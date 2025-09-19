@@ -15,6 +15,7 @@
 #   PJM_LOCATION_TYPE        - Default location type when unmapped (default NODE)
 #   PJM_SUBJECT              - Schema Registry subject (default <topic>-value)
 #   ISO_LMP_SCHEMA           - Avro schema JSON populated by run_job.sh
+#   ISO_LOCATION_REGISTRY    - Path to iso_nodes.csv (default config/iso_nodes.csv)
 
 env {
   job.mode = "BATCH"
@@ -46,6 +47,26 @@ source {
     }
     result_table_name = "pjm_raw"
   }
+  LocalFile {
+    path = "${ISO_LOCATION_REGISTRY}"
+    format = "csv"
+    csv {
+      delimiter = ","
+      header = true
+    }
+    schema {
+      fields {
+        iso = string
+        location_id = string
+        location_name = string
+        location_type = string
+        zone = string
+        hub = string
+        timezone = string
+      }
+    }
+    result_table_name = "iso_registry"
+  }
 }
 
 transform {
@@ -56,25 +77,31 @@ transform {
       SELECT
         'PJM'                                                     AS iso_code,
         '${PJM_MARKET}'                                           AS market,
-        DATEDIFF(TO_DATE(datetime_beginning_utc), TO_DATE('1970-01-01')) AS delivery_date,
-        CAST(UNIX_TIMESTAMP(datetime_beginning_utc) * 1000000 AS BIGINT) AS interval_start,
-        CAST(UNIX_TIMESTAMP(datetime_ending_utc) * 1000000 AS BIGINT)   AS interval_end,
-        CAST(TIMESTAMPDIFF(MINUTE, datetime_beginning_utc, datetime_ending_utc) AS INT) AS interval_minutes,
-        pnode_id                                                  AS location_id,
-        pnode_name                                                AS location_name,
-        COALESCE(TRIM(UPPER(type)), '${PJM_LOCATION_TYPE}')       AS location_type,
-        CAST(total_lmp_rt AS DOUBLE)                              AS price_total,
-        CAST(system_energy_price AS DOUBLE)                       AS price_energy,
-        CAST(congestion_price AS DOUBLE)                          AS price_congestion,
-        CAST(loss_price AS DOUBLE)                                AS price_loss,
+        DATEDIFF(TO_DATE(p.datetime_beginning_utc), TO_DATE('1970-01-01')) AS delivery_date,
+        CAST(UNIX_TIMESTAMP(p.datetime_beginning_utc) * 1000000 AS BIGINT) AS interval_start,
+        CAST(UNIX_TIMESTAMP(p.datetime_ending_utc) * 1000000 AS BIGINT)   AS interval_end,
+        CAST(TIMESTAMPDIFF(MINUTE, p.datetime_beginning_utc, p.datetime_ending_utc) AS INT) AS interval_minutes,
+        p.pnode_id                                                AS location_id,
+        COALESCE(reg.location_name, p.pnode_name)                 AS location_name,
+        COALESCE(reg.location_type, COALESCE(TRIM(UPPER(p.type)), '${PJM_LOCATION_TYPE}')) AS location_type,
+        reg.zone                                                  AS zone,
+        reg.hub                                                   AS hub,
+        reg.timezone                                              AS timezone,
+        CAST(p.total_lmp_rt AS DOUBLE)                            AS price_total,
+        CAST(p.system_energy_price AS DOUBLE)                     AS price_energy,
+        CAST(p.congestion_price AS DOUBLE)                        AS price_congestion,
+        CAST(p.loss_price AS DOUBLE)                              AS price_loss,
         'USD'                                                     AS currency,
         'MWh'                                                     AS uom,
-        load_identifier                                           AS settlement_point,
-        comp_subzone                                               AS source_run_id,
+        p.load_identifier                                         AS settlement_point,
+        p.comp_subzone                                            AS source_run_id,
         CAST(UNIX_TIMESTAMP() * 1000000 AS BIGINT)                AS ingest_ts,
-        SHA2(CONCAT_WS('|', datetime_beginning_utc, pnode_id, total_lmp_rt), 256) AS record_hash,
+        SHA2(CONCAT_WS('|', p.datetime_beginning_utc, p.pnode_id, p.total_lmp_rt), 256) AS record_hash,
         NULL                                                      AS metadata
-      FROM pjm_raw
+      FROM pjm_raw p
+      LEFT JOIN iso_registry reg
+        ON upper(reg.iso) = 'PJM'
+       AND upper(reg.location_id) = upper(CAST(pnode_id AS STRING))
     """
   }
 }

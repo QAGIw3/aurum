@@ -83,6 +83,24 @@
       "default": "OTHER"
     },
     {
+      "name": "zone",
+      "doc": "Optional ISO zone identifier derived from the location registry.",
+      "type": ["null", "string"],
+      "default": null
+    },
+    {
+      "name": "hub",
+      "doc": "Optional hub grouping associated with the location.",
+      "type": ["null", "string"],
+      "default": null
+    },
+    {
+      "name": "timezone",
+      "doc": "Preferred timezone for interpreting interval timestamps (IANA name).",
+      "type": ["null", "string"],
+      "default": null
+    },
+    {
       "name": "price_total",
       "doc": "Locational marginal price reported by the ISO.",
       "type": "double"

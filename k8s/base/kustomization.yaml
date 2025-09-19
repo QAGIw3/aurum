@@ -23,7 +23,6 @@ resources:
   - kafka.yaml
   - schema-registry-runner-configmap.yaml
   - schema-registry.yaml
-  - hive-metastore.yaml
   - nessie.yaml
   - lakefs.yaml
   - trino.yaml

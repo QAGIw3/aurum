@@ -1,0 +1,20 @@
+{
+  "type": "record",
+  "name": "FxRate",
+  "namespace": "aurum.ref.fx",
+  "doc": "Daily foreign exchange reference rate.",
+  "fields": [
+    {"name": "base_currency", "type": "string", "doc": "Base ISO-4217 currency code."},
+    {"name": "quote_currency", "type": "string", "doc": "Quoted ISO-4217 currency code."},
+    {"name": "rate", "type": "double", "doc": "Exchange rate expressed as quote per one unit of base."},
+    {"name": "source", "type": "string", "default": "ECB", "doc": "Provider of the reference rate."},
+    {"name": "as_of_date", "type": {"type": "int", "logicalType": "date"}, "doc": "Date the rate is effective."},
+    {"name": "ingest_ts", "type": {"type": "long", "logicalType": "timestamp-micros"}, "doc": "Ingestion timestamp (UTC)."},
+    {
+      "name": "metadata",
+      "type": ["null", {"type": "map", "values": "string"}],
+      "default": null,
+      "doc": "Optional key/value metadata (e.g., source identifiers)."
+    }
+  ]
+}

@@ -20,6 +20,7 @@
 #   MISO_INTERVAL_SECONDS   - Interval length in seconds (default 3600 for DA, 300 for RT)
 #   MISO_CURRENCY           - Currency code (default USD)
 #   MISO_UOM                - Price unit (default MWh)
+#   ISO_LOCATION_REGISTRY   - Path to iso_nodes.csv (default config/iso_nodes.csv)
 #
 # SeaTunnel fetches the CSV, normalizes columns, and publishes Avro-encoded records.
 
@@ -38,6 +39,26 @@ source {
       header = true
     }
     result_table_name = "miso_raw"
+  }
+  LocalFile {
+    path = "${ISO_LOCATION_REGISTRY}"
+    format = "csv"
+    csv {
+      delimiter = ","
+      header = true
+    }
+    schema {
+      fields {
+        iso = string
+        location_id = string
+        location_name = string
+        location_type = string
+        zone = string
+        hub = string
+        timezone = string
+      }
+    }
+    result_table_name = "iso_registry"
   }
 }
 
@@ -59,29 +80,35 @@ transform {
       SELECT
         'MISO' AS iso_code,
         UPPER('${MISO_MARKET}') AS market,
-        DATEDIFF(TO_DATE(interval_ts), TO_DATE('1970-01-01')) AS delivery_date,
-        CAST(UNIX_TIMESTAMP(interval_ts, '${MISO_TIME_FORMAT}') * 1000000 AS BIGINT) AS interval_start,
-        CAST(UNIX_TIMESTAMP(interval_ts, '${MISO_TIME_FORMAT}') * 1000000
+        DATEDIFF(TO_DATE(e.interval_ts), TO_DATE('1970-01-01')) AS delivery_date,
+        CAST(UNIX_TIMESTAMP(e.interval_ts, '${MISO_TIME_FORMAT}') * 1000000 AS BIGINT) AS interval_start,
+        CAST(UNIX_TIMESTAMP(e.interval_ts, '${MISO_TIME_FORMAT}') * 1000000
              + ${MISO_INTERVAL_SECONDS} * 1000000 AS BIGINT) AS interval_end,
         ${MISO_INTERVAL_SECONDS} / 60 AS interval_minutes,
-        CAST(location_id AS STRING) AS location_id,
-        CAST(location_name AS STRING) AS location_name,
-        'NODE' AS location_type,
-        CAST(price_total_raw AS DOUBLE) AS price_total,
-        CAST(price_total_raw AS DOUBLE)
-          - COALESCE(CAST(price_congestion_raw AS DOUBLE), 0)
-          - COALESCE(CAST(price_loss_raw AS DOUBLE), 0) AS price_energy,
-        CAST(price_congestion_raw AS DOUBLE) AS price_congestion,
-        CAST(price_loss_raw AS DOUBLE) AS price_loss,
+        CAST(e.location_id AS STRING) AS location_id,
+        COALESCE(reg.location_name, CAST(e.location_name AS STRING)) AS location_name,
+        COALESCE(reg.location_type, 'NODE') AS location_type,
+        reg.zone AS zone,
+        reg.hub AS hub,
+        reg.timezone AS timezone,
+        CAST(e.price_total_raw AS DOUBLE) AS price_total,
+        CAST(e.price_total_raw AS DOUBLE)
+          - COALESCE(CAST(e.price_congestion_raw AS DOUBLE), 0)
+          - COALESCE(CAST(e.price_loss_raw AS DOUBLE), 0) AS price_energy,
+        CAST(e.price_congestion_raw AS DOUBLE) AS price_congestion,
+        CAST(e.price_loss_raw AS DOUBLE) AS price_loss,
         '${MISO_CURRENCY}' AS currency,
         '${MISO_UOM}' AS uom,
-        CAST(location_name AS STRING) AS settlement_point,
+        CAST(e.location_name AS STRING) AS settlement_point,
         NULL AS source_run_id,
         CAST(UNIX_TIMESTAMP() * 1000000 AS BIGINT) AS ingest_ts,
-        SHA2(CONCAT_WS('|', interval_ts, CAST(location_id AS STRING), CAST(price_total_raw AS STRING)), 256) AS record_hash,
+        SHA2(CONCAT_WS('|', e.interval_ts, CAST(e.location_id AS STRING), CAST(e.price_total_raw AS STRING)), 256) AS record_hash,
         NULL AS metadata
-      FROM enriched
-      WHERE interval_ts IS NOT NULL AND price_total_raw IS NOT NULL
+      FROM enriched e
+      LEFT JOIN iso_registry reg
+        ON upper(reg.iso) = 'MISO'
+       AND upper(reg.location_id) = upper(CAST(e.location_id AS STRING))
+      WHERE e.interval_ts IS NOT NULL AND e.price_total_raw IS NOT NULL
     """
   }
 }

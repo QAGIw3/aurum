@@ -8,14 +8,32 @@ import uuid
 from datetime import date
 from typing import Any, Dict, List, Optional
 
-from fastapi import FastAPI, HTTPException, Query, Response
+from fastapi import FastAPI, HTTPException, Query, Response, Request
 from fastapi.middleware.cors import CORSMiddleware
 
 from .config import CacheConfig, TrinoConfig
 from . import service
-from .models import CurveDiffPoint, CurveDiffResponse, CurvePoint, CurveResponse, DimensionsData, DimensionsResponse, Meta
+from .models import (
+    CurveDiffPoint,
+    CurveDiffResponse,
+    CurvePoint,
+    CurveResponse,
+    DimensionsData,
+    DimensionsResponse,
+    Meta,
+    CreateScenarioRequest,
+    ScenarioResponse,
+    ScenarioData,
+    ScenarioRunOptions,
+    ScenarioRunResponse,
+    ScenarioRunData,
+    PpaValuationRequest,
+    PpaValuationResponse,
+    PpaMetric,
+)
 from .ratelimit import RateLimitConfig, RateLimitMiddleware
 from .auth import AuthMiddleware, OIDCConfig
+from .scenario_service import STORE as ScenarioStore
 
 
 app = FastAPI(title="Aurum API", version="0.1.0")
@@ -86,6 +104,15 @@ def _decode_cursor(token: str) -> dict:
         return json.loads(raw.decode("utf-8"))
     except Exception as exc:  # pragma: no cover
         raise HTTPException(status_code=400, detail="Invalid cursor") from exc
+
+
+def _resolve_tenant(request: Request, explicit: Optional[str]) -> str:
+    principal = getattr(request.state, "principal", {}) or {}
+    if tenant := principal.get("tenant"):
+        return tenant
+    if explicit:
+        return explicit
+    raise HTTPException(status_code=400, detail="tenant_id is required")
 
 
 @app.get("/v1/curves", response_model=CurveResponse)
@@ -294,3 +321,122 @@ def list_strips(
 
 
 __all__ = ["app"]
+
+
+# --- Scenario endpoints (stubbed service behavior for now) ---
+
+
+@app.post("/v1/scenarios", response_model=ScenarioResponse, status_code=201)
+def create_scenario(payload: CreateScenarioRequest, request: Request) -> ScenarioResponse:
+    request_id = str(uuid.uuid4())
+    tenant_id = _resolve_tenant(request, payload.tenant_id)
+    record = ScenarioStore.create_scenario(
+        tenant_id=tenant_id,
+        name=payload.name,
+        description=payload.description,
+        assumptions=payload.assumptions,
+    )
+    return ScenarioResponse(
+        meta=Meta(request_id=request_id, query_time_ms=0),
+        data=ScenarioData(
+            scenario_id=record.id,
+            tenant_id=record.tenant_id,
+            name=record.name,
+            description=record.description,
+            status=record.status,
+            assumptions=record.assumptions,
+            created_at=record.created_at.isoformat(),
+        ),
+    )
+
+
+@app.get("/v1/scenarios/{scenario_id}", response_model=ScenarioResponse)
+def get_scenario(scenario_id: str) -> ScenarioResponse:
+    request_id = str(uuid.uuid4())
+    record = ScenarioStore.get_scenario(scenario_id)
+    if record is None:
+        raise HTTPException(status_code=404, detail="Scenario not found")
+    return ScenarioResponse(
+        meta=Meta(request_id=request_id, query_time_ms=0),
+        data=ScenarioData(
+            scenario_id=record.id,
+            tenant_id=record.tenant_id,
+            name=record.name,
+            description=record.description,
+            status=record.status,
+            assumptions=record.assumptions,
+            created_at=record.created_at.isoformat(),
+        ),
+    )
+
+
+@app.post("/v1/scenarios/{scenario_id}/run", response_model=ScenarioRunResponse, status_code=202)
+def run_scenario(
+    scenario_id: str,
+    options: ScenarioRunOptions | None = None,
+) -> ScenarioRunResponse:
+    request_id = str(uuid.uuid4())
+    record = ScenarioStore.get_scenario(scenario_id)
+    if record is None:
+        raise HTTPException(status_code=404, detail="Scenario not found")
+    run = ScenarioStore.create_run(
+        scenario_id=scenario_id,
+        code_version=options.code_version if options else None,
+        seed=options.seed if options else None,
+    )
+    return ScenarioRunResponse(
+        meta=Meta(request_id=request_id, query_time_ms=0),
+        data=ScenarioRunData(
+            run_id=run.run_id,
+            scenario_id=run.scenario_id,
+            state=run.state,
+            code_version=run.code_version,
+            seed=run.seed,
+            created_at=run.created_at.isoformat(),
+        ),
+    )
+
+
+@app.get("/v1/scenarios/{scenario_id}/runs/{run_id}", response_model=ScenarioRunResponse)
+def get_scenario_run(scenario_id: str, run_id: str) -> ScenarioRunResponse:
+    request_id = str(uuid.uuid4())
+    run = ScenarioStore.get_run_for_scenario(scenario_id, run_id)
+    if run is None:
+        raise HTTPException(status_code=404, detail="Scenario run not found")
+    return ScenarioRunResponse(
+        meta=Meta(request_id=request_id, query_time_ms=0),
+        data=ScenarioRunData(
+            run_id=run.run_id,
+            scenario_id=run.scenario_id,
+            state=run.state,
+            code_version=run.code_version,
+            seed=run.seed,
+            created_at=run.created_at.isoformat(),
+        ),
+    )
+
+
+@app.post("/v1/scenarios/runs/{run_id}/state", response_model=ScenarioRunResponse)
+def update_scenario_run_state(run_id: str, state: str = Query(..., pattern="^(QUEUED|RUNNING|SUCCEEDED|FAILED)$")) -> ScenarioRunResponse:
+    request_id = str(uuid.uuid4())
+    run = ScenarioStore.update_run_state(run_id, state=state)
+    if run is None:
+        raise HTTPException(status_code=404, detail="Scenario run not found")
+    return ScenarioRunResponse(
+        meta=Meta(request_id=request_id, query_time_ms=0),
+        data=ScenarioRunData(
+            run_id=run.run_id,
+            scenario_id=run.scenario_id,
+            state=run.state,
+            code_version=run.code_version,
+            seed=run.seed,
+            created_at=run.created_at.isoformat(),
+        ),
+    )
+
+
+@app.post("/v1/ppa/valuate", response_model=PpaValuationResponse)
+def valuate_ppa(payload: PpaValuationRequest) -> PpaValuationResponse:
+    request_id = str(uuid.uuid4())
+    # Placeholder behavior: return empty metrics list until valuation engine is wired
+    return PpaValuationResponse(meta=Meta(request_id=request_id, query_time_ms=0), data=[])

@@ -4,6 +4,7 @@ from datetime import date
 from typing import List, Optional
 
 from pydantic import BaseModel, Field
+from aurum.scenarios.models import ScenarioAssumption
 
 
 class Meta(BaseModel):
@@ -70,4 +71,83 @@ __all__ = [
     "CurveDiffResponse",
     "DimensionsData",
     "DimensionsResponse",
+]
+
+# Scenario models
+
+
+class CreateScenarioRequest(BaseModel):
+    tenant_id: str
+    name: str
+    description: Optional[str] = None
+    assumptions: list[ScenarioAssumption]
+
+
+class ScenarioData(BaseModel):
+    scenario_id: str
+    tenant_id: str
+    name: str
+    description: Optional[str] = None
+    status: str
+    assumptions: list[ScenarioAssumption]
+    created_at: Optional[str] = None
+
+
+class ScenarioResponse(BaseModel):
+    meta: Meta
+    data: ScenarioData
+
+
+class ScenarioRunOptions(BaseModel):
+    code_version: Optional[str] = None
+    seed: Optional[int] = None
+
+
+class ScenarioRunData(BaseModel):
+    run_id: str
+    scenario_id: str
+    state: str
+    code_version: Optional[str] = None
+    seed: Optional[int] = None
+    created_at: Optional[str] = None
+
+
+class ScenarioRunResponse(BaseModel):
+    meta: Meta
+    data: ScenarioRunData
+
+
+# PPA valuation models
+
+
+class PpaValuationRequest(BaseModel):
+    ppa_contract_id: str
+    scenario_id: Optional[str] = None
+    asof_date: Optional[date] = None
+    options: Optional[dict] = None
+
+
+class PpaMetric(BaseModel):
+    period_start: date
+    period_end: date
+    metric: str
+    value: float
+    currency: Optional[str] = None
+
+
+class PpaValuationResponse(BaseModel):
+    meta: Meta
+    data: list[PpaMetric]
+
+
+__all__ += [
+    "CreateScenarioRequest",
+    "ScenarioData",
+    "ScenarioResponse",
+    "ScenarioRunOptions",
+    "ScenarioRunData",
+    "ScenarioRunResponse",
+    "PpaValuationRequest",
+    "PpaMetric",
+    "PpaValuationResponse",
 ]

@@ -186,3 +186,46 @@ def test_strips_endpoint(monkeypatch):
     assert resp.status_code == 200
     payload = resp.json()
     assert payload["data"][0]["tenor_type"] == "CALENDAR"
+
+
+def test_scenarios_create_and_run():
+    pytest.importorskip("fastapi", reason="fastapi not installed")
+    from fastapi.testclient import TestClient
+    from aurum.api import app as api_app
+
+    client = TestClient(api_app.app)
+
+    # Create scenario
+    payload = {
+        "tenant_id": "t1",
+        "name": "My Scenario",
+        "assumptions": [
+            {"driver_type": "policy", "payload": {"policy_name": "RPS", "start_year": 2025}}
+        ],
+    }
+    r = client.post("/v1/scenarios", json=payload)
+    assert r.status_code == 201
+    scenario_body = r.json()["data"]
+    scenario_id = scenario_body["scenario_id"]
+    assert scenario_id
+    assert scenario_body["tenant_id"] == "t1"
+    assert scenario_body["status"] == "CREATED"
+
+    # Run scenario
+    r2 = client.post(f"/v1/scenarios/{scenario_id}/run", json={"code_version": "abc"})
+    assert r2.status_code == 202
+    run_body = r2.json()["data"]
+    assert run_body["state"] == "QUEUED"
+    assert run_body["scenario_id"] == scenario_id
+
+
+def test_ppa_valuate():
+    pytest.importorskip("fastapi", reason="fastapi not installed")
+    from fastapi.testclient import TestClient
+    from aurum.api import app as api_app
+
+    client = TestClient(api_app.app)
+    payload = {"ppa_contract_id": "ppa1"}
+    r = client.post("/v1/ppa/valuate", json=payload)
+    assert r.status_code == 200
+    assert isinstance(r.json()["data"], list)

@@ -76,6 +76,27 @@ paths:
                 $ref: '#/components/schemas/ScenarioResponse'
         '400':
           $ref: '#/components/responses/BadRequest'
+  /v1/scenarios/{id}:
+    get:
+      summary: Retrieve a scenario definition.
+      operationId: getScenario
+      security:
+        - oauth2: [aurum]
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Scenario metadata retrieved.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ScenarioResponse'
+        '404':
+          $ref: '#/components/responses/NotFound'
   /v1/scenarios/{id}/run:
     post:
       summary: Trigger a scenario run asynchronously via Kafka.
@@ -97,6 +118,32 @@ paths:
       responses:
         '202':
           description: Scenario run accepted.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ScenarioRunResponse'
+        '404':
+          $ref: '#/components/responses/NotFound'
+  /v1/scenarios/{id}/runs/{run_id}:
+    get:
+      summary: Get the status of a scenario run.
+      operationId: getScenarioRun
+      security:
+        - oauth2: [aurum]
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: run_id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Scenario run status returned.
           content:
             application/json:
               schema:
@@ -487,11 +534,9 @@ components:
             $ref: '#/components/schemas/ScenarioAssumption'
     ScenarioAssumption:
       type: object
-      required: [type, payload]
+      required: [driver_type, payload]
       properties:
-        assumption_id:
-          type: string
-        type:
+        driver_type:
           type: string
         payload:
           type: object
@@ -507,8 +552,21 @@ components:
           properties:
             scenario_id:
               type: string
+            tenant_id:
+              type: string
+            name:
+              type: string
+            description:
+              type: string
             status:
               type: string
+            assumptions:
+              type: array
+              items:
+                $ref: '#/components/schemas/ScenarioAssumption'
+            created_at:
+              type: string
+              format: date-time
     ScenarioRunOptions:
       type: object
       properties:
@@ -526,8 +584,17 @@ components:
           properties:
             run_id:
               type: string
+            scenario_id:
+              type: string
             state:
               type: string
+            code_version:
+              type: string
+            seed:
+              type: integer
+            created_at:
+              type: string
+              format: date-time
     PpaValuationRequest:
       type: object
       required: [ppa_contract_id]

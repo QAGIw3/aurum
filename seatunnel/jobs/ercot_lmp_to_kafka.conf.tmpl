@@ -11,6 +11,7 @@
 #   ISO_LMP_SCHEMA          - Avro schema JSON populated by run_job.sh
 #   ERCOT_CURRENCY          - Override currency code (default USD)
 #   ERCOT_UOM               - Override unit of measure (default MWh)
+#   ISO_LOCATION_REGISTRY   - Path to iso_nodes.csv (default config/iso_nodes.csv)
 
 env {
   job.mode = "BATCH"
@@ -26,6 +27,26 @@ source {
     }
     result_table_name = "ercot_stage"
   }
+  LocalFile {
+    path = "${ISO_LOCATION_REGISTRY}"
+    format = "csv"
+    csv {
+      delimiter = ","
+      header = true
+    }
+    schema {
+      fields {
+        iso = string
+        location_id = string
+        location_name = string
+        location_type = string
+        zone = string
+        hub = string
+        timezone = string
+      }
+    }
+    result_table_name = "iso_registry"
+  }
 }
 
 transform {
@@ -36,32 +57,38 @@ transform {
       SELECT
         'ERCOT' AS iso_code,
         CASE
-          WHEN upper(CAST(market AS STRING)) IN ('DA', 'DAM', 'DAY_AHEAD') THEN 'DAY_AHEAD'
-          WHEN upper(CAST(market AS STRING)) IN ('RT', 'RTM', 'REAL_TIME') THEN 'REAL_TIME'
-          ELSE COALESCE(UPPER(CAST(market AS STRING)), 'UNKNOWN')
+          WHEN upper(CAST(s.market AS STRING)) IN ('DA', 'DAM', 'DAY_AHEAD') THEN 'DAY_AHEAD'
+          WHEN upper(CAST(s.market AS STRING)) IN ('RT', 'RTM', 'REAL_TIME') THEN 'REAL_TIME'
+          ELSE COALESCE(UPPER(CAST(s.market AS STRING)), 'UNKNOWN')
         END AS market,
-        CAST(delivery_date AS INT) AS delivery_date,
-        CAST(interval_start AS BIGINT) AS interval_start,
+        CAST(s.delivery_date AS INT) AS delivery_date,
+        CAST(s.interval_start AS BIGINT) AS interval_start,
         CASE
-          WHEN interval_end IS NULL OR CAST(interval_end AS BIGINT) = 0 THEN NULL
-          ELSE CAST(interval_end AS BIGINT)
+          WHEN s.interval_end IS NULL OR CAST(s.interval_end AS BIGINT) = 0 THEN NULL
+          ELSE CAST(s.interval_end AS BIGINT)
         END AS interval_end,
-        CAST(interval_minutes AS INT) AS interval_minutes,
-        CAST(location_id AS STRING) AS location_id,
-        CAST(location_name AS STRING) AS location_name,
-        COALESCE(UPPER(CAST(location_type AS STRING)), 'NODE') AS location_type,
-        CAST(price_total AS DOUBLE) AS price_total,
-        CAST(price_energy AS DOUBLE) AS price_energy,
-        CAST(price_congestion AS DOUBLE) AS price_congestion,
-        CAST(price_loss AS DOUBLE) AS price_loss,
-        COALESCE(CAST(currency AS STRING), '${ERCOT_CURRENCY}') AS currency,
-        COALESCE(CAST(uom AS STRING), '${ERCOT_UOM}') AS uom,
-        CAST(settlement_point AS STRING) AS settlement_point,
-        CAST(source_run_id AS STRING) AS source_run_id,
-        COALESCE(CAST(ingest_ts AS BIGINT), CAST(UNIX_TIMESTAMP() * 1000000 AS BIGINT)) AS ingest_ts,
-        CAST(record_hash AS STRING) AS record_hash,
+        CAST(s.interval_minutes AS INT) AS interval_minutes,
+        CAST(s.location_id AS STRING) AS location_id,
+        COALESCE(reg.location_name, CAST(s.location_name AS STRING)) AS location_name,
+        COALESCE(reg.location_type, COALESCE(UPPER(CAST(s.location_type AS STRING)), 'NODE')) AS location_type,
+        reg.zone AS zone,
+        reg.hub AS hub,
+        reg.timezone AS timezone,
+        CAST(s.price_total AS DOUBLE) AS price_total,
+        CAST(s.price_energy AS DOUBLE) AS price_energy,
+        CAST(s.price_congestion AS DOUBLE) AS price_congestion,
+        CAST(s.price_loss AS DOUBLE) AS price_loss,
+        COALESCE(CAST(s.currency AS STRING), '${ERCOT_CURRENCY}') AS currency,
+        COALESCE(CAST(s.uom AS STRING), '${ERCOT_UOM}') AS uom,
+        CAST(s.settlement_point AS STRING) AS settlement_point,
+        CAST(s.source_run_id AS STRING) AS source_run_id,
+        COALESCE(CAST(s.ingest_ts AS BIGINT), CAST(UNIX_TIMESTAMP() * 1000000 AS BIGINT)) AS ingest_ts,
+        CAST(s.record_hash AS STRING) AS record_hash,
         NULL AS metadata
-      FROM ercot_stage
+      FROM ercot_stage s
+      LEFT JOIN iso_registry reg
+        ON upper(reg.iso) = 'ERCOT'
+       AND upper(reg.location_id) = upper(CAST(s.location_id AS STRING))
     """
   }
 }

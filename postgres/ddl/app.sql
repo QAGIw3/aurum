@@ -47,6 +47,25 @@ CREATE TABLE IF NOT EXISTS scenario (
     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
+CREATE TABLE IF NOT EXISTS scenario_driver (
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    name TEXT NOT NULL,
+    type TEXT NOT NULL,
+    description TEXT,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    UNIQUE (name, type)
+);
+
+CREATE TABLE IF NOT EXISTS scenario_assumption_value (
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    scenario_id UUID NOT NULL REFERENCES scenario(id) ON DELETE CASCADE,
+    driver_id UUID NOT NULL REFERENCES scenario_driver(id) ON DELETE RESTRICT,
+    payload JSONB NOT NULL,
+    version TEXT,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    UNIQUE (scenario_id, driver_id, version)
+);
+
 CREATE TABLE IF NOT EXISTS assumption (
     id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
     scenario_id UUID NOT NULL REFERENCES scenario(id) ON DELETE CASCADE,

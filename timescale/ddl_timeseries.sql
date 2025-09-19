@@ -13,6 +13,9 @@ CREATE TABLE IF NOT EXISTS public.iso_lmp_timeseries (
     location_id TEXT NOT NULL,
     location_name TEXT,
     location_type TEXT,
+    zone TEXT,
+    hub TEXT,
+    timezone TEXT,
     price_total DOUBLE PRECISION NOT NULL,
     price_energy DOUBLE PRECISION,
     price_congestion DOUBLE PRECISION,
@@ -65,6 +68,9 @@ BEGIN
                 iso_code,
                 location_id,
                 market,
+                zone,
+                hub,
+                timezone,
                 currency,
                 uom,
                 avg(price_total) AS price_avg,
@@ -73,7 +79,7 @@ BEGIN
                 stddev_pop(price_total) AS price_stddev,
                 count(*) AS sample_count
             FROM public.iso_lmp_timeseries
-            GROUP BY 1, 2, 3, 4, 5, 6, 7
+            GROUP BY 1, 2, 3, 4, 5, 6, 7, 8, 9, 10
             WITH NO DATA;
         $DDL$;
     END IF;
@@ -106,6 +112,9 @@ BEGIN
                 iso_code,
                 location_id,
                 market,
+                zone,
+                hub,
+                timezone,
                 currency,
                 uom,
                 avg(price_total) AS price_avg,
@@ -114,7 +123,7 @@ BEGIN
                 stddev_pop(price_total) AS price_stddev,
                 count(*) AS sample_count
             FROM public.iso_lmp_timeseries
-            GROUP BY 1, 2, 3, 4, 5, 6, 7
+            GROUP BY 1, 2, 3, 4, 5, 6, 7, 8, 9, 10
             WITH NO DATA;
         $DDL$;
     END IF;

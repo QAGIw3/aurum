@@ -20,7 +20,7 @@ spec:
           image: apache/superset:3.0.0
           command: ["/bin/sh", "-c"]
           args:
-            - superset db upgrade && superset init && superset run -h 0.0.0.0 -p 8088
+            - superset db upgrade && superset init && python /bootstrap/add_timescale.py && python /import/import_iso_dashboard.py && superset run -h 0.0.0.0 -p 8088
           envFrom:
             - configMapRef:
                 name: aurum-config
@@ -46,9 +46,19 @@ spec:
           volumeMounts:
             - name: superset-home
               mountPath: /app/superset_home
+            - name: superset-bootstrap
+              mountPath: /bootstrap
+            - name: superset-import
+              mountPath: /import
       volumes:
         - name: superset-home
           emptyDir: {}
+        - name: superset-bootstrap
+          configMap:
+            name: superset-bootstrap
+        - name: superset-import
+          configMap:
+            name: superset-import
 ---
 apiVersion: v1
 kind: Service
