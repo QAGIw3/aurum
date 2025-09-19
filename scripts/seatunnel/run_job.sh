@@ -97,6 +97,8 @@ if [[ ! -f "${TEMPLATE}" ]]; then
   exit 1
 fi
 
+export ISO_LOCATION_REGISTRY="${ISO_LOCATION_REGISTRY:-${REPO_ROOT}/config/iso_nodes.csv}"
+
 case "${JOB_NAME}" in
   noaa_ghcnd_to_kafka)
     REQUIRED_VARS=(
@@ -153,11 +155,11 @@ case "${JOB_NAME}" in
     fi
     export EIA_SERIES_SCHEMA
     ;;
-  fred_series_to_kafka)
-    REQUIRED_VARS=(
-      FRED_API_KEY
-      FRED_SERIES_ID
-      FRED_FREQUENCY
+ fred_series_to_kafka)
+   REQUIRED_VARS=(
+     FRED_API_KEY
+     FRED_SERIES_ID
+     FRED_FREQUENCY
       FRED_SEASONAL_ADJ
       FRED_TOPIC
       KAFKA_BOOTSTRAP_SERVERS
@@ -169,10 +171,30 @@ case "${JOB_NAME}" in
     export FRED_TITLE="${FRED_TITLE:-}"
     export FRED_NOTES="${FRED_NOTES:-}"
     export FRED_SUBJECT="${FRED_SUBJECT:-${FRED_TOPIC}-value}"
-    if [[ -z "${FRED_SERIES_SCHEMA:-}" ]]; then
-      FRED_SERIES_SCHEMA="$(render_schema "${FRED_SERIES_SCHEMA_PATH}")"
+   if [[ -z "${FRED_SERIES_SCHEMA:-}" ]]; then
+     FRED_SERIES_SCHEMA="$(render_schema "${FRED_SERIES_SCHEMA_PATH}")"
+   fi
+   export FRED_SERIES_SCHEMA
+   ;;
+  cpi_series_to_kafka)
+    REQUIRED_VARS=(
+      FRED_API_KEY
+      CPI_SERIES_ID
+      CPI_FREQUENCY
+      CPI_SEASONAL_ADJ
+      CPI_TOPIC
+      KAFKA_BOOTSTRAP_SERVERS
+      SCHEMA_REGISTRY_URL
+    )
+    export CPI_AREA="${CPI_AREA:-US}"
+    export CPI_UNITS="${CPI_UNITS:-Index}"
+    export CPI_SOURCE="${CPI_SOURCE:-FRED}"
+    export CPI_SUBJECT="${CPI_SUBJECT:-${CPI_TOPIC}-value}"
+    export CPI_SCHEMA_PATH="${CPI_SCHEMA_PATH:-${REPO_ROOT}/kafka/schemas/cpi.series.v1.avsc}"
+    if [[ -z "${CPI_SCHEMA:-}" ]]; then
+      CPI_SCHEMA="$(render_schema "${CPI_SCHEMA_PATH}")"
     fi
-    export FRED_SERIES_SCHEMA
+    export CPI_SCHEMA
     ;;
   pjm_lmp_to_kafka)
     REQUIRED_VARS=(

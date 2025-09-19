@@ -313,12 +313,14 @@ Set lakeFS credentials when using branch commits: `AURUM_LAKEFS_ENDPOINT`, `AURU
 
 ### Public and real-time feeds
 
-* **SeaTunnel** or **Kafka Connect** to ingest HTTP/REST or JDBC into Kafka topics. Prototype jobs live under `seatunnel/`; render and run them with `scripts/seatunnel/run_job.sh <job>` once required environment variables (including `SCHEMA_REGISTRY_URL` for Avro sinks) are exported. Current jobs cover NOAA GHCND (with station enrichment), EIA series, FRED series, CAISO PRC_LMP (helper script), ERCOT MIS (helper script), PJM day-ahead LMP ingestion, and Kafka→Timescale landing for ISO LMP topics.
+* **SeaTunnel** or **Kafka Connect** to ingest HTTP/REST or JDBC into Kafka topics. Prototype jobs live under `seatunnel/`; render and run them with `scripts/seatunnel/run_job.sh <job>` once required environment variables (including `SCHEMA_REGISTRY_URL` for Avro sinks) are exported. Current jobs cover NOAA GHCND (with station enrichment), EIA series, FRED series, CAISO PRC_LMP (helper script), ERCOT MIS (helper script), PJM day-ahead LMP ingestion, daily FX rates (scripted helper), and Kafka→Timescale landing for ISO LMP topics. All ISO LMP jobs join against the registry in `config/iso_nodes.csv` to populate zone/hub/timezone metadata.
+* Keep `config/iso_nodes.csv` up to date; SeaTunnel LMP jobs join against this registry to populate zone, hub, and timezone attributes for downstream analytics.
 * Store API credentials in Vault under `secret/data/aurum/<source>` (e.g., `secret/data/aurum/noaa`, `secret/data/aurum/eia`, `secret/data/aurum/aeso`, `secret/data/aurum/nepool`). Use `python scripts/secrets/push_vault_env.py --mapping NOAA_GHCND_TOKEN=secret/data/aurum/noaa:token ...` to seed Vault from a local `.env`, and `python scripts/secrets/pull_vault_env.py --mapping secret/data/aurum/noaa:token=NOAA_GHCND_TOKEN ...` to populate environment variables before running ingestion jobs.
 * Need a local instance? Run `scripts/vault/run_dev.sh` to start a dev-mode Vault container on `http://localhost:8200` with root token `aurum-dev-token`.
 * After Schema Registry is online, run `make kafka-register-schemas` followed by `make kafka-set-compat` to register Avro contracts and enforce `BACKWARD` compatibility across all ISO/reference subjects.
 * Configure DLQ support by setting `AURUM_DLQ_TOPIC` (or passing `--dlq-topic`) so helpers publish failure diagnostics to the shared Avro subject `aurum.ingest.error.v1`.
 * CAISO PRC_LMP ingestion can be driven by `scripts/ingest/caiso_prc_lmp_to_kafka.py` inside the cluster. The helper fetches zip/XML payloads, parses them, and emits Avro messages to Kafka.
+* Daily FX rates from the ECB feed can be published with `python scripts/ingest/fx_rates_to_kafka.py --base EUR --symbols USD,GBP` (uses `aurum.ref.fx` Avro schema).
 * TimescaleDB for real-time telemetry (LMP, load, weather).
 * Trino exposes Kafka topics for live queries if needed.
 
@@ -356,8 +358,9 @@ Set lakeFS credentials when using branch commits: `AURUM_LAKEFS_ENDPOINT`, `AURU
 Key endpoints:
 
 * `GET /v1/curves` -- slice curves by identity, tenor, as-of
-* `POST /v1/scenarios` -- create scenarios (assumptions graph)
-* `POST /v1/scenarios/{id}/run` -- run scenario; async via Kafka
+* `POST /v1/scenarios` -- create scenarios (persists assumptions to Postgres when `AURUM_APP_DB_DSN` configured; falls back to in-memory otherwise)
+* `POST /v1/scenarios/{id}/run` -- enqueue scenario run (stored in `model_run`, currently marked `QUEUED` until orchestration completes)
+* `GET /v1/scenarios/{id}` / `GET /v1/scenarios/{id}/runs/{run_id}` -- inspect scenario metadata and run status
 * `POST /v1/ppa/valuate` -- PPA cashflows and risk (scenario or ensemble aware)
 
 > OpenAPI spec lives at `openapi/aurum.yaml`. Responses include `meta` and `data` arrays.

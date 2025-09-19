@@ -76,6 +76,8 @@ def test_reference_schema_namespaces() -> None:
       "eia.series.v1.avsc": "aurum.ref.eia",
       "fred.series.v1.avsc": "aurum.ref.fred",
       "ingest.error.v1.avsc": "aurum.ingest",
+      "cpi.series.v1.avsc": "aurum.ref.cpi",
+      "fx.rate.v1.avsc": "aurum.ref.fx",
     }
 
     for filename, expected_namespace in reference_files.items():
@@ -100,6 +102,9 @@ def test_iso_schema_serialization_roundtrip() -> None:
         "location_id": "PJM123",
         "location_name": "Test Node",
         "location_type": "NODE",
+        "zone": "PJM-RTO",
+        "hub": "WEST_HUB",
+        "timezone": "America/New_York",
         "price_total": 45.67,
         "price_energy": 40.0,
         "price_congestion": 3.5,
@@ -119,6 +124,7 @@ def test_iso_schema_serialization_roundtrip() -> None:
     decoded = next(reader(buffer))
     assert decoded["iso_code"] == "PJM"
     assert decoded["price_total"] == pytest.approx(45.67)
+    assert decoded["zone"] == "PJM-RTO"
 
 
 def test_reference_schemas_serialization_roundtrip() -> None:
@@ -197,6 +203,45 @@ def test_reference_schemas_serialization_roundtrip() -> None:
                 decoded["series_id"] == "DGS10"
                 and isinstance(decoded["date"], date)
                 and decoded["frequency"] == "DAILY"
+                and isinstance(decoded["ingest_ts"], datetime)
+            ),
+        },
+        "fx.rate.v1.avsc": {
+            "record": {
+                "base_currency": "EUR",
+                "quote_currency": "USD",
+                "rate": 1.085,
+                "source": "ECB",
+                "as_of_date": _days_since_epoch(date(2024, 1, 4)),
+                "ingest_ts": now_ts,
+                "metadata": {"provider": "exchangerate.host"},
+            },
+            "assertions": lambda decoded: (
+                decoded["base_currency"] == "EUR"
+                and decoded["quote_currency"] == "USD"
+                and isinstance(decoded["as_of_date"], date)
+                and isinstance(decoded["ingest_ts"], datetime)
+            ),
+        },
+        "cpi.series.v1.avsc": {
+            "record": {
+                "series_id": "CPIAUCSL",
+                "area": "US",
+                "frequency": "MONTHLY",
+                "seasonal_adjustment": "SA",
+                "period": "2024-02",
+                "value": 304.5,
+                "units": "Index",
+                "source": "FRED",
+                "ingest_ts": now_ts,
+                "metadata": {"base_year": "1982-84"},
+            },
+            "assertions": lambda decoded: (
+                decoded["series_id"] == "CPIAUCSL"
+                and decoded["area"] == "US"
+                and decoded["frequency"] == "MONTHLY"
+                and decoded["seasonal_adjustment"] == "SA"
+                and decoded["period"] == "2024-02"
                 and isinstance(decoded["ingest_ts"], datetime)
             ),
         },

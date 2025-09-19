@@ -52,6 +52,25 @@ curl "http://localhost:8095/v1/metadata/dimensions?asof=2025-09-12"
 
 # Strip curves
 curl "http://localhost:8095/v1/curves/strips?type=CALENDAR&iso=PJM&limit=10"
+
+# Create scenario (MVP stub)
+curl -X POST "http://localhost:8095/v1/scenarios" \
+  -H "Content-Type: application/json" \
+  -d '{
+        "tenant_id": "demo-tenant",
+        "name": "Test Scenario",
+        "assumptions": [
+          {"driver_type": "policy", "payload": {"policy_name": "RPS", "start_year": 2030}}
+        ]
+      }'
+
+# Trigger scenario run
+curl -X POST "http://localhost:8095/v1/scenarios/{scenario_id}/run" \
+  -H "Content-Type: application/json" \
+  -d '{"code_version": "v1"}'
+
+# FX rates ingestion helper (publish to Kafka)
+python scripts/ingest/fx_rates_to_kafka.py --base EUR --symbols USD,GBP,JPY --bootstrap localhost:9092
 ```
 
 The API queries `iceberg.market.curve_observation` via Trino and caches hot slices in Redis when `AURUM_API_REDIS_URL` is set.
@@ -61,6 +80,7 @@ Observability and limits:
 - Basic per-client rate limiting; tune with `AURUM_API_RATE_LIMIT_RPS` and `AURUM_API_RATE_LIMIT_BURST`
 - Optional CORS: set `AURUM_API_CORS_ORIGINS` (comma-separated, `*` allowed)
 - Optional OIDC/JWT auth: set `AURUM_API_AUTH_DISABLED=0` plus `AURUM_API_OIDC_{ISSUER,AUDIENCE,JWKS_URL}`
+- Optional Postgres storage for scenarios: set `AURUM_APP_DB_DSN` (e.g. `postgresql://aurum:aurum@localhost:5432/aurum`).
 
 Alternative: run a prebuilt API image (separate service, port 8096):
 

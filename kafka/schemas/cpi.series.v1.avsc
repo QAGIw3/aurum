@@ -1,0 +1,23 @@
+{
+  "type": "record",
+  "name": "CpiSeries",
+  "namespace": "aurum.ref.cpi",
+  "doc": "Consumer Price Index series observation from BLS/FRED.",
+  "fields": [
+    {"name": "series_id", "type": "string", "doc": "Unique CPI series identifier (e.g., CPIAUCSL)."},
+    {"name": "area", "type": ["null", "string"], "default": null, "doc": "Geographic area (e.g., US, region code)."},
+    {"name": "frequency", "type": "string", "doc": "Observation frequency (MONTHLY, QUARTERLY, etc.)."},
+    {"name": "seasonal_adjustment", "type": "string", "doc": "Seasonal adjustment flag (SA, NSA)."},
+    {"name": "period", "type": "string", "doc": "Period label (e.g., 2024-01)."},
+    {"name": "value", "type": "double", "doc": "Observed CPI value."},
+    {"name": "units", "type": "string", "default": "Index", "doc": "Units of the CPI series."},
+    {"name": "source", "type": "string", "default": "FRED", "doc": "Data source provider."},
+    {"name": "ingest_ts", "type": {"type": "long", "logicalType": "timestamp-micros"}, "doc": "Ingestion timestamp (UTC)."},
+    {
+      "name": "metadata",
+      "type": ["null", {"type": "map", "values": "string"}],
+      "default": null,
+      "doc": "Additional metadata such as base year or notes."
+    }
+  ]
+}

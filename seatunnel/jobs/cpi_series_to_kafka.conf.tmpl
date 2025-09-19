@@ -1,0 +1,92 @@
+# CPI (FRED) series observations → Kafka (Avro)
+#
+# Required environment variables:
+#   CPI_SERIES_ID          - CPI series identifier (e.g. CPIAUCSL)
+#   CPI_FREQUENCY          - Frequency enum value (MONTHLY, QUARTERLY, etc.)
+#   CPI_SEASONAL_ADJ       - Seasonal adjustment (SA/NSA)
+#   CPI_TOPIC              - Kafka topic (default aurum.ref.cpi.series.v1)
+#   KAFKA_BOOTSTRAP_SERVERS - Kafka brokers
+#   SCHEMA_REGISTRY_URL    - Schema Registry endpoint
+#   FRED_API_KEY           - FRED API key
+#
+# Optional environment variables:
+#   CPI_START_DATE         - Observation start (YYYY-MM-DD)
+#   CPI_END_DATE           - Observation end (YYYY-MM-DD)
+#   CPI_AREA               - Area label (default US)
+#   CPI_UNITS              - Units string (default Index)
+#   CPI_SOURCE             - Source label (default FRED)
+#   CPI_SUBJECT            - Schema Registry subject (default <topic>-value)
+#   CPI_SCHEMA             - Avro schema JSON populated by run_job.sh
+
+env {
+  job.mode = "BATCH"
+  parallelism = 1
+}
+
+source {
+  Http {
+    url = "https://api.stlouisfed.org/fred/series/observations"
+    method = "GET"
+    params {
+      series_id = "${CPI_SERIES_ID}"
+      api_key = "${FRED_API_KEY}"
+      file_type = "json"
+      observation_start = "${CPI_START_DATE}"
+      observation_end = "${CPI_END_DATE}"
+    }
+    connection_timeout_ms = 15000
+    retry {
+      interval_ms = 2000
+      max_retries = 5
+    }
+    format = "json"
+    json {
+      json_path = "$$.observations[*]"
+    }
+    result_table_name = "cpi_raw"
+  }
+}
+
+transform {
+  Sql {
+    source_table_name = "cpi_raw"
+    result_table_name = "cpi_normalized"
+    query = """
+      SELECT
+        '${CPI_SERIES_ID}'                                        AS series_id,
+        '${CPI_AREA}'                                             AS area,
+        '${CPI_FREQUENCY}'                                        AS frequency,
+        '${CPI_SEASONAL_ADJ}'                                     AS seasonal_adjustment,
+        date                                                      AS period,
+        CASE
+          WHEN value IN ('', '.') THEN NULL
+          ELSE CAST(value AS DOUBLE)
+        END                                                       AS value,
+        COALESCE('${CPI_UNITS}', units)                           AS units,
+        COALESCE('${CPI_SOURCE}', 'FRED')                         AS source,
+        NULL                                                      AS metadata,
+        CAST(UNIX_TIMESTAMP() * 1000000 AS BIGINT)                AS ingest_ts
+      FROM cpi_raw
+    """
+  }
+}
+
+sink {
+  Kafka {
+    bootstrap.servers = "${KAFKA_BOOTSTRAP_SERVERS}"
+    topic = "${CPI_TOPIC}"
+    semantic = "AT_LEAST_ONCE"
+    format = "avro"
+    avro {
+      use.schema.registry = true
+      schema.registry.url = "${SCHEMA_REGISTRY_URL}"
+      value.schema.subject = "${CPI_SUBJECT}"
+      value.schema = """${CPI_SCHEMA}"""
+    }
+    producer {
+      linger.ms = 500
+      batch.size = 32768
+      retries = 5
+    }
+  }
+}
