@@ -1,0 +1,169 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: airflow-init
+  namespace: aurum-dev
+spec:
+  template:
+    metadata:
+      labels:
+        app: airflow
+        component: init
+    spec:
+      restartPolicy: OnFailure
+      containers:
+        - name: airflow-init
+          image: apache/airflow:2.8.1
+          envFrom:
+            - configMapRef:
+                name: aurum-config
+            - secretRef:
+                name: aurum-secrets
+          command: ["/bin/bash", "-c"]
+          args:
+            - |
+              set -e
+              airflow db init
+              airflow users create \
+                --role Admin \
+                --username "${AIRFLOW_ADMIN_USER}" \
+                --password "${AIRFLOW_ADMIN_PASSWORD}" \
+                --firstname Aurum \
+                --lastname Admin \
+                --email "${AIRFLOW_ADMIN_EMAIL}" || true
+          volumeMounts:
+            - name: dags
+              mountPath: /opt/airflow/dags
+            - name: logs
+              mountPath: /opt/airflow/logs
+      volumes:
+        - name: dags
+          hostPath:
+            path: /workspace/airflow/dags
+            type: DirectoryOrCreate
+        - name: logs
+          emptyDir: {}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: airflow-webserver
+  namespace: aurum-dev
+  labels:
+    app: airflow
+    component: webserver
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: airflow
+      component: webserver
+  template:
+    metadata:
+      labels:
+        app: airflow
+        component: webserver
+    spec:
+      containers:
+        - name: webserver
+          image: apache/airflow:2.8.1
+          args: ["webserver"]
+          envFrom:
+            - configMapRef:
+                name: aurum-config
+            - secretRef:
+                name: aurum-secrets
+          ports:
+            - containerPort: 8080
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 8080
+            initialDelaySeconds: 20
+            periodSeconds: 15
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 8080
+            initialDelaySeconds: 60
+            periodSeconds: 60
+          volumeMounts:
+            - name: dags
+              mountPath: /opt/airflow/dags
+            - name: logs
+              mountPath: /opt/airflow/logs
+      volumes:
+        - name: dags
+          hostPath:
+            path: /workspace/airflow/dags
+            type: DirectoryOrCreate
+        - name: logs
+          emptyDir: {}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: airflow-scheduler
+  namespace: aurum-dev
+  labels:
+    app: airflow
+    component: scheduler
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: airflow
+      component: scheduler
+  template:
+    metadata:
+      labels:
+        app: airflow
+        component: scheduler
+    spec:
+      containers:
+        - name: scheduler
+          image: apache/airflow:2.8.1
+          args: ["scheduler"]
+          envFrom:
+            - configMapRef:
+                name: aurum-config
+            - secretRef:
+                name: aurum-secrets
+          readinessProbe:
+            exec:
+              command: ["/bin/bash", "-c", "airflow jobs check --job-type SchedulerJob --hostname $(hostname)"]
+            initialDelaySeconds: 30
+            periodSeconds: 60
+          livenessProbe:
+            exec:
+              command: ["/bin/bash", "-c", "airflow jobs check --job-type SchedulerJob --hostname $(hostname)"]
+            initialDelaySeconds: 90
+            periodSeconds: 120
+          volumeMounts:
+            - name: dags
+              mountPath: /opt/airflow/dags
+            - name: logs
+              mountPath: /opt/airflow/logs
+      volumes:
+        - name: dags
+          hostPath:
+            path: /workspace/airflow/dags
+            type: DirectoryOrCreate
+        - name: logs
+          emptyDir: {}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: airflow-webserver
+  namespace: aurum-dev
+spec:
+  type: NodePort
+  selector:
+    app: airflow
+    component: webserver
+  ports:
+    - name: http
+      port: 8080
+      targetPort: 8080
+      nodePort: 30888

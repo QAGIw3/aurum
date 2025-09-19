@@ -1,0 +1,107 @@
+# MISO market reports (DA/RT) → Kafka (Avro)
+#
+# Required environment variables:
+#   MISO_URL                - HTTPS URL for the CSV report (see MISO Market Reports)
+#   MISO_MARKET             - Market run (DAY_AHEAD or REAL_TIME)
+#   KAFKA_BOOTSTRAP_SERVERS - Kafka brokers
+#   SCHEMA_REGISTRY_URL     - Schema Registry endpoint
+#
+# Optional environment variables:
+#   MISO_TOPIC              - Kafka topic (default aurum.iso.miso.lmp.v1)
+#   MISO_SUBJECT            - Schema Registry subject (default <topic>-value)
+#   ISO_LMP_SCHEMA          - Avro schema JSON populated by run_job.sh
+#   MISO_TIME_FORMAT        - Java datetime pattern for parsing the timestamp column (default yyyy-MM-dd HH:mm:ss)
+#   MISO_TIME_COLUMN        - Column containing the interval start timestamp (default Time)
+#   MISO_NODE_COLUMN        - Column containing the node/settlement location (default CPNode)
+#   MISO_NODE_ID_COLUMN     - Column containing the node id (default "CPNode ID")
+#   MISO_LMP_COLUMN         - Column containing the total LMP (default LMP)
+#   MISO_CONGESTION_COLUMN  - Column containing congestion (default MCC)
+#   MISO_LOSS_COLUMN        - Column containing loss (default MLC)
+#   MISO_INTERVAL_SECONDS   - Interval length in seconds (default 3600 for DA, 300 for RT)
+#   MISO_CURRENCY           - Currency code (default USD)
+#   MISO_UOM                - Price unit (default MWh)
+#
+# SeaTunnel fetches the CSV, normalizes columns, and publishes Avro-encoded records.
+
+env {
+  job.mode = "BATCH"
+  parallelism = 1
+}
+
+source {
+  Http {
+    url = "${MISO_URL}"
+    method = "GET"
+    format = "csv"
+    csv {
+      delimiter = ","
+      header = true
+    }
+    result_table_name = "miso_raw"
+  }
+}
+
+transform {
+  Sql {
+    source_table_name = "miso_raw"
+    result_table_name = "miso_normalized"
+    query = """
+      WITH enriched AS (
+        SELECT
+          `${MISO_TIME_COLUMN}` AS interval_ts,
+          `${MISO_NODE_COLUMN}` AS location_name,
+          `${MISO_NODE_ID_COLUMN}` AS location_id,
+          `${MISO_LMP_COLUMN}` AS price_total_raw,
+          `${MISO_CONGESTION_COLUMN}` AS price_congestion_raw,
+          `${MISO_LOSS_COLUMN}` AS price_loss_raw
+        FROM miso_raw
+      )
+      SELECT
+        'MISO' AS iso_code,
+        UPPER('${MISO_MARKET}') AS market,
+        DATEDIFF(TO_DATE(interval_ts), TO_DATE('1970-01-01')) AS delivery_date,
+        CAST(UNIX_TIMESTAMP(interval_ts, '${MISO_TIME_FORMAT}') * 1000000 AS BIGINT) AS interval_start,
+        CAST(UNIX_TIMESTAMP(interval_ts, '${MISO_TIME_FORMAT}') * 1000000
+             + ${MISO_INTERVAL_SECONDS} * 1000000 AS BIGINT) AS interval_end,
+        ${MISO_INTERVAL_SECONDS} / 60 AS interval_minutes,
+        CAST(location_id AS STRING) AS location_id,
+        CAST(location_name AS STRING) AS location_name,
+        'NODE' AS location_type,
+        CAST(price_total_raw AS DOUBLE) AS price_total,
+        CAST(price_total_raw AS DOUBLE)
+          - COALESCE(CAST(price_congestion_raw AS DOUBLE), 0)
+          - COALESCE(CAST(price_loss_raw AS DOUBLE), 0) AS price_energy,
+        CAST(price_congestion_raw AS DOUBLE) AS price_congestion,
+        CAST(price_loss_raw AS DOUBLE) AS price_loss,
+        '${MISO_CURRENCY}' AS currency,
+        '${MISO_UOM}' AS uom,
+        CAST(location_name AS STRING) AS settlement_point,
+        NULL AS source_run_id,
+        CAST(UNIX_TIMESTAMP() * 1000000 AS BIGINT) AS ingest_ts,
+        SHA2(CONCAT_WS('|', interval_ts, CAST(location_id AS STRING), CAST(price_total_raw AS STRING)), 256) AS record_hash,
+        NULL AS metadata
+      FROM enriched
+      WHERE interval_ts IS NOT NULL AND price_total_raw IS NOT NULL
+    """
+  }
+}
+
+sink {
+  Kafka {
+    bootstrap.servers = "${KAFKA_BOOTSTRAP_SERVERS}"
+    topic = "${MISO_TOPIC}"
+    semantic = "AT_LEAST_ONCE"
+    format = "avro"
+    avro {
+      use.schema.registry = true
+      schema.registry.url = "${SCHEMA_REGISTRY_URL}"
+      value.schema.subject = "${MISO_SUBJECT}"
+      value.schema = """${ISO_LMP_SCHEMA}"""
+    }
+    producer {
+      linger.ms = 500
+      batch.size = 32768
+      retries = 5
+    }
+  }
+}

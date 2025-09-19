@@ -1,0 +1,7 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: aurum-dev
+  labels:
+    app.kubernetes.io/name: aurum
+    app.kubernetes.io/environment: dev

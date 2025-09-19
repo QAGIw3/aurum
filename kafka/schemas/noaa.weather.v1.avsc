@@ -1,0 +1,154 @@
+{
+  "type": "record",
+  "name": "NoaaDailyObservation",
+  "namespace": "aurum.ref.noaa",
+  "doc": "Daily NOAA GHCND weather measurement normalized for ingestion.",
+  "fields": [
+    {
+      "name": "station_id",
+      "doc": "GHCND station identifier.",
+      "type": "string"
+    },
+    {
+      "name": "station_name",
+      "doc": "Optional descriptive name for the station.",
+      "type": ["null", "string"],
+      "default": null
+    },
+    {
+      "name": "latitude",
+      "doc": "Station latitude in decimal degrees.",
+      "type": ["null", "double"],
+      "default": null
+    },
+    {
+      "name": "longitude",
+      "doc": "Station longitude in decimal degrees.",
+      "type": ["null", "double"],
+      "default": null
+    },
+    {
+      "name": "elevation_m",
+      "doc": "Elevation above sea level in meters.",
+      "type": ["null", "double"],
+      "default": null
+    },
+    {
+      "name": "dataset",
+      "doc": "NOAA dataset identifier (e.g. GHCND).",
+      "type": "string",
+      "default": "GHCND"
+    },
+    {
+      "name": "date",
+      "doc": "Local observation date.",
+      "type": {"type": "int", "logicalType": "date"}
+    },
+    {
+      "name": "element",
+      "doc": "Measurement element reported by NOAA.",
+      "type": {
+        "type": "enum",
+        "name": "NoaaElement",
+        "symbols": [
+          "PRCP",
+          "SNOW",
+          "SNWD",
+          "TMAX",
+          "TMIN",
+          "TAVG",
+          "TOBS",
+          "AWND",
+          "WDF1",
+          "WDF2",
+          "WDF5",
+          "WSF1",
+          "WSF2",
+          "WSF5",
+          "WT01",
+          "WT02",
+          "WT03",
+          "WT04",
+          "WT05",
+          "WT06",
+          "WT07",
+          "WT08",
+          "WT09",
+          "WT10",
+          "WT11",
+          "WT12",
+          "WT13",
+          "WT14",
+          "WT15",
+          "WT16",
+          "WT17",
+          "WT18",
+          "WT19",
+          "WT21",
+          "WT22",
+          "WT23",
+          "WT24",
+          "UNKNOWN"
+        ]
+      }
+    },
+    {
+      "name": "value",
+      "doc": "Value reported by NOAA standardized to SI/imperial units per element.",
+      "type": ["null", "double"],
+      "default": null
+    },
+    {
+      "name": "raw_value",
+      "doc": "Original value from NOAA prior to scaling or cleaning.",
+      "type": ["null", "string"],
+      "default": null
+    },
+    {
+      "name": "unit",
+      "doc": "Unit of measure for the normalized value (e.g. mm, degC).",
+      "type": "string"
+    },
+    {
+      "name": "observation_time",
+      "doc": "Optional observation timestamp when provided.",
+      "type": ["null", {"type": "long", "logicalType": "timestamp-micros"}],
+      "default": null
+    },
+    {
+      "name": "measurement_flag",
+      "doc": "Measurement flag emitted by NOAA (A, B, etc).",
+      "type": ["null", "string"],
+      "default": null
+    },
+    {
+      "name": "quality_flag",
+      "doc": "Quality flag from NOAA cross checks.",
+      "type": ["null", "string"],
+      "default": null
+    },
+    {
+      "name": "source_flag",
+      "doc": "Source flag from NOAA providing collection channel.",
+      "type": ["null", "string"],
+      "default": null
+    },
+    {
+      "name": "attributes",
+      "doc": "Additional key/value attributes exposed by NOAA.",
+      "type": [
+        "null",
+        {
+          "type": "map",
+          "values": "string"
+        }
+      ],
+      "default": null
+    },
+    {
+      "name": "ingest_ts",
+      "doc": "Timestamp when the observation was ingested (UTC).",
+      "type": {"type": "long", "logicalType": "timestamp-micros"}
+    }
+  ]
+}

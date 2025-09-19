@@ -1,0 +1,119 @@
+{
+  "type": "record",
+  "name": "EiaSeriesPoint",
+  "namespace": "aurum.ref.eia",
+  "doc": "Normalized observation emitted from the EIA v2 timeseries API.",
+  "fields": [
+    {
+      "name": "series_id",
+      "doc": "EIA series identifier.",
+      "type": "string"
+    },
+    {
+      "name": "period",
+      "doc": "Period token returned by the API (e.g. 2023, 2023-Q1, 2023-05).",
+      "type": "string"
+    },
+    {
+      "name": "period_start",
+      "doc": "Start timestamp of the period in UTC when resolvable.",
+      "type": ["null", {"type": "long", "logicalType": "timestamp-micros"}],
+      "default": null
+    },
+    {
+      "name": "period_end",
+      "doc": "End timestamp of the period in UTC when resolvable (exclusive).",
+      "type": ["null", {"type": "long", "logicalType": "timestamp-micros"}],
+      "default": null
+    },
+    {
+      "name": "frequency",
+      "doc": "Frequency reported by EIA.",
+      "type": {
+        "type": "enum",
+        "name": "EiaFrequency",
+        "symbols": [
+          "ANNUAL",
+          "QUARTERLY",
+          "MONTHLY",
+          "WEEKLY",
+          "DAILY",
+          "HOURLY",
+          "OTHER"
+        ]
+      },
+      "default": "OTHER"
+    },
+    {
+      "name": "value",
+      "doc": "Numeric value reported for the series period.",
+      "type": ["null", "double"],
+      "default": null
+    },
+    {
+      "name": "raw_value",
+      "doc": "Original string value returned from the API.",
+      "type": ["null", "string"],
+      "default": null
+    },
+    {
+      "name": "unit",
+      "doc": "Unit of measure provided by EIA (e.g. MWh, bbl).",
+      "type": ["null", "string"],
+      "default": null
+    },
+    {
+      "name": "area",
+      "doc": "Geographic area or ISO code tied to the series (if supplied).",
+      "type": ["null", "string"],
+      "default": null
+    },
+    {
+      "name": "sector",
+      "doc": "Sector/category dimension from EIA metadata.",
+      "type": ["null", "string"],
+      "default": null
+    },
+    {
+      "name": "seasonal_adjustment",
+      "doc": "Seasonal adjustment flag if available.",
+      "type": ["null", "string"],
+      "default": null
+    },
+    {
+      "name": "description",
+      "doc": "Series description or title.",
+      "type": ["null", "string"],
+      "default": null
+    },
+    {
+      "name": "source",
+      "doc": "Source agency attribution as provided by EIA.",
+      "type": ["null", "string"],
+      "default": null
+    },
+    {
+      "name": "dataset",
+      "doc": "Dataset identifier or table code.",
+      "type": ["null", "string"],
+      "default": null
+    },
+    {
+      "name": "metadata",
+      "doc": "Additional metadata captured from the API response.",
+      "type": [
+        "null",
+        {
+          "type": "map",
+          "values": "string"
+        }
+      ],
+      "default": null
+    },
+    {
+      "name": "ingest_ts",
+      "doc": "Timestamp when the observation was ingested (UTC).",
+      "type": {"type": "long", "logicalType": "timestamp-micros"}
+    }
+  ]
+}

@@ -1,0 +1,57 @@
+{
+  "expectation_suite_name": "noaa_weather",
+  "meta": {
+    "notes": "Checks for NOAA GHCND daily observations after SeaTunnel ingestion."
+  },
+  "expectations": [
+    {
+      "expectation_type": "expect_table_columns_to_match_set",
+      "kwargs": {
+        "column_set": [
+          "station_id",
+          "station_name",
+          "latitude",
+          "longitude",
+          "elevation_m",
+          "dataset",
+          "date",
+          "element",
+          "value",
+          "raw_value",
+          "unit",
+          "observation_time",
+          "measurement_flag",
+          "quality_flag",
+          "source_flag",
+          "attributes",
+          "ingest_ts"
+        ]
+      }
+    },
+    {"expectation_type": "expect_column_values_to_not_be_null", "kwargs": {"column": "station_id"}},
+    {"expectation_type": "expect_column_values_to_not_be_null", "kwargs": {"column": "date"}},
+    {
+      "expectation_type": "expect_column_values_to_be_in_set",
+      "kwargs": {
+        "column": "element",
+        "value_set": [
+          "PRCP", "SNOW", "SNWD", "TMAX", "TMIN", "TAVG", "TOBS", "AWND",
+          "WDF1", "WDF2", "WDF5", "WSF1", "WSF2", "WSF5", "WT01", "WT02",
+          "WT03", "WT04", "WT05", "WT06", "WT07", "WT08", "WT09", "WT10",
+          "WT11", "WT12", "WT13", "WT14", "WT15", "WT16", "WT17", "WT18",
+          "WT19", "WT21", "WT22", "WT23", "WT24", "UNKNOWN"
+        ]
+      }
+    },
+    {
+      "expectation_type": "expect_column_values_to_be_between",
+      "kwargs": {"column": "value", "min_value": -200, "max_value": 1000, "mostly": 0.97}
+    },
+    {"expectation_type": "expect_column_values_to_not_be_null", "kwargs": {"column": "unit"}},
+    {
+      "expectation_type": "expect_column_values_to_be_in_set",
+      "kwargs": {"column": "dataset", "value_set": ["GHCND"]}
+    },
+    {"expectation_type": "expect_column_values_to_not_be_null", "kwargs": {"column": "ingest_ts"}}
+  ]
+}

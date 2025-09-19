@@ -1,0 +1,93 @@
+# FRED series observations → Kafka (Avro)
+#
+# Required environment variables:
+#   FRED_API_KEY            - FRED API key
+#   FRED_SERIES_ID          - Series identifier (e.g. DGS10)
+#   FRED_FREQUENCY          - Frequency enum value (ANNUAL/QUARTERLY/MONTHLY/WEEKLY/BIWEEKLY/DAILY/BUSINESS_DAILY)
+#   FRED_SEASONAL_ADJ       - Seasonal adjustment token (SA/NSA/UNKNOWN)
+#   FRED_TOPIC              - Kafka topic (e.g. aurum.ref.fred.series.v1)
+#   KAFKA_BOOTSTRAP_SERVERS - Kafka brokers
+#   SCHEMA_REGISTRY_URL     - Schema Registry endpoint
+#
+# Optional environment variables:
+#   FRED_START_DATE         - Observation start (YYYY-MM-DD)
+#   FRED_END_DATE           - Observation end (YYYY-MM-DD)
+#   FRED_UNITS              - Units string (default Percent)
+#   FRED_TITLE              - Title override
+#   FRED_NOTES              - Notes override
+#   FRED_SUBJECT            - Schema Registry subject (default <topic>-value)
+#   FRED_SERIES_SCHEMA      - Avro schema JSON populated by run_job.sh
+
+env {
+  job.mode = "BATCH"
+  parallelism = 1
+}
+
+source {
+  Http {
+    url = "https://api.stlouisfed.org/fred/series/observations"
+    method = "GET"
+    params {
+      series_id = "${FRED_SERIES_ID}"
+      api_key = "${FRED_API_KEY}"
+      file_type = "json"
+      observation_start = "${FRED_START_DATE}"
+      observation_end = "${FRED_END_DATE}"
+    }
+    connection_timeout_ms = 15000
+    retry {
+      interval_ms = 2000
+      max_retries = 5
+    }
+    format = "json"
+    json {
+      json_path = "$$.observations[*]"
+    }
+    result_table_name = "fred_raw"
+  }
+}
+
+transform {
+  Sql {
+    source_table_name = "fred_raw"
+    result_table_name = "fred_normalized"
+    query = """
+      SELECT
+        '${FRED_SERIES_ID}'                                        AS series_id,
+        DATEDIFF(TO_DATE(date), TO_DATE('1970-01-01'))             AS date,
+        '${FRED_FREQUENCY}'                                        AS frequency,
+        '${FRED_SEASONAL_ADJ}'                                    AS seasonal_adjustment,
+        CASE
+          WHEN value IN ('', '.') THEN NULL
+          ELSE CAST(value AS DOUBLE)
+        END                                                        AS value,
+        value                                                      AS raw_value,
+        COALESCE('${FRED_UNITS}', units)                           AS units,
+        COALESCE('${FRED_TITLE}', series_id)                       AS title,
+        COALESCE('${FRED_NOTES}', realtime_start)                  AS notes,
+        NULL                                                       AS metadata,
+        CAST(UNIX_TIMESTAMP() * 1000000 AS BIGINT)                 AS ingest_ts
+      FROM fred_raw
+    """
+  }
+}
+
+sink {
+  Kafka {
+    bootstrap.servers = "${KAFKA_BOOTSTRAP_SERVERS}"
+    topic = "${FRED_TOPIC}"
+    semantic = "AT_LEAST_ONCE"
+    format = "avro"
+    avro {
+      use.schema.registry = true
+      schema.registry.url = "${SCHEMA_REGISTRY_URL}"
+      value.schema.subject = "${FRED_SUBJECT}"
+      value.schema = """${FRED_SERIES_SCHEMA}"""
+    }
+    producer {
+      linger.ms = 500
+      batch.size = 32768
+      retries = 5
+    }
+  }
+}

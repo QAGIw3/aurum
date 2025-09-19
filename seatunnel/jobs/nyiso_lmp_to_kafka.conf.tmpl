@@ -1,0 +1,78 @@
+# NYISO day-ahead LBMP → Kafka (Avro)
+# Required environment variables:
+#   NYISO_URL                - HTTP endpoint returning CSV data
+#   KAFKA_BOOTSTRAP_SERVERS  - Kafka brokers
+#   SCHEMA_REGISTRY_URL      - Schema Registry endpoint
+#   NYISO_TOPIC              - Kafka topic (default aurum.iso.nyiso.lmp.v1)
+# Optional environment variables:
+#   NYISO_SUBJECT            - Schema Registry subject (default <topic>-value)
+#   ISO_LMP_SCHEMA           - Avro schema JSON populated by run_job.sh
+
+env {
+  job.mode = "BATCH"
+  parallelism = 1
+}
+
+source {
+  Http {
+    url = "${NYISO_URL}"
+    method = "GET"
+    format = "csv"
+    csv {
+      delimiter = ","
+      header = true
+    }
+    result_table_name = "nyiso_raw"
+  }
+}
+
+transform {
+  Sql {
+    source_table_name = "nyiso_raw"
+    result_table_name = "nyiso_normalized"
+    query = """
+      SELECT
+        'NYISO'                                                AS iso_code,
+        COALESCE(market_name, 'DAY_AHEAD')                     AS market,
+        DATEDIFF(TO_DATE(time_stamp), TO_DATE('1970-01-01'))   AS delivery_date,
+        CAST(UNIX_TIMESTAMP(time_stamp) * 1000000 AS BIGINT)   AS interval_start,
+        CAST(UNIX_TIMESTAMP(time_stamp) * 1000000 + 3600000000 AS BIGINT) AS interval_end,
+        60                                                     AS interval_minutes,
+        ptid                                                   AS location_id,
+        name                                                   AS location_name,
+        'NODE'                                                 AS location_type,
+        CAST("LBMP ($$/MWh)" AS DOUBLE)                       AS price_total,
+        CAST("Marginal Cost Congestion" AS DOUBLE)            AS price_congestion,
+        CAST("Marginal Cost Loss" AS DOUBLE)                   AS price_loss,
+        CAST("Marginal Cost Components" AS DOUBLE)            AS price_energy,
+        'USD'                                                  AS currency,
+        'MWh'                                                  AS uom,
+        name                                                   AS settlement_point,
+        NULL                                                   AS source_run_id,
+        CAST(UNIX_TIMESTAMP() * 1000000 AS BIGINT)             AS ingest_ts,
+        SHA2(CONCAT_WS('|', time_stamp, ptid, "LBMP ($$/MWh)"), 256) AS record_hash,
+        NULL                                                   AS metadata
+      FROM nyiso_raw
+    """
+  }
+}
+
+sink {
+  Kafka {
+    bootstrap.servers = "${KAFKA_BOOTSTRAP_SERVERS}"
+    topic = "${NYISO_TOPIC}"
+    semantic = "AT_LEAST_ONCE"
+    format = "avro"
+    avro {
+      use.schema.registry = true
+      schema.registry.url = "${SCHEMA_REGISTRY_URL}"
+      value.schema.subject = "${NYISO_SUBJECT}"
+      value.schema = """${ISO_LMP_SCHEMA}"""
+    }
+    producer {
+      linger.ms = 500
+      batch.size = 32768
+      retries = 5
+    }
+  }
+}

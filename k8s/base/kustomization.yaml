@@ -1,0 +1,34 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: aurum-dev
+resources:
+  - namespace.yaml
+  - configmap-env.yaml
+  - secret-env.yaml
+  - storage.yaml
+  - traefik-crds.yaml
+  - traefik.yaml
+  - ingressroutes.yaml
+  - vault.yaml
+  - vault-bootstrap.yaml
+  - vault-agent-injector.yaml
+  - backups.yaml
+  - postgres-init-configmap.yaml
+  - timescale-init-configmap.yaml
+  - clickhouse-init-configmap.yaml
+  - minio.yaml
+  - postgres.yaml
+  - timescale.yaml
+  - redis.yaml
+  - kafka.yaml
+  - schema-registry-runner-configmap.yaml
+  - schema-registry.yaml
+  - hive-metastore.yaml
+  - nessie.yaml
+  - lakefs.yaml
+  - trino.yaml
+  - airflow.yaml
+  - clickhouse.yaml
+  - vector.yaml
+  - vector-rbac.yaml
+  - api.yaml

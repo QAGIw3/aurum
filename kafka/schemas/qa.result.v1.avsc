@@ -1,0 +1,18 @@
+{
+  "type": "record",
+  "name": "QualityResult",
+  "namespace": "aurum.qa",
+  "doc": "Great Expectations checkpoint result emitted from ingestion DAG.",
+  "fields": [
+    {"name": "asof_date", "type": {"type": "int", "logicalType": "date"}},
+    {"name": "run_id", "type": "string"},
+    {"name": "checkpoint", "type": "string"},
+    {"name": "check_name", "type": "string"},
+    {"name": "check_type", "type": "string"},
+    {"name": "status", "type": {"type": "enum", "name": "CheckStatus", "symbols": ["PASS", "WARN", "FAIL"]}},
+    {"name": "severity", "type": {"type": "enum", "name": "CheckSeverity", "symbols": ["LOW", "MEDIUM", "HIGH"]}},
+    {"name": "curve_keys", "type": {"type": "array", "items": "string"}},
+    {"name": "details", "type": ["null", "string"], "default": null},
+    {"name": "created_ts", "type": {"type": "long", "logicalType": "timestamp-micros"}}
+  ]
+}

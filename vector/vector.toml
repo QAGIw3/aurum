@@ -1,0 +1,27 @@
+# Vector configuration shipping Kubernetes logs to ClickHouse.
+
+[sources.kubernetes_logs]
+  type = "kubernetes_logs"
+  extra_fields = ["pod", "namespace", "container", "node"]
+  scrape_interval_secs = 10
+
+[transforms.parse_json]
+  type = "remap"
+  inputs = ["kubernetes_logs"]
+  source = """
+  parsed, err = parse_json(.message)
+  if err == null {
+    . = merge(., parsed)
+  }
+  """
+
+[sinks.clickhouse]
+  type = "clickhouse"
+  inputs = ["parse_json"]
+  endpoint = "http://clickhouse:8123"
+  database = "ops"
+  table = "logs"
+  compression = "gzip"
+  auth.username = "default"
+  skip_unknown_fields = true
+  strategy = "insert"

@@ -1,0 +1,97 @@
+{
+  "type": "record",
+  "name": "FredSeriesPoint",
+  "namespace": "aurum.ref.fred",
+  "doc": "Observation from the Federal Reserve Economic Data (FRED) API.",
+  "fields": [
+    {
+      "name": "series_id",
+      "doc": "FRED series identifier (e.g. DGS10).",
+      "type": "string"
+    },
+    {
+      "name": "date",
+      "doc": "Observation date in the series' native frequency interpreted as a calendar date.",
+      "type": {"type": "int", "logicalType": "date"}
+    },
+    {
+      "name": "frequency",
+      "doc": "Normalized frequency label from FRED metadata.",
+      "type": {
+        "type": "enum",
+        "name": "FredFrequency",
+        "symbols": [
+          "ANNUAL",
+          "QUARTERLY",
+          "MONTHLY",
+          "WEEKLY",
+          "BIWEEKLY",
+          "DAILY",
+          "BUSINESS_DAILY",
+          "UNKNOWN"
+        ]
+      },
+      "default": "UNKNOWN"
+    },
+    {
+      "name": "seasonal_adjustment",
+      "doc": "Seasonal adjustment flag from FRED metadata.",
+      "type": [
+        "null",
+        {
+          "type": "enum",
+          "name": "FredSeasonalAdjustment",
+          "symbols": ["NSA", "SA", "UNKNOWN"]
+        }
+      ],
+      "default": null
+    },
+    {
+      "name": "value",
+      "doc": "Numeric value for the observation.",
+      "type": ["null", "double"],
+      "default": null
+    },
+    {
+      "name": "raw_value",
+      "doc": "Raw string value returned by FRED.",
+      "type": ["null", "string"],
+      "default": null
+    },
+    {
+      "name": "units",
+      "doc": "Units reported by FRED (percentage, index, etc.).",
+      "type": ["null", "string"],
+      "default": null
+    },
+    {
+      "name": "title",
+      "doc": "Series title for reference.",
+      "type": ["null", "string"],
+      "default": null
+    },
+    {
+      "name": "notes",
+      "doc": "Additional notes or footnotes.",
+      "type": ["null", "string"],
+      "default": null
+    },
+    {
+      "name": "metadata",
+      "doc": "Additional metadata captured from the API response.",
+      "type": [
+        "null",
+        {
+          "type": "map",
+          "values": "string"
+        }
+      ],
+      "default": null
+    },
+    {
+      "name": "ingest_ts",
+      "doc": "Timestamp when the observation entered the pipeline (UTC).",
+      "type": {"type": "long", "logicalType": "timestamp-micros"}
+    }
+  ]
+}

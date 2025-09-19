@@ -1,0 +1,154 @@
+# NOAA GHCND daily observations → Kafka
+#
+# Render with envsubst (see scripts/seatunnel/run_job.sh) before running via SeaTunnel.
+# Required environment variables:
+#   NOAA_GHCND_TOKEN        - NOAA API token with GHCND access
+#   NOAA_GHCND_BASE_URL     - Base URL for the NOAA datasets API (default https://www.ncdc.noaa.gov/cdo-web/api/v2)
+#   NOAA_GHCND_DATASET      - Dataset id (default GHCND)
+#   NOAA_GHCND_START_DATE   - Start date (YYYY-MM-DD)
+#   NOAA_GHCND_END_DATE     - End date (YYYY-MM-DD)
+#   NOAA_GHCND_LIMIT        - Page size (default 1000, max per NOAA API)
+#   NOAA_GHCND_OFFSET       - Offset for pagination (default 1)
+#   NOAA_GHCND_STATION_LIMIT- Number of station metadata rows to fetch (default 1000)
+#   NOAA_GHCND_TOPIC        - Kafka topic to write (e.g. aurum.ref.noaa.weather.v1)
+#   KAFKA_BOOTSTRAP_SERVERS - Comma separated brokers (host:port)
+#   SCHEMA_REGISTRY_URL     - Confluent Schema Registry endpoint
+#
+# Optional environment variables:
+#   NOAA_GHCND_STATION      - Filter for specific station id
+#   NOAA_GHCND_UNITS        - Measurement units (metric/standard)
+#   NOAA_GHCND_DATA_TYPES   - Comma separated list of data types to include (edit rendered config to use)
+#   NOAA_GHCND_TIMEOUT      - Request timeout milliseconds (default 30000)
+#   NOAA_GHCND_UNIT_CODE    - Unit string to store in the Avro payload (default "unknown")
+#   NOAA_GHCND_SUBJECT      - Schema Registry subject override (default <topic>-value)
+#   NOAA_GHCND_SCHEMA       - Avro schema JSON populated by run_job.sh
+
+env {
+  job.mode = "BATCH"
+  parallelism = 1
+}
+
+source {
+  Http {
+    url = "${NOAA_GHCND_BASE_URL}/data"
+    method = "GET"
+    headers {
+      token = "${NOAA_GHCND_TOKEN}"
+    }
+    params {
+      datasetid = "${NOAA_GHCND_DATASET}"
+      startdate = "${NOAA_GHCND_START_DATE}"
+      enddate = "${NOAA_GHCND_END_DATE}"
+      limit = ${NOAA_GHCND_LIMIT}
+      offset = ${NOAA_GHCND_OFFSET}
+    }
+    # Optional filters can be added by editing the rendered config.
+
+    connection_timeout_ms = ${NOAA_GHCND_TIMEOUT}
+    retry {
+      interval_ms = 1000
+      max_retries = 5
+    }
+    format = "json"
+    json {
+      schema = {
+        fields = [
+          { name = "station", type = "string" },
+          { name = "datatype", type = "string" },
+          { name = "attributes", type = "string" },
+          { name = "date", type = "string" },
+          { name = "value", type = "double" }
+        ]
+      }
+      json_path = "$$.results[*]"
+    }
+    result_table_name = "noaa_raw"
+  }
+  Http {
+    url = "${NOAA_GHCND_BASE_URL}/stations"
+    method = "GET"
+    headers {
+      token = "${NOAA_GHCND_TOKEN}"
+    }
+    params {
+      datasetid = "${NOAA_GHCND_DATASET}"
+      startdate = "${NOAA_GHCND_START_DATE}"
+      enddate = "${NOAA_GHCND_END_DATE}"
+      limit = ${NOAA_GHCND_STATION_LIMIT}
+    }
+    connection_timeout_ms = ${NOAA_GHCND_TIMEOUT}
+    retry {
+      interval_ms = 1000
+      max_retries = 5
+    }
+    format = "json"
+    json {
+      json_path = "$$.results[*]"
+    }
+    result_table_name = "noaa_stations"
+  }
+}
+
+transform {
+  Sql {
+    source_table_name = "noaa_raw"
+    result_table_name = "noaa_normalized"
+    query = """
+      SELECT
+        raw.station                                                  AS station_id,
+        meta.station_name                                            AS station_name,
+        meta.latitude                                                AS latitude,
+        meta.longitude                                               AS longitude,
+        meta.elevation_m                                             AS elevation_m,
+        '${NOAA_GHCND_DATASET}'                                      AS dataset,
+        DATEDIFF(TO_DATE(SUBSTRING(raw.date, 1, 10)), TO_DATE('1970-01-01')) AS date,
+        UPPER(raw.datatype)                                          AS element,
+        CAST(raw.value AS DOUBLE)                                    AS value,
+        CAST(raw.value AS STRING)                                    AS raw_value,
+        '${NOAA_GHCND_UNIT_CODE}'                                    AS unit,
+        CASE
+          WHEN raw.date IS NOT NULL THEN CAST(UNIX_TIMESTAMP(SUBSTRING(raw.date, 1, 19), "yyyy-MM-dd'T'HH:mm:ss") * 1000000 AS BIGINT)
+          ELSE NULL
+        END                                                          AS observation_time,
+        NULL                                                         AS measurement_flag,
+        NULL                                                         AS quality_flag,
+        NULL                                                         AS source_flag,
+        CASE
+          WHEN raw.attributes IS NULL OR raw.attributes = '' THEN NULL
+          ELSE map('raw', raw.attributes)
+        END                                                          AS attributes,
+        CAST(UNIX_TIMESTAMP() * 1000000 AS BIGINT)                    AS ingest_ts
+      FROM noaa_raw AS raw
+      LEFT JOIN (
+        SELECT
+          id AS station_id,
+          name AS station_name,
+          CAST(latitude AS DOUBLE) AS latitude,
+          CAST(longitude AS DOUBLE) AS longitude,
+          CAST(elevation AS DOUBLE) AS elevation_m
+        FROM noaa_stations
+      ) AS meta
+      ON raw.station = meta.station_id
+    """
+  }
+}
+
+sink {
+  Kafka {
+    bootstrap.servers = "${KAFKA_BOOTSTRAP_SERVERS}"
+    topic = "${NOAA_GHCND_TOPIC}"
+    semantic = "AT_LEAST_ONCE"
+    format = "avro"
+    avro {
+      use.schema.registry = true
+      schema.registry.url = "${SCHEMA_REGISTRY_URL}"
+      value.schema.subject = "${NOAA_GHCND_SUBJECT}"
+      value.schema = """${NOAA_GHCND_SCHEMA}"""
+    }
+    producer {
+      linger.ms = 500
+      batch.size = 32768
+      retries = 5
+    }
+  }
+}

@@ -1,0 +1,398 @@
+{
+  "pjm": {
+    "timezone": "America/New_York",
+    "holidays": [
+      "2024-01-01",
+      "2024-07-04",
+      "2024-11-28",
+      "2024-12-25"
+    ],
+    "blocks": {
+      "ON_PEAK": {
+        "rules": [
+          {
+            "weekdays": [
+              1,
+              2,
+              3,
+              4,
+              5
+            ],
+            "hours": [
+              "07-22"
+            ]
+          }
+        ]
+      },
+      "OFF_PEAK": {
+        "rules": [
+          {
+            "weekdays": [
+              1,
+              2,
+              3,
+              4,
+              5
+            ],
+            "hours": [
+              "00-06",
+              "23-23"
+            ]
+          },
+          {
+            "weekdays": [
+              6,
+              7
+            ],
+            "hours": [
+              "00-23"
+            ]
+          }
+        ]
+      }
+    }
+  },
+  "caiso": {
+    "timezone": "America/Los_Angeles",
+    "holidays": [
+      "2024-01-01",
+      "2024-07-04",
+      "2024-11-28",
+      "2024-12-25"
+    ],
+    "blocks": {
+      "ON_PEAK": {
+        "rules": [
+          {
+            "weekdays": [
+              1,
+              2,
+              3,
+              4,
+              5
+            ],
+            "hours": [
+              "06-21"
+            ]
+          }
+        ]
+      },
+      "OFF_PEAK": {
+        "rules": [
+          {
+            "weekdays": [
+              1,
+              2,
+              3,
+              4,
+              5
+            ],
+            "hours": [
+              "00-05",
+              "22-23"
+            ]
+          },
+          {
+            "weekdays": [
+              6,
+              7
+            ],
+            "hours": [
+              "00-23"
+            ]
+          }
+        ]
+      }
+    }
+  },
+  "ercot": {
+    "timezone": "America/Chicago",
+    "holidays": [
+      "2024-01-01",
+      "2024-05-27",
+      "2024-07-04",
+      "2024-09-02",
+      "2024-11-28",
+      "2024-12-25"
+    ],
+    "blocks": {
+      "ON_PEAK": {
+        "rules": [
+          {
+            "weekdays": [
+              1,
+              2,
+              3,
+              4,
+              5
+            ],
+            "hours": [
+              "07-22"
+            ]
+          }
+        ]
+      },
+      "OFF_PEAK": {
+        "rules": [
+          {
+            "weekdays": [
+              1,
+              2,
+              3,
+              4,
+              5
+            ],
+            "hours": [
+              "00-06",
+              "23-23"
+            ]
+          },
+          {
+            "weekdays": [
+              6,
+              7
+            ],
+            "hours": [
+              "00-23"
+            ]
+          }
+        ]
+      }
+    }
+  },
+  "nyiso": {
+    "timezone": "America/New_York",
+    "holidays": [],
+    "blocks": {
+      "ON_PEAK": {
+        "rules": [
+          {
+            "weekdays": [
+              1,
+              2,
+              3,
+              4,
+              5
+            ],
+            "hours": [
+              "07-22"
+            ]
+          }
+        ]
+      },
+      "OFF_PEAK": {
+        "rules": [
+          {
+            "weekdays": [
+              1,
+              2,
+              3,
+              4,
+              5
+            ],
+            "hours": [
+              "00-06",
+              "23-23"
+            ]
+          },
+          {
+            "weekdays": [
+              6,
+              7
+            ],
+            "hours": [
+              "00-23"
+            ]
+          }
+        ]
+      }
+    }
+  },
+  "miso": {
+    "timezone": "America/Chicago",
+    "holidays": [],
+    "blocks": {
+      "ON_PEAK": {
+        "rules": [
+          {
+            "weekdays": [
+              1,
+              2,
+              3,
+              4,
+              5
+            ],
+            "hours": [
+              "08-21"
+            ]
+          }
+        ]
+      },
+      "OFF_PEAK": {
+        "rules": [
+          {
+            "weekdays": [
+              1,
+              2,
+              3,
+              4,
+              5
+            ],
+            "hours": [
+              "00-07",
+              "22-23"
+            ]
+          },
+          {
+            "weekdays": [
+              6,
+              7
+            ],
+            "hours": [
+              "00-23"
+            ]
+          }
+        ]
+      }
+    }
+  },
+  "isone": {
+    "timezone": "America/New_York",
+    "holidays": [],
+    "blocks": {
+      "ON_PEAK": {
+        "rules": [
+          {
+            "weekdays": [
+              1,
+              2,
+              3,
+              4,
+              5
+            ],
+            "hours": [
+              "07-22"
+            ]
+          }
+        ]
+      },
+      "OFF_PEAK": {
+        "rules": [
+          {
+            "weekdays": [
+              1,
+              2,
+              3,
+              4,
+              5
+            ],
+            "hours": [
+              "00-06",
+              "23-23"
+            ]
+          },
+          {
+            "weekdays": [
+              6,
+              7
+            ],
+            "hours": [
+              "00-23"
+            ]
+          }
+        ]
+      }
+    }
+  },
+  "spp": {
+    "timezone": "America/Chicago",
+    "holidays": [],
+    "blocks": {
+      "ON_PEAK": {
+        "rules": [
+          {
+            "weekdays": [
+              1,
+              2,
+              3,
+              4,
+              5
+            ],
+            "hours": [
+              "07-22"
+            ]
+          }
+        ]
+      },
+      "OFF_PEAK": {
+        "rules": [
+          {
+            "weekdays": [
+              1,
+              2,
+              3,
+              4,
+              5
+            ],
+            "hours": [
+              "00-06",
+              "23-23"
+            ]
+          },
+          {
+            "weekdays": [
+              6,
+              7
+            ],
+            "hours": [
+              "00-23"
+            ]
+          }
+        ]
+      }
+    }
+  },
+  "eu_base": {
+    "timezone": "Europe/Berlin",
+    "holidays": [
+      "2024-01-01",
+      "2024-12-25"
+    ],
+    "blocks": {
+      "BASE": {
+        "rules": [
+          {
+            "weekdays": [
+              1,
+              2,
+              3,
+              4,
+              5,
+              6,
+              7
+            ],
+            "hours": [
+              "00-23"
+            ]
+          }
+        ]
+      },
+      "PEAK": {
+        "rules": [
+          {
+            "weekdays": [
+              1,
+              2,
+              3,
+              4,
+              5
+            ],
+            "hours": [
+              "08-19"
+            ]
+          }
+        ]
+      }
+    }
+  }
+}

@@ -1,0 +1,42 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: aurum-config
+  namespace: aurum-dev
+data:
+  AURUM_S3_ENDPOINT: http://minio.aurum-dev.svc.cluster.local:9000
+  AURUM_S3_REGION: us-east-1
+  AURUM_S3_BUCKET: aurum
+  AURUM_S3_WAREHOUSE: s3://aurum/curated/iceberg
+  AURUM_LAKEFS_ENDPOINT: http://lakefs.aurum-dev.svc.cluster.local:8000/api/v1
+  AURUM_LAKEFS_REPO: aurum
+  LAKEFS_REPO: aurum
+  LAKEFS_STORAGE_NAMESPACE: s3://aurum/curated/iceberg
+  LAKEFS_API_ENDPOINT: http://lakefs.aurum-dev.svc.cluster.local:8000/api/v1
+  NESSIE_API_ENDPOINT: http://nessie.aurum-dev.svc.cluster.local:19121/api/v1
+  POSTGRES_DB: aurum
+  TIMESCALE_DB: timeseries
+  SUPERSET_LOAD_EXAMPLES: "no"
+  KAFKA_INTERNAL_BOOTSTRAP: kafka.aurum-dev.svc.cluster.local:9092
+  SCHEMA_REGISTRY_URL: http://schema-registry.aurum-dev.svc.cluster.local:8081
+  TRINO_JAVA_TOOL_OPTIONS: -Xms512M -Xmx2G
+  AIRFLOW__CORE__EXECUTOR: LocalExecutor
+  AIRFLOW__CORE__LOAD_EXAMPLES: "False"
+  AIRFLOW__CORE__DAGS_ARE_PAUSED_AT_CREATION: "True"
+  AIRFLOW__WEBSERVER__DEFAULT_UI_TIMEZONE: UTC
+  AIRFLOW_HOME: /opt/airflow
+  # API defaults
+  AURUM_API_TRINO_HOST: trino.aurum-dev.svc.cluster.local
+  AURUM_API_TRINO_PORT: "8080"
+  AURUM_API_TRINO_USER: aurum
+  AURUM_API_TRINO_SCHEME: http
+  AURUM_API_REDIS_URL: redis://redis.aurum-dev.svc.cluster.local:6379/0
+  AURUM_API_CACHE_TTL: "60"
+  AURUM_API_RATE_LIMIT_RPS: "10"
+  AURUM_API_RATE_LIMIT_BURST: "20"
+  AURUM_API_CORS_ORIGINS: "*"
+  AURUM_API_AUTH_DISABLED: "1"
+  AURUM_API_OIDC_ISSUER: ""
+  AURUM_API_OIDC_AUDIENCE: ""
+  AURUM_API_OIDC_JWKS_URL: ""
+  AURUM_API_JWT_LEEWAY: "60"

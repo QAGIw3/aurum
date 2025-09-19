@@ -1,0 +1,66 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: superset
+  namespace: aurum-dev
+  labels:
+    app: superset
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: superset
+  template:
+    metadata:
+      labels:
+        app: superset
+    spec:
+      containers:
+        - name: superset
+          image: apache/superset:3.0.0
+          command: ["/bin/sh", "-c"]
+          args:
+            - superset db upgrade && superset init && superset run -h 0.0.0.0 -p 8088
+          envFrom:
+            - configMapRef:
+                name: aurum-config
+            - secretRef:
+                name: aurum-secrets
+          env:
+            - name: SUPERSET_ENV
+              value: production
+          ports:
+            - containerPort: 8088
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 8088
+            initialDelaySeconds: 30
+            periodSeconds: 20
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 8088
+            initialDelaySeconds: 90
+            periodSeconds: 60
+          volumeMounts:
+            - name: superset-home
+              mountPath: /app/superset_home
+      volumes:
+        - name: superset-home
+          emptyDir: {}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: superset
+  namespace: aurum-dev
+spec:
+  type: NodePort
+  selector:
+    app: superset
+  ports:
+    - name: http
+      port: 8088
+      targetPort: 8088
+      nodePort: 30889

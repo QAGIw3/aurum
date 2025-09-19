@@ -1,0 +1,576 @@
+openapi: 3.0.3
+info:
+  title: Aurum API
+  version: 0.1.0
+  description: API for retrieving market intelligence data, managing scenarios, and valuing PPAs.
+servers:
+  - url: https://api.aurum.local
+    description: Local development gateway
+  - url: https://api.aurum.prod
+    description: Production
+security:
+  - oauth2: [aurum]
+
+paths:
+  /v1/curves:
+    get:
+      summary: Retrieve curve observations with filtering by identity and tenor.
+      operationId: listCurves
+      security:
+        - oauth2: [aurum]
+      parameters:
+        - $ref: '#/components/parameters/AsOfDate'
+        - $ref: '#/components/parameters/AssetClass'
+        - $ref: '#/components/parameters/Iso'
+        - $ref: '#/components/parameters/Location'
+        - $ref: '#/components/parameters/Market'
+        - $ref: '#/components/parameters/Product'
+        - $ref: '#/components/parameters/Block'
+        - $ref: '#/components/parameters/TenorType'
+        - $ref: '#/components/parameters/CurveKey'
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 1000
+          description: Maximum number of rows to return.
+        - name: offset
+          in: query
+          schema:
+            type: integer
+            minimum: 0
+          description: Offset for pagination.
+        - name: cursor
+          in: query
+          schema:
+            type: string
+          description: Opaque cursor for stable pagination.
+      responses:
+        '200':
+          description: Curve data retrieved.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CurveResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+  /v1/scenarios:
+    post:
+      summary: Create a new scenario definition with assumptions.
+      operationId: createScenario
+      security:
+        - oauth2: [aurum]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateScenarioRequest'
+      responses:
+        '201':
+          description: Scenario created.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ScenarioResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+  /v1/scenarios/{id}/run:
+    post:
+      summary: Trigger a scenario run asynchronously via Kafka.
+      operationId: runScenario
+      security:
+        - oauth2: [aurum]
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ScenarioRunOptions'
+      responses:
+        '202':
+          description: Scenario run accepted.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ScenarioRunResponse'
+        '404':
+          $ref: '#/components/responses/NotFound'
+  /v1/ppa/valuate:
+    post:
+      summary: Calculate cashflows and risk metrics for a PPA contract.
+      operationId: valuatePpa
+      security:
+        - oauth2: [aurum]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PpaValuationRequest'
+      responses:
+        '200':
+          description: Valuation results produced.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PpaValuationResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+  /v1/curves/diff:
+    get:
+      summary: Diff curve observations between two as-of dates.
+      operationId: diffCurves
+      security:
+        - oauth2: [aurum]
+      parameters:
+        - name: asof_a
+          in: query
+          required: true
+          schema:
+            type: string
+            format: date
+        - name: asof_b
+          in: query
+          required: true
+          schema:
+            type: string
+            format: date
+        - $ref: '#/components/parameters/AssetClass'
+        - $ref: '#/components/parameters/Iso'
+        - $ref: '#/components/parameters/Location'
+        - $ref: '#/components/parameters/Market'
+        - $ref: '#/components/parameters/Product'
+        - $ref: '#/components/parameters/Block'
+        - $ref: '#/components/parameters/TenorType'
+        - $ref: '#/components/parameters/CurveKey'
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 1000
+        - name: offset
+          in: query
+          schema:
+            type: integer
+            minimum: 0
+        - name: cursor
+          in: query
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Curve diff results.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CurveDiffResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+  /v1/metadata/dimensions:
+    get:
+      summary: List distinct dimension values useful for filters.
+      operationId: listDimensions
+      security:
+        - oauth2: [aurum]
+      parameters:
+        - $ref: '#/components/parameters/AsOfDate'
+        - $ref: '#/components/parameters/AssetClass'
+        - $ref: '#/components/parameters/Iso'
+        - $ref: '#/components/parameters/Location'
+        - $ref: '#/components/parameters/Market'
+        - $ref: '#/components/parameters/Product'
+        - $ref: '#/components/parameters/Block'
+        - $ref: '#/components/parameters/TenorType'
+        - name: per_dim_limit
+          in: query
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 5000
+        - name: prefix
+          in: query
+          schema:
+            type: string
+          description: Optional case-insensitive startswith filter applied to each dimension list
+      responses:
+        '200':
+          description: Dimension values.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DimensionsResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+  /v1/curves/strips:
+    get:
+      summary: Retrieve non-monthly (strip) curves by type.
+      operationId: listStrips
+      security:
+        - oauth2: [aurum]
+      parameters:
+        - $ref: '#/components/parameters/AsOfDate'
+        - name: type
+          in: query
+          required: true
+          schema:
+            type: string
+            enum: [CALENDAR, SEASON, QUARTER]
+        - $ref: '#/components/parameters/CurveKey'
+        - $ref: '#/components/parameters/AssetClass'
+        - $ref: '#/components/parameters/Iso'
+        - $ref: '#/components/parameters/Location'
+        - $ref: '#/components/parameters/Market'
+        - $ref: '#/components/parameters/Product'
+        - $ref: '#/components/parameters/Block'
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 1000
+        - name: offset
+          in: query
+          schema:
+            type: integer
+            minimum: 0
+        - name: cursor
+          in: query
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Strip curves retrieved.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CurveResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
+components:
+  securitySchemes:
+    oauth2:
+      type: oauth2
+      flows:
+        authorizationCode:
+          authorizationUrl: https://auth.aurum.local/oauth2/auth
+          tokenUrl: https://auth.aurum.local/oauth2/token
+          scopes:
+            aurum: Full access to Aurum APIs
+  parameters:
+    AsOfDate:
+      name: asof
+      in: query
+      required: false
+      schema:
+        type: string
+        format: date
+      description: Filter by as-of date.
+    AssetClass:
+      name: asset_class
+      in: query
+      schema:
+        type: string
+      required: false
+    Iso:
+      name: iso
+      in: query
+      schema:
+        type: string
+      required: false
+    Location:
+      name: location
+      in: query
+      schema:
+        type: string
+      required: false
+    Market:
+      name: market
+      in: query
+      schema:
+        type: string
+      required: false
+    Product:
+      name: product
+      in: query
+      schema:
+        type: string
+      required: false
+    Block:
+      name: block
+      in: query
+      schema:
+        type: string
+      required: false
+    TenorType:
+      name: tenor_type
+      in: query
+      schema:
+        type: string
+        enum: [MONTHLY, CALENDAR, SEASON, QUARTER]
+      required: false
+    CurveKey:
+      name: curve_key
+      in: query
+      schema:
+        type: string
+      required: false
+  responses:
+    Unauthorized:
+      description: Authentication failed or missing token.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+    BadRequest:
+      description: Request validation failed.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+    NotFound:
+      description: Requested resource not found.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+  schemas:
+    Meta:
+      type: object
+      properties:
+        request_id:
+          type: string
+        query_time_ms:
+          type: integer
+        next_cursor:
+          type: string
+          nullable: true
+    CurvePoint:
+      type: object
+      required: [curve_key, tenor_label, mid]
+      properties:
+        curve_key:
+          type: string
+        tenor_label:
+          type: string
+        tenor_type:
+          type: string
+        contract_month:
+          type: string
+          format: date
+          nullable: true
+        mid:
+          type: number
+        bid:
+          type: number
+          nullable: true
+        ask:
+          type: number
+          nullable: true
+        price_type:
+          type: string
+          nullable: true
+        asof_date:
+          type: string
+          format: date
+    CurveResponse:
+      type: object
+      properties:
+        meta:
+          $ref: '#/components/schemas/Meta'
+        data:
+          type: array
+          items:
+            $ref: '#/components/schemas/CurvePoint'
+    CurveDiffPoint:
+      type: object
+      required: [curve_key, tenor_label, asof_a, asof_b]
+      properties:
+        curve_key:
+          type: string
+        tenor_label:
+          type: string
+        tenor_type:
+          type: string
+          nullable: true
+        contract_month:
+          type: string
+          format: date
+          nullable: true
+        asof_a:
+          type: string
+          format: date
+        mid_a:
+          type: number
+          nullable: true
+        asof_b:
+          type: string
+          format: date
+        mid_b:
+          type: number
+          nullable: true
+        diff_abs:
+          type: number
+          nullable: true
+        diff_pct:
+          type: number
+          nullable: true
+    CurveDiffResponse:
+      type: object
+      properties:
+        meta:
+          $ref: '#/components/schemas/Meta'
+        data:
+          type: array
+          items:
+            $ref: '#/components/schemas/CurveDiffPoint'
+    DimensionsData:
+      type: object
+      properties:
+        asset_class:
+          type: array
+          items:
+            type: string
+        iso:
+          type: array
+          items:
+            type: string
+        location:
+          type: array
+          items:
+            type: string
+        market:
+          type: array
+          items:
+            type: string
+        product:
+          type: array
+          items:
+            type: string
+        block:
+          type: array
+          items:
+            type: string
+        tenor_type:
+          type: array
+          items:
+            type: string
+    DimensionsResponse:
+      type: object
+      properties:
+        meta:
+          $ref: '#/components/schemas/Meta'
+        data:
+          $ref: '#/components/schemas/DimensionsData'
+    CreateScenarioRequest:
+      type: object
+      required: [tenant_id, name, assumptions]
+      properties:
+        tenant_id:
+          type: string
+        name:
+          type: string
+        description:
+          type: string
+        assumptions:
+          type: array
+          items:
+            $ref: '#/components/schemas/ScenarioAssumption'
+    ScenarioAssumption:
+      type: object
+      required: [type, payload]
+      properties:
+        assumption_id:
+          type: string
+        type:
+          type: string
+        payload:
+          type: object
+        version:
+          type: string
+    ScenarioResponse:
+      type: object
+      properties:
+        meta:
+          $ref: '#/components/schemas/Meta'
+        data:
+          type: object
+          properties:
+            scenario_id:
+              type: string
+            status:
+              type: string
+    ScenarioRunOptions:
+      type: object
+      properties:
+        code_version:
+          type: string
+        seed:
+          type: integer
+    ScenarioRunResponse:
+      type: object
+      properties:
+        meta:
+          $ref: '#/components/schemas/Meta'
+        data:
+          type: object
+          properties:
+            run_id:
+              type: string
+            state:
+              type: string
+    PpaValuationRequest:
+      type: object
+      required: [ppa_contract_id]
+      properties:
+        ppa_contract_id:
+          type: string
+        scenario_id:
+          type: string
+        asof_date:
+          type: string
+          format: date
+        options:
+          type: object
+    PpaValuationResponse:
+      type: object
+      properties:
+        meta:
+          $ref: '#/components/schemas/Meta'
+        data:
+          type: array
+          items:
+            $ref: '#/components/schemas/PpaMetric'
+    PpaMetric:
+      type: object
+      properties:
+        period_start:
+          type: string
+          format: date
+        period_end:
+          type: string
+          format: date
+        metric:
+          type: string
+        value:
+          type: number
+        currency:
+          type: string
+    ErrorResponse:
+      type: object
+      properties:
+        error:
+          type: string
+        message:
+          type: string
+        meta:
+          $ref: '#/components/schemas/Meta'

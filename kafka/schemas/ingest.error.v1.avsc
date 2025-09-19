@@ -1,0 +1,12 @@
+{
+  "type": "record",
+  "name": "IngestError",
+  "namespace": "aurum.ingest",
+  "doc": "Capture ingestion failures for ISO/public feed pipelines.",
+  "fields": [
+    {"name": "source", "type": "string"},
+    {"name": "error_message", "type": "string"},
+    {"name": "context", "type": {"type": "map", "values": "string"}},
+    {"name": "ingest_ts", "type": {"type": "long", "logicalType": "timestamp-micros"}}
+  ]
+}

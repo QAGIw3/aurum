@@ -1,0 +1,46 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: nessie
+  namespace: aurum-dev
+  labels:
+    app: nessie
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: nessie
+  template:
+    metadata:
+      labels:
+        app: nessie
+    spec:
+      containers:
+        - name: nessie
+          image: projectnessie/nessie:0.71.0
+          ports:
+            - containerPort: 19120
+          env:
+            - name: NESSIE_VERSION_STORE_TYPE
+              value: INMEMORY
+          readinessProbe:
+            httpGet:
+              path: /api/v1/config
+              port: 19120
+            initialDelaySeconds: 10
+            periodSeconds: 10
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: nessie
+  namespace: aurum-dev
+spec:
+  type: NodePort
+  selector:
+    app: nessie
+  ports:
+    - name: http
+      port: 19121
+      targetPort: 19120
+      nodePort: 30121

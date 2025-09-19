@@ -1,0 +1,30 @@
+{
+  "type": "record",
+  "name": "ScenarioRequest",
+  "namespace": "aurum.scenario",
+  "doc": "Request to compute a what-if scenario.",
+  "fields": [
+    {"name": "scenario_id", "type": "string"},
+    {"name": "tenant_id", "type": "string"},
+    {"name": "requested_by", "type": "string"},
+    {"name": "asof_date", "type": ["null", {"type": "int", "logicalType": "date"}], "default": null},
+    {"name": "curve_def_ids", "type": {"type": "array", "items": "string"}},
+    {
+      "name": "assumptions",
+      "type": {
+        "type": "array",
+        "items": {
+          "type": "record",
+          "name": "ScenarioAssumption",
+          "fields": [
+            {"name": "assumption_id", "type": "string"},
+            {"name": "type", "type": "string"},
+            {"name": "payload", "type": "string"},
+            {"name": "version", "type": ["null", "string"], "default": null}
+          ]
+        }
+      }
+    },
+    {"name": "submitted_ts", "type": {"type": "long", "logicalType": "timestamp-micros"}}
+  ]
+}

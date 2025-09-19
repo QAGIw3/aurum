@@ -1,0 +1,87 @@
+# ERCOT staged JSON → Kafka (Avro)
+#
+# Required environment variables:
+#   ERCOT_INPUT_JSON        - Path to JSON file containing normalized ERCOT LMP records (array of objects)
+#   KAFKA_BOOTSTRAP_SERVERS - Kafka brokers
+#   SCHEMA_REGISTRY_URL     - Schema Registry endpoint
+#
+# Optional environment variables:
+#   ERCOT_TOPIC             - Kafka topic (default aurum.iso.ercot.lmp.v1)
+#   ERCOT_SUBJECT           - Schema Registry subject (default <topic>-value)
+#   ISO_LMP_SCHEMA          - Avro schema JSON populated by run_job.sh
+#   ERCOT_CURRENCY          - Override currency code (default USD)
+#   ERCOT_UOM               - Override unit of measure (default MWh)
+
+env {
+  job.mode = "BATCH"
+  parallelism = 1
+}
+
+source {
+  LocalFile {
+    path = "${ERCOT_INPUT_JSON}"
+    format = "json"
+    json {
+      json_path = "$$[*]"
+    }
+    result_table_name = "ercot_stage"
+  }
+}
+
+transform {
+  Sql {
+    source_table_name = "ercot_stage"
+    result_table_name = "ercot_normalized"
+    query = """
+      SELECT
+        'ERCOT' AS iso_code,
+        CASE
+          WHEN upper(CAST(market AS STRING)) IN ('DA', 'DAM', 'DAY_AHEAD') THEN 'DAY_AHEAD'
+          WHEN upper(CAST(market AS STRING)) IN ('RT', 'RTM', 'REAL_TIME') THEN 'REAL_TIME'
+          ELSE COALESCE(UPPER(CAST(market AS STRING)), 'UNKNOWN')
+        END AS market,
+        CAST(delivery_date AS INT) AS delivery_date,
+        CAST(interval_start AS BIGINT) AS interval_start,
+        CASE
+          WHEN interval_end IS NULL OR CAST(interval_end AS BIGINT) = 0 THEN NULL
+          ELSE CAST(interval_end AS BIGINT)
+        END AS interval_end,
+        CAST(interval_minutes AS INT) AS interval_minutes,
+        CAST(location_id AS STRING) AS location_id,
+        CAST(location_name AS STRING) AS location_name,
+        COALESCE(UPPER(CAST(location_type AS STRING)), 'NODE') AS location_type,
+        CAST(price_total AS DOUBLE) AS price_total,
+        CAST(price_energy AS DOUBLE) AS price_energy,
+        CAST(price_congestion AS DOUBLE) AS price_congestion,
+        CAST(price_loss AS DOUBLE) AS price_loss,
+        COALESCE(CAST(currency AS STRING), '${ERCOT_CURRENCY}') AS currency,
+        COALESCE(CAST(uom AS STRING), '${ERCOT_UOM}') AS uom,
+        CAST(settlement_point AS STRING) AS settlement_point,
+        CAST(source_run_id AS STRING) AS source_run_id,
+        COALESCE(CAST(ingest_ts AS BIGINT), CAST(UNIX_TIMESTAMP() * 1000000 AS BIGINT)) AS ingest_ts,
+        CAST(record_hash AS STRING) AS record_hash,
+        NULL AS metadata
+      FROM ercot_stage
+    """
+  }
+}
+
+sink {
+  Kafka {
+    bootstrap.servers = "${KAFKA_BOOTSTRAP_SERVERS}"
+    topic = "${ERCOT_TOPIC}"
+    semantic = "AT_LEAST_ONCE"
+    format = "avro"
+    avro {
+      use.schema.registry = true
+      schema.registry.url = "${SCHEMA_REGISTRY_URL}"
+      value.schema.subject = "${ERCOT_SUBJECT}"
+      value.schema = """${ISO_LMP_SCHEMA}"""
+    }
+    producer {
+      linger.ms = 500
+      batch.size = 32768
+      retries = 5
+    }
+  }
+}

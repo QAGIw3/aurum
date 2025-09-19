@@ -1,0 +1,100 @@
+# PJM day-ahead locational marginal prices → Kafka (Avro)
+#
+# Required environment variables:
+#   PJM_API_KEY              - PJM Data Miner API key (Bearer token)
+#   PJM_TOPIC                - Kafka topic (e.g. aurum.iso.pjm.lmp.v1)
+#   PJM_INTERVAL_START       - Interval start in ISO 8601 (e.g. 2024-01-01T00:00:00-05:00)
+#   PJM_INTERVAL_END         - Interval end in ISO 8601 (exclusive)
+#   KAFKA_BOOTSTRAP_SERVERS  - Kafka brokers
+#   SCHEMA_REGISTRY_URL      - Schema Registry endpoint
+#
+# Optional environment variables:
+#   PJM_ENDPOINT             - API endpoint (default https://api.pjm.com/api/v1/da_hrl_lmps)
+#   PJM_ROW_LIMIT            - Max rows per request (default 10000)
+#   PJM_MARKET               - Market label (default DAY_AHEAD)
+#   PJM_LOCATION_TYPE        - Default location type when unmapped (default NODE)
+#   PJM_SUBJECT              - Schema Registry subject (default <topic>-value)
+#   ISO_LMP_SCHEMA           - Avro schema JSON populated by run_job.sh
+
+env {
+  job.mode = "BATCH"
+  parallelism = 1
+}
+
+source {
+  Http {
+    url = "${PJM_ENDPOINT}"
+    method = "GET"
+    headers {
+      Authorization = "Bearer ${PJM_API_KEY}"
+    }
+    params {
+      row = ${PJM_ROW_LIMIT}
+      sort = "datetime_beginning_ept"
+      order = "asc"
+      datetime_begin = "${PJM_INTERVAL_START}"
+      datetime_end = "${PJM_INTERVAL_END}"
+    }
+    connection_timeout_ms = 20000
+    retry {
+      interval_ms = 2000
+      max_retries = 5
+    }
+    format = "json"
+    json {
+      json_path = "$$.data[*]"
+    }
+    result_table_name = "pjm_raw"
+  }
+}
+
+transform {
+  Sql {
+    source_table_name = "pjm_raw"
+    result_table_name = "pjm_normalized"
+    query = """
+      SELECT
+        'PJM'                                                     AS iso_code,
+        '${PJM_MARKET}'                                           AS market,
+        DATEDIFF(TO_DATE(datetime_beginning_utc), TO_DATE('1970-01-01')) AS delivery_date,
+        CAST(UNIX_TIMESTAMP(datetime_beginning_utc) * 1000000 AS BIGINT) AS interval_start,
+        CAST(UNIX_TIMESTAMP(datetime_ending_utc) * 1000000 AS BIGINT)   AS interval_end,
+        CAST(TIMESTAMPDIFF(MINUTE, datetime_beginning_utc, datetime_ending_utc) AS INT) AS interval_minutes,
+        pnode_id                                                  AS location_id,
+        pnode_name                                                AS location_name,
+        COALESCE(TRIM(UPPER(type)), '${PJM_LOCATION_TYPE}')       AS location_type,
+        CAST(total_lmp_rt AS DOUBLE)                              AS price_total,
+        CAST(system_energy_price AS DOUBLE)                       AS price_energy,
+        CAST(congestion_price AS DOUBLE)                          AS price_congestion,
+        CAST(loss_price AS DOUBLE)                                AS price_loss,
+        'USD'                                                     AS currency,
+        'MWh'                                                     AS uom,
+        load_identifier                                           AS settlement_point,
+        comp_subzone                                               AS source_run_id,
+        CAST(UNIX_TIMESTAMP() * 1000000 AS BIGINT)                AS ingest_ts,
+        SHA2(CONCAT_WS('|', datetime_beginning_utc, pnode_id, total_lmp_rt), 256) AS record_hash,
+        NULL                                                      AS metadata
+      FROM pjm_raw
+    """
+  }
+}
+
+sink {
+  Kafka {
+    bootstrap.servers = "${KAFKA_BOOTSTRAP_SERVERS}"
+    topic = "${PJM_TOPIC}"
+    semantic = "AT_LEAST_ONCE"
+    format = "avro"
+    avro {
+      use.schema.registry = true
+      schema.registry.url = "${SCHEMA_REGISTRY_URL}"
+      value.schema.subject = "${PJM_SUBJECT}"
+      value.schema = """${ISO_LMP_SCHEMA}"""
+    }
+    producer {
+      linger.ms = 500
+      batch.size = 32768
+      retries = 5
+    }
+  }
+}

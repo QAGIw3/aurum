@@ -1,0 +1,149 @@
+apiVersion: traefik.io/v1alpha1
+kind: IngressRoute
+metadata:
+  name: aurum-traefik-dashboard
+  namespace: aurum-dev
+spec:
+  entryPoints:
+    - web
+  routes:
+    - match: Host(`traefik.aurum.localtest.me`)
+      kind: Rule
+      services:
+        - name: traefik-dashboard
+          port: 9000
+---
+apiVersion: traefik.io/v1alpha1
+kind: IngressRoute
+metadata:
+  name: aurum-minio-api
+  namespace: aurum-dev
+spec:
+  entryPoints:
+    - web
+  routes:
+    - match: Host(`minio.aurum.localtest.me`)
+      kind: Rule
+      services:
+        - name: minio
+          port: 9000
+---
+apiVersion: traefik.io/v1alpha1
+kind: IngressRoute
+metadata:
+  name: aurum-minio-console
+  namespace: aurum-dev
+spec:
+  entryPoints:
+    - web
+  routes:
+    - match: Host(`minio-console.aurum.localtest.me`)
+      kind: Rule
+      services:
+        - name: minio
+          port: 9001
+---
+apiVersion: traefik.io/v1alpha1
+kind: IngressRoute
+metadata:
+  name: aurum-lakefs
+  namespace: aurum-dev
+spec:
+  entryPoints:
+    - web
+  routes:
+    - match: Host(`lakefs.aurum.localtest.me`)
+      kind: Rule
+      services:
+        - name: lakefs
+          port: 8000
+---
+apiVersion: traefik.io/v1alpha1
+kind: IngressRoute
+metadata:
+  name: aurum-nessie
+  namespace: aurum-dev
+spec:
+  entryPoints:
+    - web
+  routes:
+    - match: Host(`nessie.aurum.localtest.me`)
+      kind: Rule
+      services:
+        - name: nessie
+          port: 19121
+---
+apiVersion: traefik.io/v1alpha1
+kind: IngressRoute
+metadata:
+  name: aurum-trino
+  namespace: aurum-dev
+spec:
+  entryPoints:
+    - web
+  routes:
+    - match: Host(`trino.aurum.localtest.me`)
+      kind: Rule
+      services:
+        - name: trino
+          port: 8080
+---
+apiVersion: traefik.io/v1alpha1
+kind: IngressRoute
+metadata:
+  name: aurum-airflow
+  namespace: aurum-dev
+spec:
+  entryPoints:
+    - web
+  routes:
+    - match: Host(`airflow.aurum.localtest.me`)
+      kind: Rule
+      services:
+        - name: airflow-webserver
+          port: 8080
+---
+apiVersion: traefik.io/v1alpha1
+kind: IngressRoute
+metadata:
+  name: aurum-schema-registry
+  namespace: aurum-dev
+spec:
+  entryPoints:
+    - web
+  routes:
+    - match: Host(`schema-registry.aurum.localtest.me`)
+      kind: Rule
+      services:
+        - name: schema-registry
+          port: 8081
+---
+apiVersion: traefik.io/v1alpha1
+kind: IngressRoute
+metadata:
+  name: aurum-clickhouse
+  namespace: aurum-dev
+spec:
+  entryPoints:
+    - web
+  routes:
+    - match: Host(`clickhouse.aurum.localtest.me`)
+      kind: Rule
+      services:
+        - name: clickhouse
+          port: 8123
+---
+apiVersion: traefik.io/v1alpha1
+kind: IngressRoute
+metadata:
+  name: aurum-vault
+  namespace: aurum-dev
+spec:
+  entryPoints:
+    - web
+  routes:
+    - match: Host(`vault.aurum.localtest.me`)
+      kind: Rule
+      services:
+        - name: vault
+          port: 8200

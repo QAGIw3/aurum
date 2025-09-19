@@ -1,0 +1,35 @@
+{
+  "type": "record",
+  "name": "ScenarioOutput",
+  "namespace": "aurum.scenario",
+  "doc": "Computed scenario curve point emitted after processing a scenario request.",
+  "fields": [
+    {"name": "scenario_id", "type": "string"},
+    {"name": "tenant_id", "type": "string"},
+    {"name": "asof_date", "type": {"type": "int", "logicalType": "date"}},
+    {"name": "curve_key", "type": "string"},
+    {"name": "tenor_type", "type": "string"},
+    {"name": "contract_month", "type": ["null", {"type": "int", "logicalType": "date"}], "default": null},
+    {"name": "tenor_label", "type": "string"},
+    {"name": "metric", "type": "string"},
+    {"name": "value", "type": "double"},
+    {"name": "band_lower", "type": ["null", "double"], "default": null},
+    {"name": "band_upper", "type": ["null", "double"], "default": null},
+    {"name": "attribution", "type": [
+      "null",
+      {
+        "type": "array",
+        "items": {
+          "type": "record",
+          "name": "ScenarioAttribution",
+          "fields": [
+            {"name": "component", "type": "string"},
+            {"name": "delta", "type": "double"}
+          ]
+        }
+      }
+    ], "default": null},
+    {"name": "version_hash", "type": "string"},
+    {"name": "computed_ts", "type": {"type": "long", "logicalType": "timestamp-micros"}}
+  ]
+}

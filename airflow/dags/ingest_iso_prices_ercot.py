@@ -1,0 +1,87 @@
+"""Airflow DAG to ingest ERCOT MIS LMP data via staged SeaTunnel job."""
+from __future__ import annotations
+
+import os
+from datetime import datetime, timedelta
+from typing import Any
+
+from airflow import DAG
+from airflow.operators.bash import BashOperator
+from airflow.operators.empty import EmptyOperator
+
+
+DEFAULT_ARGS: dict[str, Any] = {
+    "owner": "aurum-data",
+    "depends_on_past": False,
+    "email_on_failure": True,
+    "email": ["aurum-ops@example.com"],
+    "retries": 1,
+    "retry_delay": timedelta(minutes=10),
+}
+
+BIN_PATH = os.environ.get("AURUM_BIN_PATH", ".venv/bin:$PATH")
+PYTHONPATH_ENTRY = os.environ.get("AURUM_PYTHONPATH_ENTRY", "/opt/airflow/src")
+STAGING_DIR = os.environ.get("AURUM_STAGING_DIR", "files/staging")
+
+
+def _ercot_token_flag() -> str:
+    return "{% if var.value.get('aurum_ercot_bearer_token', '') %} --bearer-token {{ var.value.get('aurum_ercot_bearer_token') }}{% endif %}"
+
+
+with DAG(
+    dag_id="ingest_iso_prices_ercot",
+    description="Fetch ERCOT MIS data, stage to JSON, and publish to Kafka via SeaTunnel",
+    default_args=DEFAULT_ARGS,
+    schedule_interval="45 * * * *",
+    start_date=datetime(2024, 1, 1),
+    catchup=False,
+    max_active_runs=1,
+    tags=["aurum", "ercot", "lmp"],
+) as dag:
+    start = EmptyOperator(task_id="start")
+
+    staging_path = f"{STAGING_DIR}/ercot/{{{{ ds }}}}.json"
+
+    token_flag = _ercot_token_flag()
+
+    stage_command = "\n".join(
+        [
+            "set -euo pipefail",
+            "cd /opt/airflow",
+            "mkdir -p $(dirname '" + staging_path + "')",
+            f"export PATH=\"{BIN_PATH}\"",
+            f"export PYTHONPATH=\"${{PYTHONPATH:-}}:{PYTHONPATH_ENTRY}\"",
+            (
+                "python scripts/ingest/ercot_mis_to_kafka.py "
+                "--url {{ var.value.get('aurum_ercot_mis_url') }} "
+                f"{token_flag} "
+                f"--output-json {staging_path} --no-kafka"
+            ),
+        ]
+    )
+
+    stage_ercot = BashOperator(task_id="stage_ercot_lmp", bash_command=stage_command)
+
+    kafka_bootstrap = "{{ var.value.get('aurum_kafka_bootstrap', 'localhost:9092') }}"
+    schema_registry = "{{ var.value.get('aurum_schema_registry', 'http://localhost:8081') }}"
+
+    seatunnel_command = "\n".join(
+        [
+            "set -euo pipefail",
+            "cd /opt/airflow",
+            f"export PATH=\"{BIN_PATH}\"",
+            f"export PYTHONPATH=\"${{PYTHONPATH:-}}:{PYTHONPATH_ENTRY}\"",
+            (
+                f"ERCOT_INPUT_JSON={staging_path} "
+                f"KAFKA_BOOTSTRAP_SERVERS='{kafka_bootstrap}' "
+                f"SCHEMA_REGISTRY_URL='{schema_registry}' "
+                "scripts/seatunnel/run_job.sh ercot_lmp_to_kafka"
+            ),
+        ]
+    )
+
+    seatunnel_task = BashOperator(task_id="ercot_lmp_seatunnel", bash_command=seatunnel_command)
+
+    end = EmptyOperator(task_id="end")
+
+    start >> stage_ercot >> seatunnel_task >> end

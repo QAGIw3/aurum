@@ -1,0 +1,13 @@
+{
+  "aurum.iso.pjm.lmp.v1-value": "iso.lmp.v1.avsc",
+  "aurum.iso.caiso.lmp.v1-value": "iso.lmp.v1.avsc",
+  "aurum.iso.ercot.lmp.v1-value": "iso.lmp.v1.avsc",
+  "aurum.iso.nyiso.lmp.v1-value": "iso.lmp.v1.avsc",
+  "aurum.iso.miso.lmp.v1-value": "iso.lmp.v1.avsc",
+  "aurum.iso.isone.lmp.v1-value": "iso.lmp.v1.avsc",
+  "aurum.iso.spp.lmp.v1-value": "iso.lmp.v1.avsc",
+  "aurum.ref.noaa.weather.v1-value": "noaa.weather.v1.avsc",
+  "aurum.ref.eia.series.v1-value": "eia.series.v1.avsc",
+  "aurum.ref.fred.series.v1-value": "fred.series.v1.avsc",
+  "aurum.ingest.error.v1": "ingest.error.v1.avsc"
+}

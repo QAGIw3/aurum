@@ -1,0 +1,36 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: aurum-bootstrap
+  namespace: aurum-dev
+spec:
+  template:
+    metadata:
+      labels:
+        app: aurum
+        component: bootstrap
+    spec:
+      restartPolicy: OnFailure
+      containers:
+        - name: bootstrap
+          image: python:3.11-slim
+          envFrom:
+            - configMapRef:
+                name: aurum-config
+            - secretRef:
+                name: aurum-secrets
+          volumeMounts:
+            - name: script
+              mountPath: /bootstrap
+          command: ["/bin/sh", "-c"]
+          args:
+            - >-
+              pip install --no-cache-dir boto3 requests &&
+              python /bootstrap/bootstrap_dev.py
+      volumes:
+        - name: script
+          configMap:
+            name: aurum-bootstrap-script
+            items:
+              - key: bootstrap_dev.py
+                path: bootstrap_dev.py

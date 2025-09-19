@@ -1,0 +1,27 @@
+CREATE DATABASE IF NOT EXISTS ops;
+
+CREATE TABLE IF NOT EXISTS ops.logs (
+    timestamp DateTime DEFAULT now(),
+    level LowCardinality(String),
+    service LowCardinality(String),
+    host String,
+    trace_id String,
+    span_id String,
+    message String,
+    fields Map(String, String)
+) ENGINE = MergeTree
+PARTITION BY toYYYYMMDD(timestamp)
+ORDER BY (timestamp, service, level)
+SETTINGS index_granularity = 8192;
+
+CREATE TABLE IF NOT EXISTS ops.events (
+    timestamp DateTime DEFAULT now(),
+    event_type LowCardinality(String),
+    source LowCardinality(String),
+    severity LowCardinality(String),
+    payload JSON,
+    tenant String
+) ENGINE = MergeTree
+PARTITION BY toYYYYMMDD(timestamp)
+ORDER BY (timestamp, event_type)
+SETTINGS index_granularity = 8192;

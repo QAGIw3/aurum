@@ -1,0 +1,106 @@
+# EIA v2 series observations → Kafka (Avro)
+#
+# Required environment variables (set via scripts/seatunnel/run_job.sh):
+#   EIA_API_KEY             - EIA API key
+#   EIA_API_BASE_URL        - Base URL for EIA v2 API (default https://api.eia.gov/v2)
+#   EIA_SERIES_PATH         - Dataset path (e.g. electricity/wholesale/prices/data)
+#   EIA_SERIES_ID           - Series identifier stored in the record
+#   EIA_FREQUENCY           - Value for the Avro frequency enum (ANNUAL, MONTHLY, etc.)
+#   EIA_TOPIC               - Kafka topic to emit to
+#   KAFKA_BOOTSTRAP_SERVERS - Kafka brokers
+#   SCHEMA_REGISTRY_URL     - Confluent Schema Registry endpoint
+#
+# Optional environment variables:
+#   EIA_START               - Start period (YYYY-MM-DD or dataset-supported token)
+#   EIA_END                 - End period
+#   EIA_OFFSET              - Pagination offset
+#   EIA_LIMIT               - Page size
+#   EIA_SORT                - Column to sort by (default period)
+#   EIA_DIRECTION           - ASC/DESC sort order
+#   EIA_UNITS               - Units string stored in the Avro record
+#   EIA_SEASONAL_ADJUSTMENT - Seasonal adjustment token (SA, NSA, UNKNOWN)
+#   EIA_SOURCE              - Source string stored in the Avro record
+#   EIA_DATASET             - Dataset name captured in the record
+#   EIA_SUBJECT             - Schema Registry subject (default <topic>-value)
+#   EIA_SERIES_SCHEMA       - Avro schema JSON populated by run_job.sh
+
+env {
+  job.mode = "BATCH"
+  parallelism = 1
+}
+
+source {
+  Http {
+    url = "${EIA_API_BASE_URL}/${EIA_SERIES_PATH}"
+    method = "GET"
+    params {
+      api_key = "${EIA_API_KEY}"
+      start = "${EIA_START}"
+      end = "${EIA_END}"
+      offset = ${EIA_OFFSET}
+      length = ${EIA_LIMIT}
+      sort[0] = "${EIA_SORT}"
+      direction[0] = "${EIA_DIRECTION}"
+    }
+    connection_timeout_ms = 15000
+    retry {
+      interval_ms = 1000
+      max_retries = 5
+    }
+    format = "json"
+    json {
+      json_path = "$$.response.data[*]"
+    }
+    result_table_name = "eia_raw"
+  }
+}
+
+transform {
+  Sql {
+    source_table_name = "eia_raw"
+    result_table_name = "eia_normalized"
+    query = """
+      SELECT
+        '${EIA_SERIES_ID}'                                         AS series_id,
+        period                                                     AS period,
+        CAST(NULL AS BIGINT)                                       AS period_start,
+        CAST(NULL AS BIGINT)                                       AS period_end,
+        '${EIA_FREQUENCY}'                                         AS frequency,
+        CASE
+          WHEN value IS NULL OR value = '' THEN NULL
+          ELSE CAST(value AS DOUBLE)
+        END                                                        AS value,
+        CAST(value AS STRING)                                      AS raw_value,
+        COALESCE(units, '${EIA_UNITS}')                            AS unit,
+        ${EIA_AREA_EXPR}                                           AS area,
+        ${EIA_SECTOR_EXPR}                                         AS sector,
+        '${EIA_SEASONAL_ADJUSTMENT}'                               AS seasonal_adjustment,
+        ${EIA_DESCRIPTION_EXPR}                                    AS description,
+        ${EIA_SOURCE_EXPR}                                         AS source,
+        ${EIA_DATASET_EXPR}                                        AS dataset,
+        ${EIA_METADATA_EXPR}                                       AS metadata,
+        CAST(UNIX_TIMESTAMP() * 1000000 AS BIGINT)                 AS ingest_ts
+      FROM eia_raw
+    """
+  }
+}
+
+sink {
+  Kafka {
+    bootstrap.servers = "${KAFKA_BOOTSTRAP_SERVERS}"
+    topic = "${EIA_TOPIC}"
+    semantic = "AT_LEAST_ONCE"
+    format = "avro"
+    avro {
+      use.schema.registry = true
+      schema.registry.url = "${SCHEMA_REGISTRY_URL}"
+      value.schema.subject = "${EIA_SUBJECT}"
+      value.schema = """${EIA_SERIES_SCHEMA}"""
+    }
+    producer {
+      linger.ms = 500
+      batch.size = 32768
+      retries = 5
+    }
+  }
+}

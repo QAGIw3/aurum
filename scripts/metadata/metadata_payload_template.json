@@ -1,0 +1,43 @@
+{
+  "datasets": [
+    {
+      "name": "iso_lmp_curated",
+      "fullyQualifiedName": "aurum.timescale.iso_lmp_curated",
+      "description": "Normalized ISO LMP dataset combining all markets",
+      "service": {
+        "type": "databaseService",
+        "name": "timescale"
+      },
+      "domain": {
+        "fullyQualifiedName": "aurum.energy.iso"
+      }
+    }
+  ],
+  "tables": [
+    {
+      "name": "iso_lmp_timeseries",
+      "fullyQualifiedName": "aurum.timescale.iso_lmp_timeseries",
+      "description": "Hypertable storing ISO locational marginal prices",
+      "tableConstraints": [
+        {
+          "constraintType": "PRIMARY_KEY",
+          "columns": [
+            "interval_start",
+            "iso_code",
+            "location_id",
+            "market"
+          ]
+        }
+      ],
+      "service": {
+        "type": "databaseService",
+        "name": "timescale"
+      },
+      "tags": [
+        {
+          "tagFQN": "license.oss.no-redistribution"
+        }
+      ]
+    }
+  ]
+}

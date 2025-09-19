@@ -1,0 +1,155 @@
+{
+  "type": "record",
+  "name": "IsoLmpRecord",
+  "namespace": "aurum.iso",
+  "doc": "Normalized locational marginal price observation from an ISO day-ahead or real-time feed.",
+  "fields": [
+    {
+      "name": "iso_code",
+      "type": {
+        "type": "enum",
+        "name": "IsoCode",
+        "doc": "Market operator the observation belongs to.",
+        "symbols": ["PJM", "CAISO", "ERCOT", "NYISO", "MISO", "ISONE", "SPP"]
+      }
+    },
+    {
+      "name": "market",
+      "type": {
+        "type": "enum",
+        "name": "IsoMarket",
+        "doc": "Normalized market/run identifier reported by the ISO.",
+        "symbols": [
+          "DAY_AHEAD",
+          "REAL_TIME",
+          "FIFTEEN_MINUTE",
+          "FIVE_MINUTE",
+          "HOUR_AHEAD",
+          "SETTLEMENT",
+          "UNKNOWN"
+        ]
+      }
+    },
+    {
+      "name": "delivery_date",
+      "doc": "Trading or operating date for the interval (ISO local calendar).",
+      "type": {"type": "int", "logicalType": "date"}
+    },
+    {
+      "name": "interval_start",
+      "doc": "UTC timestamp when the interval starts.",
+      "type": {"type": "long", "logicalType": "timestamp-micros"}
+    },
+    {
+      "name": "interval_end",
+      "doc": "Optional UTC timestamp when the interval ends (exclusive).",
+      "type": ["null", {"type": "long", "logicalType": "timestamp-micros"}],
+      "default": null
+    },
+    {
+      "name": "interval_minutes",
+      "doc": "Duration of the interval in minutes (if supplied by the ISO).",
+      "type": ["null", "int"],
+      "default": null
+    },
+    {
+      "name": "location_id",
+      "doc": "Primary identifier (node, zone, hub) from the ISO feed.",
+      "type": "string"
+    },
+    {
+      "name": "location_name",
+      "doc": "Human-readable description of the location.",
+      "type": ["null", "string"],
+      "default": null
+    },
+    {
+      "name": "location_type",
+      "doc": "Classification of the location identifier.",
+      "type": {
+        "type": "enum",
+        "name": "IsoLocationType",
+        "symbols": [
+          "NODE",
+          "ZONE",
+          "HUB",
+          "SYSTEM",
+          "AGGREGATE",
+          "INTERFACE",
+          "RESOURCE",
+          "OTHER"
+        ]
+      },
+      "default": "OTHER"
+    },
+    {
+      "name": "price_total",
+      "doc": "Locational marginal price reported by the ISO.",
+      "type": "double"
+    },
+    {
+      "name": "price_energy",
+      "doc": "Energy component of the price.",
+      "type": ["null", "double"],
+      "default": null
+    },
+    {
+      "name": "price_congestion",
+      "doc": "Congestion component of the price.",
+      "type": ["null", "double"],
+      "default": null
+    },
+    {
+      "name": "price_loss",
+      "doc": "Loss component of the price.",
+      "type": ["null", "double"],
+      "default": null
+    },
+    {
+      "name": "currency",
+      "doc": "ISO reported currency (ISO-4217 code).",
+      "type": "string",
+      "default": "USD"
+    },
+    {
+      "name": "uom",
+      "doc": "Unit of measure for the price.",
+      "type": "string",
+      "default": "MWh"
+    },
+    {
+      "name": "settlement_point",
+      "doc": "Optional ISO-specific settlement point grouping.",
+      "type": ["null", "string"],
+      "default": null
+    },
+    {
+      "name": "source_run_id",
+      "doc": "Identifier for the source extraction run (file, report id, etc.).",
+      "type": ["null", "string"],
+      "default": null
+    },
+    {
+      "name": "ingest_ts",
+      "doc": "Timestamp when the record entered the pipeline (UTC).",
+      "type": {"type": "long", "logicalType": "timestamp-micros"}
+    },
+    {
+      "name": "record_hash",
+      "doc": "Deterministic hash of the source fields for idempotency.",
+      "type": "string"
+    },
+    {
+      "name": "metadata",
+      "doc": "Optional key/value metadata captured from the source feed.",
+      "type": [
+        "null",
+        {
+          "type": "map",
+          "values": "string"
+        }
+      ],
+      "default": null
+    }
+  ]
+}

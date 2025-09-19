@@ -1,0 +1,448 @@
+x-env-file: &env_file ../.env
+
+services:
+  minio:
+    image: minio/minio:RELEASE.2024-01-18T22-51-28Z
+    env_file: *env_file
+    command: server /data --console-address ":9001"
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+    environment:
+      MINIO_ROOT_USER: ${AURUM_S3_ACCESS_KEY}
+      MINIO_ROOT_PASSWORD: ${AURUM_S3_SECRET_KEY}
+    volumes:
+      - minio-data:/data
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/ready"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - aurum
+
+  postgres:
+    image: postgres:15
+    env_file: *env_file
+    environment:
+      POSTGRES_DB: aurum
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+      - ../postgres/ddl:/docker-entrypoint-initdb.d
+    healthcheck:
+      test: ["CMD", "pg_isready", "-U", "${POSTGRES_USER}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - aurum
+
+  timescale:
+    image: timescale/timescaledb:latest-pg15
+    env_file: *env_file
+    environment:
+      POSTGRES_DB: timeseries
+      POSTGRES_USER: ${TIMESCALE_USER}
+      POSTGRES_PASSWORD: ${TIMESCALE_PASSWORD}
+    ports:
+      - "5433:5432"
+    volumes:
+      - timescale-data:/var/lib/postgresql/data
+      - ../timescale:/docker-entrypoint-initdb.d
+    healthcheck:
+      test: ["CMD", "pg_isready", "-U", "${TIMESCALE_USER}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - aurum
+
+  redis:
+    image: redis:7-alpine
+    env_file: *env_file
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - aurum
+
+  zookeeper:
+    image: bitnami/zookeeper:3.7
+    env_file: *env_file
+    environment:
+      ALLOW_ANONYMOUS_LOGIN: "yes"
+    ports:
+      - "2181:2181"
+    healthcheck:
+      test: ["CMD", "/opt/bitnami/scripts/zookeeper/healthcheck.sh"]
+      interval: 10s
+      timeout: 10s
+      retries: 6
+    networks:
+      - aurum
+
+  kafka:
+    image: bitnami/kafka:3.6
+    env_file: *env_file
+    depends_on:
+      zookeeper:
+        condition: service_healthy
+    environment:
+      KAFKA_BROKER_ID: 1
+      KAFKA_CFG_ZOOKEEPER_CONNECT: zookeeper:2181
+      KAFKA_CFG_LISTENER_SECURITY_PROTOCOL_MAP: PLAINTEXT:PLAINTEXT,PLAINTEXT_HOST:PLAINTEXT
+      KAFKA_CFG_LISTENERS: PLAINTEXT://:9092,PLAINTEXT_HOST://:29092
+      KAFKA_CFG_ADVERTISED_LISTENERS: PLAINTEXT://kafka:9092,PLAINTEXT_HOST://localhost:29092
+      KAFKA_CFG_AUTO_CREATE_TOPICS_ENABLE: "true"
+      ALLOW_PLAINTEXT_LISTENER: "yes"
+    ports:
+      - "29092:29092"
+    volumes:
+      - kafka-data:/bitnami/kafka
+    healthcheck:
+      test: ["CMD", "bash", "-c", "/opt/bitnami/kafka/bin/kafka-topics.sh --bootstrap-server localhost:9092 --list >/dev/null"]
+      interval: 10s
+      timeout: 10s
+      retries: 6
+    networks:
+      - aurum
+
+  schema-registry:
+    image: confluentinc/cp-schema-registry:7.5.1
+    env_file: *env_file
+    depends_on:
+      kafka:
+        condition: service_healthy
+    environment:
+      SCHEMA_REGISTRY_HOST_NAME: schema-registry
+      SCHEMA_REGISTRY_KAFKASTORE_BOOTSTRAP_SERVERS: PLAINTEXT://kafka:9092
+      SCHEMA_REGISTRY_LISTENERS: http://0.0.0.0:8081
+    ports:
+      - "8081:8081"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8081/subjects"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - aurum
+
+  clickhouse:
+    image: clickhouse/clickhouse-server:23.8
+    env_file: *env_file
+    ports:
+      - "8123:8123"
+      - "9009:9009"
+    volumes:
+      - clickhouse-data:/var/lib/clickhouse
+      - ../clickhouse:/docker-entrypoint-initdb.d
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8123/ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - aurum
+
+  nessie:
+    image: ghcr.io/projectnessie/nessie:0.71.0
+    env_file: *env_file
+    environment:
+      NESSIE_VERSION_STORE_TYPE: INMEMORY
+    ports:
+      - "19120:19120"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:19120/api/v1/config"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - aurum
+
+  lakefs:
+    image: treeverse/lakefs:1.13.0
+    env_file: *env_file
+    depends_on:
+      minio:
+        condition: service_healthy
+      postgres:
+        condition: service_healthy
+    environment:
+      LAKEFS_AUTH_ENCRYPT_SECRET_KEY: ${LAKEFS_SECRET_KEY}
+      LAKEFS_DATABASE_TYPE: postgresql
+      LAKEFS_DATABASE_URI: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/aurum?sslmode=disable
+      LAKEFS_BLOCKSTORE_TYPE: s3
+      LAKEFS_BLOCKSTORE_S3_CREDENTIALS_ACCESS_KEY_ID: ${AURUM_S3_ACCESS_KEY}
+      LAKEFS_BLOCKSTORE_S3_CREDENTIALS_SECRET_ACCESS_KEY: ${AURUM_S3_SECRET_KEY}
+      LAKEFS_BLOCKSTORE_S3_REGION: us-east-1
+      LAKEFS_BLOCKSTORE_S3_ENDPOINT: http://minio:9000
+      LAKEFS_GATEWAYS_S3_DOMAIN_NAME: localhost
+      LAKEFS_LOGGING_LEVEL: INFO
+      LAKEFS_ROOT_USER: ${LAKEFS_ROOT_USER}
+      LAKEFS_ROOT_PASSWORD: ${LAKEFS_ROOT_PASSWORD}
+    ports:
+      - "8000:8000"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/_health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - aurum
+
+  trino:
+    image: trinodb/trino:430
+    env_file: *env_file
+    depends_on:
+      nessie:
+        condition: service_healthy
+      lakefs:
+        condition: service_healthy
+      postgres:
+        condition: service_healthy
+      clickhouse:
+        condition: service_healthy
+    environment:
+      JAVA_TOOL_OPTIONS: "-Xms512M -Xmx2G"
+    ports:
+      - "8080:8080"
+    volumes:
+      - ../trino/catalog:/etc/trino/catalog
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/v1/info"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - aurum
+
+  api:
+    image: python:3.11-slim
+    env_file: *env_file
+    depends_on:
+      trino:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    working_dir: /workspace
+    volumes:
+      - ..:/workspace
+    command: >-
+      bash -lc "pip install --no-cache-dir -e .[api] && uvicorn aurum.api.app:app --host 0.0.0.0 --port 8085"
+    environment:
+      AURUM_API_TRINO_HOST: trino
+      AURUM_API_TRINO_PORT: 8080
+      AURUM_API_TRINO_USER: aurum
+      AURUM_API_TRINO_SCHEME: http
+      AURUM_API_REDIS_URL: redis://redis:6379/0
+      AURUM_API_CACHE_TTL: 60
+    ports:
+      - "8095:8085"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8085/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+    networks:
+      - aurum
+  api-built:
+    profiles: ["api-built"]
+    build:
+      context: ..
+      dockerfile: Dockerfile.api
+    env_file: *env_file
+    depends_on:
+      trino:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    environment:
+      AURUM_API_TRINO_HOST: trino
+      AURUM_API_TRINO_PORT: 8080
+      AURUM_API_TRINO_USER: aurum
+      AURUM_API_TRINO_SCHEME: http
+      AURUM_API_REDIS_URL: redis://redis:6379/0
+      AURUM_API_CACHE_TTL: 60
+    ports:
+      - "8096:8080"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+    networks:
+      - aurum
+
+  vector:
+    image: timberio/vector:0.33.0-alpine
+    env_file: *env_file
+    depends_on:
+      clickhouse:
+        condition: service_healthy
+    volumes:
+      - ../vector/vector.toml:/etc/vector/vector.toml:ro
+      - /var/run/docker.sock:/var/run/docker.sock
+    healthcheck:
+      test: ["CMD", "vector", "validate", "/etc/vector/vector.toml"]
+      interval: 60s
+      timeout: 10s
+      retries: 3
+    networks:
+      - aurum
+
+  airflow-init:
+    image: apache/airflow:2.8.1
+    env_file: *env_file
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    environment:
+      AIRFLOW__CORE__EXECUTOR: LocalExecutor
+      AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://${AIRFLOW_DB_USER}:${AIRFLOW_DB_PASSWORD}@postgres:5432/airflow
+      AIRFLOW__CORE__FERNET_KEY: ${AIRFLOW_FERNET_KEY}
+      AIRFLOW__CORE__LOAD_EXAMPLES: "False"
+      _AIRFLOW_WWW_USER_USERNAME: ${AIRFLOW_ADMIN_USER}
+      _AIRFLOW_WWW_USER_PASSWORD: ${AIRFLOW_ADMIN_PASSWORD}
+      AIRFLOW_HOME: /opt/airflow
+    command: >-
+      bash -c "airflow db init && airflow users create --role Admin --username '${AIRFLOW_ADMIN_USER}' --password '${AIRFLOW_ADMIN_PASSWORD}' --firstname Aurum --lastname Admin --email ${AIRFLOW_ADMIN_EMAIL} || true"
+    volumes:
+      - airflow-data:/opt/airflow
+      - ../airflow/dags:/opt/airflow/dags
+    networks:
+      - aurum
+
+  airflow-webserver:
+    image: apache/airflow:2.8.1
+    env_file: *env_file
+    depends_on:
+      airflow-init:
+        condition: service_completed_successfully
+    environment:
+      AIRFLOW__CORE__EXECUTOR: LocalExecutor
+      AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://${AIRFLOW_DB_USER}:${AIRFLOW_DB_PASSWORD}@postgres:5432/airflow
+      AIRFLOW__CORE__FERNET_KEY: ${AIRFLOW_FERNET_KEY}
+      AIRFLOW__CORE__LOAD_EXAMPLES: "False"
+      AIRFLOW__WEBSERVER__DEFAULT_UI_TIMEZONE: UTC
+      AIRFLOW__CORE__DAGS_ARE_PAUSED_AT_CREATION: "True"
+      AIRFLOW_HOME: /opt/airflow
+    ports:
+      - "8088:8080"
+    volumes:
+      - airflow-data:/opt/airflow
+      - ../airflow/dags:/opt/airflow/dags
+    command: webserver
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+    networks:
+      - aurum
+
+  airflow-scheduler:
+    image: apache/airflow:2.8.1
+    env_file: *env_file
+    depends_on:
+      airflow-init:
+        condition: service_completed_successfully
+    environment:
+      AIRFLOW__CORE__EXECUTOR: LocalExecutor
+      AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://${AIRFLOW_DB_USER}:${AIRFLOW_DB_PASSWORD}@postgres:5432/airflow
+      AIRFLOW__CORE__FERNET_KEY: ${AIRFLOW_FERNET_KEY}
+      AIRFLOW__CORE__LOAD_EXAMPLES: "False"
+      AIRFLOW_HOME: /opt/airflow
+    volumes:
+      - airflow-data:/opt/airflow
+      - ../airflow/dags:/opt/airflow/dags
+    command: scheduler
+    healthcheck:
+      test: ["CMD", "airflow", "jobs", "check", "--job-type", "SchedulerJob", "--hostname", "$(hostname)"]
+      interval: 60s
+      timeout: 15s
+      retries: 5
+    networks:
+      - aurum
+
+  superset:
+    profiles: ["ui"]
+    image: apache/superset:3.0.0
+    env_file: *env_file
+    depends_on:
+      trino:
+        condition: service_healthy
+    environment:
+      SUPERSET_SECRET_KEY: ${SUPERSET_SECRET_KEY}
+      SUPERSET_LOAD_EXAMPLES: "no"
+      SUPERSET_ENV: production
+    command: >-
+      /bin/sh -c "superset db upgrade && superset init && superset run -h 0.0.0.0 -p 8088"
+    ports:
+      - "8089:8088"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8088/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+    networks:
+      - aurum
+
+  kafka-ui:
+    profiles: ["ui"]
+    image: provectuslabs/kafka-ui:master
+    env_file: *env_file
+    depends_on:
+      kafka:
+        condition: service_healthy
+      schema-registry:
+        condition: service_healthy
+    environment:
+      KAFKA_CLUSTERS_0_NAME: local
+      KAFKA_CLUSTERS_0_BOOTSTRAPSERVERS: kafka:9092
+      KAFKA_CLUSTERS_0_SCHEMAREGISTRY: http://schema-registry:8081
+    ports:
+      - "8090:8080"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+    networks:
+      - aurum
+
+  bootstrap:
+    profiles: ["bootstrap"]
+    image: python:3.11-slim
+    env_file: *env_file
+    depends_on:
+      minio:
+        condition: service_healthy
+      lakefs:
+        condition: service_healthy
+    volumes:
+      - ../scripts/bootstrap:/bootstrap:ro
+    entrypoint: ["/bin/sh", "-c", "pip install --no-cache-dir boto3 requests && python /bootstrap/bootstrap_dev.py"]
+    networks:
+      - aurum
+
+volumes:
+  minio-data:
+  postgres-data:
+  timescale-data:
+  kafka-data:
+  clickhouse-data:
+  airflow-data:
+
+networks:
+  aurum:
+    driver: bridge

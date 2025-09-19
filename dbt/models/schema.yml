@@ -1,0 +1,82 @@
+version: 2
+
+sources:
+  - name: iceberg_market
+    schema: market
+    tables:
+      - name: curve_observation
+        description: Canonical Iceberg table containing normalized vendor curve rows.
+        loaded_at_field: _ingest_ts
+
+models:
+  - name: stg_curve_observation
+    description: Staging model that harmonizes curve observations for downstream consumption.
+    columns:
+      - name: curve_key
+        tests:
+          - not_null
+      - name: tenor_label
+        tests:
+          - not_null
+      - name: currency
+        description: Normalized currency code for the curve price.
+      - name: per_unit
+        description: Normalized unit denominator for the curve price.
+  - name: int_curve_monthly
+    description: Intermediate model filtering to monthly tenors and latest copies per ingest.
+    tests:
+      - unique:
+          column_name: "curve_key || '|' || tenor_label || '|' || cast(asof_date as varchar)"
+    columns:
+      - name: asof_date
+        tests:
+          - not_null
+      - name: currency
+        description: Currency propagated from the staging model.
+      - name: per_unit
+        description: Unit denominator propagated from the staging model.
+  - name: mart_curve_latest
+    description: Business mart exposing the latest available curve per identity and tenor.
+    tests:
+      - unique:
+          column_name: "curve_key || '|' || tenor_label"
+    columns:
+      - name: mid
+        tests:
+          - not_null
+      - name: currency
+        description: Currency associated with the curve mid price.
+      - name: per_unit
+        description: Unit denominator associated with the curve mid price.
+  - name: int_curve_calendar
+    description: Calendar strips derived by averaging monthly curves.
+    tests:
+      - unique:
+          column_name: "curve_key || '|' || tenor_label || '|' || cast(asof_date as varchar)"
+    columns:
+      - name: asof_date
+        tests:
+          - not_null
+      - name: tenor_type
+        tests:
+          - accepted_values:
+              values: ['CALENDAR']
+      - name: mid
+        tests:
+          - not_null
+  - name: int_curve_quarter
+    description: Quarterly strips derived by averaging monthly curves.
+    tests:
+      - unique:
+          column_name: "curve_key || '|' || tenor_label || '|' || cast(asof_date as varchar)"
+    columns:
+      - name: asof_date
+        tests:
+          - not_null
+      - name: tenor_type
+        tests:
+          - accepted_values:
+              values: ['QUARTER']
+      - name: mid
+        tests:
+          - not_null

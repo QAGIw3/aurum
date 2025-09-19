@@ -1,0 +1,135 @@
+# ISO-NE web services LMP → Kafka (Avro)
+#
+# Required environment variables:
+#   ISONE_URL               - ISO-NE web service endpoint returning JSON
+#   ISONE_START             - ISO-NE start datetime (YYYY-MM-DDTHH:MM:SSZ)
+#   ISONE_END               - ISO-NE end datetime (YYYY-MM-DDTHH:MM:SSZ)
+#   ISONE_MARKET            - Market run identifier (DA or RT)
+#   KAFKA_BOOTSTRAP_SERVERS - Kafka brokers
+#   SCHEMA_REGISTRY_URL     - Schema Registry endpoint
+#
+# Optional environment variables:
+#   ISONE_TOPIC             - Kafka topic (default aurum.iso.isone.lmp.v1)
+#   ISONE_SUBJECT           - Schema Registry subject (default <topic>-value)
+#   ISO_LMP_SCHEMA          - Avro schema JSON populated by run_job.sh
+#   ISONE_USERNAME          - Basic auth username (if required)
+#   ISONE_PASSWORD          - Basic auth password (if required)
+#   ISONE_AUTH_HEADER       - Override Authorization header (takes precedence over username/password)
+#   ISONE_NODE_FIELD        - Field containing node name (default name)
+#   ISONE_NODE_ID_FIELD     - Field containing node id (default ptid)
+#   ISONE_NODE_TYPE_FIELD   - Field containing node type (default locationType)
+#
+# SeaTunnel fetches ISO-NE JSON, projects required fields, and publishes Avro records.
+
+env {
+  job.mode = "BATCH"
+  parallelism = 1
+}
+
+source {
+  Http {
+    url = "${ISONE_URL}"
+    method = "GET"
+    params {
+      start = "${ISONE_START}"
+      end = "${ISONE_END}"
+      market = "${ISONE_MARKET}"
+    }
+    format = "json"
+    json {
+      json_path = "$$.items[*]"
+    }
+    headers {
+      Authorization = "${ISONE_AUTH_HEADER}"
+    }
+    auth {
+      type = "BASIC"
+      username = "${ISONE_USERNAME}"
+      password = "${ISONE_PASSWORD}"
+      enabled = ${ISONE_HTTP_AUTH_ENABLED}
+    }
+    result_table_name = "isone_raw"
+  }
+}
+
+transform {
+  Sql {
+    source_table_name = "isone_raw"
+    result_table_name = "isone_normalized"
+    query = """
+      WITH prepared AS (
+        SELECT
+          COALESCE(begin, startTime, start_time) AS begin_raw,
+          COALESCE(end, endTime, end_time) AS end_raw,
+          ${ISONE_NODE_FIELD} AS node_name,
+          ${ISONE_NODE_ID_FIELD} AS node_id,
+          ${ISONE_NODE_TYPE_FIELD} AS node_type,
+          CAST(lmp AS DOUBLE) AS price_total,
+          CAST(energy AS DOUBLE) AS price_energy,
+          CAST(congestion AS DOUBLE) AS price_congestion,
+          CAST(loss AS DOUBLE) AS price_loss
+        FROM isone_raw
+      ), converted AS (
+        SELECT
+          begin_raw,
+          end_raw,
+          node_name,
+          node_id,
+          node_type,
+          price_total,
+          price_energy,
+          price_congestion,
+          price_loss,
+          CAST(UNIX_TIMESTAMP(SUBSTRING(begin_raw, 1, 19), 'yyyy-MM-dd''T''HH:mm:ss') * 1000000 AS BIGINT) AS interval_start,
+          CAST(UNIX_TIMESTAMP(SUBSTRING(end_raw, 1, 19), 'yyyy-MM-dd''T''HH:mm:ss') * 1000000 AS BIGINT) AS interval_end
+        FROM prepared
+      )
+      SELECT
+        'ISONE' AS iso_code,
+        CASE
+          WHEN upper('${ISONE_MARKET}') LIKE 'DA%' THEN 'DAY_AHEAD'
+          ELSE 'REAL_TIME'
+        END AS market,
+        DATEDIFF(TO_DATE(SUBSTRING(begin_raw, 1, 10)), TO_DATE('1970-01-01')) AS delivery_date,
+        interval_start,
+        interval_end,
+        CAST((interval_end - interval_start) / 60000000 AS INT) AS interval_minutes,
+        CAST(node_id AS STRING) AS location_id,
+        CAST(node_name AS STRING) AS location_name,
+        COALESCE(UPPER(CAST(node_type AS STRING)), 'NODE') AS location_type,
+        COALESCE(price_total, 0.0) AS price_total,
+        price_energy,
+        price_congestion,
+        price_loss,
+        'USD' AS currency,
+        'MWh' AS uom,
+        CAST(node_name AS STRING) AS settlement_point,
+        NULL AS source_run_id,
+        CAST(UNIX_TIMESTAMP() * 1000000 AS BIGINT) AS ingest_ts,
+        SHA2(CONCAT_WS('|', begin_raw, CAST(node_id AS STRING), CAST(price_total AS STRING)), 256) AS record_hash,
+        NULL AS metadata
+      FROM converted
+      WHERE interval_start IS NOT NULL
+    """
+  }
+}
+
+sink {
+  Kafka {
+    bootstrap.servers = "${KAFKA_BOOTSTRAP_SERVERS}"
+    topic = "${ISONE_TOPIC}"
+    semantic = "AT_LEAST_ONCE"
+    format = "avro"
+    avro {
+      use.schema.registry = true
+      schema.registry.url = "${SCHEMA_REGISTRY_URL}"
+      value.schema.subject = "${ISONE_SUBJECT}"
+      value.schema = """${ISO_LMP_SCHEMA}"""
+    }
+    producer {
+      linger.ms = 500
+      batch.size = 32768
+      retries = 5
+    }
+  }
+}

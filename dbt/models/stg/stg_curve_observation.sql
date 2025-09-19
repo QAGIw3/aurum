@@ -1,0 +1,27 @@
+-- Canonical staging model for curve observations sourced from Iceberg.
+select
+    asof_date,
+    source_file,
+    sheet_name,
+    asset_class,
+    region,
+    iso,
+    location,
+    market,
+    product,
+    block,
+    spark_location,
+    price_type,
+    units_raw,
+    currency,
+    per_unit,
+    tenor_type,
+    contract_month,
+    tenor_label,
+    coalesce(mid, value) as mid,
+    bid,
+    ask,
+    curve_key,
+    version_hash,
+    _ingest_ts
+from {{ source('iceberg_market', 'curve_observation') }}
