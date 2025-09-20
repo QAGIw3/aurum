@@ -3,14 +3,17 @@ from __future__ import annotations
 """FastAPI application exposing curve endpoints."""
 
 import base64
+import hashlib
 import json
+import os
 import uuid
 from datetime import date, datetime
 import logging
 import time
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Set
 
-from fastapi import FastAPI, HTTPException, Response, Request
+from fastapi import Depends, FastAPI, HTTPException, Response, Request
+from opentelemetry import trace
 from ._fastapi_compat import Query, Path
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.gzip import GZipMiddleware
@@ -37,6 +40,8 @@ from .models import (
     ScenarioRunListResponse,
     ScenarioOutputResponse,
     ScenarioOutputPoint,
+    ScenarioMetricLatestResponse,
+    ScenarioMetricLatest,
     PpaValuationRequest,
     PpaValuationResponse,
     PpaMetric,
@@ -63,12 +68,55 @@ from aurum.reference import iso_locations as ref_iso
 from aurum.reference import units as ref_units
 from aurum.reference import calendars as ref_cal
 from aurum.reference import eia_catalog as ref_eia
+from aurum.telemetry import configure_telemetry
+from aurum.telemetry.context import get_request_id, set_request_id, reset_request_id
 
 
 app = FastAPI(title="Aurum API", version="0.1.0")
 
+configure_telemetry("aurum-api", fastapi_app=app, enable_psycopg=True)
+
+
+def _current_request_id() -> str:
+    existing = get_request_id()
+    if existing:
+        return existing
+    return str(uuid.uuid4())
+
+
+def _load_admin_groups() -> Set[str]:
+    raw = os.getenv("AURUM_API_ADMIN_GROUP", "aurum-admins")
+    groups = {item.strip().lower() for item in raw.split(",") if item.strip()}
+    if os.getenv("AURUM_API_AUTH_DISABLED", "0").lower() in {"1", "true", "yes"}:
+        return set()
+    return groups
+
+
+ADMIN_GROUPS: Set[str] = _load_admin_groups()
+
+
+def _get_principal(request: Request) -> Dict[str, Any] | None:
+    principal = getattr(request.state, "principal", None)
+    if isinstance(principal, dict):
+        return principal
+    return None
+
+
+def _is_admin(principal: Dict[str, Any] | None) -> bool:
+    if not ADMIN_GROUPS:
+        return True
+    if not principal:
+        return False
+    groups = principal.get("groups") or []
+    normalized = {str(group).lower() for group in groups if group}
+    return any(group in normalized for group in ADMIN_GROUPS)
+
+
+def _require_admin(principal: Dict[str, Any] | None) -> None:
+    if not _is_admin(principal):
+        raise HTTPException(status_code=403, detail="admin_required")
+
 # CORS (configurable via env AURUM_API_CORS_ORIGINS, comma-separated)
-import os
 import threading
 import time as _time
 origins_raw = os.getenv("AURUM_API_CORS_ORIGINS", "")
@@ -90,11 +138,18 @@ app.add_middleware(GZipMiddleware, minimum_size=min_bytes)
 
 # Structured access logging
 ACCESS_LOGGER = logging.getLogger("aurum.api.access")
+LOGGER = logging.getLogger(__name__)
 
 
 @app.middleware("http")
 async def _access_log_middleware(request, call_next):  # type: ignore[no-redef]
     request_id = request.headers.get("x-request-id") or str(uuid.uuid4())
+    token = set_request_id(request_id)
+    request.state.request_id = request_id
+    span = trace.get_current_span()
+    if span.is_recording():  # pragma: no branch - inexpensive check
+        span.set_attribute("aurum.request_id", request_id)
+        span.set_attribute("http.request_id", request_id)
     start = time.perf_counter()
     try:
         response = await call_next(request)
@@ -116,6 +171,7 @@ async def _access_log_middleware(request, call_next):  # type: ignore[no-redef]
                 }
             )
         )
+        reset_request_id(token)
         raise
     duration_ms = (time.perf_counter() - start) * 1000.0
     principal = getattr(request.state, "principal", {}) or {}
@@ -138,6 +194,7 @@ async def _access_log_middleware(request, call_next):  # type: ignore[no-redef]
             }
         )
     )
+    reset_request_id(token)
     return response
 
 # Attach simple rate limiting middleware (Redis-backed when configured)
@@ -183,6 +240,45 @@ class _SimpleCache:
 
 _INMEM_TTL = int(os.getenv("AURUM_API_INMEMORY_TTL", "60") or 60)
 _CACHE = _SimpleCache(default_ttl=_INMEM_TTL)
+
+
+def _model_dump(value: Any) -> Dict[str, Any]:
+    if hasattr(value, "model_dump"):
+        return value.model_dump()  # type: ignore[attr-defined]
+    if hasattr(value, "dict"):
+        return value.dict()  # type: ignore[attr-defined]
+    if isinstance(value, dict):
+        return value
+    raise TypeError(f"Unsupported payload type for ETag generation: {type(value)!r}")
+
+
+
+def _compute_etag(payload: Dict[str, Any]) -> str:
+    serialized = json.dumps(payload, sort_keys=True, default=str)
+    return hashlib.sha256(serialized.encode("utf-8")).hexdigest()
+
+
+
+def _respond_with_etag(
+    model,
+    request: Request,
+    response: Response,
+    *,
+    extra_headers: Optional[Dict[str, str]] = None,
+):
+    payload = _model_dump(model)
+    etag = _compute_etag(payload)
+    incoming = request.headers.get("if-none-match")
+    if incoming and incoming == etag:
+        headers = {"ETag": etag}
+        if extra_headers:
+            headers.update(extra_headers)
+        return Response(status_code=304, headers=headers)
+    response.headers["ETag"] = etag
+    if extra_headers:
+        for key, value in extra_headers.items():
+            response.headers.setdefault(key, value)
+    return model
 
 # Prometheus metrics
 try:  # pragma: no cover
@@ -236,8 +332,16 @@ SCENARIO_OUTPUT_CURSOR_FIELDS = [
     "tenor_label",
     "contract_month",
     "metric",
+    "run_id",
 ]
 
+
+METADATA_CACHE_TTL = int(os.getenv("AURUM_API_METADATA_REDIS_TTL", "300") or 300)
+SCENARIO_OUTPUT_CACHE_TTL = int(os.getenv("AURUM_API_SCENARIO_OUTPUT_TTL", "60") or 60)
+SCENARIO_METRIC_CACHE_TTL = int(os.getenv("AURUM_API_SCENARIO_METRICS_TTL", "60") or 60)
+
+CURVE_MAX_LIMIT = int(os.getenv("AURUM_API_CURVE_MAX_LIMIT", "500") or 500)
+SCENARIO_OUTPUT_MAX_LIMIT = int(os.getenv("AURUM_API_SCENARIO_OUTPUT_MAX_LIMIT", "500") or 500)
 
 def _encode_cursor(payload: dict) -> str:
     raw = json.dumps(payload, separators=(",", ":")).encode("utf-8")
@@ -256,6 +360,9 @@ def _resolve_tenant(request: Request, explicit: Optional[str]) -> str:
     principal = getattr(request.state, "principal", {}) or {}
     if tenant := principal.get("tenant"):
         return tenant
+    header_tenant = request.headers.get("X-Aurum-Tenant")
+    if header_tenant:
+        return header_tenant
     if explicit:
         return explicit
     raise HTTPException(status_code=400, detail="tenant_id is required")
@@ -265,6 +372,9 @@ def _resolve_tenant_optional(request: Request, explicit: Optional[str]) -> Optio
     principal = getattr(request.state, "principal", {}) or {}
     if tenant := principal.get("tenant"):
         return tenant
+    header_tenant = request.headers.get("X-Aurum-Tenant")
+    if header_tenant:
+        return header_tenant
     return explicit
 
 
@@ -294,6 +404,75 @@ def _scenario_outputs_enabled() -> bool:
     flag = os.getenv("AURUM_API_SCENARIO_OUTPUTS_ENABLED", "0").lower()
     return flag in {"1", "true", "yes", "on"}
 
+
+def _persist_ppa_valuation_records(
+    *,
+    ppa_contract_id: str,
+    scenario_id: str,
+    tenant_id: Optional[str],
+    asof_date: date,
+    metrics: List[Dict[str, Any]],
+) -> None:
+    if os.getenv("AURUM_API_PPA_WRITE_ENABLED", "1").lower() not in {"1", "true", "yes", "on"}:
+        return
+    if not metrics:
+        return
+    try:
+        import pandas as pd
+    except ModuleNotFoundError:
+        LOGGER.debug("Skipping PPA valuation persistence: pandas not available")
+        return
+    try:
+        from aurum.parsers.iceberg_writer import write_ppa_valuation
+    except ModuleNotFoundError:
+        LOGGER.debug("Skipping PPA valuation persistence: pyiceberg not available")
+        return
+
+    records: List[Dict[str, Any]] = []
+    now = datetime.utcnow().replace(microsecond=0)
+    curve_hint = next((m.get("curve_key") for m in metrics if m.get("curve_key")), None)
+
+    for metric in metrics:
+        metric_name = str(metric.get("metric"))
+        value = metric.get("value")
+        period_start = metric.get("period_start") or asof_date
+        period_end = metric.get("period_end") or period_start
+        curve_key = metric.get("curve_key") or curve_hint
+        record = {
+            "asof_date": asof_date,
+            "ppa_contract_id": ppa_contract_id,
+            "scenario_id": scenario_id,
+            "curve_key": curve_key,
+            "period_start": period_start,
+            "period_end": period_end,
+            "cashflow": None,
+            "npv": None,
+            "irr": None,
+            "metric": metric_name,
+            "value": value,
+            "version_hash": hashlib.sha256(
+                f"{ppa_contract_id}|{scenario_id}|{metric_name}|{period_start}|{period_end}|{value}".encode("utf-8")
+            ).hexdigest()[:16],
+            "_ingest_ts": now,
+        }
+
+        if metric_name.lower() == "cashflow":
+            record["cashflow"] = value
+        elif metric_name.lower() == "npv":
+            record["npv"] = value
+        elif metric_name.lower() == "irr":
+            record["irr"] = value
+
+        records.append(record)
+
+    if not records:
+        return
+
+    try:
+        frame = pd.DataFrame(records)
+        write_ppa_valuation(frame)
+    except Exception as exc:  # pragma: no cover - integration failure
+        LOGGER.warning("Failed to persist PPA valuation for %s/%s: %s", scenario_id, ppa_contract_id, exc)
 
 def _check_trino_ready(cfg: TrinoConfig) -> bool:
     try:
@@ -333,19 +512,44 @@ def list_curves(
         None,
         description="Alias for 'cursor' to resume iteration from a previously returned next_cursor",
     ),
+    prev_cursor: Optional[str] = Query(
+        None,
+        description="Cursor pointing to the previous page; obtained from meta.prev_cursor",
+    ),
 ) -> CurveResponse:
-    request_id = str(uuid.uuid4())
+    request_id = _current_request_id()
     trino_cfg = TrinoConfig.from_env()
     cache_cfg = CacheConfig.from_env()
 
+    effective_limit = min(limit, CURVE_MAX_LIMIT)
+    effective_offset = offset
     cursor_after: Optional[dict] = None
-    effective_cursor = cursor or since_cursor
-    if effective_cursor:
-        payload = _decode_cursor(effective_cursor)
-        offset, cursor_after = _normalise_cursor_input(payload)
+    cursor_before: Optional[dict] = None
+    descending = False
+
+    prev_token = prev_cursor
+    forward_token = cursor or since_cursor
+    if prev_token:
+        payload = _decode_cursor(prev_token)
+        before_payload = payload.get("before") if isinstance(payload, dict) else None
+        if before_payload:
+            cursor_before = before_payload
+            descending = True
+            effective_offset = 0
+        elif isinstance(payload, dict) and set(payload.keys()) <= {"offset"}:
+            try:
+                effective_offset = max(int(payload.get("offset", 0)), 0)
+            except (TypeError, ValueError) as exc:
+                raise HTTPException(status_code=400, detail="Invalid cursor") from exc
+        else:
+            cursor_before = payload if isinstance(payload, dict) else None
+            descending = True
+            effective_offset = 0
+    elif forward_token:
+        payload = _decode_cursor(forward_token)
+        effective_offset, cursor_after = _normalise_cursor_input(payload)
 
     try:
-        # Fetch one extra row to determine if there is a next page
         rows, elapsed_ms = service.query_curves(
             trino_cfg,
             cache_cfg,
@@ -358,23 +562,46 @@ def list_curves(
             product=product,
             block=block,
             tenor_type=tenor_type,
-            limit=limit + 1,
-            offset=offset,
+            limit=effective_limit + 1,
+            offset=effective_offset,
             cursor_after=cursor_after,
+            cursor_before=cursor_before,
+            descending=descending,
         )
     except RuntimeError as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
 
-    next_cursor: str | None = None
-    if len(rows) > limit:
-        rows = rows[:limit]
+    more = len(rows) > effective_limit
+    if descending:
+        rows = rows[:effective_limit]
+        rows.reverse()
+    else:
+        if more:
+            rows = rows[:effective_limit]
+
+    next_cursor = None
+    if more and rows:
         next_payload = _extract_cursor_payload(rows[-1], CURVE_CURSOR_FIELDS)
         next_cursor = _encode_cursor(next_payload)
 
-    return CurveResponse(
-        meta=Meta(request_id=request_id, query_time_ms=int(elapsed_ms), next_cursor=next_cursor),
-        data=[CurvePoint(**row) for row in rows],
+    prev_cursor_value = None
+    if rows:
+        if descending:
+            if cursor_before and more:
+                prev_payload = _extract_cursor_payload(rows[0], CURVE_CURSOR_FIELDS)
+                prev_cursor_value = _encode_cursor({"before": prev_payload})
+        else:
+            if prev_token or forward_token or effective_offset > 0:
+                prev_payload = _extract_cursor_payload(rows[0], CURVE_CURSOR_FIELDS)
+                prev_cursor_value = _encode_cursor({"before": prev_payload})
+
+    meta = Meta(
+        request_id=request_id,
+        query_time_ms=int(elapsed_ms),
+        next_cursor=next_cursor,
+        prev_cursor=prev_cursor_value,
     )
+    return CurveResponse(meta=meta, data=[CurvePoint(**row) for row in rows])
 
 
 @app.get("/v1/curves/diff", response_model=CurveDiffResponse)
@@ -397,7 +624,7 @@ def list_curves_diff(
         description="Alias for 'cursor' to resume iteration from a previously returned next_cursor",
     ),
 ) -> CurveDiffResponse:
-    request_id = str(uuid.uuid4())
+    request_id = _current_request_id()
     trino_cfg = TrinoConfig.from_env()
     cache_cfg = CacheConfig.from_env()
 
@@ -453,10 +680,14 @@ def list_dimensions(
     per_dim_limit: int = Query(1000, ge=1, le=5000),
     prefix: Optional[str] = Query(None, description="Optional case-insensitive startswith filter applied to each dimension list"),
     include_counts: bool = Query(False, description="Include per-dimension value counts when true"),
+    *,
+    request: Request,
+    response: Response,
 ) -> DimensionsResponse:
-    request_id = str(uuid.uuid4())
+    request_id = _current_request_id()
     trino_cfg = TrinoConfig.from_env()
-    cache_cfg = CacheConfig.from_env()
+    base_cache = CacheConfig.from_env()
+    cache_cfg = CacheConfig(redis_url=base_cache.redis_url, ttl_seconds=METADATA_CACHE_TTL)
 
     try:
         results, counts_raw = service.query_dimensions(
@@ -506,11 +737,12 @@ def list_dimensions(
         if counts_payload:
             counts_model = DimensionsCountData(**counts_payload)
 
-    return DimensionsResponse(
+    model = DimensionsResponse(
         meta=Meta(request_id=request_id, query_time_ms=0),
         data=DimensionsData(**results),
         counts=counts_model,
     )
+    return _respond_with_etag(model, request, response)
 
 
 @app.get(
@@ -523,9 +755,11 @@ def list_dimensions(
 def list_locations(
     iso: Optional[str] = Query(None, description="Filter by ISO code (e.g., PJM, CAISO)", examples={"default": {"value": "PJM"}}),
     prefix: Optional[str] = Query(None, description="Case-insensitive startswith on id or name", examples={"default": {"value": "AE"}}),
-    response: Response = None,  # type: ignore[assignment]
+    *,
+    request: Request,
+    response: Response,
 ) -> IsoLocationsResponse:
-    request_id = str(uuid.uuid4())
+    request_id = _current_request_id()
     def _base_locations() -> list[dict[str, Any]]:
         data: list[dict[str, Any]] = []
         for loc in ref_iso.iter_locations(iso):
@@ -552,9 +786,8 @@ def list_locations(
                 items.append(IsoLocationOut(**rec))
     else:
         items = [IsoLocationOut(**rec) for rec in base]
-    if isinstance(response, Response):
-        response.headers["Cache-Control"] = f"public, max-age={_INMEM_TTL}"
-    return IsoLocationsResponse(meta=Meta(request_id=request_id, query_time_ms=0), data=items)
+    model = IsoLocationsResponse(meta=Meta(request_id=request_id, query_time_ms=0), data=items)
+    return _respond_with_etag(model, request, response, extra_headers={"Cache-Control": f"public, max-age={_INMEM_TTL}"})
 
 
 @app.get(
@@ -567,9 +800,11 @@ def list_locations(
 def get_location(
     iso: str = Path(..., description="ISO code", examples={"default": {"value": "PJM"}}),
     location_id: str = Path(..., description="Location identifier", examples={"default": {"value": "AECO"}}),
-    response: Response = None,  # type: ignore[assignment]
+    *,
+    request: Request,
+    response: Response,
 ) -> IsoLocationResponse:
-    request_id = str(uuid.uuid4())
+    request_id = _current_request_id()
     def _load_loc() -> dict[str, Any]:
         loc = ref_iso.get_location(iso, location_id)
         if loc is None:
@@ -590,9 +825,8 @@ def get_location(
     except LookupError:
         raise HTTPException(status_code=404, detail="Location not found")
     item = IsoLocationOut(**rec)
-    if isinstance(response, Response):
-        response.headers["Cache-Control"] = f"public, max-age={_INMEM_TTL}"
-    return IsoLocationResponse(meta=Meta(request_id=request_id, query_time_ms=0), data=item)
+    model = IsoLocationResponse(meta=Meta(request_id=request_id, query_time_ms=0), data=item)
+    return _respond_with_etag(model, request, response, extra_headers={"Cache-Control": f"public, max-age={_INMEM_TTL}"})
 
 
 # --- Units metadata ---
@@ -605,8 +839,13 @@ def get_location(
     summary="List canonical currencies and units",
     description="Return distinct currencies and units derived from the units mapping file. Optionally filter by case-insensitive prefix.",
 )
-def list_units(prefix: Optional[str] = Query(None, description="Optional startswith filter", examples={"sample": {"value": "US"}}), response: Response = None) -> UnitsCanonicalResponse:  # type: ignore[assignment]
-    request_id = str(uuid.uuid4())
+def list_units(
+    prefix: Optional[str] = Query(None, description="Optional startswith filter", examples={"sample": {"value": "US"}}),
+    *,
+    request: Request,
+    response: Response,
+) -> UnitsCanonicalResponse:
+    request_id = _current_request_id()
     def _base():
         mapper = ref_units.UnitsMapper()
         mapping = mapper._load_mapping(mapper._path)  # type: ignore[attr-defined]
@@ -621,9 +860,11 @@ def list_units(prefix: Optional[str] = Query(None, description="Optional startsw
         pfx = prefix.lower()
         currencies = [c for c in currencies if c.lower().startswith(pfx)]
         units = [u for u in units if u.lower().startswith(pfx)]
-    if isinstance(response, Response):
-        response.headers["Cache-Control"] = f"public, max-age={_INMEM_TTL}"
-    return UnitsCanonicalResponse(meta=Meta(request_id=request_id, query_time_ms=0), data=UnitsCanonical(currencies=currencies, units=units))
+    model = UnitsCanonicalResponse(
+        meta=Meta(request_id=request_id, query_time_ms=0),
+        data=UnitsCanonical(currencies=currencies, units=units),
+    )
+    return _respond_with_etag(model, request, response, extra_headers={"Cache-Control": f"public, max-age={_INMEM_TTL}"})
 
 
 @app.get(
@@ -635,9 +876,11 @@ def list_units(prefix: Optional[str] = Query(None, description="Optional startsw
 )
 def list_unit_mappings(
     prefix: Optional[str] = Query(None, description="Startswith filter on units_raw", examples={"sample": {"value": "USD/"}}),
-    response: Response = None,  # type: ignore[assignment]
+    *,
+    request: Request,
+    response: Response,
 ) -> UnitsMappingResponse:
-    request_id = str(uuid.uuid4())
+    request_id = _current_request_id()
     def _base_list():
         mapper = ref_units.UnitsMapper()
         mapping = mapper._load_mapping(mapper._path)  # type: ignore[attr-defined]
@@ -656,9 +899,8 @@ def list_unit_mappings(
                 items.append(UnitMappingOut(units_raw=raw, currency=cur, per_unit=per))
     else:
         items = [UnitMappingOut(units_raw=raw, currency=cur, per_unit=per) for raw, cur, per in base]
-    if isinstance(response, Response):
-        response.headers["Cache-Control"] = f"public, max-age={_INMEM_TTL}"
-    return UnitsMappingResponse(meta=Meta(request_id=request_id, query_time_ms=0), data=items)
+    model = UnitsMappingResponse(meta=Meta(request_id=request_id, query_time_ms=0), data=items)
+    return _respond_with_etag(model, request, response, extra_headers={"Cache-Control": f"public, max-age={_INMEM_TTL}"})
 
 
 # --- Calendars metadata ---
@@ -671,12 +913,13 @@ def list_unit_mappings(
     summary="List calendars",
     description="Return available trading calendars and their timezones.",
 )
-def list_calendars() -> CalendarsResponse:
-    request_id = str(uuid.uuid4())
+def list_calendars(request: Request, response: Response) -> CalendarsResponse:
+    request_id = _current_request_id()
     calendars = ref_cal.get_calendars()
     items = [CalendarOut(name=name, timezone=cfg.timezone) for name, cfg in calendars.items()]
     items.sort(key=lambda x: x.name)
-    return CalendarsResponse(meta=Meta(request_id=request_id, query_time_ms=0), data=items)
+    model = CalendarsResponse(meta=Meta(request_id=request_id, query_time_ms=0), data=items)
+    return _respond_with_etag(model, request, response, extra_headers={"Cache-Control": f"public, max-age={_INMEM_TTL}"})
 
 
 @app.get(
@@ -686,14 +929,20 @@ def list_calendars() -> CalendarsResponse:
     summary="List calendar blocks",
     description="Return block names for a given calendar.",
 )
-def list_calendar_blocks(name: str = Path(..., description="Calendar name", examples={"default": {"value": "us"}})) -> CalendarBlocksResponse:
-    request_id = str(uuid.uuid4())
+def list_calendar_blocks(
+    name: str = Path(..., description="Calendar name", examples={"default": {"value": "us"}}),
+    *,
+    request: Request,
+    response: Response,
+) -> CalendarBlocksResponse:
+    request_id = _current_request_id()
     calendars = ref_cal.get_calendars()
     cfg = calendars.get(name.lower())
     if cfg is None:
         raise HTTPException(status_code=404, detail="Calendar not found")
     blocks = sorted(cfg.blocks.keys())
-    return CalendarBlocksResponse(meta=Meta(request_id=request_id, query_time_ms=0), data=blocks)
+    model = CalendarBlocksResponse(meta=Meta(request_id=request_id, query_time_ms=0), data=blocks)
+    return _respond_with_etag(model, request, response, extra_headers={"Cache-Control": f"public, max-age={_INMEM_TTL}"})
 
 
 @app.get(
@@ -707,11 +956,15 @@ def calendar_hours(
     name: str = Path(..., description="Calendar name", examples={"default": {"value": "us"}}),
     block: str = Query(..., description="Block identifier", examples={"default": {"value": "ON_PEAK"}}),
     date: date = Query(..., description="Local calendar date (YYYY-MM-DD)", examples={"default": {"value": "2024-01-02"}}),
-) -> CalendarHoursResponse:  # type: ignore[no-redef]
-    request_id = str(uuid.uuid4())
+    *,
+    request: Request,
+    response: Response,
+) -> CalendarHoursResponse:
+    request_id = _current_request_id()
     datetimes = ref_cal.hours_for_block(name, block, date)
     iso_list = [dt.isoformat() for dt in datetimes]
-    return CalendarHoursResponse(meta=Meta(request_id=request_id, query_time_ms=0), data=iso_list)
+    model = CalendarHoursResponse(meta=Meta(request_id=request_id, query_time_ms=0), data=iso_list)
+    return _respond_with_etag(model, request, response, extra_headers={"Cache-Control": f"public, max-age={_INMEM_TTL}"})
 
 
 @app.get(
@@ -726,11 +979,15 @@ def calendar_expand(
     block: str = Query(..., description="Block identifier", examples={"default": {"value": "ON_PEAK"}}),
     start: date = Query(..., description="Start date (YYYY-MM-DD)", examples={"default": {"value": "2024-01-01"}}),
     end: date = Query(..., description="End date (YYYY-MM-DD)", examples={"default": {"value": "2024-01-02"}}),
+    *,
+    request: Request,
+    response: Response,
 ) -> CalendarHoursResponse:
-    request_id = str(uuid.uuid4())
+    request_id = _current_request_id()
     datetimes = ref_cal.expand_block_range(name, block, start, end)
     iso_list = [dt.isoformat() for dt in datetimes]
-    return CalendarHoursResponse(meta=Meta(request_id=request_id, query_time_ms=0), data=iso_list)
+    model = CalendarHoursResponse(meta=Meta(request_id=request_id, query_time_ms=0), data=iso_list)
+    return _respond_with_etag(model, request, response, extra_headers={"Cache-Control": f"public, max-age={_INMEM_TTL}"})
 
 
 # --- EIA Catalog metadata ---
@@ -745,9 +1002,11 @@ def calendar_expand(
 )
 def list_eia_datasets(
     prefix: Optional[str] = Query(None, description="Startswith filter on path or name", examples={"default": {"value": "natural-gas/"}}),
-    response: Response = None,  # type: ignore[assignment]
+    *,
+    request: Request,
+    response: Response,
 ) -> EiaDatasetsResponse:
-    request_id = str(uuid.uuid4())
+    request_id = _current_request_id()
     def _base_eia():
         lst: list[dict[str, Any]] = []
         for ds in ref_eia.iter_datasets():
@@ -771,9 +1030,8 @@ def list_eia_datasets(
     else:
         filtered = base
     items = [EiaDatasetBriefOut(**d) for d in filtered]
-    if isinstance(response, Response):
-        response.headers["Cache-Control"] = f"public, max-age={_INMEM_TTL}"
-    return EiaDatasetsResponse(meta=Meta(request_id=request_id, query_time_ms=0), data=items)
+    model = EiaDatasetsResponse(meta=Meta(request_id=request_id, query_time_ms=0), data=items)
+    return _respond_with_etag(model, request, response, extra_headers={"Cache-Control": f"public, max-age={_INMEM_TTL}"})
 
 
 @app.get(
@@ -785,9 +1043,11 @@ def list_eia_datasets(
 )
 def get_eia_dataset(
     dataset_path: str = Path(..., description="Dataset path (e.g., natural-gas/stor/wkly)", examples={"default": {"value": "natural-gas/stor/wkly"}}),
-    response: Response = None,  # type: ignore[assignment]
+    *,
+    request: Request,
+    response: Response,
 ) -> EiaDatasetResponse:
-    request_id = str(uuid.uuid4())
+    request_id = _current_request_id()
     def _detail() -> dict[str, Any]:
         ds = ref_eia.get_dataset(dataset_path)
         return {
@@ -807,9 +1067,8 @@ def get_eia_dataset(
     except ref_eia.DatasetNotFoundError as exc:  # type: ignore[attr-defined]
         raise HTTPException(status_code=404, detail="Dataset not found") from exc
     item = EiaDatasetDetailOut(**data)
-    if isinstance(response, Response):
-        response.headers["Cache-Control"] = f"public, max-age={_INMEM_TTL}"
-    return EiaDatasetResponse(meta=Meta(request_id=request_id, query_time_ms=0), data=item)
+    model = EiaDatasetResponse(meta=Meta(request_id=request_id, query_time_ms=0), data=item)
+    return _respond_with_etag(model, request, response, extra_headers={"Cache-Control": f"public, max-age={_INMEM_TTL}"})
 
 
 @app.get("/v1/curves/strips", response_model=CurveResponse)
@@ -831,7 +1090,7 @@ def list_strips(
         description="Alias for 'cursor' to resume iteration from a previously returned next_cursor",
     ),
 ) -> CurveResponse:
-    request_id = str(uuid.uuid4())
+    request_id = _current_request_id()
     trino_cfg = TrinoConfig.from_env()
     cache_cfg = CacheConfig.from_env()
 
@@ -905,27 +1164,43 @@ def _scenario_run_to_data(run) -> ScenarioRunData:
 @app.get("/v1/scenarios", response_model=ScenarioListResponse)
 def list_scenarios(
     request: Request,
+    response: Response,
+    status: Optional[str] = Query(None, pattern="^[A-Z_]+$", description="Optional scenario status filter"),
     limit: int = Query(50, ge=1, le=200),
     offset: int = Query(0, ge=0),
+    cursor: Optional[str] = Query(None),
+    since_cursor: Optional[str] = Query(None),
 ) -> ScenarioListResponse:
     tenant_id = _resolve_tenant_optional(request, None)
-    request_id = str(uuid.uuid4())
+    request_id = _current_request_id()
     start = time.perf_counter()
-    records = ScenarioStore.list_scenarios(tenant_id=tenant_id, limit=limit, offset=offset)
+    effective_offset = offset
+    cursor_token = cursor or since_cursor
+    if cursor_token:
+        payload = _decode_cursor(cursor_token)
+        effective_offset, _cursor_after = _normalise_cursor_input(payload)
+
+    records = ScenarioStore.list_scenarios(
+        tenant_id=tenant_id,
+        status=status,
+        limit=limit,
+        offset=effective_offset,
+    )
     duration_ms = int((time.perf_counter() - start) * 1000.0)
     next_cursor = None
     if len(records) == limit:
-        next_cursor = _encode_cursor({"offset": offset + limit})
+        next_cursor = _encode_cursor({"offset": effective_offset + limit})
     data = [_scenario_record_to_data(record) for record in records]
-    return ScenarioListResponse(
+    model = ScenarioListResponse(
         meta=Meta(request_id=request_id, query_time_ms=duration_ms, next_cursor=next_cursor),
         data=data,
     )
+    return _respond_with_etag(model, request, response)
 
 
 @app.post("/v1/scenarios", response_model=ScenarioResponse, status_code=201)
 def create_scenario(payload: CreateScenarioRequest, request: Request) -> ScenarioResponse:
-    request_id = str(uuid.uuid4())
+    request_id = _current_request_id()
     tenant_id = _resolve_tenant(request, payload.tenant_id)
     record = ScenarioStore.create_scenario(
         tenant_id=tenant_id,
@@ -940,43 +1215,65 @@ def create_scenario(payload: CreateScenarioRequest, request: Request) -> Scenari
 
 
 @app.get("/v1/scenarios/{scenario_id}", response_model=ScenarioResponse)
-def get_scenario(scenario_id: str, request: Request) -> ScenarioResponse:
-    request_id = str(uuid.uuid4())
+def get_scenario(scenario_id: str, request: Request, response: Response) -> ScenarioResponse:
+    request_id = _current_request_id()
     tenant_id = _resolve_tenant_optional(request, None)
     record = ScenarioStore.get_scenario(scenario_id, tenant_id=tenant_id)
     if record is None:
         raise HTTPException(status_code=404, detail="Scenario not found")
-    return ScenarioResponse(
+    model = ScenarioResponse(
         meta=Meta(request_id=request_id, query_time_ms=0),
         data=_scenario_record_to_data(record),
     )
+    return _respond_with_etag(model, request, response)
+
+
+@app.delete("/v1/scenarios/{scenario_id}", status_code=204)
+def delete_scenario(scenario_id: str, request: Request) -> Response:
+    tenant_id = _resolve_tenant(request, None)
+    deleted = ScenarioStore.delete_scenario(scenario_id, tenant_id=tenant_id)
+    if not deleted:
+        raise HTTPException(status_code=404, detail="Scenario not found")
+    return Response(status_code=204)
 
 
 @app.get("/v1/scenarios/{scenario_id}/runs", response_model=ScenarioRunListResponse)
 def list_scenario_runs(
     scenario_id: str,
     request: Request,
+    response: Response,
+    state: Optional[str] = Query(None, pattern="^(QUEUED|RUNNING|SUCCEEDED|FAILED|CANCELLED)$"),
     limit: int = Query(50, ge=1, le=200),
     offset: int = Query(0, ge=0),
+    cursor: Optional[str] = Query(None),
+    since_cursor: Optional[str] = Query(None),
 ) -> ScenarioRunListResponse:
     tenant_id = _resolve_tenant_optional(request, None)
-    request_id = str(uuid.uuid4())
+    request_id = _current_request_id()
     start = time.perf_counter()
+    effective_offset = offset
+    cursor_token = cursor or since_cursor
+    if cursor_token:
+        payload = _decode_cursor(cursor_token)
+        effective_offset, _cursor_after = _normalise_cursor_input(payload)
+
     runs = ScenarioStore.list_runs(
         tenant_id=tenant_id,
         scenario_id=scenario_id,
+        state=state,
         limit=limit,
-        offset=offset,
+        offset=effective_offset,
     )
     duration_ms = int((time.perf_counter() - start) * 1000.0)
     next_cursor = None
     if len(runs) == limit:
-        next_cursor = _encode_cursor({"offset": offset + limit})
+        next_cursor = _encode_cursor({"offset": effective_offset + limit})
     data = [_scenario_run_to_data(run) for run in runs]
-    return ScenarioRunListResponse(
+    model = ScenarioRunListResponse(
         meta=Meta(request_id=request_id, query_time_ms=duration_ms, next_cursor=next_cursor),
         data=data,
     )
+    return _respond_with_etag(model, request, response)
 
 
 @app.post("/v1/scenarios/{scenario_id}/run", response_model=ScenarioRunResponse, status_code=202)
@@ -985,7 +1282,7 @@ def run_scenario(
     request: Request,
     options: ScenarioRunOptions | None = None,
 ) -> ScenarioRunResponse:
-    request_id = str(uuid.uuid4())
+    request_id = _current_request_id()
     tenant_id = _resolve_tenant_optional(request, None)
     record = ScenarioStore.get_scenario(scenario_id, tenant_id=tenant_id)
     if record is None:
@@ -1004,16 +1301,17 @@ def run_scenario(
 
 
 @app.get("/v1/scenarios/{scenario_id}/runs/{run_id}", response_model=ScenarioRunResponse)
-def get_scenario_run(scenario_id: str, run_id: str, request: Request) -> ScenarioRunResponse:
-    request_id = str(uuid.uuid4())
+def get_scenario_run(scenario_id: str, run_id: str, request: Request, response: Response) -> ScenarioRunResponse:
+    request_id = _current_request_id()
     tenant_id = _resolve_tenant_optional(request, None)
     run = ScenarioStore.get_run_for_scenario(scenario_id, run_id, tenant_id=tenant_id)
     if run is None:
         raise HTTPException(status_code=404, detail="Scenario run not found")
-    return ScenarioRunResponse(
+    model = ScenarioRunResponse(
         meta=Meta(request_id=request_id, query_time_ms=0),
         data=_scenario_run_to_data(run),
     )
+    return _respond_with_etag(model, request, response)
 
 
 @app.post("/v1/scenarios/runs/{run_id}/state", response_model=ScenarioRunResponse)
@@ -1022,7 +1320,7 @@ def update_scenario_run_state(
     request: Request,
     state: str = Query(..., pattern="^(QUEUED|RUNNING|SUCCEEDED|FAILED|CANCELLED)$"),
 ) -> ScenarioRunResponse:
-    request_id = str(uuid.uuid4())
+    request_id = _current_request_id()
     tenant_id = _resolve_tenant_optional(request, None)
     run = ScenarioStore.update_run_state(run_id, state=state, tenant_id=tenant_id)
     if run is None:
@@ -1035,7 +1333,7 @@ def update_scenario_run_state(
 
 @app.post("/v1/scenarios/runs/{run_id}/cancel", response_model=ScenarioRunResponse)
 def cancel_scenario_run(run_id: str, request: Request) -> ScenarioRunResponse:
-    request_id = str(uuid.uuid4())
+    request_id = _current_request_id()
     tenant_id = _resolve_tenant_optional(request, None)
     run = ScenarioStore.update_run_state(run_id, state="CANCELLED", tenant_id=tenant_id)
     if run is None:
@@ -1046,17 +1344,93 @@ def cancel_scenario_run(run_id: str, request: Request) -> ScenarioRunResponse:
     )
 
 
+@app.post(
+    "/v1/admin/cache/scenario/{scenario_id}/invalidate",
+    status_code=204,
+    tags=["Admin"],
+    summary="Invalidate cached scenario outputs",
+)
+def invalidate_scenario_cache(  # type: ignore[no-redef]
+    scenario_id: str,
+    request: Request,
+    tenant_id: Optional[str] = Query(
+        None,
+        description="Optional tenant override; defaults to the calling principal's tenant",
+    ),
+    principal: Dict[str, Any] | None = Depends(_get_principal),
+) -> Response:
+    _require_admin(principal)
+    effective_tenant = tenant_id or (principal or {}).get("tenant")
+    service.invalidate_scenario_outputs_cache(CacheConfig.from_env(), effective_tenant, scenario_id)
+    return Response(status_code=204)
+
+
 @app.post("/v1/ppa/valuate", response_model=PpaValuationResponse)
-def valuate_ppa(payload: PpaValuationRequest) -> PpaValuationResponse:
-    request_id = str(uuid.uuid4())
-    # Placeholder behavior: return empty metrics list until valuation engine is wired
-    return PpaValuationResponse(meta=Meta(request_id=request_id, query_time_ms=0), data=[])
+def valuate_ppa(payload: PpaValuationRequest, request: Request) -> PpaValuationResponse:
+    request_id = _current_request_id()
+    if not payload.scenario_id:
+        raise HTTPException(status_code=400, detail="scenario_id is required for valuation")
+
+    tenant_id = _resolve_tenant_optional(request, None)
+    trino_cfg = TrinoConfig.from_env()
+
+    try:
+        rows, elapsed_ms = service.query_ppa_valuation(
+            trino_cfg,
+            scenario_id=payload.scenario_id,
+            tenant_id=tenant_id,
+            asof_date=payload.asof_date,
+            options=payload.options or None,
+        )
+    except RuntimeError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+
+    metrics: list[PpaMetric] = []
+    fallback_date = payload.asof_date or date.today()
+    for row in rows:
+        period_start = row.get("period_start") or fallback_date
+        period_end = row.get("period_end") or period_start
+        metrics.append(
+            PpaMetric(
+                period_start=period_start,
+                period_end=period_end,
+                metric=str(row.get("metric") or "mid"),
+                value=float(row.get("value") or 0.0),
+                currency=row.get("currency"),
+                unit=row.get("unit"),
+                run_id=row.get("run_id"),
+                curve_key=row.get("curve_key"),
+                tenor_type=row.get("tenor_type"),
+            )
+        )
+
+    try:
+        _persist_ppa_valuation_records(
+            ppa_contract_id=payload.ppa_contract_id,
+            scenario_id=payload.scenario_id,
+            tenant_id=tenant_id,
+            asof_date=fallback_date,
+            metrics=[metric.model_dump() if hasattr(metric, "model_dump") else metric for metric in metrics],
+        )
+    except Exception as exc:  # pragma: no cover - persistence should not break API
+        LOGGER.warning("Failed to persist PPA valuation: %s", exc)
+
+    return PpaValuationResponse(
+        meta=Meta(request_id=request_id, query_time_ms=int(elapsed_ms)),
+        data=metrics,
+    )
 
 
 @app.get("/v1/scenarios/{scenario_id}/outputs", response_model=ScenarioOutputResponse)
 def list_scenario_outputs(
     scenario_id: str,
     request: Request,
+    response: Response,
+    tenant_id_param: Optional[str] = Query(
+        None,
+        alias="tenant_id",
+        description="Tenant identifier override; defaults to the authenticated tenant",
+    ),
     metric: Optional[str] = Query(None),
     tenor_type: Optional[str] = Query(None),
     curve_key: Optional[str] = Query(None),
@@ -1066,21 +1440,45 @@ def list_scenario_outputs(
         None,
         description="Alias for 'cursor' to resume iteration from a previously returned next_cursor",
     ),
+    prev_cursor: Optional[str] = Query(
+        None,
+        description="Cursor pointing to the previous page; obtained from meta.prev_cursor",
+    ),
 ) -> ScenarioOutputResponse:
     if not _scenario_outputs_enabled():
         raise HTTPException(status_code=503, detail="Scenario outputs not enabled")
 
-    request_id = str(uuid.uuid4())
-    tenant_id = _resolve_tenant_optional(request, None)
+    request_id = _current_request_id()
+    tenant_id = _resolve_tenant(request, tenant_id_param)
     trino_cfg = TrinoConfig.from_env()
-    cache_cfg = CacheConfig.from_env()
+    base_cache = CacheConfig.from_env()
+    cache_cfg = CacheConfig(redis_url=base_cache.redis_url, ttl_seconds=SCENARIO_OUTPUT_CACHE_TTL)
 
+    effective_limit = min(limit, SCENARIO_OUTPUT_MAX_LIMIT)
+    effective_offset = 0
     cursor_after: Optional[dict] = None
-    offset = 0
-    effective_cursor = cursor or since_cursor
-    if effective_cursor:
-        payload = _decode_cursor(effective_cursor)
-        offset, cursor_after = _normalise_cursor_input(payload)
+    cursor_before: Optional[dict] = None
+    descending = False
+
+    prev_token = prev_cursor
+    forward_token = cursor or since_cursor
+    if prev_token:
+        payload = _decode_cursor(prev_token)
+        before_payload = payload.get("before") if isinstance(payload, dict) else None
+        if before_payload:
+            cursor_before = before_payload
+            descending = True
+        elif isinstance(payload, dict) and set(payload.keys()) <= {"offset"}:
+            try:
+                effective_offset = max(int(payload.get("offset", 0)), 0)
+            except (TypeError, ValueError) as exc:
+                raise HTTPException(status_code=400, detail="Invalid cursor") from exc
+        else:
+            cursor_before = payload if isinstance(payload, dict) else None
+            descending = True
+    elif forward_token:
+        decoded = _decode_cursor(forward_token)
+        effective_offset, cursor_after = _normalise_cursor_input(decoded)
 
     try:
         rows, elapsed_ms = service.query_scenario_outputs(
@@ -1091,20 +1489,93 @@ def list_scenario_outputs(
             curve_key=curve_key,
             tenor_type=tenor_type,
             metric=metric,
-            limit=limit + 1,
-            offset=offset,
+            limit=effective_limit + 1,
+            offset=effective_offset,
             cursor_after=cursor_after,
+            cursor_before=cursor_before,
+            descending=descending,
         )
     except RuntimeError as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
 
-    next_cursor: Optional[str] = None
-    if len(rows) > limit:
-        rows = rows[:limit]
+    more = len(rows) > effective_limit
+    if descending:
+        rows = rows[:effective_limit]
+        rows.reverse()
+    else:
+        if more:
+            rows = rows[:effective_limit]
+
+    next_cursor = None
+    if more and rows:
         next_payload = _extract_cursor_payload(rows[-1], SCENARIO_OUTPUT_CURSOR_FIELDS)
         next_cursor = _encode_cursor(next_payload)
 
-    return ScenarioOutputResponse(
-        meta=Meta(request_id=request_id, query_time_ms=int(elapsed_ms), next_cursor=next_cursor),
+    prev_cursor_value = None
+    if rows:
+        if descending:
+            if cursor_before and more:
+                prev_payload = _extract_cursor_payload(rows[0], SCENARIO_OUTPUT_CURSOR_FIELDS)
+                prev_cursor_value = _encode_cursor({"before": prev_payload})
+        else:
+            if prev_token or forward_token or effective_offset > 0:
+                prev_payload = _extract_cursor_payload(rows[0], SCENARIO_OUTPUT_CURSOR_FIELDS)
+                prev_cursor_value = _encode_cursor({"before": prev_payload})
+
+    meta = Meta(
+        request_id=request_id,
+        query_time_ms=int(elapsed_ms),
+        next_cursor=next_cursor,
+        prev_cursor=prev_cursor_value,
+    )
+    model = ScenarioOutputResponse(
+        meta=meta,
         data=[ScenarioOutputPoint(**row) for row in rows],
+    )
+    return _respond_with_etag(
+        model,
+        request,
+        response,
+        extra_headers={"Cache-Control": f"public, max-age={SCENARIO_OUTPUT_CACHE_TTL}"},
+    )
+
+
+@app.get("/v1/scenarios/{scenario_id}/metrics/latest", response_model=ScenarioMetricLatestResponse)
+def list_scenario_metrics_latest(
+    scenario_id: str,
+    request: Request,
+    response: Response,
+    tenant_id_param: Optional[str] = Query(
+        None,
+        alias="tenant_id",
+        description="Tenant identifier override; defaults to the authenticated tenant",
+    ),
+    metric: Optional[str] = Query(None, description="Filter by metric name (e.g., mid)"),
+) -> ScenarioMetricLatestResponse:
+    if not _scenario_outputs_enabled():
+        raise HTTPException(status_code=503, detail="Scenario outputs not enabled")
+
+    request_id = _current_request_id()
+    tenant_id = _resolve_tenant(request, tenant_id_param)
+    trino_cfg = TrinoConfig.from_env()
+
+    try:
+        rows, elapsed_ms = service.query_scenario_metrics_latest(
+            trino_cfg,
+            scenario_id=scenario_id,
+            tenant_id=tenant_id,
+            metric=metric,
+        )
+    except RuntimeError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+
+    model = ScenarioMetricLatestResponse(
+        meta=Meta(request_id=request_id, query_time_ms=int(elapsed_ms)),
+        data=[ScenarioMetricLatest(**row) for row in rows],
+    )
+    return _respond_with_etag(
+        model,
+        request,
+        response,
+        extra_headers={"Cache-Control": f"public, max-age={SCENARIO_METRIC_CACHE_TTL}"},
     )

@@ -3,7 +3,7 @@ from __future__ import annotations
 """Optional OIDC/JWT auth middleware for the Aurum API.
 
 Enables Bearer token verification against a JWKS endpoint when configured.
-Defaults to disabled in development via AURUM_API_AUTH_DISABLED=1.
+Controlled via AURUM_API_AUTH_DISABLED (default: 0 / enabled when OIDC config present).
 """
 
 import json
@@ -35,7 +35,10 @@ class OIDCConfig:
         issuer = os.getenv("AURUM_API_OIDC_ISSUER")
         audience = os.getenv("AURUM_API_OIDC_AUDIENCE")
         jwks_url = os.getenv("AURUM_API_OIDC_JWKS_URL")
-        disabled = (os.getenv("AURUM_API_AUTH_DISABLED", "1").lower() in {"1", "true", "yes"})
+        disabled_flag = os.getenv("AURUM_API_AUTH_DISABLED")
+        disabled = False if disabled_flag is None else disabled_flag.lower() in {"1", "true", "yes"}
+        if not issuer or not jwks_url:
+            disabled = True
         leeway = int(os.getenv("AURUM_API_JWT_LEEWAY", "60") or 60)
         return cls(issuer=issuer, audience=audience, jwks_url=jwks_url, disabled=disabled, leeway=leeway)
 

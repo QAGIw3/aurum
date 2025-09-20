@@ -75,3 +75,12 @@
 4. Wire scenario DAG stub that writes to Iceberg, plus integration tests for the new endpoints.
 5. Enhance observability (DLQ dashboard, Prometheus alerts) once new feeds are live.
 
+## Backfill automation
+
+- The `aurum_backfill_scenarios` DAG wraps `aurum.scripts.ingest.backfill`. Configure it via:
+  - `AURUM_BACKFILL_SOURCE`: registered ingest source to update.
+  - `AURUM_BACKFILL_DAYS`: rolling window of days to replay (default 7).
+  - `AURUM_BACKFILL_HISTORY_LIMIT`: hard cap to prevent infinite history sweeps (default 30).
+  - `AURUM_BACKFILL_COMMAND_TEMPLATE`: optional shell command rendered per day (the DAG passes `--shell` when `AURUM_BACKFILL_COMMAND_SHELL` is truthy).
+  - `AURUM_BACKFILL_WATERMARK_KEY`: watermark key to bump (default `default`).
+

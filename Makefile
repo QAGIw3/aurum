@@ -102,13 +102,19 @@ api-built-up:
 api-down:
 	docker compose -f compose/docker-compose.dev.yml rm -sf api api-built || true
 
-.PHONY: worker-up worker-down
+.PHONY: worker-up worker-down worker-built-up worker-built-down
 
 worker-up:
 	docker compose -f compose/docker-compose.dev.yml --profile worker up -d scenario-worker
 
 worker-down:
 	docker compose -f compose/docker-compose.dev.yml --profile worker rm -sf scenario-worker || true
+
+worker-built-up:
+	docker compose -f compose/docker-compose.dev.yml --profile worker-built up -d scenario-worker-built
+
+worker-built-down:
+	docker compose -f compose/docker-compose.dev.yml --profile worker-built rm -sf scenario-worker-built || true
 
 .PHONY: test-docker
 test-docker:

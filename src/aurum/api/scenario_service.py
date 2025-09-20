@@ -12,11 +12,18 @@ from typing import Any, Dict, Iterable, List, Optional
 
 import json
 
+from opentelemetry import propagate
+
 from aurum.scenarios import DriverType, ScenarioAssumption
+from aurum.telemetry import get_tracer
+from aurum.telemetry.context import get_request_id
 
 
 def _now() -> datetime:
     return datetime.now(timezone.utc)
+
+
+TRACER = get_tracer("aurum.api.scenario")
 
 
 @dataclass
@@ -57,6 +64,7 @@ class BaseScenarioStore:
         self,
         tenant_id: Optional[str],
         *,
+        status: Optional[str] = None,
         limit: int = 100,
         offset: int = 0,
     ) -> List[ScenarioRecord]:
@@ -86,6 +94,7 @@ class BaseScenarioStore:
         tenant_id: Optional[str],
         *,
         scenario_id: Optional[str] = None,
+        state: Optional[str] = None,
         limit: int = 100,
         offset: int = 0,
     ) -> List[ScenarioRunRecord]:
@@ -101,6 +110,14 @@ class BaseScenarioStore:
         state: str,
         tenant_id: Optional[str] = None,
     ) -> Optional[ScenarioRunRecord]:
+        raise NotImplementedError
+
+    def delete_scenario(
+        self,
+        scenario_id: str,
+        *,
+        tenant_id: Optional[str] = None,
+    ) -> bool:
         raise NotImplementedError
 
 
@@ -130,18 +147,26 @@ class InMemoryScenarioStore(BaseScenarioStore):
         return record
 
     def get_scenario(self, scenario_id: str, *, tenant_id: Optional[str] = None) -> Optional[ScenarioRecord]:
-        return self._scenarios.get(scenario_id)
+        record = self._scenarios.get(scenario_id)
+        if record is None:
+            return None
+        if tenant_id and record.tenant_id != tenant_id:
+            return None
+        return record
 
     def list_scenarios(
         self,
         tenant_id: Optional[str],
         *,
+        status: Optional[str] = None,
         limit: int = 100,
         offset: int = 0,
     ) -> List[ScenarioRecord]:
         matches = list(self._scenarios.values())
         if tenant_id:
             matches = [record for record in matches if record.tenant_id == tenant_id]
+        if status:
+            matches = [record for record in matches if record.status == status]
         matches.sort(key=lambda rec: rec.created_at, reverse=True)
         return matches[offset : offset + limit]
 
@@ -180,6 +205,9 @@ class InMemoryScenarioStore(BaseScenarioStore):
     ) -> Optional[ScenarioRunRecord]:
         record = self._runs.get(run_id)
         if record and record.scenario_id == scenario_id:
+            scenario = self._scenarios.get(scenario_id)
+            if tenant_id and scenario and scenario.tenant_id != tenant_id:
+                return None
             return record
         return None
 
@@ -188,6 +216,7 @@ class InMemoryScenarioStore(BaseScenarioStore):
         tenant_id: Optional[str],
         *,
         scenario_id: Optional[str] = None,
+        state: Optional[str] = None,
         limit: int = 100,
         offset: int = 0,
     ) -> List[ScenarioRunRecord]:
@@ -195,6 +224,7 @@ class InMemoryScenarioStore(BaseScenarioStore):
             run
             for run in self._runs.values()
             if (scenario_id is None or run.scenario_id == scenario_id)
+            and (state is None or run.state == state)
             and (self._scenarios.get(run.scenario_id) is not None)
             and (
                 not tenant_id
@@ -218,9 +248,27 @@ class InMemoryScenarioStore(BaseScenarioStore):
         run = self._runs.get(run_id)
         if run is None:
             return None
+        scenario = self._scenarios.get(run.scenario_id)
+        if tenant_id and scenario and scenario.tenant_id != tenant_id:
+            return None
         run.state = state
         self._runs[run_id] = run
         return run
+
+    def delete_scenario(
+        self,
+        scenario_id: str,
+        *,
+        tenant_id: Optional[str] = None,
+    ) -> bool:
+        record = self._scenarios.get(scenario_id)
+        if record is None:
+            return False
+        if tenant_id and record.tenant_id != tenant_id:
+            return False
+        self._scenarios.pop(scenario_id, None)
+        self._runs = {run_id: run for run_id, run in self._runs.items() if run.scenario_id != scenario_id}
+        return True
 
 
 class PostgresScenarioStore(BaseScenarioStore):
@@ -363,6 +411,7 @@ class PostgresScenarioStore(BaseScenarioStore):
         self,
         tenant_id: Optional[str],
         *,
+        status: Optional[str] = None,
         limit: int = 100,
         offset: int = 0,
     ) -> List[ScenarioRecord]:
@@ -370,14 +419,18 @@ class PostgresScenarioStore(BaseScenarioStore):
             with conn.cursor() as cur:
                 self._set_tenant(cur, tenant_id)
                 params: list[Any] = []
-                where_clause = ""
+                clauses: list[str] = []
                 if tenant_id:
-                    where_clause = "WHERE tenant_id = %s"
+                    clauses.append("tenant_id = %s")
                     params.append(tenant_id)
+                if status:
+                    clauses.append("status = %s")
+                    params.append(status)
+                where_clause = f"WHERE {' AND '.join(clauses)}" if clauses else ""
                 params.extend([limit, offset])
                 cur.execute(
                     f"""
-                    SELECT id, tenant_id, name, description, created_at
+                    SELECT id, tenant_id, name, description, status, created_at
                     FROM scenario
                     {where_clause}
                     ORDER BY created_at DESC
@@ -423,7 +476,7 @@ class PostgresScenarioStore(BaseScenarioStore):
                     name=row["name"],
                     description=row["description"],
                     assumptions=assumptions_map.get(row["id"], []),
-                    status="CREATED",
+                     status=row.get("status", "CREATED"),
                     created_at=row["created_at"],
                 )
             )
@@ -470,6 +523,21 @@ class PostgresScenarioStore(BaseScenarioStore):
             pass
         return run
 
+    def delete_scenario(
+        self,
+        scenario_id: str,
+        *,
+        tenant_id: Optional[str] = None,
+    ) -> bool:
+        with self._connect() as conn:
+            with conn.cursor() as cur:
+                self._set_tenant(cur, tenant_id)
+                cur.execute("DELETE FROM model_run WHERE scenario_id = %s", (scenario_id,))
+                cur.execute("DELETE FROM scenario WHERE id = %s", (scenario_id,))
+                deleted = cur.rowcount
+            conn.commit()
+        return deleted > 0
+
     def get_run_for_scenario(
         self,
         scenario_id: str,
@@ -506,6 +574,7 @@ class PostgresScenarioStore(BaseScenarioStore):
         tenant_id: Optional[str],
         *,
         scenario_id: Optional[str] = None,
+        state: Optional[str] = None,
         limit: int = 100,
         offset: int = 0,
     ) -> List[ScenarioRunRecord]:
@@ -524,6 +593,9 @@ class PostgresScenarioStore(BaseScenarioStore):
                 if scenario_id:
                     query.append("AND mr.scenario_id = %s")
                     params.append(scenario_id)
+                if state:
+                    query.append("AND mr.state = %s")
+                    params.append(state)
                 query.append("ORDER BY mr.submitted_at DESC")
                 query.append("LIMIT %s OFFSET %s")
                 params.extend([limit, offset])
@@ -698,8 +770,23 @@ def _maybe_emit_scenario_request(scenario: ScenarioRecord, run: ScenarioRunRecor
             "assumptions": assumptions_payload,
             "submitted_ts": int(_now().timestamp() * 1_000_000),
         }
-        headers = [("run_id", run.run_id.encode("utf-8"))]
-        producer.produce(topic=topic, value=payload, headers=headers)
-        producer.flush(2)
+        with TRACER.start_as_current_span("scenario.request.produce") as span:
+            if span.is_recording():  # pragma: no branch
+                span.set_attribute("messaging.system", "kafka")
+                span.set_attribute("messaging.destination", topic)
+                span.set_attribute("messaging.destination_kind", "topic")
+                span.set_attribute("aurum.scenario_id", scenario.id)
+                span.set_attribute("aurum.run_id", run.run_id)
+                span.set_attribute("tenant.id", scenario.tenant_id)
+            carrier: Dict[str, str] = {}
+            propagate.inject(carrier)
+            headers = [("run_id", run.run_id.encode("utf-8"))]
+            request_id = get_request_id()
+            if request_id:
+                headers.append(("x-request-id", request_id.encode("utf-8")))
+            for key, value in carrier.items():
+                headers.append((key, value.encode("utf-8")))
+            producer.produce(topic=topic, value=payload, headers=headers)
+            producer.flush(2)
     except Exception:
         return

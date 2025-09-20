@@ -1,0 +1,66 @@
+replicaCount: 2
+
+nameOverride: ""
+fullnameOverride: ""
+
+image:
+  repository: ghcr.io/aurum/aurum-api
+  tag: latest
+  pullPolicy: IfNotPresent
+
+service:
+  type: ClusterIP
+  port: 8080
+
+config:
+  AURUM_API_TRINO_HOST: trino.aurum-dev.svc.cluster.local
+  AURUM_API_TRINO_PORT: "8080"
+  AURUM_API_TRINO_USER: aurum
+  AURUM_API_TRINO_SCHEME: http
+  AURUM_API_REDIS_URL: redis://redis.aurum-dev.svc.cluster.local:6379/0
+  AURUM_API_CACHE_TTL: "60"
+  AURUM_API_RATE_LIMIT_RPS: "10"
+  AURUM_API_RATE_LIMIT_BURST: "20"
+  AURUM_API_CORS_ORIGINS: "*"
+  AURUM_API_INMEMORY_TTL: "60"
+  AURUM_API_SCENARIO_OUTPUTS_ENABLED: "1"
+  AURUM_API_OIDC_ISSUER: ""
+  AURUM_API_OIDC_AUDIENCE: ""
+  AURUM_API_OIDC_JWKS_URL: ""
+  AURUM_API_JWT_LEEWAY: "60"
+  AURUM_API_AUTH_DISABLED: "0"
+  AURUM_API_ADMIN_GROUP: aurum-admins
+  KAFKA_EXTERNAL_BOOTSTRAP: kafka.aurum.localtest.me:31092
+  SCHEMA_REGISTRY_EXTERNAL_URL: http://schema-registry.aurum.localtest.me
+  AURUM_OTEL_SERVICE_NAME: aurum-api
+  AURUM_OTEL_EXPORTER_ENDPOINT: http://jaeger-collector.aurum-dev.svc.cluster.local:4317
+  AURUM_OTEL_EXPORTER_INSECURE: "true"
+
+secrets:
+  AURUM_API_OIDC_CLIENT_ID: changeme-client
+  AURUM_API_OIDC_CLIENT_SECRET: changeme-secret
+  AURUM_API_JWT_SECRET: change-me
+  TRINO_PASSWORD: ""
+  REDIS_PASSWORD: ""
+
+resources:
+  requests:
+    cpu: 200m
+    memory: 512Mi
+  limits:
+    cpu: 1
+    memory: 1Gi
+
+serviceMonitor:
+  enabled: true
+  interval: 30s
+  scrapeTimeout: 10s
+  labels: {}
+
+podAnnotations: {}
+
+nodeSelector: {}
+
+tolerations: []
+
+affinity: {}

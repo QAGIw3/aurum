@@ -3,6 +3,8 @@ from __future__ import annotations
 import json
 from datetime import date
 
+import pytest
+
 from aurum.api import service
 
 
@@ -54,6 +56,7 @@ def test_scenario_output_cache_invalidation(monkeypatch):
             self.description = [
                 ("tenant_id",),
                 ("scenario_id",),
+                ("run_id",),
                 ("asof_date",),
                 ("curve_key",),
                 ("tenor_type",),
@@ -116,6 +119,7 @@ def test_scenario_output_cache_invalidation(monkeypatch):
         (
             "tenant-1",
             "scn-1",
+            "run-1",
             date(2025, 1, 1),
             "curve-a",
             "MONTHLY",
@@ -146,7 +150,8 @@ def test_scenario_output_cache_invalidation(monkeypatch):
         limit=10,
     )
     assert rows
-    index_key = "scenario-outputs:index:tenant-1:scn-1"
+    assert rows[0]["run_id"] == "run-1"
+    index_key = f"{cfg.namespace}:scenario-outputs:index:tenant-1:scn-1" if cfg.namespace else "scenario-outputs:index:tenant-1:scn-1"
     assert index_key in fake_redis.sets
     cache_keys = list(fake_redis.store.keys())
     assert cache_keys
@@ -154,3 +159,96 @@ def test_scenario_output_cache_invalidation(monkeypatch):
     service.invalidate_scenario_outputs_cache(cfg, tenant_id="tenant-1", scenario_id="scn-1")
     assert not fake_redis.store
     assert index_key not in fake_redis.sets
+
+
+def test_query_scenario_outputs_rejects_missing_tenant():
+    cache_cfg = service.CacheConfig(redis_url=None, ttl_seconds=60)
+    with pytest.raises(ValueError, match="tenant_id is required"):
+        service.query_scenario_outputs(
+            service.TrinoConfig(),
+            cache_cfg,
+            tenant_id="",
+            scenario_id="scn-1",
+            curve_key=None,
+            tenor_type=None,
+            metric=None,
+            limit=10,
+        )
+
+
+def test_query_ppa_valuation_builds_cashflows(monkeypatch):
+    class FakeCursor:
+        def __init__(self, rows):
+            self._rows = rows
+            self.description = [
+                ("contract_month",),
+                ("asof_date",),
+                ("tenor_label",),
+                ("metric",),
+                ("value",),
+                ("metric_currency",),
+                ("metric_unit",),
+                ("metric_unit_denominator",),
+                ("curve_key",),
+                ("tenor_type",),
+                ("run_id",),
+            ]
+
+        def execute(self, *_args, **_kwargs) -> None:
+            return None
+
+        def fetchall(self):
+            return self._rows
+
+    class FakeConnection:
+        def __init__(self, rows):
+            self._rows = rows
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):  # type: ignore[override]
+            return False
+
+        def cursor(self):
+            return FakeCursor(self._rows)
+
+    sample_rows = [
+        (date(2025, 1, 1), date(2025, 1, 1), "2025-01", "mid", 60.0, "USD", "USD/MWh", "MWh", "curve-a", "MONTHLY", "run-1"),
+        (date(2025, 2, 1), date(2025, 2, 1), "2025-02", "mid", 55.0, "USD", "USD/MWh", "MWh", "curve-a", "MONTHLY", "run-1"),
+    ]
+
+    monkeypatch.setattr(service, "_require_trino", lambda: lambda **_kw: FakeConnection(sample_rows))
+
+    options = {
+        "ppa_price": 50.0,
+        "volume_mwh": 10.0,
+        "discount_rate": 0.12,
+        "upfront_cost": 100.0,
+    }
+
+    rows, _elapsed = service.query_ppa_valuation(
+        service.TrinoConfig(),
+        scenario_id="scn-1",
+        tenant_id="tenant-1",
+        options=options,
+    )
+
+    cashflows = [row for row in rows if row["metric"] == "cashflow"]
+    assert len(cashflows) == 2
+    assert cashflows[0]["value"] == pytest.approx(100.0)
+    assert cashflows[0]["currency"] == "USD"
+    assert cashflows[0]["curve_key"] == "curve-a"
+    assert cashflows[0]["run_id"] == "run-1"
+
+    discount_rate = options["discount_rate"]
+    monthly_rate = (1 + discount_rate) ** (1 / 12) - 1
+    expected_npv = -options["upfront_cost"]
+    expected_npv += 100.0 / (1 + monthly_rate)
+    expected_npv += 50.0 / (1 + monthly_rate) ** 2
+    npv_row = next(row for row in rows if row["metric"] == "NPV")
+    assert npv_row["value"] == pytest.approx(round(expected_npv, 4))
+
+    irr_row = next(row for row in rows if row["metric"] == "IRR")
+    expected_irr = round(service._compute_irr([-options["upfront_cost"], 100.0, 50.0]) or 0.0, 6)
+    assert irr_row["value"] == expected_irr

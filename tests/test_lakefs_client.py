@@ -94,3 +94,32 @@ def test_create_tag(monkeypatch):
 
     lakefs_client.tag_commit(repo, tag, "abc123")
     assert ("POST", f"http://lakefs:8000/api/v1/repositories/{repo}/tags/{tag}", json.dumps({"id": "abc123"})) in session.calls
+
+
+def test_open_pull_request(monkeypatch):
+    repo = "demo"
+    source = "feature"
+    target = "main"
+    responses = {
+        ("POST", f"http://lakefs:8000/api/v1/repositories/{repo}/pull-requests"): DummyResponse(201, {"id": 42}),
+    }
+    session = DummySession(responses)
+    monkeypatch.setattr(lakefs_client, 'requests', type('Req', (), {'Session': staticmethod(lambda: session)}))
+
+    pr = lakefs_client.open_pull_request(repo, source=source, target=target, title="Daily ingest")
+    assert pr["id"] == 42
+    expected_payload = json.dumps({"source": source, "destination": target, "title": "Daily ingest"})
+    assert ("POST", f"http://lakefs:8000/api/v1/repositories/{repo}/pull-requests", expected_payload) in session.calls
+
+
+def test_merge_pull_request(monkeypatch):
+    repo = "demo"
+    pr_number = 42
+    responses = {
+        ("POST", f"http://lakefs:8000/api/v1/repositories/{repo}/pull-requests/{pr_number}/merge"): DummyResponse(200),
+    }
+    session = DummySession(responses)
+    monkeypatch.setattr(lakefs_client, 'requests', type('Req', (), {'Session': staticmethod(lambda: session)}))
+
+    lakefs_client.merge_pull_request(repo, pr_number)
+    assert ("POST", f"http://lakefs:8000/api/v1/repositories/{repo}/pull-requests/{pr_number}/merge", None) in session.calls

@@ -108,8 +108,8 @@ nodes:
       - containerPort: 32181
         hostPort: 2181
         protocol: TCP
-      - containerPort: 30994
-        hostPort: 29092
+      - containerPort: 31092
+        hostPort: 31092
         protocol: TCP
       - containerPort: 30121
         hostPort: 19121

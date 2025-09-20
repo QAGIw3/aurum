@@ -34,5 +34,5 @@ resources:
   - clickhouse.yaml
   - vector.yaml
   - vector-rbac.yaml
-  - api.yaml
-  - scenario-worker.yaml
+  - ../api
+  - ../scenario-worker

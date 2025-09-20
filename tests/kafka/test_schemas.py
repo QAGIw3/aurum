@@ -15,6 +15,7 @@ from fastavro import parse_schema, reader, writer  # type: ignore[import]
 
 
 SCHEMA_ROOT = Path(__file__).resolve().parents[2] / "kafka" / "schemas"
+SNAPSHOT_ROOT = Path(__file__).resolve().parent / "snapshots"
 
 
 def _iter_schema_paths() -> list[Path]:
@@ -279,6 +280,13 @@ def test_reference_schemas_serialization_roundtrip() -> None:
         buffer.seek(0)
         decoded = next(reader(buffer))
         assert config["assertions"](decoded)
+
+
+def test_scenario_schemas_backward_compatible() -> None:
+    for name in ("scenario.request.v1.avsc", "scenario.output.v1.avsc"):
+        current = _load_schema_dict(SCHEMA_ROOT / name)
+        baseline = _load_schema_dict(SNAPSHOT_ROOT / name)
+        assert current == baseline
 
 
 def test_pjm_reference_schemas_roundtrip() -> None:

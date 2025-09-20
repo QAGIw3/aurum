@@ -6,6 +6,7 @@ from pathlib import Path
 from typing import Any, Dict, List
 
 import json
+import os
 import pandas as pd
 
 
@@ -37,6 +38,19 @@ def _fraction(valid: pd.Series, total_count: int) -> float:
     return valid.sum() / total_count
 
 
+def _filter_dataframe(df: pd.DataFrame, kwargs: Dict[str, Any]) -> pd.DataFrame:
+    condition = kwargs.get("row_condition")
+    if not condition:
+        return df
+    parser = kwargs.get("condition_parser", "pandas")
+    if parser != "pandas":
+        raise ValueError(f"Unsupported condition_parser '{parser}'")
+    try:
+        return df.query(condition)
+    except Exception as exc:
+        raise ValueError(f"Failed to evaluate row_condition '{condition}': {exc}") from exc
+
+
 def _evaluate_expectation(df: pd.DataFrame, expectation: Dict[str, Any]) -> ExpectationResult:
     expectation_type = expectation["expectation_type"]
     kwargs = expectation.get("kwargs", {})
@@ -49,7 +63,8 @@ def _evaluate_expectation(df: pd.DataFrame, expectation: Dict[str, Any]) -> Expe
         return ExpectationResult(expectation_type, kwargs, success, details)
 
     column = kwargs.get("column")
-    series = df[column] if column in df.columns else pd.Series(dtype="object")
+    filtered_df = _filter_dataframe(df, kwargs)
+    series = filtered_df[column] if column in filtered_df.columns else pd.Series(dtype="object")
     total_count = len(series)
 
     if expectation_type == "expect_column_values_to_not_be_null":
@@ -107,6 +122,14 @@ def _evaluate_expectation(df: pd.DataFrame, expectation: Dict[str, Any]) -> Expe
             details = f"values not matching regex: {non_null[~mask].unique().tolist()}"
         return ExpectationResult(expectation_type, kwargs, success, details)
 
+    if expectation_type == "expect_column_proportion_of_nonnulls_to_be_between":
+        min_value = kwargs.get("min_value", 0.0)
+        max_value = kwargs.get("max_value", 1.0)
+        proportion = _fraction(series.notna(), total_count)
+        success = proportion >= min_value and proportion <= max_value
+        details = None if success else f"observed proportion {proportion:.3f}"
+        return ExpectationResult(expectation_type, kwargs, success, details)
+
     raise NotImplementedError(f"Expectation type '{expectation_type}' not supported")
 
 
@@ -116,7 +139,25 @@ def validate_dataframe(df: pd.DataFrame, suite_path: Path | str) -> List[Expecta
     suite = json.loads(suite_path.read_text(encoding="utf-8"))
     expectations = suite.get("expectations", [])
 
-    results = [_evaluate_expectation(df, expectation) for expectation in expectations]
+    processed: List[Dict[str, Any]] = []
+    for expectation in expectations:
+        overrides = expectation.get("meta", {}).get("env_overrides", {})
+        if overrides:
+            expectation = expectation.copy()
+            kwargs = dict(expectation.get("kwargs", {}))
+            for key, env_var in overrides.items():
+                raw = os.getenv(env_var)
+                if raw is None:
+                    continue
+                try:
+                    value = json.loads(raw)
+                except json.JSONDecodeError:
+                    value = raw
+                kwargs[key] = value
+            expectation["kwargs"] = kwargs
+        processed.append(expectation)
+
+    results = [_evaluate_expectation(df, expectation) for expectation in processed]
     return results
 
 

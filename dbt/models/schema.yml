@@ -2,14 +2,41 @@ version: 2
 
 sources:
   - name: iceberg_market
+    description: Iceberg curated market tables.
     schema: market
+    freshness:
+      warn_after: {count: 12, period: hour}
+      error_after: {count: 24, period: hour}
     tables:
       - name: curve_observation
         description: Canonical Iceberg table containing normalized vendor curve rows.
         loaded_at_field: _ingest_ts
+        columns:
+          - name: curve_key
+            tests:
+              - not_null
+          - name: _ingest_ts
+            tests:
+              - not_null
       - name: scenario_output
         description: Scenario engine outputs appended by the worker.
         loaded_at_field: _ingest_ts
+        columns:
+          - name: scenario_id
+            tests:
+              - not_null
+          - name: tenant_id
+            tests:
+              - not_null
+          - name: run_id
+            tests:
+              - not_null
+          - name: metric
+            tests:
+              - not_null
+          - name: _ingest_ts
+            tests:
+              - not_null
 
 models:
   - name: stg_curve_observation
@@ -85,8 +112,15 @@ models:
           - not_null
   - name: mart_scenario_output
     description: Latest scenario outputs materialized as a Trino view.
+    tests:
+      - unique:
+          column_name: "tenant_id || '|' || scenario_id || '|' || run_id || '|' || metric || '|' || tenor_label"
     columns:
       - name: scenario_id
+        tests:
+          - not_null
+      - name: run_id
+        description: Identifier of the scenario run that produced the output.
         tests:
           - not_null
       - name: tenant_id
@@ -95,3 +129,68 @@ models:
       - name: value
         tests:
           - not_null
+      - name: metric_currency
+        description: Currency code parsed from the metric unit metadata.
+      - name: metric_unit_denominator
+        description: Unit denominator parsed from the metric unit metadata (e.g., MWh).
+  - name: mart_scenario_metric_latest
+    description: Helper view exposing the latest value per scenario and metric.
+    tests:
+      - unique:
+          column_name: "tenant_id || '|' || scenario_id || '|' || metric"
+    columns:
+      - name: scenario_id
+        tests:
+          - not_null
+      - name: run_id
+        description: Run identifier corresponding to the latest metric value.
+        tests:
+          - not_null
+      - name: tenant_id
+        tests:
+          - not_null
+      - name: metric
+        tests:
+          - not_null
+      - name: latest_value
+        description: Most recent value for the metric.
+      - name: latest_asof_date
+        description: As-of date associated with the latest metric value.
+  - name: mart_ppa_valuation
+    description: Persisted PPA valuation cashflows and summary metrics.
+    tests:
+      - unique:
+          column_name: "ppa_contract_id || '|' || scenario_id || '|' || metric || '|' || coalesce(cast(period_start as varchar), '')"
+    columns:
+      - name: ppa_contract_id
+        tests:
+          - not_null
+      - name: scenario_id
+        tests:
+          - not_null
+      - name: metric
+        tests:
+          - not_null
+
+exposures:
+  - name: scenario_outputs_mart
+    type: dashboard
+    maturity: medium
+    url: https://internal.aurum.local/dashboards/scenario
+    depends_on:
+      - ref('mart_scenario_output')
+      - ref('mart_scenario_metric_latest')
+    owner:
+      name: Scenario Analytics
+      email: analytics@aurum.local
+  - name: iceberg_maintenance
+    type: application
+    maturity: low
+    url: https://airflow.aurum.local/dag/iceberg_maintenance
+    description: Scheduled job that expires Iceberg snapshots and compacts data files.
+    depends_on:
+      - source('iceberg_market', 'curve_observation')
+      - source('iceberg_market', 'scenario_output')
+    owner:
+      name: Platform Operations
+      email: platform@aurum.local

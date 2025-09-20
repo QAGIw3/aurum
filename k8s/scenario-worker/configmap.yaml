@@ -1,0 +1,22 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: aurum-scenario-worker-config
+  labels:
+    app.kubernetes.io/name: aurum-scenario-worker
+    app.kubernetes.io/component: scenario-worker
+    app.kubernetes.io/part-of: aurum
+    app.kubernetes.io/managed-by: kustomize
+data:
+  KAFKA_BOOTSTRAP_SERVERS: kafka.aurum-dev.svc.cluster.local:9092
+  SCHEMA_REGISTRY_URL: http://schema-registry.aurum-dev.svc.cluster.local:8081
+  AURUM_SCENARIO_REQUEST_TOPIC: aurum.scenario.request.v1
+  AURUM_SCENARIO_OUTPUT_TOPIC: aurum.scenario.output.v1
+  AURUM_SCENARIO_WORKER_GROUP: aurum-scenario-worker
+  AURUM_SCENARIO_METRICS_PORT: "9464"
+  AURUM_SCENARIO_METRICS_ADDR: 0.0.0.0
+  AURUM_SCENARIO_MAX_ATTEMPTS: "3"
+  AURUM_SCENARIO_RETRY_BACKOFF_SEC: "0.5"
+  AURUM_OTEL_SERVICE_NAME: aurum-scenario-worker
+  AURUM_OTEL_EXPORTER_ENDPOINT: http://jaeger-collector.aurum-dev.svc.cluster.local:4317
+  AURUM_OTEL_EXPORTER_INSECURE: "true"

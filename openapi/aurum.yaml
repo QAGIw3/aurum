@@ -34,7 +34,7 @@ paths:
             type: integer
             minimum: 1
             maximum: 1000
-          description: Maximum number of rows to return.
+          description: Maximum number of rows to return (capped at 500 by the service).
         - name: offset
           in: query
           schema:
@@ -51,18 +51,11 @@ paths:
           schema:
             type: string
           description: Alias for `cursor` to resume iteration from a previously returned `next_cursor`.
-          description: Opaque cursor for stable pagination.
-        - name: since_cursor
+        - name: prev_cursor
           in: query
           schema:
             type: string
-          description: Alias for `cursor` to resume iteration from a previously returned `next_cursor`.
-          description: Opaque cursor for stable pagination.
-        - name: since_cursor
-          in: query
-          schema:
-            type: string
-          description: Alias for `cursor` to resume iteration from a previously returned `next_cursor`.
+          description: Cursor pointing to the previous page; use the `meta.prev_cursor` value from a prior response.
       responses:
         '200':
           description: Curve data retrieved.
@@ -73,6 +66,52 @@ paths:
         '401':
           $ref: '#/components/responses/Unauthorized'
   /v1/scenarios:
+    get:
+      summary: List scenarios for the authenticated tenant.
+      operationId: listScenarios
+      security:
+        - oauth2: [aurum]
+      parameters:
+        - name: limit
+          in: query
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 200
+        - name: status
+          in: query
+          required: false
+          schema:
+            type: string
+          description: Optional scenario status filter
+        - name: offset
+          in: query
+          required: false
+          schema:
+            type: integer
+            minimum: 0
+        - name: cursor
+          in: query
+          required: false
+          schema:
+            type: string
+          description: Opaque cursor for stable pagination
+        - name: since_cursor
+          in: query
+          required: false
+          schema:
+            type: string
+          description: Resume iteration from a previously returned cursor
+      responses:
+        '200':
+          description: Scenarios returned.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ScenarioListResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
     post:
       summary: Create a new scenario definition with assumptions.
       operationId: createScenario
@@ -114,6 +153,22 @@ paths:
                 $ref: '#/components/schemas/ScenarioResponse'
         '404':
           $ref: '#/components/responses/NotFound'
+    delete:
+      summary: Delete a scenario definition and associated runs.
+      operationId: deleteScenario
+      security:
+        - oauth2: [aurum]
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '204':
+          description: Scenario deleted.
+        '404':
+          $ref: '#/components/responses/NotFound'
   /v1/scenarios/{id}/run:
     post:
       summary: Trigger a scenario run asynchronously via Kafka.
@@ -141,6 +196,58 @@ paths:
                 $ref: '#/components/schemas/ScenarioRunResponse'
         '404':
           $ref: '#/components/responses/NotFound'
+  /v1/scenarios/{id}/runs:
+    get:
+      summary: List runs for a scenario.
+      operationId: listScenarioRuns
+      security:
+        - oauth2: [aurum]
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: limit
+          in: query
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 200
+        - name: offset
+          in: query
+          required: false
+          schema:
+            type: integer
+            minimum: 0
+        - name: state
+          in: query
+          required: false
+          schema:
+            type: string
+          description: Optional run state filter
+        - name: cursor
+          in: query
+          required: false
+          schema:
+            type: string
+          description: Opaque cursor for run pagination
+        - name: since_cursor
+          in: query
+          required: false
+          schema:
+            type: string
+          description: Resume iteration from a previously returned run cursor
+      responses:
+        '200':
+          description: Scenario runs returned.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ScenarioRunListResponse'
+        '404':
+          $ref: '#/components/responses/NotFound'
   /v1/scenarios/{id}/runs/{run_id}:
     get:
       summary: Get the status of a scenario run.
@@ -161,6 +268,54 @@ paths:
       responses:
         '200':
           description: Scenario run status returned.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ScenarioRunResponse'
+        '404':
+          $ref: '#/components/responses/NotFound'
+  /v1/scenarios/runs/{run_id}/cancel:
+    post:
+      summary: Cancel a scenario run.
+      operationId: cancelScenarioRun
+      security:
+        - oauth2: [aurum]
+      parameters:
+        - name: run_id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Scenario run cancelled.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ScenarioRunResponse'
+        '404':
+          $ref: '#/components/responses/NotFound'
+  /v1/scenarios/runs/{run_id}/state:
+    post:
+      summary: Update the state of a scenario run.
+      operationId: updateScenarioRunState
+      security:
+        - oauth2: [aurum]
+      parameters:
+        - name: run_id
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: state
+          in: query
+          required: true
+          schema:
+            type: string
+            pattern: ^(QUEUED|RUNNING|SUCCEEDED|FAILED|CANCELLED)$
+      responses:
+        '200':
+          description: Scenario run state updated.
           content:
             application/json:
               schema:
@@ -201,6 +356,7 @@ paths:
             minimum: 1
             maximum: 1000
           required: false
+          description: Maximum number of rows to return (capped at 500 by the service).
         - name: cursor
           in: query
           schema:
@@ -213,6 +369,12 @@ paths:
             type: string
           required: false
           description: Alias for `cursor` to resume iteration from a previously returned `next_cursor`.
+        - name: prev_cursor
+          in: query
+          schema:
+            type: string
+          required: false
+          description: Cursor pointing to the previous page; use the `meta.prev_cursor` value from a prior response.
       responses:
         '200':
           description: Scenario outputs.
@@ -222,9 +384,37 @@ paths:
                 $ref: '#/components/schemas/ScenarioOutputResponse'
         '401':
           $ref: '#/components/responses/Unauthorized'
+  /v1/scenarios/{id}/metrics/latest:
+    get:
+      summary: List latest scenario metrics
+      operationId: listScenarioMetricsLatest
+      security:
+        - oauth2: [aurum]
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: metric
+          in: query
+          required: false
+          schema:
+            type: string
+          description: Optional metric filter (e.g., mid)
+      responses:
+        '200':
+          description: Latest metric snapshots per scenario metric.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ScenarioMetricLatestResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
   /v1/ppa/valuate:
     post:
       summary: Calculate cashflows and risk metrics for a PPA contract.
+      description: Requires a scenario identifier; the valuation pulls latest scenario outputs from Iceberg for the authenticated tenant.
       operationId: valuatePpa
       security:
         - oauth2: [aurum]
@@ -495,6 +685,9 @@ components:
         next_cursor:
           type: string
           nullable: true
+        prev_cursor:
+          type: string
+          nullable: true
     CurvePoint:
       type: object
       required: [curve_key, tenor_label, mid]
@@ -731,12 +924,33 @@ components:
             created_at:
               type: string
               format: date-time
+    ScenarioListResponse:
+      type: object
+      properties:
+        meta:
+          $ref: '#/components/schemas/Meta'
+        data:
+          type: array
+          items:
+            $ref: '#/components/schemas/ScenarioResponse/properties/data'
+    ScenarioRunListResponse:
+      type: object
+      properties:
+        meta:
+          $ref: '#/components/schemas/Meta'
+        data:
+          type: array
+          items:
+            $ref: '#/components/schemas/ScenarioRunResponse/properties/data'
     ScenarioOutputPoint:
       type: object
       required: [scenario_id, curve_key, metric]
       properties:
         scenario_id:
           type: string
+        run_id:
+          type: string
+          nullable: true
         asof_date:
           type: string
           format: date
@@ -781,6 +995,42 @@ components:
           type: array
           items:
             $ref: '#/components/schemas/ScenarioOutputPoint'
+    ScenarioMetricLatest:
+      type: object
+      required: [scenario_id, metric]
+      properties:
+        scenario_id:
+          type: string
+        metric:
+          type: string
+        curve_key:
+          type: string
+          nullable: true
+        tenor_label:
+          type: string
+          nullable: true
+        latest_value:
+          type: number
+          nullable: true
+        latest_band_lower:
+          type: number
+          nullable: true
+        latest_band_upper:
+          type: number
+          nullable: true
+        latest_asof_date:
+          type: string
+          format: date
+          nullable: true
+    ScenarioMetricLatestResponse:
+      type: object
+      properties:
+        meta:
+          $ref: '#/components/schemas/Meta'
+        data:
+          type: array
+          items:
+            $ref: '#/components/schemas/ScenarioMetricLatest'
     PpaValuationRequest:
       type: object
       required: [ppa_contract_id]
@@ -789,6 +1039,7 @@ components:
           type: string
         scenario_id:
           type: string
+          description: Scenario identifier to value; required when calling the API.
         asof_date:
           type: string
           format: date
@@ -817,6 +1068,14 @@ components:
         value:
           type: number
         currency:
+          type: string
+        unit:
+          type: string
+        run_id:
+          type: string
+        curve_key:
+          type: string
+        tenor_type:
           type: string
     ErrorResponse:
       type: object

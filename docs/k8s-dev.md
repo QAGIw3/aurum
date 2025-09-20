@@ -54,7 +54,7 @@ Install kind via Homebrew (`brew install kind`) or the official release page. En
    | MinIO Console    | `http://localhost:9001`  |
    | Postgres         | `postgresql://localhost:5432/aurum` |
    | Timescale        | `postgresql://localhost:5433/timeseries` |
-   | Kafka            | `localhost:29092` (NodePort) |
+| Kafka            | `kafka.aurum.localtest.me:31092` (NodePort) |
    | Schema Registry  | `http://localhost:8081` (Apicurio) |
    | lakeFS           | `http://localhost:8000`  |
    | Nessie           | `http://localhost:19121` |
@@ -134,7 +134,7 @@ This monitors the `api` Service on `/metrics`. Alternatively, the Service is ann
 
 - Superset and other optional UI services still run via docker-compose; porting them to Kubernetes can be layered on later once we decide how we want to package those containers.
 - Vector runs as a DaemonSet that tails cluster logs via the `kubernetes_logs` source; update `vector/vector.toml` if you change sink destinations or pod allowlists.
-- Kafka runs under Strimzi in KRaft mode; use `aurum-kafka-kafka-bootstrap:9092` for in-cluster clients and `localhost:29092` for host access.
+- Kafka runs under Strimzi in KRaft mode; use `aurum-kafka-kafka-bootstrap:9092` for in-cluster clients and `kafka.aurum.localtest.me:31092` for host access.
 - Use `make kind-apply-ui` / `make kind-delete-ui` to toggle Superset and Kafka UI when you want dashboards in the kind stack.
 - The manifests are organized with Kustomize (`k8s/base`, `k8s/dev`) so you can add overlays for stage/prod style experimentation or inject secrets via alternative generators.
 - If you change the default credentials, update `k8s/base/secret-env.yaml` or create your own secret prior to `make kind-apply` (e.g., `kubectl create secret generic aurum-secrets --from-env-file=.env`).

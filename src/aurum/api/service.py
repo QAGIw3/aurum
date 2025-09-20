@@ -4,11 +4,15 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
 import time
+from calendar import monthrange
 from datetime import date
 from typing import Any, Dict, Iterable, List, Optional, Tuple
 
 from .config import CacheConfig, TrinoConfig
+
+LOGGER = logging.getLogger(__name__)
 
 
 def _require_trino():
@@ -22,13 +26,59 @@ def _require_trino():
 
 
 def _maybe_redis_client(cache_cfg: CacheConfig):
-    if not cache_cfg.redis_url:
-        return None
     try:  # pragma: no cover - exercised in integration
         import redis  # type: ignore
-
-        return redis.Redis.from_url(cache_cfg.redis_url)
     except ModuleNotFoundError:
+        return None
+
+    try:
+        if cache_cfg.mode == "sentinel" and cache_cfg.sentinel_endpoints and cache_cfg.sentinel_master:
+            from redis.sentinel import Sentinel  # type: ignore
+
+            sentinel = Sentinel(
+                cache_cfg.sentinel_endpoints,
+                username=cache_cfg.username,
+                password=cache_cfg.password,
+                socket_timeout=2.0,
+            )
+            client = sentinel.master_for(cache_cfg.sentinel_master, db=cache_cfg.db)
+        elif cache_cfg.mode == "cluster" and cache_cfg.cluster_nodes:
+            try:
+                from redis.cluster import RedisCluster  # type: ignore
+            except Exception:
+                LOGGER.warning("Redis cluster mode requested but redis-py cluster support is unavailable")
+                return None
+
+            startup_nodes = []
+            for node in cache_cfg.cluster_nodes:
+                host, _, port = node.partition(":")
+                if not host:
+                    continue
+                try:
+                    startup_nodes.append({"host": host, "port": int(port or "6379")})
+                except ValueError:
+                    continue
+            if not startup_nodes:
+                return None
+            client = RedisCluster(
+                startup_nodes=startup_nodes,
+                username=cache_cfg.username,
+                password=cache_cfg.password,
+                decode_responses=False,
+            )
+        elif cache_cfg.redis_url:
+            client = redis.Redis.from_url(
+                cache_cfg.redis_url,
+                username=cache_cfg.username,
+                password=cache_cfg.password,
+                db=cache_cfg.db,
+            )
+        else:
+            return None
+        client.ping()
+        return client
+    except Exception:
+        LOGGER.debug("Redis client initialization failed", exc_info=True)
         return None
 
 
@@ -68,6 +118,7 @@ SCENARIO_OUTPUT_ORDER_COLUMNS = [
     "tenor_label",
     "contract_month",
     "metric",
+    "run_id",
 ]
 
 
@@ -94,6 +145,7 @@ def _build_keyset_clause(
     *,
     alias: str = "",
     order_columns: Iterable[str],
+    comparison: str = ">",
 ) -> str:
     if not cursor:
         return ""
@@ -110,7 +162,7 @@ def _build_keyset_clause(
             continue
         literal = _literal_for_column(column, cursor.get(column))
         expr = _order_expression(column, alias=alias_prefix)
-        base_condition = f"{expr} > {literal}"
+        base_condition = f"{expr} {comparison} {literal}"
         if idx == 0:
             clauses.append(base_condition)
             continue
@@ -142,6 +194,8 @@ def _build_sql(
     limit: int,
     offset: int,
     cursor_after: Optional[Dict[str, Any]],
+    cursor_before: Optional[Dict[str, Any]] = None,
+    descending: bool = False,
 ) -> str:
     base = "iceberg.market.curve_observation"
     filters: Dict[str, Optional[str]] = {
@@ -160,25 +214,42 @@ def _build_sql(
         "cast(asof_date as date) as asof_date, mid, bid, ask, price_type"
     )
 
-    order_clause = " ORDER BY curve_key, tenor_label, contract_month, asof_date, price_type"
+    direction = "DESC" if descending else "ASC"
+    order_clause = " ORDER BY " + ", ".join(f"{col} {direction}" for col in ORDER_COLUMNS)
+    comparison_cursor = cursor_after
+    comparison = ">"
+    if cursor_before:
+        comparison_cursor = cursor_before
+        comparison = "<"
+        offset = 0
+
     if asof:
         asof_clause = f"asof_date = DATE '{asof.isoformat()}'"
         where_final = where + (" AND " if where else " WHERE ") + asof_clause
-        where_final += _build_keyset_clause(cursor_after, alias="", order_columns=ORDER_COLUMNS)
-        effective_offset = 0 if cursor_after else offset
+        where_final += _build_keyset_clause(
+            comparison_cursor,
+            alias="",
+            order_columns=ORDER_COLUMNS,
+            comparison=comparison,
+        )
+        effective_offset = 0 if comparison_cursor else offset
         return (
             f"SELECT {select_cols} FROM {base}{where_final}{order_clause} "
             f"LIMIT {limit} OFFSET {effective_offset}"
         )
 
-    # latest per (curve_key, tenor_label)
     inner = (
         f"SELECT {select_cols}, "
         f"row_number() OVER (PARTITION BY curve_key, tenor_label ORDER BY asof_date DESC, _ingest_ts DESC) rn "
         f"FROM {base}{where}"
     )
-    keyset_clause = _build_keyset_clause(cursor_after, alias="t", order_columns=ORDER_COLUMNS)
-    effective_offset = 0 if cursor_after else offset
+    keyset_clause = _build_keyset_clause(
+        comparison_cursor,
+        alias="t",
+        order_columns=ORDER_COLUMNS,
+        comparison=comparison,
+    )
+    effective_offset = 0 if comparison_cursor else offset
     return (
         "SELECT curve_key, tenor_label, tenor_type, contract_month, asof_date, mid, bid, ask, price_type "
         f"FROM ({inner}) t WHERE rn = 1{keyset_clause}{order_clause} "
@@ -207,6 +278,8 @@ def query_curves(
     limit: int,
     offset: int = 0,
     cursor_after: Optional[Dict[str, Any]] = None,
+    cursor_before: Optional[Dict[str, Any]] = None,
+    descending: bool = False,
 ) -> Tuple[List[Dict[str, Any]], float]:
     params = {
         "asof": asof,
@@ -221,6 +294,8 @@ def query_curves(
         "limit": limit,
         "offset": offset,
         "cursor_after": cursor_after,
+        "cursor_before": cursor_before,
+        "descending": descending,
     }
     sql = _build_sql(
         asof=asof,
@@ -235,6 +310,8 @@ def query_curves(
         limit=limit,
         offset=offset,
         cursor_after=cursor_after,
+        cursor_before=cursor_before,
+        descending=descending,
     )
 
     # try cache
@@ -409,7 +486,7 @@ def query_curves_diff(
     if client is not None and cache_key is not None:
         try:  # pragma: no cover
             client.setex(cache_key, cache_cfg.ttl_seconds, json.dumps(rows, default=str))
-            index_key = _scenario_cache_index_key(tenant_id, scenario_id)
+            index_key = _scenario_cache_index_key(cache_cfg.namespace, tenant_id, scenario_id)
             client.sadd(index_key, cache_key)
             client.expire(index_key, cache_cfg.ttl_seconds)
         except Exception:
@@ -418,14 +495,15 @@ def query_curves_diff(
     return rows, elapsed
 
 
-def _scenario_cache_index_key(tenant_id: Optional[str], scenario_id: str) -> str:
+def _scenario_cache_index_key(namespace: str, tenant_id: Optional[str], scenario_id: str) -> str:
     tenant_key = tenant_id or "anon"
-    return f"scenario-outputs:index:{tenant_key}:{scenario_id}"
+    prefix = f"{namespace}:" if namespace else ""
+    return f"{prefix}scenario-outputs:index:{tenant_key}:{scenario_id}"
 
 
 def _build_sql_scenario_outputs(
     *,
-    tenant_id: Optional[str],
+    tenant_id: str,
     scenario_id: str,
     curve_key: Optional[str],
     tenor_type: Optional[str],
@@ -433,6 +511,8 @@ def _build_sql_scenario_outputs(
     limit: int,
     offset: int,
     cursor_after: Optional[Dict[str, Any]],
+    cursor_before: Optional[Dict[str, Any]] = None,
+    descending: bool = False,
 ) -> str:
     base = "iceberg.market.scenario_output_latest"
     filters: Dict[str, Optional[str]] = {
@@ -445,11 +525,23 @@ def _build_sql_scenario_outputs(
     where = _build_where(filters)
     if not where:
         where = " WHERE 1 = 1"
-    where += _build_keyset_clause(cursor_after, alias="", order_columns=SCENARIO_OUTPUT_ORDER_COLUMNS)
-    order_clause = " ORDER BY scenario_id, curve_key, tenor_label, contract_month, metric"
-    effective_offset = 0 if cursor_after else offset
+    comparison_cursor = cursor_after
+    comparison = ">"
+    if cursor_before:
+        comparison_cursor = cursor_before
+        comparison = "<"
+        offset = 0
+    where += _build_keyset_clause(
+        comparison_cursor,
+        alias="",
+        order_columns=SCENARIO_OUTPUT_ORDER_COLUMNS,
+        comparison=comparison,
+    )
+    direction = "DESC" if descending else "ASC"
+    order_clause = " ORDER BY " + ", ".join(f"{col} {direction}" for col in SCENARIO_OUTPUT_ORDER_COLUMNS)
+    effective_offset = 0 if comparison_cursor else offset
     return (
-        "SELECT tenant_id, scenario_id, cast(asof_date as date) as asof_date, curve_key, tenor_type, "
+        "SELECT tenant_id, scenario_id, run_id, cast(asof_date as date) as asof_date, curve_key, tenor_type, "
         "cast(contract_month as date) as contract_month, tenor_label, metric, value, band_lower, band_upper, "
         "attribution, version_hash "
         f"FROM {base}{where}{order_clause} LIMIT {limit} OFFSET {effective_offset}"
@@ -460,7 +552,7 @@ def query_scenario_outputs(
     trino_cfg: TrinoConfig,
     cache_cfg: CacheConfig,
     *,
-    tenant_id: Optional[str],
+    tenant_id: str,
     scenario_id: str,
     curve_key: Optional[str],
     tenor_type: Optional[str],
@@ -468,7 +560,12 @@ def query_scenario_outputs(
     limit: int,
     offset: int = 0,
     cursor_after: Optional[Dict[str, Any]] = None,
+    cursor_before: Optional[Dict[str, Any]] = None,
+    descending: bool = False,
 ) -> Tuple[List[Dict[str, Any]], float]:
+    if not tenant_id:
+        raise ValueError("tenant_id is required")
+
     params = {
         "tenant_id": tenant_id,
         "scenario_id": scenario_id,
@@ -478,6 +575,8 @@ def query_scenario_outputs(
         "limit": limit,
         "offset": offset,
         "cursor_after": cursor_after,
+        "cursor_before": cursor_before,
+        "descending": descending,
     }
     sql = _build_sql_scenario_outputs(
         tenant_id=tenant_id,
@@ -488,12 +587,15 @@ def query_scenario_outputs(
         limit=limit,
         offset=offset,
         cursor_after=cursor_after,
+        cursor_before=cursor_before,
+        descending=descending,
     )
 
     client = _maybe_redis_client(cache_cfg)
     cache_key = None
+    prefix = f"{cache_cfg.namespace}:" if cache_cfg.namespace else ""
     if client is not None:
-        cache_key = f"scenario-outputs:{_cache_key({**params, 'sql': sql})}"
+        cache_key = f"{prefix}scenario-outputs:{_cache_key({**params, 'sql': sql})}"
         cached = client.get(cache_key)
         if cached:  # pragma: no cover
             data = json.loads(cached)
@@ -514,12 +616,270 @@ def query_scenario_outputs(
     if client is not None and cache_key is not None:
         try:  # pragma: no cover
             client.setex(cache_key, cache_cfg.ttl_seconds, json.dumps(rows, default=str))
-            index_key = _scenario_cache_index_key(tenant_id, scenario_id)
+            index_key = _scenario_cache_index_key(cache_cfg.namespace, tenant_id, scenario_id)
             client.sadd(index_key, cache_key)
             client.expire(index_key, cache_cfg.ttl_seconds)
         except Exception:
             pass
 
+    return rows, elapsed
+
+
+def _coerce_float(value: Any, default: float = 0.0) -> float:
+    try:
+        if value is None:
+            return default
+        return float(value)
+    except (TypeError, ValueError):
+        return default
+
+
+def _coerce_date(value: Any, fallback: date) -> date:
+    if isinstance(value, date):
+        return value
+    if isinstance(value, str):
+        try:
+            return date.fromisoformat(value)
+        except ValueError:
+            return fallback
+    return fallback
+
+
+def _month_end(day: date) -> date:
+    last_day = monthrange(day.year, day.month)[1]
+    return day.replace(day=last_day)
+
+
+def _month_offset(start: date, end: date) -> int:
+    return (end.year - start.year) * 12 + (end.month - start.month)
+
+
+def _extract_currency(row: Dict[str, Any]) -> Optional[str]:
+    currency = row.get("metric_currency")
+    if currency:
+        currency_str = str(currency).strip()
+        if currency_str:
+            return currency_str
+    unit = row.get("metric_unit")
+    if unit:
+        parts = str(unit).split("/", 1)
+        candidate = parts[0].strip()
+        if candidate:
+            return candidate
+    return None
+
+
+def _compute_irr(cashflows: List[float], *, tolerance: float = 1e-6, max_iterations: int = 80) -> Optional[float]:
+    if not cashflows:
+        return None
+    if all(cf >= 0 for cf in cashflows) or all(cf <= 0 for cf in cashflows):
+        return None
+
+    def npv(rate: float) -> float:
+        total = 0.0
+        for idx, cf in enumerate(cashflows):
+            total += cf / (1.0 + rate) ** idx
+        return total
+
+    low, high = -0.9999, 10.0
+    f_low = npv(low)
+    f_high = npv(high)
+    if f_low == 0:
+        return low
+    if f_high == 0:
+        return high
+    if f_low * f_high > 0:
+        return None
+
+    mid = (low + high) / 2.0
+    for _ in range(max_iterations):
+        mid = (low + high) / 2.0
+        f_mid = npv(mid)
+        if abs(f_mid) < tolerance:
+            return mid
+        if f_low * f_mid < 0:
+            high = mid
+            f_high = f_mid
+        else:
+            low = mid
+            f_low = f_mid
+    return mid
+
+
+def query_ppa_valuation(
+    trino_cfg: TrinoConfig,
+    *,
+    scenario_id: str,
+    tenant_id: Optional[str] = None,
+    asof_date: Optional[date] = None,
+    metric: Optional[str] = "mid",
+    options: Optional[Dict[str, Any]] = None,
+) -> Tuple[List[Dict[str, Any]], float]:
+    base = "mart_scenario_output"
+    filters: Dict[str, Optional[str]] = {"scenario_id": scenario_id}
+    if tenant_id:
+        filters["tenant_id"] = tenant_id
+    target_metric = metric or "mid"
+    filters["metric"] = target_metric
+    where = _build_where(filters)
+    if asof_date:
+        clause = f"asof_date = DATE '{asof_date.isoformat()}'"
+        where = where + (" AND " if where else " WHERE ") + clause
+
+    sql = (
+        "SELECT cast(contract_month as date) as contract_month, "
+        "cast(asof_date as date) as asof_date, tenor_label, metric, value, "
+        "metric_currency, metric_unit, metric_unit_denominator, curve_key, tenor_type, run_id "
+        f"FROM {base}{where} "
+        "ORDER BY contract_month NULLS LAST, tenor_label"
+    )
+
+    connect = _require_trino()
+    start = time.perf_counter()
+    rows: List[Dict[str, Any]] = []
+    with connect(host=trino_cfg.host, port=trino_cfg.port, user=trino_cfg.user, http_scheme=trino_cfg.http_scheme) as conn:  # type: ignore[arg-type]
+        cur = conn.cursor()
+        cur.execute(sql)
+        columns = [col[0] for col in cur.description]
+        for rec in cur.fetchall():
+            rows.append({col: val for col, val in zip(columns, rec)})
+    elapsed = (time.perf_counter() - start) * 1000.0
+
+    if not rows:
+        return [], elapsed
+
+    opts = options or {}
+    ppa_price = _coerce_float(opts.get("ppa_price"), 0.0)
+    volume = _coerce_float(opts.get("volume_mwh"), 1.0)
+    discount_rate = _coerce_float(opts.get("discount_rate"), 0.0)
+    upfront_cost = _coerce_float(opts.get("upfront_cost"), 0.0)
+    if discount_rate <= -1.0:
+        discount_rate = 0.0
+    monthly_rate = (1.0 + discount_rate) ** (1.0 / 12.0) - 1.0 if discount_rate else 0.0
+
+    fallback_date = asof_date or date.today()
+    base_period: Optional[date] = None
+    latest_period: Optional[date] = None
+    npv_total = -upfront_cost
+    cashflows_by_offset: Dict[int, float] = {}
+    metrics_out: List[Dict[str, Any]] = []
+    currency_hint: Optional[str] = None
+    curve_hint: Optional[str] = None
+    run_hint: Optional[str] = None
+    tenor_hint: Optional[str] = None
+
+    for row in rows:
+        if str(row.get("metric")) != target_metric:
+            continue
+        period_candidate = row.get("contract_month") or row.get("asof_date") or fallback_date
+        period = _coerce_date(period_candidate, fallback_date)
+        base_period = base_period or period
+        latest_period = period
+        offset = _month_offset(base_period, period) + 1
+        price_value = _coerce_float(row.get("value"), 0.0)
+        cashflow_value = (price_value - ppa_price) * volume
+        cashflows_by_offset[offset] = cashflows_by_offset.get(offset, 0.0) + cashflow_value
+        discount_factor = (1.0 + monthly_rate) ** offset if monthly_rate else 1.0
+        npv_total += cashflow_value / discount_factor
+        currency = _extract_currency(row)
+        if currency:
+            currency_hint = currency_hint or currency
+        curve = row.get("curve_key")
+        if curve:
+            curve_hint = curve_hint or curve
+        run_id = row.get("run_id")
+        if run_id:
+            run_hint = run_hint or run_id
+        tenor = row.get("tenor_type")
+        if tenor:
+            tenor_hint = tenor_hint or tenor
+        metrics_out.append(
+            {
+                "period_start": period,
+                "period_end": _month_end(period),
+                "metric": "cashflow",
+                "value": round(cashflow_value, 4),
+                "currency": currency or currency_hint,
+                "unit": (currency or currency_hint),
+                "curve_key": curve or curve_hint,
+                "run_id": row.get("run_id") or run_hint,
+                "tenor_type": row.get("tenor_type") or tenor_hint,
+            }
+        )
+
+    if not metrics_out:
+        return [], elapsed
+
+    summary_start = base_period or fallback_date
+    summary_end = _month_end(latest_period) if latest_period else summary_start
+    currency_summary = currency_hint or metrics_out[0].get("currency")
+    metrics_out.append(
+        {
+            "period_start": summary_start,
+            "period_end": summary_end,
+            "metric": "NPV",
+            "value": round(npv_total, 4),
+            "currency": currency_summary,
+            "unit": currency_summary,
+            "curve_key": curve_hint,
+            "run_id": run_hint,
+            "tenor_type": tenor_hint,
+        }
+    )
+
+    if cashflows_by_offset:
+        max_offset = max(cashflows_by_offset)
+        series = [-upfront_cost] + [cashflows_by_offset.get(idx, 0.0) for idx in range(1, max_offset + 1)]
+        irr = _compute_irr(series)
+        if irr is not None:
+            metrics_out.append(
+                {
+                    "period_start": summary_start,
+                    "period_end": summary_end,
+                    "metric": "IRR",
+                    "value": round(irr, 6),
+                    "currency": None,
+                    "unit": "ratio",
+                    "curve_key": curve_hint,
+                    "run_id": run_hint,
+                    "tenor_type": tenor_hint,
+                }
+            )
+
+    return metrics_out, elapsed
+
+
+def query_scenario_metrics_latest(
+    trino_cfg: TrinoConfig,
+    *,
+    scenario_id: str,
+    tenant_id: Optional[str] = None,
+    metric: Optional[str] = None,
+) -> Tuple[List[Dict[str, Any]], float]:
+    base = "iceberg.market.scenario_output_latest_by_metric"
+    filters: Dict[str, Optional[str]] = {"scenario_id": scenario_id}
+    if tenant_id:
+        filters["tenant_id"] = tenant_id
+    if metric:
+        filters["metric"] = metric
+    where = _build_where(filters)
+    sql = (
+        "SELECT tenant_id, scenario_id, curve_key, metric, tenor_label, "
+        "latest_value, latest_band_lower, latest_band_upper, "
+        "cast(latest_asof_date as date) as latest_asof_date "
+        f"FROM {base}{where} ORDER BY metric, tenor_label"
+    )
+
+    connect = _require_trino()
+    start = time.perf_counter()
+    rows: List[Dict[str, Any]] = []
+    with connect(host=trino_cfg.host, port=trino_cfg.port, user=trino_cfg.user, http_scheme=trino_cfg.http_scheme) as conn:  # type: ignore[arg-type]
+        cur = conn.cursor()
+        cur.execute(sql)
+        columns = [col[0] for col in cur.description]
+        for rec in cur.fetchall():
+            rows.append({col: val for col, val in zip(columns, rec)})
+    elapsed = (time.perf_counter() - start) * 1000.0
     return rows, elapsed
 
 
@@ -531,7 +891,7 @@ def invalidate_scenario_outputs_cache(
     client = _maybe_redis_client(cache_cfg)
     if client is None:
         return
-    index_key = _scenario_cache_index_key(tenant_id, scenario_id)
+    index_key = _scenario_cache_index_key(cache_cfg.namespace, tenant_id, scenario_id)
     try:  # pragma: no cover
         members = client.smembers(index_key)
         if members:
@@ -547,6 +907,8 @@ __all__ = [
     "query_curves",
     "query_curves_diff",
     "query_scenario_outputs",
+    "query_ppa_valuation",
+    "query_scenario_metrics_latest",
     "invalidate_scenario_outputs_cache",
     "TrinoConfig",
     "CacheConfig",

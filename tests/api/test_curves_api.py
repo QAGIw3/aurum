@@ -1,10 +1,144 @@
+import sys
 import types
+from typing import Any
 
 import pytest
 
 
+def _ensure_opentelemetry(monkeypatch):
+    stub_span = types.SimpleNamespace(set_attribute=lambda *args, **kwargs: None)
+
+    trace_module = types.ModuleType("opentelemetry.trace")
+    trace_module.get_current_span = lambda: stub_span
+    trace_module.get_tracer_provider = lambda: None
+    trace_module.get_tracer = lambda *_args, **_kwargs: None
+    trace_module.set_tracer_provider = lambda *_args, **_kwargs: None
+
+    propagate_module = types.ModuleType("opentelemetry.propagate")
+    propagate_module.inject = lambda *_args, **_kwargs: None
+
+    resources_module = types.ModuleType("opentelemetry.sdk.resources")
+
+    class _Resource:
+        @staticmethod
+        def create(attrs):
+            return attrs
+
+    resources_module.Resource = _Resource
+
+    sdk_trace_module = types.ModuleType("opentelemetry.sdk.trace")
+
+    class _TracerProvider:
+        def __init__(self, resource=None, sampler=None):
+            self.resource = resource
+            self.sampler = sampler
+
+        def add_span_processor(self, _processor):
+            return None
+
+    sdk_trace_module.TracerProvider = _TracerProvider
+
+    trace_export_module = types.ModuleType("opentelemetry.sdk.trace.export")
+
+    class _BatchSpanProcessor:
+        def __init__(self, _exporter):
+            pass
+
+    trace_export_module.BatchSpanProcessor = _BatchSpanProcessor
+
+    sampling_module = types.ModuleType("opentelemetry.sdk.trace.sampling")
+
+    class _TraceIdRatioBased:
+        def __init__(self, _ratio):
+            self.ratio = _ratio
+
+    sampling_module.TraceIdRatioBased = _TraceIdRatioBased
+
+    otlp_trace_module = types.ModuleType("opentelemetry.exporter.otlp.proto.grpc.trace_exporter")
+
+    class _OTLPSpanExporter:
+        def __init__(self, **_kwargs):
+            pass
+
+    otlp_trace_module.OTLPSpanExporter = _OTLPSpanExporter
+
+    logs_module = types.ModuleType("opentelemetry._logs")
+    logs_module.set_logger_provider = lambda *_args, **_kwargs: None
+
+    sdk_logs_module = types.ModuleType("opentelemetry.sdk._logs")
+
+    class _LoggerProvider:
+        def __init__(self, **_kwargs):
+            pass
+
+        def add_log_record_processor(self, _processor):
+            return None
+
+    sdk_logs_module.LoggerProvider = _LoggerProvider
+
+    sdk_logs_export_module = types.ModuleType("opentelemetry.sdk._logs.export")
+
+    class _BatchLogRecordProcessor:
+        def __init__(self, _exporter):
+            pass
+
+    sdk_logs_export_module.BatchLogRecordProcessor = _BatchLogRecordProcessor
+
+    otlp_logs_module = types.ModuleType("opentelemetry.exporter.otlp.proto.grpc._log_exporter")
+
+    class _OTLPLogExporter:
+        def __init__(self, **_kwargs):
+            pass
+
+    otlp_logs_module.OTLPLogExporter = _OTLPLogExporter
+
+    logging_instr_module = types.ModuleType("opentelemetry.instrumentation.logging")
+
+    class _LoggingInstrumentor:
+        def instrument(self, **_kwargs):
+            return None
+
+    logging_instr_module.LoggingInstrumentor = _LoggingInstrumentor
+
+    requests_instr_module = types.ModuleType("opentelemetry.instrumentation.requests")
+
+    class _RequestsInstrumentor:
+        def instrument(self, **_kwargs):
+            return None
+
+    requests_instr_module.RequestsInstrumentor = _RequestsInstrumentor
+
+    fastapi_instr_module = types.ModuleType("opentelemetry.instrumentation.fastapi")
+    fastapi_instr_module.FastAPIInstrumentor = None
+
+    psycopg_instr_module = types.ModuleType("opentelemetry.instrumentation.psycopg")
+    psycopg_instr_module.PsycopgInstrumentation = None
+
+    base_module = types.ModuleType("opentelemetry")
+    base_module.trace = trace_module
+    base_module.propagate = propagate_module
+
+    monkeypatch.setitem(sys.modules, "opentelemetry", base_module)
+    monkeypatch.setitem(sys.modules, "opentelemetry.trace", trace_module)
+    monkeypatch.setitem(sys.modules, "opentelemetry.propagate", propagate_module)
+    monkeypatch.setitem(sys.modules, "opentelemetry.sdk.resources", resources_module)
+    monkeypatch.setitem(sys.modules, "opentelemetry.sdk.trace", sdk_trace_module)
+    monkeypatch.setitem(sys.modules, "opentelemetry.sdk.trace.export", trace_export_module)
+    monkeypatch.setitem(sys.modules, "opentelemetry.sdk.trace.sampling", sampling_module)
+    monkeypatch.setitem(sys.modules, "opentelemetry.exporter.otlp.proto.grpc.trace_exporter", otlp_trace_module)
+    monkeypatch.setitem(sys.modules, "opentelemetry._logs", logs_module)
+    monkeypatch.setitem(sys.modules, "opentelemetry.sdk._logs", sdk_logs_module)
+    monkeypatch.setitem(sys.modules, "opentelemetry.sdk._logs.export", sdk_logs_export_module)
+    monkeypatch.setitem(sys.modules, "opentelemetry.exporter.otlp.proto.grpc._log_exporter", otlp_logs_module)
+    monkeypatch.setitem(sys.modules, "opentelemetry.instrumentation.logging", logging_instr_module)
+    monkeypatch.setitem(sys.modules, "opentelemetry.instrumentation.requests", requests_instr_module)
+    monkeypatch.setitem(sys.modules, "opentelemetry.instrumentation.fastapi", fastapi_instr_module)
+    monkeypatch.setitem(sys.modules, "opentelemetry.instrumentation.psycopg", psycopg_instr_module)
+
+
 def test_list_curves_basic(monkeypatch):
     pytest.importorskip("fastapi", reason="fastapi not installed")
+    pytest.importorskip("opentelemetry", reason="opentelemetry not installed")
     from fastapi.testclient import TestClient
     from aurum.api import app as api_app
     from aurum.api import service
@@ -40,6 +174,7 @@ def test_list_curves_basic(monkeypatch):
 
 def test_list_curves_diff(monkeypatch):
     pytest.importorskip("fastapi", reason="fastapi not installed")
+    pytest.importorskip("opentelemetry", reason="opentelemetry not installed")
     from fastapi.testclient import TestClient
     from aurum.api import app as api_app
     from aurum.api import service
@@ -187,19 +322,41 @@ def test_cursor_pagination(monkeypatch):
 
     def fake_query_curves(*args, **kwargs):
         cursor_after = kwargs.get("cursor_after")
-        captured_cursors.append(cursor_after)
+        cursor_before = kwargs.get("cursor_before")
+        descending = kwargs.get("descending")
+        captured_cursors.append((cursor_after, cursor_before, descending))
         req_limit = kwargs.get("limit", 1)
-        start = 0
-        if cursor_after:
-            for idx, item in enumerate(rows):
-                current_payload = {
+
+        if cursor_before:
+            idx = 0
+            for i, item in enumerate(rows):
+                payload = {
                     "curve_key": item["curve_key"],
                     "tenor_label": item["tenor_label"],
                     "contract_month": item.get("contract_month"),
                     "asof_date": item.get("asof_date"),
                     "price_type": item.get("price_type"),
                 }
-                if current_payload == cursor_after:
+                if payload == cursor_before:
+                    idx = i
+                    break
+            start = max(0, idx - req_limit)
+            subset = rows[start:idx]
+            if descending:
+                subset = list(reversed(subset))
+            return subset, 3.0
+
+        start = 0
+        if cursor_after:
+            for idx, item in enumerate(rows):
+                payload = {
+                    "curve_key": item["curve_key"],
+                    "tenor_label": item["tenor_label"],
+                    "contract_month": item.get("contract_month"),
+                    "asof_date": item.get("asof_date"),
+                    "price_type": item.get("price_type"),
+                }
+                if payload == cursor_after:
                     start = idx + 1
                     break
         subset = rows[start : start + req_limit]
@@ -214,7 +371,8 @@ def test_cursor_pagination(monkeypatch):
     p1 = r1.json()
     assert len(p1["data"]) == 1
     assert p1["meta"].get("next_cursor")
-    assert captured_cursors[0] is None
+    assert p1["meta"].get("prev_cursor") is None
+    assert captured_cursors[0] == (None, None, None)
 
     # Second page using cursor
     cursor = p1["meta"]["next_cursor"]
@@ -222,13 +380,94 @@ def test_cursor_pagination(monkeypatch):
     assert r2.status_code == 200
     p2 = r2.json()
     assert len(p2["data"]) == 1
-    assert captured_cursors[-1] == {
+    assert captured_cursors[-1][0] == {
         "curve_key": "a",
         "tenor_label": "2025-01",
         "contract_month": "2025-01-01",
         "asof_date": "2025-09-12",
         "price_type": "MID",
     }
+    assert captured_cursors[-1][1] is None
+    assert p2["meta"].get("prev_cursor")
+
+
+def test_cursor_prev_cursor(monkeypatch):
+    pytest.importorskip("fastapi", reason="fastapi not installed")
+    from fastapi.testclient import TestClient
+    from aurum.api import app as api_app
+    from aurum.api import service
+
+    rows = [
+        {
+            "curve_key": "a",
+            "tenor_label": "2025-01",
+            "tenor_type": "MONTHLY",
+            "contract_month": "2025-01-01",
+            "asof_date": "2025-09-12",
+            "mid": 1.0,
+            "price_type": "MID",
+        },
+        {
+            "curve_key": "b",
+            "tenor_label": "2025-02",
+            "tenor_type": "MONTHLY",
+            "contract_month": "2025-02-01",
+            "asof_date": "2025-09-12",
+            "mid": 2.0,
+            "price_type": "MID",
+        },
+    ]
+
+    def fake_query_curves(*args, **kwargs):
+        cursor_after = kwargs.get("cursor_after")
+        cursor_before = kwargs.get("cursor_before")
+        descending = kwargs.get("descending")
+        limit = kwargs.get("limit", 1)
+        if cursor_before:
+            idx = 0
+            for i, item in enumerate(rows):
+                payload = {
+                    "curve_key": item["curve_key"],
+                    "tenor_label": item["tenor_label"],
+                    "contract_month": item.get("contract_month"),
+                    "asof_date": item.get("asof_date"),
+                    "price_type": item.get("price_type"),
+                }
+                if payload == cursor_before:
+                    idx = i
+                    break
+            subset = rows[max(0, idx - limit):idx]
+            if descending:
+                subset = list(reversed(subset))
+            return subset, 3.0
+        start = 0
+        if cursor_after:
+            for i, item in enumerate(rows):
+                payload = {
+                    "curve_key": item["curve_key"],
+                    "tenor_label": item["tenor_label"],
+                    "contract_month": item.get("contract_month"),
+                    "asof_date": item.get("asof_date"),
+                    "price_type": item.get("price_type"),
+                }
+                if payload == cursor_after:
+                    start = i + 1
+                    break
+        subset = rows[start : start + limit]
+        return subset, 3.0
+
+    monkeypatch.setattr(service, "query_curves", fake_query_curves)
+    client = TestClient(api_app.app)
+
+    first = client.get("/v1/curves", params={"limit": 1}).json()
+    cursor = first["meta"]["next_cursor"]
+    second = client.get("/v1/curves", params={"limit": 1, "cursor": cursor}).json()
+    prev_token = second["meta"].get("prev_cursor")
+    assert prev_token
+    back = client.get("/v1/curves", params={"limit": 1, "prev_cursor": prev_token})
+    assert back.status_code == 200
+    payload = back.json()["data"]
+    assert payload and payload[0]["curve_key"] == "a"
 
 
 def test_cursor_pagination_alias(monkeypatch):
@@ -267,6 +506,9 @@ def test_cursor_pagination_alias(monkeypatch):
     def fake_query_curves(*args, **kwargs):
         captured.append(kwargs.get("cursor_after"))
         req_limit = kwargs.get("limit", 1)
+        cursor_before = kwargs.get("cursor_before")
+        if cursor_before:
+            return [], 1.0
         start = 0
         cursor_after = kwargs.get("cursor_after")
         if cursor_after:
@@ -455,13 +697,83 @@ def test_scenarios_create_and_run():
     assert run_body["scenario_id"] == scenario_id
 
 
-def test_ppa_valuate():
+def test_ppa_valuate(monkeypatch):
     pytest.importorskip("fastapi", reason="fastapi not installed")
+    _ensure_opentelemetry(monkeypatch)
+    from fastapi.testclient import TestClient
+    from aurum.api import app as api_app
+    from aurum.api import service
+    from datetime import date
+
+    client = TestClient(api_app.app)
+    client.headers.update({"X-Aurum-Tenant": "tenant-42"})
+
+    def fake_query(trino_cfg, *, scenario_id, tenant_id=None, asof_date=None, metric="mid", options=None):
+        assert scenario_id == "scn-123"
+        assert tenant_id == "tenant-42"
+        assert metric == "mid"
+        assert options == {"foo": "bar"}
+        return (
+            [
+                {
+                    "period_start": date(2025, 1, 1),
+                    "period_end": date(2025, 1, 1),
+                    "metric": "mid",
+                    "value": 12.5,
+                    "currency": "USD",
+                    "unit": "USD",
+                    "curve_key": "curve-a",
+                    "tenor_type": "MONTHLY",
+                    "run_id": "run-xyz",
+                }
+            ],
+            11.2,
+        )
+
+    monkeypatch.setattr(service, "query_ppa_valuation", fake_query)
+
+    persisted: dict[str, Any] = {}
+
+    def fake_persist(**kwargs):
+        persisted.update(kwargs)
+
+    monkeypatch.setattr(api_app, "_persist_ppa_valuation_records", fake_persist)
+
+    payload = {"ppa_contract_id": "ppa1", "scenario_id": "scn-123", "options": {"foo": "bar"}}
+    r = client.post("/v1/ppa/valuate", json=payload)
+    assert r.status_code == 200
+    body = r.json()
+    assert isinstance(body["data"], list)
+    assert body["data"][0]["value"] == pytest.approx(12.5)
+    assert body["data"][0]["unit"] == "USD"
+    assert persisted["ppa_contract_id"] == "ppa1"
+    assert persisted["scenario_id"] == "scn-123"
+
+
+def test_ppa_valuate_requires_scenario(monkeypatch):
+    pytest.importorskip("fastapi", reason="fastapi not installed")
+    _ensure_opentelemetry(monkeypatch)
     from fastapi.testclient import TestClient
     from aurum.api import app as api_app
 
     client = TestClient(api_app.app)
     payload = {"ppa_contract_id": "ppa1"}
-    r = client.post("/v1/ppa/valuate", json=payload)
-    assert r.status_code == 200
-    assert isinstance(r.json()["data"], list)
+    resp = client.post("/v1/ppa/valuate", json=payload)
+    assert resp.status_code == 400
+    assert resp.json()["detail"] == "scenario_id is required for valuation"
+
+
+
+def test_metadata_units_etag():
+    pytest.importorskip("fastapi", reason="fastapi not installed")
+    from fastapi.testclient import TestClient
+    from aurum.api import app as api_app
+
+    client = TestClient(api_app.app)
+    resp = client.get("/v1/metadata/units")
+    assert resp.status_code == 200
+    etag = resp.headers.get("etag")
+    assert etag
+
+    cached = client.get("/v1/metadata/units", headers={"If-None-Match": etag})
+    assert cached.status_code == 304

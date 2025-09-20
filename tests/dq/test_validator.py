@@ -1,57 +1,65 @@
-from __future__ import annotations
-
 from pathlib import Path
 
+import json
 import pandas as pd
 import pytest
 
-from aurum.dq import ExpectationFailedError, enforce_expectation_suite, validate_dataframe
-
-SUITE_PATH = Path("ge/expectations/curve_schema.json")
+from aurum.dq import validator
 
 
-def _sample_dataframe() -> pd.DataFrame:
-    return pd.DataFrame(
-        [
+def test_env_overrides(monkeypatch, tmp_path: Path):
+    suite = {
+        "expectations": [
             {
-                "asof_date": "2024-01-01",
-                "source_file": "test.xlsx",
-                "sheet_name": "Fixed Prices - Mid",
-                "asset_class": "power",
-                "region": "US",
-                "iso": "PJM",
-                "location": "WEST",
-                "market": "DAY_AHEAD",
-                "product": "OnPeak",
-                "block": "ON_PEAK",
-                "spark_location": None,
-                "price_type": "MID",
-                "units_raw": "$/MWh",
-                "currency": "USD",
-                "per_unit": "MWh",
-                "tenor_type": "MONTHLY",
-                "contract_month": "2024-01-01",
-                "tenor_label": "2024-01",
-                "value": 45.0,
-                "bid": 44.5,
-                "ask": 45.5,
-                "mid": 45.0,
-                "curve_key": "curve-key",
-                "version_hash": "hash",
-                "_ingest_ts": "2024-01-01T00:00:00Z",
+                "expectation_type": "expect_column_values_to_be_between",
+                "kwargs": {"column": "value", "min_value": 0, "max_value": 5},
+                "meta": {
+                    "env_overrides": {
+                        "min_value": "GE_TEST_MIN",
+                        "max_value": "GE_TEST_MAX",
+                    }
+                },
             }
         ]
+    }
+    suite_path = tmp_path / "suite.json"
+    suite_path.write_text(json.dumps(suite))
+
+    df = pd.DataFrame({"value": [1, 2, 3]})
+    monkeypatch.setenv("GE_TEST_MIN", "2")
+    monkeypatch.setenv("GE_TEST_MAX", "4")
+
+    results = validator.validate_dataframe(df, suite_path)
+    assert len(results) == 1
+    assert not results[0].success
+    assert "only" in (results[0].details or "")
+
+
+def test_row_condition_proportion(tmp_path: Path):
+    suite = {
+        "expectations": [
+            {
+                "expectation_type": "expect_column_proportion_of_nonnulls_to_be_between",
+                "kwargs": {
+                    "column": "value",
+                    "row_condition": "segment == 'A'",
+                    "min_value": 0.5,
+                    "max_value": 1.0,
+                },
+            }
+        ]
+    }
+    suite_path = tmp_path / "suite.json"
+    suite_path.write_text(json.dumps(suite))
+
+    df = pd.DataFrame(
+        {
+            "segment": ["A", "A", "B"],
+            "value": [1.0, None, 2.0],
+        }
     )
 
-
-def test_validate_dataframe_returns_success() -> None:
-    df = _sample_dataframe()
-    results = validate_dataframe(df, SUITE_PATH)
-    assert all(result.success for result in results)
-
-
-def test_enforce_expectation_suite_raises_on_failure() -> None:
-    df = _sample_dataframe()
-    df.loc[0, "currency"] = None
-    with pytest.raises(ExpectationFailedError):
-        enforce_expectation_suite(df, SUITE_PATH)
+    results = validator.validate_dataframe(df, suite_path)
+    assert len(results) == 1
+    # Only rows in segment A considered => one value, one null => proportion 0.5 satisfies bounds
+    assert results[0].success

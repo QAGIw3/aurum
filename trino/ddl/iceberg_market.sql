@@ -36,6 +36,7 @@ CREATE TABLE IF NOT EXISTS iceberg.market.scenario_output (
     asof_date DATE,
     scenario_id VARCHAR,
     tenant_id VARCHAR,
+    run_id VARCHAR,
     curve_key VARCHAR,
     tenor_type VARCHAR,
     contract_month DATE,
@@ -51,7 +52,7 @@ CREATE TABLE IF NOT EXISTS iceberg.market.scenario_output (
 )
 WITH (
     format = 'PARQUET',
-    partitioning = ARRAY['scenario_id', 'year(asof_date)']
+    partitioning = ARRAY['scenario_id', 'metric', 'year(asof_date)']
 );
 
 CREATE TABLE IF NOT EXISTS iceberg.market.ppa_valuation (
@@ -160,6 +161,7 @@ WITH ranked AS (
         asof_date,
         scenario_id,
         tenant_id,
+        run_id,
         curve_key,
         tenor_type,
         contract_month,
@@ -182,6 +184,7 @@ SELECT
     asof_date,
     scenario_id,
     tenant_id,
+    run_id,
     curve_key,
     tenor_type,
     contract_month,
@@ -194,5 +197,51 @@ SELECT
     version_hash,
     computed_ts,
     _ingest_ts
+FROM ranked
+WHERE rn = 1;
+
+CREATE OR REPLACE VIEW iceberg.market.scenario_output_by_curve AS
+SELECT
+    scenario_id,
+    tenant_id,
+    curve_key,
+    metric,
+    tenor_label,
+    max(asof_date) AS latest_asof_date,
+    max_by(value, computed_ts) AS latest_value,
+    max_by(band_lower, computed_ts) AS latest_band_lower,
+    max_by(band_upper, computed_ts) AS latest_band_upper,
+    max_by(run_id, computed_ts) AS latest_run_id
+FROM iceberg.market.scenario_output
+GROUP BY scenario_id, tenant_id, curve_key, metric, tenor_label;
+
+CREATE OR REPLACE VIEW iceberg.market.scenario_output_latest_by_metric AS
+WITH ranked AS (
+    SELECT
+        tenant_id,
+        scenario_id,
+        metric,
+        run_id,
+        value,
+        band_lower,
+        band_upper,
+        asof_date,
+        computed_ts,
+        row_number() OVER (
+            PARTITION BY tenant_id, scenario_id, metric
+            ORDER BY asof_date DESC, computed_ts DESC
+        ) AS rn
+    FROM iceberg.market.scenario_output
+)
+SELECT
+    tenant_id,
+    scenario_id,
+    metric,
+    run_id AS latest_run_id,
+    value AS latest_value,
+    band_lower AS latest_band_lower,
+    band_upper AS latest_band_upper,
+    asof_date AS latest_asof_date,
+    computed_ts AS latest_computed_ts
 FROM ranked
 WHERE rn = 1;

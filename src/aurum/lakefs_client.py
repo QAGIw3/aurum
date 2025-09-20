@@ -72,6 +72,29 @@ class LakeFSClient:
         resp = self.session.post(self._url(f"/repositories/{repo}/tags/{tag}"), data=json.dumps(payload))
         resp.raise_for_status()
 
+    def create_pull_request(
+        self,
+        repo: str,
+        source: str,
+        target: str,
+        title: str,
+        description: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        payload: Dict[str, Any] = {
+            "source": source,
+            "destination": target,
+            "title": title,
+        }
+        if description:
+            payload["description"] = description
+        resp = self.session.post(self._url(f"/repositories/{repo}/pull-requests"), data=json.dumps(payload))
+        resp.raise_for_status()
+        return resp.json()
+
+    def merge_pull_request(self, repo: str, pr_number: int) -> None:
+        resp = self.session.post(self._url(f"/repositories/{repo}/pull-requests/{pr_number}/merge"))
+        resp.raise_for_status()
+
 
 def ensure_branch(repo: str, branch: str, source: str = "main") -> None:
     client = LakeFSClient()
@@ -86,3 +109,20 @@ def commit_branch(repo: str, branch: str, message: str, metadata: Optional[Dict[
 def tag_commit(repo: str, tag: str, ref: str) -> None:
     client = LakeFSClient()
     client.create_tag(repo, tag, ref)
+
+
+def open_pull_request(
+    repo: str,
+    *,
+    source: str,
+    target: str,
+    title: str,
+    description: Optional[str] = None,
+) -> Dict[str, Any]:
+    client = LakeFSClient()
+    return client.create_pull_request(repo, source, target, title, description)
+
+
+def merge_pull_request(repo: str, pr_number: int) -> None:
+    client = LakeFSClient()
+    client.merge_pull_request(repo, pr_number)

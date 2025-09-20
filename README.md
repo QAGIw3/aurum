@@ -29,6 +29,16 @@ Developer-oriented scaffolding for the Aurum market intelligence platform. Start
 5. Enable optional UIs with `docker compose -f compose/docker-compose.dev.yml --profile ui up -d`.
 6. When finished, stop the stack with `docker compose -f compose/docker-compose.dev.yml down` (add `--volumes` to reset state).
 
+Scenario outputs are now enabled on the API by default. To populate `/v1/scenarios/{id}/outputs`, start the scenario worker alongside core services:
+
+```
+COMPOSE_PROFILES=worker docker compose -f compose/docker-compose.dev.yml up -d scenario-worker
+```
+
+Set `AURUM_SCENARIO_METRICS_PORT=9500` (and optionally `AURUM_SCENARIO_METRICS_ADDR`) to expose Prometheus metrics from the worker for scraping.
+
+Command-line helper: once the project is installed in a virtualenv, use `aurum-scenario` to manage scenarios, e.g. `aurum-scenario --tenant demo list` or `aurum-scenario --tenant demo create "Test" --assumption '{"driver_type":"policy","payload":{"policy_name":"RPS"}}'`.
+
 ### Curve API
 
 Spin up the API service (exposed on localhost:8095) alongside core services:
@@ -48,6 +58,9 @@ first=$(curl -s "http://localhost:8095/v1/curves?limit=10" | jq -r .meta.next_cu
 curl "http://localhost:8095/v1/curves?limit=10&cursor=${first}"
 # Alias using since_cursor (identical to cursor)
 curl "http://localhost:8095/v1/curves?limit=10&since_cursor=${first}"
+# Navigate backwards with prev_cursor
+prev=$(curl -s "http://localhost:8095/v1/curves?limit=10&cursor=${first}" | jq -r .meta.prev_cursor)
+curl "http://localhost:8095/v1/curves?limit=10&prev_cursor=${prev}"
 
 # Dimensions for UI filters
 curl "http://localhost:8095/v1/metadata/dimensions?asof=2025-09-12"
@@ -80,6 +93,9 @@ curl -X POST "http://localhost:8095/v1/scenarios/runs/{run_id}/cancel"
 
 # List scenario outputs (when `AURUM_API_SCENARIO_OUTPUTS_ENABLED=1`)
 curl "http://localhost:8095/v1/scenarios/{scenario_id}/outputs?limit=20"
+
+# Latest metrics per scenario
+curl "http://localhost:8095/v1/scenarios/{scenario_id}/metrics/latest"
 
 # Dimension counts for UI facets
 curl "http://localhost:8095/v1/metadata/dimensions?include_counts=true"

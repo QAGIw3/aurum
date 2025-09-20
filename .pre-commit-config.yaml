@@ -11,3 +11,10 @@ repos:
       - id: black
         name: black-format
         language_version: python3.11
+  - repo: local
+    hooks:
+      - id: scenario-schema-guard
+        name: scenario-schema-guard
+        entry: python scripts/ci/verify_scenario_schema.py
+        language: system
+        files: ^kafka/schemas/scenario\.(?:request|output)\.v1\.avsc$

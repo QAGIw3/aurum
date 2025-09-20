@@ -11,6 +11,7 @@ class Meta(BaseModel):
     request_id: str
     query_time_ms: int = Field(ge=0)
     next_cursor: str | None = None
+    prev_cursor: str | None = None
 
 
 class CurvePoint(BaseModel):
@@ -257,6 +258,7 @@ class ScenarioRunListResponse(BaseModel):
 
 class ScenarioOutputPoint(BaseModel):
     scenario_id: str
+    run_id: Optional[str] = None
     asof_date: Optional[date] = None
     curve_key: str
     tenor_type: Optional[str] = None
@@ -275,6 +277,22 @@ class ScenarioOutputResponse(BaseModel):
     data: list[ScenarioOutputPoint]
 
 
+class ScenarioMetricLatest(BaseModel):
+    scenario_id: str
+    metric: str
+    curve_key: Optional[str] = None
+    tenor_label: Optional[str] = None
+    latest_value: Optional[float] = None
+    latest_band_lower: Optional[float] = None
+    latest_band_upper: Optional[float] = None
+    latest_asof_date: Optional[date] = None
+
+
+class ScenarioMetricLatestResponse(BaseModel):
+    meta: Meta
+    data: list[ScenarioMetricLatest]
+
+
 # PPA valuation models
 
 
@@ -291,6 +309,10 @@ class PpaMetric(BaseModel):
     metric: str
     value: float
     currency: Optional[str] = None
+    unit: Optional[str] = None
+    run_id: Optional[str] = None
+    curve_key: Optional[str] = None
+    tenor_type: Optional[str] = None
 
 
 class PpaValuationResponse(BaseModel):
@@ -307,6 +329,8 @@ __all__ += [
     "ScenarioRunResponse",
     "ScenarioOutputPoint",
     "ScenarioOutputResponse",
+    "ScenarioMetricLatest",
+    "ScenarioMetricLatestResponse",
     "PpaValuationRequest",
     "PpaMetric",
     "PpaValuationResponse",

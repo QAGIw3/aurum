@@ -28,6 +28,7 @@ def test_scenario_output_avro_contract() -> None:
     record = {
         "scenario_id": "scn-1",
         "tenant_id": "tenant-a",
+        "run_id": "run-123",
         "asof_date": _days_since_epoch(date(2025, 1, 1)),
         "curve_key": "demo-key",
         "tenor_type": "MONTHLY",
@@ -69,3 +70,11 @@ def test_scenario_request_avro_contract() -> None:
     }
 
     assert fastavro.validation.validate(record, schema)
+
+
+def test_scenario_output_expectation_suite_exists() -> None:
+    suite_path = Path("ge/expectations/scenario_output.json")
+    assert suite_path.exists()
+    suite = _load_schema(suite_path)
+    assert suite.get("expectation_suite_name") == "scenario_output"
+    assert any(exp.get("kwargs", {}).get("column") == "scenario_id" for exp in suite.get("expectations", []))

@@ -17,6 +17,7 @@ latest as (
     select
         scenario_id,
         tenant_id,
+        run_id,
         asof_date,
         curve_key,
         tenor_type,
@@ -34,6 +35,7 @@ latest as (
 )
 select
     l.scenario_id,
+    l.run_id,
     l.tenant_id,
     tenants.tenant_name,
     l.asof_date,
@@ -44,6 +46,8 @@ select
     l.metric,
     metrics.description as metric_description,
     metrics.unit as metric_unit,
+    trim(split_part(metrics.unit, '/', 1)) as metric_currency,
+    nullif(trim(split_part(metrics.unit, '/', 2)), '') as metric_unit_denominator,
     l.value,
     l.band_lower,
     l.band_upper,

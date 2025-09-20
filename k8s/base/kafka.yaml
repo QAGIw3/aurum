@@ -19,9 +19,9 @@ spec:
         configuration:
           brokers:
             - broker: 0
-              advertisedHost: localhost
-              advertisedPort: 29092
-              nodePort: 30994
+              advertisedHost: kafka.aurum.localtest.me
+              advertisedPort: 31092
+              nodePort: 31092
     config:
       process.roles: broker,controller
       node.id: 0

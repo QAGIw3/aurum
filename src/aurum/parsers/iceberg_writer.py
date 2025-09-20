@@ -4,9 +4,14 @@ from __future__ import annotations
 import importlib
 import json
 import os
+import time
+import logging
 from typing import Optional
 
 import pandas as pd
+
+
+LOGGER = logging.getLogger(__name__)
 
 
 def _require_pyiceberg():
@@ -111,6 +116,7 @@ def _build_scenario_schema():
         NestedField(13, "version_hash", StringType()),
         NestedField(14, "computed_ts", TimestampType()),
         NestedField(15, "_ingest_ts", TimestampType()),
+        NestedField(16, "run_id", StringType()),
     )
 
 
@@ -127,6 +133,48 @@ def _build_scenario_partition_spec(schema):
     return PartitionSpec(
         PartitionField(source_id=scenario_id_field, transform=IdentityTransform(), name="scenario_id"),
         PartitionField(source_id=asof_id, transform=YearTransform(), name="asof_year"),
+    )
+
+
+def _build_ppa_schema():
+    _, schema_module, types_module, _, _, _ = _require_pyiceberg()
+    Schema = schema_module.Schema
+    NestedField = schema_module.NestedField
+    StringType = types_module.StringType
+    DateType = types_module.DateType
+    DoubleType = types_module.DoubleType
+    TimestampType = types_module.TimestampType
+
+    return Schema(
+        NestedField(1, "asof_date", DateType()),
+        NestedField(2, "ppa_contract_id", StringType(), required=True),
+        NestedField(3, "scenario_id", StringType(), required=True),
+        NestedField(4, "curve_key", StringType()),
+        NestedField(5, "period_start", DateType()),
+        NestedField(6, "period_end", DateType()),
+        NestedField(7, "cashflow", DoubleType()),
+        NestedField(8, "npv", DoubleType()),
+        NestedField(9, "irr", DoubleType()),
+        NestedField(10, "metric", StringType(), required=True),
+        NestedField(11, "value", DoubleType()),
+        NestedField(12, "version_hash", StringType()),
+        NestedField(13, "_ingest_ts", TimestampType()),
+    )
+
+
+def _build_ppa_partition_spec(schema):
+    _, _, _, partitioning_module, transforms_module, _ = _require_pyiceberg()
+    PartitionSpec = partitioning_module.PartitionSpec
+    PartitionField = partitioning_module.PartitionField
+    IdentityTransform = transforms_module.IdentityTransform
+    YearTransform = transforms_module.YearTransform
+
+    contract_field = schema.find_field("ppa_contract_id").field_id
+    asof_field = schema.find_field("asof_date").field_id
+
+    return PartitionSpec(
+        PartitionField(source_id=contract_field, transform=IdentityTransform(), name="ppa_contract_id"),
+        PartitionField(source_id=asof_field, transform=YearTransform(), name="asof_year"),
     )
 
 
@@ -210,7 +258,147 @@ def write_to_iceberg(
         )
 
     arrow_table = df.to_arrow()
-    iceberg_table.append(arrow_table)
+    max_attempts = int(os.getenv("AURUM_ICEBERG_WRITE_RETRIES", "3"))
+    _append_with_retry(iceberg_table, arrow_table, max_attempts=max_attempts)
+
+
+def _delete_existing_scenario_rows(table, frame: pd.DataFrame) -> None:
+    try:
+        from pyiceberg.expressions import And, EqualTo  # type: ignore
+    except ModuleNotFoundError:
+        return
+    key_cols = ["tenant_id", "scenario_id", "run_id", "metric", "tenor_label"]
+    if any(col not in frame.columns for col in key_cols):
+        return
+    unique_keys = frame[key_cols].dropna().drop_duplicates()
+    for _, row in unique_keys.iterrows():
+        if any(pd.isna(row[col]) for col in key_cols):
+            continue
+        expr = EqualTo(key_cols[0], row[key_cols[0]])
+        for col in key_cols[1:]:
+            expr = And(expr, EqualTo(col, row[col]))
+        try:
+            table.delete(expr)
+        except AttributeError:
+            LOGGER.debug("Iceberg table.delete not available; skipping dedup")
+            return
+        except Exception as exc:  # pragma: no cover - delete failures
+            LOGGER.warning("Failed to delete existing scenario rows for %s: %s", row.to_dict(), exc)
+
+
+def _delete_existing_ppa_rows(table, frame: pd.DataFrame) -> None:
+    try:
+        from pyiceberg.expressions import And, EqualTo  # type: ignore
+    except ModuleNotFoundError:
+        return
+    key_cols = ["ppa_contract_id", "scenario_id", "period_start", "metric"]
+    if any(col not in frame.columns for col in key_cols):
+        return
+    unique_keys = frame[key_cols].dropna().drop_duplicates()
+    for _, row in unique_keys.iterrows():
+        expr = EqualTo(key_cols[0], row[key_cols[0]])
+        for col in key_cols[1:]:
+            expr = And(expr, EqualTo(col, row[col]))
+        try:
+            table.delete(expr)
+        except AttributeError:
+            LOGGER.debug("Iceberg table.delete not available; skipping PPA dedup")
+            return
+        except Exception as exc:  # pragma: no cover
+            LOGGER.warning("Failed to delete PPA rows for %s: %s", row.to_dict(), exc)
+
+
+def _append_with_retry(table, arrow_table, *, max_attempts: int = 3, sleep_seconds: float = 1.0) -> None:
+    attempt = 0
+    while True:
+        attempt += 1
+        try:
+            table.append(arrow_table)
+            return
+        except Exception as exc:  # pragma: no cover
+            if attempt >= max_attempts:
+                raise
+            LOGGER.warning("Iceberg append failed (attempt %s/%s): %s", attempt, max_attempts, exc)
+            time.sleep(sleep_seconds * attempt)
+
+
+def write_ppa_valuation(
+    df: pd.DataFrame,
+    *,
+    table: Optional[str] = None,
+    branch: Optional[str] = None,
+    catalog_name: Optional[str] = None,
+    warehouse: Optional[str] = None,
+    properties: Optional[dict[str, str]] = None,
+) -> None:
+    (
+        catalog_module,
+        _,
+        _,
+        _,
+        _,
+        exceptions_module,
+    ) = _require_pyiceberg()
+
+    load_catalog = catalog_module.load_catalog
+    NoSuchTableError = exceptions_module.NoSuchTableError
+
+    table_name: str = table if table is not None else os.getenv("AURUM_PPA_ICEBERG_TABLE", "iceberg.market.ppa_valuation")  # type: ignore[assignment]
+    branch_name: str = branch if branch is not None else os.getenv("AURUM_ICEBERG_BRANCH", "main")  # type: ignore[assignment]
+    catalog_name_val: str = catalog_name if catalog_name is not None else os.getenv("AURUM_ICEBERG_CATALOG", "nessie")  # type: ignore[assignment]
+
+    uri: str = os.getenv("AURUM_NESSIE_URI", "http://nessie:19121/api/v1")
+    warehouse_val: str = warehouse if warehouse is not None else os.getenv("AURUM_S3_WAREHOUSE", "s3://aurum/curated/iceberg")  # type: ignore[assignment]
+
+    catalog_properties = {
+        "uri": uri,
+        "warehouse": warehouse_val,
+        "s3.endpoint": os.getenv("AURUM_S3_ENDPOINT"),
+        "s3.access-key-id": os.getenv("AURUM_S3_ACCESS_KEY"),
+        "s3.secret-access-key": os.getenv("AURUM_S3_SECRET_KEY"),
+        "nessie.ref": branch_name,
+    }
+    if properties:
+        catalog_properties.update(properties)
+    catalog_properties = {k: v for k, v in catalog_properties.items() if v is not None}
+
+    catalog = load_catalog(catalog_name_val, **catalog_properties)
+
+    schema = _build_ppa_schema()
+    spec = _build_ppa_partition_spec(schema)
+
+    expected_columns = [field.name for field in schema]
+    frame = df.copy()
+    for column in expected_columns:
+        if column not in frame.columns:
+            frame[column] = None
+    frame = frame[expected_columns]
+
+    for date_col in ("asof_date", "period_start", "period_end"):
+        frame[date_col] = pd.to_datetime(frame[date_col], errors="coerce").dt.date
+    frame["_ingest_ts"] = pd.to_datetime(frame.get("_ingest_ts"), utc=True, errors="coerce")
+    if frame["_ingest_ts"].isna().all():
+        frame["_ingest_ts"] = pd.Timestamp.utcnow().tz_localize("UTC")
+    else:
+        fallback_ts = pd.Timestamp.utcnow().tz_localize("UTC")
+        frame.loc[frame["_ingest_ts"].isna(), "_ingest_ts"] = fallback_ts
+
+    table_identifier = f"{table_name}@{branch_name}" if "@" not in table_name else table_name
+
+    try:
+        iceberg_table = catalog.load_table(table_identifier)
+    except NoSuchTableError:
+        iceberg_table = catalog.create_table(
+            table_identifier,
+            schema=schema,
+            partition_spec=spec,
+            properties={"write.format.default": "parquet"},
+        )
+
+    arrow_table = frame.to_arrow()
+    _delete_existing_ppa_rows(iceberg_table, frame)
+    max_attempts = int(os.getenv("AURUM_ICEBERG_WRITE_RETRIES", "3"))
+    _append_with_retry(iceberg_table, arrow_table, max_attempts=max_attempts)
 
 
 def write_scenario_output(
@@ -265,6 +453,9 @@ def write_scenario_output(
             frame[column] = None
     frame = frame[expected_columns]
 
+    if "run_id" in frame.columns:
+        frame["run_id"] = frame["run_id"].apply(lambda value: str(value) if pd.notna(value) else None)
+
     frame["asof_date"] = pd.to_datetime(frame["asof_date"]).dt.date
     frame["contract_month"] = pd.to_datetime(frame["contract_month"], errors="coerce").dt.date
     frame["computed_ts"] = pd.to_datetime(frame["computed_ts"], utc=True, errors="coerce")
@@ -297,4 +488,6 @@ def write_scenario_output(
         )
 
     arrow_table = frame.to_arrow()
-    iceberg_table.append(arrow_table)
+    _delete_existing_scenario_rows(iceberg_table, frame)
+    max_attempts = int(os.getenv("AURUM_ICEBERG_WRITE_RETRIES", "3"))
+    _append_with_retry(iceberg_table, arrow_table, max_attempts=max_attempts)
