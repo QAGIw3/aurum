@@ -1,0 +1,11 @@
+log:
+  level: INFO
+
+entryPoints:
+  web:
+    address: ":8082"
+
+providers:
+  file:
+    directory: /etc/traefik/dynamic
+    watch: true

@@ -105,6 +105,8 @@ spec:
   routes:
     - match: Host(`api.aurum.localtest.me`)
       kind: Rule
+      middlewares:
+        - name: oidc-forward-auth
       services:
         - name: api
           port: 8080

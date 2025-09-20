@@ -40,6 +40,11 @@ data:
   AURUM_API_OIDC_AUDIENCE: ""
   AURUM_API_OIDC_JWKS_URL: ""
   AURUM_API_JWT_LEEWAY: "60"
+  OAUTH2_PROXY_PROVIDER: oidc
+  OAUTH2_PROXY_ISSUER_URL: ""
+  OAUTH2_PROXY_CLIENT_ID: ""
+  OAUTH2_PROXY_REDIRECT_URL: "https://api.aurum.localtest.me/oauth2/callback"
+  OAUTH2_PROXY_EMAIL_DOMAINS: "*"
   # Scenario API / Worker defaults
   AURUM_SCENARIO_REQUESTS_ENABLED: "1"
   AURUM_SCENARIO_REQUEST_TOPIC: aurum.scenario.request.v1

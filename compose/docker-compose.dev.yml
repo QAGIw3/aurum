@@ -281,6 +281,48 @@ services:
     networks:
       - aurum
 
+  oauth2-proxy:
+    profiles: ["auth"]
+    image: quay.io/oauth2-proxy/oauth2-proxy:v7.5.1
+    env_file: *env_file
+    depends_on:
+      api:
+        condition: service_started
+    environment:
+      OAUTH2_PROXY_PROVIDER: ${OAUTH2_PROXY_PROVIDER:-oidc}
+      OAUTH2_PROXY_OIDC_ISSUER_URL: ${OAUTH2_PROXY_ISSUER_URL}
+      OAUTH2_PROXY_CLIENT_ID: ${OAUTH2_PROXY_CLIENT_ID}
+      OAUTH2_PROXY_CLIENT_SECRET: ${OAUTH2_PROXY_CLIENT_SECRET}
+      OAUTH2_PROXY_REDIRECT_URL: ${OAUTH2_PROXY_REDIRECT_URL:-http://api.aurum.localhost/oauth2/callback}
+      OAUTH2_PROXY_COOKIE_SECRET: ${OAUTH2_PROXY_COOKIE_SECRET}
+      OAUTH2_PROXY_EMAIL_DOMAINS: ${OAUTH2_PROXY_EMAIL_DOMAINS:-*}
+      OAUTH2_PROXY_HTTP_ADDRESS: 0.0.0.0:4180
+      OAUTH2_PROXY_UPSTREAMS: file:///dev/null
+      OAUTH2_PROXY_COOKIE_SECURE: "false"
+      OAUTH2_PROXY_COOKIE_SAMESITE: lax
+      OAUTH2_PROXY_SKIP_PROVIDER_BUTTON: "true"
+      OAUTH2_PROXY_SET_AUTHORIZATION_HEADER: "true"
+      OAUTH2_PROXY_SET_XAUTHREQUEST: "true"
+    networks:
+      - aurum
+
+  traefik:
+    profiles: ["auth"]
+    image: traefik:v2.11
+    depends_on:
+      oauth2-proxy:
+        condition: service_started
+    command:
+      - --providers.file.directory=/etc/traefik/dynamic
+      - --entrypoints.web.address=:8082
+    volumes:
+      - ./traefik/traefik.yml:/etc/traefik/traefik.yml:ro
+      - ./traefik/dynamic:/etc/traefik/dynamic:ro
+    ports:
+      - "8082:8082"
+    networks:
+      - aurum
+
   scenario-worker:
     profiles: ["worker"]
     image: python:3.11-slim

@@ -71,6 +71,13 @@ curl -X POST "http://localhost:8095/v1/scenarios/{scenario_id}/run" \
   -H "Content-Type: application/json" \
   -d '{"code_version": "v1"}'
 
+# List scenarios and runs for the current tenant
+curl "http://localhost:8095/v1/scenarios?limit=20"
+curl "http://localhost:8095/v1/scenarios/{scenario_id}/runs"
+
+# Cancel a run (e.g., when a worker is stuck)
+curl -X POST "http://localhost:8095/v1/scenarios/runs/{run_id}/cancel"
+
 # List scenario outputs (when `AURUM_API_SCENARIO_OUTPUTS_ENABLED=1`)
 curl "http://localhost:8095/v1/scenarios/{scenario_id}/outputs?limit=20"
 
@@ -98,6 +105,7 @@ Observability and limits:
 - Rate limit headers: successful responses include `X-RateLimit-{Limit,Remaining,Reset}`; 429 includes `Retry-After`.
 - `/ready` responds with `503` when the API cannot reach Trino; integrate with load balancer checks.
 - Add `include_counts=true` to `/v1/metadata/dimensions` to receive per-dimension frequencies alongside values.
+- Traefik + OAuth2 forward-auth wiring is documented in `docs/auth/oidc-forward-auth.md` (includes docker compose and Kubernetes notes).
 - Pagination returns `meta.next_cursor`; supply it as either `cursor` or `since_cursor` on subsequent requests to resume iteration and avoid duplicate rows.
 
 ### Vendor Parser CLI

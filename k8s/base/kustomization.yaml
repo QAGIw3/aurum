@@ -23,6 +23,9 @@ resources:
   - kafka.yaml
   - schema-registry-runner-configmap.yaml
   - schema-registry.yaml
+  - oauth2-proxy-secret.yaml
+  - oauth2-proxy.yaml
+  - middleware-forwardauth.yaml
   - nessie.yaml
   - lakefs.yaml
   - trino.yaml
