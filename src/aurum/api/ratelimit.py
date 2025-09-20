@@ -5,8 +5,8 @@ from __future__ import annotations
 import time
 import uuid
 from collections import deque
-from dataclasses import dataclass
-from typing import Deque, Optional, Tuple, Any
+from dataclasses import dataclass, field
+from typing import Deque, Dict, Optional, Tuple, Any
 
 from starlette.requests import Request
 from starlette.responses import JSONResponse, Response
@@ -42,6 +42,7 @@ def _record_metric(result: str) -> None:
 class RateLimitConfig:
     rps: int = 10
     burst: int = 20
+    overrides: Dict[str, Tuple[int, int]] = field(default_factory=dict)
 
     @classmethod
     def from_env(cls) -> "RateLimitConfig":
@@ -49,7 +50,33 @@ class RateLimitConfig:
 
         rps = int(os.getenv("AURUM_API_RATE_LIMIT_RPS", "10") or 10)
         burst = int(os.getenv("AURUM_API_RATE_LIMIT_BURST", "20") or 20)
-        return cls(rps=rps, burst=burst)
+        overrides_env = os.getenv("AURUM_API_RATE_LIMIT_OVERRIDES", "")
+        overrides: Dict[str, Tuple[int, int]] = {}
+        if overrides_env:
+            for item in overrides_env.split(","):
+                if not item.strip():
+                    continue
+                try:
+                    path_part, limits_part = item.split("=", 1)
+                    path_prefix = path_part.strip()
+                    limit_tokens = limits_part.split(":")
+                    if len(limit_tokens) != 2:
+                        continue
+                    override_rps = int(limit_tokens[0])
+                    override_burst = int(limit_tokens[1])
+                    overrides[path_prefix] = (override_rps, override_burst)
+                except ValueError:
+                    continue
+        return cls(rps=rps, burst=burst, overrides=overrides)
+
+    def limits_for_path(self, path: str) -> Tuple[int, int]:
+        match_prefix = ""
+        selected = (self.rps, self.burst)
+        for prefix, values in self.overrides.items():
+            if path.startswith(prefix) and len(prefix) > len(match_prefix):
+                match_prefix = prefix
+                selected = values
+        return selected
 
 
 def _redis_client(cache_cfg: CacheConfig):
@@ -81,13 +108,15 @@ class RateLimitMiddleware:
         if request.url.path in {"/health", "/metrics", "/ready"}:
             await self.app(scope, receive, send)
             return
-        client_ip = self._client_ip(request)
-        allowed, remaining, reset = await self._allow(client_ip)
+        path = request.url.path
+        rps, burst = self.rl_cfg.limits_for_path(path)
+        key = self._rate_key(request, path)
+        allowed, remaining, reset = await self._allow(key, rps=rps, burst=burst)
         if not allowed:
             await self._reject(scope, receive, send, remaining=0, reset=reset)
             return
         # Inject rate limit headers on successful responses
-        limit_total = self.rl_cfg.rps + self.rl_cfg.burst
+        limit_total = rps + burst
 
         async def send_with_headers(message: dict[str, Any]) -> None:
             if message.get("type") == "http.response.start":
@@ -100,8 +129,8 @@ class RateLimitMiddleware:
 
         await self.app(scope, receive, send_with_headers)
 
-    async def _allow(self, key: str) -> Tuple[bool, int, int]:
-        limit_total = self.rl_cfg.rps + self.rl_cfg.burst
+    async def _allow(self, key: str, *, rps: int, burst: int) -> Tuple[bool, int, int]:
+        limit_total = rps + burst
         now = time.time()
         reset = 1
 
@@ -144,6 +173,12 @@ class RateLimitMiddleware:
             return xff.split(",")[0].strip()
         client = request.client
         return client.host if client else "unknown"
+
+    def _rate_key(self, request: Request, path: str) -> str:
+        principal = getattr(request.state, "principal", {}) or {}
+        tenant = principal.get("tenant")
+        identifier = tenant or self._client_ip(request)
+        return f"{path}:{identifier}"
 
     async def _reject(self, scope: Scope, receive: Receive, send: Send, *, remaining: int, reset: int) -> None:
         headers = {"Retry-After": str(reset), "X-RateLimit-Limit": str(self.rl_cfg.rps + self.rl_cfg.burst), "X-RateLimit-Remaining": str(remaining), "X-RateLimit-Reset": str(reset)}
