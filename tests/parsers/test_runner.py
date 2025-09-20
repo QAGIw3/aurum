@@ -43,19 +43,18 @@ def test_runner_lakefs_commit(monkeypatch, tmp_path):
         return 'abc123'
 
     monkeypatch.setattr(runner, '_commit_lakefs', fake_commit)
-    monkeypatch.setenv('AURUM_LAKEFS_COMMIT', '1')
     monkeypatch.setenv('AURUM_LAKEFS_REPO', 'demo')
 
     args = [
         '--as-of', '2025-09-12',
         '--format', 'csv',
         '--output-dir', str(tmp_path),
+        '--lakefs-commit',
         str(FILES_DIR / 'EOD_PW_20250912_1430.xlsx'),
     ]
     runner.main(args)
     assert called['ref'] == 'abc123'
 
-    monkeypatch.delenv('AURUM_LAKEFS_COMMIT', raising=False)
     monkeypatch.delenv('AURUM_LAKEFS_REPO', raising=False)
 
 

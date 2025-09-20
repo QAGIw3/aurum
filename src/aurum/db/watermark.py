@@ -1,4 +1,9 @@
-"""Helpers for interacting with ingest watermark tables."""
+"""Helpers for interacting with ingest watermark tables.
+
+This module attempts to discover the correct Postgres DSN from environment
+variables commonly present in the Aurum dev stack. You can always override the
+connection by passing ``dsn=...`` or setting ``AURUM_APP_DB_DSN``.
+"""
 from __future__ import annotations
 
 import os
@@ -8,12 +13,24 @@ from typing import Generator, Optional
 
 import psycopg
 
-DEFAULT_DSN = "postgresql://app:app@postgres:5432/app"
+
+def _env_default_dsn() -> str:
+    """Build a sensible default DSN from standard env vars.
+
+    Falls back to the Aurum dev stack defaults if not provided.
+    """
+    user = os.getenv("POSTGRES_USER", "aurum")
+    password = os.getenv("POSTGRES_PASSWORD", "aurum")
+    host = os.getenv("POSTGRES_HOST", "postgres")
+    port = os.getenv("POSTGRES_PORT", "5432")
+    db = os.getenv("POSTGRES_DB", "aurum")
+    return f"postgresql://{user}:{password}@{host}:{port}/{db}"
 
 
 @contextmanager
 def _get_connection(dsn: Optional[str] = None) -> Generator[psycopg.Connection, None, None]:
-    dsn = dsn or os.getenv("AURUM_APP_DB_DSN", DEFAULT_DSN)
+    # Choose DSN in order of precedence: explicit arg, env var, derived default
+    dsn = dsn or os.getenv("AURUM_APP_DB_DSN") or _env_default_dsn()
     conn = psycopg.connect(dsn)
     try:
         yield conn

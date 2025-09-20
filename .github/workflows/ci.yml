@@ -30,10 +30,20 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r requirements-dev.txt
 
+      - name: Validate EIA dataset config
+        run: |
+          python scripts/eia/validate_config.py
+
       - name: Lint (ruff)
         run: |
           . .venv/bin/activate 2>/dev/null || true
           ruff check src tests
+
+      - name: Static type check (mypy)
+        run: |
+          mypy --version
+          # Incremental adoption: focus on stable modules first
+          mypy src/aurum/reference src/aurum/db src/aurum/dq src/aurum/parsers src/aurum/api/service.py src/aurum/api/app.py src/aurum/api/ratelimit.py
 
       - name: Run tests
         run: |
@@ -53,3 +63,14 @@ jobs:
         run: |
           docker build -f Dockerfile.api -t aurum-api:ci .
 
+  test-docker:
+    runs-on: ubuntu-latest
+    needs: test
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Run tests inside Docker
+        run: |
+          chmod +x scripts/dev/test_in_docker.sh
+          scripts/dev/test_in_docker.sh

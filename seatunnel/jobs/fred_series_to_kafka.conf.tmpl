@@ -35,14 +35,18 @@ source {
       observation_end = "${FRED_END_DATE}"
     }
     connection_timeout_ms = 15000
-    retry {
-      interval_ms = 2000
-      max_retries = 5
-    }
+    retry = 5
     format = "json"
-    json {
-      json_path = "$$.observations[*]"
+    schema = {
+      fields {
+        date = string
+        value = string
+        units = string
+        series_id = string
+        realtime_start = string
+      }
     }
+    jsonpath = "$$.observations[*]"
     result_table_name = "fred_raw"
   }
 }
@@ -74,6 +78,7 @@ transform {
 
 sink {
   Kafka {
+    plugin_input = "fred_normalized"
     bootstrap.servers = "${KAFKA_BOOTSTRAP_SERVERS}"
     topic = "${FRED_TOPIC}"
     semantic = "AT_LEAST_ONCE"

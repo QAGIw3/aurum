@@ -11,6 +11,7 @@ def test_list_curves_basic(monkeypatch):
 
     # stub service.query_curves to avoid Trino dependency
     def fake_query_curves(*args, **kwargs):
+        assert kwargs.get("cursor_after") is None
         rows = [
             {
                 "curve_key": "abc",
@@ -44,6 +45,7 @@ def test_list_curves_diff(monkeypatch):
     from aurum.api import service
 
     def fake_query_curves_diff(*args, **kwargs):
+        assert kwargs.get("cursor_after") is None
         rows = [
             {
                 "curve_key": "abc",
@@ -66,6 +68,88 @@ def test_list_curves_diff(monkeypatch):
     assert resp.status_code == 200
     payload = resp.json()
     assert payload["data"][0]["diff_abs"] == 1.0
+
+
+def test_cursor_pagination_diff(monkeypatch):
+    pytest.importorskip("fastapi", reason="fastapi not installed")
+    from fastapi.testclient import TestClient
+    from aurum.api import app as api_app
+    from aurum.api import service
+
+    rows = [
+        {
+            "curve_key": "a",
+            "tenor_label": "2025-01",
+            "tenor_type": "MONTHLY",
+            "contract_month": "2025-01-01",
+            "asof_a": "2025-09-01",
+            "mid_a": 10.0,
+            "asof_b": "2025-09-02",
+            "mid_b": 11.0,
+            "diff_abs": 1.0,
+            "diff_pct": 0.1,
+        },
+        {
+            "curve_key": "b",
+            "tenor_label": "2025-02",
+            "tenor_type": "MONTHLY",
+            "contract_month": "2025-02-01",
+            "asof_a": "2025-09-01",
+            "mid_a": 12.0,
+            "asof_b": "2025-09-02",
+            "mid_b": 13.0,
+            "diff_abs": 1.0,
+            "diff_pct": 1.0/12.0,
+        },
+    ]
+
+    captured_cursors: list = []
+
+    def fake_query_curves_diff(*args, **kwargs):
+        cursor_after = kwargs.get("cursor_after")
+        captured_cursors.append(cursor_after)
+        req_limit = kwargs.get("limit", 1)
+        start = 0
+        if cursor_after:
+            for idx, item in enumerate(rows):
+                if {
+                    "curve_key": item["curve_key"],
+                    "tenor_label": item["tenor_label"],
+                    "contract_month": item.get("contract_month"),
+                } == cursor_after:
+                    start = idx + 1
+                    break
+        subset = rows[start : start + req_limit]
+        return subset, 5.0
+
+    monkeypatch.setattr(service, "query_curves_diff", fake_query_curves_diff)
+    client = TestClient(api_app.app)
+
+    r1 = client.get(
+        "/v1/curves/diff",
+        params={"asof_a": "2025-09-01", "asof_b": "2025-09-02", "limit": 1},
+    )
+    assert r1.status_code == 200
+    body1 = r1.json()
+    assert body1["meta"]["next_cursor"]
+    assert captured_cursors[0] is None
+
+    cursor = body1["meta"]["next_cursor"]
+    r2 = client.get(
+        "/v1/curves/diff",
+        params={
+            "asof_a": "2025-09-01",
+            "asof_b": "2025-09-02",
+            "limit": 1,
+            "cursor": cursor,
+        },
+    )
+    assert r2.status_code == 200
+    assert captured_cursors[-1] == {
+        "curve_key": "a",
+        "tenor_label": "2025-01",
+        "contract_month": "2025-01-01",
+    }
 
 
 def test_cursor_pagination(monkeypatch):
@@ -99,10 +183,27 @@ def test_cursor_pagination(monkeypatch):
         },
     ]
 
+    captured_cursors = []
+
     def fake_query_curves(*args, **kwargs):
-        # Return exactly the number of rows requested
+        cursor_after = kwargs.get("cursor_after")
+        captured_cursors.append(cursor_after)
         req_limit = kwargs.get("limit", 1)
-        return rows[:req_limit], 3.0
+        start = 0
+        if cursor_after:
+            for idx, item in enumerate(rows):
+                current_payload = {
+                    "curve_key": item["curve_key"],
+                    "tenor_label": item["tenor_label"],
+                    "contract_month": item.get("contract_month"),
+                    "asof_date": item.get("asof_date"),
+                    "price_type": item.get("price_type"),
+                }
+                if current_payload == cursor_after:
+                    start = idx + 1
+                    break
+        subset = rows[start : start + req_limit]
+        return subset, 3.0
 
     monkeypatch.setattr(service, "query_curves", fake_query_curves)
     client = TestClient(api_app.app)
@@ -113,6 +214,7 @@ def test_cursor_pagination(monkeypatch):
     p1 = r1.json()
     assert len(p1["data"]) == 1
     assert p1["meta"].get("next_cursor")
+    assert captured_cursors[0] is None
 
     # Second page using cursor
     cursor = p1["meta"]["next_cursor"]
@@ -120,6 +222,13 @@ def test_cursor_pagination(monkeypatch):
     assert r2.status_code == 200
     p2 = r2.json()
     assert len(p2["data"]) == 1
+    assert captured_cursors[-1] == {
+        "curve_key": "a",
+        "tenor_label": "2025-01",
+        "contract_month": "2025-01-01",
+        "asof_date": "2025-09-12",
+        "price_type": "MID",
+    }
 
 
 def test_dimensions_endpoint(monkeypatch):
@@ -129,6 +238,7 @@ def test_dimensions_endpoint(monkeypatch):
     from aurum.api import service
 
     def fake_query_dimensions(*args, **kwargs):
+        assert kwargs.get("include_counts") is False
         return {
             "asset_class": ["power"],
             "iso": ["PJM"],
@@ -137,7 +247,7 @@ def test_dimensions_endpoint(monkeypatch):
             "block": ["ON_PEAK"],
             "tenor_type": ["MONTHLY"],
             "location": ["West"],
-        }
+        }, None
 
     monkeypatch.setattr(service, "query_dimensions", fake_query_dimensions)
     client = TestClient(api_app.app)
@@ -145,6 +255,40 @@ def test_dimensions_endpoint(monkeypatch):
     assert resp.status_code == 200
     payload = resp.json()
     assert payload["data"]["iso"] == ["PJM"]
+    assert payload.get("counts") is None
+
+
+def test_dimensions_endpoint_with_counts(monkeypatch):
+    pytest.importorskip("fastapi", reason="fastapi not installed")
+    from fastapi.testclient import TestClient
+    from aurum.api import app as api_app
+    from aurum.api import service
+
+    def fake_query_dimensions(*args, **kwargs):
+        assert kwargs.get("include_counts") is True
+        return (
+            {
+                "asset_class": ["power"],
+                "iso": ["PJM"],
+                "location": ["West"],
+                "market": ["DA"],
+                "product": ["ATC"],
+                "block": ["ON_PEAK"],
+                "tenor_type": ["MONTHLY"],
+            },
+            {
+                "iso": [{"value": "PJM", "count": 10}],
+                "market": [{"value": "DA", "count": 8}],
+            },
+        )
+
+    monkeypatch.setattr(service, "query_dimensions", fake_query_dimensions)
+    client = TestClient(api_app.app)
+    resp = client.get("/v1/metadata/dimensions", params={"include_counts": "true"})
+    assert resp.status_code == 200
+    payload = resp.json()
+    assert payload["counts"]["iso"][0]["value"] == "PJM"
+    assert payload["counts"]["market"][0]["count"] == 8
 
 
 def test_health_endpoint():
@@ -156,6 +300,29 @@ def test_health_endpoint():
     resp = client.get("/health")
     assert resp.status_code == 200
     assert resp.json()["status"] == "ok"
+
+
+def test_ready_endpoint(monkeypatch):
+    pytest.importorskip("fastapi", reason="fastapi not installed")
+    from fastapi.testclient import TestClient
+    from aurum.api import app as api_app
+
+    monkeypatch.setattr(api_app, "_check_trino_ready", lambda cfg: True)
+    client = TestClient(api_app.app)
+    resp = client.get("/ready")
+    assert resp.status_code == 200
+    assert resp.json()["status"] == "ready"
+
+
+def test_ready_endpoint_unavailable(monkeypatch):
+    pytest.importorskip("fastapi", reason="fastapi not installed")
+    from fastapi.testclient import TestClient
+    from aurum.api import app as api_app
+
+    monkeypatch.setattr(api_app, "_check_trino_ready", lambda cfg: False)
+    client = TestClient(api_app.app)
+    resp = client.get("/ready")
+    assert resp.status_code == 503
 
 
 def test_strips_endpoint(monkeypatch):

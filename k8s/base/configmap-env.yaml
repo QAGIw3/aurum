@@ -40,3 +40,9 @@ data:
   AURUM_API_OIDC_AUDIENCE: ""
   AURUM_API_OIDC_JWKS_URL: ""
   AURUM_API_JWT_LEEWAY: "60"
+  # Scenario API / Worker defaults
+  AURUM_SCENARIO_REQUESTS_ENABLED: "1"
+  AURUM_SCENARIO_REQUEST_TOPIC: aurum.scenario.request.v1
+  AURUM_SCENARIO_OUTPUT_TOPIC: aurum.scenario.output.v1
+  KAFKA_BOOTSTRAP_SERVERS: kafka.aurum-dev.svc.cluster.local:9092
+  AURUM_VENV_PYTHON: python

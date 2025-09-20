@@ -10,7 +10,6 @@ from airflow.operators.bash import BashOperator
 from airflow.operators.empty import EmptyOperator
 from airflow.operators.python import PythonOperator
 
-from aurum.db import register_ingest_source, update_ingest_watermark
 
 DEFAULT_ARGS: dict[str, Any] = {
     "owner": "aurum-data",
@@ -29,50 +28,78 @@ VENV_PYTHON = os.environ.get("AURUM_VENV_PYTHON", ".venv/bin/python")
 
 
 def _register_sources() -> None:
-    for name, description in (
-        ("nyiso_csv", "NYISO LBMP CSV ingestion"),
-        ("miso_csv", "MISO market report CSV ingestion"),
-    ):
-        try:
-            register_ingest_source(
-                name,
-                description=description,
-                schedule="0 * * * *",
-                target="kafka",
-            )
-        except Exception as exc:  # pragma: no cover
-            print(f"Failed to register ingest source {name}: {exc}")
+    # Defer import so the real package is used at runtime inside Airflow workers
+    try:
+        import sys
+        src_path = os.environ.get("AURUM_PYTHONPATH_ENTRY", "/opt/airflow/src")
+        if src_path and src_path not in sys.path:
+            sys.path.insert(0, src_path)
+        from aurum.db import register_ingest_source  # type: ignore
+
+        for name, description in (
+            ("nyiso_csv", "NYISO LBMP CSV ingestion"),
+            ("miso_csv", "MISO market report CSV ingestion"),
+        ):
+            try:
+                register_ingest_source(
+                    name,
+                    description=description,
+                    schedule="0 * * * *",
+                    target="kafka",
+                )
+            except Exception as exc:  # pragma: no cover
+                print(f"Failed to register ingest source {name}: {exc}")
+    except Exception as exc:  # pragma: no cover
+        print(f"Failed during register_sources setup: {exc}")
 
 
 def _update_watermark(source_name: str, logical_date: datetime) -> None:
     watermark = logical_date.astimezone(timezone.utc)
     try:
+        import sys
+        src_path = os.environ.get("AURUM_PYTHONPATH_ENTRY", "/opt/airflow/src")
+        if src_path and src_path not in sys.path:
+            sys.path.insert(0, src_path)
+        from aurum.db import update_ingest_watermark  # type: ignore
+
         update_ingest_watermark(source_name, "logical_date", watermark)
     except Exception as exc:  # pragma: no cover
         print(f"Failed to update watermark for {source_name}: {exc}")
 
 
-def build_seatunnel_task(job_name: str, required_vars: list[str], env_assignments: list[str]) -> BashOperator:
+def build_seatunnel_task(job_name: str, *, env_assignments: list[str], task_id_override: str | None = None) -> tuple[BashOperator, BashOperator]:
     mappings = ["secret/data/aurum/kafka:bootstrap=KAFKA_BOOTSTRAP_SERVERS"]
     mapping_flags = " ".join(f"--mapping {mapping}" for mapping in mappings)
     pull_cmd = (
         f"eval \"$(VAULT_ADDR={VAULT_ADDR} VAULT_TOKEN={VAULT_TOKEN} "
-        f"PYTHONPATH=${{PYTHONPATH:-}}:{PYTHONPATH_ENTRY} "
-        f"{VENV_PYTHON} scripts/secrets/pull_vault_env.py {mapping_flags} --format shell)\""
+        f"PYTHONPATH={PYTHONPATH_ENTRY}:${{PYTHONPATH:-}} "
+        f"{VENV_PYTHON} scripts/scripts/secrets/pull_vault_env.py {mapping_flags} --format shell)\" || true"
     )
 
     env_line = " ".join(env_assignments)
 
-    return BashOperator(
-        task_id=f"seatunnel_{job_name}",
+    render = BashOperator(
+        task_id=task_id_override or f"seatunnel_{job_name}",
         bash_command=(
             "set -euo pipefail\n"
+            "cd /opt/airflow\n"
             f"{pull_cmd}\n"
             f"export PATH=\"{BIN_PATH}\"\n"
             f"export PYTHONPATH=\"${{PYTHONPATH:-}}:{PYTHONPATH_ENTRY}\"\n"
-            f"{env_line} scripts/seatunnel/run_job.sh {job_name}"
+            f"AURUM_EXECUTE_SEATUNNEL=0 {env_line} scripts/scripts/seatunnel/run_job.sh {job_name} --render-only"
         ),
     )
+    exec_k8s = BashOperator(
+        task_id=(task_id_override or f"seatunnel_{job_name}") + "_execute_k8s",
+        bash_command=(
+            "set -euo pipefail\n"
+            "cd /opt/airflow\n"
+            f"export PATH=\"{BIN_PATH}\"\n"
+            f"export PYTHONPATH=\"${{PYTHONPATH:-}}:{PYTHONPATH_ENTRY}\"\n"
+            f"python scripts/k8s/run_seatunnel_job.py --job-name {job_name} --wait --timeout 600"
+        ),
+    )
+    return render, exec_k8s
 
 
 with DAG(
@@ -92,34 +119,36 @@ with DAG(
         python_callable=_register_sources,
     )
 
-    nyiso_task = build_seatunnel_task(
+    nyiso_render, nyiso_exec = build_seatunnel_task(
         "nyiso_lmp_to_kafka",
-        required_vars=[],
         env_assignments=[
+            "KAFKA_BOOTSTRAP_SERVERS='{{ var.value.get('aurum_kafka_bootstrap', 'kafka:9092') }}'",
             "NYISO_URL='{{ var.value.get('aurum_nyiso_url') }}'",
             "NYISO_TOPIC='{{ var.value.get('aurum_nyiso_topic', 'aurum.iso.nyiso.lmp.v1') }}'",
             "SCHEMA_REGISTRY_URL='{{ var.value.get('aurum_schema_registry', 'http://localhost:8081') }}'"
         ],
     )
 
-    miso_da = build_seatunnel_task(
+    miso_da_render, miso_da_exec = build_seatunnel_task(
         "miso_lmp_to_kafka",
-        required_vars=[],
         env_assignments=[
+            "KAFKA_BOOTSTRAP_SERVERS='{{ var.value.get('aurum_kafka_bootstrap', 'kafka:9092') }}'",
             "MISO_URL='{{ var.value.get('aurum_miso_da_url') }}'",
             "MISO_MARKET='DAY_AHEAD'",
             "SCHEMA_REGISTRY_URL='{{ var.value.get('aurum_schema_registry', 'http://localhost:8081') }}'"
         ],
+        task_id_override="seatunnel_miso_lmp_da",
     )
 
-    miso_rt = build_seatunnel_task(
+    miso_rt_render, miso_rt_exec = build_seatunnel_task(
         "miso_lmp_to_kafka",
-        required_vars=[],
         env_assignments=[
+            "KAFKA_BOOTSTRAP_SERVERS='{{ var.value.get('aurum_kafka_bootstrap', 'kafka:9092') }}'",
             "MISO_URL='{{ var.value.get('aurum_miso_rt_url') }}'",
             "MISO_MARKET='REAL_TIME'",
             "SCHEMA_REGISTRY_URL='{{ var.value.get('aurum_schema_registry', 'http://localhost:8081') }}'"
         ],
+        task_id_override="seatunnel_miso_lmp_rt",
     )
 
     nyiso_watermark = PythonOperator(
@@ -140,7 +169,7 @@ with DAG(
     end = EmptyOperator(task_id="end")
 
     start >> register_sources
-    register_sources >> nyiso_task >> nyiso_watermark
-    register_sources >> miso_da >> miso_da_watermark
-    register_sources >> miso_rt >> miso_rt_watermark
+    register_sources >> nyiso_render >> nyiso_exec >> nyiso_watermark
+    register_sources >> miso_da_render >> miso_da_exec >> miso_da_watermark
+    register_sources >> miso_rt_render >> miso_rt_exec >> miso_rt_watermark
     [nyiso_watermark, miso_da_watermark, miso_rt_watermark] >> end

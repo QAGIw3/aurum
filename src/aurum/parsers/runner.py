@@ -29,6 +29,7 @@ VENDOR_HINTS: Sequence[Tuple[str, str]] = (
     ("_PW_", "pw"),
     ("_EUGP_", "eugp"),
     ("_RP_", "rp"),
+    ("_SIMPLE_", "simple"),
 )
 
 
@@ -105,13 +106,13 @@ def write_output(
                 import pyarrow  # noqa: F401
             except ImportError as exc:  # pragma: no cover
                 raise RuntimeError("pyarrow is required for parquet output") from exc
-            buffer = io.BytesIO()
-            df.to_parquet(buffer, index=False)
-            body = buffer.getvalue()
+            bufb = io.BytesIO()
+            df.to_parquet(bufb, index=False)
+            body = bufb.getvalue()
         elif fmt == "csv":
-            buffer = io.StringIO()
-            df.to_csv(buffer, index=False)
-            body = buffer.getvalue().encode("utf-8")
+            bufs = io.StringIO()
+            df.to_csv(bufs, index=False)
+            body = bufs.getvalue().encode("utf-8")
         else:
             raise ValueError(f"Unsupported format '{fmt}'")
         client.put_object(Bucket=bucket, Key=key, Body=body)
@@ -169,6 +170,27 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     )
     parser.add_argument("--verbose", action="store_true")
     parser.add_argument(
+        "--validate",
+        action="store_true",
+        help="Validate parsed dataframe against an expectation suite (Great Expectations-like JSON)",
+    )
+    parser.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Parse (and optionally validate) only; print a summary and exit without writing",
+    )
+    parser.add_argument(
+        "--summary",
+        action="store_true",
+        help="After writing output, print a one-line parse summary to stdout",
+    )
+    parser.add_argument(
+        "--suite",
+        dest="suite",
+        type=Path,
+        help="Path to expectation suite JSON (defaults to ge/expectations/curve_schema.json)",
+    )
+    parser.add_argument(
         "--write-iceberg",
         action="store_true",
         help="Append parsed data to the configured Iceberg table via Nessie",
@@ -183,6 +205,26 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         dest="iceberg_branch",
         help="Iceberg/Nessie branch to write to (overrides env)",
     )
+    parser.add_argument(
+        "--lakefs-commit",
+        action="store_true",
+        help="Commit parsed rows to lakeFS using aurum.lakefs_client",
+    )
+    parser.add_argument(
+        "--lakefs-branch",
+        dest="lakefs_branch",
+        help="Target lakeFS branch (defaults to env or eod_<asof>)",
+    )
+    parser.add_argument(
+        "--lakefs-message",
+        dest="lakefs_message",
+        help="Commit message to use when lakeFS commit occurs",
+    )
+    parser.add_argument(
+        "--lakefs-tag",
+        dest="lakefs_tag",
+        help="Optional tag name to apply to the lakeFS commit",
+    )
 
     args = parser.parse_args(argv)
     logging.basicConfig(level=logging.DEBUG if args.verbose else logging.INFO)
@@ -195,8 +237,34 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     if df.empty:
         LOG.warning("No rows parsed")
     selected_asof = as_of or _infer_asof(df)
+
+    # Optional data validation prior to writing output
+    if args.validate:
+        suite_path: Path
+        if args.suite:
+            suite_path = args.suite
+        else:
+            # default to repo_root/ge/expectations/curve_schema.json
+            repo_root = Path(__file__).resolve().parents[3]
+            suite_path = repo_root / "ge" / "expectations" / "curve_schema.json"
+        try:
+            from aurum.dq import enforce_expectation_suite  # type: ignore
+
+            enforce_expectation_suite(df, suite_path, suite_name="curve_schema")
+            LOG.info("Validation succeeded against %s", suite_path)
+        except Exception as exc:  # pragma: no cover - surface error condition
+            raise RuntimeError(f"Validation failed: {exc}") from exc
+    if args.dry_run:
+        distinct_curves = len(df["curve_key"].unique()) if (not df.empty and "curve_key" in df.columns) else 0
+        # print a concise summary to stdout (not logging) for easy capture
+        print(f"Parsed {len(df)} rows; distinct curves: {distinct_curves}; as_of={selected_asof}")
+        return 0
+
     path = write_output(df, args.output_dir, as_of=selected_asof, fmt=args.fmt)
     LOG.info("Wrote %s rows to %s", len(df), path)
+    if args.summary:
+        distinct_curves = len(df["curve_key"].unique()) if (not df.empty and "curve_key" in df.columns) else 0
+        print(f"Parsed {len(df)} rows; distinct curves: {distinct_curves}; as_of={selected_asof}")
 
     if args.write_iceberg or os.getenv(ICEBERG_ENV_FLAG):
         try:

@@ -4,7 +4,7 @@ from __future__ import annotations
 import hashlib
 import re
 from datetime import date, datetime
-from typing import Iterable, Mapping, Optional, Sequence
+from typing import Any, Iterable, Mapping, Optional, Sequence
 
 import pandas as pd
 
@@ -18,12 +18,80 @@ _ASOF_KEYWORD = re.compile(r"as[-_\s]*of", re.IGNORECASE)
 
 _DATE_FORMATS = ("%Y-%m-%d", "%m/%d/%Y", "%m/%d/%y", "%Y/%m/%d")
 
+_CURRENCY_ALIASES: Mapping[str, str] = {
+    "C$": "CAD",
+    "US$": "USD",
+    "$": "USD",
+    "£": "GBP",
+    "€": "EUR",
+    "¥": "JPY",
+    "A$": "AUD",
+    "AU$": "AUD",
+    "NZ$": "NZD",
+}
+
+_UNIT_TOKENS: tuple[str, ...] = (
+    "MWH",
+    "KWH",
+    "MMBTU",
+    "MW-DAY",
+    "MW-YR",
+    "MW-MONTH",
+    "MW-WEEK",
+    "MW",
+    "KW",
+    "TONNE",
+    "TON",
+    "BBL",
+    "GAL",
+    "THERM",
+)
+
 
 def normalise_token(value: Optional[str]) -> str:
     """Return a lowercase trimmed representation suitable for key construction."""
     if value is None:
         return ""
     return re.sub(r"\s+", " ", value.strip()).lower()
+
+
+def normalise_units_token(text: Optional[str]) -> Optional[str]:
+    """Normalise vendor-provided units text to aid lookup heuristics."""
+    if not text:
+        return None
+    s = str(text).strip()
+    if not s:
+        return None
+    for alias, canonical in _CURRENCY_ALIASES.items():
+        s = s.replace(alias, canonical)
+    s = s.replace(" - ", "/")
+    s = s.replace("—", "/")
+    s_compact = s.upper().replace(" ", "")
+    currencies = ("CAD", "USD", "GBP", "EUR", "JPY", "AUD", "NZD", "CHF", "SEK", "NOK", "DKK", "ZAR", "MXN")
+    currency = next((code for code in currencies if code in s_compact), None)
+    unit = next((token for token in _UNIT_TOKENS if token in s_compact), None)
+    if currency and unit:
+        return f"{currency}/{unit}"
+    return s
+
+
+def looks_like_unit_token(text: Optional[str]) -> bool:
+    if not text:
+        return False
+    upper = text.upper()
+    return any(token in upper for token in _UNIT_TOKENS)
+
+
+def detect_units_row(df: pd.DataFrame, *, header_rows: int = 12, scan_columns: int = 6) -> Optional[pd.Series]:
+    """Best-effort detection of a header row that contains unit hints."""
+    limit = min(header_rows, len(df))
+    for idx in range(limit):
+        row = df.iloc[idx, :]
+        for value in row.tolist()[:scan_columns]:
+            token = normalise_units_token(safe_str(value))
+            if token and looks_like_unit_token(token):
+                return row
+    return None
 
 
 def compute_curve_key(identity: Mapping[str, Optional[str]], *, separator: str = "|") -> str:
@@ -58,16 +126,15 @@ def parse_bid_ask(value: object) -> tuple[Optional[float], Optional[float]]:
     if value is None:
         return None, None
     if isinstance(value, (int, float)) and not pd.isna(value):
-        number = float(value)
-        return number, number
+        return float(value), float(value)
     if isinstance(value, str):
         cleaned = value.strip()
         if not cleaned:
             return None, None
         parts = re.split(r"\s*/\s*", cleaned)
         if len(parts) == 1:
-            number = _safe_float(parts[0])
-            return number, number
+            f = _safe_float(parts[0])
+            return f, f
         bid = _safe_float(parts[0])
         ask = _safe_float(parts[1])
         return bid, ask
@@ -117,7 +184,7 @@ def safe_str(value: object) -> Optional[str]:
     return str(value)
 
 
-def to_float(value: object) -> Optional[float]:
+def to_float(value: Any) -> Optional[float]:
     if value is None:
         return None
     try:

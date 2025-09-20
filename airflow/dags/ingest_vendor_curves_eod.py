@@ -12,10 +12,10 @@ from airflow.models.baseoperator import chain
 from airflow.operators.empty import EmptyOperator
 from airflow.operators.python import PythonOperator
 
-from aurum.dq import enforce_expectation_suite
-from aurum.db import register_ingest_source, update_ingest_watermark
-from aurum.parsers.runner import parse_files, write_output
-from aurum.lakefs_client import ensure_branch, commit_branch, tag_commit
+"""
+Note: imports of aurum.* are deferred into task functions to ensure Airflow pods
+use the real package mounted at /opt/airflow/src instead of DAG-time stubs.
+"""
 
 DEFAULT_ARGS: dict[str, Any] = {
     "owner": "aurum-data",
@@ -36,7 +36,17 @@ def create_lakefs_branch(**context: Any) -> None:
         print("lakeFS repo not configured; skipping branch creation")
         return
     source_branch = os.environ.get("AURUM_LAKEFS_SOURCE_BRANCH", "main")
-    ensure_branch(repo, branch_name, source_branch)
+    # Defer import
+    try:
+        import sys
+        src_path = os.environ.get("AURUM_PYTHONPATH_ENTRY", "/opt/airflow/src")
+        if src_path and src_path not in sys.path:
+            sys.path.insert(0, src_path)
+        from aurum.lakefs_client import ensure_branch  # type: ignore
+
+        ensure_branch(repo, branch_name, source_branch)
+    except Exception as exc:  # pragma: no cover
+        print(f"lakeFS ensure_branch failed: {exc}")
     os.environ["AURUM_LAKEFS_BRANCH"] = branch_name
     print(f"Ensured lakeFS branch {branch_name} from {source_branch}")
 
@@ -48,15 +58,24 @@ def parse_vendor_workbook(vendor: str, **context: Any) -> None:
     output_root_env = os.environ.get("AURUM_PARSED_OUTPUT_DIR", "/opt/airflow/data/processed")
     output_uri_env = os.environ.get("AURUM_PARSED_OUTPUT_URI")
     output_format = os.environ.get("AURUM_OUTPUT_FORMAT", "parquet")
+    ti = context.get("ti")
 
     pattern = f"EOD_{vendor.upper()}_*.xlsx"
     files = sorted(drop_dir.glob(pattern))
     if not files:
         print(f"No workbooks found for vendor={vendor} in {drop_dir}")
+        if ti:
+            ti.xcom_push(key="rows", value=0)
         return
 
     source_name = f"vendor_{vendor.lower()}"
     try:
+        import sys
+        src_path = os.environ.get("AURUM_PYTHONPATH_ENTRY", "/opt/airflow/src")
+        if src_path and src_path not in sys.path:
+            sys.path.insert(0, src_path)
+        from aurum.db import register_ingest_source  # type: ignore
+
         register_ingest_source(
             source_name,
             description=f"Vendor curves for {vendor.upper()}",
@@ -66,13 +85,30 @@ def parse_vendor_workbook(vendor: str, **context: Any) -> None:
     except Exception as exc:  # pragma: no cover - best effort registration
         print(f"Failed to register ingest source {source_name}: {exc}")
 
-    df = parse_files(files, as_of=execution_date)
+    try:
+        import sys
+        src_path = os.environ.get("AURUM_PYTHONPATH_ENTRY", "/opt/airflow/src")
+        if src_path and src_path not in sys.path:
+            sys.path.insert(0, src_path)
+        from aurum.parsers.runner import parse_files  # type: ignore
+
+        df = parse_files(files, as_of=execution_date)
+    except Exception as exc:  # pragma: no cover - ensure failure is surfaced
+        raise RuntimeError(f"Failed to parse vendor files: {exc}") from exc
     if df.empty:
         print(f"Parsed zero rows for vendor={vendor}; skipping write")
+        if ti:
+            ti.xcom_push(key="rows", value=0)
         return
 
     suite_path = Path(__file__).resolve().parents[2] / "ge" / "expectations" / "curve_schema.json"
     try:
+        import sys
+        src_path = os.environ.get("AURUM_PYTHONPATH_ENTRY", "/opt/airflow/src")
+        if src_path and src_path not in sys.path:
+            sys.path.insert(0, src_path)
+        from aurum.dq import enforce_expectation_suite  # type: ignore
+
         enforce_expectation_suite(df, suite_path, suite_name="curve_schema")
     except Exception as exc:
         raise RuntimeError(f"Great Expectations validation failed for vendor {vendor}: {exc}") from exc
@@ -84,13 +120,31 @@ def parse_vendor_workbook(vendor: str, **context: Any) -> None:
         output_root = Path(output_root_env)
         target = output_root / sub_path
 
-    write_output(df, target, as_of=execution_date, fmt=output_format)
+    try:
+        import sys
+        src_path = os.environ.get("AURUM_PYTHONPATH_ENTRY", "/opt/airflow/src")
+        if src_path and src_path not in sys.path:
+            sys.path.insert(0, src_path)
+        from aurum.parsers.runner import write_output  # type: ignore
+
+        write_output(df, target, as_of=execution_date, fmt=output_format)
+    except Exception as exc:  # pragma: no cover
+        raise RuntimeError(f"Failed to write parsed output: {exc}") from exc
 
     watermark_dt = datetime.combine(execution_date, datetime.min.time(), tzinfo=timezone.utc)
     try:
+        import sys
+        src_path = os.environ.get("AURUM_PYTHONPATH_ENTRY", "/opt/airflow/src")
+        if src_path and src_path not in sys.path:
+            sys.path.insert(0, src_path)
+        from aurum.db import update_ingest_watermark  # type: ignore
+
         update_ingest_watermark(source_name, "asof_date", watermark_dt)
     except Exception as exc:  # pragma: no cover - best effort watermark update
         print(f"Failed to update ingest watermark for {source_name}: {exc}")
+
+    if ti:
+        ti.xcom_push(key="rows", value=len(df))
 
 
 def run_great_expectations(**context: Any) -> None:
@@ -144,14 +198,41 @@ def merge_branch(**context: Any) -> None:
         return
     execution_date = context["ds"]
     message = f"Ingest vendor curves {execution_date}"
-    commit_id = commit_branch(
-        repo,
-        branch,
-        message,
-        metadata={"execution_date": execution_date},
-    )
+    metadata = {"execution_date": execution_date}
+    ti = context.get("ti")
+    vendor_tasks = {"pw": "parse_pw", "eugp": "parse_eugp", "rp": "parse_rp"}
+    total_rows = 0
+    if ti:
+        for vendor, task_id in vendor_tasks.items():
+            rows = ti.xcom_pull(task_ids=task_id, key="rows")
+            if rows is None:
+                continue
+            try:
+                int_rows = int(rows)
+            except (TypeError, ValueError):
+                continue
+            metadata[f"{vendor}_rows"] = str(int_rows)
+            total_rows += int_rows
+    if total_rows:
+        metadata["total_rows"] = str(total_rows)
+    try:
+        import sys
+        src_path = os.environ.get("AURUM_PYTHONPATH_ENTRY", "/opt/airflow/src")
+        if src_path and src_path not in sys.path:
+            sys.path.insert(0, src_path)
+        from aurum.lakefs_client import commit_branch, tag_commit  # type: ignore
+
+        commit_id = commit_branch(
+            repo,
+            branch,
+            message,
+            metadata=metadata,
+        )
+    except Exception as exc:  # pragma: no cover
+        raise RuntimeError(f"lakeFS commit failed: {exc}")
     tag_name = os.environ.get("AURUM_LAKEFS_TAG") or f"ingest/{execution_date}"
     try:
+        from aurum.lakefs_client import tag_commit  # type: ignore
         tag_commit(repo, tag_name, commit_id)
     except Exception as exc:  # pragma: no cover - tagging optional
         print(f"Failed to tag commit {commit_id}: {exc}")

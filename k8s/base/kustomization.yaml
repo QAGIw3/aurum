@@ -27,7 +27,9 @@ resources:
   - lakefs.yaml
   - trino.yaml
   - airflow.yaml
+  - airflow-rbac.yaml
   - clickhouse.yaml
   - vector.yaml
   - vector-rbac.yaml
   - api.yaml
+  - scenario-worker.yaml

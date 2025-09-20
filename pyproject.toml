@@ -63,6 +63,9 @@ api = [
 "Documentation" = "https://github.com/aurum/dev-docs"
 "Source" = "https://github.com/aurum/platform"
 
+[project.scripts]
+aurum-unknown-units = "aurum.parsers.unknown_units_cli:main"
+
 [tool.setuptools.packages.find]
 where = ["src"]
 

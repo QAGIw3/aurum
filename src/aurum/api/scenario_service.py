@@ -49,24 +49,38 @@ class BaseScenarioStore:
     ) -> ScenarioRecord:
         raise NotImplementedError
 
-    def get_scenario(self, scenario_id: str) -> Optional[ScenarioRecord]:
+    def get_scenario(self, scenario_id: str, *, tenant_id: Optional[str] = None) -> Optional[ScenarioRecord]:
         raise NotImplementedError
 
     def create_run(
         self,
         scenario_id: str,
+        *,
+        tenant_id: Optional[str] = None,
         code_version: Optional[str],
         seed: Optional[int],
     ) -> ScenarioRunRecord:
         raise NotImplementedError
 
-    def get_run_for_scenario(self, scenario_id: str, run_id: str) -> Optional[ScenarioRunRecord]:
+    def get_run_for_scenario(
+        self,
+        scenario_id: str,
+        run_id: str,
+        *,
+        tenant_id: Optional[str] = None,
+    ) -> Optional[ScenarioRunRecord]:
         raise NotImplementedError
 
     def reset(self) -> None:  # pragma: no cover - only meaningful for in-memory
         pass
 
-    def update_run_state(self, run_id: str, *, state: str) -> Optional[ScenarioRunRecord]:
+    def update_run_state(
+        self,
+        run_id: str,
+        *,
+        state: str,
+        tenant_id: Optional[str] = None,
+    ) -> Optional[ScenarioRunRecord]:
         raise NotImplementedError
 
 
@@ -95,12 +109,14 @@ class InMemoryScenarioStore(BaseScenarioStore):
         self._scenarios[scenario_id] = record
         return record
 
-    def get_scenario(self, scenario_id: str) -> Optional[ScenarioRecord]:
+    def get_scenario(self, scenario_id: str, *, tenant_id: Optional[str] = None) -> Optional[ScenarioRecord]:
         return self._scenarios.get(scenario_id)
 
     def create_run(
         self,
         scenario_id: str,
+        *,
+        tenant_id: Optional[str] = None,
         code_version: Optional[str],
         seed: Optional[int],
     ) -> ScenarioRunRecord:
@@ -115,14 +131,20 @@ class InMemoryScenarioStore(BaseScenarioStore):
         )
         self._runs[run_id] = record
         try:
-            scenario = self.get_scenario(scenario_id)
+            scenario = self.get_scenario(scenario_id, tenant_id=tenant_id)
             if scenario is not None:
                 _maybe_emit_scenario_request(scenario, record)
         except Exception:
             pass
         return record
 
-    def get_run_for_scenario(self, scenario_id: str, run_id: str) -> Optional[ScenarioRunRecord]:
+    def get_run_for_scenario(
+        self,
+        scenario_id: str,
+        run_id: str,
+        *,
+        tenant_id: Optional[str] = None,
+    ) -> Optional[ScenarioRunRecord]:
         record = self._runs.get(run_id)
         if record and record.scenario_id == scenario_id:
             return record
@@ -132,7 +154,13 @@ class InMemoryScenarioStore(BaseScenarioStore):
         self._scenarios.clear()
         self._runs.clear()
 
-    def update_run_state(self, run_id: str, *, state: str) -> Optional[ScenarioRunRecord]:
+    def update_run_state(
+        self,
+        run_id: str,
+        *,
+        state: str,
+        tenant_id: Optional[str] = None,
+    ) -> Optional[ScenarioRunRecord]:
         run = self._runs.get(run_id)
         if run is None:
             return None
@@ -159,6 +187,12 @@ class PostgresScenarioStore(BaseScenarioStore):
         finally:
             conn.close()
 
+    @staticmethod
+    def _set_tenant(cursor, tenant_id: Optional[str]) -> None:
+        if not tenant_id:
+            return
+        cursor.execute("SET LOCAL app.current_tenant = %s", (tenant_id,))
+
     def create_scenario(
         self,
         tenant_id: str,
@@ -169,6 +203,7 @@ class PostgresScenarioStore(BaseScenarioStore):
         scenario_id = str(uuid.uuid4())
         with self._connect() as conn:
             with conn.cursor() as cur:
+                self._set_tenant(cur, tenant_id)
                 cur.execute(
                     """
                     INSERT INTO scenario (id, tenant_id, name, description, created_by)
@@ -224,9 +259,10 @@ class PostgresScenarioStore(BaseScenarioStore):
             created_at=created_at,
         )
 
-    def get_scenario(self, scenario_id: str) -> Optional[ScenarioRecord]:
+    def get_scenario(self, scenario_id: str, *, tenant_id: Optional[str] = None) -> Optional[ScenarioRecord]:
         with self._connect() as conn:
             with conn.cursor() as cur:
+                self._set_tenant(cur, tenant_id)
                 cur.execute(
                     """SELECT id, tenant_id, name, description, created_at FROM scenario WHERE id = %s""",
                     (scenario_id,),
@@ -272,6 +308,8 @@ class PostgresScenarioStore(BaseScenarioStore):
     def create_run(
         self,
         scenario_id: str,
+        *,
+        tenant_id: Optional[str] = None,
         code_version: Optional[str],
         seed: Optional[int],
     ) -> ScenarioRunRecord:
@@ -280,6 +318,7 @@ class PostgresScenarioStore(BaseScenarioStore):
         state = "QUEUED"
         with self._connect() as conn:
             with conn.cursor() as cur:
+                self._set_tenant(cur, tenant_id)
                 cur.execute(
                     """
                     INSERT INTO model_run (id, scenario_id, curve_def_id, code_version, seed, state, version_hash)
@@ -300,16 +339,23 @@ class PostgresScenarioStore(BaseScenarioStore):
             seed=seed,
         )
         try:
-            scenario = self.get_scenario(scenario_id)
+            scenario = self.get_scenario(scenario_id, tenant_id=tenant_id)
             if scenario is not None:
                 _maybe_emit_scenario_request(scenario, run)
         except Exception:
             pass
         return run
 
-    def get_run_for_scenario(self, scenario_id: str, run_id: str) -> Optional[ScenarioRunRecord]:
+    def get_run_for_scenario(
+        self,
+        scenario_id: str,
+        run_id: str,
+        *,
+        tenant_id: Optional[str] = None,
+    ) -> Optional[ScenarioRunRecord]:
         with self._connect() as conn:
             with conn.cursor() as cur:
+                self._set_tenant(cur, tenant_id)
                 cur.execute(
                     """
                     SELECT id, scenario_id, state, code_version, seed, submitted_at
@@ -331,10 +377,17 @@ class PostgresScenarioStore(BaseScenarioStore):
             seed=row.get("seed"),
         )
 
-    def update_run_state(self, run_id: str, *, state: str) -> Optional[ScenarioRunRecord]:
+    def update_run_state(
+        self,
+        run_id: str,
+        *,
+        state: str,
+        tenant_id: Optional[str] = None,
+    ) -> Optional[ScenarioRunRecord]:
         now = _now()
         with self._connect() as conn:
             with conn.cursor() as cur:
+                self._set_tenant(cur, tenant_id)
                 # fetch current run and scenario tenant
                 cur.execute(
                     """
@@ -349,7 +402,7 @@ class PostgresScenarioStore(BaseScenarioStore):
                 if row is None:
                     return None
                 scenario_id = row["scenario_id"]
-                tenant_id = row["tenant_id"]
+                row_tenant = row["tenant_id"]
 
                 # update state with timestamps
                 if state == "RUNNING":
@@ -376,7 +429,12 @@ class PostgresScenarioStore(BaseScenarioStore):
                     seed=row.get("seed"),
                 )
 
-        _maybe_emit_status_alert(tenant_id=str(tenant_id) if tenant_id else None, scenario_id=scenario_id, run_id=run_id, state=state)
+        _maybe_emit_status_alert(
+            tenant_id=str(row_tenant) if row_tenant else None,
+            scenario_id=scenario_id,
+            run_id=run_id,
+            state=state,
+        )
         return updated
 
 
@@ -440,7 +498,8 @@ def _schema_path(filename: str) -> str:
 
 
 def _maybe_emit_scenario_request(scenario: ScenarioRecord, run: ScenarioRunRecord) -> None:
-    if os.getenv("AURUM_SCENARIO_REQUESTS_ENABLED", "0").lower() not in {"1", "true", "yes"}:
+    # Default to enabled unless explicitly disabled
+    if os.getenv("AURUM_SCENARIO_REQUESTS_ENABLED", "1").lower() in {"0", "false", "no"}:
         return
     bootstrap = os.getenv("KAFKA_BOOTSTRAP_SERVERS")
     if not bootstrap:

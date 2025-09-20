@@ -10,7 +10,6 @@ from airflow.operators.bash import BashOperator
 from airflow.operators.empty import EmptyOperator
 from airflow.operators.python import PythonOperator
 
-from aurum.db import register_ingest_source, update_ingest_watermark
 
 DEFAULT_ARGS: dict[str, Any] = {
     "owner": "aurum-data",
@@ -34,46 +33,74 @@ ISO_SOURCES = {
 
 
 def _register_sources() -> None:
-    for name, description in ISO_SOURCES.items():
-        try:
-            register_ingest_source(
-                name,
-                description=description,
-                schedule="20 * * * *",
-                target="kafka",
-            )
-        except Exception as exc:  # pragma: no cover
-            print(f"Failed to register ingest source {name}: {exc}")
+    # Defer import so the real package is used at runtime inside Airflow workers
+    try:
+        import sys
+        src_path = os.environ.get("AURUM_PYTHONPATH_ENTRY", "/opt/airflow/src")
+        if src_path and src_path not in sys.path:
+            sys.path.insert(0, src_path)
+        from aurum.db import register_ingest_source  # type: ignore
+
+        for name, description in ISO_SOURCES.items():
+            try:
+                register_ingest_source(
+                    name,
+                    description=description,
+                    schedule="20 * * * *",
+                    target="kafka",
+                )
+            except Exception as exc:  # pragma: no cover
+                print(f"Failed to register ingest source {name}: {exc}")
+    except Exception as exc:  # pragma: no cover
+        print(f"Failed during register_sources setup: {exc}")
 
 
 def _update_watermark(source_name: str, logical_date: datetime) -> None:
     watermark = logical_date.astimezone(timezone.utc)
     try:
+        import sys
+        src_path = os.environ.get("AURUM_PYTHONPATH_ENTRY", "/opt/airflow/src")
+        if src_path and src_path not in sys.path:
+            sys.path.insert(0, src_path)
+        from aurum.db import update_ingest_watermark  # type: ignore
+
         update_ingest_watermark(source_name, "logical_date", watermark)
     except Exception as exc:  # pragma: no cover
         print(f"Failed to update watermark for {source_name}: {exc}")
 
 
-def build_seatunnel_task(job_name: str, env_assignments: list[str], mappings: list[str]) -> BashOperator:
+def build_seatunnel_task(job_name: str, env_assignments: list[str], mappings: list[str]) -> tuple[BashOperator, BashOperator]:
     mapping_flags = " ".join(f"--mapping {mapping}" for mapping in mappings)
     pull_cmd = (
         f"eval \"$(VAULT_ADDR={VAULT_ADDR} VAULT_TOKEN={VAULT_TOKEN} "
-        f"PYTHONPATH=${{PYTHONPATH:-}}:{PYTHONPATH_ENTRY} "
-        f"{VENV_PYTHON} scripts/secrets/pull_vault_env.py {mapping_flags} --format shell)\"\n"
+        f"PYTHONPATH={PYTHONPATH_ENTRY}:${{PYTHONPATH:-}} "
+        f"{VENV_PYTHON} scripts/scripts/secrets/pull_vault_env.py {mapping_flags} --format shell)\" || true\n"
     )
 
     env_line = " ".join(env_assignments)
 
-    return BashOperator(
+    render = BashOperator(
         task_id=f"seatunnel_{job_name}",
         bash_command=(
             "set -euo pipefail\n"
+            "cd /opt/airflow\n"
             f"{pull_cmd}"
             f"export PATH=\"{BIN_PATH}\"\n"
             f"export PYTHONPATH=\"${{PYTHONPATH:-}}:{PYTHONPATH_ENTRY}\"\n"
-            f"{env_line} scripts/seatunnel/run_job.sh {job_name}"
+            f"AURUM_EXECUTE_SEATUNNEL=0 {env_line} scripts/scripts/seatunnel/run_job.sh {job_name} --render-only"
         ),
     )
+    exec_k8s = BashOperator(
+        task_id=f"seatunnel_{job_name}_execute_k8s",
+        bash_command=(
+            "set -euo pipefail\n"
+            "cd /opt/airflow\n"
+            f"export PATH=\"{BIN_PATH}\"\n"
+            f"export PYTHONPATH=\"${{PYTHONPATH:-}}:{PYTHONPATH_ENTRY}\"\n"
+            f"python scripts/k8s/run_seatunnel_job.py --job-name {job_name} --wait --timeout 600"
+        ),
+    )
+    return render, exec_k8s
 
 
 with DAG(
@@ -93,14 +120,15 @@ with DAG(
         python_callable=_register_sources,
     )
 
-    isone_task = build_seatunnel_task(
+    isone_render, isone_exec = build_seatunnel_task(
         "isone_lmp_to_kafka",
         [
             "ISONE_URL='{{ var.value.get('aurum_isone_endpoint') }}'",
             "ISONE_START='{{ data_interval_start.in_timezone('UTC').isoformat() }}'",
             "ISONE_END='{{ data_interval_end.in_timezone('UTC').isoformat() }}'",
             "ISONE_MARKET='{{ var.value.get('aurum_isone_market', 'DA') }}'",
-            "SCHEMA_REGISTRY_URL='{{ var.value.get('aurum_schema_registry', 'http://localhost:8081') }}'"
+            "KAFKA_BOOTSTRAP_SERVERS='{{ var.value.get('aurum_kafka_bootstrap', 'kafka:9092') }}'",
+            "SCHEMA_REGISTRY_URL='{{ var.value.get('aurum_schema_registry', 'http://localhost:8081') }}'",
         ],
         mappings=[
             "secret/data/aurum/isone:username=ISONE_USERNAME",
@@ -119,7 +147,7 @@ with DAG(
             f"export PATH=\"{BIN_PATH}\"",
             f"export PYTHONPATH=\"${{PYTHONPATH:-}}:{PYTHONPATH_ENTRY}\"",
             (
-                "python scripts/ingest/spp_file_api_to_kafka.py "
+                "python scripts/scripts/ingest/spp_file_api_to_kafka.py "
                 "--base-url {{ var.value.get('aurum_spp_base_url') }} "
                 "--report {{ var.value.get('aurum_spp_rt_report') }} "
                 "--date {{ ds }} "
@@ -129,12 +157,14 @@ with DAG(
     )
     stage_spp = BashOperator(task_id="stage_spp_lmp", bash_command=stage_spp_cmd)
 
-    spp_task = build_seatunnel_task(
+    spp_render, spp_exec = build_seatunnel_task(
         "spp_lmp_to_kafka",
         [
             f"SPP_INPUT_JSON={spp_staging}",
+            "KAFKA_BOOTSTRAP_SERVERS='{{ var.value.get('aurum_kafka_bootstrap', 'kafka:9092') }}'",
             "SPP_TOPIC='{{ var.value.get('aurum_spp_topic', 'aurum.iso.spp.lmp.v1') }}'",
             "SCHEMA_REGISTRY_URL='{{ var.value.get('aurum_schema_registry', 'http://localhost:8081') }}'",
+            "ISO_LMP_SCHEMA_PATH=/opt/airflow/scripts/scripts/kafka/schemas/iso.lmp.v1.avsc",
         ],
         mappings=[],
     )
@@ -152,6 +182,6 @@ with DAG(
     end = EmptyOperator(task_id="end")
 
     start >> register_sources
-    register_sources >> isone_task >> isone_watermark
-    register_sources >> stage_spp >> spp_task >> spp_watermark
+    register_sources >> isone_render >> isone_exec >> isone_watermark
+    register_sources >> stage_spp >> spp_render >> spp_exec >> spp_watermark
     [isone_watermark, spp_watermark] >> end

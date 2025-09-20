@@ -281,6 +281,33 @@ services:
     networks:
       - aurum
 
+  scenario-worker:
+    profiles: ["worker"]
+    image: python:3.11-slim
+    env_file: *env_file
+    depends_on:
+      kafka:
+        condition: service_healthy
+      schema-registry:
+        condition: service_healthy
+    working_dir: /workspace
+    volumes:
+      - ..:/workspace
+    command: >-
+      bash -lc "pip install --no-cache-dir -e .[api] confluent-kafka[avro] && python -m aurum.scenarios.worker"
+    environment:
+      KAFKA_BOOTSTRAP_SERVERS: kafka:9092
+      SCHEMA_REGISTRY_URL: http://schema-registry:8081
+      AURUM_SCENARIO_REQUEST_TOPIC: aurum.scenario.request.v1
+      AURUM_SCENARIO_OUTPUT_TOPIC: aurum.scenario.output.v1
+    healthcheck:
+      test: ["CMD", "bash", "-lc", "echo ok"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    networks:
+      - aurum
+
   vector:
     image: timberio/vector:0.33.0-alpine
     env_file: *env_file
@@ -319,6 +346,9 @@ services:
     volumes:
       - airflow-data:/opt/airflow
       - ../airflow/dags:/opt/airflow/dags
+      - ../src:/opt/airflow/src
+      - ../scripts:/opt/airflow/scripts
+      - ../seatunnel:/opt/airflow/seatunnel
     networks:
       - aurum
 
@@ -336,11 +366,15 @@ services:
       AIRFLOW__WEBSERVER__DEFAULT_UI_TIMEZONE: UTC
       AIRFLOW__CORE__DAGS_ARE_PAUSED_AT_CREATION: "True"
       AIRFLOW_HOME: /opt/airflow
+      PYTHONPATH: /opt/airflow/src
     ports:
       - "8088:8080"
     volumes:
       - airflow-data:/opt/airflow
       - ../airflow/dags:/opt/airflow/dags
+      - ../src:/opt/airflow/src
+      - ../scripts:/opt/airflow/scripts
+      - ../seatunnel:/opt/airflow/seatunnel
     command: webserver
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
@@ -362,9 +396,13 @@ services:
       AIRFLOW__CORE__FERNET_KEY: ${AIRFLOW_FERNET_KEY}
       AIRFLOW__CORE__LOAD_EXAMPLES: "False"
       AIRFLOW_HOME: /opt/airflow
+      PYTHONPATH: /opt/airflow/src
     volumes:
       - airflow-data:/opt/airflow
       - ../airflow/dags:/opt/airflow/dags
+      - ../src:/opt/airflow/src
+      - ../scripts:/opt/airflow/scripts
+      - ../seatunnel:/opt/airflow/seatunnel
     command: scheduler
     healthcheck:
       test: ["CMD", "airflow", "jobs", "check", "--job-type", "SchedulerJob", "--hostname", "$(hostname)"]

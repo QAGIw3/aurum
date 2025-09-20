@@ -78,6 +78,7 @@ def test_reference_schema_namespaces() -> None:
       "ingest.error.v1.avsc": "aurum.ingest",
       "cpi.series.v1.avsc": "aurum.ref.cpi",
       "fx.rate.v1.avsc": "aurum.ref.fx",
+      "fuel.curve.v1.avsc": "aurum.ref.fuel",
     }
 
     for filename, expected_namespace in reference_files.items():
@@ -245,6 +246,29 @@ def test_reference_schemas_serialization_roundtrip() -> None:
                 and isinstance(decoded["ingest_ts"], datetime)
             ),
         },
+        "fuel.curve.v1.avsc": {
+            "record": {
+                "series_id": "NG.HUB.PRICE.D",
+                "fuel_type": "NATURAL_GAS",
+                "benchmark": "Henry Hub",
+                "region": "US_Gulf",
+                "frequency": "DAILY",
+                "period": "2024-04-15",
+                "value": 2.45,
+                "units": "USD/MMBtu",
+                "currency": "USD",
+                "source": "EIA",
+                "ingest_ts": now_ts,
+                "metadata": {"dataset": "natural-gas/pri/fut"},
+            },
+            "assertions": lambda decoded: (
+                decoded["fuel_type"] == "NATURAL_GAS"
+                and decoded["benchmark"] == "Henry Hub"
+                and decoded["period"] == "2024-04-15"
+                and isinstance(decoded["ingest_ts"], datetime)
+                and decoded["metadata"]["dataset"] == "natural-gas/pri/fut"
+            ),
+        },
     }
 
     for filename, config in schema_inputs.items():
@@ -255,3 +279,66 @@ def test_reference_schemas_serialization_roundtrip() -> None:
         buffer.seek(0)
         decoded = next(reader(buffer))
         assert config["assertions"](decoded)
+
+
+def test_pjm_reference_schemas_roundtrip() -> None:
+    now = _micros_since_epoch(datetime.now(timezone.utc))
+    # iso.load.v1
+    load_schema = fastavro_schema.load_schema(SCHEMA_ROOT / "iso.load.v1.avsc")
+    load_parsed = parse_schema(load_schema)
+    load_buf = BytesIO()
+    load_record = {
+        "iso_code": "PJM",
+        "area": "RTO",
+        "interval_start": now,
+        "interval_end": now + 3_600_000,
+        "interval_minutes": 60,
+        "mw": 55000.0,
+        "ingest_ts": now,
+        "metadata": {"source": "pjm"},
+    }
+    writer(load_buf, load_parsed, [load_record])
+    load_buf.seek(0)
+    decoded_load = next(reader(load_buf))
+    assert decoded_load["iso_code"] == "PJM"
+    assert decoded_load["mw"] == 55000.0
+
+    # iso.genmix.v1
+    genmix_schema = fastavro_schema.load_schema(SCHEMA_ROOT / "iso.genmix.v1.avsc")
+    genmix_parsed = parse_schema(genmix_schema)
+    genmix_buf = BytesIO()
+    genmix_record = {
+        "iso_code": "PJM",
+        "asof_time": now,
+        "fuel_type": "GAS",
+        "mw": 23000.0,
+        "unit": "MW",
+        "ingest_ts": now,
+        "metadata": {"note": "hourly"},
+    }
+    writer(genmix_buf, genmix_parsed, [genmix_record])
+    genmix_buf.seek(0)
+    decoded_genmix = next(reader(genmix_buf))
+    assert decoded_genmix["fuel_type"] == "GAS"
+    assert decoded_genmix["mw"] == 23000.0
+
+    # iso.pnode.v1
+    pnode_schema = fastavro_schema.load_schema(SCHEMA_ROOT / "iso.pnode.v1.avsc")
+    pnode_parsed = parse_schema(pnode_schema)
+    pnode_buf = BytesIO()
+    pnode_record = {
+        "iso_code": "PJM",
+        "pnode_id": "51234",
+        "pnode_name": "TEST_NODE",
+        "type": "NODE",
+        "zone": "PJM-RTO",
+        "hub": "WEST_HUB",
+        "effective_start": now,
+        "effective_end": None,
+        "ingest_ts": now,
+    }
+    writer(pnode_buf, pnode_parsed, [pnode_record])
+    pnode_buf.seek(0)
+    decoded_pnode = next(reader(pnode_buf))
+    assert decoded_pnode["pnode_id"] == "51234"
+    assert decoded_pnode["type"] == "NODE"

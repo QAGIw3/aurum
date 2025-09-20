@@ -33,6 +33,8 @@ source {
   Http {
     url = "${MISO_URL}"
     method = "GET"
+    connection_timeout_ms = 20000
+    retry { interval_ms = 8000, max_retries = 10 }
     format = "csv"
     csv {
       delimiter = ","
@@ -115,6 +117,7 @@ transform {
 
 sink {
   Kafka {
+    plugin_input = "miso_normalized"
     bootstrap.servers = "${KAFKA_BOOTSTRAP_SERVERS}"
     topic = "${MISO_TOPIC}"
     semantic = "AT_LEAST_ONCE"

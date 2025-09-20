@@ -78,7 +78,7 @@ CREATE TABLE IF NOT EXISTS assumption (
 CREATE TABLE IF NOT EXISTS model_run (
     id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
     scenario_id UUID NOT NULL REFERENCES scenario(id) ON DELETE CASCADE,
-    curve_def_id UUID NOT NULL REFERENCES curve_def(id) ON DELETE CASCADE,
+    curve_def_id UUID REFERENCES curve_def(id) ON DELETE CASCADE,
     code_version TEXT NOT NULL,
     seed BIGINT,
     state TEXT NOT NULL,

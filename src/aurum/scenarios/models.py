@@ -17,14 +17,14 @@ class DriverType(str, Enum):
 
 class PolicyPayload(BaseModel):
     policy_name: str
-    start_year: int = Field(ge=1900, le=2100)
+    start_year: Optional[int] = Field(default=None, ge=1900, le=2100)
     description: Optional[str] = None
 
 
 class LoadGrowthPayload(BaseModel):
-    region: str
+    region: Optional[str] = None
     annual_growth_pct: float = Field(description="Percentage growth (e.g., 2.5 for 2.5%)")
-    start_year: int = Field(ge=1900, le=2100)
+    start_year: Optional[int] = Field(default=None, ge=1900, le=2100)
     end_year: Optional[int] = Field(default=None, ge=1900, le=2100)
 
 

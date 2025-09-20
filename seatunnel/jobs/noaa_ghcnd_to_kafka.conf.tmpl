@@ -45,23 +45,20 @@ source {
     # Optional filters can be added by editing the rendered config.
 
     connection_timeout_ms = ${NOAA_GHCND_TIMEOUT}
-    retry {
-      interval_ms = 1000
-      max_retries = 5
-    }
+    # SeaTunnel Zeta Http expects integer retry count
+    retry = 5
     format = "json"
-    json {
-      schema = {
-        fields = [
-          { name = "station", type = "string" },
-          { name = "datatype", type = "string" },
-          { name = "attributes", type = "string" },
-          { name = "date", type = "string" },
-          { name = "value", type = "double" }
-        ]
+    # Zeta engine requires schema/jsonpath at top-level for JSON format
+    schema = {
+      fields {
+        station = string
+        datatype = string
+        attributes = string
+        date = string
+        value = double
       }
-      json_path = "$$.results[*]"
     }
+    jsonpath = "$$.results[*]"
     result_table_name = "noaa_raw"
   }
   Http {
@@ -77,20 +74,26 @@ source {
       limit = ${NOAA_GHCND_STATION_LIMIT}
     }
     connection_timeout_ms = ${NOAA_GHCND_TIMEOUT}
-    retry {
-      interval_ms = 1000
-      max_retries = 5
-    }
+    retry = 5
     format = "json"
-    json {
-      json_path = "$$.results[*]"
+    schema = {
+      fields {
+        id = string
+        name = string
+        latitude = double
+        longitude = double
+        elevation = double
+      }
     }
+    jsonpath = "$$.results[*]"
     result_table_name = "noaa_stations"
   }
 }
 
 transform {
   Sql {
+    # Explicitly wire both sources for Zeta engine graph validation
+    plugin_input = ["noaa_raw", "noaa_stations"]
     source_table_name = "noaa_raw"
     result_table_name = "noaa_normalized"
     query = """
@@ -135,6 +138,8 @@ transform {
 
 sink {
   Kafka {
+    # Wire the output table explicitly for Zeta engine
+    plugin_input = "noaa_normalized"
     bootstrap.servers = "${KAFKA_BOOTSTRAP_SERVERS}"
     topic = "${NOAA_GHCND_TOPIC}"
     semantic = "AT_LEAST_ONCE"

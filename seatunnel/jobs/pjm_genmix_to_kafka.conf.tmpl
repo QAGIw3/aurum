@@ -1,0 +1,59 @@
+# PJM generation mix → Kafka (Avro)
+
+env { job.mode = "BATCH", parallelism = 1 }
+
+source {
+  Http {
+    url = "${PJM_GENMIX_ENDPOINT}"
+    method = "GET"
+    headers { Authorization = "Bearer ${PJM_API_KEY}" }
+    params {
+      row = ${PJM_ROW_LIMIT}
+      sort = "as_of_datetime_utc"
+      order = "asc"
+      as_of_datetime_begin = "${PJM_INTERVAL_START}"
+      as_of_datetime_end = "${PJM_INTERVAL_END}"
+    }
+    connection_timeout_ms = 20000
+    retry { interval_ms = 10000, max_retries = 12 }
+    format = "json"
+    schema = { fields { datetime_beginning_utc = string datetime_ending_utc = string fuel_type = string gen_mw = string } }
+    jsonpath = "$$.data[*]"
+    result_table_name = "pjm_genmix_raw"
+  }
+}
+
+transform {
+  Sql {
+    source_table_name = "pjm_genmix_raw"
+    result_table_name = "pjm_genmix_normalized"
+    query = """
+      SELECT
+        'PJM' AS iso_code,
+        CAST(UNIX_TIMESTAMP(as_of_datetime_utc) * 1000000 AS BIGINT) AS asof_time,
+        TRIM(UPPER(fuel_type)) AS fuel_type,
+        CAST(mw AS DOUBLE) AS mw,
+        'MW' AS unit,
+        CAST(UNIX_TIMESTAMP() * 1000000 AS BIGINT) AS ingest_ts,
+        NULL AS metadata
+      FROM pjm_genmix_raw
+    """
+  }
+}
+
+sink {
+  Kafka {
+    plugin_input = "pjm_genmix_normalized"
+    bootstrap.servers = "${KAFKA_BOOTSTRAP_SERVERS}"
+    topic = "${PJM_GENMIX_TOPIC}"
+    semantic = "AT_LEAST_ONCE"
+    format = "avro"
+    avro {
+      use.schema.registry = true
+      schema.registry.url = "${SCHEMA_REGISTRY_URL}"
+      value.schema.subject = "${PJM_GENMIX_SUBJECT}"
+      value.schema = """${ISO_GENMIX_SCHEMA}"""
+    }
+  }
+}
+

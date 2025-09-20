@@ -36,6 +36,20 @@ spec:
               mountPath: /opt/airflow/dags
             - name: logs
               mountPath: /opt/airflow/logs
+            - name: src
+              mountPath: /opt/airflow/src
+              subPath: src
+            - name: scripts
+              mountPath: /opt/airflow/scripts
+              subPath: scripts
+            - name: seatunnel
+              mountPath: /opt/airflow/seatunnel
+            - name: kafka
+              mountPath: /opt/airflow/scripts/kafka
+              subPath: kafka
+            - name: kafka
+              mountPath: /opt/airflow/kafka
+              subPath: kafka
       volumes:
         - name: dags
           hostPath:
@@ -43,6 +57,22 @@ spec:
             type: DirectoryOrCreate
         - name: logs
           emptyDir: {}
+        - name: src
+          hostPath:
+            path: /workspace
+            type: DirectoryOrCreate
+        - name: scripts
+          hostPath:
+            path: /workspace
+            type: DirectoryOrCreate
+        - name: seatunnel
+          hostPath:
+            path: /workspace/seatunnel
+            type: DirectoryOrCreate
+        - name: kafka
+          hostPath:
+            path: /workspace
+            type: DirectoryOrCreate
 ---
 apiVersion: apps/v1
 kind: Deployment
@@ -64,6 +94,7 @@ spec:
         app: airflow
         component: webserver
     spec:
+      serviceAccountName: airflow
       containers:
         - name: webserver
           image: apache/airflow:2.8.1
@@ -92,6 +123,20 @@ spec:
               mountPath: /opt/airflow/dags
             - name: logs
               mountPath: /opt/airflow/logs
+            - name: src
+              mountPath: /opt/airflow/src
+              subPath: src
+            - name: scripts
+              mountPath: /opt/airflow/scripts
+              subPath: scripts
+            - name: seatunnel
+              mountPath: /opt/airflow/seatunnel
+            - name: kafka
+              mountPath: /opt/airflow/scripts/kafka
+              subPath: kafka
+            - name: kafka
+              mountPath: /opt/airflow/kafka
+              subPath: kafka
       volumes:
         - name: dags
           hostPath:
@@ -99,6 +144,22 @@ spec:
             type: DirectoryOrCreate
         - name: logs
           emptyDir: {}
+        - name: src
+          hostPath:
+            path: /workspace
+            type: DirectoryOrCreate
+        - name: scripts
+          hostPath:
+            path: /workspace
+            type: DirectoryOrCreate
+        - name: seatunnel
+          hostPath:
+            path: /workspace/seatunnel
+            type: DirectoryOrCreate
+        - name: kafka
+          hostPath:
+            path: /workspace
+            type: DirectoryOrCreate
 ---
 apiVersion: apps/v1
 kind: Deployment
@@ -120,6 +181,7 @@ spec:
         app: airflow
         component: scheduler
     spec:
+      serviceAccountName: airflow
       containers:
         - name: scheduler
           image: apache/airflow:2.8.1
@@ -144,6 +206,20 @@ spec:
               mountPath: /opt/airflow/dags
             - name: logs
               mountPath: /opt/airflow/logs
+            - name: src
+              mountPath: /opt/airflow/src
+              subPath: src
+            - name: scripts
+              mountPath: /opt/airflow/scripts
+              subPath: scripts
+            - name: seatunnel
+              mountPath: /opt/airflow/seatunnel
+            - name: kafka
+              mountPath: /opt/airflow/scripts/kafka
+              subPath: kafka
+            - name: kafka
+              mountPath: /opt/airflow/kafka
+              subPath: kafka
       volumes:
         - name: dags
           hostPath:
@@ -151,6 +227,22 @@ spec:
             type: DirectoryOrCreate
         - name: logs
           emptyDir: {}
+        - name: src
+          hostPath:
+            path: /workspace
+            type: DirectoryOrCreate
+        - name: scripts
+          hostPath:
+            path: /workspace
+            type: DirectoryOrCreate
+        - name: seatunnel
+          hostPath:
+            path: /workspace/seatunnel
+            type: DirectoryOrCreate
+        - name: kafka
+          hostPath:
+            path: /workspace
+            type: DirectoryOrCreate
 ---
 apiVersion: v1
 kind: Service

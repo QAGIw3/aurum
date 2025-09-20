@@ -35,6 +35,15 @@ with DAG(
 ) as dag:
     start = EmptyOperator(task_id="start")
 
+    # Best-effort pull of ISO-NE WS creds from Vault
+    pull_cmd = (
+        "eval \"$(VAULT_ADDR=${AURUM_VAULT_ADDR:-http://127.0.0.1:8200} "
+        "VAULT_TOKEN=${AURUM_VAULT_TOKEN:-aurum-dev-token} "
+        "PYTHONPATH=${PYTHONPATH:-}:" + PYTHONPATH_ENTRY + " "
+        + os.environ.get("AURUM_VENV_PYTHON", ".venv/bin/python") +
+        " scripts/secrets/pull_vault_env.py --mapping secret/data/aurum/isone:username=ISONE_USERNAME --mapping secret/data/aurum/isone:password=ISONE_PASSWORD --format shell)\" || true"
+    )
+
     env_exports = "\n".join(
         [
             "export ISONE_URL=\"{{ var.value.get('aurum_isone_endpoint') }}\"",
@@ -59,8 +68,14 @@ with DAG(
             "cd /opt/airflow",
             f"export PATH=\"{BIN_PATH}\"",
             f"export PYTHONPATH=\"${{PYTHONPATH:-}}:{PYTHONPATH_ENTRY}\"",
+            pull_cmd,
             env_exports,
-            "scripts/seatunnel/run_job.sh isone_lmp_to_kafka",
+            # Prefer Python helper in-cluster; avoid depending on docker in seatunnel runner
+            "python scripts/ingest/isone_ws_to_kafka.py "
+            "--url \"${ISONE_URL}\" --start \"${ISONE_START}\" --end \"${ISONE_END}\" "
+            "--market \"${ISONE_MARKET}\" --topic \"${ISONE_TOPIC}\" "
+            "--schema-registry \"${SCHEMA_REGISTRY_URL}\" --bootstrap-servers \"${KAFKA_BOOTSTRAP_SERVERS}\" "
+            "${ISONE_USERNAME:+--username \"${ISONE_USERNAME}\"} ${ISONE_PASSWORD:+--password \"${ISONE_PASSWORD}\"}",
         ]
     )
 

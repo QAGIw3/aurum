@@ -1,0 +1,53 @@
+# CPI series topics → TimescaleDB (JDBC)
+
+env {
+  job.mode = "STREAMING"
+  checkpoint.interval = 60000
+}
+
+source {
+  Kafka {
+    bootstrap.servers = "${KAFKA_BOOTSTRAP_SERVERS}"
+    pattern = "${CPI_TOPIC_PATTERN}"
+    format = "avro"
+    start_mode = "latest"
+    avro { schema.registry.url = "${SCHEMA_REGISTRY_URL}" }
+    result_table_name = "cpi_raw"
+  }
+}
+
+transform {
+  Sql {
+    source_table_name = "cpi_raw"
+    result_table_name = "cpi_enriched"
+    query = """
+      SELECT
+        series_id,
+        area,
+        frequency,
+        seasonal_adjustment,
+        period,
+        value,
+        units,
+        source,
+        TO_TIMESTAMP(ingest_ts / 1000000.0) AS ingest_ts,
+        CASE WHEN metadata IS NULL THEN NULL ELSE CAST(metadata AS STRING) END AS metadata
+      FROM cpi_raw
+    """
+  }
+}
+
+sink {
+  Jdbc {
+    plugin_input = "cpi_enriched"
+    driver = "org.postgresql.Driver"
+    url = "${TIMESCALE_JDBC_URL}"
+    user = "${TIMESCALE_USER}"
+    password = "${TIMESCALE_PASSWORD}"
+    table = "${CPI_SERIES_TABLE}"
+    primary_keys = ["series_id", "period"]
+    save_mode = "${CPI_SERIES_SAVE_MODE}"
+    connection_check_timeout_sec = 30
+  }
+}
+

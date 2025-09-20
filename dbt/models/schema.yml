@@ -7,6 +7,9 @@ sources:
       - name: curve_observation
         description: Canonical Iceberg table containing normalized vendor curve rows.
         loaded_at_field: _ingest_ts
+      - name: scenario_output
+        description: Scenario engine outputs appended by the worker.
+        loaded_at_field: _ingest_ts
 
 models:
   - name: stg_curve_observation
@@ -78,5 +81,17 @@ models:
           - accepted_values:
               values: ['QUARTER']
       - name: mid
+        tests:
+          - not_null
+  - name: mart_scenario_output
+    description: Latest scenario outputs materialized as a Trino view.
+    columns:
+      - name: scenario_id
+        tests:
+          - not_null
+      - name: tenant_id
+        tests:
+          - not_null
+      - name: value
         tests:
           - not_null

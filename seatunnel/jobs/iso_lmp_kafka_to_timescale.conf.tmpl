@@ -73,6 +73,7 @@ transform {
 
 sink {
   Jdbc {
+    plugin_input = "lmp_enriched"
     driver = "org.postgresql.Driver"
     url = "${TIMESCALE_JDBC_URL}"
     user = "${TIMESCALE_USER}"

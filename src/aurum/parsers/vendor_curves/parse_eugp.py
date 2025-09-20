@@ -14,9 +14,11 @@ from ...reference import infer_default_units, map_units
 from ..utils import (
     compute_curve_key,
     compute_version_hash,
+    detect_units_row,
     derive_region,
     infer_tenor_type,
     normalise_tenor_label,
+    normalise_units_token,
     parse_bid_ask,
     safe_str,
     to_float,
@@ -125,7 +127,7 @@ def _extract_records(
         region = derive_region(identity.get("iso"), identity.get("location"))
         version_hash = compute_version_hash(source_file, sheet_name, asof)
 
-        units_raw = identity.get("units")
+        units_raw = normalise_units_token(identity.get("units"))
         currency, per_unit = map_units(units_raw)
         if currency is None or per_unit is None:
             fallback_currency, fallback_unit = infer_default_units(identity.get("iso"), region)
@@ -202,6 +204,10 @@ def _collect_header_rows(df: pd.DataFrame) -> Dict[str, pd.Series]:
         for key, alias in HEADERS_TO_CAPTURE.items():
             if key in label_norm and alias not in headers:
                 headers[alias] = row
+    if "units" not in headers:
+        detected = detect_units_row(df)
+        if detected is not None:
+            headers["units"] = detected
     return headers
 
 
@@ -217,10 +223,24 @@ def _find_data_start(df: pd.DataFrame) -> Optional[int]:
 
 
 def _value_from_headers(headers: Dict[str, pd.Series], key: str, col: int) -> Optional[str]:
+    """Fetch header value carrying last non-empty to the right.
+
+    EUGP sheets often specify metadata once; carry-forward ensures we reuse
+    that value for subsequent columns when cells are blank.
+    """
     series = headers.get(key)
-    if series is None or col >= len(series):
+    if series is None:
         return None
-    return safe_str(series.iloc[col])
+    i = min(col, len(series) - 1)
+    while i >= 0:
+        val = safe_str(series.iloc[i])
+        if val:
+            if val.strip().endswith(":"):
+                i -= 1
+                continue
+            return val
+        i -= 1
+    return None
 
 
 def _build_identity(headers: Dict[str, pd.Series], col: int, sheet_name: str) -> Optional[Dict[str, Optional[str]]]:

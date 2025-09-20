@@ -5,7 +5,19 @@ This directory contains SeaTunnel job templates used to ingest external data sou
 ## Usage
 
 1. Ensure Docker is available locally and the Kafka cluster/Schema Registry are running.
-2. Export the environment variables required by the job template. For the NOAA GHCND job this includes at least:
+2. Discover available jobs:
+
+   ```bash
+   scripts/seatunnel/run_job.sh --list
+   ```
+
+3. Inspect a job's required environment variables:
+
+   ```bash
+   scripts/seatunnel/run_job.sh --describe noaa_ghcnd_to_kafka
+   ```
+
+4. Export the environment variables required by the job template. For the NOAA GHCND job this includes at least:
 
    ```bash
    export NOAA_GHCND_TOKEN=...
@@ -19,7 +31,7 @@ This directory contains SeaTunnel job templates used to ingest external data sou
    export NOAA_GHCND_STATION_LIMIT=500
    ```
 
-3. Render and run the job:
+5. Render and run the job:
 
    ```bash
    scripts/seatunnel/run_job.sh noaa_ghcnd_to_kafka
@@ -27,6 +39,8 @@ This directory contains SeaTunnel job templates used to ingest external data sou
 
    Use `--render-only` to output the generated config without executing the job. The rendered configuration is written to `seatunnel/jobs/generated/<job>.conf` by default.
    Edit the rendered configuration if you need to add NOAA filters such as `locationid` or `datatypeid` before running the job manually.
+
+   Note: generated configs may contain sensitive tokens. They are ignored via `.gitignore` (`seatunnel/jobs/generated/*.conf`). Avoid committing rendered files to the repository.
 
 ### Loading secrets from Vault
 
@@ -68,3 +82,42 @@ This exposes Vault at `http://localhost:8200` with root token `aurum-dev-token` 
 - `spp_lmp_to_kafka.conf.tmpl`: Loads SPP Marketplace LMP records from staged JSON and writes them to Kafka.
 
 Add additional job templates following the same pattern and extend `scripts/seatunnel/run_job.sh` to declare required environment variables per job.
+
+## NOAA → Timescale quickstart
+
+1. Ensure the table exists in Timescale:
+
+   - `make timescale-apply-noaa`
+
+2. Publish NOAA GHCND observations to Kafka (render-only first to verify):
+
+   - Render: `NOAA_GHCND_TOKEN=... NOAA_GHCND_START_DATE=2024-01-01 NOAA_GHCND_END_DATE=2024-01-02 NOAA_GHCND_TOPIC=aurum.ref.noaa.weather.v1 KAFKA_BOOTSTRAP_SERVERS=broker:29092 SCHEMA_REGISTRY_URL=http://schema-registry:8081 make noaa-kafka-render`
+   - Run: `NOAA_GHCND_TOKEN=... NOAA_GHCND_START_DATE=2024-01-01 NOAA_GHCND_END_DATE=2024-01-02 NOAA_GHCND_TOPIC=aurum.ref.noaa.weather.v1 KAFKA_BOOTSTRAP_SERVERS=broker:29092 SCHEMA_REGISTRY_URL=http://schema-registry:8081 make noaa-kafka-run`
+
+3. Stream NOAA topic into Timescale:
+
+   - Render: `TIMESCALE_JDBC_URL=jdbc:postgresql://timescale:5432/timeseries TIMESCALE_USER=ts TIMESCALE_PASSWORD=ts SCHEMA_REGISTRY_URL=http://schema-registry:8081 KAFKA_BOOTSTRAP_SERVERS=broker:29092 make noaa-timescale-render`
+   - Run: `TIMESCALE_JDBC_URL=jdbc:postgresql://timescale:5432/timeseries TIMESCALE_USER=ts TIMESCALE_PASSWORD=ts SCHEMA_REGISTRY_URL=http://schema-registry:8081 KAFKA_BOOTSTRAP_SERVERS=broker:29092 make noaa-timescale-run`
+
+Rendered configs are placed under `seatunnel/jobs/generated` and are git-ignored.
+
+## EIA/FRED/CPI → Timescale quickstart
+
+1. Ensure Timescale tables exist:
+
+   - EIA: (uses existing eia_series_timeseries — create via your own DDL if needed)
+   - FRED: `make timescale-apply-fred`
+   - CPI: `make timescale-apply-cpi`
+
+2. Render and run sinks (Kafka → Timescale):
+
+   - EIA:
+     `KAFKA_BOOTSTRAP_SERVERS=broker:29092 SCHEMA_REGISTRY_URL=http://schema-registry:8081 TIMESCALE_JDBC_URL=jdbc:postgresql://timescale:5432/timeseries TIMESCALE_USER=ts TIMESCALE_PASSWORD=ts scripts/seatunnel/run_job.sh eia_series_kafka_to_timescale --render-only`
+
+   - FRED:
+     `KAFKA_BOOTSTRAP_SERVERS=broker:29092 SCHEMA_REGISTRY_URL=http://schema-registry:8081 TIMESCALE_JDBC_URL=jdbc:postgresql://timescale:5432/timeseries TIMESCALE_USER=ts TIMESCALE_PASSWORD=ts scripts/seatunnel/run_job.sh fred_series_kafka_to_timescale --render-only`
+
+   - CPI:
+     `KAFKA_BOOTSTRAP_SERVERS=broker:29092 SCHEMA_REGISTRY_URL=http://schema-registry:8081 TIMESCALE_JDBC_URL=jdbc:postgresql://timescale:5432/timeseries TIMESCALE_USER=ts TIMESCALE_PASSWORD=ts scripts/seatunnel/run_job.sh cpi_series_kafka_to_timescale --render-only`
+
+3. To execute in kind, copy rendered configs to `/workspace/seatunnel/jobs/generated` on the node and launch a local-mode Job as shown above in the NOAA section.

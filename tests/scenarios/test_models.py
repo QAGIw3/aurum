@@ -1,5 +1,7 @@
 import pytest
 
+pytest.importorskip("pydantic", reason="pydantic not installed")
+
 from aurum.scenarios import DriverType, ScenarioAssumption
 
 

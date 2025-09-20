@@ -1,0 +1,16 @@
+{
+  "type": "record",
+  "name": "IsoGenerationMixRecord",
+  "namespace": "aurum.iso",
+  "doc": "Generation mix observation by fuel type for an ISO.",
+  "fields": [
+    {"name": "iso_code", "type": "string"},
+    {"name": "asof_time", "type": {"type": "long", "logicalType": "timestamp-micros"}},
+    {"name": "fuel_type", "type": "string"},
+    {"name": "mw", "type": "double"},
+    {"name": "unit", "type": "string", "default": "MW"},
+    {"name": "ingest_ts", "type": {"type": "long", "logicalType": "timestamp-micros"}},
+    {"name": "metadata", "type": ["null", {"type": "map", "values": "string"}], "default": null}
+  ]
+}
+

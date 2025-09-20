@@ -22,9 +22,31 @@ source {
   LocalFile {
     path = "${CAISO_INPUT_JSON}"
     format = "json"
-    json {
-      json_path = "$$[*]"
+    # Zeta: use top-level schema + jsonpath for JSON
+    schema {
+      fields {
+        market = string
+        delivery_date = string
+        interval_start = string
+        interval_end = string
+        interval_minutes = string
+        location_id = string
+        location_name = string
+        location_type = string
+        price_total = string
+        price_energy = string
+        price_congestion = string
+        price_loss = string
+        currency = string
+        uom = string
+        settlement_point = string
+        source_run_id = string
+        ingest_ts = string
+        record_hash = string
+        metadata = string
+      }
     }
+    jsonpath = "$$[*]"
     result_table_name = "caiso_stage"
   }
   LocalFile {
@@ -99,6 +121,7 @@ transform {
 
 sink {
   Kafka {
+    plugin_input = "caiso_normalized"
     bootstrap.servers = "${KAFKA_BOOTSTRAP_SERVERS}"
     topic = "${CAISO_TOPIC}"
     semantic = "AT_LEAST_ONCE"

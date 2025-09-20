@@ -22,9 +22,13 @@ DEFAULT_ARGS: dict[str, Any] = {
 BIN_PATH = os.environ.get("AURUM_BIN_PATH", ".venv/bin:$PATH")
 PYTHONPATH_ENTRY = os.environ.get("AURUM_PYTHONPATH_ENTRY", "/opt/airflow/src")
 STAGING_DIR = os.environ.get("AURUM_STAGING_DIR", "files/staging")
+VENV_PYTHON = os.environ.get("AURUM_VENV_PYTHON", ".venv/bin/python")
 
 
 def _ercot_token_flag() -> str:
+    # Prefer Vault-provided env ERCOT_BEARER_TOKEN if present (set below),
+    # otherwise allow Airflow Variable-based token.
+    # The bash command will include: ${ERCOT_BEARER_TOKEN:+--bearer-token ${ERCOT_BEARER_TOKEN}}
     return "{% if var.value.get('aurum_ercot_bearer_token', '') %} --bearer-token {{ var.value.get('aurum_ercot_bearer_token') }}{% endif %}"
 
 
@@ -44,6 +48,15 @@ with DAG(
 
     token_flag = _ercot_token_flag()
 
+    # Optionally pull ERCOT bearer token from Vault into ERCOT_BEARER_TOKEN
+    pull_cmd = (
+        "eval \"$(VAULT_ADDR=${AURUM_VAULT_ADDR:-http://127.0.0.1:8200} "
+        "VAULT_TOKEN=${AURUM_VAULT_TOKEN:-aurum-dev-token} "
+        "PYTHONPATH=${PYTHONPATH:-}:" + PYTHONPATH_ENTRY + " "
+        + VENV_PYTHON +
+        " scripts/secrets/pull_vault_env.py --mapping secret/data/aurum/ercot:token=ERCOT_BEARER_TOKEN --format shell)\" || true"
+    )
+
     stage_command = "\n".join(
         [
             "set -euo pipefail",
@@ -51,10 +64,12 @@ with DAG(
             "mkdir -p $(dirname '" + staging_path + "')",
             f"export PATH=\"{BIN_PATH}\"",
             f"export PYTHONPATH=\"${{PYTHONPATH:-}}:{PYTHONPATH_ENTRY}\"",
+            pull_cmd,
             (
-                "python scripts/ingest/ercot_mis_to_kafka.py "
+                "python scripts/scripts/ingest/ercot_mis_to_kafka.py "
                 "--url {{ var.value.get('aurum_ercot_mis_url') }} "
                 f"{token_flag} "
+                "${ERCOT_BEARER_TOKEN:+--bearer-token ${ERCOT_BEARER_TOKEN}} "
                 f"--output-json {staging_path} --no-kafka"
             ),
         ]
@@ -72,16 +87,26 @@ with DAG(
             f"export PATH=\"{BIN_PATH}\"",
             f"export PYTHONPATH=\"${{PYTHONPATH:-}}:{PYTHONPATH_ENTRY}\"",
             (
-                f"ERCOT_INPUT_JSON={staging_path} "
+                f"AURUM_EXECUTE_SEATUNNEL=0 ERCOT_INPUT_JSON={staging_path} "
                 f"KAFKA_BOOTSTRAP_SERVERS='{kafka_bootstrap}' "
                 f"SCHEMA_REGISTRY_URL='{schema_registry}' "
-                "scripts/seatunnel/run_job.sh ercot_lmp_to_kafka"
+                "scripts/scripts/seatunnel/run_job.sh ercot_lmp_to_kafka --render-only"
             ),
         ]
     )
 
     seatunnel_task = BashOperator(task_id="ercot_lmp_seatunnel", bash_command=seatunnel_command)
+    exec_k8s = BashOperator(
+        task_id="ercot_execute_k8s",
+        bash_command=(
+            "set -euo pipefail\n"
+            "cd /opt/airflow\n"
+            f"export PATH=\"{BIN_PATH}\"\n"
+            f"export PYTHONPATH=\"${{PYTHONPATH:-}}:{PYTHONPATH_ENTRY}\"\n"
+            "python scripts/k8s/run_seatunnel_job.py --job-name ercot_lmp_to_kafka --wait --timeout 600"
+        ),
+    )
 
     end = EmptyOperator(task_id="end")
 
-    start >> stage_ercot >> seatunnel_task >> end
+    start >> stage_ercot >> seatunnel_task >> exec_k8s >> end

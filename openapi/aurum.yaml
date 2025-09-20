@@ -150,6 +150,54 @@ paths:
                 $ref: '#/components/schemas/ScenarioRunResponse'
         '404':
           $ref: '#/components/responses/NotFound'
+  /v1/scenarios/{id}/outputs:
+    get:
+      summary: List scenario outputs
+      operationId: listScenarioOutputs
+      security:
+        - oauth2: [aurum]
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: metric
+          in: query
+          schema:
+            type: string
+          required: false
+        - name: tenor_type
+          in: query
+          schema:
+            type: string
+          required: false
+        - name: curve_key
+          in: query
+          schema:
+            type: string
+          required: false
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 1000
+          required: false
+        - name: cursor
+          in: query
+          schema:
+            type: string
+          required: false
+      responses:
+        '200':
+          description: Scenario outputs.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ScenarioOutputResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
   /v1/ppa/valuate:
     post:
       summary: Calculate cashflows and risk metrics for a PPA contract.
@@ -222,6 +270,23 @@ paths:
                 $ref: '#/components/schemas/CurveDiffResponse'
         '401':
           $ref: '#/components/responses/Unauthorized'
+  /ready:
+    get:
+      summary: Readiness probe
+      operationId: readinessProbe
+      security: []
+      responses:
+        '200':
+          description: Service is ready to receive traffic.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+        '503':
+          description: Dependencies unavailable.
   /v1/metadata/dimensions:
     get:
       summary: List distinct dimension values useful for filters.
@@ -248,6 +313,11 @@ paths:
           schema:
             type: string
           description: Optional case-insensitive startswith filter applied to each dimension list
+        - name: include_counts
+          in: query
+          schema:
+            type: boolean
+          description: Include per-dimension counts when true
       responses:
         '200':
           description: Dimension values.
@@ -518,6 +588,48 @@ components:
           $ref: '#/components/schemas/Meta'
         data:
           $ref: '#/components/schemas/DimensionsData'
+        counts:
+          $ref: '#/components/schemas/DimensionsCountData'
+          nullable: true
+    DimensionCount:
+      type: object
+      required: [value, count]
+      properties:
+        value:
+          type: string
+        count:
+          type: integer
+    DimensionsCountData:
+      type: object
+      properties:
+        asset_class:
+          type: array
+          items:
+            $ref: '#/components/schemas/DimensionCount'
+        iso:
+          type: array
+          items:
+            $ref: '#/components/schemas/DimensionCount'
+        location:
+          type: array
+          items:
+            $ref: '#/components/schemas/DimensionCount'
+        market:
+          type: array
+          items:
+            $ref: '#/components/schemas/DimensionCount'
+        product:
+          type: array
+          items:
+            $ref: '#/components/schemas/DimensionCount'
+        block:
+          type: array
+          items:
+            $ref: '#/components/schemas/DimensionCount'
+        tenor_type:
+          type: array
+          items:
+            $ref: '#/components/schemas/DimensionCount'
     CreateScenarioRequest:
       type: object
       required: [tenant_id, name, assumptions]
@@ -595,6 +707,56 @@ components:
             created_at:
               type: string
               format: date-time
+    ScenarioOutputPoint:
+      type: object
+      required: [scenario_id, curve_key, metric]
+      properties:
+        scenario_id:
+          type: string
+        asof_date:
+          type: string
+          format: date
+          nullable: true
+        curve_key:
+          type: string
+        tenor_type:
+          type: string
+          nullable: true
+        contract_month:
+          type: string
+          format: date
+          nullable: true
+        tenor_label:
+          type: string
+          nullable: true
+        metric:
+          type: string
+        value:
+          type: number
+          nullable: true
+        band_lower:
+          type: number
+          nullable: true
+        band_upper:
+          type: number
+          nullable: true
+        attribution:
+          type: object
+          additionalProperties:
+            type: number
+          nullable: true
+        version_hash:
+          type: string
+          nullable: true
+    ScenarioOutputResponse:
+      type: object
+      properties:
+        meta:
+          $ref: '#/components/schemas/Meta'
+        data:
+          type: array
+          items:
+            $ref: '#/components/schemas/ScenarioOutputPoint'
     PpaValuationRequest:
       type: object
       required: [ppa_contract_id]

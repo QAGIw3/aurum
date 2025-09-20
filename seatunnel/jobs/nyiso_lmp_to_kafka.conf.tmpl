@@ -18,6 +18,8 @@ source {
   Http {
     url = "${NYISO_URL}"
     method = "GET"
+    connection_timeout_ms = 20000
+    retry = 10
     format = "csv"
     csv {
       delimiter = ","
@@ -86,6 +88,7 @@ transform {
 
 sink {
   Kafka {
+    plugin_input = "nyiso_normalized"
     bootstrap.servers = "${KAFKA_BOOTSTRAP_SERVERS}"
     topic = "${NYISO_TOPIC}"
     semantic = "AT_LEAST_ONCE"

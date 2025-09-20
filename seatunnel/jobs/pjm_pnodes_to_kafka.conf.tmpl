@@ -1,0 +1,60 @@
+# PJM PNODES metadata → Kafka (Avro)
+
+env { job.mode = "BATCH", parallelism = 1 }
+
+source {
+  Http {
+    url = "${PJM_PNODES_ENDPOINT}"
+    method = "GET"
+    headers { Authorization = "Bearer ${PJM_API_KEY}" }
+    params {
+      row = ${PJM_ROW_LIMIT}
+      sort = "effective_date_utc"
+      order = "asc"
+      effective_date_utc> = "${PJM_PNODES_EFFECTIVE_START}"
+    }
+    connection_timeout_ms = 20000
+    retry { interval_ms = 10000, max_retries = 12 }
+    format = "json"
+    schema = { fields { pnode_id = string name = string type = string } }
+    jsonpath = "$$.data[*]"
+    result_table_name = "pjm_pnodes_raw"
+  }
+}
+
+transform {
+  Sql {
+    source_table_name = "pjm_pnodes_raw"
+    result_table_name = "pjm_pnodes_normalized"
+    query = """
+      SELECT
+        'PJM' AS iso_code,
+        CAST(pnode_id AS STRING) AS pnode_id,
+        pnode_name,
+        type,
+        CAST(NULL AS STRING) AS zone,
+        CAST(NULL AS STRING) AS hub,
+        CAST(UNIX_TIMESTAMP(effective_date_utc) * 1000000 AS BIGINT) AS effective_start,
+        CAST(NULL AS BIGINT) AS effective_end,
+        CAST(UNIX_TIMESTAMP() * 1000000 AS BIGINT) AS ingest_ts
+      FROM pjm_pnodes_raw
+    """
+  }
+}
+
+sink {
+  Kafka {
+    plugin_input = "pjm_pnodes_normalized"
+    bootstrap.servers = "${KAFKA_BOOTSTRAP_SERVERS}"
+    topic = "${PJM_PNODES_TOPIC}"
+    semantic = "AT_LEAST_ONCE"
+    format = "avro"
+    avro {
+      use.schema.registry = true
+      schema.registry.url = "${SCHEMA_REGISTRY_URL}"
+      value.schema.subject = "${PJM_PNODES_SUBJECT}"
+      value.schema = """${ISO_PNODE_SCHEMA}"""
+    }
+  }
+}
+

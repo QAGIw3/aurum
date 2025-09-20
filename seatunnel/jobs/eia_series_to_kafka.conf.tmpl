@@ -23,6 +23,8 @@
 #   EIA_DATASET             - Dataset name captured in the record
 #   EIA_SUBJECT             - Schema Registry subject (default <topic>-value)
 #   EIA_SERIES_SCHEMA       - Avro schema JSON populated by run_job.sh
+#   EIA_FILTER_EXPR         - Additional SQL predicate appended to the WHERE clause (default TRUE)
+#   EIA_PARAM_OVERRIDES     - Additional key/value pairs injected into the params block
 
 env {
   job.mode = "BATCH"
@@ -41,16 +43,25 @@ source {
       length = ${EIA_LIMIT}
       sort[0] = "${EIA_SORT}"
       direction[0] = "${EIA_DIRECTION}"
+${EIA_PARAM_OVERRIDES}
     }
     connection_timeout_ms = 15000
-    retry {
-      interval_ms = 1000
-      max_retries = 5
-    }
+    retry = 5
     format = "json"
-    json {
-      json_path = "$$.response.data[*]"
+    schema = {
+      fields {
+        period = string
+        value = string
+        units = string
+        series = string
+        dataset = string
+        description = string
+        area = string
+        sector = string
+        source = string
+      }
     }
+    jsonpath = "$$.response.data[*]"
     result_table_name = "eia_raw"
   }
 }
@@ -61,7 +72,7 @@ transform {
     result_table_name = "eia_normalized"
     query = """
       SELECT
-        '${EIA_SERIES_ID}'                                         AS series_id,
+        ${EIA_SERIES_ID_EXPR}                                      AS series_id,
         period                                                     AS period,
         CAST(NULL AS BIGINT)                                       AS period_start,
         CAST(NULL AS BIGINT)                                       AS period_end,
@@ -81,12 +92,14 @@ transform {
         ${EIA_METADATA_EXPR}                                       AS metadata,
         CAST(UNIX_TIMESTAMP() * 1000000 AS BIGINT)                 AS ingest_ts
       FROM eia_raw
+      WHERE (${EIA_FILTER_EXPR})
     """
   }
 }
 
 sink {
   Kafka {
+    plugin_input = "eia_normalized"
     bootstrap.servers = "${KAFKA_BOOTSTRAP_SERVERS}"
     topic = "${EIA_TOPIC}"
     semantic = "AT_LEAST_ONCE"

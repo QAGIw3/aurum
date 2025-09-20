@@ -37,14 +37,24 @@ source {
       datetime_end = "${PJM_INTERVAL_END}"
     }
     connection_timeout_ms = 20000
-    retry {
-      interval_ms = 2000
-      max_retries = 5
-    }
+    retry = 5
     format = "json"
-    json {
-      json_path = "$$.data[*]"
+    schema = {
+      fields {
+        datetime_beginning_utc = string
+        datetime_ending_utc = string
+        pnode_id = string
+        pnode_name = string
+        type = string
+        total_lmp_rt = string
+        system_energy_price = string
+        congestion_price = string
+        loss_price = string
+        load_identifier = string
+        comp_subzone = string
+      }
     }
+    jsonpath = "$$.data[*]"
     result_table_name = "pjm_raw"
   }
   LocalFile {
@@ -108,6 +118,7 @@ transform {
 
 sink {
   Kafka {
+    plugin_input = "pjm_normalized"
     bootstrap.servers = "${KAFKA_BOOTSTRAP_SERVERS}"
     topic = "${PJM_TOPIC}"
     semantic = "AT_LEAST_ONCE"

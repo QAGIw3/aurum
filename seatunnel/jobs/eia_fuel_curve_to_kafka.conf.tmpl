@@ -1,0 +1,114 @@
+# EIA fuel curve observations → Kafka (Avro)
+#
+# Required environment variables:
+#   EIA_API_KEY             - EIA API key
+#   EIA_API_BASE_URL        - Base URL for the EIA API (default https://api.eia.gov/v2)
+#   FUEL_EIA_PATH           - Dataset path segment (e.g. natural-gas/pri/fut/wfut/data)
+#   FUEL_SERIES_ID          - Identifier stored in the Avro record
+#   FUEL_FUEL_TYPE          - FuelType enum value (NATURAL_GAS, CO2)
+#   FUEL_FREQUENCY          - Observation frequency label
+#   FUEL_TOPIC              - Kafka topic to publish to
+#   FUEL_UNITS              - Units string stored in the Avro record
+#   KAFKA_BOOTSTRAP_SERVERS - Kafka brokers (host:port)
+#   SCHEMA_REGISTRY_URL     - Confluent Schema Registry endpoint
+#
+# Optional environment variables:
+#   FUEL_START              - Start period (YYYY-MM-DD or dataset token)
+#   FUEL_END                - End period (YYYY-MM-DD or dataset token)
+#   FUEL_OFFSET             - Pagination offset (default 0)
+#   FUEL_LIMIT              - Page size (default 5000)
+#   FUEL_SORT               - Field to sort by (default period)
+#   FUEL_DIRECTION          - Sort order ASC/DESC (default DESC)
+#   FUEL_BENCHMARK_EXPR     - SQL expression for benchmark column (default NULL)
+#   FUEL_REGION_EXPR        - SQL expression for region column (default NULL)
+#   FUEL_VALUE_EXPR         - SQL expression for numeric value (default value)
+#   FUEL_METADATA_EXPR      - SQL expression for metadata map (default NULL)
+#   FUEL_FILTER_EXPR        - Additional SQL predicate appended to the WHERE clause (default TRUE)
+#   FUEL_CURRENCY           - Currency label (default empty / NULL)
+#   FUEL_SOURCE             - Source label (default EIA)
+#   FUEL_SUBJECT            - Schema Registry subject (default <topic>-value)
+#   FUEL_SCHEMA             - Avro schema JSON populated by run_job.sh
+
+env {
+  job.mode = "BATCH"
+  parallelism = 1
+}
+
+source {
+  Http {
+    url = "${EIA_API_BASE_URL}/${FUEL_EIA_PATH}"
+    method = "GET"
+    params {
+      api_key = "${EIA_API_KEY}"
+      start = "${FUEL_START}"
+      end = "${FUEL_END}"
+      offset = ${FUEL_OFFSET}
+      length = ${FUEL_LIMIT}
+      sort[0] = "${FUEL_SORT}"
+      direction[0] = "${FUEL_DIRECTION}"
+    }
+    connection_timeout_ms = 15000
+    retry = 5
+    format = "json"
+    schema = {
+      fields {
+        period = string
+        value = string
+        units = string
+        series = string
+        dataset = string
+        description = string
+        area = string
+        source = string
+      }
+    }
+    jsonpath = "$$.response.data[*]"
+    result_table_name = "fuel_raw"
+  }
+}
+
+transform {
+  Sql {
+    source_table_name = "fuel_raw"
+    result_table_name = "fuel_normalized"
+    query = """
+      SELECT
+        '${FUEL_SERIES_ID}'                                       AS series_id,
+        '${FUEL_FUEL_TYPE}'                                       AS fuel_type,
+        ${FUEL_BENCHMARK_EXPR}                                    AS benchmark,
+        ${FUEL_REGION_EXPR}                                       AS region,
+        '${FUEL_FREQUENCY}'                                       AS frequency,
+        period                                                    AS period,
+        CAST((${FUEL_VALUE_EXPR}) AS DOUBLE)                      AS value,
+        COALESCE(units, '${FUEL_UNITS}')                          AS units,
+        CASE WHEN '${FUEL_CURRENCY}' = '' THEN NULL ELSE '${FUEL_CURRENCY}' END AS currency,
+        '${FUEL_SOURCE}'                                          AS source,
+        CAST(UNIX_TIMESTAMP() * 1000000 AS BIGINT)                AS ingest_ts,
+        ${FUEL_METADATA_EXPR}                                     AS metadata
+      FROM fuel_raw
+      WHERE value IS NOT NULL AND value <> ''
+        AND (${FUEL_FILTER_EXPR})
+    """
+  }
+}
+
+sink {
+  Kafka {
+    plugin_input = "fuel_normalized"
+    bootstrap.servers = "${KAFKA_BOOTSTRAP_SERVERS}"
+    topic = "${FUEL_TOPIC}"
+    semantic = "AT_LEAST_ONCE"
+    format = "avro"
+    avro {
+      use.schema.registry = true
+      schema.registry.url = "${SCHEMA_REGISTRY_URL}"
+      value.schema.subject = "${FUEL_SUBJECT}"
+      value.schema = """${FUEL_SCHEMA}"""
+    }
+    producer {
+      linger.ms = 500
+      batch.size = 32768
+      retries = 5
+    }
+  }
+}

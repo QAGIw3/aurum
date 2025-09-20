@@ -1,0 +1,24 @@
+{
+  "aurum_kafka_bootstrap": "kafka:9092",
+  "aurum_schema_registry": "http://schema-registry:8081",
+  "aurum_timescale_jdbc": "jdbc:postgresql://timescale:5432/timeseries",
+
+  "aurum_noaa_topic": "aurum.ref.noaa.weather.v1",
+
+  "aurum_eia_topic": "aurum.ref.eia.series.v1",
+  "aurum_eia_topic_pattern": "aurum\\.ref\\.eia\\..*\\.v1",
+  "aurum_eia_series_table": "eia_series_timeseries",
+
+  "aurum_fred_topic": "aurum.ref.fred.series.v1",
+  "aurum_fred_topic_pattern": "aurum\\.ref\\.fred\\..*\\.v1",
+  "aurum_fred_series_table": "fred_series_timeseries",
+
+  "aurum_cpi_topic": "aurum.ref.cpi.series.v1",
+  "aurum_cpi_topic_pattern": "aurum\\.ref\\.cpi\\..*\\.v1",
+  "aurum_cpi_series_table": "cpi_series_timeseries",
+
+  "aurum_iso_lmp_topic_pattern": "aurum\\.iso\\..*\\.lmp\\.v1",
+
+  "aurum_noaa_timescale_table": "noaa_weather_timeseries"
+}
+

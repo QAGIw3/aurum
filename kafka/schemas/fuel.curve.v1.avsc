@@ -1,0 +1,73 @@
+{
+  "type": "record",
+  "name": "FuelCurveObservation",
+  "namespace": "aurum.ref.fuel",
+  "doc": "Fuel curve observation normalised from EIA reference data feeds.",
+  "fields": [
+    {"name": "series_id", "type": "string", "doc": "Unique EIA series identifier."},
+    {
+      "name": "fuel_type",
+      "type": {
+        "type": "enum",
+        "name": "FuelType",
+        "doc": "Fuel commodity category represented by the series.",
+        "symbols": ["NATURAL_GAS", "CO2"]
+      }
+    },
+    {
+      "name": "benchmark",
+      "type": ["null", "string"],
+      "default": null,
+      "doc": "Benchmark or hub for the curve (e.g., Henry Hub)."
+    },
+    {
+      "name": "region",
+      "type": ["null", "string"],
+      "default": null,
+      "doc": "Geographic region or market identifier."
+    },
+    {
+      "name": "frequency",
+      "type": "string",
+      "doc": "Observation frequency (DAILY, WEEKLY, MONTHLY, etc.)."
+    },
+    {
+      "name": "period",
+      "type": "string",
+      "doc": "Period label captured from the source (e.g., 2024-01, 2024-01-15)."
+    },
+    {
+      "name": "value",
+      "type": "double",
+      "doc": "Curve value for the given period."
+    },
+    {
+      "name": "units",
+      "type": "string",
+      "doc": "Units for the value (e.g., USD/MMBtu, USD/tCO2)."
+    },
+    {
+      "name": "currency",
+      "type": ["null", "string"],
+      "default": null,
+      "doc": "Currency denomination of the curve (e.g., USD)."
+    },
+    {
+      "name": "source",
+      "type": "string",
+      "default": "EIA",
+      "doc": "Source system or provider of the observation."
+    },
+    {
+      "name": "ingest_ts",
+      "type": {"type": "long", "logicalType": "timestamp-micros"},
+      "doc": "Ingestion timestamp in UTC."
+    },
+    {
+      "name": "metadata",
+      "type": ["null", {"type": "map", "values": "string"}],
+      "default": null,
+      "doc": "Additional metadata attributes (e.g., dataset, notes)."
+    }
+  ]
+}

@@ -3,7 +3,7 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
-ISO_LMP_SCHEMA_PATH="${REPO_ROOT}/kafka/schemas/iso.lmp.v1.avsc"
+ISO_LMP_SCHEMA_PATH="${ISO_LMP_SCHEMA_PATH:-${REPO_ROOT}/kafka/schemas/iso.lmp.v1.avsc}"
 NOAA_GHCND_SCHEMA_PATH="${REPO_ROOT}/kafka/schemas/noaa.weather.v1.avsc"
 EIA_SERIES_SCHEMA_PATH="${REPO_ROOT}/kafka/schemas/eia.series.v1.avsc"
 FRED_SERIES_SCHEMA_PATH="${REPO_ROOT}/kafka/schemas/fred.series.v1.avsc"
@@ -26,9 +26,22 @@ print(json.dumps(schema, indent=2))
 PY
 }
 
+ensure_iso_lmp_schema() {
+  if [[ -z "${ISO_LMP_SCHEMA:-}" ]]; then
+    if [[ -n "${ISO_LMP_SCHEMA_PATH:-}" && -f "${ISO_LMP_SCHEMA_PATH}" ]]; then
+      ISO_LMP_SCHEMA="$(render_schema "${ISO_LMP_SCHEMA_PATH}")"
+    else
+      ISO_LMP_SCHEMA='{"type":"record","name":"IsoLmpRecord","namespace":"aurum.iso","doc":"Normalized locational marginal price observation from an ISO day-ahead or real-time feed.","fields":[{"name":"iso_code","type":{"type":"enum","name":"IsoCode","doc":"Market operator the observation belongs to.","symbols":["PJM","CAISO","ERCOT","NYISO","MISO","ISONE","SPP"]}},{"name":"market","type":{"type":"enum","name":"IsoMarket","doc":"Normalized market/run identifier reported by the ISO.","symbols":["DAY_AHEAD","REAL_TIME","FIFTEEN_MINUTE","FIVE_MINUTE","HOUR_AHEAD","SETTLEMENT","UNKNOWN"]}},{"name":"delivery_date","doc":"Trading or operating date for the interval (ISO local calendar).","type":{"type":"int","logicalType":"date"}},{"name":"interval_start","doc":"UTC timestamp when the interval starts.","type":{"type":"long","logicalType":"timestamp-micros"}},{"name":"interval_end","doc":"Optional UTC timestamp when the interval ends (exclusive).","type":["null",{"type":"long","logicalType":"timestamp-micros"}],"default":null},{"name":"interval_minutes","doc":"Duration of the interval in minutes (if supplied by the ISO).","type":["null","int"],"default":null},{"name":"location_id","doc":"Primary identifier (node, zone, hub) from the ISO feed.","type":"string"},{"name":"location_name","doc":"Human-readable description of the location.","type":["null","string"],"default":null},{"name":"location_type","doc":"Classification of the location identifier.","type":{"type":"enum","name":"IsoLocationType","symbols":["NODE","ZONE","HUB","SYSTEM","AGGREGATE","INTERFACE","RESOURCE","OTHER"]},"default":"OTHER"},{"name":"zone","doc":"Optional ISO zone identifier derived from the location registry.","type":["null","string"],"default":null},{"name":"hub","doc":"Optional hub grouping associated with the location.","type":["null","string"],"default":null},{"name":"timezone","doc":"Preferred timezone for interpreting interval timestamps (IANA name).","type":["null","string"],"default":null},{"name":"price_total","doc":"Locational marginal price reported by the ISO.","type":"double"},{"name":"price_energy","doc":"Energy component of the price.","type":["null","double"],"default":null},{"name":"price_congestion","doc":"Congestion component of the price.","type":["null","double"],"default":null},{"name":"price_loss","doc":"Loss component of the price.","type":["null","double"],"default":null},{"name":"currency","doc":"ISO reported currency (ISO-4217 code).","type":"string","default":"USD"},{"name":"uom","doc":"Unit of measure for the price.","type":"string","default":"MWh"},{"name":"settlement_point","doc":"Optional ISO-specific settlement point grouping.","type":["null","string"],"default":null},{"name":"source_run_id","doc":"Identifier for the source extraction run (file, report id, etc.).","type":["null","string"],"default":null},{"name":"ingest_ts","doc":"Timestamp when the record entered the pipeline (UTC).","type":{"type":"long","logicalType":"timestamp-micros"}},{"name":"record_hash","doc":"Deterministic hash of the source fields for idempotency.","type":"string"},{"name":"metadata","doc":"Optional key/value metadata captured from the source feed.","type":["null",{"type":"map","values":"string"}],"default":null}]}'
+    fi
+  fi
+  export ISO_LMP_SCHEMA
+}
+
 usage() {
   cat <<'USAGE'
 Usage: scripts/seatunnel/run_job.sh <job-name> [--render-only] [--image IMAGE]
+       scripts/seatunnel/run_job.sh --list
+       scripts/seatunnel/run_job.sh --describe <job-name>
 
 Render a SeaTunnel job template (seatunnel/jobs/<job-name>.conf.tmpl) using the
 current environment and optionally execute it inside a container.
@@ -36,6 +49,8 @@ current environment and optionally execute it inside a container.
 Options:
   --render-only    Generate the config file but do not run SeaTunnel
   --image IMAGE    Docker image to use when executing (default: ${SEATUNNEL_IMAGE:-apache/seatunnel:2.3.3})
+  --list           List available job templates and exit
+  --describe JOB   Print required env vars for JOB and exit
 
 Environment:
   SEATUNNEL_IMAGE      Override the default SeaTunnel image
@@ -60,6 +75,9 @@ fi
 JOB_NAME=""
 RENDER_ONLY="false"
 IMAGE="${SEATUNNEL_IMAGE:-apache/seatunnel:2.3.3}"
+LIST_ONLY="false"
+DESCRIBE_ONLY="false"
+DESCRIBE_JOB=""
 
 while [[ $# > 0 ]]; do
   case "$1" in
@@ -75,6 +93,20 @@ while [[ $# > 0 ]]; do
       IMAGE="$2"
       shift 2
       ;;
+    --list|-l)
+      LIST_ONLY="true"
+      shift
+      ;;
+    --describe)
+      if [[ $# -lt 2 ]]; then
+        echo "--describe requires a job name" >&2
+        exit 1
+      fi
+      DESCRIBE_ONLY="true"
+      DESCRIBE_JOB="$2"
+      JOB_NAME="$2"
+      shift 2
+      ;;
     -h|--help)
       usage
       exit 0
@@ -85,6 +117,14 @@ while [[ $# > 0 ]]; do
       ;;
   esac
 done
+
+if [[ "${LIST_ONLY}" == "true" ]]; then
+  for f in seatunnel/jobs/*.conf.tmpl; do
+    bn="$(basename "$f")"
+    echo "${bn%.conf.tmpl}"
+  done | sort
+  exit 0
+fi
 
 if [[ -z "${JOB_NAME}" ]]; then
   echo "Job name is required" >&2
@@ -109,18 +149,20 @@ case "${JOB_NAME}" in
       KAFKA_BOOTSTRAP_SERVERS
       SCHEMA_REGISTRY_URL
     )
-    export NOAA_GHCND_BASE_URL="${NOAA_GHCND_BASE_URL:-https://www.ncdc.noaa.gov/cdo-web/api/v2}"
-    export NOAA_GHCND_DATASET="${NOAA_GHCND_DATASET:-GHCND}"
-    export NOAA_GHCND_LIMIT="${NOAA_GHCND_LIMIT:-1000}"
-    export NOAA_GHCND_OFFSET="${NOAA_GHCND_OFFSET:-1}"
-    export NOAA_GHCND_TIMEOUT="${NOAA_GHCND_TIMEOUT:-30000}"
-    export NOAA_GHCND_STATION_LIMIT="${NOAA_GHCND_STATION_LIMIT:-1000}"
-    export NOAA_GHCND_UNIT_CODE="${NOAA_GHCND_UNIT_CODE:-unknown}"
-    export NOAA_GHCND_SUBJECT="${NOAA_GHCND_SUBJECT:-${NOAA_GHCND_TOPIC}-value}"
-    if [[ -z "${NOAA_GHCND_SCHEMA:-}" ]]; then
-      NOAA_GHCND_SCHEMA="$(render_schema "${NOAA_GHCND_SCHEMA_PATH}")"
+    if [[ "${DESCRIBE_ONLY}" != "true" ]]; then
+      export NOAA_GHCND_BASE_URL="${NOAA_GHCND_BASE_URL:-https://www.ncdc.noaa.gov/cdo-web/api/v2}"
+      export NOAA_GHCND_DATASET="${NOAA_GHCND_DATASET:-GHCND}"
+      export NOAA_GHCND_LIMIT="${NOAA_GHCND_LIMIT:-1000}"
+      export NOAA_GHCND_OFFSET="${NOAA_GHCND_OFFSET:-1}"
+      export NOAA_GHCND_TIMEOUT="${NOAA_GHCND_TIMEOUT:-30000}"
+      export NOAA_GHCND_STATION_LIMIT="${NOAA_GHCND_STATION_LIMIT:-1000}"
+      export NOAA_GHCND_UNIT_CODE="${NOAA_GHCND_UNIT_CODE:-unknown}"
+      export NOAA_GHCND_SUBJECT="${NOAA_GHCND_SUBJECT:-${NOAA_GHCND_TOPIC}-value}"
+      if [[ -z "${NOAA_GHCND_SCHEMA:-}" ]]; then
+        NOAA_GHCND_SCHEMA="$(render_schema "${NOAA_GHCND_SCHEMA_PATH}")"
+      fi
+      export NOAA_GHCND_SCHEMA
     fi
-    export NOAA_GHCND_SCHEMA
     ;;
   eia_series_to_kafka)
     REQUIRED_VARS=(
@@ -150,16 +192,95 @@ case "${JOB_NAME}" in
     export EIA_SOURCE_EXPR="${EIA_SOURCE_EXPR:-COALESCE(source, '${EIA_SOURCE}')}"
     export EIA_DATASET_EXPR="${EIA_DATASET_EXPR:-COALESCE(dataset, '${EIA_DATASET}')}"
     export EIA_METADATA_EXPR="${EIA_METADATA_EXPR:-NULL}"
+    export EIA_SERIES_ID_EXPR="${EIA_SERIES_ID_EXPR:-'${EIA_SERIES_ID}'}"
+    export EIA_FILTER_EXPR="${EIA_FILTER_EXPR:-TRUE}"
+    export EIA_PARAM_OVERRIDES_JSON="${EIA_PARAM_OVERRIDES_JSON:-[]}"
+    if [[ -z "${EIA_PARAM_OVERRIDES_JSON}" || "${EIA_PARAM_OVERRIDES_JSON}" == "[]" ]]; then
+      EIA_PARAM_OVERRIDES=""
+    else
+      if ! EIA_PARAM_OVERRIDES="$(python3 - <<'PY'
+import json
+import os
+import sys
+
+raw = os.environ.get("EIA_PARAM_OVERRIDES_JSON", "[]")
+try:
+    overrides = json.loads(raw)
+except json.JSONDecodeError as exc:
+    print(f"Invalid JSON for EIA_PARAM_OVERRIDES_JSON: {exc}", file=sys.stderr)
+    sys.exit(1)
+
+def iter_entries(obj):
+    if isinstance(obj, dict):
+        for key, value in obj.items():
+            yield key, value
+    elif isinstance(obj, list):
+        for item in obj:
+            if isinstance(item, dict):
+                yield from iter_entries(item)
+            elif isinstance(item, (list, tuple)) and len(item) == 2:
+                yield item[0], item[1]
+            else:
+                raise SystemExit(f"Unsupported override entry: {item!r}")
+    elif obj is None:
+        return
+    else:
+        raise SystemExit(
+            "EIA_PARAM_OVERRIDES_JSON must encode a list or mapping of key/value overrides"
+        )
+
+lines = [f"      {key} = \"{value}\"" for key, value in iter_entries(overrides)]
+print("\n".join(lines))
+PY
+)"; then
+        echo "Failed to parse EIA_PARAM_OVERRIDES_JSON" >&2
+        exit 1
+      fi
+    fi
+    export EIA_PARAM_OVERRIDES
     if [[ -z "${EIA_SERIES_SCHEMA:-}" ]]; then
       EIA_SERIES_SCHEMA="$(render_schema "${EIA_SERIES_SCHEMA_PATH}")"
     fi
     export EIA_SERIES_SCHEMA
     ;;
- fred_series_to_kafka)
-   REQUIRED_VARS=(
-     FRED_API_KEY
-     FRED_SERIES_ID
-     FRED_FREQUENCY
+  eia_fuel_curve_to_kafka)
+    REQUIRED_VARS=(
+      EIA_API_KEY
+      FUEL_EIA_PATH
+      FUEL_SERIES_ID
+      FUEL_FUEL_TYPE
+      FUEL_FREQUENCY
+      FUEL_TOPIC
+      FUEL_UNITS
+      KAFKA_BOOTSTRAP_SERVERS
+      SCHEMA_REGISTRY_URL
+    )
+    export EIA_API_BASE_URL="${EIA_API_BASE_URL:-https://api.eia.gov/v2}"
+    export FUEL_START="${FUEL_START:-}"
+    export FUEL_END="${FUEL_END:-}"
+    export FUEL_OFFSET="${FUEL_OFFSET:-0}"
+    export FUEL_LIMIT="${FUEL_LIMIT:-5000}"
+    export FUEL_SORT="${FUEL_SORT:-period}"
+    export FUEL_DIRECTION="${FUEL_DIRECTION:-DESC}"
+    export FUEL_BENCHMARK_EXPR="${FUEL_BENCHMARK_EXPR:-CAST(NULL AS STRING)}"
+    export FUEL_REGION_EXPR="${FUEL_REGION_EXPR:-CAST(NULL AS STRING)}"
+    export FUEL_VALUE_EXPR="${FUEL_VALUE_EXPR:-value}"
+    export FUEL_METADATA_EXPR="${FUEL_METADATA_EXPR:-NULL}"
+    export FUEL_CURRENCY="${FUEL_CURRENCY:-}"
+    export FUEL_SOURCE="${FUEL_SOURCE:-EIA}"
+    export FUEL_SUBJECT="${FUEL_SUBJECT:-${FUEL_TOPIC}-value}"
+    export FUEL_FILTER_EXPR="${FUEL_FILTER_EXPR:-TRUE}"
+    export FUEL_SCHEMA_PATH="${FUEL_SCHEMA_PATH:-${REPO_ROOT}/kafka/schemas/fuel.curve.v1.avsc}"
+    if [[ -z "${FUEL_SCHEMA:-}" ]]; then
+      FUEL_SCHEMA="$(render_schema "${FUEL_SCHEMA_PATH}")"
+    fi
+    export FUEL_SCHEMA
+    ;;
+  fred_series_to_kafka)
+    REQUIRED_VARS=(
+      FRED_API_KEY
+      FRED_SERIES_ID
+      FRED_FREQUENCY
       FRED_SEASONAL_ADJ
       FRED_TOPIC
       KAFKA_BOOTSTRAP_SERVERS
@@ -171,11 +292,11 @@ case "${JOB_NAME}" in
     export FRED_TITLE="${FRED_TITLE:-}"
     export FRED_NOTES="${FRED_NOTES:-}"
     export FRED_SUBJECT="${FRED_SUBJECT:-${FRED_TOPIC}-value}"
-   if [[ -z "${FRED_SERIES_SCHEMA:-}" ]]; then
-     FRED_SERIES_SCHEMA="$(render_schema "${FRED_SERIES_SCHEMA_PATH}")"
-   fi
-   export FRED_SERIES_SCHEMA
-   ;;
+    if [[ -z "${FRED_SERIES_SCHEMA:-}" ]]; then
+      FRED_SERIES_SCHEMA="$(render_schema "${FRED_SERIES_SCHEMA_PATH}")"
+    fi
+    export FRED_SERIES_SCHEMA
+    ;;
   cpi_series_to_kafka)
     REQUIRED_VARS=(
       FRED_API_KEY
@@ -210,10 +331,78 @@ case "${JOB_NAME}" in
     export PJM_MARKET="${PJM_MARKET:-DAY_AHEAD}"
     export PJM_LOCATION_TYPE="${PJM_LOCATION_TYPE:-NODE}"
     export PJM_SUBJECT="${PJM_SUBJECT:-${PJM_TOPIC}-value}"
+    # Ensure PJM_API_KEY is defined for template substitution even if empty
+    export PJM_API_KEY="${PJM_API_KEY:-}"
     if [[ -z "${ISO_LMP_SCHEMA:-}" ]]; then
       ISO_LMP_SCHEMA="$(render_schema "${ISO_LMP_SCHEMA_PATH}")"
     fi
     export ISO_LMP_SCHEMA
+    ;;
+  pjm_load_to_kafka)
+    REQUIRED_VARS=(
+      PJM_LOAD_ENDPOINT
+      PJM_ROW_LIMIT
+      PJM_INTERVAL_START
+      PJM_INTERVAL_END
+      PJM_LOAD_TOPIC
+      KAFKA_BOOTSTRAP_SERVERS
+      SCHEMA_REGISTRY_URL
+    )
+    export PJM_API_KEY="${PJM_API_KEY:-}"
+    export PJM_LOAD_SUBJECT="${PJM_LOAD_SUBJECT:-${PJM_LOAD_TOPIC}-value}"
+    export ISO_LOAD_SCHEMA_PATH="${ISO_LOAD_SCHEMA_PATH:-${REPO_ROOT}/kafka/schemas/iso.load.v1.avsc}"
+    if [[ -z "${ISO_LOAD_SCHEMA:-}" ]]; then
+      ISO_LOAD_SCHEMA="$(render_schema "${ISO_LOAD_SCHEMA_PATH}")"
+    fi
+    export ISO_LOAD_SCHEMA
+    ;;
+  pjm_genmix_to_kafka)
+    REQUIRED_VARS=(
+      PJM_GENMIX_ENDPOINT
+      PJM_ROW_LIMIT
+      PJM_INTERVAL_START
+      PJM_INTERVAL_END
+      PJM_GENMIX_TOPIC
+      KAFKA_BOOTSTRAP_SERVERS
+      SCHEMA_REGISTRY_URL
+    )
+    export PJM_API_KEY="${PJM_API_KEY:-}"
+    export PJM_GENMIX_SUBJECT="${PJM_GENMIX_SUBJECT:-${PJM_GENMIX_TOPIC}-value}"
+    export ISO_GENMIX_SCHEMA_PATH="${ISO_GENMIX_SCHEMA_PATH:-${REPO_ROOT}/kafka/schemas/iso.genmix.v1.avsc}"
+    if [[ -z "${ISO_GENMIX_SCHEMA:-}" ]]; then
+      ISO_GENMIX_SCHEMA="$(render_schema "${ISO_GENMIX_SCHEMA_PATH}")"
+    fi
+    export ISO_GENMIX_SCHEMA
+    ;;
+  pjm_pnodes_to_kafka)
+    REQUIRED_VARS=(
+      PJM_PNODES_ENDPOINT
+      PJM_ROW_LIMIT
+      PJM_PNODES_TOPIC
+      PJM_PNODES_EFFECTIVE_START
+      KAFKA_BOOTSTRAP_SERVERS
+      SCHEMA_REGISTRY_URL
+    )
+    export PJM_API_KEY="${PJM_API_KEY:-}"
+    export PJM_PNODES_SUBJECT="${PJM_PNODES_SUBJECT:-${PJM_PNODES_TOPIC}-value}"
+    export ISO_PNODE_SCHEMA_PATH="${ISO_PNODE_SCHEMA_PATH:-${REPO_ROOT}/kafka/schemas/iso.pnode.v1.avsc}"
+    if [[ -z "${ISO_PNODE_SCHEMA:-}" ]]; then
+      ISO_PNODE_SCHEMA="$(render_schema "${ISO_PNODE_SCHEMA_PATH}")"
+    fi
+    export ISO_PNODE_SCHEMA
+    ;;
+  aeso_lmp_to_kafka)
+    REQUIRED_VARS=(
+      AESO_ENDPOINT
+      AESO_TOPIC
+      KAFKA_BOOTSTRAP_SERVERS
+      SCHEMA_REGISTRY_URL
+    )
+    export AESO_API_KEY="${AESO_API_KEY:-}"
+    export AESO_START="${AESO_START:-}"
+    export AESO_END="${AESO_END:-}"
+    export AESO_SUBJECT="${AESO_SUBJECT:-${AESO_TOPIC}-value}"
+    ensure_iso_lmp_schema
     ;;
   iso_lmp_kafka_to_timescale)
     REQUIRED_VARS=(
@@ -227,6 +416,54 @@ case "${JOB_NAME}" in
     export ISO_LMP_TABLE="${ISO_LMP_TABLE:-iso_lmp_timeseries}"
     export ISO_LMP_SAVE_MODE="${ISO_LMP_SAVE_MODE:-append}"
     ;;
+  eia_series_kafka_to_timescale)
+    REQUIRED_VARS=(
+      KAFKA_BOOTSTRAP_SERVERS
+      SCHEMA_REGISTRY_URL
+      TIMESCALE_JDBC_URL
+      TIMESCALE_USER
+      TIMESCALE_PASSWORD
+    )
+    export EIA_TOPIC_PATTERN="${EIA_TOPIC_PATTERN:-aurum\\.ref\\.eia\\..*\\.v1}"
+    export EIA_SERIES_TABLE="${EIA_SERIES_TABLE:-eia_series_timeseries}"
+    export EIA_SERIES_SAVE_MODE="${EIA_SERIES_SAVE_MODE:-append}"
+    ;;
+  fred_series_kafka_to_timescale)
+    REQUIRED_VARS=(
+      KAFKA_BOOTSTRAP_SERVERS
+      SCHEMA_REGISTRY_URL
+      TIMESCALE_JDBC_URL
+      TIMESCALE_USER
+      TIMESCALE_PASSWORD
+    )
+    export FRED_TOPIC_PATTERN="${FRED_TOPIC_PATTERN:-aurum\\.ref\\.fred\\..*\\.v1}"
+    export FRED_SERIES_TABLE="${FRED_SERIES_TABLE:-fred_series_timeseries}"
+    export FRED_SERIES_SAVE_MODE="${FRED_SERIES_SAVE_MODE:-append}"
+    ;;
+  cpi_series_kafka_to_timescale)
+    REQUIRED_VARS=(
+      KAFKA_BOOTSTRAP_SERVERS
+      SCHEMA_REGISTRY_URL
+      TIMESCALE_JDBC_URL
+      TIMESCALE_USER
+      TIMESCALE_PASSWORD
+    )
+    export CPI_TOPIC_PATTERN="${CPI_TOPIC_PATTERN:-aurum\\.ref\\.cpi\\..*\\.v1}"
+    export CPI_SERIES_TABLE="${CPI_SERIES_TABLE:-cpi_series_timeseries}"
+    export CPI_SERIES_SAVE_MODE="${CPI_SERIES_SAVE_MODE:-append}"
+    ;;
+  noaa_weather_kafka_to_timescale)
+    REQUIRED_VARS=(
+      KAFKA_BOOTSTRAP_SERVERS
+      SCHEMA_REGISTRY_URL
+      TIMESCALE_JDBC_URL
+      TIMESCALE_USER
+      TIMESCALE_PASSWORD
+    )
+    export NOAA_TOPIC_PATTERN="${NOAA_TOPIC_PATTERN:-aurum\\.ref\\.noaa\\.weather\\.v1}"
+    export NOAA_TABLE="${NOAA_TABLE:-noaa_weather_timeseries}"
+    export NOAA_SAVE_MODE="${NOAA_SAVE_MODE:-append}"
+    ;;
   nyiso_lmp_to_kafka)
     REQUIRED_VARS=(
       NYISO_URL
@@ -235,10 +472,7 @@ case "${JOB_NAME}" in
     )
     export NYISO_TOPIC="${NYISO_TOPIC:-aurum.iso.nyiso.lmp.v1}"
     export NYISO_SUBJECT="${NYISO_SUBJECT:-${NYISO_TOPIC}-value}"
-    if [[ -z "${ISO_LMP_SCHEMA:-}" ]]; then
-      ISO_LMP_SCHEMA="$(render_schema "${ISO_LMP_SCHEMA_PATH}")"
-    fi
-    export ISO_LMP_SCHEMA
+    ensure_iso_lmp_schema
     ;;
   miso_lmp_to_kafka)
     REQUIRED_VARS=(
@@ -257,7 +491,8 @@ case "${JOB_NAME}" in
     export MISO_CONGESTION_COLUMN="${MISO_CONGESTION_COLUMN:-MCC}"
     export MISO_LOSS_COLUMN="${MISO_LOSS_COLUMN:-MLC}"
     if [[ -z "${MISO_INTERVAL_SECONDS:-}" ]]; then
-      case "${MISO_MARKET^^}" in
+      MISO_MARKET_UPPER="$(printf '%s' "${MISO_MARKET}" | tr '[:lower:]' '[:upper:]')"
+      case "${MISO_MARKET_UPPER}" in
         DA|DAY_AHEAD)
           MISO_INTERVAL_SECONDS=3600
           ;;
@@ -269,10 +504,7 @@ case "${JOB_NAME}" in
     export MISO_INTERVAL_SECONDS
     export MISO_CURRENCY="${MISO_CURRENCY:-USD}"
     export MISO_UOM="${MISO_UOM:-MWh}"
-    if [[ -z "${ISO_LMP_SCHEMA:-}" ]]; then
-      ISO_LMP_SCHEMA="$(render_schema "${ISO_LMP_SCHEMA_PATH}")"
-    fi
-    export ISO_LMP_SCHEMA
+    ensure_iso_lmp_schema
     ;;
   isone_lmp_to_kafka)
     REQUIRED_VARS=(
@@ -297,10 +529,7 @@ case "${JOB_NAME}" in
         export ISONE_HTTP_AUTH_ENABLED=false
       fi
     fi
-    if [[ -z "${ISO_LMP_SCHEMA:-}" ]]; then
-      ISO_LMP_SCHEMA="$(render_schema "${ISO_LMP_SCHEMA_PATH}")"
-    fi
-    export ISO_LMP_SCHEMA
+    ensure_iso_lmp_schema
     ;;
   caiso_lmp_to_kafka)
     REQUIRED_VARS=(
@@ -312,10 +541,7 @@ case "${JOB_NAME}" in
     export CAISO_SUBJECT="${CAISO_SUBJECT:-${CAISO_TOPIC}-value}"
     export CAISO_CURRENCY="${CAISO_CURRENCY:-USD}"
     export CAISO_UOM="${CAISO_UOM:-MWh}"
-    if [[ -z "${ISO_LMP_SCHEMA:-}" ]]; then
-      ISO_LMP_SCHEMA="$(render_schema "${ISO_LMP_SCHEMA_PATH}")"
-    fi
-    export ISO_LMP_SCHEMA
+    ensure_iso_lmp_schema
     ;;
   ercot_lmp_to_kafka)
     REQUIRED_VARS=(
@@ -327,10 +553,7 @@ case "${JOB_NAME}" in
     export ERCOT_SUBJECT="${ERCOT_SUBJECT:-${ERCOT_TOPIC}-value}"
     export ERCOT_CURRENCY="${ERCOT_CURRENCY:-USD}"
     export ERCOT_UOM="${ERCOT_UOM:-MWh}"
-    if [[ -z "${ISO_LMP_SCHEMA:-}" ]]; then
-      ISO_LMP_SCHEMA="$(render_schema "${ISO_LMP_SCHEMA_PATH}")"
-    fi
-    export ISO_LMP_SCHEMA
+    ensure_iso_lmp_schema
     ;;
   spp_lmp_to_kafka)
     REQUIRED_VARS=(
@@ -342,22 +565,47 @@ case "${JOB_NAME}" in
     export SPP_SUBJECT="${SPP_SUBJECT:-${SPP_TOPIC}-value}"
     export SPP_CURRENCY="${SPP_CURRENCY:-USD}"
     export SPP_UOM="${SPP_UOM:-MWh}"
-    if [[ -z "${ISO_LMP_SCHEMA:-}" ]]; then
-      ISO_LMP_SCHEMA="$(render_schema "${ISO_LMP_SCHEMA_PATH}")"
-    fi
-    export ISO_LMP_SCHEMA
+    ensure_iso_lmp_schema
     ;;
   *)
     REQUIRED_VARS=()
     ;;
 esac
 
-for var in "${REQUIRED_VARS[@]}"; do
-  if [[ -z "${!var:-}" ]]; then
-    echo "Missing required env var ${var} for job ${JOB_NAME}" >&2
-    exit 1
-  fi
-done
+if [[ "${DESCRIBE_ONLY}" != "true" ]]; then
+  for var in "${REQUIRED_VARS[@]}"; do
+    if [[ -z "${!var:-}" ]]; then
+      echo "Missing required env var ${var} for job ${JOB_NAME}" >&2
+      exit 1
+    fi
+  done
+fi
+
+if [[ "${DESCRIBE_ONLY}" == "true" ]]; then
+  echo "Job: ${DESCRIBE_JOB}"
+  echo "Required vars:"
+  for var in "${REQUIRED_VARS[@]}"; do
+    echo "  - ${var}"
+  done
+  echo "Optional vars (commonly used):"
+  # Heuristic: show envs introduced in this case section that have defaults and look meaningful
+  # (We can't statically analyze, so list a few widely-used ones)
+  case "${JOB_NAME}" in
+    noaa_ghcnd_to_kafka)
+      printf "  - NOAA_GHCND_UNIT_CODE (default: %s)\n" "${NOAA_GHCND_UNIT_CODE:-unknown}"
+      printf "  - NOAA_GHCND_STATION_LIMIT (default: %s)\n" "${NOAA_GHCND_STATION_LIMIT:-1000}"
+      ;;
+    eia_series_to_kafka)
+      printf "  - EIA_FREQUENCY (e.g., HOURLY/DAILY)\n"
+      printf "  - EIA_UNITS (e.g., USD/MWh)\n"
+      ;;
+    pjm_lmp_to_kafka)
+      printf "  - PJM_MARKET (default: %s)\n" "${PJM_MARKET:-DAY_AHEAD}"
+      printf "  - PJM_LOCATION_TYPE (default: %s)\n" "${PJM_LOCATION_TYPE:-NODE}"
+      ;;
+  esac
+  exit 0
+fi
 
 OUTPUT_DIR="${SEATUNNEL_OUTPUT_DIR:-seatunnel/jobs/generated}"
 mkdir -p "${OUTPUT_DIR}"
@@ -381,6 +629,12 @@ fi
 
 if [[ "${RENDER_ONLY}" == "true" ]]; then
   cat "${OUTPUT_CONFIG}"
+  exit 0
+fi
+
+# Optionally disable execution in environments where Docker is unavailable (e.g., Airflow pods)
+if [[ "${AURUM_EXECUTE_SEATUNNEL:-1}" != "1" ]]; then
+  echo "AURUM_EXECUTE_SEATUNNEL is disabled; rendered config at ${OUTPUT_CONFIG}" >&2
   exit 0
 fi
 

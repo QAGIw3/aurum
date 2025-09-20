@@ -98,9 +98,20 @@ def load_schema(schema_root: Path, relative_path: str) -> dict:
         raise SchemaRegistryError(f"Invalid JSON in schema file: {schema_path}") from exc
 
 
+def _timeout(env_var: str, default_seconds: int) -> int:
+    try:
+        return int(os.getenv(env_var, str(default_seconds)))
+    except Exception:
+        return default_seconds
+
+
 def put_compatibility(registry_url: str, subject: str, level: str, *, session: requests.Session) -> None:
     endpoint = f"{registry_url.rstrip('/')}/config/{subject}"
-    response = session.put(endpoint, json={"compatibility": level}, timeout=10)
+    response = session.put(
+        endpoint,
+        json={"compatibility": level},
+        timeout=_timeout("SCHEMA_REGISTRY_PUT_TIMEOUT", 30),
+    )
     if response.status_code not in {200, 204}:
         raise SchemaRegistryError(
             f"Failed to set compatibility for {subject}: {response.status_code} {response.text}"
@@ -110,7 +121,11 @@ def put_compatibility(registry_url: str, subject: str, level: str, *, session: r
 def register_schema(registry_url: str, subject: str, schema: dict, *, session: requests.Session) -> int:
     endpoint = f"{registry_url.rstrip('/')}/subjects/{subject}/versions"
     payload = {"schema": json_module.dumps(schema), "schemaType": "AVRO"}
-    response = session.post(endpoint, json=payload, timeout=15)
+    response = session.post(
+        endpoint,
+        json=payload,
+        timeout=_timeout("SCHEMA_REGISTRY_POST_TIMEOUT", 45),
+    )
     if response.status_code not in {200, 201}:
         raise SchemaRegistryError(
             f"Failed to register schema for {subject}: {response.status_code} {response.text}"

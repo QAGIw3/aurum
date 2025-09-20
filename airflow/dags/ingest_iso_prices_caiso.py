@@ -67,16 +67,25 @@ with DAG(
             f"export PATH=\"{BIN_PATH}\"",
             f"export PYTHONPATH=\"${{PYTHONPATH:-}}:{PYTHONPATH_ENTRY}\"",
             (
-                f"CAISO_INPUT_JSON={staging_path} "
+                f"AURUM_EXECUTE_SEATUNNEL=0 CAISO_INPUT_JSON={staging_path} "
                 f"KAFKA_BOOTSTRAP_SERVERS='{kafka_bootstrap}' "
                 f"SCHEMA_REGISTRY_URL='{schema_registry}' "
-                "scripts/seatunnel/run_job.sh caiso_lmp_to_kafka"
+                "scripts/scripts/seatunnel/run_job.sh caiso_lmp_to_kafka --render-only"
             ),
         ]
     )
 
     seatunnel_task = BashOperator(task_id="caiso_lmp_seatunnel", bash_command=seatunnel_command)
+    exec_k8s = BashOperator(
+        task_id="caiso_execute_k8s",
+        bash_command=(
+            "set -euo pipefail\n"
+            f"export PATH=\"{BIN_PATH}\"\n"
+            f"export PYTHONPATH=\"${{PYTHONPATH:-}}:{PYTHONPATH_ENTRY}\"\n"
+            "python scripts/k8s/run_seatunnel_job.py --job-name caiso_lmp_to_kafka --wait --timeout 600"
+        ),
+    )
 
     end = EmptyOperator(task_id="end")
 
-    start >> stage_caiso >> seatunnel_task >> end
+    start >> stage_caiso >> seatunnel_task >> exec_k8s >> end

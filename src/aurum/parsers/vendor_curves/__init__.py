@@ -33,3 +33,4 @@ def parse(vendor: str, path: str, asof: date) -> pd.DataFrame:
 from . import parse_pw  # noqa: F401
 from . import parse_eugp  # noqa: F401
 from . import parse_rp  # noqa: F401
+from . import parse_simple  # noqa: F401

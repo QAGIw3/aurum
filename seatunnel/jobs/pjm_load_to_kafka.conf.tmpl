@@ -1,0 +1,65 @@
+# PJM load observations → Kafka (Avro)
+
+env {
+  job.mode = "BATCH"
+  parallelism = 1
+}
+
+source {
+  Http {
+    url = "${PJM_LOAD_ENDPOINT}"
+    method = "GET"
+    headers {
+      Authorization = "Bearer ${PJM_API_KEY}"
+    }
+    params {
+      row = ${PJM_ROW_LIMIT}
+      sort = "datetime_beginning_ept"
+      order = "asc"
+      datetime_begin = "${PJM_INTERVAL_START}"
+      datetime_end = "${PJM_INTERVAL_END}"
+    }
+    connection_timeout_ms = 20000
+    retry = 12
+    format = "json"
+    schema = { fields { datetime_beginning_utc = string datetime_ending_utc = string area = string load_mw = string } }
+    jsonpath = "$$.data[*]"
+    result_table_name = "pjm_load_raw"
+  }
+}
+
+transform {
+  Sql {
+    source_table_name = "pjm_load_raw"
+    result_table_name = "pjm_load_normalized"
+    query = """
+      SELECT
+        'PJM' AS iso_code,
+        area AS area,
+        CAST(UNIX_TIMESTAMP(datetime_beginning_utc) * 1000000 AS BIGINT) AS interval_start,
+        CAST(UNIX_TIMESTAMP(datetime_ending_utc) * 1000000 AS BIGINT)   AS interval_end,
+        CAST(TIMESTAMPDIFF(MINUTE, datetime_beginning_utc, datetime_ending_utc) AS INT) AS interval_minutes,
+        CAST(load_mw AS DOUBLE) AS mw,
+        CAST(UNIX_TIMESTAMP() * 1000000 AS BIGINT) AS ingest_ts,
+        NULL AS metadata
+      FROM pjm_load_raw
+    """
+  }
+}
+
+sink {
+  Kafka {
+    plugin_input = "pjm_load_normalized"
+    bootstrap.servers = "${KAFKA_BOOTSTRAP_SERVERS}"
+    topic = "${PJM_LOAD_TOPIC}"
+    semantic = "AT_LEAST_ONCE"
+    format = "avro"
+    avro {
+      use.schema.registry = true
+      schema.registry.url = "${SCHEMA_REGISTRY_URL}"
+      value.schema.subject = "${PJM_LOAD_SUBJECT}"
+      value.schema = """${ISO_LOAD_SCHEMA}"""
+    }
+  }
+}
+

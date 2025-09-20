@@ -10,6 +10,7 @@ import json
 import os
 import time
 from dataclasses import dataclass
+from threading import Lock
 from typing import Any, Dict, Optional
 
 import httpx
@@ -45,16 +46,41 @@ class JWKSCache:
         self._ttl = ttl_seconds
         self._cached: dict[str, Any] | None = None
         self._expires_at: float = 0.0
+        self._lock = Lock()
+        self._cache_by_kid: dict[str, dict[str, Any]] = {}
+
+    def _refresh_locked(self) -> None:
+        with httpx.Client(timeout=5.0) as client:
+            resp = client.get(self._url)
+            resp.raise_for_status()
+            data = resp.json()
+        self._cached = data
+        keys = data.get("keys", []) if isinstance(data, dict) else []
+        self._cache_by_kid = {}
+        for entry in keys:
+            kid = entry.get("kid")
+            if kid:
+                self._cache_by_kid[kid] = entry
+        self._expires_at = time.time() + self._ttl
 
     def get(self) -> dict[str, Any]:
-        now = time.time()
-        if self._cached is None or now >= self._expires_at:
-            with httpx.Client(timeout=5.0) as client:
-                resp = client.get(self._url)
-                resp.raise_for_status()
-                self._cached = resp.json()
-                self._expires_at = now + self._ttl
-        return self._cached or {"keys": []}
+        with self._lock:
+            now = time.time()
+            if self._cached is None or now >= self._expires_at:
+                self._refresh_locked()
+            return self._cached or {"keys": []}
+
+    def get_key(self, kid: str) -> Optional[dict[str, Any]]:
+        with self._lock:
+            now = time.time()
+            if self._cached is None or now >= self._expires_at:
+                self._refresh_locked()
+            key = self._cache_by_kid.get(kid)
+            if key is not None:
+                return key
+            # force single refresh in case of rotation
+            self._refresh_locked()
+            return self._cache_by_kid.get(kid)
 
 
 def _unauthorized(detail: str) -> JSONResponse:
@@ -66,7 +92,7 @@ class AuthMiddleware:
         self.app = app
         self.config = config
         self._jwks = JWKSCache(config.jwks_url, ttl_seconds=300) if config.jwks_url else None
-        self._exempt = {"/health", "/metrics", "/docs", "/openapi.json"}
+        self._exempt = {"/health", "/metrics", "/docs", "/openapi.json", "/ready"}
 
     async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
         if scope["type"] != "http":
@@ -112,14 +138,10 @@ class AuthMiddleware:
         kid = unverified.get("kid")
         if not kid:
             raise HTTPException(status_code=401, detail="Missing key id")
-        keys = (self._jwks.get()["keys"] if self._jwks else [])
-        public_key: Optional[dict[str, Any]] = next((k for k in keys if k.get("kid") == kid), None)
-        if public_key is None:
-            # refresh once
-            if self._jwks:
-                self._jwks._expires_at = 0  # force refresh
-                keys = self._jwks.get()["keys"]
-                public_key = next((k for k in keys if k.get("kid") == kid), None)
+        try:
+            public_key = self._jwks.get_key(kid) if self._jwks else None
+        except Exception as exc:  # pragma: no cover - network failure path
+            raise HTTPException(status_code=503, detail="Unable to fetch JWKS") from exc
         if public_key is None:
             raise HTTPException(status_code=401, detail="Signing key not found")
 
@@ -138,4 +160,3 @@ class AuthMiddleware:
 
 
 __all__ = ["AuthMiddleware", "OIDCConfig"]
-

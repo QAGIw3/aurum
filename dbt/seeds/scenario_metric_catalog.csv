@@ -1,0 +1,4 @@
+metric,description,unit
+mid,Base scenario mid price,USD/MWh
+uplift,Scenario uplift relative to base,USD/MWh
+policy_uplift,Policy overlay adjustment,USD/MWh

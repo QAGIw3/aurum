@@ -10,7 +10,6 @@ from airflow.operators.bash import BashOperator
 from airflow.operators.empty import EmptyOperator
 from airflow.operators.python import PythonOperator
 
-from aurum.db import register_ingest_source, update_ingest_watermark
 
 DEFAULT_ARGS: dict[str, Any] = {
     "owner": "aurum-data",
@@ -26,24 +25,40 @@ PYTHONPATH_ENTRY = os.environ.get("AURUM_PYTHONPATH_ENTRY", "/opt/airflow/src")
 
 
 def _register_sources() -> None:
-    for name, description in (
-        ("caiso_helper", "CAISO PRC_LMP helper ingestion"),
-        ("ercot_helper", "ERCOT MIS helper ingestion"),
-    ):
-        try:
-            register_ingest_source(
-                name,
-                description=description,
-                schedule="30 * * * *",
-                target="kafka",
-            )
-        except Exception as exc:  # pragma: no cover
-            print(f"Failed to register ingest source {name}: {exc}")
+    # Defer import so the real package is used at runtime inside Airflow workers
+    try:
+        import sys
+        src_path = os.environ.get("AURUM_PYTHONPATH_ENTRY", "/opt/airflow/src")
+        if src_path and src_path not in sys.path:
+            sys.path.insert(0, src_path)
+        from aurum.db import register_ingest_source  # type: ignore
+
+        for name, description in (
+            ("caiso_helper", "CAISO PRC_LMP helper ingestion"),
+            ("ercot_helper", "ERCOT MIS helper ingestion"),
+        ):
+            try:
+                register_ingest_source(
+                    name,
+                    description=description,
+                    schedule="30 * * * *",
+                    target="kafka",
+                )
+            except Exception as exc:  # pragma: no cover
+                print(f"Failed to register ingest source {name}: {exc}")
+    except Exception as exc:  # pragma: no cover
+        print(f"Failed during register_sources setup: {exc}")
 
 
 def _update_watermark(source_name: str, logical_date: datetime) -> None:
     watermark = logical_date.astimezone(timezone.utc)
     try:
+        import sys
+        src_path = os.environ.get("AURUM_PYTHONPATH_ENTRY", "/opt/airflow/src")
+        if src_path and src_path not in sys.path:
+            sys.path.insert(0, src_path)
+        from aurum.db import update_ingest_watermark  # type: ignore
+
         update_ingest_watermark(source_name, "logical_date", watermark)
     except Exception as exc:  # pragma: no cover
         print(f"Failed to update watermark for {source_name}: {exc}")

@@ -1,0 +1,54 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: scenario-worker
+  labels:
+    app: scenario-worker
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: scenario-worker
+  template:
+    metadata:
+      labels:
+        app: scenario-worker
+    spec:
+      serviceAccountName: default
+      containers:
+        - name: worker
+          image: ghcr.io/aurum/aurum-api:dev
+          imagePullPolicy: IfNotPresent
+          command: ["python", "-m", "aurum.scenarios.worker"]
+          envFrom:
+            - configMapRef:
+                name: aurum-config
+            - secretRef:
+                name: aurum-secrets
+          env:
+            - name: KAFKA_BOOTSTRAP_SERVERS
+              value: kafka:9092
+            - name: SCHEMA_REGISTRY_URL
+              value: http://schema-registry:8081
+            - name: AURUM_SCENARIO_REQUEST_TOPIC
+              value: aurum.scenario.request.v1
+            - name: AURUM_SCENARIO_OUTPUT_TOPIC
+              value: aurum.scenario.output.v1
+          resources:
+            requests:
+              cpu: 100m
+              memory: 256Mi
+            limits:
+              cpu: 500m
+              memory: 512Mi
+          livenessProbe:
+            exec:
+              command: ["/bin/sh", "-c", "echo ok"]
+            initialDelaySeconds: 10
+            periodSeconds: 30
+          readinessProbe:
+            exec:
+              command: ["/bin/sh", "-c", "echo ok"]
+            initialDelaySeconds: 5
+            periodSeconds: 15
+

@@ -10,7 +10,6 @@ from airflow.operators.bash import BashOperator
 from airflow.operators.empty import EmptyOperator
 from airflow.operators.python import PythonOperator
 
-from aurum.db import register_ingest_source, update_ingest_watermark  # type: ignore
 
 
 DEFAULT_ARGS: dict[str, Any] = {
@@ -33,6 +32,12 @@ PYTHONPATH_ENTRY = os.environ.get("AURUM_PYTHONPATH_ENTRY", "/opt/airflow/src")
 def register_stream_source(**context: Any) -> None:
     """Ensure the ISO LMP stream ingest source is registered."""
     try:
+        import sys
+        src_path = os.environ.get("AURUM_PYTHONPATH_ENTRY", "/opt/airflow/src")
+        if src_path and src_path not in sys.path:
+            sys.path.insert(0, src_path)
+        from aurum.db import register_ingest_source  # type: ignore
+
         register_ingest_source(
             "iso_lmp_timescale",
             description="ISO LMP streaming load into Timescale",
@@ -41,6 +46,25 @@ def register_stream_source(**context: Any) -> None:
         )
     except Exception as exc:  # pragma: no cover
         print(f"Failed to register ingest source iso_lmp_timescale: {exc}")
+
+
+def preflight_required_vars(keys: list[str]) -> None:
+    try:
+        from airflow.models import Variable  # type: ignore
+    except Exception as exc:  # pragma: no cover
+        print(f"Airflow Variable API unavailable: {exc}")
+        return
+    missing: list[str] = []
+    for key in keys:
+        try:
+            Variable.get(key)
+        except Exception:
+            missing.append(key)
+    if missing:
+        critical = {"aurum_kafka_bootstrap", "aurum_schema_registry", "aurum_timescale_jdbc"}
+        if any(k in critical for k in missing):
+            raise RuntimeError(f"Missing required Airflow Variables: {missing}")
+        print(f"Warning: missing optional Airflow Variables: {missing}")
 
 
 def build_timescale_task(task_id: str) -> BashOperator:
@@ -52,7 +76,7 @@ def build_timescale_task(task_id: str) -> BashOperator:
     pull_cmd = (
         f"eval \"$(VAULT_ADDR={VAULT_ADDR} VAULT_TOKEN={VAULT_TOKEN} "
         f"PYTHONPATH=${{PYTHONPATH:-}}:{PYTHONPATH_ENTRY} "
-        f"{VENV_PYTHON} scripts/secrets/pull_vault_env.py {mapping_flags} --format shell)\""
+        f"{VENV_PYTHON} scripts/secrets/pull_vault_env.py {mapping_flags} --format shell)\" || true"
     )
 
     kafka_bootstrap = "{{ var.value.get('aurum_kafka_bootstrap', 'localhost:9092') }}"
@@ -93,6 +117,17 @@ with DAG(
 ) as dag:
     start = EmptyOperator(task_id="start")
 
+    preflight = PythonOperator(
+        task_id="preflight_airflow_vars",
+        python_callable=lambda **_: preflight_required_vars(
+            [
+                "aurum_kafka_bootstrap",
+                "aurum_schema_registry",
+                "aurum_timescale_jdbc",
+            ]
+        ),
+    )
+
     register_source = PythonOperator(task_id="register_iso_lmp_source", python_callable=register_stream_source)
 
     load_timescale = build_timescale_task(task_id="iso_lmp_kafka_to_timescale")
@@ -101,6 +136,12 @@ with DAG(
         logical_date: datetime = context["logical_date"]
         watermark = logical_date.astimezone(timezone.utc)
         try:
+            import sys
+            src_path = os.environ.get("AURUM_PYTHONPATH_ENTRY", "/opt/airflow/src")
+            if src_path and src_path not in sys.path:
+                sys.path.insert(0, src_path)
+            from aurum.db import update_ingest_watermark  # type: ignore
+
             update_ingest_watermark("iso_lmp_timescale", "logical_date", watermark)
         except Exception as exc:  # pragma: no cover
             print(f"Failed to update iso_lmp_timescale watermark: {exc}")
@@ -109,4 +150,4 @@ with DAG(
 
     end = EmptyOperator(task_id="end")
 
-    start >> register_source >> load_timescale >> watermark >> end
+    start >> preflight >> register_source >> load_timescale >> watermark >> end

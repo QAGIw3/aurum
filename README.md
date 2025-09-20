@@ -69,6 +69,15 @@ curl -X POST "http://localhost:8095/v1/scenarios/{scenario_id}/run" \
   -H "Content-Type: application/json" \
   -d '{"code_version": "v1"}'
 
+# List scenario outputs (when `AURUM_API_SCENARIO_OUTPUTS_ENABLED=1`)
+curl "http://localhost:8095/v1/scenarios/{scenario_id}/outputs?limit=20"
+
+# Dimension counts for UI facets
+curl "http://localhost:8095/v1/metadata/dimensions?include_counts=true"
+
+# Readiness probe
+curl -i "http://localhost:8095/ready"
+
 # FX rates ingestion helper (publish to Kafka)
 python scripts/ingest/fx_rates_to_kafka.py --base EUR --symbols USD,GBP,JPY --bootstrap localhost:9092
 ```
@@ -81,6 +90,76 @@ Observability and limits:
 - Optional CORS: set `AURUM_API_CORS_ORIGINS` (comma-separated, `*` allowed)
 - Optional OIDC/JWT auth: set `AURUM_API_AUTH_DISABLED=0` plus `AURUM_API_OIDC_{ISSUER,AUDIENCE,JWKS_URL}`
 - Optional Postgres storage for scenarios: set `AURUM_APP_DB_DSN` (e.g. `postgresql://aurum:aurum@localhost:5432/aurum`).
+- GZip compression: enable response compression with `AURUM_API_GZIP_MIN_BYTES` (default 500 bytes)
+- JSON access logs: emitted on logger `aurum.api.access` with fields `method,path,status,duration_ms,request_id,client_ip,tenant,subject`. Incoming `X-Request-Id` is honored and echoed.
+- In-memory metadata cache: enable short-lived caching for ISO locations, Units, and EIA catalog endpoints with `AURUM_API_INMEMORY_TTL` (seconds, default 60).
+- Rate limit headers: successful responses include `X-RateLimit-{Limit,Remaining,Reset}`; 429 includes `Retry-After`.
+- `/ready` responds with `503` when the API cannot reach Trino; integrate with load balancer checks.
+- Add `include_counts=true` to `/v1/metadata/dimensions` to receive per-dimension frequencies alongside values.
+
+### Vendor Parser CLI
+
+Parse vendor workbooks and optionally validate against an expectation suite before writing Parquet/CSV outputs.
+
+Example (validate then write CSV):
+
+```
+python -m aurum.parsers.runner files/EOD_PW_*.xlsx \
+  --as-of 2025-01-01 \
+  --validate \
+  --suite ge/expectations/curve_schema.json \
+  --output-dir artifacts/curves --format csv
+```
+
+Notes:
+- Supports vendors: PW, EUGP, RP, SIMPLE (auto-detected by filename).
+- If unit strings are not explicitly mapped, the parser infers canonical currency/unit from ISO/region where possible.
+- For quick inspection without writing files, use `--dry-run` to print a one-line summary (rows, distinct curves, as_of) and exit.
+- To also print a summary after writing, pass `--summary`.
+
+### Reference Metadata API
+
+Useful for UI dropdowns and developer tooling.
+
+- List ISO locations (filter by ISO, optional prefix on id/name):
+  `GET /v1/metadata/locations?iso=PJM&prefix=AE`
+- Get a specific location:
+  `GET /v1/metadata/locations/{iso}/{location_id}`
+- List canonical units and currencies:
+  `GET /v1/metadata/units`
+- List unit mappings (raw string to currency/unit):
+  `GET /v1/metadata/units/mapping?prefix=USD`
+- List calendars:
+  `GET /v1/metadata/calendars`
+- List blocks for a calendar:
+  `GET /v1/metadata/calendars/{name}/blocks`
+- Hours for a date/block:
+  `GET /v1/metadata/calendars/{name}/hours?block=ON_PEAK&date=2024-01-02`
+- Expand a block over a date range:
+  `GET /v1/metadata/calendars/{name}/expand?block=ON_PEAK&start=2024-01-01&end=2024-01-02`
+
+### Timescale Sink DAGs
+
+Stream reference topics from Kafka into TimescaleDB with prebuilt DAGs and SeaTunnel jobs:
+
+- EIA series → Timescale
+  - DAG: `ingest_eia_series_timescale`
+  - SeaTunnel template: `seatunnel/jobs/eia_series_kafka_to_timescale.conf.tmpl`
+  - Variables: `aurum_kafka_bootstrap`, `aurum_schema_registry`, `aurum_timescale_jdbc`, optional `aurum_eia_topic_pattern`, `aurum_eia_series_table`
+  - One‑time DDL (default DSN `postgresql://timescale:timescale@localhost:5433/timeseries`):
+    - `make timescale-apply-cpi` (for CPI) and `make timescale-apply-fred` (for FRED) as needed
+
+- FRED series → Timescale
+  - DAG: `indigest_fred_series_timescale`
+  - SeaTunnel template: `seatunnel/jobs/fred_series_kafka_to_timescale.conf.tmpl`
+  - Make target: `make timescale-apply-fred`
+
+- CPI series → Timescale
+  - DAG: `ingest_cpi_series_timescale`
+  - SeaTunnel template: `seatunnel/jobs/cpi_series_kafka_to_timescale.conf.tmpl`
+  - Make target: `make timescale-apply-cpi`
+
+See `seatunnel/README.md` for job rendering and environment variables; Airflow DAGs shell out to `scripts/seatunnel/run_job.sh` and read Timescale credentials from Vault (`secret/data/aurum/timescale:{user,password}`).
 
 Alternative: run a prebuilt API image (separate service, port 8096):
 
@@ -103,6 +182,7 @@ Run `make kafka-bootstrap` (optionally export `SCHEMA_REGISTRY_URL`) after the S
 Set `AURUM_DLQ_TOPIC` (or pass `--dlq-topic`) when running the ingestion helpers to capture failures in `aurum.ingest.error.v1` alongside the ingest attempt metadata.
 
 Prototype SeaTunnel jobs live under `seatunnel/`; render and execute them with `scripts/seatunnel/run_job.sh` once the necessary environment variables are set (see `seatunnel/README.md`). NOAA, EIA, FRED, NYISO, PJM, and Timescale landing jobs are supported out of the box, and Python helpers cover CAISO PRC_LMP and ERCOT MIS ingestion.
+EIA API coverage is catalog-driven: run `python scripts/eia/build_catalog.py` (requires `EIA_API_KEY`) to refresh `config/eia_catalog.json`, then Airflow reads the catalog plus `config/eia_ingest_datasets.json` to materialize per-dataset tasks without hand-maintained env blocks. Add or tweak dataset definitions in that JSON to control schedules, topics, filter/parameter overrides, and field expressions (see `docs/ingestion/eia_dataset_config.md` for the schema). Once updated, generate Airflow variable commands with `python scripts/eia/set_airflow_variables.py` (pass `--apply` to call `airflow variables set` directly).
 Use Vault for runtime secrets: store tokens under `secret/data/aurum/<source>` (seed with `python scripts/secrets/push_vault_env.py --mapping NOAA_GHCND_TOKEN=secret/data/aurum/noaa:token ...`) and populate the environment with `python scripts/secrets/pull_vault_env.py --mapping secret/data/aurum/noaa:token=NOAA_GHCND_TOKEN ...` before launching ingestion helpers. When developing against kind, the in-cluster Vault instance already exposes those paths (`vault login $(kubectl -n aurum-dev get secret vault-root-token -o jsonpath='{.data.token}' | base64 --decode)`); for standalone docker-compose workflows you can still run `scripts/vault/run_dev.sh` to launch an ad-hoc dev-mode Vault on `http://localhost:8200` (default root token `aurum-dev-token`).
 
 - Scripted ISO helpers:
@@ -136,6 +216,70 @@ Use Vault for runtime secrets: store tokens under `secret/data/aurum/<source>` (
     --report RTBM-LMPBYLP --date 2024-01-01
   ```
 
+### Airflow Variables Matrix
+
+Apply a standard set of Airflow Variables (Kafka bootstrap, Schema Registry URL, Timescale JDBC, topic names/patterns, and sink table names) from a single JSON mapping:
+
+- Mapping file: `config/airflow_variables.json`
+- Preview commands: `make airflow-print-vars`
+- Apply to Airflow: `make airflow-apply-vars`
+
+These variables are consumed by the public feeds DAGs and the Kafka→Timescale sink DAGs to avoid hardcoding endpoints and names.
+
+Variables overview (defaults for dev):
+
+- Endpoints
+  - `aurum_kafka_bootstrap`: Kafka brokers (default `kafka:9092`)
+  - `aurum_schema_registry`: Schema Registry (default `http://schema-registry:8081`)
+  - `aurum_timescale_jdbc`: Timescale JDBC (default `jdbc:postgresql://timescale:5432/timeseries`)
+
+- NOAA
+  - `aurum_noaa_topic`: Kafka topic for NOAA GHCND (`aurum.ref.noaa.weather.v1`)
+  - `aurum_noaa_timescale_table`: Timescale table (`noaa_weather_timeseries`)
+
+- EIA
+  - `aurum_eia_topic`: Base Kafka topic (`aurum.ref.eia.series.v1`)
+  - `aurum_eia_topic_pattern`: Pattern for sink (`aurum\.ref\.eia\..*\.v1`)
+  - `aurum_eia_series_table`: Timescale table (`eia_series_timeseries`)
+
+- FRED
+  - `aurum_fred_topic`: Base Kafka topic (`aurum.ref.fred.series.v1`)
+  - `aurum_fred_topic_pattern`: Pattern for sink (`aurum\.ref\.fred\..*\.v1`)
+  - `aurum_fred_series_table`: Timescale table (`fred_series_timeseries`)
+
+- CPI (FRED)
+  - `aurum_cpi_topic`: Base Kafka topic (`aurum.ref.cpi.series.v1`)
+  - `aurum_cpi_topic_pattern`: Pattern for sink (`aurum\.ref\.cpi\..*\.v1`)
+  - `aurum_cpi_series_table`: Timescale table (`cpi_series_timeseries`)
+
+- ISO LMP (shared)
+  - `aurum_iso_lmp_topic_pattern`: Pattern for ISO LMP topics (`aurum\.iso\..*\.lmp\.v1`)
+
+Helpful targets:
+- `make airflow-print-vars` (prints apply commands for the matrix)
+- `make airflow-apply-vars` (applies variables)
+- `make airflow-list-vars` (lists current Airflow variables)
+- `make airflow-list-aurum-vars` (filters for aurum_ keys)
+
+### PJM Data Miner integration
+
+- Airflow DAGs and tasks:
+  - Public feeds DAG adds PJM Day-Ahead LMP (`pjm_lmp_to_kafka`), Load (`pjm_load_to_kafka`), and Generation Mix (`pjm_genmix_to_kafka`).
+  - Separate DAG `ingest_pjm_pnodes.py` ingests PNODES metadata periodically.
+- Rate limiting:
+  - Create an Airflow pool named `pjm_api` with size 1. This serializes PJM API calls across tasks and helps respect the published rate limits (example: 6 requests per minute).
+- Variables (Airflow > Admin > Variables):
+  - `aurum_pjm_topic` (default `aurum.iso.pjm.lmp.v1`)
+  - `aurum_pjm_load_endpoint` (default `https://api.pjm.com/api/v1/inst_load`)
+  - `aurum_pjm_load_topic` (default `aurum.iso.pjm.load.v1`)
+  - `aurum_pjm_genmix_endpoint` (default `https://api.pjm.com/api/v1/gen_by_fuel`)
+  - `aurum_pjm_genmix_topic` (default `aurum.iso.pjm.genmix.v1`)
+  - `aurum_pjm_pnodes_endpoint` (default `https://api.pjm.com/api/v1/pnodes`)
+  - `aurum_pjm_pnodes_topic` (default `aurum.iso.pjm.pnode.v1`)
+  - `aurum_pjm_row_limit` (default `10000`)
+  - `aurum_schema_registry` (default `http://localhost:8081` in dev)
+- Secrets (optional):
+  - Store a PJM token under `secret/data/aurum/pjm:token` in Vault. Jobs will pick it up automatically via the DAGs. If not provided, jobs will attempt to call public endpoints where permitted.
 
 ## Python tooling
 

@@ -17,3 +17,4 @@ build/
 *.log
 .kind-data/
 .kind-data/backups/
+seatunnel/jobs/generated/*.conf

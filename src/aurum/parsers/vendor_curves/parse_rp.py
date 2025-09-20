@@ -215,10 +215,20 @@ def _find_data_start(df: pd.DataFrame) -> Optional[int]:
 
 
 def _value_from_headers(headers: Dict[str, pd.Series], key: str, col: int) -> Optional[str]:
+    """Return header cell at or before column index to handle sparse headers."""
     series = headers.get(key)
-    if series is None or col >= len(series):
+    if series is None:
         return None
-    return safe_str(series.iloc[col])
+    i = min(col, len(series) - 1)
+    while i >= 0:
+        val = safe_str(series.iloc[i])
+        if val:
+            if val.strip().endswith(":"):
+                i -= 1
+                continue
+            return val
+        i -= 1
+    return None
 
 
 def _build_identity(headers: Dict[str, pd.Series], col: int, sheet_name: str) -> Optional[Dict[str, Optional[str]]]:

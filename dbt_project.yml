@@ -1,0 +1,26 @@
+name: "aurum"
+version: "1.0.0"
+config-version: 2
+profile: "aurum"
+
+model-paths: ["dbt/models"]
+seed-paths: ["dbt/seeds"]
+analysis-paths: ["dbt/analysis"]
+target-path: "artifacts/dbt/target"
+clean-targets:
+  - "artifacts/dbt/target"
+  - "artifacts/dbt/dbt_packages"
+
+models:
+  aurum:
+    +materialized: view
+    stg:
+      +schema: stg
+    int:
+      +schema: int
+    mart:
+      +schema: mart
+
+seeds:
+  aurum:
+    +schema: ref

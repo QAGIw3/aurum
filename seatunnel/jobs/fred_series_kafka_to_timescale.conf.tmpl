@@ -1,0 +1,66 @@
+# FRED series topics → TimescaleDB (JDBC)
+#
+# Required environment variables:
+#   KAFKA_BOOTSTRAP_SERVERS  - Kafka brokers
+#   SCHEMA_REGISTRY_URL      - Schema Registry endpoint
+#   TIMESCALE_JDBC_URL       - JDBC URL for TimescaleDB
+#   TIMESCALE_USER           - Timescale username
+#   TIMESCALE_PASSWORD       - Timescale password
+#
+# Optional environment variables:
+#   FRED_TOPIC_PATTERN       - Regex pattern for topics (default aurum\\.ref\\.fred\\..*\\.v1)
+#   FRED_SERIES_TABLE        - Timescale table (default fred_series_timeseries)
+#   FRED_SERIES_SAVE_MODE    - Save mode (append)
+
+env {
+  job.mode = "STREAMING"
+  checkpoint.interval = 60000
+}
+
+source {
+  Kafka {
+    bootstrap.servers = "${KAFKA_BOOTSTRAP_SERVERS}"
+    pattern = "${FRED_TOPIC_PATTERN}"
+    format = "avro"
+    start_mode = "latest"
+    avro { schema.registry.url = "${SCHEMA_REGISTRY_URL}" }
+    result_table_name = "fred_raw"
+  }
+}
+
+transform {
+  Sql {
+    source_table_name = "fred_raw"
+    result_table_name = "fred_enriched"
+    query = """
+      SELECT
+        series_id,
+        DATE '1970-01-01' + date * INTERVAL '1 day' AS obs_date,
+        frequency,
+        seasonal_adjustment,
+        value,
+        raw_value,
+        units,
+        title,
+        notes,
+        CASE WHEN metadata IS NULL THEN NULL ELSE CAST(metadata AS STRING) END AS metadata,
+        TO_TIMESTAMP(ingest_ts / 1000000.0) AS ingest_ts
+      FROM fred_raw
+    """
+  }
+}
+
+sink {
+  Jdbc {
+    plugin_input = "fred_enriched"
+    driver = "org.postgresql.Driver"
+    url = "${TIMESCALE_JDBC_URL}"
+    user = "${TIMESCALE_USER}"
+    password = "${TIMESCALE_PASSWORD}"
+    table = "${FRED_SERIES_TABLE}"
+    primary_keys = ["series_id", "obs_date"]
+    save_mode = "${FRED_SERIES_SAVE_MODE}"
+    connection_check_timeout_sec = 30
+  }
+}
+

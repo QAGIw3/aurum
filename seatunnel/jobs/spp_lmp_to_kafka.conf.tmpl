@@ -22,9 +22,29 @@ source {
   LocalFile {
     path = "${SPP_INPUT_JSON}"
     format = "json"
-    json {
-      json_path = "$$[*]"
+    schema {
+      fields {
+        market = string
+        delivery_date = string
+        interval_start = string
+        interval_end = string
+        interval_minutes = string
+        location_id = string
+        location_name = string
+        location_type = string
+        price_total = string
+        price_energy = string
+        price_congestion = string
+        price_loss = string
+        currency = string
+        uom = string
+        settlement_point = string
+        source_run_id = string
+        ingest_ts = string
+        record_hash = string
+      }
     }
+    jsonpath = "$$[*]"
     result_table_name = "spp_stage"
   }
   LocalFile {
@@ -95,6 +115,7 @@ transform {
 
 sink {
   Kafka {
+    plugin_input = "spp_normalized"
     bootstrap.servers = "${KAFKA_BOOTSTRAP_SERVERS}"
     topic = "${SPP_TOPIC}"
     semantic = "AT_LEAST_ONCE"

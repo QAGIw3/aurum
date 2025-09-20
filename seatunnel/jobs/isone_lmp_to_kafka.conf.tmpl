@@ -36,10 +36,11 @@ source {
       end = "${ISONE_END}"
       market = "${ISONE_MARKET}"
     }
+    connection_timeout_ms = 20000
+    retry = 10
     format = "json"
-    json {
-      json_path = "$$.items[*]"
-    }
+    schema = { fields { begin = string end = string startTime = string endTime = string start_time = string end_time = string ${ISONE_NODE_FIELD} = string ${ISONE_NODE_ID_FIELD} = string ${ISONE_NODE_TYPE_FIELD} = string lmp = string energy = string congestion = string loss = string } }
+    jsonpath = "$$.items[*]"
     headers {
       Authorization = "${ISONE_AUTH_HEADER}"
     }
@@ -143,6 +144,7 @@ transform {
 
 sink {
   Kafka {
+    plugin_input = "isone_normalized"
     bootstrap.servers = "${KAFKA_BOOTSTRAP_SERVERS}"
     topic = "${ISONE_TOPIC}"
     semantic = "AT_LEAST_ONCE"
