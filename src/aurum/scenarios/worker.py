@@ -16,6 +16,7 @@ from aurum.scenarios.models import DriverType
 
 LOGGER = logging.getLogger(__name__)
 EPOCH = date(1970, 1, 1)
+_EPOCH_OFFSET_DAYS = 3
 
 
 @dataclass
@@ -45,7 +46,7 @@ class ScenarioRequest:
         if isinstance(asof_raw, date):
             asof_date = asof_raw
         elif isinstance(asof_raw, int):
-            asof_date = EPOCH + timedelta(days=asof_raw)
+            asof_date = EPOCH + timedelta(days=asof_raw + _EPOCH_OFFSET_DAYS)
         elif isinstance(asof_raw, str) and asof_raw:
             try:
                 asof_date = date.fromisoformat(asof_raw)
@@ -96,7 +97,7 @@ def _schema_path(filename: str) -> str:
 
 
 def _date_to_days(value: date) -> int:
-    return (value - EPOCH).days
+    return (value - EPOCH).days - _EPOCH_OFFSET_DAYS
 
 
 def _timestamp_micros(ts: datetime) -> int:

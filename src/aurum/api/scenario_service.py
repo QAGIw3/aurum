@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import os
 import uuid
+from collections import defaultdict
 from contextlib import contextmanager
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
@@ -52,6 +53,15 @@ class BaseScenarioStore:
     def get_scenario(self, scenario_id: str, *, tenant_id: Optional[str] = None) -> Optional[ScenarioRecord]:
         raise NotImplementedError
 
+    def list_scenarios(
+        self,
+        tenant_id: str,
+        *,
+        limit: int = 100,
+        offset: int = 0,
+    ) -> List[ScenarioRecord]:
+        raise NotImplementedError
+
     def create_run(
         self,
         scenario_id: str,
@@ -69,6 +79,16 @@ class BaseScenarioStore:
         *,
         tenant_id: Optional[str] = None,
     ) -> Optional[ScenarioRunRecord]:
+        raise NotImplementedError
+
+    def list_runs(
+        self,
+        tenant_id: str,
+        *,
+        scenario_id: Optional[str] = None,
+        limit: int = 100,
+        offset: int = 0,
+    ) -> List[ScenarioRunRecord]:
         raise NotImplementedError
 
     def reset(self) -> None:  # pragma: no cover - only meaningful for in-memory
@@ -112,6 +132,19 @@ class InMemoryScenarioStore(BaseScenarioStore):
     def get_scenario(self, scenario_id: str, *, tenant_id: Optional[str] = None) -> Optional[ScenarioRecord]:
         return self._scenarios.get(scenario_id)
 
+    def list_scenarios(
+        self,
+        tenant_id: str,
+        *,
+        limit: int = 100,
+        offset: int = 0,
+    ) -> List[ScenarioRecord]:
+        matches = [
+            record for record in self._scenarios.values() if record.tenant_id == tenant_id
+        ]
+        matches.sort(key=lambda rec: rec.created_at, reverse=True)
+        return matches[offset : offset + limit]
+
     def create_run(
         self,
         scenario_id: str,
@@ -149,6 +182,24 @@ class InMemoryScenarioStore(BaseScenarioStore):
         if record and record.scenario_id == scenario_id:
             return record
         return None
+
+    def list_runs(
+        self,
+        tenant_id: str,
+        *,
+        scenario_id: Optional[str] = None,
+        limit: int = 100,
+        offset: int = 0,
+    ) -> List[ScenarioRunRecord]:
+        runs = [
+            run
+            for run in self._runs.values()
+            if (scenario_id is None or run.scenario_id == scenario_id)
+            and (self._scenarios.get(run.scenario_id) is not None)
+            and (self._scenarios[run.scenario_id].tenant_id == tenant_id)
+        ]
+        runs.sort(key=lambda rec: rec.created_at, reverse=True)
+        return runs[offset : offset + limit]
 
     def reset(self) -> None:
         self._scenarios.clear()
@@ -305,6 +356,69 @@ class PostgresScenarioStore(BaseScenarioStore):
             created_at=row["created_at"],
         )
 
+    def list_scenarios(
+        self,
+        tenant_id: str,
+        *,
+        limit: int = 100,
+        offset: int = 0,
+    ) -> List[ScenarioRecord]:
+        with self._connect() as conn:
+            with conn.cursor() as cur:
+                self._set_tenant(cur, tenant_id)
+                cur.execute(
+                    """
+                    SELECT id, tenant_id, name, description, created_at
+                    FROM scenario
+                    ORDER BY created_at DESC
+                    LIMIT %s OFFSET %s
+                    """,
+                    (limit, offset),
+                )
+                scenario_rows = cur.fetchall()
+                if not scenario_rows:
+                    return []
+
+                scenario_ids = [row["id"] for row in scenario_rows]
+                assumptions_map: Dict[str, List[ScenarioAssumption]] = defaultdict(list)
+                cur.execute(
+                    """
+                    SELECT sav.scenario_id, d.type, sav.payload, sav.version
+                    FROM scenario_assumption_value sav
+                    JOIN scenario_driver d ON d.id = sav.driver_id
+                    WHERE sav.scenario_id = ANY(%s)
+                    ORDER BY sav.scenario_id, d.type
+                    """,
+                    (scenario_ids,),
+                )
+                for assumption_row in cur.fetchall():
+                    driver_type = DriverType(assumption_row["type"])
+                    payload = assumption_row["payload"]
+                    if isinstance(payload, str):
+                        payload = json.loads(payload)
+                    assumptions_map[assumption_row["scenario_id"]].append(
+                        ScenarioAssumption(
+                            driver_type=driver_type,
+                            payload=payload,
+                            version=assumption_row.get("version"),
+                        )
+                    )
+
+        records: List[ScenarioRecord] = []
+        for row in scenario_rows:
+            records.append(
+                ScenarioRecord(
+                    id=row["id"],
+                    tenant_id=row["tenant_id"],
+                    name=row["name"],
+                    description=row["description"],
+                    assumptions=assumptions_map.get(row["id"], []),
+                    status="CREATED",
+                    created_at=row["created_at"],
+                )
+            )
+        return records
+
     def create_run(
         self,
         scenario_id: str,
@@ -377,6 +491,45 @@ class PostgresScenarioStore(BaseScenarioStore):
             seed=row.get("seed"),
         )
 
+    def list_runs(
+        self,
+        tenant_id: str,
+        *,
+        scenario_id: Optional[str] = None,
+        limit: int = 100,
+        offset: int = 0,
+    ) -> List[ScenarioRunRecord]:
+        with self._connect() as conn:
+            with conn.cursor() as cur:
+                self._set_tenant(cur, tenant_id)
+                params: List[object] = []
+                query = [
+                    "SELECT mr.id, mr.scenario_id, mr.state, mr.code_version, mr.seed, mr.submitted_at",
+                    "FROM model_run mr",
+                    "JOIN scenario s ON s.id = mr.scenario_id",
+                    "WHERE s.tenant_id = current_setting('app.current_tenant')::UUID",
+                ]
+                if scenario_id:
+                    query.append("AND mr.scenario_id = %s")
+                    params.append(scenario_id)
+                query.append("ORDER BY mr.submitted_at DESC")
+                query.append("LIMIT %s OFFSET %s")
+                params.extend([limit, offset])
+                cur.execute("\n".join(query), tuple(params))
+                rows = cur.fetchall()
+
+        return [
+            ScenarioRunRecord(
+                run_id=row["id"],
+                scenario_id=row["scenario_id"],
+                state=row["state"],
+                created_at=row["submitted_at"],
+                code_version=row.get("code_version"),
+                seed=row.get("seed"),
+            )
+            for row in rows
+        ]
+
     def update_run_state(
         self,
         run_id: str,
@@ -410,7 +563,7 @@ class PostgresScenarioStore(BaseScenarioStore):
                         "UPDATE model_run SET state=%s, started_at=COALESCE(started_at, %s) WHERE id=%s",
                         (state, now, run_id),
                     )
-                elif state in ("SUCCEEDED", "FAILED"):
+                elif state in ("SUCCEEDED", "FAILED", "CANCELLED"):
                     cur.execute(
                         "UPDATE model_run SET state=%s, completed_at=COALESCE(completed_at, %s) WHERE id=%s",
                         (state, now, run_id),
