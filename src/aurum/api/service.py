@@ -62,6 +62,14 @@ DIFF_ORDER_COLUMNS = [
     "contract_month",
 ]
 
+SCENARIO_OUTPUT_ORDER_COLUMNS = [
+    "scenario_id",
+    "curve_key",
+    "tenor_label",
+    "contract_month",
+    "metric",
+]
+
 
 def _order_expression(column: str, *, alias: str = "") -> str:
     qualified = f"{alias}{column}" if alias else column
@@ -401,10 +409,18 @@ def query_curves_diff(
     if client is not None and cache_key is not None:
         try:  # pragma: no cover
             client.setex(cache_key, cache_cfg.ttl_seconds, json.dumps(rows, default=str))
+            index_key = _scenario_cache_index_key(tenant_id, scenario_id)
+            client.sadd(index_key, cache_key)
+            client.expire(index_key, cache_cfg.ttl_seconds)
         except Exception:
             pass
 
     return rows, elapsed
+
+
+def _scenario_cache_index_key(tenant_id: Optional[str], scenario_id: str) -> str:
+    tenant_key = tenant_id or "anon"
+    return f"scenario-outputs:index:{tenant_key}:{scenario_id}"
 
 
 def _build_sql_scenario_outputs(
@@ -498,16 +514,40 @@ def query_scenario_outputs(
     if client is not None and cache_key is not None:
         try:  # pragma: no cover
             client.setex(cache_key, cache_cfg.ttl_seconds, json.dumps(rows, default=str))
+            index_key = _scenario_cache_index_key(tenant_id, scenario_id)
+            client.sadd(index_key, cache_key)
+            client.expire(index_key, cache_cfg.ttl_seconds)
         except Exception:
             pass
 
     return rows, elapsed
 
 
+def invalidate_scenario_outputs_cache(
+    cache_cfg: CacheConfig,
+    tenant_id: Optional[str],
+    scenario_id: str,
+) -> None:
+    client = _maybe_redis_client(cache_cfg)
+    if client is None:
+        return
+    index_key = _scenario_cache_index_key(tenant_id, scenario_id)
+    try:  # pragma: no cover
+        members = client.smembers(index_key)
+        if members:
+            keys = [member.decode("utf-8") if isinstance(member, bytes) else member for member in members]
+            if keys:
+                client.delete(*keys)
+        client.delete(index_key)
+    except Exception:
+        return
+
+
 __all__ = [
     "query_curves",
     "query_curves_diff",
     "query_scenario_outputs",
+    "invalidate_scenario_outputs_cache",
     "TrinoConfig",
     "CacheConfig",
 ]

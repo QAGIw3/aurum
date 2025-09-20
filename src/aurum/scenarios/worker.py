@@ -10,7 +10,9 @@ from typing import Iterable, Optional, Sequence
 
 import pandas as pd
 
+from aurum.api.config import CacheConfig
 from aurum.api.scenario_service import STORE as ScenarioStore
+from aurum.api.service import invalidate_scenario_outputs_cache
 from aurum.parsers.iceberg_writer import write_scenario_output
 from aurum.scenarios.models import DriverType
 
@@ -232,6 +234,21 @@ def _append_to_iceberg(records: Iterable[dict[str, object]]) -> None:
         write_scenario_output(frame)
     except Exception as exc:  # pragma: no cover - integration error path
         LOGGER.warning("Failed to append scenario outputs to Iceberg: %s", exc)
+        return
+    try:
+        cache_cfg = CacheConfig.from_env()
+        keys = {
+            (
+                (record.get("tenant_id") or None),
+                str(record.get("scenario_id")),
+            )
+            for record in payload
+            if record.get("scenario_id")
+        }
+        for tenant_id, scenario_id in keys:
+            invalidate_scenario_outputs_cache(cache_cfg, tenant_id, scenario_id)
+    except Exception:  # pragma: no cover - cache invalidation best effort
+        LOGGER.debug("Cache invalidation skipped", exc_info=True)
 
 
 def _to_avro_payload(record: dict[str, object]) -> dict[str, object]:
