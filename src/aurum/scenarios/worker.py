@@ -111,8 +111,62 @@ def _resolve_curve_key(request: ScenarioRequest, scenario_id: str, tenant_id: st
     return hashlib.sha256(seed.encode("utf-8")).hexdigest()[:32]
 
 
-def _compute_value(scenario, request: ScenarioRequest) -> float:
-    base = 50.0
+def _load_base_mid(curve_key: str, asof: Optional[date]) -> Optional[float]:
+    table_name = os.getenv("AURUM_CURVE_LATEST_TABLE", "iceberg.market.curve_observation_latest")
+    branch = os.getenv("AURUM_ICEBERG_BRANCH", "main")
+    catalog_name = os.getenv("AURUM_ICEBERG_CATALOG", "nessie")
+    warehouse = os.getenv("AURUM_S3_WAREHOUSE", "s3://aurum/curated/iceberg")
+    props = {
+        "uri": os.getenv("AURUM_NESSIE_URI", "http://nessie:19121/api/v1"),
+        "warehouse": warehouse,
+        "s3.endpoint": os.getenv("AURUM_S3_ENDPOINT"),
+        "s3.access-key-id": os.getenv("AURUM_S3_ACCESS_KEY"),
+        "s3.secret-access-key": os.getenv("AURUM_S3_SECRET_KEY"),
+        "nessie.ref": branch,
+    }
+    props = {k: v for k, v in props.items() if v is not None}
+    table_identifier = table_name if "@" in table_name else f"{table_name}@{branch}"
+    try:
+        from pyiceberg.catalog import load_catalog  # type: ignore
+        from pyiceberg.expressions import And, EqualTo  # type: ignore
+    except ModuleNotFoundError:
+        return None
+
+    try:
+        catalog = load_catalog(catalog_name, **props)
+        table = catalog.load_table(table_identifier)
+        expr = None
+        if curve_key:
+            expr = EqualTo("curve_key", curve_key)
+        if asof is not None:
+            filter_asof = EqualTo("asof_date", asof)
+            expr = filter_asof if expr is None else And(expr, filter_asof)
+        scan = table.scan(row_filter=expr) if expr is not None else table.scan()
+        if hasattr(scan, "limit"):
+            scan = scan.limit(1000)
+        arrow_table = scan.to_arrow()
+        df = arrow_table.to_pandas()
+    except Exception as exc:  # pragma: no cover - integration failures
+        LOGGER.debug("Failed to load base curve mid: %s", exc)
+        return None
+
+    if df.empty:
+        return None
+    column = None
+    for candidate in ("mid", "value"):
+        if candidate in df.columns:
+            column = candidate
+            break
+    if column is None:
+        return None
+    series = df[column].dropna()
+    if series.empty:
+        return None
+    return float(series.mean())
+
+
+def _compute_value(scenario, request: ScenarioRequest, base_mid: Optional[float]) -> float:
+    base = base_mid if base_mid is not None else 50.0
     policy_terms = []
     load_terms = []
     for assumption in getattr(scenario, "assumptions", []) or []:
@@ -142,7 +196,8 @@ def _build_outputs(scenario, request: ScenarioRequest) -> list[dict[str, object]
     contract_month = asof.replace(day=1)
     computed_ts = datetime.now(timezone.utc)
     curve_key = _resolve_curve_key(request, scenario.id, scenario.tenant_id)
-    value = _compute_value(scenario, request)
+    base_mid = _load_base_mid(curve_key, asof)
+    value = _compute_value(scenario, request, base_mid)
     band_lower = round(value * 0.98, 4)
     band_upper = round(value * 1.02, 4)
     attribution = _build_attribution(scenario)

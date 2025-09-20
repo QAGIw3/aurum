@@ -5,7 +5,7 @@ from __future__ import annotations
 import base64
 import json
 import uuid
-from datetime import date
+from datetime import date, datetime
 import logging
 import time
 from typing import Any, Dict, List, Optional
@@ -30,9 +30,11 @@ from .models import (
     CreateScenarioRequest,
     ScenarioResponse,
     ScenarioData,
+    ScenarioListResponse,
     ScenarioRunOptions,
     ScenarioRunResponse,
     ScenarioRunData,
+    ScenarioRunListResponse,
     ScenarioOutputResponse,
     ScenarioOutputPoint,
     PpaValuationRequest,
@@ -327,14 +329,19 @@ def list_curves(
     limit: int = Query(200, ge=1, le=1000),
     offset: int = Query(0, ge=0, description="Offset for pagination (use 'cursor' for stability)"),
     cursor: Optional[str] = Query(None, description="Opaque cursor for stable pagination"),
+    since_cursor: Optional[str] = Query(
+        None,
+        description="Alias for 'cursor' to resume iteration from a previously returned next_cursor",
+    ),
 ) -> CurveResponse:
     request_id = str(uuid.uuid4())
     trino_cfg = TrinoConfig.from_env()
     cache_cfg = CacheConfig.from_env()
 
     cursor_after: Optional[dict] = None
-    if cursor:
-        payload = _decode_cursor(cursor)
+    effective_cursor = cursor or since_cursor
+    if effective_cursor:
+        payload = _decode_cursor(effective_cursor)
         offset, cursor_after = _normalise_cursor_input(payload)
 
     try:
@@ -385,14 +392,19 @@ def list_curves_diff(
     limit: int = Query(200, ge=1, le=1000),
     offset: int = Query(0, ge=0, description="Offset for pagination (use 'cursor' for stability)"),
     cursor: Optional[str] = Query(None, description="Opaque cursor for stable pagination"),
+    since_cursor: Optional[str] = Query(
+        None,
+        description="Alias for 'cursor' to resume iteration from a previously returned next_cursor",
+    ),
 ) -> CurveDiffResponse:
     request_id = str(uuid.uuid4())
     trino_cfg = TrinoConfig.from_env()
     cache_cfg = CacheConfig.from_env()
 
     cursor_after: Optional[dict] = None
-    if cursor:
-        payload = _decode_cursor(cursor)
+    effective_cursor = cursor or since_cursor
+    if effective_cursor:
+        payload = _decode_cursor(effective_cursor)
         offset, cursor_after = _normalise_cursor_input(payload)
 
     try:
@@ -814,13 +826,18 @@ def list_strips(
     limit: int = Query(200, ge=1, le=1000),
     offset: int = Query(0, ge=0),
     cursor: Optional[str] = Query(None),
+    since_cursor: Optional[str] = Query(
+        None,
+        description="Alias for 'cursor' to resume iteration from a previously returned next_cursor",
+    ),
 ) -> CurveResponse:
     request_id = str(uuid.uuid4())
     trino_cfg = TrinoConfig.from_env()
     cache_cfg = CacheConfig.from_env()
 
-    if cursor:
-        payload = _decode_cursor(cursor)
+    effective_cursor = cursor or since_cursor
+    if effective_cursor:
+        payload = _decode_cursor(effective_cursor)
         offset = int(payload.get("offset", 0))
 
     try:
@@ -859,6 +876,53 @@ __all__ = ["app"]
 # --- Scenario endpoints (stubbed service behavior for now) ---
 
 
+def _scenario_record_to_data(record) -> ScenarioData:
+    return ScenarioData(
+        scenario_id=record.id,
+        tenant_id=record.tenant_id,
+        name=record.name,
+        description=record.description,
+        status=record.status,
+        assumptions=record.assumptions,
+        created_at=record.created_at.isoformat() if record.created_at else None,
+    )
+
+
+def _scenario_run_to_data(run) -> ScenarioRunData:
+    created_at = None
+    if isinstance(run.created_at, datetime):
+        created_at = run.created_at.isoformat()
+    return ScenarioRunData(
+        run_id=run.run_id,
+        scenario_id=run.scenario_id,
+        state=run.state,
+        code_version=run.code_version,
+        seed=run.seed,
+        created_at=created_at,
+    )
+
+
+@app.get("/v1/scenarios", response_model=ScenarioListResponse)
+def list_scenarios(
+    request: Request,
+    limit: int = Query(50, ge=1, le=200),
+    offset: int = Query(0, ge=0),
+) -> ScenarioListResponse:
+    tenant_id = _resolve_tenant_optional(request, None)
+    request_id = str(uuid.uuid4())
+    start = time.perf_counter()
+    records = ScenarioStore.list_scenarios(tenant_id=tenant_id, limit=limit, offset=offset)
+    duration_ms = int((time.perf_counter() - start) * 1000.0)
+    next_cursor = None
+    if len(records) == limit:
+        next_cursor = _encode_cursor({"offset": offset + limit})
+    data = [_scenario_record_to_data(record) for record in records]
+    return ScenarioListResponse(
+        meta=Meta(request_id=request_id, query_time_ms=duration_ms, next_cursor=next_cursor),
+        data=data,
+    )
+
+
 @app.post("/v1/scenarios", response_model=ScenarioResponse, status_code=201)
 def create_scenario(payload: CreateScenarioRequest, request: Request) -> ScenarioResponse:
     request_id = str(uuid.uuid4())
@@ -871,15 +935,7 @@ def create_scenario(payload: CreateScenarioRequest, request: Request) -> Scenari
     )
     return ScenarioResponse(
         meta=Meta(request_id=request_id, query_time_ms=0),
-        data=ScenarioData(
-            scenario_id=record.id,
-            tenant_id=record.tenant_id,
-            name=record.name,
-            description=record.description,
-            status=record.status,
-            assumptions=record.assumptions,
-            created_at=record.created_at.isoformat(),
-        ),
+        data=_scenario_record_to_data(record),
     )
 
 
@@ -892,15 +948,34 @@ def get_scenario(scenario_id: str, request: Request) -> ScenarioResponse:
         raise HTTPException(status_code=404, detail="Scenario not found")
     return ScenarioResponse(
         meta=Meta(request_id=request_id, query_time_ms=0),
-        data=ScenarioData(
-            scenario_id=record.id,
-            tenant_id=record.tenant_id,
-            name=record.name,
-            description=record.description,
-            status=record.status,
-            assumptions=record.assumptions,
-            created_at=record.created_at.isoformat(),
-        ),
+        data=_scenario_record_to_data(record),
+    )
+
+
+@app.get("/v1/scenarios/{scenario_id}/runs", response_model=ScenarioRunListResponse)
+def list_scenario_runs(
+    scenario_id: str,
+    request: Request,
+    limit: int = Query(50, ge=1, le=200),
+    offset: int = Query(0, ge=0),
+) -> ScenarioRunListResponse:
+    tenant_id = _resolve_tenant_optional(request, None)
+    request_id = str(uuid.uuid4())
+    start = time.perf_counter()
+    runs = ScenarioStore.list_runs(
+        tenant_id=tenant_id,
+        scenario_id=scenario_id,
+        limit=limit,
+        offset=offset,
+    )
+    duration_ms = int((time.perf_counter() - start) * 1000.0)
+    next_cursor = None
+    if len(runs) == limit:
+        next_cursor = _encode_cursor({"offset": offset + limit})
+    data = [_scenario_run_to_data(run) for run in runs]
+    return ScenarioRunListResponse(
+        meta=Meta(request_id=request_id, query_time_ms=duration_ms, next_cursor=next_cursor),
+        data=data,
     )
 
 
@@ -924,14 +999,7 @@ def run_scenario(
     )
     return ScenarioRunResponse(
         meta=Meta(request_id=request_id, query_time_ms=0),
-        data=ScenarioRunData(
-            run_id=run.run_id,
-            scenario_id=run.scenario_id,
-            state=run.state,
-            code_version=run.code_version,
-            seed=run.seed,
-            created_at=run.created_at.isoformat(),
-        ),
+        data=_scenario_run_to_data(run),
     )
 
 
@@ -944,14 +1012,7 @@ def get_scenario_run(scenario_id: str, run_id: str, request: Request) -> Scenari
         raise HTTPException(status_code=404, detail="Scenario run not found")
     return ScenarioRunResponse(
         meta=Meta(request_id=request_id, query_time_ms=0),
-        data=ScenarioRunData(
-            run_id=run.run_id,
-            scenario_id=run.scenario_id,
-            state=run.state,
-            code_version=run.code_version,
-            seed=run.seed,
-            created_at=run.created_at.isoformat(),
-        ),
+        data=_scenario_run_to_data(run),
     )
 
 
@@ -959,7 +1020,7 @@ def get_scenario_run(scenario_id: str, run_id: str, request: Request) -> Scenari
 def update_scenario_run_state(
     run_id: str,
     request: Request,
-    state: str = Query(..., pattern="^(QUEUED|RUNNING|SUCCEEDED|FAILED)$"),
+    state: str = Query(..., pattern="^(QUEUED|RUNNING|SUCCEEDED|FAILED|CANCELLED)$"),
 ) -> ScenarioRunResponse:
     request_id = str(uuid.uuid4())
     tenant_id = _resolve_tenant_optional(request, None)
@@ -968,14 +1029,20 @@ def update_scenario_run_state(
         raise HTTPException(status_code=404, detail="Scenario run not found")
     return ScenarioRunResponse(
         meta=Meta(request_id=request_id, query_time_ms=0),
-        data=ScenarioRunData(
-            run_id=run.run_id,
-            scenario_id=run.scenario_id,
-            state=run.state,
-            code_version=run.code_version,
-            seed=run.seed,
-            created_at=run.created_at.isoformat(),
-        ),
+        data=_scenario_run_to_data(run),
+    )
+
+
+@app.post("/v1/scenarios/runs/{run_id}/cancel", response_model=ScenarioRunResponse)
+def cancel_scenario_run(run_id: str, request: Request) -> ScenarioRunResponse:
+    request_id = str(uuid.uuid4())
+    tenant_id = _resolve_tenant_optional(request, None)
+    run = ScenarioStore.update_run_state(run_id, state="CANCELLED", tenant_id=tenant_id)
+    if run is None:
+        raise HTTPException(status_code=404, detail="Scenario run not found")
+    return ScenarioRunResponse(
+        meta=Meta(request_id=request_id, query_time_ms=0),
+        data=_scenario_run_to_data(run),
     )
 
 
@@ -995,6 +1062,10 @@ def list_scenario_outputs(
     curve_key: Optional[str] = Query(None),
     limit: int = Query(200, ge=1, le=1000),
     cursor: Optional[str] = Query(None),
+    since_cursor: Optional[str] = Query(
+        None,
+        description="Alias for 'cursor' to resume iteration from a previously returned next_cursor",
+    ),
 ) -> ScenarioOutputResponse:
     if not _scenario_outputs_enabled():
         raise HTTPException(status_code=503, detail="Scenario outputs not enabled")
@@ -1006,8 +1077,9 @@ def list_scenario_outputs(
 
     cursor_after: Optional[dict] = None
     offset = 0
-    if cursor:
-        payload = _decode_cursor(cursor)
+    effective_cursor = cursor or since_cursor
+    if effective_cursor:
+        payload = _decode_cursor(effective_cursor)
         offset, cursor_after = _normalise_cursor_input(payload)
 
     try:

@@ -8,7 +8,7 @@ from collections import defaultdict
 from contextlib import contextmanager
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
-from typing import Dict, Iterable, List, Optional
+from typing import Any, Dict, Iterable, List, Optional
 
 import json
 
@@ -55,7 +55,7 @@ class BaseScenarioStore:
 
     def list_scenarios(
         self,
-        tenant_id: str,
+        tenant_id: Optional[str],
         *,
         limit: int = 100,
         offset: int = 0,
@@ -83,7 +83,7 @@ class BaseScenarioStore:
 
     def list_runs(
         self,
-        tenant_id: str,
+        tenant_id: Optional[str],
         *,
         scenario_id: Optional[str] = None,
         limit: int = 100,
@@ -134,14 +134,14 @@ class InMemoryScenarioStore(BaseScenarioStore):
 
     def list_scenarios(
         self,
-        tenant_id: str,
+        tenant_id: Optional[str],
         *,
         limit: int = 100,
         offset: int = 0,
     ) -> List[ScenarioRecord]:
-        matches = [
-            record for record in self._scenarios.values() if record.tenant_id == tenant_id
-        ]
+        matches = list(self._scenarios.values())
+        if tenant_id:
+            matches = [record for record in matches if record.tenant_id == tenant_id]
         matches.sort(key=lambda rec: rec.created_at, reverse=True)
         return matches[offset : offset + limit]
 
@@ -185,7 +185,7 @@ class InMemoryScenarioStore(BaseScenarioStore):
 
     def list_runs(
         self,
-        tenant_id: str,
+        tenant_id: Optional[str],
         *,
         scenario_id: Optional[str] = None,
         limit: int = 100,
@@ -196,7 +196,10 @@ class InMemoryScenarioStore(BaseScenarioStore):
             for run in self._runs.values()
             if (scenario_id is None or run.scenario_id == scenario_id)
             and (self._scenarios.get(run.scenario_id) is not None)
-            and (self._scenarios[run.scenario_id].tenant_id == tenant_id)
+            and (
+                not tenant_id
+                or self._scenarios[run.scenario_id].tenant_id == tenant_id
+            )
         ]
         runs.sort(key=lambda rec: rec.created_at, reverse=True)
         return runs[offset : offset + limit]
@@ -358,7 +361,7 @@ class PostgresScenarioStore(BaseScenarioStore):
 
     def list_scenarios(
         self,
-        tenant_id: str,
+        tenant_id: Optional[str],
         *,
         limit: int = 100,
         offset: int = 0,
@@ -366,14 +369,21 @@ class PostgresScenarioStore(BaseScenarioStore):
         with self._connect() as conn:
             with conn.cursor() as cur:
                 self._set_tenant(cur, tenant_id)
+                params: list[Any] = []
+                where_clause = ""
+                if tenant_id:
+                    where_clause = "WHERE tenant_id = %s"
+                    params.append(tenant_id)
+                params.extend([limit, offset])
                 cur.execute(
-                    """
+                    f"""
                     SELECT id, tenant_id, name, description, created_at
                     FROM scenario
+                    {where_clause}
                     ORDER BY created_at DESC
                     LIMIT %s OFFSET %s
                     """,
-                    (limit, offset),
+                    tuple(params),
                 )
                 scenario_rows = cur.fetchall()
                 if not scenario_rows:
@@ -493,7 +503,7 @@ class PostgresScenarioStore(BaseScenarioStore):
 
     def list_runs(
         self,
-        tenant_id: str,
+        tenant_id: Optional[str],
         *,
         scenario_id: Optional[str] = None,
         limit: int = 100,
@@ -507,8 +517,10 @@ class PostgresScenarioStore(BaseScenarioStore):
                     "SELECT mr.id, mr.scenario_id, mr.state, mr.code_version, mr.seed, mr.submitted_at",
                     "FROM model_run mr",
                     "JOIN scenario s ON s.id = mr.scenario_id",
-                    "WHERE s.tenant_id = current_setting('app.current_tenant')::UUID",
+                    "WHERE 1 = 1",
                 ]
+                if tenant_id:
+                    query.append("AND s.tenant_id = current_setting('app.current_tenant')::UUID")
                 if scenario_id:
                     query.append("AND mr.scenario_id = %s")
                     params.append(scenario_id)

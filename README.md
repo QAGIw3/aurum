@@ -46,6 +46,8 @@ curl "http://localhost:8095/v1/curves/diff?asof_a=2025-09-11&asof_b=2025-09-12&i
 # Cursor-based pagination
 first=$(curl -s "http://localhost:8095/v1/curves?limit=10" | jq -r .meta.next_cursor)
 curl "http://localhost:8095/v1/curves?limit=10&cursor=${first}"
+# Alias using since_cursor (identical to cursor)
+curl "http://localhost:8095/v1/curves?limit=10&since_cursor=${first}"
 
 # Dimensions for UI filters
 curl "http://localhost:8095/v1/metadata/dimensions?asof=2025-09-12"
@@ -96,6 +98,7 @@ Observability and limits:
 - Rate limit headers: successful responses include `X-RateLimit-{Limit,Remaining,Reset}`; 429 includes `Retry-After`.
 - `/ready` responds with `503` when the API cannot reach Trino; integrate with load balancer checks.
 - Add `include_counts=true` to `/v1/metadata/dimensions` to receive per-dimension frequencies alongside values.
+- Pagination returns `meta.next_cursor`; supply it as either `cursor` or `since_cursor` on subsequent requests to resume iteration and avoid duplicate rows.
 
 ### Vendor Parser CLI
 

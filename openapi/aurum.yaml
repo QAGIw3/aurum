@@ -46,6 +46,23 @@ paths:
           schema:
             type: string
           description: Opaque cursor for stable pagination.
+        - name: since_cursor
+          in: query
+          schema:
+            type: string
+          description: Alias for `cursor` to resume iteration from a previously returned `next_cursor`.
+          description: Opaque cursor for stable pagination.
+        - name: since_cursor
+          in: query
+          schema:
+            type: string
+          description: Alias for `cursor` to resume iteration from a previously returned `next_cursor`.
+          description: Opaque cursor for stable pagination.
+        - name: since_cursor
+          in: query
+          schema:
+            type: string
+          description: Alias for `cursor` to resume iteration from a previously returned `next_cursor`.
       responses:
         '200':
           description: Curve data retrieved.
@@ -189,6 +206,13 @@ paths:
           schema:
             type: string
           required: false
+          description: Opaque cursor for stable pagination.
+        - name: since_cursor
+          in: query
+          schema:
+            type: string
+          required: false
+          description: Alias for `cursor` to resume iteration from a previously returned `next_cursor`.
       responses:
         '200':
           description: Scenario outputs.

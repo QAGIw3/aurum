@@ -226,6 +226,11 @@ class ScenarioResponse(BaseModel):
     data: ScenarioData
 
 
+class ScenarioListResponse(BaseModel):
+    meta: Meta
+    data: List[ScenarioData]
+
+
 class ScenarioRunOptions(BaseModel):
     code_version: Optional[str] = None
     seed: Optional[int] = None
@@ -243,6 +248,11 @@ class ScenarioRunData(BaseModel):
 class ScenarioRunResponse(BaseModel):
     meta: Meta
     data: ScenarioRunData
+
+
+class ScenarioRunListResponse(BaseModel):
+    meta: Meta
+    data: List[ScenarioRunData]
 
 
 class ScenarioOutputPoint(BaseModel):

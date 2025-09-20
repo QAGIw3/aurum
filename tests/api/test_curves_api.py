@@ -231,6 +231,75 @@ def test_cursor_pagination(monkeypatch):
     }
 
 
+def test_cursor_pagination_alias(monkeypatch):
+    pytest.importorskip("fastapi", reason="fastapi not installed")
+    from fastapi.testclient import TestClient
+    from aurum.api import app as api_app
+    from aurum.api import service
+
+    rows = [
+        {
+            "curve_key": "a",
+            "tenor_label": "2025-01",
+            "tenor_type": "MONTHLY",
+            "contract_month": "2025-01-01",
+            "asof_date": "2025-09-12",
+            "mid": 1.0,
+            "bid": 1.0,
+            "ask": 1.0,
+            "price_type": "MID",
+        },
+        {
+            "curve_key": "b",
+            "tenor_label": "2025-02",
+            "tenor_type": "MONTHLY",
+            "contract_month": "2025-02-01",
+            "asof_date": "2025-09-12",
+            "mid": 2.0,
+            "bid": 2.0,
+            "ask": 2.0,
+            "price_type": "MID",
+        },
+    ]
+
+    captured = []
+
+    def fake_query_curves(*args, **kwargs):
+        captured.append(kwargs.get("cursor_after"))
+        req_limit = kwargs.get("limit", 1)
+        start = 0
+        cursor_after = kwargs.get("cursor_after")
+        if cursor_after:
+            for idx, row in enumerate(rows):
+                snapshot = {
+                    "curve_key": row["curve_key"],
+                    "tenor_label": row["tenor_label"],
+                    "contract_month": row.get("contract_month"),
+                    "asof_date": row.get("asof_date"),
+                    "price_type": row.get("price_type"),
+                }
+                if snapshot == cursor_after:
+                    start = idx + 1
+                    break
+        subset = rows[start : start + req_limit]
+        return subset, 1.0
+
+    monkeypatch.setattr(service, "query_curves", fake_query_curves)
+    client = TestClient(api_app.app)
+
+    first = client.get("/v1/curves", params={"limit": 1})
+    cursor = first.json()["meta"]["next_cursor"]
+    second = client.get("/v1/curves", params={"limit": 1, "since_cursor": cursor})
+    assert second.status_code == 200
+    assert captured[-1] == {
+        "curve_key": "a",
+        "tenor_label": "2025-01",
+        "contract_month": "2025-01-01",
+        "asof_date": "2025-09-12",
+        "price_type": "MID",
+    }
+
+
 def test_dimensions_endpoint(monkeypatch):
     pytest.importorskip("fastapi", reason="fastapi not installed")
     from fastapi.testclient import TestClient

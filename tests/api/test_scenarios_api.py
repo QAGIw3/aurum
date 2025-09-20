@@ -51,6 +51,11 @@ def test_create_and_get_scenario(client):
     assert retrieved["scenario_id"] == scenario_id
     assert retrieved["name"] == "Test Scenario"
 
+    list_resp = client.get("/v1/scenarios")
+    assert list_resp.status_code == 200
+    scenarios = list_resp.json()["data"]
+    assert any(item["scenario_id"] == scenario_id for item in scenarios)
+
 
 def test_run_scenario(client):
     create = client.post("/v1/scenarios", json=_sample_payload())
@@ -70,6 +75,15 @@ def test_run_scenario(client):
     fetched = get_run.json()["data"]
     assert fetched["run_id"] == run_id
     assert fetched["scenario_id"] == scenario_id
+
+    list_runs = client.get(f"/v1/scenarios/{scenario_id}/runs")
+    assert list_runs.status_code == 200
+    runs = list_runs.json()["data"]
+    assert any(item["run_id"] == run_id for item in runs)
+
+    cancel_resp = client.post(f"/v1/scenarios/runs/{run_id}/cancel")
+    assert cancel_resp.status_code == 200
+    assert cancel_resp.json()["data"]["state"] == "CANCELLED"
 
 
 def test_scenario_outputs_disabled(client):
@@ -151,7 +165,7 @@ def test_scenario_outputs_enabled(monkeypatch, client):
     cursor = body["meta"]["next_cursor"]
     resp2 = client.get(
         "/v1/scenarios/scn-1/outputs",
-        params={"limit": 1, "cursor": cursor},
+        params={"limit": 1, "since_cursor": cursor},
     )
     assert resp2.status_code == 200
     assert captured_cursors[-1] == {

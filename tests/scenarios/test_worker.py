@@ -26,7 +26,7 @@ def test_request_from_message_converts_days():
     assert req.curve_def_ids == ["curve-a", "curve-b"]
 
 
-def test_build_outputs_uses_assumptions():
+def test_build_outputs_uses_assumptions(monkeypatch):
     scenario = ScenarioRecord(
         id="scn-1",
         tenant_id="tenant-1",
@@ -46,13 +46,14 @@ def test_build_outputs_uses_assumptions():
         asof_date=date(2025, 1, 1),
         curve_def_ids=None,
     )
+    monkeypatch.setattr(worker, "_load_base_mid", lambda *args, **kwargs: 60.0)
     outputs = worker._build_outputs(scenario, request)
     assert len(outputs) == 1
     record = outputs[0]
     assert record["scenario_id"] == "scn-1"
     assert record["tenant_id"] == "tenant-1"
     assert record["tenor_label"] == "2025-01"
-    assert record["value"] > 50.0
+    assert record["value"] == pytest.approx(60.625, rel=1e-6)
     assert record["band_lower"] < record["value"] < record["band_upper"]
     assert record["computed_ts"].tzinfo is not None
 
