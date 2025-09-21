@@ -21,3 +21,6 @@ artifacts/
 .kind-data/backups/
 seatunnel/jobs/generated/*.conf
 k8s/**/helm/charts/
+venv*/
+env*/
+.python-version

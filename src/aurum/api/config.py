@@ -2,79 +2,90 @@ from __future__ import annotations
 
 """Configuration helpers for the Aurum API service."""
 
-import os
 from dataclasses import dataclass, field
+from typing import Tuple
 
-
-def _env(name: str, default: str | None = None) -> str | None:
-    val = os.getenv(name)
-    return val if val is not None else default
+from aurum.core import AurumSettings
+from aurum.core.settings import RedisMode
 
 
 @dataclass(frozen=True)
 class TrinoConfig:
-    host: str = "localhost"
-    port: int = 8080
-    user: str = "aurum"
-    http_scheme: str = "http"
+    host: str
+    port: int
+    user: str
+    http_scheme: str
+    catalog: str
+    schema: str
+    password: str | None = None
 
     @classmethod
-    def from_env(cls) -> "TrinoConfig":
-        host = _env("AURUM_API_TRINO_HOST", "localhost") or "localhost"
-        port = int(_env("AURUM_API_TRINO_PORT", "8080") or 8080)
-        user = _env("AURUM_API_TRINO_USER", "aurum") or "aurum"
-        http_scheme = _env("AURUM_API_TRINO_SCHEME", "http") or "http"
-        return cls(host=host, port=port, user=user, http_scheme=http_scheme)
+    def from_settings(cls, settings: AurumSettings) -> "TrinoConfig":
+        trino = settings.trino
+        return cls(
+            host=trino.host,
+            port=trino.port,
+            user=trino.user,
+            http_scheme=trino.http_scheme,
+            catalog=trino.catalog,
+            schema=trino.schema,
+            password=trino.password,
+        )
 
 
 @dataclass(frozen=True)
 class CacheConfig:
     redis_url: str | None = None
     ttl_seconds: int = 60
-    mode: str = "standalone"
-    sentinel_endpoints: tuple[tuple[str, int], ...] = field(default_factory=tuple)
+    mode: RedisMode = RedisMode.STANDALONE
+    sentinel_endpoints: Tuple[Tuple[str, int], ...] = field(default_factory=tuple)
     sentinel_master: str | None = None
-    cluster_nodes: tuple[str, ...] = field(default_factory=tuple)
+    cluster_nodes: Tuple[str, ...] = field(default_factory=tuple)
     username: str | None = None
     password: str | None = None
     namespace: str = "aurum"
     db: int = 0
+    socket_timeout: float = 1.5
+    connect_timeout: float = 1.5
 
     @classmethod
-    def from_env(cls) -> "CacheConfig":
-        url = _env("AURUM_API_REDIS_URL")
-        ttl = int(_env("AURUM_API_CACHE_TTL", "60") or 60)
-        mode = (_env("AURUM_API_REDIS_MODE", "standalone") or "standalone").lower()
-        namespace = _env("AURUM_API_CACHE_NAMESPACE", _env("AURUM_ENV", "aurum")) or "aurum"
-        db = int(_env("AURUM_API_REDIS_DB", "0") or 0)
-
-        sentinel_raw = _env("AURUM_API_REDIS_SENTINELS", "") or ""
-        sentinel_endpoints: list[tuple[str, int]] = []
-        for entry in sentinel_raw.split(","):
-            host_port = entry.strip()
-            if not host_port:
-                continue
-            host, _, port = host_port.partition(":")
-            try:
-                sentinel_endpoints.append((host, int(port or "26379")))
-            except ValueError:
-                continue
-
-        cluster_raw = _env("AURUM_API_REDIS_CLUSTER_NODES", "") or ""
-        cluster_nodes = tuple(node.strip() for node in cluster_raw.split(",") if node.strip())
-
+    def from_settings(cls, settings: AurumSettings, *, ttl_override: int | None = None) -> "CacheConfig":
+        redis = settings.redis
+        ttl = ttl_override if ttl_override is not None else redis.ttl_seconds
+        sentinel_pairs: list[Tuple[str, int]] = []
+        for entry in redis.sentinel_endpoints:
+            parsed = _parse_host_port(entry, default_port=26379)
+            if parsed is not None:
+                sentinel_pairs.append(parsed)
+        cluster_nodes: Tuple[str, ...] = tuple(redis.cluster_nodes)
         return cls(
-            redis_url=url,
+            redis_url=redis.url,
             ttl_seconds=ttl,
-            mode=mode,
-            sentinel_endpoints=tuple(sentinel_endpoints),
-            sentinel_master=_env("AURUM_API_REDIS_SENTINEL_SERVICE"),
+            mode=redis.mode,
+            sentinel_endpoints=tuple(sentinel_pairs),
+            sentinel_master=redis.sentinel_master,
             cluster_nodes=cluster_nodes,
-            username=_env("AURUM_API_REDIS_USERNAME"),
-            password=_env("AURUM_API_REDIS_PASSWORD"),
-            namespace=namespace,
-            db=db,
+            username=redis.username,
+            password=redis.password,
+            namespace=redis.namespace,
+            db=redis.db,
+            socket_timeout=redis.socket_timeout,
+            connect_timeout=redis.connect_timeout,
         )
+
+
+def _parse_host_port(value: str, *, default_port: int) -> Tuple[str, int] | None:
+    token = value.strip()
+    if not token:
+        return None
+    host, _, port_str = token.partition(":")
+    if not host:
+        return None
+    try:
+        port = int(port_str or default_port)
+    except ValueError:
+        return None
+    return host, port
 
 
 __all__ = ["TrinoConfig", "CacheConfig"]

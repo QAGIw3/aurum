@@ -1,0 +1,13 @@
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: aurum-scenario-worker-pdb
+  labels:
+    app.kubernetes.io/name: aurum-scenario-worker
+    app.kubernetes.io/component: scenario-worker
+    app.kubernetes.io/part-of: aurum
+spec:
+  maxUnavailable: 0
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: aurum-scenario-worker

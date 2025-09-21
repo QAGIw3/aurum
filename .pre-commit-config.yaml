@@ -18,3 +18,10 @@ repos:
         entry: python scripts/ci/verify_scenario_schema.py
         language: system
         files: ^kafka/schemas/scenario\.(?:request|output)\.v1\.avsc$
+
+  - repo: https://github.com/pre-commit/mirrors-mypy
+    rev: v1.10.0
+    hooks:
+      - id: mypy
+        name: mypy-strict
+        args: ["--strict"]

@@ -18,6 +18,7 @@ spec:
         app.kubernetes.io/component: scenario-worker
         app.kubernetes.io/part-of: aurum
     spec:
+      serviceAccountName: aurum-scenario-worker
       containers:
         - name: worker
           image: ghcr.io/aurum/aurum-worker:latest

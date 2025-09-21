@@ -1,7 +1,7 @@
 """Centralised configuration for Aurum services."""
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Mapping, MutableMapping
 from enum import Enum
 from typing import Any, Dict, Iterable, List
 
@@ -212,12 +212,16 @@ class AurumSettings(BaseSettings):
 
         updates: Dict[str, Any] = {}
         for key, value in mapping.items():
-            pointer: Dict[str, Any] = updates
+            pointer: MutableMapping[str, Any] = updates
             parts: List[str] = [part for part in key.split("__") if part]
             if not parts:
                 continue
             for part in parts[:-1]:
-                pointer = pointer.setdefault(part, {})  # type: ignore[assignment]
+                child = pointer.get(part)
+                if not isinstance(child, MutableMapping):
+                    child = {}
+                    pointer[part] = child
+                pointer = child
             pointer[parts[-1]] = value
         if not updates:
             return self

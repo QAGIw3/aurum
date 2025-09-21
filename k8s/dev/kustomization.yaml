@@ -4,6 +4,10 @@ namespace: aurum-dev
 resources:
   - ../base
 
+patchesStrategicMerge:
+  - patches/api-vault.yaml
+  - patches/scenario-worker-vault.yaml
+
 generatorOptions:
   disableNameSuffixHash: true
 

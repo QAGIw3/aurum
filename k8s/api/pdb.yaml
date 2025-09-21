@@ -1,0 +1,13 @@
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: aurum-api-pdb
+  labels:
+    app.kubernetes.io/name: aurum-api
+    app.kubernetes.io/component: api
+    app.kubernetes.io/part-of: aurum
+spec:
+  minAvailable: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: aurum-api
