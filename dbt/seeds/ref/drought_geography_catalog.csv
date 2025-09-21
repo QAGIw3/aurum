@@ -1,0 +1,7 @@
+region_type,description,source_dataset,update_frequency
+ISO_ZONE,"ISO market zones for nodal aggregation","aurum.reference.iso_locations","static"
+ISO_NODE,"ISO nodes aligned to Aurum ISO metadata","aurum.reference.iso_locations","static"
+STATE,"US states (FIPS)","US Census TIGER/Line","annual"
+COUNTY,"US counties (FIPS)","US Census TIGER/Line","annual"
+HUC2,"USGS hydrologic unit code (level 2)","USGS WBD","annual"
+HUC8,"USGS hydrologic unit code (level 8)","USGS WBD","annual"
