@@ -29,6 +29,18 @@ jobs:
       - name: Pytest
         run: make test
 
+      - name: Check unknown unit mappings
+        run: |
+          set -e
+          for workbook in files/EOD_PW_20250912_1430.xlsx files/EOD_EUGP_20250912_1430.xlsx files/EOD_RP_20250912_1430.xlsx; do
+            python -m aurum.parsers.unknown_units_cli "$workbook" --as-of 2025-09-12 --emit-patch > patch.diff
+            if [ -s patch.diff ]; then
+              echo "Unknown unit mappings detected in $workbook" >&2
+              cat patch.diff
+              exit 1
+            fi
+          done
+
   scenario-smoke:
     name: Scenario Smoke
     needs: lint-test
@@ -53,9 +65,46 @@ jobs:
         run: |
           bash scripts/ci/scenario_smoke.sh
 
+  dbt-build:
+    name: dbt Build
+    needs: lint-test
+    runs-on: ubuntu-latest
+    env:
+      DBT_PROFILES_DIR: tests/dbt
+      DBT_TARGET: duckdb
+      DBT_VARS: '{"iceberg_catalog": "main"}'
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements-dev.txt
+
+      - name: Prepare dbt artifacts directory
+        run: |
+          mkdir -p artifacts/dbt
+
+      - name: dbt seed
+        run: |
+          dbt seed --profiles-dir "$DBT_PROFILES_DIR" --target "$DBT_TARGET" --vars "$DBT_VARS" --full-refresh
+
+      - name: dbt build (stg,int,mart)
+        run: |
+          dbt build --profiles-dir "$DBT_PROFILES_DIR" --target "$DBT_TARGET" --vars "$DBT_VARS" -m stg int mart
+
   build-and-publish:
     name: Build & Publish Images
-    needs: lint-test
+    needs:
+      - lint-test
+      - dbt-build
+      - scenario-smoke
     if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     steps:
@@ -95,6 +144,41 @@ jobs:
             ghcr.io/aurum/aurum-worker:dev
             ghcr.io/aurum/aurum-worker:${{ github.sha }}
 
+      - name: Install Helm
+        uses: azure/setup-helm@v3
+        with:
+          version: v3.13.3
+
+      - name: Build Helm dependencies
+        run: |
+          helm dependency build k8s/platform/helm
+
+      - name: Package Helm charts
+        run: |
+          mkdir -p dist/helm-packages
+          helm package k8s/api/helm --destination dist/helm-packages
+          helm package k8s/scenario-worker/helm --destination dist/helm-packages
+          helm package k8s/platform/helm --destination dist/helm-packages
+
+      - name: Push Helm charts to GHCR
+        env:
+          HELM_REGISTRY: ghcr.io/${{ github.repository_owner }}/helm
+          HELM_EXPERIMENTAL_OCI: 1
+        run: |
+          echo "${{ secrets.GITHUB_TOKEN }}" | helm registry login ghcr.io --username "${{ github.actor }}" --password-stdin
+          for chart in dist/helm-packages/*.tgz; do
+            helm push "$chart" oci://$HELM_REGISTRY
+          done
+
+      - name: Generate Helm repository index
+        env:
+          REPO_OWNER: ${{ github.repository_owner }}
+          REPO_NAME: ${{ github.event.repository.name }}
+        run: |
+          mkdir -p dist/pages/helm
+          cp dist/helm-packages/*.tgz dist/pages/helm/
+          helm repo index dist/pages/helm --url https://${REPO_OWNER}.github.io/${REPO_NAME}/helm
+
       - name: Generate kustomize overlay
         run: |
           mkdir -p dist/kustomize/dev-${GITHUB_SHA}
@@ -115,3 +199,40 @@ jobs:
         with:
           name: kustomize-images-${{ github.sha }}
           path: dist/kustomize/dev-${{ github.sha }}
+
+      - name: Upload Helm charts
+        uses: actions/upload-artifact@v4
+        with:
+          name: helm-charts
+          path: dist/pages
+
+  deploy-helm-pages:
+    name: Publish Helm Repo
+    needs: build-and-publish
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deploy.outputs.page_url }}
+    steps:
+      - name: Configure Pages
+        uses: actions/configure-pages@v3
+
+      - name: Download Helm artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: helm-charts
+          path: public
+
+      - name: Upload Pages artifact
+        uses: actions/upload-pages-artifact@v2
+        with:
+          path: public
+
+      - name: Deploy to GitHub Pages
+        id: deploy
+        uses: actions/deploy-pages@v3

@@ -16,6 +16,10 @@
           "value",
           "raw_value",
           "unit",
+          "canonical_unit",
+          "canonical_currency",
+          "canonical_value",
+          "conversion_factor",
           "area",
           "sector",
           "seasonal_adjustment",
@@ -27,13 +31,31 @@
         ]
       }
     },
-    {"expectation_type": "expect_column_values_to_not_be_null", "kwargs": {"column": "series_id"}},
-    {"expectation_type": "expect_column_values_to_not_be_null", "kwargs": {"column": "period"}},
+    {
+      "expectation_type": "expect_column_values_to_not_be_null",
+      "kwargs": {
+        "column": "series_id"
+      }
+    },
+    {
+      "expectation_type": "expect_column_values_to_not_be_null",
+      "kwargs": {
+        "column": "period"
+      }
+    },
     {
       "expectation_type": "expect_column_values_to_be_in_set",
       "kwargs": {
         "column": "frequency",
-        "value_set": ["ANNUAL", "QUARTERLY", "MONTHLY", "WEEKLY", "DAILY", "HOURLY", "OTHER"]
+        "value_set": [
+          "ANNUAL",
+          "QUARTERLY",
+          "MONTHLY",
+          "WEEKLY",
+          "DAILY",
+          "HOURLY",
+          "OTHER"
+        ]
       }
     },
     {
@@ -45,8 +67,48 @@
         "mostly": 0.99
       }
     },
-    {"expectation_type": "expect_column_values_to_not_be_null", "kwargs": {"column": "value", "mostly": 0.9}},
-    {"expectation_type": "expect_column_values_to_not_be_null", "kwargs": {"column": "unit", "mostly": 0.9}},
-    {"expectation_type": "expect_column_values_to_not_be_null", "kwargs": {"column": "ingest_ts"}}
+    {
+      "expectation_type": "expect_column_values_to_not_be_null",
+      "kwargs": {
+        "column": "value",
+        "mostly": 0.9
+      }
+    },
+    {
+      "expectation_type": "expect_column_values_to_not_be_null",
+      "kwargs": {
+        "column": "unit",
+        "mostly": 0.9
+      }
+    },
+    {
+      "expectation_type": "expect_column_values_to_not_be_null",
+      "kwargs": {
+        "column": "ingest_ts"
+      }
+    },
+    {
+      "expectation_type": "expect_column_values_to_not_be_null",
+      "kwargs": {
+        "column": "canonical_unit",
+        "mostly": 0.8
+      }
+    },
+    {
+      "expectation_type": "expect_column_values_to_not_be_null",
+      "kwargs": {
+        "column": "canonical_currency",
+        "mostly": 0.8
+      }
+    },
+    {
+      "expectation_type": "expect_column_values_to_be_between",
+      "kwargs": {
+        "column": "canonical_value",
+        "min_value": -1000000000,
+        "max_value": 1000000000,
+        "mostly": 0.99
+      }
+    }
   ]
 }

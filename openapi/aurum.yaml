@@ -426,6 +426,219 @@ paths:
                 $ref: '#/components/schemas/ScenarioMetricLatestResponse'
         '401':
           $ref: '#/components/responses/Unauthorized'
+  /v1/ppa/contracts:
+    get:
+      summary: List PPA contracts.
+      operationId: listPpaContracts
+      security:
+        - oauth2: [aurum]
+      parameters:
+        - name: limit
+          in: query
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 200
+          description: Maximum number of contracts to return.
+        - name: offset
+          in: query
+          required: false
+          schema:
+            type: integer
+            minimum: 0
+          description: Offset used for pagination (alternative to cursor).
+        - name: cursor
+          in: query
+          required: false
+          schema:
+            type: string
+          description: Cursor token obtained from `meta.next_cursor`.
+        - name: since_cursor
+          in: query
+          required: false
+          schema:
+            type: string
+          description: Alias for `cursor` to resume a prior listing.
+      responses:
+        '200':
+          description: Collection of PPA contracts for the tenant.
+          headers:
+            ETag:
+              description: Strong entity tag for cache validation.
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PpaContractListResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+    post:
+      summary: Create a new PPA contract definition.
+      operationId: createPpaContract
+      security:
+        - oauth2: [aurum]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PpaContractCreate'
+      responses:
+        '201':
+          description: Contract created successfully.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PpaContractResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+  /v1/ppa/contracts/{contract_id}:
+    get:
+      summary: Retrieve a PPA contract.
+      operationId: getPpaContract
+      security:
+        - oauth2: [aurum]
+      parameters:
+        - name: contract_id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Requested contract.
+          headers:
+            ETag:
+              description: Strong entity tag for cache validation.
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PpaContractResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+    patch:
+      summary: Update attributes on a PPA contract.
+      operationId: updatePpaContract
+      security:
+        - oauth2: [aurum]
+      parameters:
+        - name: contract_id
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PpaContractUpdate'
+      responses:
+        '200':
+          description: Updated contract definition.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PpaContractResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+    delete:
+      summary: Delete a PPA contract.
+      operationId: deletePpaContract
+      security:
+        - oauth2: [aurum]
+      parameters:
+        - name: contract_id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '204':
+          description: Contract deleted.
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+  /v1/ppa/contracts/{contract_id}/valuations:
+    get:
+      summary: List historical valuations for a PPA contract.
+      operationId: listPpaContractValuations
+      security:
+        - oauth2: [aurum]
+      parameters:
+        - name: contract_id
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: scenario_id
+          in: query
+          required: false
+          schema:
+            type: string
+          description: Filter valuations to a specific scenario.
+        - name: metric
+          in: query
+          required: false
+          schema:
+            type: string
+          description: Filter by metric label (e.g., NPV, IRR).
+        - name: limit
+          in: query
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 1000
+          description: Maximum number of valuation rows to return.
+        - name: offset
+          in: query
+          required: false
+          schema:
+            type: integer
+            minimum: 0
+        - name: cursor
+          in: query
+          required: false
+          schema:
+            type: string
+        - name: since_cursor
+          in: query
+          required: false
+          schema:
+            type: string
+        - name: prev_cursor
+          in: query
+          required: false
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Valuation records stored for the contract.
+          headers:
+            ETag:
+              description: Strong entity tag for cache validation.
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PpaValuationListResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
   /v1/ppa/valuate:
     post:
       summary: Calculate cashflows and risk metrics for a PPA contract.
@@ -1238,6 +1451,111 @@ components:
           type: array
           items:
             $ref: '#/components/schemas/PpaMetric'
+    PpaContractCreate:
+      type: object
+      properties:
+        instrument_id:
+          type: string
+          nullable: true
+        terms:
+          type: object
+          additionalProperties: {}
+    PpaContractUpdate:
+      type: object
+      properties:
+        instrument_id:
+          type: string
+          nullable: true
+        terms:
+          type: object
+          additionalProperties: {}
+    PpaContract:
+      type: object
+      properties:
+        ppa_contract_id:
+          type: string
+        tenant_id:
+          type: string
+        instrument_id:
+          type: string
+          nullable: true
+        terms:
+          type: object
+          additionalProperties: {}
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+    PpaContractResponse:
+      type: object
+      properties:
+        meta:
+          $ref: '#/components/schemas/Meta'
+        data:
+          $ref: '#/components/schemas/PpaContract'
+    PpaContractListResponse:
+      type: object
+      properties:
+        meta:
+          $ref: '#/components/schemas/Meta'
+        data:
+          type: array
+          items:
+            $ref: '#/components/schemas/PpaContract'
+    PpaValuationRecord:
+      type: object
+      properties:
+        asof_date:
+          type: string
+          format: date
+          nullable: true
+        scenario_id:
+          type: string
+          nullable: true
+        period_start:
+          type: string
+          format: date
+          nullable: true
+        period_end:
+          type: string
+          format: date
+          nullable: true
+        metric:
+          type: string
+          nullable: true
+        value:
+          type: number
+          nullable: true
+        cashflow:
+          type: number
+          nullable: true
+        npv:
+          type: number
+          nullable: true
+        irr:
+          type: number
+          nullable: true
+        curve_key:
+          type: string
+          nullable: true
+        version_hash:
+          type: string
+          nullable: true
+        ingested_at:
+          type: string
+          format: date-time
+          nullable: true
+    PpaValuationListResponse:
+      type: object
+      properties:
+        meta:
+          $ref: '#/components/schemas/Meta'
+        data:
+          type: array
+          items:
+            $ref: '#/components/schemas/PpaValuationRecord'
     PpaMetric:
       type: object
       properties:

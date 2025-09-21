@@ -98,6 +98,8 @@ def test_build_sql_eia_series_with_filters():
         sector="ALL",
         dataset="EBA",
         unit="MW",
+        canonical_unit="MW",
+        canonical_currency="USD",
         source="EIA",
         start=datetime(2024, 1, 1, 0, 0, 0),
         end=datetime(2024, 1, 2, 0, 0, 0),
@@ -109,6 +111,9 @@ def test_build_sql_eia_series_with_filters():
     )
     assert "series_id = 'EBA.PJME-ALL.NG.H'" in sql
     assert "upper(frequency) = 'HOURLY'" in sql
+    assert "unit_raw = 'MW'" in sql
+    assert "unit_normalized = 'MW'" in sql
+    assert "currency_normalized = 'USD'" in sql
     assert "period_start >= TIMESTAMP '2024-01-01 00:00:00" in sql
     assert "ORDER BY series_id ASC" in sql
 

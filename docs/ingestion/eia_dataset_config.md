@@ -8,7 +8,7 @@
 | `path` | ✓ | Dataset route in the EIA API (e.g. `natural-gas/stor/wkly`). |
 | `data_path` | optional | Overrides the API path when data lives under `/data`. Defaults to `path`. |
 | `description` | optional | Description used for ingest source registration. |
-| `schedule` | optional | Cron expression for the dataset task; defaults to hourly if omitted. |
+| `schedule` | optional | Cron expression for the dataset task; if omitted the generator maps common frequencies to sensible defaults (hourly → `5 * * * *`, daily → `20 6 * * *`, weekly → `30 6 * * 1`, monthly → `0 7 3 * *`, quarterly → `0 7 5 1,4,7,10 *`, annual → `0 7 5 1 *`). |
 | `topic_var` | ✓ | Airflow Variable used to resolve the Kafka topic. |
 | `default_topic` | ✓ | Default Kafka topic if the Airflow Variable is unset. |
 | `series_id_expr` | ✓ | SQL expression in SeaTunnel that emits the `series_id`. |
@@ -22,6 +22,9 @@
 | `metadata_expr` | optional | SQL expression for arbitrary JSON metadata. |
 | `filter_expr` | optional | SQL predicate appended to the query `WHERE` clause. |
 | `param_overrides` | optional | Array of dictionaries/tuples (`param` → `value`) injected into the HTTP params section. |
+| `page_limit` | optional | Overrides the per-request `length` parameter (defaults to 5000). |
+| `window_hours` / `window_days` / `window_months` / `window_years` | optional | Size of the look-back window used to derive `start`/`end` tokens when the Airflow DAG materializes the job. |
+| `dlq_topic` | optional | Kafka topic to receive dirty records (default `aurum.ref.eia.series.dlq.v1`). |
 | `extra_env` | optional | Additional environment variable assignments for the SeaTunnel job. |
 
 Update the file and re-run `python3.11 -m pytest tests/seatunnel/test_run_job.py` to ensure templating passes.

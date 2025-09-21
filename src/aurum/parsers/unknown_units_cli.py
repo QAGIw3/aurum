@@ -2,8 +2,11 @@
 from __future__ import annotations
 
 import argparse
+import csv
+import difflib
 import json
 import logging
+import sys
 from dataclasses import dataclass
 from datetime import date
 from pathlib import Path
@@ -13,6 +16,7 @@ import pandas as pd
 
 from .runner import parse_files
 from ..reference import map_units
+from ..reference.units import infer_default_units
 
 LOG = logging.getLogger(__name__)
 
@@ -97,6 +101,17 @@ def _parse_args(argv: Sequence[str] | None) -> argparse.Namespace:
     parser.add_argument("--as-of", dest="as_of", help="Optional as-of date override (YYYY-MM-DD)")
     parser.add_argument("--json", dest="as_json", action="store_true", help="Emit JSON instead of table output")
     parser.add_argument("--verbose", action="store_true", help="Enable debug logging")
+    parser.add_argument(
+        "--emit-patch",
+        action="store_true",
+        help="Emit a unified diff patch for config/units_map.csv covering the unknown units",
+    )
+    parser.add_argument(
+        "--units-map",
+        dest="units_map",
+        type=Path,
+        help="Override path to units_map.csv (default: config/units_map.csv)",
+    )
     return parser.parse_args(argv)
 
 
@@ -131,6 +146,44 @@ def _print_table(summaries: list[UnknownUnitSummary]) -> None:
         )
 
 
+def _generate_units_patch(summaries: list[UnknownUnitSummary], csv_path: Path) -> str:
+    if not summaries:
+        return ""
+
+    if not csv_path.exists():
+        raise FileNotFoundError(f"Units mapping file not found: {csv_path}")
+
+    with csv_path.open(encoding="utf-8") as fh:
+        reader = csv.DictReader(fh)
+        existing = {row.get("units_raw", "").strip() for row in reader}
+
+    additions: list[str] = []
+    for summary in summaries:
+        units_raw = summary.units_raw
+        if not units_raw or units_raw in existing:
+            continue
+        iso_hint = summary.sample_iso[0] if summary.sample_iso else None
+        currency, per_unit = infer_default_units(iso_hint, None)
+        additions.append(
+            f"{units_raw},{(currency or '').strip()},{(per_unit or '').strip()}"
+        )
+        existing.add(units_raw)
+
+    if not additions:
+        return ""
+
+    original_lines = csv_path.read_text(encoding="utf-8").splitlines()
+    updated_lines = original_lines + additions
+    diff = difflib.unified_diff(
+        original_lines,
+        updated_lines,
+        fromfile=str(csv_path),
+        tofile=str(csv_path),
+        lineterm="",
+    )
+    return "\n".join(diff)
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     args = _parse_args(argv)
     logging.basicConfig(level=logging.DEBUG if args.verbose else logging.INFO)
@@ -146,6 +199,18 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     df = parse_files(workbooks, as_of=as_of)
     summaries = _collect_unknown_units(df)
+
+    if args.emit_patch:
+        units_map_path = args.units_map
+        if units_map_path is None:
+            repo_root = Path(__file__).resolve().parents[3]
+            units_map_path = repo_root / "config" / "units_map.csv"
+        patch = _generate_units_patch(summaries, units_map_path)
+        if patch:
+            print(patch)
+        else:
+            print("No unknown units detected; nothing to patch", file=sys.stderr)
+        return 0
 
     if args.as_json:
         payload = [summary.to_dict() for summary in summaries]

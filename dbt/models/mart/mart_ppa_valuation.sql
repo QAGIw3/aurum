@@ -1,5 +1,7 @@
 {{ config(materialized='view') }}
 
+{% set iceberg_catalog = var('iceberg_catalog', 'iceberg') %}
+
 select
     ppa_contract_id,
     scenario_id,
@@ -13,4 +15,4 @@ select
     irr,
     asof_date,
     version_hash
-from iceberg.market.ppa_valuation
+from {{ iceberg_catalog }}.market.ppa_valuation

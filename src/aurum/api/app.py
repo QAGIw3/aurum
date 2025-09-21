@@ -50,6 +50,13 @@ from .models import (
     ScenarioMetricLatest,
     PpaValuationRequest,
     PpaValuationResponse,
+    PpaValuationListResponse,
+    PpaValuationRecord,
+    PpaContractCreate,
+    PpaContractUpdate,
+    PpaContractOut,
+    PpaContractResponse,
+    PpaContractListResponse,
     PpaMetric,
     IsoLocationOut,
     IsoLocationsResponse,
@@ -1281,6 +1288,8 @@ def list_eia_series(
     sector: Optional[str] = Query(None, description="Sector/category filter"),
     dataset: Optional[str] = Query(None, description="EIA dataset identifier"),
     unit: Optional[str] = Query(None, description="Unit filter"),
+    canonical_unit: Optional[str] = Query(None, description="Normalized unit filter"),
+    canonical_currency: Optional[str] = Query(None, description="Canonical currency filter"),
     source: Optional[str] = Query(None, description="Source attribution filter"),
     start: Optional[datetime] = Query(None, description="Filter observations with period_start >= this timestamp (ISO 8601)"),
     end: Optional[datetime] = Query(None, description="Filter observations with period_start <= this timestamp (ISO 8601)"),
@@ -1335,6 +1344,8 @@ def list_eia_series(
             sector=sector,
             dataset=dataset,
             unit=unit,
+            canonical_unit=canonical_unit,
+            canonical_currency=canonical_currency,
             source=source,
             start=start,
             end=end,
@@ -1488,6 +1499,8 @@ def list_eia_series_dimensions(
     sector: Optional[str] = Query(None, description="Sector filter"),
     dataset: Optional[str] = Query(None, description="Dataset filter"),
     unit: Optional[str] = Query(None, description="Unit filter"),
+    canonical_unit: Optional[str] = Query(None, description="Normalized unit filter"),
+    canonical_currency: Optional[str] = Query(None, description="Canonical currency filter"),
     source: Optional[str] = Query(None, description="Source filter"),
     *,
     response: Response,
@@ -1507,6 +1520,8 @@ def list_eia_series_dimensions(
             sector=sector,
             dataset=dataset,
             unit=unit,
+            canonical_unit=canonical_unit,
+            canonical_currency=canonical_currency,
             source=source,
         )
     except RuntimeError as exc:
@@ -1626,6 +1641,20 @@ def _scenario_run_to_data(run) -> ScenarioRunData:
         code_version=run.code_version,
         seed=run.seed,
         created_at=created_at,
+    )
+
+
+def _ppa_contract_to_model(record) -> PpaContractOut:
+    if record is None:
+        raise ValueError("PPA contract record is required")
+    terms = record.terms if isinstance(record.terms, dict) else {}
+    return PpaContractOut(
+        ppa_contract_id=record.id,
+        tenant_id=record.tenant_id,
+        instrument_id=record.instrument_id,
+        terms=terms,
+        created_at=record.created_at,
+        updated_at=record.updated_at,
     )
 
 
@@ -1833,13 +1862,208 @@ def invalidate_scenario_cache(  # type: ignore[no-redef]
     return Response(status_code=204)
 
 
+@app.get("/v1/ppa/contracts", response_model=PpaContractListResponse)
+def list_ppa_contracts(
+    request: Request,
+    response: Response,
+    limit: int = Query(50, ge=1, le=200),
+    offset: int = Query(0, ge=0),
+    cursor: Optional[str] = Query(None),
+    since_cursor: Optional[str] = Query(None),
+) -> PpaContractListResponse:
+    request_id = _current_request_id()
+    tenant_id = _resolve_tenant_optional(request, None)
+    start = time.perf_counter()
+    effective_offset = offset
+    token = cursor or since_cursor
+    if token:
+        payload = _decode_cursor(token)
+        try:
+            effective_offset = max(int(payload.get("offset", 0)), 0)
+        except (TypeError, ValueError) as exc:
+            raise HTTPException(status_code=400, detail="Invalid cursor") from exc
+
+    effective_limit = limit
+    records = ScenarioStore.list_ppa_contracts(
+        tenant_id,
+        limit=effective_limit + 1,
+        offset=effective_offset,
+    )
+    elapsed_ms = (time.perf_counter() - start) * 1000.0
+
+    more = len(records) > effective_limit
+    if more:
+        records = records[:effective_limit]
+
+    next_cursor = None
+    if more:
+        next_cursor = _encode_cursor({"offset": effective_offset + effective_limit})
+
+    prev_cursor_value = None
+    if effective_offset > 0:
+        prev_offset = max(effective_offset - effective_limit, 0)
+        prev_cursor_value = _encode_cursor({"offset": prev_offset})
+
+    data = [_ppa_contract_to_model(record) for record in records]
+    meta = Meta(
+        request_id=request_id,
+        query_time_ms=int(elapsed_ms),
+        next_cursor=next_cursor,
+        prev_cursor=prev_cursor_value,
+    )
+    model = PpaContractListResponse(meta=meta, data=data)
+    return _respond_with_etag(model, request, response)
+
+
+@app.post("/v1/ppa/contracts", response_model=PpaContractResponse, status_code=201)
+def create_ppa_contract(payload: PpaContractCreate, request: Request) -> PpaContractResponse:
+    request_id = _current_request_id()
+    tenant_id = _resolve_tenant(request, None)
+    record = ScenarioStore.create_ppa_contract(
+        tenant_id=tenant_id,
+        instrument_id=payload.instrument_id,
+        terms=payload.terms,
+    )
+    return PpaContractResponse(
+        meta=Meta(request_id=request_id, query_time_ms=0),
+        data=_ppa_contract_to_model(record),
+    )
+
+
+@app.get("/v1/ppa/contracts/{contract_id}", response_model=PpaContractResponse)
+def get_ppa_contract(contract_id: str, request: Request, response: Response) -> PpaContractResponse:
+    request_id = _current_request_id()
+    tenant_id = _resolve_tenant_optional(request, None)
+    record = ScenarioStore.get_ppa_contract(contract_id, tenant_id=tenant_id)
+    if record is None:
+        raise HTTPException(status_code=404, detail="PPA contract not found")
+    model = PpaContractResponse(
+        meta=Meta(request_id=request_id, query_time_ms=0),
+        data=_ppa_contract_to_model(record),
+    )
+    return _respond_with_etag(model, request, response)
+
+
+@app.patch("/v1/ppa/contracts/{contract_id}", response_model=PpaContractResponse)
+def update_ppa_contract(contract_id: str, payload: PpaContractUpdate, request: Request) -> PpaContractResponse:
+    request_id = _current_request_id()
+    tenant_id = _resolve_tenant(request, None)
+    record = ScenarioStore.update_ppa_contract(
+        contract_id,
+        tenant_id=tenant_id,
+        instrument_id=payload.instrument_id,
+        terms=payload.terms,
+    )
+    if record is None:
+        raise HTTPException(status_code=404, detail="PPA contract not found")
+    return PpaContractResponse(
+        meta=Meta(request_id=request_id, query_time_ms=0),
+        data=_ppa_contract_to_model(record),
+    )
+
+
+@app.delete("/v1/ppa/contracts/{contract_id}", status_code=204)
+def delete_ppa_contract(contract_id: str, request: Request) -> Response:
+    tenant_id = _resolve_tenant(request, None)
+    deleted = ScenarioStore.delete_ppa_contract(contract_id, tenant_id=tenant_id)
+    if not deleted:
+        raise HTTPException(status_code=404, detail="PPA contract not found")
+    return Response(status_code=204)
+
+
+@app.get("/v1/ppa/contracts/{contract_id}/valuations", response_model=PpaValuationListResponse)
+def list_ppa_contract_valuations(
+    contract_id: str,
+    request: Request,
+    response: Response,
+    scenario_id: Optional[str] = Query(None, description="Filter by scenario identifier"),
+    metric: Optional[str] = Query(None, description="Filter by valuation metric name"),
+    limit: int = Query(200, ge=1, le=1000),
+    offset: int = Query(0, ge=0),
+    cursor: Optional[str] = Query(None),
+    since_cursor: Optional[str] = Query(None),
+    prev_cursor: Optional[str] = Query(None),
+) -> PpaValuationListResponse:
+    request_id = _current_request_id()
+    tenant_id = _resolve_tenant_optional(request, None)
+    contract = ScenarioStore.get_ppa_contract(contract_id, tenant_id=tenant_id)
+    if contract is None:
+        raise HTTPException(status_code=404, detail="PPA contract not found")
+
+    effective_offset = offset
+    token = prev_cursor or cursor or since_cursor
+    if token:
+        payload = _decode_cursor(token)
+        try:
+            effective_offset = max(int(payload.get("offset", 0)), 0)
+        except (TypeError, ValueError) as exc:
+            raise HTTPException(status_code=400, detail="Invalid cursor") from exc
+
+    effective_limit = limit
+    trino_cfg = TrinoConfig.from_env()
+    try:
+        rows, elapsed_ms = service.query_ppa_contract_valuations(
+            trino_cfg,
+            ppa_contract_id=contract_id,
+            scenario_id=scenario_id,
+            metric=metric,
+            limit=effective_limit + 1,
+            offset=effective_offset,
+        )
+    except RuntimeError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+
+    more = len(rows) > effective_limit
+    if more:
+        rows = rows[:effective_limit]
+
+    data: list[PpaValuationRecord] = []
+    for row in rows:
+        data.append(
+            PpaValuationRecord(
+                asof_date=row.get("asof_date"),
+                scenario_id=row.get("scenario_id"),
+                period_start=row.get("period_start"),
+                period_end=row.get("period_end"),
+                metric=row.get("metric"),
+                value=row.get("value"),
+                cashflow=row.get("cashflow"),
+                npv=row.get("npv"),
+                irr=row.get("irr"),
+                curve_key=row.get("curve_key"),
+                version_hash=row.get("version_hash"),
+                ingested_at=row.get("_ingest_ts"),
+            )
+        )
+
+    next_cursor = None
+    if more:
+        next_cursor = _encode_cursor({"offset": effective_offset + effective_limit})
+
+    prev_cursor_value = None
+    if effective_offset > 0:
+        prev_offset = max(effective_offset - effective_limit, 0)
+        prev_cursor_value = _encode_cursor({"offset": prev_offset})
+
+    meta = Meta(
+        request_id=request_id,
+        query_time_ms=int(elapsed_ms),
+        next_cursor=next_cursor,
+        prev_cursor=prev_cursor_value,
+    )
+    model = PpaValuationListResponse(meta=meta, data=data)
+    return _respond_with_etag(model, request, response)
+
+
 @app.post("/v1/ppa/valuate", response_model=PpaValuationResponse)
 def valuate_ppa(payload: PpaValuationRequest, request: Request) -> PpaValuationResponse:
     request_id = _current_request_id()
     if not payload.scenario_id:
         raise HTTPException(status_code=400, detail="scenario_id is required for valuation")
-
-    tenant_id = _resolve_tenant_optional(request, None)
+    tenant_id = _resolve_tenant(request, None)
+    contract = ScenarioStore.get_ppa_contract(payload.ppa_contract_id, tenant_id=tenant_id)
+    if contract is None:
+        raise HTTPException(status_code=404, detail="PPA contract not found")
     trino_cfg = TrinoConfig.from_env()
 
     try:

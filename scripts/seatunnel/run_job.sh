@@ -241,6 +241,53 @@ PY
       fi
     fi
     export EIA_PARAM_OVERRIDES
+    export EIA_LIMIT="${EIA_LIMIT:-5000}"
+    if [[ -z "${EIA_START:-}" || -z "${EIA_END:-}" ]]; then
+      window_specified="${EIA_WINDOW_END:-}${EIA_WINDOW_HOURS:-}${EIA_WINDOW_DAYS:-}${EIA_WINDOW_MONTHS:-}${EIA_WINDOW_YEARS:-}"
+      if [[ -n "${window_specified}" ]]; then
+        if [[ -z "${EIA_WINDOW_END:-}" ]]; then
+          EIA_WINDOW_END="$(date -u +"%Y-%m-%dT%H:%M:%SZ")"
+        fi
+        if ! eval "$(python3 - <<'PY'
+import os
+import shlex
+import sys
+from pathlib import Path
+
+repo_root = Path(os.environ.get("REPO_ROOT", Path.cwd()))
+sys.path.insert(0, str(repo_root / "src"))
+
+from aurum.eia.windows import WindowConfigError, compute_window_bounds
+
+window_end = os.environ.get("EIA_WINDOW_END")
+frequency = os.environ.get("EIA_FREQUENCY")
+date_format = os.environ.get("EIA_DATE_FORMAT")
+
+try:
+    bounds = compute_window_bounds(
+        window_end=window_end,
+        frequency=frequency,
+        date_format=date_format,
+        hours=os.environ.get("EIA_WINDOW_HOURS"),
+        days=os.environ.get("EIA_WINDOW_DAYS"),
+        months=os.environ.get("EIA_WINDOW_MONTHS"),
+        years=os.environ.get("EIA_WINDOW_YEARS"),
+    )
+except WindowConfigError as exc:
+    print(exc, file=sys.stderr)
+    sys.exit(1)
+
+print(f"EIA_START={shlex.quote(bounds.start_token)}")
+print(f"EIA_END={shlex.quote(bounds.end_token)}")
+PY
+)"; then
+          echo "Failed to derive EIA window bounds" >&2
+          exit 1
+        fi
+      fi
+    fi
+    export EIA_START
+    export EIA_END
     if [[ -z "${EIA_PERIOD_START_EXPR:-}" || -z "${EIA_PERIOD_END_EXPR:-}" ]]; then
       if ! eval "$(python3 - <<'PY'
 import os

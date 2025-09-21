@@ -1,0 +1,3 @@
+asof_date,scenario_id,tenant_id,run_id,curve_key,tenor_type,contract_month,tenor_label,metric,value,band_lower,band_upper,attribution,version_hash,computed_ts,_ingest_ts
+2025-09-12,scn-1,tenant-1,run-1,hash_month_sep,MONTHLY,2025-09-01,2025-09,mid,48.5,47.0,50.0,,run_hash_sep,2025-09-12T00:00:00+00:00,2025-09-12T00:00:00+00:00
+2025-09-12,scn-1,tenant-1,run-1,hash_month_oct,MONTHLY,2025-10-01,2025-10,mid,49.0,47.5,50.5,,run_hash_oct,2025-09-12T00:00:00+00:00,2025-09-12T00:00:00+00:00

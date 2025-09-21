@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import json
 import os
+import subprocess
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
@@ -19,6 +20,8 @@ BIN_PATH = os.environ.get("AURUM_BIN_PATH", ".venv/bin:$PATH")
 PYTHONPATH_ENTRY = os.environ.get("AURUM_PYTHONPATH_ENTRY", "/opt/airflow/src")
 
 CONFIG_PATH = Path(__file__).resolve().parents[2] / "config" / "eia_bulk_datasets.json"
+MANIFEST_SCRIPT = Path(__file__).resolve().parents[2] / "scripts" / "eia" / "bulk_manifest.py"
+MANIFEST_OUTPUT = Path(__file__).resolve().parents[2] / "artifacts" / "eia_bulk_manifest.json"
 
 DEFAULT_ARGS: dict[str, Any] = {
     "owner": "aurum-data",
@@ -103,6 +106,9 @@ def _build_bulk_env(cfg: dict[str, Any]) -> list[str]:
         for key, value in extra_env.items():
             env.append(_format_env_var(key, str(value)))
 
+    if cfg.get("last_modified"):
+        env.append(_format_env_var("EIA_BULK_LAST_MODIFIED", str(cfg["last_modified"])))
+
     env.append(
         _format_env_var(
             "KAFKA_BOOTSTRAP_SERVERS",
@@ -146,6 +152,21 @@ def _build_bulk_task(cfg: dict[str, Any]) -> BashOperator:
             f"{env_line} scripts/seatunnel/run_job.sh eia_bulk_to_kafka"
         ),
     )
+
+
+def _refresh_manifest(**_: Any) -> None:
+    cmd = [
+        VENV_PYTHON,
+        str(MANIFEST_SCRIPT),
+        f"--manifest-url=https://www.eia.gov/opendata/bulk/manifest.txt",
+        f"--output={MANIFEST_OUTPUT}",
+        f"--config={CONFIG_PATH}",
+        "--update-config",
+    ]
+    result = subprocess.run(cmd, cwd="/opt/airflow", capture_output=True, text=True)
+    if result.returncode != 0:
+        raise RuntimeError(f"Bulk manifest refresh failed: {result.stderr.strip()}")
+    print(result.stdout)
 
 
 def _register_bulk_sources(**context: Any) -> None:
@@ -217,7 +238,7 @@ with DAG(
     dag_id="ingest_eia_bulk",
     description="Ingest EIA bulk CSV archives into Kafka",
     default_args=DEFAULT_ARGS,
-    schedule_interval="0 6 * * *",
+    schedule_interval="0 6,18 * * *",
     start_date=datetime(2024, 1, 1),
     catchup=False,
     max_active_runs=1,
@@ -230,6 +251,11 @@ with DAG(
         python_callable=lambda **_: _preflight_required_vars(
             ["aurum_kafka_bootstrap", "aurum_schema_registry"]
         ),
+    )
+
+    refresh_manifest = PythonOperator(
+        task_id="refresh_bulk_manifest",
+        python_callable=_refresh_manifest,
     )
 
     register_sources = PythonOperator(
@@ -248,7 +274,7 @@ with DAG(
 
     end = EmptyOperator(task_id="end")
 
-    start >> preflight >> register_sources
+    start >> preflight >> refresh_manifest >> register_sources
     for bulk_task, watermark_task in task_results:
         register_sources >> bulk_task >> watermark_task >> end
 

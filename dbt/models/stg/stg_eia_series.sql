@@ -1,0 +1,46 @@
+with source as (
+    select
+        series_id,
+        period,
+        period_start,
+        period_end,
+        frequency,
+        value,
+        raw_value,
+        unit,
+        canonical_unit,
+        canonical_currency,
+        canonical_value,
+        conversion_factor,
+        area,
+        sector,
+        seasonal_adjustment,
+        description,
+        source,
+        dataset,
+        metadata,
+        ingest_ts
+    from {{ source('timescale_eia', 'eia_series_timeseries') }}
+)
+select
+    series_id,
+    period,
+    period_start,
+    period_end,
+    frequency,
+    value,
+    raw_value,
+    unit as unit_raw,
+    canonical_unit,
+    canonical_currency,
+    canonical_value,
+    conversion_factor,
+    area,
+    sector,
+    seasonal_adjustment,
+    description,
+    source,
+    dataset,
+    metadata,
+    ingest_ts
+from source

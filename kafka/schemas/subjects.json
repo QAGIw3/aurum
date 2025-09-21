@@ -44,5 +44,6 @@
   "aurum.curve.observation.v1-value": "curve.observation.v1.avsc",
   "aurum.scenario.request.v1-value": "scenario.request.v1.avsc",
   "aurum.scenario.output.v1-value": "scenario.output.v1.avsc",
+  "aurum.ref.eia.series.dlq.v1-value": "ingest.error.v1.avsc",
   "aurum.ingest.error.v1": "ingest.error.v1.avsc"
 }

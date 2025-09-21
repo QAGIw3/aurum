@@ -57,6 +57,10 @@ def _build_env_for_api(cfg: dict[str, Any]) -> Dict[str, str]:
     env["EIA_FILTER_EXPR"] = cfg.get("filter_expr", "TRUE")
     overrides = cfg.get("param_overrides") or []
     env["EIA_PARAM_OVERRIDES_JSON"] = json.dumps(overrides)
+    env["EIA_LIMIT"] = str(cfg.get("page_limit", 5000))
+    dlq_topic = cfg.get("dlq_topic", "aurum.ref.eia.series.dlq.v1")
+    env["EIA_DLQ_TOPIC"] = dlq_topic
+    env["EIA_DLQ_SUBJECT"] = f"{dlq_topic}-value"
     return env
 
 

@@ -4,7 +4,7 @@
       "source_name": "eia_bulk_eba",
       "url": "https://api.eia.gov/bulk/EBA.zip",
       "description": "EIA bulk archive for balancing authority interchange (EBA)",
-      "schedule": "30 * * * *",
+      "schedule": "0 6,18 * * *",
       "topic_var": "aurum_eia_bulk_eba_topic",
       "default_topic": "aurum.ref.eia.bulk.eba.v1",
       "frequency": "HOURLY",
@@ -22,26 +22,57 @@
       "filter_expr": "series_id IS NOT NULL",
       "skip_header": 1,
       "schema_fields": [
-        {"name": "series_id", "type": "string"},
-        {"name": "period", "type": "string"},
-        {"name": "value", "type": "string"},
-        {"name": "units", "type": "string"},
-        {"name": "area", "type": "string"},
-        {"name": "sector", "type": "string"},
-        {"name": "description", "type": "string"},
-        {"name": "source", "type": "string"},
-        {"name": "dataset", "type": "string"},
-        {"name": "metadata", "type": "string"}
+        {
+          "name": "series_id",
+          "type": "string"
+        },
+        {
+          "name": "period",
+          "type": "string"
+        },
+        {
+          "name": "value",
+          "type": "string"
+        },
+        {
+          "name": "units",
+          "type": "string"
+        },
+        {
+          "name": "area",
+          "type": "string"
+        },
+        {
+          "name": "sector",
+          "type": "string"
+        },
+        {
+          "name": "description",
+          "type": "string"
+        },
+        {
+          "name": "source",
+          "type": "string"
+        },
+        {
+          "name": "dataset",
+          "type": "string"
+        },
+        {
+          "name": "metadata",
+          "type": "string"
+        }
       ],
       "extra_env": {
         "EIA_BULK_METADATA_EXPR": "metadata"
-      }
+      },
+      "last_modified": "2025-09-20T15:04:00-04:00"
     },
     {
       "source_name": "eia_bulk_coal",
       "url": "https://api.eia.gov/bulk/COAL.zip",
       "description": "EIA bulk archive for coal datasets",
-      "schedule": "0 6 * * *",
+      "schedule": "0 6,18 * * *",
       "topic_var": "aurum_eia_bulk_coal_topic",
       "default_topic": "aurum.ref.eia.bulk.coal.v1",
       "frequency": "MONTHLY",
@@ -60,17 +91,48 @@
       "csv_delimiter": ",",
       "skip_header": 1,
       "schema_fields": [
-        {"name": "series_id", "type": "string"},
-        {"name": "period", "type": "string"},
-        {"name": "value", "type": "string"},
-        {"name": "units", "type": "string"},
-        {"name": "area", "type": "string"},
-        {"name": "sector", "type": "string"},
-        {"name": "description", "type": "string"},
-        {"name": "source", "type": "string"},
-        {"name": "dataset", "type": "string"},
-        {"name": "metadata", "type": "string"}
-      ]
+        {
+          "name": "series_id",
+          "type": "string"
+        },
+        {
+          "name": "period",
+          "type": "string"
+        },
+        {
+          "name": "value",
+          "type": "string"
+        },
+        {
+          "name": "units",
+          "type": "string"
+        },
+        {
+          "name": "area",
+          "type": "string"
+        },
+        {
+          "name": "sector",
+          "type": "string"
+        },
+        {
+          "name": "description",
+          "type": "string"
+        },
+        {
+          "name": "source",
+          "type": "string"
+        },
+        {
+          "name": "dataset",
+          "type": "string"
+        },
+        {
+          "name": "metadata",
+          "type": "string"
+        }
+      ],
+      "last_modified": "2025-07-01T14:52:15-04:00"
     }
   ]
 }

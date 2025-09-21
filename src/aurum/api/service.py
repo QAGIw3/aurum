@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
+import os
 import time
 from calendar import monthrange
 from datetime import date, datetime
@@ -13,6 +14,11 @@ from typing import Any, Dict, Iterable, List, Optional, Tuple
 from .config import CacheConfig, TrinoConfig
 
 LOGGER = logging.getLogger(__name__)
+
+EIA_SERIES_BASE_TABLE = os.getenv(
+    "AURUM_API_EIA_SERIES_TABLE",
+    "mart.mart_eia_series_latest",
+)
 
 
 def _require_trino():
@@ -296,7 +302,9 @@ def _build_sql_eia_series(
     sector: Optional[str],
     dataset: Optional[str],
     unit: Optional[str],
-    source: Optional[str],
+    canonical_unit: Optional[str] = None,
+    canonical_currency: Optional[str] = None,
+    source: Optional[str] = None,
     start: Optional[datetime],
     end: Optional[datetime],
     limit: int,
@@ -305,7 +313,7 @@ def _build_sql_eia_series(
     cursor_before: Optional[Dict[str, Any]],
     descending: bool,
 ) -> str:
-    base = "timescale.public.eia_series_timeseries"
+    base = EIA_SERIES_BASE_TABLE
     conditions: list[str] = []
     if series_id:
         conditions.append(f"series_id = '{_safe_literal(series_id)}'")
@@ -318,7 +326,11 @@ def _build_sql_eia_series(
     if dataset:
         conditions.append(f"dataset = '{_safe_literal(dataset)}'")
     if unit:
-        conditions.append(f"unit = '{_safe_literal(unit)}'")
+        conditions.append(f"unit_raw = '{_safe_literal(unit)}'")
+    if canonical_unit:
+        conditions.append(f"unit_normalized = '{_safe_literal(canonical_unit)}'")
+    if canonical_currency:
+        conditions.append(f"currency_normalized = '{_safe_literal(canonical_currency)}'")
     if source:
         conditions.append(f"source = '{_safe_literal(source)}'")
     if start:
@@ -355,8 +367,9 @@ def _build_sql_eia_series(
 
     effective_offset = 0 if comparison_cursor else offset
     select_cols = (
-        "series_id, period, period_start, period_end, frequency, value, raw_value, unit, "
-        "canonical_unit, canonical_currency, canonical_value, conversion_factor, "
+        "series_id, period, period_start, period_end, frequency, value, raw_value, "
+        "unit_raw AS unit, unit_normalized AS canonical_unit, "
+        "currency_normalized AS canonical_currency, value AS canonical_value, conversion_factor, "
         "area, sector, seasonal_adjustment, description, source, dataset, metadata, ingest_ts"
     )
     return (
@@ -375,7 +388,9 @@ def query_eia_series(
     sector: Optional[str],
     dataset: Optional[str],
     unit: Optional[str],
-    source: Optional[str],
+    canonical_unit: Optional[str] = None,
+    canonical_currency: Optional[str] = None,
+    source: Optional[str] = None,
     start: Optional[datetime],
     end: Optional[datetime],
     limit: int,
@@ -391,6 +406,8 @@ def query_eia_series(
         "sector": sector,
         "dataset": dataset,
         "unit": unit,
+        "canonical_unit": canonical_unit,
+        "canonical_currency": canonical_currency,
         "source": source,
         "start": start.isoformat() if start else None,
         "end": end.isoformat() if end else None,
@@ -407,6 +424,8 @@ def query_eia_series(
         sector=sector,
         dataset=dataset,
         unit=unit,
+        canonical_unit=canonical_unit,
+        canonical_currency=canonical_currency,
         source=source,
         start=start,
         end=end,
@@ -458,7 +477,9 @@ def query_eia_series_dimensions(
     sector: Optional[str],
     dataset: Optional[str],
     unit: Optional[str],
-    source: Optional[str],
+    canonical_unit: Optional[str] = None,
+    canonical_currency: Optional[str] = None,
+    source: Optional[str] = None,
 ) -> Tuple[Dict[str, List[str]], float]:
     conditions: list[str] = []
     if series_id:
@@ -472,7 +493,11 @@ def query_eia_series_dimensions(
     if dataset:
         conditions.append(f"dataset = '{_safe_literal(dataset)}'")
     if unit:
-        conditions.append(f"unit = '{_safe_literal(unit)}'")
+        conditions.append(f"unit_raw = '{_safe_literal(unit)}'")
+    if canonical_unit:
+        conditions.append(f"unit_normalized = '{_safe_literal(canonical_unit)}'")
+    if canonical_currency:
+        conditions.append(f"currency_normalized = '{_safe_literal(canonical_currency)}'")
     if source:
         conditions.append(f"source = '{_safe_literal(source)}'")
 
@@ -485,12 +510,12 @@ def query_eia_series_dimensions(
         "ARRAY_AGG(DISTINCT dataset) FILTER (WHERE dataset IS NOT NULL) AS dataset_values, "
         "ARRAY_AGG(DISTINCT area) FILTER (WHERE area IS NOT NULL) AS area_values, "
         "ARRAY_AGG(DISTINCT sector) FILTER (WHERE sector IS NOT NULL) AS sector_values, "
-        "ARRAY_AGG(DISTINCT unit) FILTER (WHERE unit IS NOT NULL) AS unit_values, "
-        "ARRAY_AGG(DISTINCT canonical_unit) FILTER (WHERE canonical_unit IS NOT NULL) AS canonical_unit_values, "
-        "ARRAY_AGG(DISTINCT canonical_currency) FILTER (WHERE canonical_currency IS NOT NULL) AS canonical_currency_values, "
+        "ARRAY_AGG(DISTINCT unit_raw) FILTER (WHERE unit_raw IS NOT NULL) AS unit_values, "
+        "ARRAY_AGG(DISTINCT unit_normalized) FILTER (WHERE unit_normalized IS NOT NULL) AS canonical_unit_values, "
+        "ARRAY_AGG(DISTINCT currency_normalized) FILTER (WHERE currency_normalized IS NOT NULL) AS canonical_currency_values, "
         "ARRAY_AGG(DISTINCT frequency) FILTER (WHERE frequency IS NOT NULL) AS frequency_values, "
         "ARRAY_AGG(DISTINCT source) FILTER (WHERE source IS NOT NULL) AS source_values "
-        f"FROM timescale.public.eia_series_timeseries{where}"
+        f"FROM {EIA_SERIES_BASE_TABLE}{where}"
     )
 
     client = _maybe_redis_client(cache_cfg)
@@ -503,6 +528,8 @@ def query_eia_series_dimensions(
         "sector": sector,
         "dataset": dataset,
         "unit": unit,
+        "canonical_unit": canonical_unit,
+        "canonical_currency": canonical_currency,
         "source": source,
     }
     if client is not None:
@@ -1148,6 +1175,57 @@ def query_ppa_valuation(
     return metrics_out, elapsed
 
 
+def query_ppa_contract_valuations(
+    trino_cfg: TrinoConfig,
+    *,
+    ppa_contract_id: str,
+    scenario_id: Optional[str] = None,
+    metric: Optional[str] = None,
+    limit: int = 200,
+    offset: int = 0,
+) -> Tuple[List[Dict[str, Any]], float]:
+    filters: Dict[str, Optional[str]] = {"ppa_contract_id": ppa_contract_id}
+    if scenario_id:
+        filters["scenario_id"] = scenario_id
+    if metric:
+        filters["metric"] = metric
+    where = _build_where(filters)
+
+    sql = (
+        "SELECT cast(asof_date as date) as asof_date, "
+        "cast(period_start as date) as period_start, "
+        "cast(period_end as date) as period_end, "
+        "scenario_id, curve_key, metric, value, cashflow, npv, irr, version_hash, _ingest_ts "
+        "FROM iceberg.market.ppa_valuation"
+        f"{where} "
+        "ORDER BY asof_date DESC, scenario_id, metric, period_start DESC "
+        f"LIMIT {int(limit)} OFFSET {int(offset)}"
+    )
+
+    connect = _require_trino()
+    start = time.perf_counter()
+    rows: List[Dict[str, Any]] = []
+    with connect(
+        host=trino_cfg.host,
+        port=trino_cfg.port,
+        user=trino_cfg.user,
+        http_scheme=trino_cfg.http_scheme,
+    ) as conn:  # type: ignore[arg-type]
+        cur = conn.cursor()
+        cur.execute(sql)
+        columns = [col[0] for col in cur.description]
+        for rec in cur.fetchall():
+            record = {col: val for col, val in zip(columns, rec)}
+            for key in ("value", "cashflow", "npv"):
+                if record.get(key) is not None:
+                    record[key] = float(record[key])
+            if record.get("irr") is not None:
+                record["irr"] = float(record["irr"])
+            rows.append(record)
+    elapsed = (time.perf_counter() - start) * 1000.0
+    return rows, elapsed
+
+
 def _build_sql_scenario_metrics_latest(
     *,
     tenant_id: Optional[str],
@@ -1293,6 +1371,7 @@ __all__ = [
     "query_eia_series",
     "query_eia_series_dimensions",
     "query_ppa_valuation",
+    "query_ppa_contract_valuations",
     "query_scenario_metrics_latest",
     "invalidate_scenario_outputs_cache",
     "TrinoConfig",

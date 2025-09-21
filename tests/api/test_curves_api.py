@@ -79,6 +79,15 @@ def _ensure_opentelemetry(monkeypatch):
 
     sdk_logs_export_module = types.ModuleType("opentelemetry.sdk._logs.export")
 
+
+@pytest.fixture(autouse=True)
+def reset_store():
+    from aurum.api.scenario_service import STORE
+
+    STORE.reset()
+    yield
+    STORE.reset()
+
     class _BatchLogRecordProcessor:
         def __init__(self, _exporter):
             pass
@@ -715,6 +724,13 @@ def test_ppa_valuate(monkeypatch):
     client = TestClient(api_app.app)
     client.headers.update({"X-Aurum-Tenant": "tenant-42"})
 
+    create_resp = client.post(
+        "/v1/ppa/contracts",
+        json={"instrument_id": "instr-1", "terms": {"strike": 42.5}},
+    )
+    assert create_resp.status_code == 201
+    contract_id = create_resp.json()["data"]["ppa_contract_id"]
+
     def fake_query(trino_cfg, *, scenario_id, tenant_id=None, asof_date=None, metric="mid", options=None):
         assert scenario_id == "scn-123"
         assert tenant_id == "tenant-42"
@@ -746,7 +762,7 @@ def test_ppa_valuate(monkeypatch):
 
     monkeypatch.setattr(api_app, "_persist_ppa_valuation_records", fake_persist)
 
-    payload = {"ppa_contract_id": "ppa1", "scenario_id": "scn-123", "options": {"foo": "bar"}}
+    payload = {"ppa_contract_id": contract_id, "scenario_id": "scn-123", "options": {"foo": "bar"}}
     r = client.post("/v1/ppa/valuate", json=payload)
     assert r.status_code == 200
     body = r.json()
@@ -827,11 +843,138 @@ def test_ppa_valuate_requires_scenario(monkeypatch):
     from aurum.api import app as api_app
 
     client = TestClient(api_app.app)
-    payload = {"ppa_contract_id": "ppa1"}
+    client.headers.update({"X-Aurum-Tenant": "tenant-99"})
+    create_resp = client.post(
+        "/v1/ppa/contracts",
+        json={"instrument_id": None, "terms": {}},
+    )
+    assert create_resp.status_code == 201
+    contract_id = create_resp.json()["data"]["ppa_contract_id"]
+
+    payload = {"ppa_contract_id": contract_id}
     resp = client.post("/v1/ppa/valuate", json=payload)
     assert resp.status_code == 400
     assert resp.json()["detail"] == "scenario_id is required for valuation"
 
+
+
+def test_ppa_contract_crud(monkeypatch):
+    pytest.importorskip("fastapi", reason="fastapi not installed")
+    _ensure_opentelemetry(monkeypatch)
+    from fastapi.testclient import TestClient
+    from aurum.api import app as api_app
+
+    client = TestClient(api_app.app)
+    client.headers.update({"X-Aurum-Tenant": "tenant-007"})
+
+    create_resp = client.post(
+        "/v1/ppa/contracts",
+        json={"instrument_id": "instr-1", "terms": {"strike": 39.5}},
+    )
+    assert create_resp.status_code == 201
+    created = create_resp.json()["data"]
+    contract_id = created["ppa_contract_id"]
+    assert created["instrument_id"] == "instr-1"
+
+    get_resp = client.get(f"/v1/ppa/contracts/{contract_id}")
+    assert get_resp.status_code == 200
+    assert get_resp.headers.get("etag")
+
+    list_resp = client.get("/v1/ppa/contracts", params={"limit": 1})
+    assert list_resp.status_code == 200
+    body = list_resp.json()
+    assert body["data"][0]["ppa_contract_id"] == contract_id
+
+    update_resp = client.patch(
+        f"/v1/ppa/contracts/{contract_id}",
+        json={"instrument_id": "instr-2", "terms": {"strike": 41.0}},
+    )
+    assert update_resp.status_code == 200
+    updated = update_resp.json()["data"]
+    assert updated["instrument_id"] == "instr-2"
+    assert updated["terms"]["strike"] == 41.0
+
+    delete_resp = client.delete(f"/v1/ppa/contracts/{contract_id}")
+    assert delete_resp.status_code == 204
+
+    missing = client.get(f"/v1/ppa/contracts/{contract_id}")
+    assert missing.status_code == 404
+
+
+def test_ppa_contract_valuations_list(monkeypatch):
+    pytest.importorskip("fastapi", reason="fastapi not installed")
+    _ensure_opentelemetry(monkeypatch)
+    from fastapi.testclient import TestClient
+    from aurum.api import app as api_app
+    from aurum.api import service
+
+    client = TestClient(api_app.app)
+    client.headers.update({"X-Aurum-Tenant": "tenant-555"})
+
+    create_resp = client.post(
+        "/v1/ppa/contracts",
+        json={"instrument_id": "instr-9", "terms": {}},
+    )
+    assert create_resp.status_code == 201
+    contract_id = create_resp.json()["data"]["ppa_contract_id"]
+
+    def fake_query(
+        trino_cfg,
+        *,
+        ppa_contract_id,
+        scenario_id=None,
+        metric=None,
+        limit,
+        offset,
+    ):
+        assert ppa_contract_id == contract_id
+        assert limit == 2  # limit + 1 from handler
+        assert offset == 0
+        return (
+            [
+                {
+                    "asof_date": datetime(2025, 9, 12).date(),
+                    "period_start": datetime(2025, 9, 1).date(),
+                    "period_end": datetime(2025, 9, 30).date(),
+                    "scenario_id": "scn-1",
+                    "metric": "NPV",
+                    "value": 1100.0,
+                    "cashflow": 1250.0,
+                    "npv": 1100.0,
+                    "irr": 0.08,
+                    "curve_key": "curve-a",
+                    "version_hash": "hash-a",
+                    "_ingest_ts": datetime(2025, 9, 12, 0, 0, 0),
+                },
+                {
+                    "asof_date": datetime(2025, 10, 12).date(),
+                    "period_start": datetime(2025, 10, 1).date(),
+                    "period_end": datetime(2025, 10, 31).date(),
+                    "scenario_id": "scn-1",
+                    "metric": "IRR",
+                    "value": 0.08,
+                    "cashflow": None,
+                    "npv": None,
+                    "irr": 0.0825,
+                    "curve_key": "curve-a",
+                    "version_hash": "hash-b",
+                    "_ingest_ts": datetime(2025, 10, 12, 0, 0, 0),
+                },
+            ],
+            12.3,
+        )
+
+    monkeypatch.setattr(service, "query_ppa_contract_valuations", fake_query)
+
+    resp = client.get(
+        f"/v1/ppa/contracts/{contract_id}/valuations",
+        params={"limit": 1},
+    )
+    assert resp.status_code == 200
+    payload = resp.json()
+    assert len(payload["data"]) == 1
+    assert payload["meta"]["next_cursor"]
+    assert payload["data"][0]["metric"] == "NPV"
 
 
 def test_metadata_units_etag(monkeypatch):

@@ -10,6 +10,7 @@ from scripts.kafka.register_schemas import (
     SchemaRegistryError,
     create_session,
     iter_subjects,
+    load_eia_subjects,
     load_schema,
     load_subject_mapping,
     put_compatibility,
@@ -40,6 +41,17 @@ def test_load_schema(tmp_path: Path) -> None:
 
     schema = load_schema(schema_root, "example.avsc")
     assert schema["name"] == "Foo"
+
+
+def test_load_eia_subjects(tmp_path: Path) -> None:
+    config_path = tmp_path / "eia.json"
+    config_path.write_text(
+        json.dumps({"datasets": [{"default_topic": "aurum.ref.eia.test.v1"}]}),
+        encoding="utf-8",
+    )
+
+    subjects = load_eia_subjects(config_path)
+    assert subjects == {"aurum.ref.eia.test.v1-value": "eia.series.v1.avsc"}
 
 
 def test_iter_subjects_filters() -> None:

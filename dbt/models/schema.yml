@@ -34,6 +34,24 @@ sources:
           - name: _ingest_ts
             tests:
               - not_null
+  - name: timescale_eia
+    description: Timescale reference for EIA v2 series observations.
+    database: timeseries
+    schema: public
+    freshness:
+      warn_after: {count: 6, period: hour}
+      error_after: {count: 12, period: hour}
+    tables:
+      - name: eia_series_timeseries
+        description: Canonical Timescale hypertable populated by the SeaTunnel Kafka→Timescale job.
+        loaded_at_field: ingest_ts
+        columns:
+          - name: series_id
+            tests:
+              - not_null
+          - name: period_start
+            tests:
+              - not_null
       - name: curve_observation_quarantine
         description: Repository of quarantined rows awaiting remediation.
         loaded_at_field: _ingest_ts
@@ -54,9 +72,9 @@ sources:
           - name: run_id
             tests:
               - not_null
-          - name: metric
-            tests:
-              - not_null
+      - name: metric
+          tests:
+            - not_null
           - name: _ingest_ts
             tests:
               - not_null
@@ -214,6 +232,63 @@ models:
         tests:
           - not_null
       - name: metric
+        tests:
+          - not_null
+  - name: stg_eia_series
+    description: Staging model exposing raw EIA series observations from Timescale.
+    columns:
+      - name: series_id
+        tests:
+          - not_null
+      - name: period
+        tests:
+          - not_null
+      - name: frequency
+        tests:
+          - not_null
+      - name: ingest_ts
+        tests:
+          - not_null
+  - name: int_eia_series_enriched
+    description: Intermediate model normalizing currency and unit metadata for EIA series.
+    columns:
+      - name: series_id
+        tests:
+          - not_null
+      - name: value_converted
+        description: Numeric value after applying any canonical conversion rules.
+      - name: currency_normalized
+        description: Currency resolved from canonical metadata or unit mappings.
+      - name: unit_normalized
+        description: Unit denominator resolved from canonical metadata or unit mappings.
+  - name: mart_eia_series_latest
+    description: Latest observation per series identifier with normalized units and currency.
+    tests:
+      - unique:
+          column_name: "series_id"
+    columns:
+      - name: value
+        tests:
+          - not_null
+      - name: currency_normalized
+        tests:
+          - not_null
+      - name: unit_normalized
+        tests:
+          - not_null
+  - name: mart_eia_series_facets
+    description: Distinct facet values (dataset, frequency, area, sector, units) for filtering APIs.
+    columns:
+      - name: dataset
+        tests:
+          - not_null
+      - name: frequency
+        tests:
+          - not_null
+  - name: mart_eia_series_units
+    description: Lookup of raw units to normalized currency and unit denominators.
+    columns:
+      - name: unit_raw
         tests:
           - not_null
 

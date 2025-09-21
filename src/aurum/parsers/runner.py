@@ -7,6 +7,7 @@ import json
 import logging
 import os
 import sys
+from concurrent.futures import ThreadPoolExecutor
 from datetime import date, datetime
 from pathlib import Path
 from typing import Iterable, List, Optional, Sequence, Tuple
@@ -65,10 +66,31 @@ def detect_asof_from_workbook(path: Path) -> date:
     raise ValueError(f"Could not infer as-of date within workbook '{path}'")
 
 
-def parse_files(paths: Iterable[Path], *, as_of: Optional[date] = None) -> pd.DataFrame:
-    frames: List[pd.DataFrame] = []
-    for raw_path in paths:
-        path = Path(raw_path)
+def parse_files(
+    paths: Iterable[Path], *, as_of: Optional[date] = None, max_workers: Optional[int] = None
+) -> pd.DataFrame:
+    path_list = [Path(raw_path) for raw_path in paths]
+    if not path_list:
+        return pd.DataFrame(columns=CANONICAL_COLUMNS)
+
+    env_workers = os.getenv("AURUM_PARSER_MAX_WORKERS")
+    worker_limit: Optional[int] = max_workers
+    if worker_limit is None and env_workers:
+        try:
+            worker_limit = int(env_workers)
+        except ValueError:
+            LOG.warning("Invalid AURUM_PARSER_MAX_WORKERS value: %s", env_workers)
+            worker_limit = None
+
+    if worker_limit is None or worker_limit <= 0:
+        worker_limit = min(4, len(path_list))
+    else:
+        worker_limit = min(worker_limit, len(path_list))
+
+    if worker_limit < 1:
+        worker_limit = 1
+
+    def _parse_path(path: Path) -> pd.DataFrame:
         if not path.exists():
             raise FileNotFoundError(path)
         vendor = detect_vendor(path)
@@ -77,8 +99,19 @@ def parse_files(paths: Iterable[Path], *, as_of: Optional[date] = None) -> pd.Da
         df = vendor_curves.parse(vendor, str(path), detected_asof)
         if df.empty:
             LOG.warning("No data parsed from %s", path)
-            continue
-        frames.append(df)
+        return df
+
+    frames: List[pd.DataFrame] = []
+    if worker_limit == 1:
+        for path in path_list:
+            df = _parse_path(path)
+            if not df.empty:
+                frames.append(df)
+    else:
+        with ThreadPoolExecutor(max_workers=worker_limit) as executor:
+            for df in executor.map(_parse_path, path_list):
+                if isinstance(df, pd.DataFrame) and not df.empty:
+                    frames.append(df)
     if not frames:
         return pd.DataFrame(columns=CANONICAL_COLUMNS)
     combined = pd.concat(frames, ignore_index=True)
@@ -175,6 +208,12 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         default="parquet",
         help="Output format",
     )
+    parser.add_argument(
+        "--workers",
+        dest="workers",
+        type=int,
+        help="Number of parallel parser workers (default: min(4, file count) or env AURUM_PARSER_MAX_WORKERS)",
+    )
     parser.add_argument("--verbose", action="store_true")
     parser.add_argument(
         "--validate",
@@ -264,7 +303,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     if args.as_of:
         as_of = date.fromisoformat(args.as_of)
 
-    raw_df = parse_files(args.files, as_of=as_of)
+    raw_df = parse_files(args.files, as_of=as_of, max_workers=args.workers)
     if raw_df.empty:
         LOG.warning("No rows parsed")
 

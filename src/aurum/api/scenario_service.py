@@ -50,6 +50,16 @@ class ScenarioRunRecord:
     seed: Optional[int] = None
 
 
+@dataclass
+class PpaContractRecord:
+    id: str
+    tenant_id: str
+    instrument_id: Optional[str]
+    terms: Dict[str, Any]
+    created_at: datetime
+    updated_at: datetime
+
+
 class BaseScenarioStore:
     def create_scenario(
         self,
@@ -123,11 +133,58 @@ class BaseScenarioStore:
     ) -> bool:
         raise NotImplementedError
 
+    # PPA contract operations
+
+    def create_ppa_contract(
+        self,
+        tenant_id: str,
+        *,
+        instrument_id: Optional[str] = None,
+        terms: Optional[Dict[str, Any]] = None,
+    ) -> PpaContractRecord:
+        raise NotImplementedError
+
+    def get_ppa_contract(
+        self,
+        contract_id: str,
+        *,
+        tenant_id: Optional[str] = None,
+    ) -> Optional[PpaContractRecord]:
+        raise NotImplementedError
+
+    def list_ppa_contracts(
+        self,
+        tenant_id: Optional[str],
+        *,
+        limit: int = 100,
+        offset: int = 0,
+    ) -> List[PpaContractRecord]:
+        raise NotImplementedError
+
+    def update_ppa_contract(
+        self,
+        contract_id: str,
+        *,
+        tenant_id: Optional[str] = None,
+        instrument_id: Optional[str] = None,
+        terms: Optional[Dict[str, Any]] = None,
+    ) -> Optional[PpaContractRecord]:
+        raise NotImplementedError
+
+    def delete_ppa_contract(
+        self,
+        contract_id: str,
+        *,
+        tenant_id: Optional[str] = None,
+    ) -> bool:
+        raise NotImplementedError
+
 
 class InMemoryScenarioStore(BaseScenarioStore):
     def __init__(self) -> None:
         self._scenarios: Dict[str, ScenarioRecord] = {}
         self._runs: Dict[str, ScenarioRunRecord] = {}
+        self._ppa_contracts: Dict[str, PpaContractRecord] = {}
 
     def create_scenario(
         self,
@@ -198,6 +255,87 @@ class InMemoryScenarioStore(BaseScenarioStore):
         except Exception:
             pass
         return record
+
+    def create_ppa_contract(
+        self,
+        tenant_id: str,
+        *,
+        instrument_id: Optional[str] = None,
+        terms: Optional[Dict[str, Any]] = None,
+    ) -> PpaContractRecord:
+        contract_id = str(uuid.uuid4())
+        record = PpaContractRecord(
+            id=contract_id,
+            tenant_id=tenant_id,
+            instrument_id=instrument_id,
+            terms=dict(terms or {}),
+            created_at=_now(),
+            updated_at=_now(),
+        )
+        self._ppa_contracts[contract_id] = record
+        return record
+
+    def get_ppa_contract(
+        self,
+        contract_id: str,
+        *,
+        tenant_id: Optional[str] = None,
+    ) -> Optional[PpaContractRecord]:
+        record = self._ppa_contracts.get(contract_id)
+        if record is None:
+            return None
+        if tenant_id and record.tenant_id != tenant_id:
+            return None
+        return record
+
+    def list_ppa_contracts(
+        self,
+        tenant_id: Optional[str],
+        *,
+        limit: int = 100,
+        offset: int = 0,
+    ) -> List[PpaContractRecord]:
+        records = list(self._ppa_contracts.values())
+        if tenant_id:
+            records = [rec for rec in records if rec.tenant_id == tenant_id]
+        records.sort(key=lambda rec: rec.created_at, reverse=True)
+        return records[offset : offset + limit]
+
+    def update_ppa_contract(
+        self,
+        contract_id: str,
+        *,
+        tenant_id: Optional[str] = None,
+        instrument_id: Optional[str] = None,
+        terms: Optional[Dict[str, Any]] = None,
+    ) -> Optional[PpaContractRecord]:
+        record = self.get_ppa_contract(contract_id, tenant_id=tenant_id)
+        if record is None:
+            return None
+        if instrument_id is not None:
+            record.instrument_id = instrument_id
+        if terms is not None:
+            record.terms = dict(terms)
+        record.updated_at = _now()
+        self._ppa_contracts[contract_id] = record
+        return record
+
+    def delete_ppa_contract(
+        self,
+        contract_id: str,
+        *,
+        tenant_id: Optional[str] = None,
+    ) -> bool:
+        record = self.get_ppa_contract(contract_id, tenant_id=tenant_id)
+        if record is None:
+            return False
+        self._ppa_contracts.pop(contract_id, None)
+        return True
+
+    def reset(self) -> None:  # pragma: no cover - test helper
+        self._scenarios.clear()
+        self._runs.clear()
+        self._ppa_contracts.clear()
 
     def get_run_for_scenario(
         self,
@@ -297,6 +435,25 @@ class PostgresScenarioStore(BaseScenarioStore):
         if not tenant_id:
             return
         cursor.execute("SET LOCAL app.current_tenant = %s", (tenant_id,))
+
+    @staticmethod
+    def _row_to_contract(row: Optional[Dict[str, Any]]) -> Optional[PpaContractRecord]:
+        if row is None:
+            return None
+        terms = row.get("terms") or {}
+        if isinstance(terms, str):
+            try:
+                terms = json.loads(terms)
+            except json.JSONDecodeError:
+                terms = {}
+        return PpaContractRecord(
+            id=row["id"],
+            tenant_id=row["tenant_id"],
+            instrument_id=row.get("instrument_id"),
+            terms=terms,
+            created_at=row["created_at"],
+            updated_at=row["updated_at"],
+        )
 
     def create_scenario(
         self,
@@ -676,6 +833,139 @@ class PostgresScenarioStore(BaseScenarioStore):
             state=state,
         )
         return updated
+
+    def create_ppa_contract(
+        self,
+        tenant_id: str,
+        *,
+        instrument_id: Optional[str] = None,
+        terms: Optional[Dict[str, Any]] = None,
+    ) -> PpaContractRecord:
+        contract_id = str(uuid.uuid4())
+        with self._connect() as conn:
+            with conn.cursor() as cur:
+                self._set_tenant(cur, tenant_id)
+                cur.execute(
+                    """
+                    INSERT INTO ppa_contract (id, tenant_id, instrument_id, terms)
+                    VALUES (%s, %s, %s, %s)
+                    RETURNING id, tenant_id, instrument_id, terms, created_at, updated_at
+                    """,
+                    (
+                        contract_id,
+                        tenant_id,
+                        instrument_id,
+                        json.dumps(terms or {}, default=str),
+                    ),
+                )
+                row = cur.fetchone()
+            conn.commit()
+        record = self._row_to_contract(row)
+        if record is None:
+            raise RuntimeError("Failed to create PPA contract")
+        return record
+
+    def get_ppa_contract(
+        self,
+        contract_id: str,
+        *,
+        tenant_id: Optional[str] = None,
+    ) -> Optional[PpaContractRecord]:
+        with self._connect() as conn:
+            with conn.cursor() as cur:
+                self._set_tenant(cur, tenant_id)
+                cur.execute(
+                    """
+                    SELECT id, tenant_id, instrument_id, terms, created_at, updated_at
+                    FROM ppa_contract
+                    WHERE id = %s
+                    """,
+                    (contract_id,),
+                )
+                row = cur.fetchone()
+        return self._row_to_contract(row)
+
+    def list_ppa_contracts(
+        self,
+        tenant_id: Optional[str],
+        *,
+        limit: int = 100,
+        offset: int = 0,
+    ) -> List[PpaContractRecord]:
+        with self._connect() as conn:
+            with conn.cursor() as cur:
+                self._set_tenant(cur, tenant_id)
+                params: List[Any] = []
+                where = ""
+                if tenant_id:
+                    where = "WHERE tenant_id = current_setting('app.current_tenant')::UUID"
+                params.extend([limit, offset])
+                cur.execute(
+                    f"""
+                    SELECT id, tenant_id, instrument_id, terms, created_at, updated_at
+                    FROM ppa_contract
+                    {where}
+                    ORDER BY created_at DESC
+                    LIMIT %s OFFSET %s
+                    """,
+                    tuple(params),
+                )
+                rows = cur.fetchall()
+        return [
+            record
+            for record in (self._row_to_contract(row) for row in rows)
+            if record is not None
+        ]
+
+    def update_ppa_contract(
+        self,
+        contract_id: str,
+        *,
+        tenant_id: Optional[str] = None,
+        instrument_id: Optional[str] = None,
+        terms: Optional[Dict[str, Any]] = None,
+    ) -> Optional[PpaContractRecord]:
+        updates: List[str] = []
+        params: List[Any] = []
+        if instrument_id is not None:
+            updates.append("instrument_id = %s")
+            params.append(instrument_id)
+        if terms is not None:
+            updates.append("terms = %s")
+            params.append(json.dumps(terms, default=str))
+        if not updates:
+            return self.get_ppa_contract(contract_id, tenant_id=tenant_id)
+        updates.append("updated_at = NOW()")
+        params.append(contract_id)
+        with self._connect() as conn:
+            with conn.cursor() as cur:
+                self._set_tenant(cur, tenant_id)
+                cur.execute(
+                    f"""
+                    UPDATE ppa_contract
+                    SET {', '.join(updates)}
+                    WHERE id = %s
+                    RETURNING id, tenant_id, instrument_id, terms, created_at, updated_at
+                    """,
+                    tuple(params),
+                )
+                row = cur.fetchone()
+            conn.commit()
+        return self._row_to_contract(row)
+
+    def delete_ppa_contract(
+        self,
+        contract_id: str,
+        *,
+        tenant_id: Optional[str] = None,
+    ) -> bool:
+        with self._connect() as conn:
+            with conn.cursor() as cur:
+                self._set_tenant(cur, tenant_id)
+                cur.execute("DELETE FROM ppa_contract WHERE id = %s", (contract_id,))
+                deleted = cur.rowcount
+            conn.commit()
+        return bool(deleted)
 
 
 def _maybe_emit_status_alert(*, tenant_id: Optional[str], scenario_id: str, run_id: str, state: str) -> None:

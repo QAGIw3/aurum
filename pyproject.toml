@@ -42,7 +42,9 @@ testing = [
   "pytest-cov>=5.0",
   "fastavro>=1.9.4",
   "pyyaml>=6.0",
-  "openapi-spec-validator>=0.7"
+  "openapi-spec-validator>=0.7",
+  "dbt-core>=1.7",
+  "dbt-duckdb>=1.7"
 ]
 quality = [
   "ruff>=0.5",

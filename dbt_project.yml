@@ -26,3 +26,7 @@ models:
 seeds:
   aurum:
     +schema: ref
+    raw:
+      +schema: raw
+    market:
+      +schema: market

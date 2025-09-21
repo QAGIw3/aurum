@@ -1,0 +1,2 @@
+asof_date,ppa_contract_id,scenario_id,curve_key,period_start,period_end,cashflow,npv,irr,metric,value,version_hash,_ingest_ts
+2025-09-12,ppa-1,scn-1,hash_month_sep,2025-09-01,2025-09-30,1250.0,1100.0,0.08,NPV,1100.0,ppa_hash_sep,2025-09-12T00:00:00+00:00

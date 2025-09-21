@@ -14,6 +14,11 @@ from .periods import (  # noqa: F401
     build_sql_period_expressions,
     parse_period_token,
 )
+from .windows import (  # noqa: F401
+    WindowBounds,
+    WindowConfigError,
+    compute_window_bounds,
+)
 
 __all__ = [
     "FacetMapping",
@@ -26,4 +31,7 @@ __all__ = [
     "PeriodParseError",
     "build_sql_period_expressions",
     "parse_period_token",
+    "WindowBounds",
+    "WindowConfigError",
+    "compute_window_bounds",
 ]

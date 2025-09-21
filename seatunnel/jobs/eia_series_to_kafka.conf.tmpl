@@ -25,6 +25,8 @@
 #   EIA_SERIES_SCHEMA       - Avro schema JSON populated by run_job.sh
 #   EIA_FILTER_EXPR         - Additional SQL predicate appended to the WHERE clause (default TRUE)
 #   EIA_PARAM_OVERRIDES     - Additional key/value pairs injected into the params block
+#   EIA_WINDOW_END          - ISO8601 timestamp anchoring the look-back window (auto-set by Airflow)
+#   EIA_WINDOW_HOURS/DAYS/MONTHS/YEARS - Window span used when deriving start/end tokens
 
 env {
   job.mode = "BATCH"

@@ -50,6 +50,18 @@
         {"principal": "User:aurum-ingest", "operations": ["WRITE", "DESCRIBE", "DESCRIBE_CONFIGS"]},
         {"principal": "User:aurum-ops", "operations": ["READ", "DESCRIBE"]}
       ]
+    },
+    {
+      "name": "aurum.ref.eia.series.dlq.v1",
+      "partitions": 3,
+      "replication_factor": 3,
+      "config": {
+        "retention.ms": "2592000000"
+      },
+      "acls": [
+        {"principal": "User:aurum-ingest", "operations": ["WRITE", "DESCRIBE", "DESCRIBE_CONFIGS"]},
+        {"principal": "User:aurum-ops", "operations": ["READ", "DESCRIBE"]}
+      ]
     }
   ]
 }

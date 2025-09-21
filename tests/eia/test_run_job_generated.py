@@ -53,9 +53,17 @@ def test_generated_dataset_renders_seatunnel_config(tmp_path: Path, datasets: di
             "EIA_PARAM_OVERRIDES_JSON": json.dumps(entry.get("param_overrides") or []),
             "EIA_PERIOD_COLUMN": entry.get("period_column", "period"),
             "EIA_DATE_FORMAT": entry.get("date_format") or "",
+            "EIA_LIMIT": str(entry.get("page_limit", 5000)),
+            "EIA_DLQ_TOPIC": entry.get("dlq_topic", "aurum.ref.eia.series.dlq.v1"),
+            "EIA_DLQ_SUBJECT": f"{entry.get('dlq_topic', 'aurum.ref.eia.series.dlq.v1')}-value",
             "SEATUNNEL_OUTPUT_DIR": str(tmp_path),
         }
     )
+    env.setdefault("EIA_WINDOW_END", "2024-01-02T00:00:00Z")
+    for key in ("window_hours", "window_days", "window_months", "window_years"):
+        value = entry.get(key)
+        if value is not None:
+            env[f"EIA_{key.upper()}"] = str(value)
 
     result = subprocess.run(
         ["bash", str(REPO_ROOT / "scripts" / "seatunnel" / "run_job.sh"), "eia_series_to_kafka", "--render-only"],

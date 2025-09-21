@@ -25,6 +25,7 @@ if TYPE_CHECKING:  # pragma: no cover
 
 DEFAULT_SCHEMA_ROOT = Path(__file__).resolve().parents[2] / "kafka" / "schemas"
 DEFAULT_SUBJECT_FILE = DEFAULT_SCHEMA_ROOT / "subjects.json"
+DEFAULT_EIA_CONFIG = Path(__file__).resolve().parents[2] / "config" / "eia_ingest_datasets.json"
 
 
 class SchemaRegistryError(RuntimeError):
@@ -96,6 +97,25 @@ def load_schema(schema_root: Path, relative_path: str) -> dict:
         raise SchemaRegistryError(f"Schema file not found: {schema_path}") from exc
     except json_module.JSONDecodeError as exc:
         raise SchemaRegistryError(f"Invalid JSON in schema file: {schema_path}") from exc
+
+
+def load_eia_subjects(config_path: Path) -> dict[str, str]:
+    if not config_path.exists():
+        raise SchemaRegistryError(f"EIA config not found at {config_path}")
+    raw = json_module.loads(config_path.read_text(encoding="utf-8"))
+    datasets = raw.get("datasets", [])
+    if not isinstance(datasets, list):
+        raise SchemaRegistryError("EIA config must contain a 'datasets' array")
+    subjects: dict[str, str] = {}
+    for entry in datasets:
+        if not isinstance(entry, dict):
+            continue
+        topic = entry.get("default_topic")
+        if not topic:
+            continue
+        subject = f"{topic}-value"
+        subjects[subject] = "eia.series.v1.avsc"
+    return subjects
 
 
 def _timeout(env_var: str, default_seconds: int) -> int:
@@ -179,6 +199,17 @@ def parse_args(argv: Iterable[str] | None = None) -> argparse.Namespace:
         help="Register only the specified subject(s); can be provided multiple times",
     )
     parser.add_argument(
+        "--include-eia",
+        action="store_true",
+        help="Merge subjects derived from config/eia_ingest_datasets.json",
+    )
+    parser.add_argument(
+        "--eia-config",
+        type=Path,
+        default=DEFAULT_EIA_CONFIG,
+        help=f"Path to eia_ingest_datasets.json (default: {DEFAULT_EIA_CONFIG})",
+    )
+    parser.add_argument(
         "--dry-run",
         action="store_true",
         help="Print actions without calling the Schema Registry",
@@ -190,6 +221,8 @@ def main(argv: Iterable[str] | None = None) -> int:
     args = parse_args(argv)
 
     subjects = load_subject_mapping(args.subjects_file)
+    if args.include_eia:
+        subjects.update(load_eia_subjects(args.eia_config))
     selected_subjects = iter_subjects(args.subject, subjects)
 
     session = create_session()

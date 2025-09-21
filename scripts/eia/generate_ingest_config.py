@@ -26,6 +26,41 @@ from aurum.reference.units import map_units  # noqa: E402
 DEFAULT_OUTPUT = REPO_ROOT / "config" / "eia_ingest_datasets.generated.json"
 DEFAULT_BASE_CONFIG = REPO_ROOT / "config" / "eia_ingest_overrides.json"
 
+FREQUENCY_SCHEDULES: dict[str, str] = {
+    "HOURLY": "5 * * * *",
+    "SUBHOURLY": "*/15 * * * *",
+    "QUARTER_HOURLY": "*/15 * * * *",
+    "EIGHTH_HOURLY": "*/15 * * * *",
+    "DAILY": "20 6 * * *",
+    "WEEKLY": "30 6 * * 1",
+    "MONTHLY": "0 7 3 * *",
+    "QUARTERLY": "0 7 5 1,4,7,10 *",
+    "ANNUAL": "0 7 5 1 *",
+}
+
+
+def _resolve_schedule(frequency: str | None, default_schedule: str) -> str:
+    if not frequency:
+        return default_schedule
+    return FREQUENCY_SCHEDULES.get(frequency.upper(), default_schedule)
+
+
+def _default_window(frequency: str) -> dict[str, int | None]:
+    freq = frequency.upper()
+    if freq == "HOURLY" or freq.endswith("HOURLY"):
+        return {"window_hours": 1, "window_days": None, "window_months": None, "window_years": None}
+    if freq == "DAILY":
+        return {"window_hours": None, "window_days": 1, "window_months": None, "window_years": None}
+    if freq == "WEEKLY":
+        return {"window_hours": None, "window_days": 7, "window_months": None, "window_years": None}
+    if freq == "MONTHLY":
+        return {"window_hours": None, "window_days": None, "window_months": 1, "window_years": None}
+    if freq == "QUARTERLY":
+        return {"window_hours": None, "window_days": None, "window_months": 3, "window_years": None}
+    if freq == "ANNUAL":
+        return {"window_hours": None, "window_days": None, "window_months": None, "window_years": 1}
+    return {"window_hours": None, "window_days": 1, "window_months": None, "window_years": None}
+
 
 def _slugify(path: str) -> str:
     token = path.replace("-", "_").replace("/", "_")
@@ -80,6 +115,12 @@ class GeneratedDataset:
     source_strategy: str
     period_column: str
     date_format: str | None
+    page_limit: int
+    window_hours: int | None
+    window_days: int | None
+    window_months: int | None
+    window_years: int | None
+    dlq_topic: str
 
     def as_config(self) -> dict[str, Any]:
         payload = asdict(self)
@@ -119,19 +160,22 @@ def _build_generated_entry(dataset: EiaDataset, *, default_schedule: str) -> Gen
         fallback="'EIA'",
     )
 
+    frequency_label = derive_frequency_label(dataset)
+    schedule = _resolve_schedule(frequency_label, default_schedule)
     canonical_currency, canonical_unit = _canonical_units(None)
+    window_defaults = _default_window(frequency_label)
 
     return GeneratedDataset(
         source_name=source_name,
         path=dataset.path,
         data_path=f"{dataset.path}/data",
         description=dataset.description,
-        schedule=default_schedule,
+        schedule=schedule,
         topic_var=f"aurum_{source_name}_topic",
         default_topic=default_topic,
         series_id_expr=series_strategy.expression,
         series_id_components=series_strategy.components,
-        frequency=derive_frequency_label(dataset),
+        frequency=frequency_label,
         units_var=f"aurum_{source_name}_units",
         default_units="UNKNOWN",
         canonical_currency=canonical_currency,
@@ -148,6 +192,12 @@ def _build_generated_entry(dataset: EiaDataset, *, default_schedule: str) -> Gen
         source_strategy=series_strategy.source,
         period_column="period",
         date_format=dataset.default_date_format,
+        page_limit=5000,
+        window_hours=window_defaults["window_hours"],
+        window_days=window_defaults["window_days"],
+        window_months=window_defaults["window_months"],
+        window_years=window_defaults["window_years"],
+        dlq_topic="aurum.ref.eia.series.dlq.v1",
     )
 
 

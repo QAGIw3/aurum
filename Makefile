@@ -129,6 +129,9 @@ trino-apply-iso-views:
 	. .venv/bin/activate && \
 	python scripts/trino/run_sql.py --server $${TRINO_SERVER:-http://localhost:8080} --user $${TRINO_USER:-aurum} trino/ddl/iso_lmp_views.sql
 
+trino-apply-eia:
+	python scripts/trino/run_sql.py --server $${TRINO_SERVER:-http://localhost:8080} --user $${TRINO_USER:-aurum} trino/ddl/eia_series.sql
+
 timescale-apply-ddl:
 	. .venv/bin/activate && \
 	python scripts/sql/apply_file.py --dsn $${TIMESCALE_DSN:-postgresql://timescale:timescale@localhost:5433/timeseries} timescale/ddl_timeseries.sql

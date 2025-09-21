@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from datetime import date, datetime
-from typing import List, Optional
+from typing import Any, List, Optional
 
 from pydantic import BaseModel, Field
 from aurum.scenarios.models import ScenarioAssumption
@@ -368,6 +368,57 @@ class PpaValuationResponse(BaseModel):
     data: list[PpaMetric]
 
 
+class PpaContractBase(BaseModel):
+    instrument_id: str | None = None
+    terms: dict[str, Any] = Field(default_factory=dict)
+
+
+class PpaContractCreate(PpaContractBase):
+    pass
+
+
+class PpaContractUpdate(BaseModel):
+    instrument_id: str | None = None
+    terms: dict[str, Any] | None = None
+
+
+class PpaContractOut(PpaContractBase):
+    ppa_contract_id: str
+    tenant_id: str
+    created_at: datetime
+    updated_at: datetime
+
+
+class PpaContractResponse(BaseModel):
+    meta: Meta
+    data: PpaContractOut
+
+
+class PpaContractListResponse(BaseModel):
+    meta: Meta
+    data: list[PpaContractOut]
+
+
+class PpaValuationRecord(BaseModel):
+    asof_date: date | None = None
+    scenario_id: str | None = None
+    period_start: date | None = None
+    period_end: date | None = None
+    metric: str | None = None
+    value: float | None = None
+    cashflow: float | None = None
+    npv: float | None = None
+    irr: float | None = None
+    curve_key: str | None = None
+    version_hash: str | None = None
+    ingested_at: datetime | None = None
+
+
+class PpaValuationListResponse(BaseModel):
+    meta: Meta
+    data: list[PpaValuationRecord]
+
+
 __all__ += [
     "CreateScenarioRequest",
     "ScenarioData",
@@ -382,4 +433,11 @@ __all__ += [
     "PpaValuationRequest",
     "PpaMetric",
     "PpaValuationResponse",
+    "PpaContractCreate",
+    "PpaContractUpdate",
+    "PpaContractOut",
+    "PpaContractResponse",
+    "PpaContractListResponse",
+    "PpaValuationRecord",
+    "PpaValuationListResponse",
 ]

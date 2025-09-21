@@ -179,53 +179,68 @@ def _format_env_var(key: str, value: str, *, quote: bool = True) -> str:
 
 def _build_eia_env(cfg: dict[str, Any]) -> list[str]:
     dataset = get_dataset(cfg["path"])
-    env: list[str] = []
+    assignments: dict[str, tuple[str, bool]] = {}
+
+    def set_env(key: str, value: str, *, quote: bool = True) -> None:
+        assignments[key] = (value, quote)
+
+    def ensure_env(key: str, value: str, *, quote: bool = True) -> None:
+        if key not in assignments:
+            set_env(key, value, quote=quote)
 
     series_path = cfg.get("data_path", cfg["path"])
-    env.append(_format_env_var("EIA_SERIES_PATH", series_path))
-    env.append(_format_env_var("EIA_SERIES_ID", cfg.get("series_id", "MULTI_SERIES")))
-    env.append(_format_env_var("EIA_SERIES_ID_EXPR", cfg["series_id_expr"], quote=False))
-    env.append(
-        _format_env_var(
-            "EIA_FREQUENCY",
-            cfg.get("frequency") or (dataset.default_frequency or "OTHER").upper(),
-        )
+    set_env("EIA_SERIES_PATH", series_path)
+    set_env("EIA_SERIES_ID", cfg.get("series_id", "MULTI_SERIES"))
+    set_env("EIA_SERIES_ID_EXPR", cfg["series_id_expr"], quote=False)
+    frequency_label = cfg.get("frequency") or (dataset.default_frequency or "OTHER").upper()
+    set_env("EIA_FREQUENCY", frequency_label)
+    set_env(
+        "EIA_TOPIC",
+        f"{{{{ var.value.get('{cfg['topic_var']}', '{cfg['default_topic']}') }}}}",
     )
-    env.append(
-        _format_env_var(
-            "EIA_TOPIC",
-            f"{{{{ var.value.get('{cfg['topic_var']}', '{cfg['default_topic']}') }}}}",
-        )
+    set_env(
+        "EIA_UNITS",
+        f"{{{{ var.value.get('{cfg['units_var']}', '{cfg['default_units']}') }}}}",
     )
-    env.append(
-        _format_env_var(
-            "EIA_UNITS",
-            f"{{{{ var.value.get('{cfg['units_var']}', '{cfg['default_units']}') }}}}",
-        )
-    )
-    env.append(_format_env_var("EIA_SEASONAL_ADJUSTMENT", cfg.get("seasonal_adjustment", "UNKNOWN")))
-    env.append(_format_env_var("EIA_AREA_EXPR", cfg.get("area_expr", "CAST(NULL AS STRING)")))
-    env.append(_format_env_var("EIA_SECTOR_EXPR", cfg.get("sector_expr", "CAST(NULL AS STRING)")))
-    env.append(_format_env_var("EIA_DESCRIPTION_EXPR", cfg.get("description_expr", "CAST(NULL AS STRING)")))
-    env.append(_format_env_var("EIA_SOURCE_EXPR", cfg.get("source_expr", "COALESCE(source, 'EIA')")))
-    env.append(_format_env_var("EIA_DATASET_EXPR", cfg.get("dataset_expr", "COALESCE(dataset, '')")))
-    env.append(_format_env_var("EIA_METADATA_EXPR", cfg.get("metadata_expr", "NULL")))
-    env.append(_format_env_var("EIA_FILTER_EXPR", cfg.get("filter_expr", "TRUE"), quote=False))
+    set_env("EIA_SEASONAL_ADJUSTMENT", cfg.get("seasonal_adjustment", "UNKNOWN"))
+    set_env("EIA_AREA_EXPR", cfg.get("area_expr", "CAST(NULL AS STRING)"))
+    set_env("EIA_SECTOR_EXPR", cfg.get("sector_expr", "CAST(NULL AS STRING)"))
+    set_env("EIA_DESCRIPTION_EXPR", cfg.get("description_expr", "CAST(NULL AS STRING)"))
+    set_env("EIA_SOURCE_EXPR", cfg.get("source_expr", "COALESCE(source, 'EIA')"))
+    set_env("EIA_DATASET_EXPR", cfg.get("dataset_expr", "COALESCE(dataset, '')"))
+    set_env("EIA_METADATA_EXPR", cfg.get("metadata_expr", "NULL"))
+    set_env("EIA_FILTER_EXPR", cfg.get("filter_expr", "TRUE"), quote=False)
+    set_env("EIA_LIMIT", str(cfg.get("page_limit", 5000)), quote=False)
+    dlq_topic = cfg.get("dlq_topic", "aurum.ref.eia.series.dlq.v1")
+    set_env("EIA_DLQ_TOPIC", dlq_topic)
+    set_env("EIA_DLQ_SUBJECT", f"{dlq_topic}-value")
 
     overrides_json = json.dumps(cfg.get("param_overrides", []))
-    env.append(_format_env_var("EIA_PARAM_OVERRIDES_JSON", overrides_json))
+    set_env("EIA_PARAM_OVERRIDES_JSON", overrides_json)
+
+    # Windowing to stay beneath API row caps
+    set_env("EIA_WINDOW_END", "{{ data_interval_end.in_timezone('UTC').isoformat() }}")
+    if cfg.get("window_hours") is not None:
+        set_env("EIA_WINDOW_HOURS", str(cfg["window_hours"]), quote=False)
+    if cfg.get("window_days") is not None:
+        set_env("EIA_WINDOW_DAYS", str(cfg["window_days"]), quote=False)
+    if cfg.get("window_months") is not None:
+        set_env("EIA_WINDOW_MONTHS", str(cfg["window_months"]), quote=False)
+    if cfg.get("window_years") is not None:
+        set_env("EIA_WINDOW_YEARS", str(cfg["window_years"]), quote=False)
 
     for extra_key, extra_value in cfg.get("extra_env", {}).items():
-        env.append(_format_env_var(extra_key, extra_value))
+        set_env(str(extra_key), str(extra_value))
 
-    env.append(
-        _format_env_var(
-            "SCHEMA_REGISTRY_URL",
-            "{{ var.value.get('aurum_schema_registry', 'http://localhost:8081') }}",
-        )
+    ensure_env(
+        "SCHEMA_REGISTRY_URL",
+        "{{ var.value.get('aurum_schema_registry', 'http://localhost:8081') }}",
     )
 
-    return env
+    return [
+        _format_env_var(key, value, quote=quote)
+        for key, (value, quote) in assignments.items()
+    ]
 
 
 def _make_watermark_callable(source_name: str):
@@ -338,6 +353,8 @@ with DAG(
             "EIA_SERIES_ID='{{ var.value.get('aurum_eia_series_id', 'EBA.ALL.D.H') }}'",
             "EIA_FREQUENCY='{{ var.value.get('aurum_eia_frequency', 'HOURLY') }}'",
             "EIA_TOPIC='{{ var.value.get('aurum_eia_topic', 'aurum.ref.eia.series.v1') }}'",
+            "EIA_WINDOW_END='{{ data_interval_end.in_timezone('UTC').isoformat() }}'",
+            "EIA_WINDOW_HOURS=1",
             "SCHEMA_REGISTRY_URL='{{ var.value.get('aurum_schema_registry', 'http://localhost:8081') }}'"
         ],
         mappings=["secret/data/aurum/eia:api_key=EIA_API_KEY"],
@@ -442,6 +459,8 @@ with DAG(
             "FUEL_BENCHMARK_EXPR=\"'{{ var.value.get('aurum_fuel_natgas_benchmark', 'Henry Hub') }}'\"",
             "FUEL_REGION_EXPR=\"'{{ var.value.get('aurum_fuel_natgas_region', 'US_Gulf') }}'\"",
             "FUEL_FILTER_EXPR=\"{{ var.value.get('aurum_fuel_natgas_filter_expr', 'TRUE') }}\"",
+            "EIA_WINDOW_END='{{ data_interval_end.in_timezone('UTC').isoformat() }}'",
+            "EIA_WINDOW_DAYS=1",
             "SCHEMA_REGISTRY_URL='{{ var.value.get('aurum_schema_registry', 'http://localhost:8081') }}'"
         ],
         mappings=["secret/data/aurum/eia:api_key=EIA_API_KEY"],
@@ -463,6 +482,8 @@ with DAG(
             "FUEL_BENCHMARK_EXPR=\"'{{ var.value.get('aurum_fuel_co2_benchmark', 'RGGI') }}'\"",
             "FUEL_REGION_EXPR=\"'{{ var.value.get('aurum_fuel_co2_region', 'US_Northeast') }}'\"",
             "FUEL_FILTER_EXPR=\"{{ var.value.get('aurum_fuel_co2_filter_expr', 'TRUE') }}\"",
+            "EIA_WINDOW_END='{{ data_interval_end.in_timezone('UTC').isoformat() }}'",
+            "EIA_WINDOW_MONTHS=1",
             "SCHEMA_REGISTRY_URL='{{ var.value.get('aurum_schema_registry', 'http://localhost:8081') }}'"
         ],
         mappings=["secret/data/aurum/eia:api_key=EIA_API_KEY"],
