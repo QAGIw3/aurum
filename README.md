@@ -35,6 +35,8 @@ Scenario outputs are now enabled on the API by default. To populate `/v1/scenari
 COMPOSE_PROFILES=worker docker compose -f compose/docker-compose.dev.yml up -d scenario-worker
 ```
 
+- Running on the kind stack? `make kind-scenario-smoke` will create a temporary tenant, enqueue a scenario run via the API, wait for the worker to flush outputs into Iceberg, and confirm `/v1/scenarios/{id}/outputs` returns data.
+
 Set `AURUM_SCENARIO_METRICS_PORT=9500` (and optionally `AURUM_SCENARIO_METRICS_ADDR`) to expose Prometheus metrics from the worker for scraping.
 
 Command-line helper: once the project is installed in a virtualenv, use `aurum-scenario` to manage scenarios, e.g. `aurum-scenario --tenant demo list` or `aurum-scenario --tenant demo create "Test" --assumption '{"driver_type":"policy","payload":{"policy_name":"RPS"}}'`.
