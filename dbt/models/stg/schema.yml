@@ -3,25 +3,80 @@ version: 2
 models:
   - name: stg_curve_landing
     description: Staging model that normalizes landing rows and retains quarantine context.
+    tests:
+      - unique_combination:
+          combination_of_columns:
+            - curve_key
+            - tenor_label
+            - _ingest_ts
     columns:
+      - name: asset_class
+        description: Asset class emitted by the upstream ingestion feed.
+        tests:
+          - accepted_values:
+              values: ['power', 'renewable', 'gas', 'carbon', 'storage', 'other']
+      - name: price_type
+        description: Price classification provided by the vendor feed.
+        tests:
+          - accepted_values:
+              values: ['MID', 'BID', 'ASK', 'LAST', 'SETTLE', 'INDEX', 'STRIP', 'CUSTOM']
+      - name: tenor_type
+        tests:
+          - accepted_values:
+              values: ['MONTHLY', 'QUARTER', 'SEASON', 'CALENDAR', 'STRIP', 'CUSTOM']
       - name: currency
         tests:
           - not_null
       - name: per_unit
         tests:
           - not_null
-  - name: stg_curve_quarantine
-    description: Filtered view of landing rows that were quarantined with reasons attached.
-    columns:
-      - name: quarantine_reason
+      - name: curve_key
         tests:
           - not_null
-  - name: stg_curve_observation
-    description: Staging model that harmonizes curve observations for downstream consumption.
+          - relationships:
+              to: source('iceberg_raw', 'curve_landing')
+              field: curve_key
+              to_field: curve_key
+      - name: _ingest_ts
+        tests:
+          - not_null
+
+  - name: stg_curve_quarantine
+    description: Filtered view of landing rows that were quarantined with reasons attached.
+    tests:
+      - unique_combination:
+          combination_of_columns:
+            - curve_key
+            - tenor_label
+            - _ingest_ts
     columns:
       - name: curve_key
         tests:
           - not_null
+          - relationships:
+              to: ref('stg_curve_landing')
+              field: curve_key
+              to_field: curve_key
+      - name: quarantine_reason
+        tests:
+          - not_null
+
+  - name: stg_curve_observation
+    description: Staging model that harmonizes curve observations for downstream consumption.
+    tests:
+      - unique_combination:
+          combination_of_columns:
+            - curve_key
+            - tenor_label
+            - asof_date
+    columns:
+      - name: curve_key
+        tests:
+          - not_null
+          - relationships:
+              to: ref('stg_curve_landing')
+              field: curve_key
+              to_field: curve_key
       - name: tenor_label
         tests:
           - not_null
@@ -29,41 +84,74 @@ models:
         description: Normalized currency code for the curve price.
       - name: per_unit
         description: Normalized unit denominator for the curve price.
+
   - name: stg_eia_series
     description: Staging model exposing raw EIA series observations from Timescale.
+    tests:
+      - unique_combination:
+          combination_of_columns:
+            - series_id
+            - period
     columns:
       - name: series_id
         tests:
           - not_null
+          - relationships:
+              to: source('timescale_eia', 'eia_series_timeseries')
+              field: series_id
+              to_field: series_id
       - name: period
         tests:
           - not_null
       - name: frequency
         tests:
           - not_null
+          - accepted_values:
+              values: ['ANNUAL', 'QUARTERLY', 'MONTHLY', 'WEEKLY', 'DAILY', 'HOURLY', 'OTHER']
       - name: ingest_ts
         tests:
           - not_null
+
   - name: stg_drought_index
     description: Staging view exposing raw drought index records with JSON metadata.
+    tests:
+      - unique_combination:
+          combination_of_columns:
+            - series_id
+            - valid_date
     columns:
       - name: series_id
         tests:
           - not_null
+          - relationships:
+              to: source('iceberg_environment', 'drought_index')
+              field: series_id
+              to_field: series_id
       - name: region_type
         tests:
           - not_null
       - name: region_id
         tests:
           - not_null
+          - relationships:
+              to: source('iceberg_environment', 'usdm_area')
+              field: region_id
+              to_field: region_id
       - name: index_id
         tests:
           - not_null
       - name: valid_date
         tests:
           - not_null
+
   - name: stg_usdm_area
     description: Staging view for USDM area fractions at the latest ingest.
+    tests:
+      - unique_combination:
+          combination_of_columns:
+            - region_type
+            - region_id
+            - valid_date
     columns:
       - name: region_type
         tests:
@@ -74,8 +162,21 @@ models:
       - name: valid_date
         tests:
           - not_null
+      - name: region_id
+        tests:
+          - relationships:
+              to: source('iceberg_environment', 'usdm_area')
+              field: region_id
+              to_field: region_id
+
   - name: stg_vector_event
     description: Staging view for vector overlays with geometry serialized as WKT.
+    tests:
+      - unique_combination:
+          combination_of_columns:
+            - layer
+            - event_id
+            - ingest_ts
     columns:
       - name: layer
         tests:
@@ -83,6 +184,10 @@ models:
       - name: event_id
         tests:
           - not_null
+          - relationships:
+              to: source('iceberg_environment', 'vector_events')
+              field: event_id
+              to_field: event_id
       - name: ingest_ts
         tests:
           - not_null

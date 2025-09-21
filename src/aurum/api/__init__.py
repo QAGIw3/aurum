@@ -38,6 +38,50 @@ from .observability.logging import (
     get_security_logger,
     get_business_logger,
 )
+from .versioning import (
+    get_version_manager,
+    get_versioned_router,
+    create_versioned_app,
+    create_v1_router,
+    create_v2_router,
+    VersionStatus,
+    APIVersion,
+    VersionManager,
+    VersionedRouter,
+)
+from .version_management import router as version_management_router
+from .rate_limiting import (
+    create_rate_limit_manager,
+    RateLimitMiddleware,
+    RateLimitManager,
+    RateLimitStorage,
+    InMemoryRateLimitStorage,
+    RedisRateLimitStorage,
+    QuotaTier,
+    Quota,
+    RateLimitRule,
+    RateLimitAlgorithm,
+    RateLimitState,
+    RateLimitResult,
+)
+from .rate_limit_management import router as rate_limit_management_router
+from .websocket_manager import (
+    WebSocketManager,
+    WebSocketConnection,
+    ConnectionState,
+    MessageType,
+    WebSocketMessage,
+    StreamSubscription,
+)
+from .streaming_manager import (
+    StreamingManager,
+    DataStream,
+    StreamConfig,
+    get_streaming_manager,
+    initialize_streaming,
+)
+from .streaming_endpoints import router as streaming_endpoints_router
+from .streaming_management import router as streaming_management_router
 
 create_app = app_module.create_app
 app = app_module
@@ -50,6 +94,7 @@ __all__ = [
     "metadata_router",
     "scenarios_router",
     "cache_analytics_router",
+    "version_management_router",
     "AurumAPIException",
     "ValidationException",
     "NotFoundException",
@@ -74,4 +119,38 @@ __all__ = [
     "get_performance_logger",
     "get_security_logger",
     "get_business_logger",
+    "get_version_manager",
+    "get_versioned_router",
+    "create_versioned_app",
+    "create_v1_router",
+    "create_v2_router",
+    "VersionStatus",
+    "APIVersion",
+    "VersionManager",
+    "VersionedRouter",    "create_rate_limit_manager",
+    "RateLimitMiddleware",
+    "RateLimitManager",
+    "RateLimitStorage",
+    "InMemoryRateLimitStorage",
+    "RedisRateLimitStorage",
+    "QuotaTier",
+    "Quota",
+    "RateLimitRule",
+    "RateLimitAlgorithm",
+    "RateLimitState",
+    "RateLimitResult",
+    "rate_limit_management_router",
+    "WebSocketManager",
+    "WebSocketConnection",
+    "ConnectionState",
+    "MessageType",
+    "WebSocketMessage",
+    "StreamSubscription",
+    "StreamingManager",
+    "DataStream",
+    "StreamConfig",
+    "get_streaming_manager",
+    "initialize_streaming",
+    "streaming_endpoints_router",
+    "streaming_management_router",
 ]

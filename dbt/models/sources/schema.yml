@@ -79,6 +79,9 @@ sources:
     description: Operational metrics persisted to Timescale for platform observability.
     database: "{{ 'timeseries' if target.name != 'duckdb' else (target.database if target.database else 'main') }}"
     schema: "{{ 'public' if target.name != 'duckdb' else target.schema ~ '_public' }}"
+    freshness:
+      warn_after: {count: 30, period: minute}
+      error_after: {count: 2, period: hour}
     tables:
       - name: ops_metrics
         description: Operational metrics stream emitted by workers and platform services.
@@ -93,9 +96,13 @@ sources:
   - name: iceberg_environment
     description: Iceberg environment schema feeding drought analytics.
     schema: "{{ 'environment' if target.name != 'duckdb' else target.schema ~ '_environment' }}"
+    freshness:
+      warn_after: {count: 6, period: hour}
+      error_after: {count: 12, period: hour}
     tables:
       - name: drought_index
         description: Zonal drought index measurements written from Airflow ingestion.
+        loaded_at_field: ingest_ts
         columns:
           - name: series_id
             tests:
@@ -111,6 +118,7 @@ sources:
               - not_null
       - name: usdm_area
         description: USDM area fractions by severity and geography.
+        loaded_at_field: ingest_ts
         columns:
           - name: region_type
             tests:
@@ -123,6 +131,7 @@ sources:
               - not_null
       - name: vector_events
         description: Canonicalized vector overlay events (QPF, AHPS, AQI, wildfire, etc.).
+        loaded_at_field: ingest_ts
         columns:
           - name: layer
             tests:
@@ -133,9 +142,13 @@ sources:
   - name: iceberg_ref
     description: Reference geometries aligned to environment datasets.
     schema: "{{ 'ref' if target.name != 'duckdb' else target.schema ~ '_ref' }}"
+    freshness:
+      warn_after: {count: 1, period: day}
+      error_after: {count: 2, period: day}
     tables:
       - name: geographies
         description: Reference geometries keyed by region_type and region_id.
+        loaded_at_field: updated_at
         columns:
           - name: region_type
             tests:

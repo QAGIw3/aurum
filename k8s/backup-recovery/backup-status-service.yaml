@@ -1,0 +1,233 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: backup-status
+  namespace: aurum-dev
+  labels:
+    app: backup-status
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: backup-status
+  template:
+    metadata:
+      labels:
+        app: backup-status
+    spec:
+      containers:
+      - name: backup-status
+        image: python:3.11-slim
+        command: ["/bin/bash", "-c"]
+        args:
+        - |
+          set -e
+
+          # Install dependencies
+          pip install flask requests minio
+
+          # Create Flask app
+          cat > app.py << 'APP_EOF'
+          from flask import Flask, jsonify, render_template_string
+          import requests
+          import json
+          import os
+          from datetime import datetime, timedelta
+          import subprocess
+
+          app = Flask(__name__)
+
+          MINIO_ENDPOINT = os.environ.get('MINIO_ENDPOINT', 'http://minio.aurum-dev.svc.cluster.local:9000')
+          MINIO_ACCESS_KEY = os.environ.get('MINIO_ACCESS_KEY', 'aurum')
+          MINIO_SECRET_KEY = os.environ.get('MINIO_SECRET_KEY', 'password')
+
+          BACKUP_SERVICES = ['postgresql', 'timescaledb', 'clickhouse', 'minio', 'kafka', 'vault']
+
+          def get_backup_status():
+              status = {
+                  'timestamp': datetime.utcnow().isoformat(),
+                  'services': {}
+              }
+
+              try:
+                  # Check Minio connectivity
+                  result = subprocess.run([
+                      'mc', 'alias', 'set', 'aurum-minio', MINIO_ENDPOINT, MINIO_ACCESS_KEY, MINIO_SECRET_KEY
+                  ], capture_output=True, text=True)
+
+                  if result.returncode != 0:
+                      return {'error': 'Minio connection failed', 'details': result.stderr}
+
+                  # Check each service backup
+                  for service in BACKUP_SERVICES:
+                      try:
+                          result = subprocess.run([
+                              'mc', 'ls', f'aurum-minio/aurum-backups/{service}/'
+                          ], capture_output=True, text=True)
+
+                          if result.returncode == 0:
+                              lines = result.stdout.strip().split('\n')
+                              if lines and lines[0]:
+                                  latest_backup = lines[-1].split()[-1]
+                                  backup_count = len(lines)
+
+                                  # Get backup size
+                                  size_result = subprocess.run([
+                                      'mc', 'stat', f'aurum-minio/aurum-backups/{service}/{latest_backup}'
+                                  ], capture_output=True, text=True)
+
+                                  size = 'unknown'
+                                  if size_result.returncode == 0:
+                                      for line in size_result.stdout.split('\n'):
+                                          if 'Size:' in line:
+                                              size = line.split('Size:')[1].strip()
+                                              break
+
+                                  status['services'][service] = {
+                                      'status': 'healthy',
+                                      'latest_backup': latest_backup,
+                                      'backup_count': backup_count,
+                                      'size': size
+                                  }
+                              else:
+                                  status['services'][service] = {
+                                      'status': 'no_backups',
+                                      'message': 'No backups found'
+                                  }
+                          else:
+                              status['services'][service] = {
+                                  'status': 'error',
+                                  'message': result.stderr
+                              }
+                      except Exception as e:
+                          status['services'][service] = {
+                              'status': 'error',
+                              'message': str(e)
+                          }
+
+              except Exception as e:
+                  return {'error': 'Service check failed', 'details': str(e)}
+
+              return status
+
+          @app.route('/health')
+          def health():
+              return jsonify({'status': 'healthy'})
+
+          @app.route('/api/backup-status')
+          def backup_status_api():
+              return jsonify(get_backup_status())
+
+          @app.route('/')
+          def dashboard():
+              status = get_backup_status()
+
+              html = """
+              <!DOCTYPE html>
+              <html>
+              <head>
+                  <title>Aurum Backup Status</title>
+                  <style>
+                      body { font-family: Arial, sans-serif; margin: 20px; }
+                      .service { border: 1px solid #ddd; margin: 10px 0; padding: 15px; border-radius: 5px; }
+                      .healthy { background-color: #d4edda; border-color: #c3e6cb; }
+                      .warning { background-color: #fff3cd; border-color: #ffeaa7; }
+                      .error { background-color: #f8d7da; border-color: #f5c6cb; }
+                      .status { font-weight: bold; }
+                      .healthy .status { color: #155724; }
+                      .warning .status { color: #856404; }
+                      .error .status { color: #721c24; }
+                  </style>
+              </head>
+              <body>
+                  <h1>Aurum Data Platform - Backup Status</h1>
+                  <p>Last updated: {{ timestamp }}</p>
+
+                  {% for service, info in services.items() %}
+                  <div class="service {{ info.status }}">
+                      <h3>{{ service|title }}</h3>
+                      <div class="status">{{ info.status|title }}</div>
+                      {% if info.latest_backup %}
+                      <p>Latest backup: {{ info.latest_backup }}</p>
+                      <p>Backup count: {{ info.backup_count }}</p>
+                      <p>Size: {{ info.size }}</p>
+                      {% endif %}
+                      {% if info.message %}
+                      <p>{{ info.message }}</p>
+                      {% endif %}
+                  </div>
+                  {% endfor %}
+              </body>
+              </html>
+              """
+              return render_template_string(html, **status)
+          APP_EOF
+
+          # Start Flask app
+          exec python app.py
+        ports:
+        - containerPort: 5000
+          name: http
+        env:
+        - name: MINIO_ENDPOINT
+          value: "http://minio.aurum-dev.svc.cluster.local:9000"
+        - name: MINIO_ACCESS_KEY
+          value: "aurum"
+        - name: MINIO_SECRET_KEY
+          valueFrom:
+            secretKeyRef:
+              name: minio-secrets
+              key: rootPassword
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: http
+          initialDelaySeconds: 30
+          periodSeconds: 10
+        readinessProbe:
+          httpGet:
+            path: /health
+            port: http
+          initialDelaySeconds: 5
+          periodSeconds: 5
+        resources:
+          requests:
+            cpu: 50m
+            memory: 128Mi
+          limits:
+            cpu: 100m
+            memory: 256Mi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: backup-status
+  namespace: aurum-dev
+spec:
+  selector:
+    app: backup-status
+  ports:
+  - port: 80
+    targetPort: 5000
+    name: http
+  type: ClusterIP
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: backup-status-config
+  namespace: aurum-dev
+data:
+  nginx.conf: |
+    server {
+        listen 80;
+        server_name localhost;
+
+        location / {
+            proxy_pass http://localhost:5000;
+            proxy_set_header Host $host;
+            proxy_set_header X-Real-IP $remote_addr;
+            proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+            proxy_set_header X-Forwarded-Proto $scheme;
+        }
+    }

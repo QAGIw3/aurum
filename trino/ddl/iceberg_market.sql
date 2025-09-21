@@ -356,3 +356,100 @@ SELECT
     computed_ts AS latest_computed_ts
 FROM ranked
 WHERE rn = 1;
+
+CREATE OR REPLACE VIEW iceberg.market.maintenance_snapshot_summary AS
+SELECT
+    'raw.curve_landing' AS table_name,
+    snapshot_id,
+    committed_at,
+    operation,
+    TRY_CAST(summary['total-data-files'] AS BIGINT) AS total_data_files,
+    TRY_CAST(summary['added-data-files'] AS BIGINT) AS added_data_files,
+    TRY_CAST(summary['deleted-data-files'] AS BIGINT) AS deleted_data_files,
+    TRY_CAST(summary['total-records'] AS BIGINT) AS total_records
+FROM iceberg.raw.curve_landing$snapshots
+UNION ALL
+SELECT
+    'curve_observation' AS table_name,
+    snapshot_id,
+    committed_at,
+    operation,
+    TRY_CAST(summary['total-data-files'] AS BIGINT) AS total_data_files,
+    TRY_CAST(summary['added-data-files'] AS BIGINT) AS added_data_files,
+    TRY_CAST(summary['deleted-data-files'] AS BIGINT) AS deleted_data_files,
+    TRY_CAST(summary['total-records'] AS BIGINT) AS total_records
+FROM iceberg.market.curve_observation$snapshots
+UNION ALL
+SELECT
+    'curve_observation_quarantine' AS table_name,
+    snapshot_id,
+    committed_at,
+    operation,
+    TRY_CAST(summary['total-data-files'] AS BIGINT) AS total_data_files,
+    TRY_CAST(summary['added-data-files'] AS BIGINT) AS added_data_files,
+    TRY_CAST(summary['deleted-data-files'] AS BIGINT) AS deleted_data_files,
+    TRY_CAST(summary['total-records'] AS BIGINT) AS total_records
+FROM iceberg.market.curve_observation_quarantine$snapshots
+UNION ALL
+SELECT
+    'scenario_output' AS table_name,
+    snapshot_id,
+    committed_at,
+    operation,
+    TRY_CAST(summary['total-data-files'] AS BIGINT) AS total_data_files,
+    TRY_CAST(summary['added-data-files'] AS BIGINT) AS added_data_files,
+    TRY_CAST(summary['deleted-data-files'] AS BIGINT) AS deleted_data_files,
+    TRY_CAST(summary['total-records'] AS BIGINT) AS total_records
+FROM iceberg.market.scenario_output$snapshots
+UNION ALL
+SELECT
+    'ppa_valuation' AS table_name,
+    snapshot_id,
+    committed_at,
+    operation,
+    TRY_CAST(summary['total-data-files'] AS BIGINT) AS total_data_files,
+    TRY_CAST(summary['added-data-files'] AS BIGINT) AS added_data_files,
+    TRY_CAST(summary['deleted-data-files'] AS BIGINT) AS deleted_data_files,
+    TRY_CAST(summary['total-records'] AS BIGINT) AS total_records
+FROM iceberg.market.ppa_valuation$snapshots
+UNION ALL
+SELECT
+    'qa_checks' AS table_name,
+    snapshot_id,
+    committed_at,
+    operation,
+    TRY_CAST(summary['total-data-files'] AS BIGINT) AS total_data_files,
+    TRY_CAST(summary['added-data-files'] AS BIGINT) AS added_data_files,
+    TRY_CAST(summary['deleted-data-files'] AS BIGINT) AS deleted_data_files,
+    TRY_CAST(summary['total-records'] AS BIGINT) AS total_records
+FROM iceberg.market.qa_checks$snapshots;
+
+CREATE OR REPLACE VIEW iceberg.market.maintenance_file_metrics AS
+WITH files AS (
+    SELECT 'raw.curve_landing' AS table_name, file_size_in_bytes
+    FROM iceberg.raw.curve_landing$files
+    UNION ALL
+    SELECT 'curve_observation' AS table_name, file_size_in_bytes
+    FROM iceberg.market.curve_observation$files
+    UNION ALL
+    SELECT 'curve_observation_quarantine' AS table_name, file_size_in_bytes
+    FROM iceberg.market.curve_observation_quarantine$files
+    UNION ALL
+    SELECT 'scenario_output' AS table_name, file_size_in_bytes
+    FROM iceberg.market.scenario_output$files
+    UNION ALL
+    SELECT 'ppa_valuation' AS table_name, file_size_in_bytes
+    FROM iceberg.market.ppa_valuation$files
+    UNION ALL
+    SELECT 'qa_checks' AS table_name, file_size_in_bytes
+    FROM iceberg.market.qa_checks$files
+)
+SELECT
+    table_name,
+    COUNT(*) AS data_file_count,
+    ROUND(SUM(file_size_in_bytes) / 1048576.0, 2) AS total_size_mb,
+    ROUND(AVG(file_size_in_bytes) / 1048576.0, 2) AS avg_file_size_mb,
+    ROUND(MAX(file_size_in_bytes) / 1048576.0, 2) AS max_file_size_mb,
+    ROUND(MIN(file_size_in_bytes) / 1048576.0, 2) AS min_file_size_mb
+FROM files
+GROUP BY table_name;

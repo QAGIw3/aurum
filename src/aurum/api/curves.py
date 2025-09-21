@@ -52,94 +52,94 @@ async def get_curves(
     # Handle offset-based pagination
     pagination = OffsetLimit(limit=limit, offset=offset)
 
-        try:
-            # Start tracing for this API request
-            from ..observability.tracing import trace_api_request
-            async with trace_api_request("/v1/curves", "GET") as span:
-                span.set_attribute("filters", {
-                    "asof": asof,
-                    "iso": iso,
-                    "market": market,
-                    "location": location,
-                    "product": product,
-                    "block": block
-                })
-                span.set_attribute("pagination", {
-                    "limit": limit,
-                    "offset": offset,
-                    "cursor": bool(cursor_obj)
-                })
+    try:
+        # Start tracing for this API request
+        from ..observability.tracing import trace_api_request
+        async with trace_api_request("/v1/curves", "GET") as span:
+            span.set_attribute("filters", {
+                "asof": asof,
+                "iso": iso,
+                "market": market,
+                "location": location,
+                "product": product,
+                "block": block
+            })
+            span.set_attribute("pagination", {
+                "limit": limit,
+                "offset": offset,
+                "cursor": bool(cursor_obj)
+            })
 
-                # Start database operation trace
-                from ..observability.tracing import trace_database_operation
-                async with trace_database_operation("fetch_curve_data") as db_span:
-                    points, meta = await fetch_curve_data(
-                        asof=asof,
-                        iso=iso,
-                        market=market,
-                        location=location,
-                        product=product,
-                        block=block,
-                        pagination=pagination,
-                        cursor=cursor_obj,
-                        prev_cursor=prev_cursor,
-                    )
-
-                    db_span.set_attribute("rows_returned", len(points))
-                    db_span.set_attribute("has_cursor", bool(meta.next_cursor))
-
-                query_time_ms = (time.perf_counter() - start_time) * 1000
-
-                # Log the API request
-                from ..observability.logging import get_api_logger, log_api_request
-                api_logger = get_api_logger()
-                log_api_request(
-                    api_logger,
-                    "/v1/curves",
-                    "GET",
-                    200,
-                    query_time_ms / 1000,
-                    rows_returned=len(points),
-                    filters_applied=sum(1 for f in [asof, iso, market, location, product, block] if f is not None)
+            # Start database operation trace
+            from ..observability.tracing import trace_database_operation
+            async with trace_database_operation("fetch_curve_data") as db_span:
+                points, meta = await fetch_curve_data(
+                    asof=asof,
+                    iso=iso,
+                    market=market,
+                    location=location,
+                    product=product,
+                    block=block,
+                    pagination=pagination,
+                    cursor=cursor_obj,
+                    prev_cursor=prev_cursor,
                 )
 
-                # Record metrics
-                from ..observability.metrics import increment_api_requests, observe_api_latency
-                await increment_api_requests("/v1/curves", "GET", 200)
-                await observe_api_latency("/v1/curves", "GET", query_time_ms / 1000)
+                db_span.set_attribute("rows_returned", len(points))
+                db_span.set_attribute("has_cursor", bool(meta.next_cursor))
 
-                return CurveResponse(
-                    meta={
-                        "request_id": get_request_id(),
-                        "query_time_ms": round(query_time_ms, 2),
-                        "next_cursor": meta.next_cursor,
-                        "prev_cursor": meta.prev_cursor,
-                    },
-                    data=points,
-                )
-
-        except Exception as exc:
             query_time_ms = (time.perf_counter() - start_time) * 1000
 
-            # Log the error
-            from ..observability.logging import get_api_logger, log_error
+            # Log the API request
+            from ..observability.logging import get_api_logger, log_api_request
             api_logger = get_api_logger()
-            log_error(
+            log_api_request(
                 api_logger,
-                exc,
-                "fetch_curve_data",
-                endpoint="/v1/curves",
-                method="GET"
+                "/v1/curves",
+                "GET",
+                200,
+                query_time_ms / 1000,
+                rows_returned=len(points),
+                filters_applied=sum(1 for f in [asof, iso, market, location, product, block] if f is not None)
             )
 
-            # Record error metrics
-            from ..observability.metrics import increment_api_requests
-            await increment_api_requests("/v1/curves", "GET", 500)
+            # Record metrics
+            from ..observability.metrics import increment_api_requests, observe_api_latency
+            await increment_api_requests("/v1/curves", "GET", 200)
+            await observe_api_latency("/v1/curves", "GET", query_time_ms / 1000)
 
-            raise HTTPException(
-                status_code=500,
-                detail=f"Failed to fetch curve data: {str(exc)}"
-            ) from exc
+            return CurveResponse(
+                meta={
+                    "request_id": get_request_id(),
+                    "query_time_ms": round(query_time_ms, 2),
+                    "next_cursor": meta.next_cursor,
+                    "prev_cursor": meta.prev_cursor,
+                },
+                data=points,
+            )
+
+    except Exception as exc:
+        query_time_ms = (time.perf_counter() - start_time) * 1000
+
+        # Log the error
+        from ..observability.logging import get_api_logger, log_error
+        api_logger = get_api_logger()
+        log_error(
+            api_logger,
+            exc,
+            "fetch_curve_data",
+            endpoint="/v1/curves",
+            method="GET"
+        )
+
+        # Record error metrics
+        from ..observability.metrics import increment_api_requests
+        await increment_api_requests("/v1/curves", "GET", 500)
+
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to fetch curve data: {str(exc)}"
+        ) from exc
 
 
 @router.get("/v1/curves/diff", response_model=CurveDiffResponse)

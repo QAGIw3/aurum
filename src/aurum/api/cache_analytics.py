@@ -266,12 +266,12 @@ async def get_performance_recommendations(
         for namespace, data in analytics.items():
             if data.hit_rate < 0.5:
                 recommendations.append(
-                    f"Low hit rate ({data.hit_rate".1%"}) in namespace '{namespace}' - "
+                    f"Low hit rate ({data.hit_rate:.1%}) in namespace '{namespace}' - "
                     "consider increasing TTL or reducing data volatility"
                 )
             elif data.hit_rate > 0.95:
                 recommendations.append(
-                    f"High hit rate ({data.hit_rate".1%"}) in namespace '{namespace}' - "
+                    f"High hit rate ({data.hit_rate:.1%}) in namespace '{namespace}' - "
                     "consider increasing TTL to reduce cache misses"
                 )
 
@@ -280,7 +280,7 @@ async def get_performance_recommendations(
         total_memory = memory_usage.get("estimated_size_bytes", 0)
         if total_memory > 100 * 1024 * 1024:  # 100MB
             recommendations.append(
-                f"High memory usage ({total_memory / (1024*1024)".1f"}MB) - "
+                f"High memory usage ({total_memory / (1024*1024):.1f}MB) - "
                 "consider implementing cache eviction policies"
             )
 
@@ -410,7 +410,7 @@ async def get_cache_health(
         for namespace, data in analytics.items():
             if data.hit_rate < 0.2:
                 health_status = "degraded"
-                issues.append(f"Low hit rate in namespace '{namespace}': {data.hit_rate".1%"}")
+                issues.append(f"Low hit rate in namespace '{namespace}': {data.hit_rate:.1%}")
 
         query_time_ms = (time.perf_counter() - start_time) * 1000
 

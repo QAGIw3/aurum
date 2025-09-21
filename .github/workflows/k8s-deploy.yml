@@ -1,0 +1,68 @@
+name: Kubernetes Deployment
+
+on:
+  push:
+    branches: [ main ]
+    paths:
+      - 'k8s/**'
+      - 'src/**'
+      - 'helm/**'
+  workflow_run:
+    workflows: ["Docker Build and Push"]
+    types:
+      - completed
+
+env:
+  KUBECONFIG: ${{ secrets.KUBECONFIG }}
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    if: ${{ github.event.workflow_run.conclusion == 'success' || github.event_name == 'push' }}
+
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v4
+
+    - name: Set up kubectl
+      uses: azure/setup-kubectl@v3
+      with:
+        version: 'v1.28.0'
+
+    - name: Configure kubectl
+      run: |
+        echo "${{ secrets.KUBECONFIG }}" > $KUBECONFIG
+        chmod 600 $KUBECONFIG
+
+    - name: Deploy to Kubernetes
+      run: |
+        # Update image tags in Kubernetes manifests
+        find k8s/ -name "*.yaml" -type f -exec sed -i "s|image:.*api:.*|image: ghcr.io/${{ github.repository }}/api:${{ github.sha }}|g" {} \;
+        find k8s/ -name "*.yaml" -type f -exec sed -i "s|image:.*aurum-api:.*|image: ghcr.io/${{ github.repository }}/aurum-api:${{ github.sha }}|g" {} \;
+
+        # Apply Kubernetes manifests
+        kubectl apply -f k8s/api/
+        kubectl apply -f k8s/scenario-worker/
+
+        # Wait for rollout to complete
+        kubectl rollout status deployment/api -n aurum-dev --timeout=300s
+        kubectl rollout status deployment/scenario-worker -n aurum-dev --timeout=300s
+
+    - name: Verify deployment
+      run: |
+        echo "Checking deployment status..."
+        kubectl get pods -n aurum-dev -l app=api
+        kubectl get pods -n aurum-dev -l app=scenario-worker
+        kubectl get svc -n aurum-dev
+
+    - name: Run smoke tests
+      run: |
+        # Wait for services to be ready
+        kubectl wait --for=condition=available --timeout=60s deployment/api -n aurum-dev
+        kubectl wait --for=condition=available --timeout=60s deployment/scenario-worker -n aurum-dev
+
+        # Run basic connectivity tests
+        API_POD=$(kubectl get pods -n aurum-dev -l app=api -o jsonpath='{.items[0].metadata.name}')
+        kubectl exec $API_POD -n aurum-dev -- curl -f http://localhost:8080/health || exit 1
+
+        echo "✅ Deployment and smoke tests completed successfully"

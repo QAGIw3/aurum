@@ -76,7 +76,7 @@ class AsyncParser(ABC):
 
             self.logger.info(
                 f"Completed parse of {path}: {len(result.data)} rows, "
-                f"{len(result.errors)} errors, {processing_time".2f"}s",
+                f"{len(result.errors)} errors, {processing_time:.2f}s",
                 extra={"request_id": request_id}
             )
 

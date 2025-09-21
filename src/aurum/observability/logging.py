@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-import asyncio
+import json
 import logging
 import sys
 import traceback
@@ -62,14 +62,13 @@ class ContextFilter(logging.Filter):
             # Add trace information if available
             try:
                 from .tracing import get_current_trace_id, get_current_span_id
-                trace_id = asyncio.create_task(get_current_trace_id())
-                span_id = asyncio.create_task(get_current_span_id())
 
-                # Since these are async, we'll set them if available
-                # In practice, this would be handled differently
-                if hasattr(record, "trace_id"):
+                trace_id = get_current_trace_id()
+                span_id = get_current_span_id()
+
+                if trace_id is not None:
                     record.trace_id = trace_id
-                if hasattr(record, "span_id"):
+                if span_id is not None:
                     record.span_id = span_id
 
             except Exception:
@@ -256,7 +255,7 @@ def log_performance_issue(
 ) -> None:
     """Log performance issue when operation exceeds threshold."""
     logger.warning(
-        f"Performance issue in {operation}: {duration".3f"}s > {threshold".3f"}s",
+        f"Performance issue in {operation}: {duration:.3f}s > {threshold:.3f}s",
         component="performance",
         operation=operation,
         duration=duration,

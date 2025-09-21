@@ -1,0 +1,94 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: postgres-backup
+  namespace: aurum-dev
+spec:
+  template:
+    spec:
+      containers:
+      - name: postgres-backup
+        image: postgres:14
+        command: ["/bin/bash", "-c"]
+        args:
+        - |
+          set -e
+
+          # Set backup timestamp
+          BACKUP_TIMESTAMP=$(date -u +'%Y%m%d_%H%M%S')
+          BACKUP_NAME="postgres_full_backup_${BACKUP_TIMESTAMP}"
+
+          echo "Starting PostgreSQL backup: $BACKUP_NAME"
+
+          # Create backup directory
+          mkdir -p /backup/$BACKUP_NAME
+
+          # Perform base backup
+          pg_basebackup -h postgres.aurum-dev.svc.cluster.local \
+                       -U aurum \
+                       -D /backup/$BACKUP_NAME \
+                       -Ft \
+                       -z \
+                       -P \
+                       -v
+
+          # Create backup metadata
+          cat > /backup/$BACKUP_NAME/backup_metadata.json << METADATA_EOF
+          {
+            "backup_type": "full",
+            "database": "postgresql",
+            "timestamp": "$BACKUP_TIMESTAMP",
+            "backup_method": "pg_basebackup",
+            "compression": "gzip",
+            "status": "completed"
+          }
+          METADATA_EOF
+
+          # Upload to Minio
+          echo "Uploading backup to Minio..."
+          mc alias set aurum-minio http://minio.aurum-dev.svc.cluster.local:9000 aurum password
+          mc cp -r /backup/$BACKUP_NAME aurum-minio/aurum-backups/postgresql/
+
+          # Cleanup local backup
+          rm -rf /backup/$BACKUP_NAME
+
+          echo "✅ PostgreSQL backup completed successfully: $BACKUP_NAME"
+        env:
+        - name: PGPASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: postgres-secrets
+              key: password
+        volumeMounts:
+        - name: backup-storage
+          mountPath: /backup
+      volumes:
+      - name: backup-storage
+        emptyDir: {}
+      restartPolicy: OnFailure
+  backoffLimit: 3
+---
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: postgres-backup-schedule
+  namespace: aurum-dev
+spec:
+  schedule: "0 2 * * *"
+  jobTemplate:
+    spec:
+      template:
+        spec:
+          containers:
+          - name: postgres-backup-scheduled
+            image: postgres:14
+            command: ["/bin/bash", "-c"]
+            args:
+            - |
+              echo "Starting scheduled PostgreSQL backup..."
+              kubectl create job postgres-backup-$(date +%s) --from=cronjob/postgres-backup-schedule
+            volumeMounts: []
+          volumes: []
+          restartPolicy: OnFailure
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 5

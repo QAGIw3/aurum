@@ -5,7 +5,7 @@ from __future__ import annotations
 import sys
 import types
 
-from fastapi import FastAPI
+from fastapi import Depends, FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.gzip import GZipMiddleware
 
@@ -19,6 +19,7 @@ from .config import CacheConfig
 from .ratelimit import RateLimitConfig, RateLimitMiddleware
 from .routes import METRICS_MIDDLEWARE, access_log_middleware, configure_routes, router
 from .state import configure as configure_state
+from aurum.observability.api import router as observability_router
 
 
 def create_app(settings: AurumSettings | None = None) -> FastAPI:
@@ -61,6 +62,17 @@ def create_app(settings: AurumSettings | None = None) -> FastAPI:
     if settings.api.metrics.enabled and METRICS_MIDDLEWARE is not None:
         app.middleware("http")(METRICS_MIDDLEWARE)
 
+    def _observability_admin_guard(
+        principal=Depends(_routes._get_principal),
+    ) -> None:
+        """Require administrator access for observability endpoints."""
+
+        _routes._require_admin(principal)
+
+    app.include_router(
+        observability_router,
+        dependencies=[Depends(_observability_admin_guard)],
+    )
     app.include_router(router)
     return app
 

@@ -1,211 +1,117 @@
-.PHONY: install lint test format bootstrap trino-apply-iso-views timescale-apply-ddl kind-scenario-smoke seed-ingest-sources
+.PHONY: help build test deploy lint clean docker-build docker-push k8s-deploy db-migrate security-scan
 
-KIND_CLUSTER_NAME ?= $(if $(AURUM_KIND_CLUSTER),$(AURUM_KIND_CLUSTER),aurum-dev)
-KIND_NAMESPACE ?= aurum-dev
-KIND_API_IMAGE ?= ghcr.io/aurum/aurum-api
-KIND_WORKER_IMAGE ?= ghcr.io/aurum/aurum-worker
+# Default target
+help: ## Show this help message
+	@echo 'Usage: make [target]'
+	@echo ''
+	@echo 'Available targets:'
+	@awk 'BEGIN {FS = ":.*?## "} /^[a-zA-Z_-]+:.*?## / {printf "  %-15s %s\n", $$1, $$2}' $(MAKEFILE_LIST)
 
-.PHONY: db-upgrade db-downgrade
+# Development
+build: ## Build the application
+	docker build -f Dockerfile.api -t aurum-api .
+	docker build -f Dockerfile.worker -t aurum-worker .
 
-db-upgrade:
-	alembic upgrade head
+test: ## Run tests
+	pytest tests/ -v
 
-db-downgrade:
-	alembic downgrade -1
+lint: ## Run linting
+	black --check src/ tests/
+	isort --check-only src/ tests/
+	flake8 src/ tests/
 
-install:
-	python -m venv .venv && . .venv/bin/activate && pip install --upgrade pip && pip install -r requirements-dev.txt
+format: ## Format code
+	black src/ tests/
+	isort src/ tests/
 
-test:
-	. .venv/bin/activate && pytest
+clean: ## Clean up build artifacts
+	find . -type f -name "*.pyc" -delete
+	find . -type d -name "__pycache__" -delete
+	docker system prune -f
 
-lint:
-	. .venv/bin/activate && ruff check src tests
+# Docker operations
+docker-build: ## Build Docker images
+	docker build -f Dockerfile.api -t ghcr.io/aurum/api:latest .
+	docker build -f Dockerfile.worker -t ghcr.io/aurum/aurum-api:latest .
 
-format:
-	. .venv/bin/activate && ruff check --fix src tests
+docker-push: ## Push Docker images to registry
+	docker push ghcr.io/aurum/api:latest
+	docker push ghcr.io/aurum/aurum-api:latest
 
-bootstrap:
-	docker compose -f compose/docker-compose.dev.yml --profile bootstrap up --exit-code-from bootstrap
+# Kubernetes operations
+k8s-deploy: ## Deploy to Kubernetes
+	kubectl apply -f k8s/api/
+	kubectl apply -f k8s/scenario-worker/
+	kubectl rollout status deployment/api -n aurum-dev --timeout=300s
+	kubectl rollout status deployment/scenario-worker -n aurum-dev --timeout=300s
 
-.PHONY: kind-create kind-delete kind-apply kind-reset kind-bootstrap kind-apply-ui kind-delete-ui kind-up kind-down kind-load-api kind-load-worker kind-scenario-smoke kafka-register-schemas kafka-set-compat kafka-apply-topics kafka-apply-topics-dry-run kafka-apply-topics-kind kafka-apply-topics-kind-dry-run minio-bootstrap
+k8s-validate: ## Validate Kubernetes deployment
+	@echo "Checking deployment status..."
+	@kubectl get pods -n aurum-dev -l app=api
+	@kubectl get pods -n aurum-dev -l app=scenario-worker
+	@kubectl get svc -n aurum-dev
+	@echo "✅ Deployment validation completed"
 
-kind-create:
-	scripts/k8s/create_kind_cluster.sh
+# Database operations
+db-migrate: ## Run database migrations
+	@echo "Running database migrations..."
+	@alembic upgrade head
+	@echo "✅ Database migrations completed"
 
-kind-delete:
-	scripts/k8s/destroy_kind_cluster.sh
+db-rollback: ## Rollback database migrations
+	@read -p "Enter number of migrations to rollback: " num; \
+	alembic downgrade -$$num
 
-kind-apply:
-	scripts/k8s/apply.sh
+# Security
+security-scan: ## Run security scans
+	bandit -r src/ -f json -o bandit-report.json
+	safety check --json | jq '.[] | .vulnerability' > safety-report.json
+	@echo "Security scan reports generated"
 
-kind-reset:
-	scripts/k8s/delete.sh
+# Monitoring
+monitoring-health: ## Check monitoring health
+	@kubectl port-forward svc/prometheus -n monitoring 9090:9090 &
+	@sleep 2
+	@curl -f http://localhost:9090/-/healthy && echo "✅ Prometheus healthy" || echo "❌ Prometheus unhealthy"
+	@curl -f http://localhost:9090/-/ready && echo "✅ Prometheus ready" || echo "❌ Prometheus not ready"
+	@pkill -f "port-forward"
 
-kind-bootstrap:
-	scripts/k8s/bootstrap.sh
+# CI/CD helpers
+ci-docker: ## Run Docker CI pipeline locally
+	docker build -f Dockerfile.api -t ghcr.io/aurum/api:test .
+	docker build -f Dockerfile.worker -t ghcr.io/aurum/aurum-api:test .
 
-kind-apply-ui:
-	scripts/k8s/apply_ui.sh
+ci-test: ## Run full test suite locally
+	$(MAKE) lint
+	$(MAKE) test
+	$(MAKE) security-scan
 
-kind-delete-ui:
-	scripts/k8s/delete_ui.sh
+ci-deploy: ## Run deployment pipeline locally
+	$(MAKE) build
+	$(MAKE) k8s-deploy
+	$(MAKE) k8s-validate
 
-kind-up:
-	$(MAKE) kind-create
-	$(MAKE) kind-apply
-	$(MAKE) kind-bootstrap
-	SCHEMA_REGISTRY_URL=$${SCHEMA_REGISTRY_URL:-http://schema-registry.aurum.localtest.me:8085} $(MAKE) kafka-bootstrap
+# Environment setup
+env-setup: ## Set up development environment
+	pip install -r requirements-dev.txt
+	pre-commit install
+	@echo "Development environment ready"
 
-kind-down:
-	@if [ "$${KIND_DOWN_FORCE:-}" != "1" ] && [ "$${KIND_DOWN_FORCE:-}" != "true" ] && [ "$${KIND_DOWN_FORCE:-}" != "yes" ]; then \
-		printf "This will delete the '%s' kind cluster and remove all aurum-dev resources. Continue? [y/N] " "${KIND_CLUSTER_NAME}"; \
-		read answer; \
-		case "$$answer" in \
-			y|Y|yes|YES) ;; \
-			*) echo "Aborted."; exit 1 ;; \
-		esac; \
-	fi
-	$(MAKE) kind-reset
-	AURUM_KIND_CLUSTER=${KIND_CLUSTER_NAME} $(MAKE) kind-delete
+# Git workflow helpers
+git-pre-commit: ## Run pre-commit checks
+	pre-commit run --all-files
 
-kind-load-api:
-	docker build -f Dockerfile.api -t ${KIND_API_IMAGE}:dev .
-	kind load docker-image ${KIND_API_IMAGE}:dev --name "${KIND_CLUSTER_NAME}"
-	kubectl -n ${KIND_NAMESPACE} set image deployment/aurum-api api=${KIND_API_IMAGE}:dev
+git-release: ## Create a release
+	@read -p "Enter release version: " version; \
+	git tag -a "v$${version}" -m "Release v$${version}"; \
+	git push origin main --tags; \
+	echo "✅ Release v$${version} created"
 
-kind-load-worker:
-	docker build -f Dockerfile.worker -t ${KIND_WORKER_IMAGE}:dev .
-	kind load docker-image ${KIND_WORKER_IMAGE}:dev --name "${KIND_CLUSTER_NAME}"
-	kubectl -n ${KIND_NAMESPACE} set image deployment/aurum-scenario-worker worker=${KIND_WORKER_IMAGE}:dev
+# Documentation
+docs-serve: ## Serve documentation locally
+	@echo "Documentation available at http://localhost:8000"
+	@cd docs && python -m http.server 8000
 
-kind-scenario-smoke:
-	python scripts/dev/kind_scenario_smoke.py
-
-kafka-register-schemas:
-	python scripts/kafka/register_schemas.py --schema-registry-url $${SCHEMA_REGISTRY_URL:-http://localhost:8081}
-
-kafka-set-compat:
-	python scripts/kafka/set_compatibility.py --schema-registry-url $${SCHEMA_REGISTRY_URL:-http://localhost:8081} --level $${COMPATIBILITY_LEVEL:-BACKWARD}
-
-kafka-bootstrap:
-	scripts/kafka/bootstrap.sh --schema-registry-url $${SCHEMA_REGISTRY_URL:-http://localhost:8081}
-
-kafka-apply-topics:
-	python scripts/kafka/manage_topics.py --bootstrap-servers $${KAFKA_BOOTSTRAP:-localhost:9092} --config $${KAFKA_TOPICS_CONFIG:-config/kafka_topics.json}
-
-kafka-apply-topics-dry-run:
-	python scripts/kafka/manage_topics.py --bootstrap-servers $${KAFKA_BOOTSTRAP:-localhost:9092} --config $${KAFKA_TOPICS_CONFIG:-config/kafka_topics.json} --dry-run
-
-kafka-apply-topics-kind:
-	KAFKA_TOPICS_CONFIG=config/kafka_topics.kind.json $(MAKE) kafka-apply-topics
-
-kafka-apply-topics-kind-dry-run:
-	KAFKA_TOPICS_CONFIG=config/kafka_topics.kind.json $(MAKE) kafka-apply-topics-dry-run
-
-minio-bootstrap:
-	python scripts/storage/bootstrap_minio.py --endpoint $${AURUM_S3_ENDPOINT:-http://localhost:9000} --access-key $${AURUM_S3_ACCESS_KEY:-minio} --secret-key $${AURUM_S3_SECRET_KEY:-minio123}
-
-seed-ingest-sources:
-	python scripts/dev/seed_ingest_sources.py $(if $(DSN),--dsn $(DSN),) --with-watermarks
-
-.PHONY: eia-validate-config airflow-eia-vars
-
-eia-validate-config:
-	python scripts/eia/validate_config.py
-
-airflow-eia-vars:
-	python scripts/eia/set_airflow_variables.py --apply
-
-.PHONY: airflow-apply-vars airflow-print-vars airflow-check-vars
-
-airflow-apply-vars:
-	python scripts/airflow/set_variables.py --file config/airflow_variables.json --apply
-
-airflow-print-vars:
-	python scripts/airflow/set_variables.py --file config/airflow_variables.json
-
-airflow-check-vars:
-	python scripts/airflow/validate_variables.py --file config/airflow_variables.json
-
-.PHONY: airflow-list-vars airflow-list-aurum-vars
-
-airflow-list-vars:
-	airflow variables list || true
-
-airflow-list-aurum-vars:
-	airflow variables list | grep -E "aurum_|AURUM_" || true
-
-trino-apply-iso-views:
-	. .venv/bin/activate && \
-	python scripts/trino/run_sql.py --server $${TRINO_SERVER:-http://localhost:8080} --user $${TRINO_USER:-aurum} trino/ddl/iso_lmp_views.sql
-
-trino-apply-eia:
-	python scripts/trino/run_sql.py --server $${TRINO_SERVER:-http://localhost:8080} --user $${TRINO_USER:-aurum} trino/ddl/eia_series.sql
-
-timescale-apply-ddl:
-	. .venv/bin/activate && \
-	python scripts/sql/apply_file.py --dsn $${TIMESCALE_DSN:-postgresql://timescale:timescale@localhost:5433/timeseries} timescale/ddl_timeseries.sql
-
-timescale-apply-noaa:
-	. .venv/bin/activate && \
-	python scripts/sql/apply_file.py --dsn $${TIMESCALE_DSN:-postgresql://timescale:timescale@localhost:5433/timeseries} timescale/ddl_noaa.sql
-
-timescale-apply-fred:
-	. .venv/bin/activate && \
-	python scripts/sql/apply_file.py --dsn $${TIMESCALE_DSN:-postgresql://timescale:timescale@localhost:5433/timeseries} timescale/ddl_fred.sql
-
-timescale-apply-cpi:
-	. .venv/bin/activate && \
-	python scripts/sql/apply_file.py --dsn $${TIMESCALE_DSN:-postgresql://timescale:timescale@localhost:5433/timeseries} timescale/ddl_cpi.sql
-
-timescale-apply-eia:
-	. .venv/bin/activate && \
-	python scripts/sql/apply_file.py --dsn $${TIMESCALE_DSN:-postgresql://timescale:timescale@localhost:5433/timeseries} timescale/ddl_eia.sql
-
-.PHONY: api-up api-down api-built-up
-
-api-up:
-	docker compose -f compose/docker-compose.dev.yml up -d api
-
-api-built-up:
-	docker compose -f compose/docker-compose.dev.yml --profile api-built up -d api-built
-
-api-down:
-	docker compose -f compose/docker-compose.dev.yml rm -sf api api-built || true
-
-.PHONY: worker-up worker-down worker-built-up worker-built-down
-
-worker-up:
-	docker compose -f compose/docker-compose.dev.yml --profile worker up -d scenario-worker
-
-worker-down:
-	docker compose -f compose/docker-compose.dev.yml --profile worker rm -sf scenario-worker || true
-
-worker-built-up:
-	docker compose -f compose/docker-compose.dev.yml --profile worker-built up -d scenario-worker-built
-
-worker-built-down:
-	docker compose -f compose/docker-compose.dev.yml --profile worker-built rm -sf scenario-worker-built || true
-
-.PHONY: test-docker
-test-docker:
-	scripts/dev/test_in_docker.sh
-
-.PHONY: noaa-kafka-render noaa-kafka-run noaa-timescale-render noaa-timescale-run
-
-# Render the NOAA GHCND → Kafka job with current environment
-noaa-kafka-render:
-	scripts/seatunnel/run_job.sh noaa_ghcnd_to_kafka --render-only
-
-# Run the NOAA GHCND → Kafka job (requires Docker, Kafka, and Schema Registry)
-noaa-kafka-run:
-	scripts/seatunnel/run_job.sh noaa_ghcnd_to_kafka
-
-# Render the NOAA weather → Timescale job with current environment
-noaa-timescale-render:
-	scripts/seatunnel/run_job.sh noaa_weather_kafka_to_timescale --render-only
-
-# Run the NOAA weather → Timescale job (requires Docker and Timescale JDBC access)
-noaa-timescale-run:
-	scripts/seatunnel/run_job.sh noaa_weather_kafka_to_timescale
+docs-build: ## Build documentation
+	@echo "Building documentation..."
+	# Add documentation build commands here

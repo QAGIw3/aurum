@@ -279,12 +279,12 @@ async def example_cache_analytics():
         print(f"  Namespace '{namespace}':")
         print(f"    Hits: {data.hits}")
         print(f"    Misses: {data.misses}")
-        print(f"    Hit Rate: {data.hit_rate".1%"}")
-        print(f"    Avg Response Time: {data.average_response_time".3f"}s")
+        print(f"    Hit Rate: {data.hit_rate:.1%}")
+        print(f"    Avg Response Time: {data.average_response_time:.3f}s")
 
     # Get memory usage
     memory_usage = await cache_manager.get_memory_usage()
-    print(f"\nMemory Usage: {memory_usage.get('estimated_size_bytes', 0) / 1024".1f"} KB")
+    print(f"\nMemory Usage: {memory_usage.get('estimated_size_bytes', 0) / 1024:.1f} KB")
 
     # Get cache health
     health = {
@@ -295,7 +295,7 @@ async def example_cache_analytics():
     # Analyze health based on analytics
     for namespace, data in analytics.items():
         if data.hit_rate < 0.5:
-            health["issues"].append(f"Low hit rate in '{namespace}': {data.hit_rate".1%"}")
+            health["issues"].append(f"Low hit rate in '{namespace}': {data.hit_rate:.1%}")
 
     print(f"Overall Health: {health['status']}")
     if health["issues"]:
@@ -343,6 +343,425 @@ async def example_distributed_caching():
     print("  Namespace cleared")
 
 
+async def example_api_versioning():
+    """Example of API versioning with backward compatibility."""
+    print("\n=== API Versioning Example ===")
+
+    from .versioning import (
+        get_version_manager,
+        create_v1_router,
+        create_v2_router,
+        VersionStatus,
+        DeprecationInfo
+    )
+
+    # Get version manager
+    version_manager = get_version_manager()
+
+    # Register v1 API
+    v1_router = create_v1_router()
+    await version_manager.register_version(
+        "1.0",
+        status=VersionStatus.ACTIVE,
+        supported_features=["basic_queries", "simple_filtering"]
+    )
+
+    # Register v2 API with enhanced features
+    v2_router = create_v2_router()
+    await version_manager.register_version(
+        "2.0",
+        status=VersionStatus.ACTIVE,
+        supported_features=[
+            "async_support",
+            "improved_error_handling",
+            "advanced_caching",
+            "real_time_updates"
+        ]
+    )
+
+    # Get version information
+    v1_version = await version_manager.get_version("1.0")
+    v2_version = await version_manager.get_version("2.0")
+
+    print("API Versions:")
+    print(f"  v1.0: {v1_version.status.value} - Features: {v1_version.supported_features}")
+    print(f"  v2.0: {v2_version.status.value} - Features: {v2_version.supported_features}")
+
+    # List all versions
+    all_versions = await version_manager.list_versions()
+    print(f"\nAll registered versions: {len(all_versions)}")
+    for version in all_versions:
+        print(f"  - {version.version}: {version.status.value}")
+
+    # Get default version
+    default_version = await version_manager.get_default_version()
+    print(f"Default version: {default_version}")
+
+    # Demonstrate version deprecation
+    print("\n--- Deprecation Example ---")
+    deprecation_info = DeprecationInfo(
+        deprecated_in="2024-01-01T00:00:00Z",
+        sunset_on="2024-06-01T00:00:00Z",
+        removed_in="2024-12-01T00:00:00Z",
+        migration_guide="https://docs.example.com/migration/v1-to-v2",
+        alternative_endpoints=["/v2/curves", "/v2/metadata"]
+    )
+
+    await version_manager.register_version(
+        "1.5",
+        status=VersionStatus.DEPRECATED,
+        deprecation_info=deprecation_info,
+        supported_features=["basic_queries", "deprecated_features"]
+    )
+
+    v15_version = await version_manager.get_version("1.5")
+    print(f"v1.5: {v15_version.status.value}")
+    print(f"  Deprecation info: {v15_version.deprecation_info.dict() if v15_version.deprecation_info else 'None'}")
+
+
+async def example_version_migration():
+    """Example of migrating between API versions."""
+    print("\n=== Version Migration Example ===")
+
+    # Example migration function
+    async def migrate_curve_data_v1_to_v2(v1_data):
+        """Migrate curve data from v1 to v2 format."""
+        v2_data = v1_data.copy()
+
+        # Add v2-specific fields
+        v2_data["version"] = "2.0"
+        v2_data["metadata"] = {
+            "migrated_from": "v1.0",
+            "migration_date": "2024-01-01T00:00:00Z",
+            "enhanced_fields": ["real_time_data", "advanced_analytics"]
+        }
+
+        # Transform v1 fields to v2 format
+        if "price" in v2_data:
+            v2_data["price_v2"] = {
+                "value": v2_data.pop("price"),
+                "currency": "USD",
+                "unit": "MWh",
+                "confidence_interval": [v2_data["price"] * 0.95, v2_data["price"] * 1.05]
+            }
+
+        return v2_data
+
+    # Sample v1 data
+    v1_curve_data = {
+        "id": "curve_123",
+        "iso": "PJM",
+        "market": "DAY_AHEAD",
+        "price": 50.0,
+        "timestamp": "2024-01-01T12:00:00Z"
+    }
+
+    print("Original v1 data:")
+    print(f"  {v1_curve_data}")
+
+    # Migrate to v2
+    v2_curve_data = await migrate_curve_data_v1_to_v2(v1_curve_data)
+
+    print("\nMigrated v2 data:")
+    print(f"  {v2_curve_data}")
+
+    print("\nMigration completed:")
+    print(f"  - Added version field: {v2_curve_data.get('version')}")
+    print(f"  - Added metadata: {bool(v2_curve_data.get('metadata'))}")
+    print(f"  - Enhanced price field: {bool(v2_curve_data.get('price_v2'))}")
+
+
+async def example_version_compatibility():
+    """Example of maintaining backward compatibility."""
+    print("\n=== Version Compatibility Example ===")
+
+    from .versioning import create_versioned_app
+
+    # Create versioned application
+    version_manager, versioned_router = create_versioned_app(
+        title="Aurum API",
+        description="Versioned Market Intelligence API",
+        version="2.0.0"
+    )
+
+    print("Versioned API Setup:")
+    print("  - Automatic version resolution from headers")
+    print("  - Deprecation headers for old versions")
+    print("  - Migration guidance for users")
+    print("  - Backward compatibility maintained")
+
+    # Example of how clients would interact
+    print("\nClient Usage Examples:")
+
+    print("1. Latest version (automatic):")
+    print("   curl -H 'Accept: application/vnd.aurum.v2+json' /api/curves")
+
+    print("\n2. Specific version:")
+    print("   curl -H 'X-API-Version: 1.0' /api/curves")
+
+    print("\n3. Version via URL:")
+    print("   curl /api/v1/curves")
+    print("   curl /api/v2/curves")
+
+    print("\n4. Deprecation warning response:")
+    print("   X-API-Deprecation: true")
+    print("   X-API-Sunset: 2024-06-01T00:00:00Z")
+    print("   X-API-Migration-Guide: https://docs.example.com/migration/v1-to-v2")
+
+    # Show version information
+    versions = await version_manager.list_versions()
+    print(f"\nActive versions: {len([v for v in versions if v.is_supported()])}")
+    print(f"Deprecated versions: {len([v for v in versions if v.is_deprecated()])}")
+
+    print("\nVersion compatibility matrix:")
+    for version in versions:
+        if version.is_supported():
+            status = "✓ Supported"
+        elif version.is_deprecated():
+            status = "⚠ Deprecated"
+        else:
+            status = "✗ Retired"
+
+        print(f"  {version.version}: {status}")
+
+
+async def example_rate_limiting():
+    """Example of sophisticated rate limiting with quotas and tiers."""
+    print("\n=== Rate Limiting Example ===")
+
+    from .rate_limiting import (
+        create_rate_limit_manager,
+        RateLimitMiddleware,
+        QuotaTier,
+        Quota,
+        RateLimitRule,
+        RateLimitAlgorithm,
+    )
+
+    # Create rate limit manager with default configuration
+    manager = create_rate_limit_manager("memory")
+
+    print("Rate Limiting Configuration:")
+    print("  Default quotas configured for all tiers")
+    print("  Token bucket algorithm with burst handling")
+    print("  Custom rules for specific endpoints")
+
+    # Get quota information
+    free_quota = manager.get_quota(QuotaTier.FREE)
+    premium_quota = manager.get_quota(QuotaTier.PREMIUM)
+
+    if free_quota:
+        print("
+Quota Comparison:")
+        print(f"  Free Tier: {free_quota.requests_per_minute}/min, {free_quota.requests_per_hour}/hour")
+        print(f"  Premium Tier: {premium_quota.requests_per_minute if premium_quota else 'N/A'}/min, {premium_quota.requests_per_hour if premium_quota else 'N/A'}/hour")
+
+    # Simulate rate limit checks
+    print("
+Simulated Rate Limit Checks:")
+
+    # Test different identifiers
+    test_identifiers = [
+        ("free_user", QuotaTier.FREE),
+        ("premium_user", QuotaTier.PREMIUM),
+        ("enterprise_user", QuotaTier.ENTERPRISE),
+    ]
+
+    for identifier, tier in test_identifiers:
+        # Check rate limit (would normally be done by middleware)
+        result = await manager.check_rate_limit(
+            identifier=identifier,
+            tier=tier,
+            endpoint="/v1/curves",
+            user_agent="test-client"
+        )
+
+        status = "✓ Allowed" if result.allowed else "✗ Limited"
+        print(f"  {identifier}: {status} (remaining: {result.remaining_requests}, tier: {result.tier.value})")
+
+
+async def example_rate_limit_middleware():
+    """Example of rate limiting middleware usage."""
+    print("\n=== Rate Limiting Middleware Example ===")
+
+    from .rate_limiting import create_rate_limit_manager, RateLimitMiddleware
+
+    # Create middleware
+    manager = create_rate_limit_manager("memory")
+    middleware = RateLimitMiddleware(manager)
+
+    print("Rate Limiting Middleware Features:")
+    print("  - Automatic identifier extraction from headers/IP")
+    print("  - Tier detection from X-Tier header")
+    print("  - Rate limit headers in responses")
+    print("  - 429 responses for exceeded limits")
+
+    print("
+Identifier Extraction Priority:")
+    print("  1. X-API-Key header")
+    print("  2. Authorization: Bearer token")
+    print("  3. X-Tenant-ID header")
+    print("  4. X-User-ID header")
+    print("  5. Client IP address")
+
+    print("
+Response Headers Added:")
+    print("  X-RateLimit-Limit: requests per minute")
+    print("  X-RateLimit-Remaining: remaining requests")
+    print("  X-RateLimit-Reset: reset time in seconds")
+    print("  X-RateLimit-Tier: user tier")
+    print("  Retry-After: seconds to wait (when limited)")
+
+
+async def example_rate_limit_management():
+    """Example of rate limiting management and monitoring."""
+    print("\n=== Rate Limiting Management Example ===")
+
+    print("Management API Endpoints:")
+
+    management_endpoints = [
+        "GET /v1/admin/ratelimit/quotas",
+        "GET /v1/admin/ratelimit/quotas/{tier}",
+        "POST /v1/admin/ratelimit/quotas/{tier}",
+        "GET /v1/admin/ratelimit/rules",
+        "POST /v1/admin/ratelimit/rules",
+        "GET /v1/admin/ratelimit/usage",
+        "GET /v1/admin/ratelimit/violations",
+        "POST /v1/admin/ratelimit/cleanup",
+        "POST /v1/admin/ratelimit/reset",
+        "GET /v1/admin/ratelimit/configuration",
+        "GET /v1/admin/ratelimit/health",
+    ]
+
+    for endpoint in management_endpoints:
+        print(f"  {endpoint}")
+
+    print("
+Quota Tiers Available:")
+    tiers = ["free", "basic", "premium", "enterprise", "unlimited"]
+    for tier in tiers:
+        print(f"  - {tier}")
+
+    print("
+Rate Limit Algorithms:")
+    algorithms = ["token_bucket", "sliding_window", "fixed_window", "adaptive"]
+    for alg in algorithms:
+        print(f"  - {alg}")
+
+    # Example management operations
+    print("
+Example Management Operations:")
+    print("  curl -X GET /v1/admin/ratelimit/usage?tier=premium")
+    print("  curl -X POST /v1/admin/ratelimit/quotas/premium \\")
+    print("    -H 'Content-Type: application/json' \\")
+    print("    -d '{\"requests_per_minute\": 2000}'")
+    print("  curl -X POST /v1/admin/ratelimit/cleanup")
+
+
+async def example_rate_limit_scenarios():
+    """Example of rate limiting scenarios and responses."""
+    print("\n=== Rate Limiting Scenarios Example ===")
+
+    print("Scenario 1: Normal Usage")
+    print("  Request: GET /v1/curves (Free tier)")
+    print("  Response: 200 OK")
+    print("  Headers:")
+    print("    X-RateLimit-Limit: 60")
+    print("    X-RateLimit-Remaining: 59")
+    print("    X-RateLimit-Tier: free")
+    print("  ✓ Request allowed")
+
+    print("
+Scenario 2: Approaching Limit")
+    print("  Request: GET /v1/curves (59th request in minute)")
+    print("  Response: 200 OK")
+    print("  Headers:")
+    print("    X-RateLimit-Limit: 60")
+    print("    X-RateLimit-Remaining: 1")
+    print("    X-RateLimit-Tier: free")
+    print("  ⚠ Near limit")
+
+    print("
+Scenario 3: Rate Limited")
+    print("  Request: GET /v1/curves (61st request in minute)")
+    print("  Response: 429 Too Many Requests")
+    print("  Headers:")
+    print("    X-RateLimit-Limit: 60")
+    print("    X-RateLimit-Remaining: 0")
+    print("    Retry-After: 60")
+    print("    X-RateLimit-Tier: free")
+    print("  ✗ Request denied")
+
+    print("
+Scenario 4: Premium Tier")
+    print("  Request: GET /v1/curves (Premium tier)")
+    print("  Response: 200 OK")
+    print("  Headers:")
+    print("    X-RateLimit-Limit: 1000")
+    print("    X-RateLimit-Remaining: 999")
+    print("    X-RateLimit-Tier: premium")
+    print("  ✓ Higher limits")
+
+    print("
+Scenario 5: Burst Handling")
+    print("  Request: Multiple rapid requests")
+    print("  Response: 200 OK (within burst limit)")
+    print("  Headers: X-RateLimit-Remaining reflects burst usage")
+    print("  ✓ Burst allowance")
+
+
+async def example_rate_limit_monitoring():
+    """Example of rate limiting monitoring and analytics."""
+    print("\n=== Rate Limiting Monitoring Example ===")
+
+    print("Real-time Monitoring:")
+    print("  - Current usage per tier")
+    print("  - Active rate limit states")
+    print("  - Violation counts and patterns")
+    print("  - Top violators identification")
+
+    print("
+Usage Analytics:")
+    print("  curl -X GET '/v1/admin/ratelimit/usage?tier=premium&hours=24'")
+    print("  Response:")
+    print("  {")
+    print("    'tier': 'premium',")
+    print("    'active_users': 1250,")
+    print("    'requests_today': 450000,")
+    print("    'requests_this_hour': 18750,")
+    print("    'average_utilization': 0.78")
+    print("  }")
+
+    print("
+Violation Analytics:")
+    print("  curl -X GET '/v1/admin/ratelimit/violations?hours=24'")
+    print("  Response:")
+    print("  {")
+    print("    'total_violations': 45,")
+    print("    'violations_by_tier': {'free': 40, 'basic': 5},")
+    print("    'violations_by_endpoint': {'/v1/curves': 35},")
+    print("    'top_violators': ['ip:192.168.1.100', 'apikey:abc123']")
+    print("  }")
+
+    print("
+Health Monitoring:")
+    print("  curl -X GET '/v1/admin/ratelimit/health'")
+    print("  Response:")
+    print("  {")
+    print("    'status': 'healthy',")
+    print("    'storage_backend': 'redis',")
+    print("    'quota_tiers_configured': 5,")
+    print("    'cleanup_last_run': 1640995200.0")
+    print("  }")
+
+    print("
+Alerting Examples:")
+    print("  - High violation rate alerts")
+    print("  - Tier utilization thresholds")
+    print("  - Storage backend health issues")
+    print("  - Burst limit exhaustion warnings")
+
+
 async def main():
     """Run all examples."""
     print("🚀 Aurum API Refactored Architecture Examples")
@@ -359,6 +778,20 @@ async def main():
     await example_advanced_caching()
     await example_cache_analytics()
     await example_distributed_caching()
+    await example_api_versioning()
+    await example_version_migration()
+    await example_version_compatibility()
+    await example_rate_limiting()
+    await example_rate_limit_middleware()
+    await example_rate_limit_management()
+    await example_rate_limit_scenarios()
+    await example_rate_limit_monitoring()
+    await example_data_streaming()
+    await example_websocket_connection()
+    await example_streaming_endpoints()
+    await example_streaming_scenarios()
+    await example_streaming_performance()
+    await example_streaming_monitoring()
 
     print("\n" + "=" * 50)
     print("✅ All examples completed successfully!")
@@ -373,6 +806,15 @@ async def main():
     print("• Advanced caching with warming and analytics")
     print("• Distributed caching capabilities")
     print("• Cache performance monitoring and recommendations")
+    print("• API versioning with backward compatibility")
+    print("• Version migration tools and deprecation management")
+    print("• Structured observability with metrics, tracing, and logging")
+    print("• Sophisticated rate limiting with user/tenant quotas")
+    print("• Multi-tier quota management and burst handling")
+    print("• Rate limiting analytics and violation monitoring")
+    print("• Real-time data streaming with WebSocket support")
+    print("• Server-Sent Events for simple streaming")
+    print("• Multi-protocol streaming with comprehensive management")
 
 
 if __name__ == "__main__":

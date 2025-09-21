@@ -1,394 +1,289 @@
-"""Comprehensive metrics collection system for the Aurum platform."""
+"""Observability metrics utilities backed by Prometheus."""
 
 from __future__ import annotations
 
-import asyncio
 import time
-from contextlib import asynccontextmanager
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from enum import Enum
-from typing import Any, Dict, List, Optional, Union
+from typing import Dict, List, Union
 
-from ..telemetry.context import get_request_id
+try:  # pragma: no cover - optional dependency
+    from prometheus_client import (
+        CONTENT_TYPE_LATEST as _PROM_CONTENT_TYPE,
+        Counter,
+        Gauge,
+        Histogram,
+        REGISTRY,
+        generate_latest as _prom_generate_latest,
+    )
+except ImportError:  # pragma: no cover - Prometheus not installed
+    Counter = None  # type: ignore[assignment]
+    Gauge = None  # type: ignore[assignment]
+    Histogram = None  # type: ignore[assignment]
+    REGISTRY = None  # type: ignore[assignment]
+    _PROM_CONTENT_TYPE = "text/plain; version=0.0.4; charset=utf-8"
+    _prom_generate_latest = None  # type: ignore[assignment]
+
+
+METRICS_PATH = "/metrics"
+PROMETHEUS_AVAILABLE = Counter is not None and Gauge is not None and Histogram is not None and REGISTRY is not None
 
 
 class MetricType(Enum):
-    """Types of metrics that can be collected."""
-    COUNTER = "counter"          # Monotonically increasing value
-    GAUGE = "gauge"              # Point-in-time value
-    HISTOGRAM = "histogram"      # Distribution of values
-    SUMMARY = "summary"          # Quantiles of observed values
+    """Metric types emitted by the observability endpoints."""
+
+    COUNTER = "counter"
+    GAUGE = "gauge"
+    HISTOGRAM = "histogram"
+    SUMMARY = "summary"
 
 
 @dataclass
 class MetricPoint:
-    """A single metric data point."""
+    """A single metric sample."""
+
     name: str
     value: Union[int, float]
     timestamp: float
-    labels: Dict[str, str] = field(default_factory=dict)
-    metric_type: MetricType = MetricType.GAUGE
+    labels: Dict[str, str]
+    metric_type: MetricType
 
 
-@dataclass
-class HistogramBucket:
-    """Histogram bucket configuration."""
-    le: float  # Less than or equal
-    count: int = 0
+_METRIC_TYPE_MAP = {
+    "counter": MetricType.COUNTER,
+    "gauge": MetricType.GAUGE,
+    "histogram": MetricType.HISTOGRAM,
+    "summary": MetricType.SUMMARY,
+}
 
 
-@dataclass
-class HistogramMetric:
-    """Histogram metric data."""
-    name: str
-    sum: float = 0.0
-    count: int = 0
-    buckets: List[HistogramBucket] = field(default_factory=list)
-    labels: Dict[str, str] = field(default_factory=dict)
-    timestamp: float = field(default_factory=time.time)
+if PROMETHEUS_AVAILABLE:  # pragma: no branch - simplify instrumentation when available
+    REQUEST_COUNTER = Counter(
+        "aurum_api_requests_total",
+        "Total API requests",
+        ["method", "path", "status"],
+    )
+    REQUEST_LATENCY = Histogram(
+        "aurum_api_request_duration_seconds",
+        "API request duration in seconds",
+        ["method", "path"],
+    )
+    TILE_CACHE_COUNTER = Counter(
+        "aurum_drought_tile_cache_total",
+        "Drought tile cache lookup results",
+        ["endpoint", "result"],
+    )
+    TILE_FETCH_LATENCY = Histogram(
+        "aurum_drought_tile_fetch_seconds",
+        "Downstream drought tile/info fetch latency in seconds",
+        ["endpoint", "status"],
+    )
+    CACHE_HIT_COUNTER = Counter(
+        "aurum_cache_hits_total",
+        "Cache hit counter",
+        ["type"],
+    )
+    CACHE_MISS_COUNTER = Counter(
+        "aurum_cache_misses_total",
+        "Cache miss counter",
+        ["type"],
+    )
+    DB_QUERY_DURATION = Histogram(
+        "aurum_db_query_duration_seconds",
+        "Database query duration",
+        ["type"],
+    )
+    QUEUE_SIZE_GAUGE = Gauge(
+        "aurum_queue_size",
+        "Queue backlog size",
+        ["queue"],
+    )
+    ACTIVE_CONNECTIONS_GAUGE = Gauge(
+        "aurum_active_connections",
+        "Active API connections",
+    )
+
+    CONTENT_TYPE_LATEST = _PROM_CONTENT_TYPE
+    generate_latest = _prom_generate_latest
+
+    async def _metrics_middleware(request, call_next):  # pragma: no cover - exercised in integration
+        request_path = request.url.path
+        if request_path == METRICS_PATH:
+            return await call_next(request)
+
+        method = request.method
+        route = request.scope.get("route") if hasattr(request, "scope") else None
+        path_template = getattr(route, "path", request_path)
+        start_time = time.perf_counter()
+        status_code = "500"
+        try:
+            response = await call_next(request)
+            status_code = str(response.status_code)
+            return response
+        finally:
+            duration = time.perf_counter() - start_time
+            try:
+                REQUEST_LATENCY.labels(method=method, path=path_template).observe(duration)
+                REQUEST_COUNTER.labels(method=method, path=path_template, status=status_code).inc()
+            except Exception:  # pragma: no cover - guard against label issues
+                pass
+
+    METRICS_MIDDLEWARE = _metrics_middleware
+else:  # pragma: no cover - Prometheus not present
+    REQUEST_COUNTER = REQUEST_LATENCY = None
+    TILE_CACHE_COUNTER = TILE_FETCH_LATENCY = None
+    CACHE_HIT_COUNTER = CACHE_MISS_COUNTER = None
+    DB_QUERY_DURATION = None
+    QUEUE_SIZE_GAUGE = ACTIVE_CONNECTIONS_GAUGE = None
+    CONTENT_TYPE_LATEST = "text/plain; version=0.0.4; charset=utf-8"
+
+    def generate_latest():  # type: ignore[misc]
+        raise RuntimeError("prometheus_client is not installed")
+
+    METRICS_MIDDLEWARE = None
 
 
 class MetricsCollector:
-    """Core metrics collection and aggregation system."""
-
-    def __init__(self):
-        self._counters: Dict[str, Dict[str, int]] = {}
-        self._gauges: Dict[str, Dict[str, Union[int, float]]] = {}
-        self._histograms: Dict[str, Dict[str, HistogramMetric]] = {}
-        self._summaries: Dict[str, Dict[str, List[float]]] = {}
-        self._lock = asyncio.Lock()
-
-    async def increment_counter(
-        self,
-        name: str,
-        value: int = 1,
-        labels: Optional[Dict[str, str]] = None
-    ) -> None:
-        """Increment a counter metric."""
-        labels = labels or {}
-        label_key = self._make_label_key(labels)
-
-        async with self._lock:
-            if name not in self._counters:
-                self._counters[name] = {}
-            self._counters[name][label_key] = (
-                self._counters[name].get(label_key, 0) + value
-            )
-
-    async def set_gauge(
-        self,
-        name: str,
-        value: Union[int, float],
-        labels: Optional[Dict[str, str]] = None
-    ) -> None:
-        """Set a gauge metric value."""
-        labels = labels or {}
-        label_key = self._make_label_key(labels)
-
-        async with self._lock:
-            if name not in self._gauges:
-                self._gauges[name] = {}
-            self._gauges[name][label_key] = value
-
-    async def observe_histogram(
-        self,
-        name: str,
-        value: float,
-        buckets: List[float] = None,
-        labels: Optional[Dict[str, str]] = None
-    ) -> None:
-        """Observe a value in a histogram."""
-        if buckets is None:
-            buckets = [0.1, 0.5, 1.0, 2.0, 5.0, 10.0, float('inf')]
-
-        labels = labels or {}
-        label_key = self._make_label_key(labels)
-
-        async with self._lock:
-            if name not in self._histograms:
-                self._histograms[name] = {}
-
-            if label_key not in self._histograms[name]:
-                self._histograms[name][label_key] = HistogramMetric(
-                    name=name,
-                    buckets=[HistogramBucket(le=bucket) for bucket in buckets],
-                    labels=labels.copy()
-                )
-
-            histogram = self._histograms[name][label_key]
-            histogram.sum += value
-            histogram.count += 1
-
-            # Update buckets
-            for bucket in histogram.buckets:
-                if value <= bucket.le:
-                    bucket.count += 1
-
-    async def observe_summary(
-        self,
-        name: str,
-        value: float,
-        labels: Optional[Dict[str, str]] = None
-    ) -> None:
-        """Observe a value in a summary."""
-        labels = labels or {}
-        label_key = self._make_label_key(labels)
-
-        async with self._lock:
-            if name not in self._summaries:
-                self._summaries[name] = {}
-            if label_key not in self._summaries[name]:
-                self._summaries[name][label_key] = []
-
-            values = self._summaries[name][label_key]
-            values.append(value)
-
-            # Keep only last 1000 values to prevent memory growth
-            if len(values) > 1000:
-                values.pop(0)
-
-    def _make_label_key(self, labels: Dict[str, str]) -> str:
-        """Create a consistent key from label dictionary."""
-        if not labels:
-            return ""
-
-        # Sort labels for consistent ordering
-        sorted_items = sorted(labels.items())
-        return ",".join(f"{k}={v}" for k, v in sorted_items)
-
-    async def get_counter(
-        self,
-        name: str,
-        labels: Optional[Dict[str, str]] = None
-    ) -> Optional[int]:
-        """Get current value of a counter."""
-        labels = labels or {}
-        label_key = self._make_label_key(labels)
-
-        async with self._lock:
-            return self._counters.get(name, {}).get(label_key)
-
-    async def get_gauge(
-        self,
-        name: str,
-        labels: Optional[Dict[str, str]] = None
-    ) -> Optional[Union[int, float]]:
-        """Get current value of a gauge."""
-        labels = labels or {}
-        label_key = self._make_label_key(labels)
-
-        async with self._lock:
-            return self._gauges.get(name, {}).get(label_key)
-
-    async def get_histogram(
-        self,
-        name: str,
-        labels: Optional[Dict[str, str]] = None
-    ) -> Optional[HistogramMetric]:
-        """Get histogram data."""
-        labels = labels or {}
-        label_key = self._make_label_key(labels)
-
-        async with self._lock:
-            return self._histograms.get(name, {}).get(label_key)
-
-    async def get_summary_quantiles(
-        self,
-        name: str,
-        quantiles: List[float] = None,
-        labels: Optional[Dict[str, str]] = None
-    ) -> Dict[float, float]:
-        """Get quantiles from summary observations."""
-        if quantiles is None:
-            quantiles = [0.5, 0.9, 0.95, 0.99]
-
-        labels = labels or {}
-        label_key = self._make_label_key(labels)
-
-        async with self._lock:
-            values = self._summaries.get(name, {}).get(label_key, [])
-            if not values:
-                return {}
-
-            sorted_values = sorted(values)
-            result = {}
-            for q in quantiles:
-                if 0 <= q <= 1:
-                    index = int(q * (len(sorted_values) - 1))
-                    result[q] = sorted_values[index]
-
-            return result
+    """Thin wrapper that exposes Prometheus metrics in a structured form."""
 
     async def collect_metrics(self) -> List[MetricPoint]:
-        """Collect all metrics in Prometheus format."""
-        metrics = []
-        timestamp = time.time()
+        if not PROMETHEUS_AVAILABLE or REGISTRY is None:
+            return []
 
-        # Collect counters
-        for name, label_values in self._counters.items():
-            for label_key, value in label_values.items():
-                labels = self._parse_label_key(label_key)
-                metrics.append(MetricPoint(
-                    name=name,
-                    value=value,
-                    timestamp=timestamp,
-                    labels=labels,
-                    metric_type=MetricType.COUNTER
-                ))
-
-        # Collect gauges
-        for name, label_values in self._gauges.items():
-            for label_key, value in label_values.items():
-                labels = self._parse_label_key(label_key)
-                metrics.append(MetricPoint(
-                    name=name,
-                    value=value,
-                    timestamp=timestamp,
-                    labels=labels,
-                    metric_type=MetricType.GAUGE
-                ))
-
-        # Collect histograms
-        for name, label_values in self._histograms.items():
-            for label_key, histogram in label_values.items():
-                labels = self._parse_label_key(label_key)
-
-                # Add count metric
-                metrics.append(MetricPoint(
-                    name=f"{name}_count",
-                    value=histogram.count,
-                    timestamp=timestamp,
-                    labels=labels,
-                    metric_type=MetricType.COUNTER
-                ))
-
-                # Add sum metric
-                metrics.append(MetricPoint(
-                    name=f"{name}_sum",
-                    value=histogram.sum,
-                    timestamp=timestamp,
-                    labels=labels,
-                    metric_type=MetricType.COUNTER
-                ))
-
-                # Add bucket metrics
-                for bucket in histogram.buckets:
-                    bucket_labels = labels.copy()
-                    bucket_labels["le"] = str(bucket.le)
-                    metrics.append(MetricPoint(
-                        name=f"{name}_bucket",
-                        value=bucket.count,
+        now = time.time()
+        points: List[MetricPoint] = []
+        for metric in REGISTRY.collect():
+            metric_type = _METRIC_TYPE_MAP.get(metric.type, MetricType.GAUGE)
+            for sample in metric.samples:
+                labels = {str(key): str(value) for key, value in sample.labels.items()}
+                timestamp = sample.timestamp if sample.timestamp is not None else now
+                points.append(
+                    MetricPoint(
+                        name=sample.name,
+                        value=sample.value,
                         timestamp=timestamp,
-                        labels=bucket_labels,
-                        metric_type=MetricType.COUNTER
-                    ))
-
-        return metrics
-
-    def _parse_label_key(self, label_key: str) -> Dict[str, str]:
-        """Parse label key back into dictionary."""
-        if not label_key:
-            return {}
-
-        labels = {}
-        for part in label_key.split(","):
-            if "=" in part:
-                key, value = part.split("=", 1)
-                labels[key] = value
-        return labels
-
-    async def reset_metrics(self) -> None:
-        """Reset all metrics (for testing)."""
-        async with self._lock:
-            self._counters.clear()
-            self._gauges.clear()
-            self._histograms.clear()
-            self._summaries.clear()
+                        labels=labels,
+                        metric_type=metric_type,
+                    )
+                )
+        return points
 
 
-# Global metrics collector
 _metrics_collector = MetricsCollector()
 
 
 def get_metrics_collector() -> MetricsCollector:
-    """Get the global metrics collector instance."""
+    """Return the shared metrics collector instance."""
+
     return _metrics_collector
 
 
-# Convenience functions for common metrics
 async def increment_api_requests(
     endpoint: str,
     method: str = "GET",
-    status_code: int = 200
+    status_code: int = 200,
 ) -> None:
-    """Increment API request counter."""
-    labels = {
-        "endpoint": endpoint,
-        "method": method,
-        "status_code": str(status_code)
-    }
-    await _metrics_collector.increment_counter(
-        "aurum_api_requests_total",
-        labels=labels
-    )
+    """Increment the API request counter for the given endpoint."""
+
+    if REQUEST_COUNTER is None:
+        return
+    try:
+        REQUEST_COUNTER.labels(method=method, path=endpoint, status=str(status_code)).inc()
+    except Exception:  # pragma: no cover - guard against label mismatches
+        pass
 
 
 async def observe_api_latency(
     endpoint: str,
     method: str,
-    duration_seconds: float
+    duration_seconds: float,
 ) -> None:
-    """Observe API request latency."""
-    labels = {"endpoint": endpoint, "method": method}
-    await _metrics_collector.observe_histogram(
-        "aurum_api_request_duration_seconds",
-        duration_seconds,
-        buckets=[0.1, 0.5, 1.0, 2.0, 5.0, 10.0, 30.0, 60.0],
-        labels=labels
-    )
+    """Record API latency histogram observations."""
+
+    if REQUEST_LATENCY is None:
+        return
+    try:
+        REQUEST_LATENCY.labels(method=method, path=endpoint).observe(duration_seconds)
+    except Exception:  # pragma: no cover - guard against label mismatches
+        pass
 
 
 async def set_active_connections(count: int) -> None:
-    """Set number of active connections."""
-    await _metrics_collector.set_gauge(
-        "aurum_active_connections",
-        count
-    )
+    """Set the number of active connections."""
+
+    if ACTIVE_CONNECTIONS_GAUGE is None:
+        return
+    try:
+        ACTIVE_CONNECTIONS_GAUGE.set(count)
+    except Exception:  # pragma: no cover - guard against gauge errors
+        pass
 
 
 async def increment_cache_hits(cache_type: str = "memory") -> None:
     """Increment cache hit counter."""
-    await _metrics_collector.increment_counter(
-        "aurum_cache_hits_total",
-        labels={"type": cache_type}
-    )
+
+    if CACHE_HIT_COUNTER is None:
+        return
+    try:
+        CACHE_HIT_COUNTER.labels(type=cache_type).inc()
+    except Exception:  # pragma: no cover
+        pass
 
 
 async def increment_cache_misses(cache_type: str = "memory") -> None:
     """Increment cache miss counter."""
-    await _metrics_collector.increment_counter(
-        "aurum_cache_misses_total",
-        labels={"type": cache_type}
-    )
+
+    if CACHE_MISS_COUNTER is None:
+        return
+    try:
+        CACHE_MISS_COUNTER.labels(type=cache_type).inc()
+    except Exception:  # pragma: no cover
+        pass
 
 
 async def observe_query_duration(
     query_type: str,
-    duration_seconds: float
+    duration_seconds: float,
 ) -> None:
     """Observe database query duration."""
-    await _metrics_collector.observe_histogram(
-        "aurum_db_query_duration_seconds",
-        duration_seconds,
-        buckets=[0.01, 0.1, 0.5, 1.0, 2.0, 5.0, 10.0],
-        labels={"type": query_type}
-    )
+
+    if DB_QUERY_DURATION is None:
+        return
+    try:
+        DB_QUERY_DURATION.labels(type=query_type).observe(duration_seconds)
+    except Exception:  # pragma: no cover
+        pass
 
 
 async def set_queue_size(queue_name: str, size: int) -> None:
     """Set queue size gauge."""
-    await _metrics_collector.set_gauge(
-        "aurum_queue_size",
-        size,
-        labels={"queue": queue_name}
-    )
+
+    if QUEUE_SIZE_GAUGE is None:
+        return
+    try:
+        QUEUE_SIZE_GAUGE.labels(queue=queue_name).set(size)
+    except Exception:  # pragma: no cover
+        pass
+
+
+__all__ = [
+    "MetricPoint",
+    "MetricType",
+    "METRICS_MIDDLEWARE",
+    "METRICS_PATH",
+    "PROMETHEUS_AVAILABLE",
+    "REQUEST_COUNTER",
+    "REQUEST_LATENCY",
+    "TILE_CACHE_COUNTER",
+    "TILE_FETCH_LATENCY",
+    "CONTENT_TYPE_LATEST",
+    "generate_latest",
+    "get_metrics_collector",
+    "increment_api_requests",
+    "observe_api_latency",
+    "set_active_connections",
+    "increment_cache_hits",
+    "increment_cache_misses",
+    "observe_query_duration",
+    "set_queue_size",
+]

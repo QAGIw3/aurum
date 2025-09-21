@@ -5,8 +5,9 @@ from __future__ import annotations
 import asyncio
 import time
 import uuid
+from collections import defaultdict
 from contextlib import asynccontextmanager
-from contextvars import ContextVar
+from contextvars import ContextVar, Token
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional, Union
 
@@ -14,9 +15,9 @@ from ..telemetry.context import get_request_id
 
 
 # Context variables for tracing
-current_trace_id: ContextVar[Optional[str]] = ContextVar('current_trace_id', default=None)
-current_span_id: ContextVar[Optional[str]] = ContextVar('current_span_id', default=None)
-trace_attributes: ContextVar[Dict[str, Any]] = ContextVar('trace_attributes', default_factory=dict)
+current_trace_id: ContextVar[Optional[str]] = ContextVar("current_trace_id", default=None)
+current_span_id: ContextVar[Optional[str]] = ContextVar("current_span_id", default=None)
+trace_attributes: ContextVar[Dict[str, Any]] = ContextVar("trace_attributes")
 
 
 @dataclass
@@ -35,6 +36,9 @@ class Span:
     events: List[Dict[str, Any]] = field(default_factory=list)
     status: str = "ok"  # ok, error, cancelled
     error_message: Optional[str] = None
+    _span_token: Token | None = field(default=None, init=False, repr=False, compare=False)
+    _trace_token: Token | None = field(default=None, init=False, repr=False, compare=False)
+    _attributes_token: Token | None = field(default=None, init=False, repr=False, compare=False)
 
     def finish(self, end_time: Optional[float] = None) -> None:
         """Mark span as finished and calculate duration."""
@@ -77,10 +81,20 @@ class TraceCollector:
         tags: Optional[Dict[str, str]] = None
     ) -> Span:
         """Start a new span."""
+        trace_token: Token | None = None
+        attrs_token: Token | None = None
+
         trace_id = current_trace_id.get()
         if trace_id is None:
             trace_id = str(uuid.uuid4())
-            current_trace_id.set(trace_id)
+            trace_token = current_trace_id.set(trace_id)
+            inherited_attributes: Dict[str, Any] = {}
+            attrs_token = trace_attributes.set(inherited_attributes)
+        else:
+            try:
+                inherited_attributes = trace_attributes.get()
+            except LookupError:
+                inherited_attributes = {}
 
         parent_span_id = current_span_id.get()
         span_id = str(uuid.uuid4())[:8]  # Short span ID for readability
@@ -96,15 +110,17 @@ class TraceCollector:
         )
 
         # Inherit attributes from parent context
-        span.attributes.update(trace_attributes.get({}))
+        span.attributes.update(inherited_attributes)
         span.attributes.update({
             "request_id": get_request_id(),
             "trace_id": trace_id,
             "span_id": span_id,
         })
 
-        # Set as current span
-        current_span_id.set(span_id)
+        # Track context tokens for restoration
+        span._trace_token = trace_token
+        span._attributes_token = attrs_token
+        span._span_token = current_span_id.set(span_id)
 
         # Store span
         async with self._lock:
@@ -133,6 +149,28 @@ class TraceCollector:
                     # Clean up if trace is complete
                     if not active_spans:
                         del self._active_traces[span.trace_id]
+
+        # Restore previous span context
+        if span._span_token is not None:
+            try:
+                current_span_id.reset(span._span_token)
+            except (LookupError, ValueError, RuntimeError):
+                current_span_id.set(span.parent_span_id)
+        else:
+            current_span_id.set(span.parent_span_id)
+
+        # Restore trace and attribute context for root spans
+        if span.parent_span_id is None and span._trace_token is not None:
+            try:
+                current_trace_id.reset(span._trace_token)
+            except (LookupError, ValueError, RuntimeError):
+                current_trace_id.set(None)
+
+        if span.parent_span_id is None and span._attributes_token is not None:
+            try:
+                trace_attributes.reset(span._attributes_token)
+            except (LookupError, ValueError, RuntimeError):
+                trace_attributes.set({})
 
     async def get_trace(self, trace_id: str) -> Optional[List[Span]]:
         """Get all spans for a trace."""
@@ -240,26 +278,36 @@ async def start_trace(
     return await _trace_collector.start_span(name, span_type, attributes, tags)
 
 
-async def get_current_trace_id() -> Optional[str]:
+def get_current_trace_id() -> Optional[str]:
     """Get the current trace ID from context."""
     return current_trace_id.get()
 
 
-async def get_current_span_id() -> Optional[str]:
+def get_current_span_id() -> Optional[str]:
     """Get the current span ID from context."""
     return current_span_id.get()
 
 
 async def set_trace_attribute(key: str, value: Any) -> None:
     """Set a trace attribute that will be inherited by child spans."""
-    attributes = trace_attributes.get({})
+    try:
+        attributes = trace_attributes.get()
+        bound = True
+    except LookupError:
+        attributes = {}
+        bound = False
+
     attributes[key] = value
-    trace_attributes.set(attributes)
+    if not bound:
+        trace_attributes.set(attributes)
 
 
 async def get_trace_attributes() -> Dict[str, Any]:
     """Get all current trace attributes."""
-    return trace_attributes.get({})
+    try:
+        return trace_attributes.get()
+    except LookupError:
+        return {}
 
 
 # Convenience functions for common tracing operations
@@ -327,13 +375,18 @@ async def get_trace_report(trace_id: str) -> Optional[Dict[str, Any]]:
 
     # Build trace tree
     root_spans = [span for span in spans if span.parent_span_id is None]
-    child_spans = {span.parent_span_id: span for span in spans if span.parent_span_id}
+    root_spans.sort(key=lambda span: span.start_time)
+
+    children_map: Dict[str, List[Span]] = defaultdict(list)
+    for child in spans:
+        if child.parent_span_id:
+            children_map[child.parent_span_id].append(child)
 
     def build_span_tree(span: Span) -> Dict[str, Any]:
-        children = []
-        for child_span_id, child_span in child_spans.items():
-            if child_span.parent_span_id == span.span_id:
-                children.append(build_span_tree(child_span))
+        children = [
+            build_span_tree(child)
+            for child in sorted(children_map.get(span.span_id, []), key=lambda c: c.start_time)
+        ]
 
         return {
             "span_id": span.span_id,

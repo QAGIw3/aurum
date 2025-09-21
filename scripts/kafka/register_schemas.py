@@ -5,10 +5,11 @@ from __future__ import annotations
 import argparse
 import json as json_module
 import os
+import re
 import sys
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Iterable
+from typing import Iterable, Mapping, Sequence
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 
@@ -26,6 +27,17 @@ if TYPE_CHECKING:  # pragma: no cover
 DEFAULT_SCHEMA_ROOT = Path(__file__).resolve().parents[2] / "kafka" / "schemas"
 DEFAULT_SUBJECT_FILE = DEFAULT_SCHEMA_ROOT / "subjects.json"
 DEFAULT_EIA_CONFIG = Path(__file__).resolve().parents[2] / "config" / "eia_ingest_datasets.json"
+
+SUBJECT_NAME_RE = re.compile(r"^aurum\.[a-z0-9_.]+\.v\d+(?:-(?:key|value))?$")
+ALLOWED_COMPATIBILITY_LEVELS = {
+    "NONE",
+    "BACKWARD",
+    "BACKWARD_TRANSITIVE",
+    "FORWARD",
+    "FORWARD_TRANSITIVE",
+    "FULL",
+    "FULL_TRANSITIVE",
+}
 
 
 class SchemaRegistryError(RuntimeError):
@@ -76,6 +88,167 @@ class _UrllibSession:
         return self._request("POST", url, json, timeout)
 
 
+@dataclass(frozen=True)
+class SchemaContract:
+    """Schema + subject contract enforced before registry interactions."""
+
+    name: str
+    schema_pattern: re.Pattern[str]
+    subject_patterns: tuple[re.Pattern[str], ...]
+    required_fields: frozenset[str]
+    expected_compatibility: str | None = None
+
+    def matches_schema(self, schema_name: str) -> bool:
+        return bool(self.schema_pattern.fullmatch(schema_name))
+
+    def matches_subject(self, subject: str) -> bool:
+        return any(pattern.fullmatch(subject) for pattern in self.subject_patterns)
+
+
+@dataclass(frozen=True)
+class ValidatedSubject:
+    """Result of validating a subject against its schema contract."""
+
+    subject: str
+    schema_path: Path
+    schema: dict
+    contract: SchemaContract
+
+
+SCHEMA_CONTRACTS: tuple[SchemaContract, ...] = (
+    SchemaContract(
+        name="Curve Observation",
+        schema_pattern=re.compile(r"^curve\.observation\.v\d+$"),
+        subject_patterns=(
+            re.compile(r"^aurum\.curve\.observation\.v\d+(?:-(?:key|value))?$"),
+        ),
+        required_fields=frozenset({"asof_date", "curve_key", "tenor_label", "version_hash", "_ingest_ts"}),
+    ),
+    SchemaContract(
+        name="Drought Payloads",
+        schema_pattern=re.compile(r"^aurum\.drought\.[a-z0-9_]+\.v\d+$"),
+        subject_patterns=(
+            re.compile(r"^aurum\.drought\.[a-z0-9_.]+\.v\d+(?:-(?:key|value))?$"),
+        ),
+        required_fields=frozenset({"tenant_id", "schema_version", "ingest_ts"}),
+    ),
+    SchemaContract(
+        name="CPI Series",
+        schema_pattern=re.compile(r"^cpi\.series\.v\d+$"),
+        subject_patterns=(
+            re.compile(r"^aurum\.ref\.cpi\.series\.v\d+(?:-(?:key|value))?$"),
+        ),
+        required_fields=frozenset({"series_id", "period", "value", "ingest_ts"}),
+    ),
+    SchemaContract(
+        name="EIA Series",
+        schema_pattern=re.compile(r"^eia\.series\.v\d+$"),
+        subject_patterns=(
+            re.compile(r"^aurum\.ref\.eia\.[a-z0-9_.]+\.v\d+(?:-(?:key|value))?$"),
+        ),
+        required_fields=frozenset({"series_id", "period", "value", "ingest_ts"}),
+    ),
+    SchemaContract(
+        name="FRED Series",
+        schema_pattern=re.compile(r"^fred\.series\.v\d+$"),
+        subject_patterns=(
+            re.compile(r"^aurum\.ref\.fred\.series\.v\d+(?:-(?:key|value))?$"),
+        ),
+        required_fields=frozenset({"series_id", "date", "value", "ingest_ts"}),
+    ),
+    SchemaContract(
+        name="Fuel Curves",
+        schema_pattern=re.compile(r"^fuel\.curve\.v\d+$"),
+        subject_patterns=(
+            re.compile(r"^aurum\.ref\.fuel\.[a-z0-9_.]+\.v\d+(?:-(?:key|value))?$"),
+        ),
+        required_fields=frozenset({"series_id", "fuel_type", "period", "value", "ingest_ts"}),
+    ),
+    SchemaContract(
+        name="FX Rates",
+        schema_pattern=re.compile(r"^fx\.rate\.v\d+$"),
+        subject_patterns=(
+            re.compile(r"^aurum\.ref\.fx\.rate\.v\d+(?:-(?:key|value))?$"),
+        ),
+        required_fields=frozenset({"base_currency", "quote_currency", "rate", "ingest_ts"}),
+    ),
+    SchemaContract(
+        name="Ingest Error",
+        schema_pattern=re.compile(r"^ingest\.error\.v\d+$"),
+        subject_patterns=(
+            re.compile(r"^aurum\.ingest\.error\.v\d+(?:-(?:key|value))?$"),
+            re.compile(r"^aurum\.ref\.eia\.series\.dlq\.v\d+(?:-(?:key|value))?$"),
+        ),
+        required_fields=frozenset({"source", "error_message", "severity", "ingest_ts"}),
+    ),
+    SchemaContract(
+        name="ISO Metrics",
+        schema_pattern=re.compile(r"^iso\.[a-z0-9_]+\.v\d+$"),
+        subject_patterns=(
+            re.compile(r"^aurum\.iso\.[a-z0-9_.]+\.v\d+(?:-(?:key|value))?$"),
+        ),
+        required_fields=frozenset({"iso_code", "ingest_ts"}),
+    ),
+    SchemaContract(
+        name="NOAA Weather",
+        schema_pattern=re.compile(r"^noaa\.weather\.v\d+$"),
+        subject_patterns=(
+            re.compile(r"^aurum\.ref\.noaa\.weather\.v\d+(?:-(?:key|value))?$"),
+        ),
+        required_fields=frozenset({"station_id", "date", "element", "ingest_ts"}),
+    ),
+    SchemaContract(
+        name="QA Result",
+        schema_pattern=re.compile(r"^qa\.result\.v\d+$"),
+        subject_patterns=(
+            re.compile(r"^aurum\.qa\.result\.v\d+(?:-(?:key|value))?$"),
+        ),
+        required_fields=frozenset({"run_id", "check_name", "status", "created_ts"}),
+    ),
+    SchemaContract(
+        name="Scenario Output",
+        schema_pattern=re.compile(r"^scenario\.output\.v\d+$"),
+        subject_patterns=(
+            re.compile(r"^aurum\.scenario\.output\.v\d+(?:-(?:key|value))?$"),
+        ),
+        required_fields=frozenset({"scenario_id", "tenant_id", "run_id", "metric", "computed_ts"}),
+    ),
+    SchemaContract(
+        name="Scenario Request",
+        schema_pattern=re.compile(r"^scenario\.request\.v\d+$"),
+        subject_patterns=(
+            re.compile(r"^aurum\.scenario\.request\.v\d+(?:-(?:key|value))?$"),
+        ),
+        required_fields=frozenset({"scenario_id", "tenant_id", "submitted_ts"}),
+    ),
+    SchemaContract(
+        name="Alert",
+        schema_pattern=re.compile(r"^alert\.v\d+$"),
+        subject_patterns=(
+            re.compile(r"^aurum\.alert\.v\d+(?:-(?:key|value))?$"),
+        ),
+        required_fields=frozenset({"alert_id", "tenant_id", "created_ts"}),
+    ),
+)
+
+
+__all__ = [
+    "SchemaRegistryError",
+    "SchemaContract",
+    "ValidatedSubject",
+    "SCHEMA_CONTRACTS",
+    "normalize_compatibility",
+    "validate_subject_name",
+    "find_contract_for_schema",
+    "enforce_contract",
+    "validate_contracts",
+    "load_subject_mapping",
+    "load_schema",
+    "load_eia_subjects",
+    "iter_subjects",
+]
+
+
 def load_subject_mapping(path: Path) -> dict[str, str]:
     try:
         mapping = json_module.loads(path.read_text(encoding="utf-8"))
@@ -116,6 +289,123 @@ def load_eia_subjects(config_path: Path) -> dict[str, str]:
         subject = f"{topic}-value"
         subjects[subject] = "eia.series.v1.avsc"
     return subjects
+
+
+def normalize_compatibility(level: str) -> str:
+    normalized = (level or "").strip().upper()
+    if normalized not in ALLOWED_COMPATIBILITY_LEVELS:
+        raise SchemaRegistryError(
+            f"Unsupported compatibility level '{level}'. Allowed values: {sorted(ALLOWED_COMPATIBILITY_LEVELS)}"
+        )
+    return normalized
+
+
+def validate_subject_name(subject: str) -> None:
+    if not SUBJECT_NAME_RE.fullmatch(subject):
+        raise SchemaRegistryError(
+            f"Subject '{subject}' does not match required pattern {SUBJECT_NAME_RE.pattern}"
+        )
+
+
+def _schema_name_from_path(schema_path: Path) -> str:
+    return schema_path.stem
+
+
+def find_contract_for_schema(schema_path: Path) -> SchemaContract:
+    schema_name = _schema_name_from_path(schema_path)
+    for contract in SCHEMA_CONTRACTS:
+        if contract.matches_schema(schema_name):
+            return contract
+    raise SchemaRegistryError(f"No schema contract declared for '{schema_name}'")
+
+
+def _collect_field_names(schema: dict) -> frozenset[str]:
+    if schema.get("type") != "record":
+        raise SchemaRegistryError("Schemas must define a top-level Avro record")
+    fields = schema.get("fields")
+    if not isinstance(fields, list):
+        raise SchemaRegistryError("Schema is missing a 'fields' array")
+    names: set[str] = set()
+    for field in fields:
+        name = field.get("name") if isinstance(field, dict) else None
+        if not isinstance(name, str):
+            raise SchemaRegistryError("Encountered field without a valid name")
+        names.add(name)
+    return frozenset(names)
+
+
+def enforce_contract(
+    subject: str,
+    schema_path: Path,
+    schema: dict,
+    contract: SchemaContract,
+    compatibility: str,
+) -> None:
+    validate_subject_name(subject)
+    if not contract.matches_schema(_schema_name_from_path(schema_path)):
+        raise SchemaRegistryError(
+            f"Schema '{schema_path.stem}' does not satisfy contract '{contract.name}'"
+        )
+    if not contract.matches_subject(subject):
+        expected = " | ".join(pattern.pattern for pattern in contract.subject_patterns)
+        raise SchemaRegistryError(
+            f"Subject '{subject}' does not match expected pattern(s) {expected} for contract '{contract.name}'"
+        )
+    missing = contract.required_fields - _collect_field_names(schema)
+    if missing:
+        raise SchemaRegistryError(
+            f"Schema '{schema_path.name}' is missing required field(s) {sorted(missing)} for contract '{contract.name}'"
+        )
+    if contract.expected_compatibility and contract.expected_compatibility != compatibility:
+        raise SchemaRegistryError(
+            f"Contract '{contract.name}' expects compatibility '{contract.expected_compatibility}' but received '{compatibility}'"
+        )
+
+
+def validate_contracts(
+    subjects: Mapping[str, str],
+    schema_root: Path,
+    compatibility: str,
+) -> dict[str, ValidatedSubject]:
+    errors: list[str] = []
+    validated: dict[str, ValidatedSubject] = {}
+
+    for subject, schema_file in sorted(subjects.items()):
+        try:
+            validate_subject_name(subject)
+        except SchemaRegistryError as exc:
+            errors.append(f"{subject}: {exc}")
+            continue
+
+        schema_path = (schema_root / schema_file).resolve()
+        try:
+            schema = load_schema(schema_root, schema_file)
+        except SchemaRegistryError as exc:
+            errors.append(f"{subject}: {exc}")
+            continue
+
+        try:
+            contract = find_contract_for_schema(schema_path)
+        except SchemaRegistryError as exc:
+            errors.append(f"{subject}: {exc}")
+            continue
+
+        try:
+            enforce_contract(subject, schema_path, schema, contract, compatibility)
+        except SchemaRegistryError as exc:
+            errors.append(f"{subject}: {exc}")
+            continue
+
+        validated[subject] = ValidatedSubject(
+            subject=subject,
+            schema_path=schema_path,
+            schema=schema,
+            contract=contract,
+        )
+
+    if errors:
+        raise SchemaRegistryError("Schema contract validation failed:\n - " + "\n - ".join(errors))
+    return validated
 
 
 def _timeout(env_var: str, default_seconds: int) -> int:
@@ -214,29 +504,59 @@ def parse_args(argv: Iterable[str] | None = None) -> argparse.Namespace:
         action="store_true",
         help="Print actions without calling the Schema Registry",
     )
+    parser.add_argument(
+        "--validate-only",
+        action="store_true",
+        help="Validate subject naming and schema contracts without hitting the registry",
+    )
     return parser.parse_args(argv)
 
 
 def main(argv: Iterable[str] | None = None) -> int:
     args = parse_args(argv)
 
+    compatibility = normalize_compatibility(args.compatibility)
+
     subjects = load_subject_mapping(args.subjects_file)
     if args.include_eia:
         subjects.update(load_eia_subjects(args.eia_config))
     selected_subjects = iter_subjects(args.subject, subjects)
 
+    validated = validate_contracts(selected_subjects, args.schema_root, compatibility)
+
+    if args.validate_only:
+        print(f"Validated {len(validated)} schema contract(s) (compatibility={compatibility})")
+        return 0
+
+    if args.dry_run:
+        for subject, details in validated.items():
+            print(
+                f"[dry-run] subject={subject} contract={details.contract.name} "
+                f"compatibility={compatibility}"
+            )
+            print(
+                f"[dry-run] would register {details.schema_path.name} -> {subject}"
+            )
+        return 0
+
     session = create_session()
 
-    for subject, schema_file in selected_subjects.items():
-        schema = load_schema(args.schema_root, schema_file)
-        if args.dry_run:
-            print(f"[dry-run] would set compatibility {args.compatibility} for {subject}")
-            print(f"[dry-run] would register {schema_file} to {subject}")
-            continue
-
-        put_compatibility(args.schema_registry_url, subject, args.compatibility, session=session)
-        version = register_schema(args.schema_registry_url, subject, schema, session=session)
-        print(f"Registered {subject} (schema: {schema_file}) -> version/id {version}")
+    for subject, details in validated.items():
+        put_compatibility(
+            args.schema_registry_url,
+            subject,
+            compatibility,
+            session=session,
+        )
+        version = register_schema(
+            args.schema_registry_url,
+            subject,
+            details.schema,
+            session=session,
+        )
+        print(
+            f"Registered {subject} (schema: {details.schema_path.name}) -> version/id {version}"
+        )
 
     return 0
 

@@ -106,6 +106,18 @@ from .models import (
     DroughtDimensionsResponse,
     DroughtInfoResponse,
 )
+import aurum.observability.metrics as observability_metrics
+from aurum.observability.metrics import (
+    CONTENT_TYPE_LATEST,
+    METRICS_MIDDLEWARE,
+    METRICS_PATH,
+    PROMETHEUS_AVAILABLE,
+    REQUEST_COUNTER,
+    REQUEST_LATENCY,
+    TILE_CACHE_COUNTER,
+    TILE_FETCH_LATENCY,
+    generate_latest,
+)
 from .auth import AuthMiddleware, OIDCConfig
 from .scenario_service import STORE as ScenarioStore
 from aurum.reference import iso_locations as ref_iso
@@ -158,10 +170,13 @@ def configure_routes(settings: AurumSettings) -> None:
     SCENARIO_METRIC_MAX_LIMIT = settings.pagination.scenario_metric_max_limit
     EIA_SERIES_MAX_LIMIT = settings.pagination.eia_series_max_limit
     _METRICS_ENABLED = bool(
-        settings.api.metrics.enabled and _PROMETHEUS_AVAILABLE and METRICS_MIDDLEWARE is not None and generate_latest
+        settings.api.metrics.enabled and PROMETHEUS_AVAILABLE and METRICS_MIDDLEWARE is not None
     )
     path = settings.api.metrics.path
     _METRICS_PATH = path if path.startswith("/") else f"/{path}"
+
+    if _METRICS_ENABLED:
+        observability_metrics.METRICS_PATH = _METRICS_PATH
 
     _register_metrics_route()
 _PPA_DECIMAL_QUANTIZER = Decimal("0.000001")
@@ -517,74 +532,13 @@ def _csv_response(
     response.headers["Content-Disposition"] = f'attachment; filename="{filename}"'
     return response
 
-# Prometheus metrics
-_METRICS_PATH = "/metrics"
-_PROMETHEUS_AVAILABLE = False
-REQUEST_COUNTER = None
-REQUEST_LATENCY = None
-TILE_CACHE_COUNTER = None
-TILE_FETCH_LATENCY = None
-METRICS_MIDDLEWARE = None
-CONTENT_TYPE_LATEST = "text/plain; version=0.0.4; charset=utf-8"
-generate_latest = None  # type: ignore[assignment]
-
-try:  # pragma: no cover - exercised in integration
-    from prometheus_client import CONTENT_TYPE_LATEST as _PROM_CONTENT_TYPE, Counter, Histogram, generate_latest
-
-    CONTENT_TYPE_LATEST = _PROM_CONTENT_TYPE
-    REQUEST_COUNTER = Counter(
-        "aurum_api_requests_total",
-        "Total API requests",
-        ["method", "path", "status"],
-    )
-    REQUEST_LATENCY = Histogram(
-        "aurum_api_request_duration_seconds",
-        "API request duration in seconds",
-        ["method", "path"],
-    )
-    TILE_CACHE_COUNTER = Counter(
-        "aurum_drought_tile_cache_total",
-        "Drought tile cache lookup results",
-        ["endpoint", "result"],
-    )
-    TILE_FETCH_LATENCY = Histogram(
-        "aurum_drought_tile_fetch_seconds",
-        "Downstream drought tile/info fetch latency in seconds",
-        ["endpoint", "status"],
-    )
-
-    async def _metrics_middleware(request, call_next):  # type: ignore[no-redef]
-        request_path = request.url.path
-        if request_path == _METRICS_PATH:
-            return await call_next(request)
-
-        method = request.method
-        route = request.scope.get("route") if hasattr(request, "scope") else None
-        path_template = getattr(route, "path", request_path)
-        start_time = time.perf_counter()
-        status_code = "500"
-        try:
-            response = await call_next(request)
-            status_code = str(response.status_code)
-            return response
-        finally:
-            duration = time.perf_counter() - start_time
-            REQUEST_LATENCY.labels(method=method, path=path_template).observe(duration)
-            REQUEST_COUNTER.labels(method=method, path=path_template, status=status_code).inc()
-
-    METRICS_MIDDLEWARE = _metrics_middleware
-    _PROMETHEUS_AVAILABLE = True
-except ImportError:  # pragma: no cover - best effort logging
-    LOGGER.warning("Prometheus client not installed; metrics endpoint disabled")
-except Exception:  # pragma: no cover - initialization failure should not break startup
-    LOGGER.exception("Failed to initialize Prometheus metrics; disabling")
-
-
-_METRICS_ENABLED = bool(_PROMETHEUS_AVAILABLE)
+# Prometheus metrics integration (shared with observability utilities)
+_METRICS_ENABLED = bool(PROMETHEUS_AVAILABLE and METRICS_MIDDLEWARE)
+_METRICS_PATH = METRICS_PATH
 
 
 def metrics():
-    if not (_METRICS_ENABLED and generate_latest):
+    if not _METRICS_ENABLED:
         raise HTTPException(status_code=503, detail="metrics_unavailable")
     data = generate_latest()
     return Response(content=data, media_type=CONTENT_TYPE_LATEST)
@@ -600,7 +554,7 @@ def _register_metrics_route() -> None:
             router.routes.remove(route)
         except ValueError:  # pragma: no cover - defensive
             continue
-    if not (_METRICS_ENABLED and generate_latest and METRICS_MIDDLEWARE):
+    if not _METRICS_ENABLED:
         return
     router.add_api_route(_METRICS_PATH, metrics, name=_METRICS_ROUTE_NAME, methods=["GET"])
 

@@ -1,0 +1,94 @@
+name: Deployment Validation
+
+on:
+  deployment_status:
+
+jobs:
+  validate-deployment:
+    runs-on: ubuntu-latest
+    if: github.event.deployment_status.state == 'success'
+
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v4
+
+    - name: Set up kubectl
+      uses: azure/setup-kubectl@v3
+      with:
+        version: 'v1.28.0'
+
+    - name: Configure kubectl
+      run: |
+        echo "${{ secrets.KUBECONFIG }}" > $KUBECONFIG
+        chmod 600 $KUBECONFIG
+
+    - name: Validate API deployment
+      run: |
+        echo "Validating API deployment..."
+
+        # Wait for deployment to be ready
+        kubectl wait --for=condition=available --timeout=300s deployment/api -n aurum-dev
+
+        # Test API endpoints
+        API_POD=$(kubectl get pods -n aurum-dev -l app=api -o jsonpath='{.items[0].metadata.name}')
+        kubectl exec $API_POD -n aurum-dev -- curl -f http://localhost:8080/health || exit 1
+        kubectl exec $API_POD -n aurum-dev -- curl -f http://localhost:8080/api/v1/status || exit 1
+
+        echo "✅ API deployment validation passed"
+
+    - name: Validate Worker deployment
+      run: |
+        echo "Validating Worker deployment..."
+
+        # Wait for deployment to be ready
+        kubectl wait --for=condition=available --timeout=300s deployment/scenario-worker -n aurum-dev
+
+        # Test worker health
+        WORKER_POD=$(kubectl get pods -n aurum-dev -l app=scenario-worker -o jsonpath='{.items[0].metadata.name}')
+        kubectl exec $WORKER_POD -n aurum-dev -- curl -f http://localhost:8080/health || exit 1
+
+        echo "✅ Worker deployment validation passed"
+
+    - name: Validate data flow
+      run: |
+        echo "Validating end-to-end data flow..."
+
+        # Test database connectivity
+        kubectl exec postgres-0 -n aurum-dev -- psql -U aurum -d aurum -c "SELECT 1;" || exit 1
+
+        # Test message queue
+        kubectl exec $(kubectl get pods -n aurum-dev -l app=kafka -o jsonpath='{.items[0].metadata.name}') -n aurum-dev -- kafka-topics --bootstrap-server localhost:9092 --list | grep -q "aurum" || exit 1
+
+        # Test monitoring endpoints
+        kubectl exec prometheus-0 -n monitoring -- curl -f http://localhost:9090/-/healthy || exit 1
+
+        echo "✅ Data flow validation passed"
+
+    - name: Create validation report
+      run: |
+        cat << 'EOF' > deployment-report.json
+        {
+          "deployment_id": "${{ github.event.deployment_status.deployment.sha }}",
+          "environment": "${{ github.event.deployment.environment }}",
+          "status": "success",
+          "timestamp": "$(date -u +'%Y-%m-%dT%H:%M:%SZ')",
+          "validations": {
+            "api_deployment": "✅ Passed",
+            "worker_deployment": "✅ Passed",
+            "data_flow": "✅ Passed",
+            "monitoring": "✅ Passed"
+          }
+        }
+        EOF
+
+        echo "✅ Deployment validation completed successfully"
+      if: success()
+
+    - name: Notify on failure
+      run: |
+        echo "❌ Deployment validation failed"
+        echo "Deployment: ${{ github.event.deployment_status.deployment.sha }}"
+        echo "Environment: ${{ github.event.deployment.environment }}"
+        echo "Target URL: ${{ github.event.deployment_status.target_url }}"
+        exit 1
+      if: failure()

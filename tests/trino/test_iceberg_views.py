@@ -10,6 +10,8 @@ def test_latest_views_declared() -> None:
     assert "CREATE TABLE IF NOT EXISTS iceberg.market.curve_observation_quarantine" in sql
     assert "CREATE OR REPLACE VIEW iceberg.market.curve_observation_latest" in sql
     assert "CREATE OR REPLACE VIEW iceberg.market.scenario_output_latest" in sql
+    assert "CREATE OR REPLACE VIEW iceberg.market.maintenance_snapshot_summary" in sql
+    assert "CREATE OR REPLACE VIEW iceberg.market.maintenance_file_metrics" in sql
 
 
 def test_curve_observation_properties() -> None:

@@ -1,4 +1,4 @@
-"""Observability API endpoints for metrics, tracing, and system monitoring."""
+"""Observability API endpoints for metrics, tracing, and system monitoring (admin-only)."""
 
 from __future__ import annotations
 
@@ -12,10 +12,10 @@ from .metrics import get_metrics_collector, MetricPoint, MetricType
 from .tracing import get_trace_collector, get_trace_report
 
 
-router = APIRouter()
+router = APIRouter(prefix="/v1/observability", tags=["Observability"])
 
 
-@router.get("/v1/observability/metrics")
+@router.get("/metrics")
 async def get_metrics(
     request: Request,
     name: Optional[str] = Query(None, description="Filter by metric name"),
@@ -99,7 +99,7 @@ async def get_metrics(
         ) from exc
 
 
-@router.get("/v1/observability/metrics/json")
+@router.get("/metrics/json")
 async def get_metrics_json(
     request: Request,
     name: Optional[str] = Query(None, description="Filter by metric name"),
@@ -156,7 +156,7 @@ async def get_metrics_json(
         ) from exc
 
 
-@router.get("/v1/observability/traces")
+@router.get("/traces")
 async def get_traces(
     request: Request,
     trace_id: Optional[str] = Query(None, description="Specific trace ID"),
@@ -233,7 +233,7 @@ async def get_traces(
         ) from exc
 
 
-@router.get("/v1/observability/traces/{trace_id}")
+@router.get("/traces/{trace_id}")
 async def get_trace_detail(
     request: Request,
     trace_id: str,
@@ -271,7 +271,7 @@ async def get_trace_detail(
         ) from exc
 
 
-@router.get("/v1/observability/health")
+@router.get("/health")
 async def get_observability_health(
     request: Request,
 ) -> Dict[str, Any]:
@@ -338,7 +338,7 @@ async def get_observability_health(
         }
 
 
-@router.post("/v1/observability/traces/{trace_id}/export")
+@router.post("/traces/{trace_id}/export")
 async def export_trace(
     request: Request,
     trace_id: str,
@@ -394,7 +394,7 @@ async def export_trace(
         ) from exc
 
 
-@router.delete("/v1/observability/traces/{trace_id}")
+@router.delete("/traces/{trace_id}")
 async def delete_trace(
     request: Request,
     trace_id: str,
@@ -421,7 +421,7 @@ async def delete_trace(
         ) from exc
 
 
-@router.post("/v1/observability/cleanup")
+@router.post("/cleanup")
 async def cleanup_observability_data(
     request: Request,
     max_age_hours: int = 24,
@@ -458,7 +458,7 @@ async def cleanup_observability_data(
         ) from exc
 
 
-@router.get("/v1/observability/performance")
+@router.get("/performance")
 async def get_observability_performance(
     request: Request,
 ) -> Dict[str, Any]:

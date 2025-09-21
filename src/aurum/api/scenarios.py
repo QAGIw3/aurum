@@ -201,7 +201,7 @@ async def delete_scenario(
 
         query_time_ms = (time.perf_counter() - start_time) * 1000
         # Log successful deletion
-        print(f"Deleted scenario {scenario_id} in {query_time_ms".2f"}ms")
+        print(f"Deleted scenario {scenario_id} in {query_time_ms:.2f}ms")
 
     except (ValidationException, NotFoundException):
         raise

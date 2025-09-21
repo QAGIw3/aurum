@@ -10,6 +10,12 @@ models:
             - tenor_label
             - asof_date
     columns:
+      - name: curve_key
+        tests:
+          - relationships:
+              to: ref('stg_curve_observation')
+              field: curve_key
+              to_field: curve_key
       - name: asof_date
         tests:
           - not_null
@@ -26,6 +32,12 @@ models:
             - tenor_label
             - asof_date
     columns:
+      - name: curve_key
+        tests:
+          - relationships:
+              to: ref('int_curve_monthly')
+              field: curve_key
+              to_field: curve_key
       - name: asof_date
         tests:
           - not_null
@@ -45,6 +57,12 @@ models:
             - tenor_label
             - asof_date
     columns:
+      - name: curve_key
+        tests:
+          - relationships:
+              to: ref('int_curve_monthly')
+              field: curve_key
+              to_field: curve_key
       - name: asof_date
         tests:
           - not_null
@@ -57,10 +75,19 @@ models:
           - not_null
   - name: int_eia_series_enriched
     description: Intermediate model normalizing currency and unit metadata for EIA series.
+    tests:
+      - unique_combination:
+          combination_of_columns:
+            - series_id
+            - period
     columns:
       - name: series_id
         tests:
           - not_null
+          - relationships:
+              to: ref('stg_eia_series')
+              field: series_id
+              to_field: series_id
       - name: value_converted
         description: Numeric value after applying any canonical conversion rules.
       - name: currency_normalized

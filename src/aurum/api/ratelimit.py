@@ -2,6 +2,7 @@ from __future__ import annotations
 
 """Sliding-window rate limiting middleware with optional Redis backend."""
 
+import math
 import time
 import uuid
 from collections import deque
@@ -182,7 +183,6 @@ class RateLimitMiddleware:
     async def _allow(self, key: str, *, rps: int, burst: int) -> Tuple[bool, int, int]:
         limit_total = rps + burst
         now = time.time()
-        reset = 1
 
         if self._redis is not None:
             now_ms = int(now * 1000)
@@ -190,18 +190,30 @@ class RateLimitMiddleware:
             window_start = now_ms - window_ms
             member = f"{now_ms}:{uuid.uuid4().hex}"
             try:
-                pipe = self._redis.pipeline()
                 redis_key = f"ratelimit:{key}"
+                pipe = self._redis.pipeline()
                 pipe.zremrangebyscore(redis_key, 0, window_start)
-                pipe.zcard(redis_key)
                 pipe.zadd(redis_key, {member: now_ms})
+                pipe.zcard(redis_key)
+                pipe.zrange(redis_key, 0, 0, withscores=True)
                 pipe.pexpire(redis_key, window_ms)
-                _, current_count, _, _ = pipe.execute()
-                current = int(current_count) + 1
+                _, _, current_count, earliest, _ = pipe.execute()
+                current = int(current_count)
                 remaining = max(0, limit_total - current)
                 allowed = current <= limit_total
+                oldest_score = None
+                if earliest:
+                    # zrange returns list of (member, score)
+                    try:
+                        oldest_score = float(earliest[0][1])
+                    except (ValueError, TypeError):
+                        oldest_score = None
+                reset_seconds = 1
+                if oldest_score is not None:
+                    reset_window = ((oldest_score + window_ms) - now_ms) / 1000.0
+                    reset_seconds = max(0, math.ceil(reset_window))
                 _record_metric("allowed" if allowed else "blocked")
-                return allowed, remaining, reset
+                return allowed, remaining, reset_seconds
             except Exception:
                 _record_metric("error")
                 self._redis = None
@@ -215,7 +227,11 @@ class RateLimitMiddleware:
         remaining = max(0, limit_total - current)
         allowed = current <= limit_total
         _record_metric("allowed" if allowed else "blocked")
-        return allowed, remaining, reset
+        reset_seconds = 1
+        if bucket:
+            reset_window = self._window_seconds - (now - bucket[0])
+            reset_seconds = max(0, math.ceil(reset_window))
+        return allowed, remaining, reset_seconds
 
     def _client_ip(self, request: Request) -> str:
         xff = request.headers.get("x-forwarded-for")

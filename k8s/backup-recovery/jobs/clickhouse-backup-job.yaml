@@ -1,0 +1,113 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: clickhouse-backup
+  namespace: aurum-dev
+spec:
+  template:
+    spec:
+      containers:
+      - name: clickhouse-backup
+        image: clickhouse/clickhouse-server:23.8
+        command: ["/bin/bash", "-c"]
+        args:
+        - |
+          set -e
+
+          # Set backup timestamp
+          BACKUP_TIMESTAMP=$(date -u +'%Y%m%d_%H%M%S')
+          BACKUP_NAME="clickhouse_backup_${BACKUP_TIMESTAMP}"
+
+          echo "Starting ClickHouse backup: $BACKUP_NAME"
+
+          # Create backup directory
+          mkdir -p /backup/$BACKUP_NAME
+
+          # Create backup using clickhouse-backup
+          clickhouse-backup create \
+            --host clickhouse.aurum-dev.svc.cluster.local \
+            --port 9000 \
+            --username default \
+            --password aurum \
+            $BACKUP_NAME
+
+          # Export backup metadata
+          clickhouse-client --host clickhouse.aurum-dev.svc.cluster.local \
+                           --port 9000 \
+                           --user default \
+                           --password aurum \
+                           --query "SELECT name, status, error, create_time FROM system.backups WHERE name = '$BACKUP_NAME' FORMAT JSON" \
+                           > /backup/backup_status.json
+
+          # Export table schemas
+          clickhouse-client --host clickhouse.aurum-dev.svc.cluster.local \
+                           --port 9000 \
+                           --user default \
+                           --password aurum \
+                           --query "SHOW TABLES FROM aurum FORMAT JSON" \
+                           > /backup/tables.json
+
+          # Get backup size
+          BACKUP_SIZE=$(du -sh /backup | cut -f1)
+
+          # Create backup metadata
+          cat > /backup/backup_metadata.json << METADATA_EOF
+          {
+            "backup_type": "full",
+            "database": "clickhouse",
+            "timestamp": "$BACKUP_TIMESTAMP",
+            "backup_method": "clickhouse-backup",
+            "backup_size": "$BACKUP_SIZE",
+            "includes": ["all_databases", "schemas", "metadata"],
+            "status": "completed"
+          }
+          METADATA_EOF
+
+          # Compress backup
+          tar -czf /backup/$BACKUP_NAME.tar.gz -C /backup $BACKUP_NAME backup_status.json backup_metadata.json
+
+          # Upload to Minio
+          echo "Uploading backup to Minio..."
+          mc alias set aurum-minio http://minio.aurum-dev.svc.cluster.local:9000 aurum password
+          mc cp /backup/$BACKUP_NAME.tar.gz aurum-minio/aurum-backups/clickhouse/
+
+          # Cleanup
+          rm -rf /backup/$BACKUP_NAME
+          rm -f /backup/backup_status.json
+          rm -f /backup/backup_metadata.json
+          rm -f /backup/tables.json
+
+          echo "✅ ClickHouse backup completed successfully: $BACKUP_NAME"
+        volumeMounts:
+        - name: backup-storage
+          mountPath: /backup
+      volumes:
+      - name: backup-storage
+        emptyDir: {}
+      restartPolicy: OnFailure
+  backoffLimit: 3
+---
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: clickhouse-backup-schedule
+  namespace: aurum-dev
+spec:
+  schedule: "0 4 * * *"
+  jobTemplate:
+    spec:
+      template:
+        spec:
+          containers:
+          - name: clickhouse-backup-scheduled
+            image: clickhouse/clickhouse-server:23.8
+            command: ["/bin/bash", "-c"]
+            args:
+            - |
+              echo "Starting scheduled ClickHouse backup..."
+              kubectl create job clickhouse-backup-$(date +%s) --from=cronjob/clickhouse-backup-schedule
+            volumeMounts: []
+          volumes: []
+          restartPolicy: OnFailure
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 5
