@@ -143,6 +143,8 @@ except ModuleNotFoundError:  # pragma: no cover - drought features optional
     DroughtCatalog = None  # type: ignore[assignment]
 from aurum.telemetry.context import get_request_id, set_request_id, reset_request_id
 
+# Import external API router
+from .handlers.external import router as external_router
 
 router = APIRouter()
 
@@ -3769,3 +3771,7 @@ def get_drought_tile_metadata(
 
     meta = Meta(request_id=_current_request_id(), query_time_ms=0)
     return DroughtInfoResponse(meta=meta, data=payload)
+
+
+# Include external API router
+router.include_router(external_router)
