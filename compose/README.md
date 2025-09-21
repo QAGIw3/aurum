@@ -1,6 +1,8 @@
 # Aurum Dev Stack
 
-This directory contains Docker Compose files for the minimal development stack described in the developer documentation. The default `docker-compose.dev.yml` stands up the following core services:
+This directory contains Docker Compose files for the minimal development stack described in the developer documentation. See also the onboarding guide in `docs/onboarding.md`.
+
+The default `docker-compose.dev.yml` stands up the following core services:
 
 - MinIO, lakeFS, Nessie (Iceberg catalog)
 - Trino (coordinator) and Vector

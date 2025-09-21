@@ -1,0 +1,100 @@
+env {
+  parallelism = 1
+  job.mode = "BATCH"
+}
+
+source {
+  Http {
+    url = "${ISO_BASE_URL}/${ISO_LMP_ENDPOINT}"
+    method = "GET"
+    params {
+      startdate = "${ISO_START_DATE}"
+      enddate = "${ISO_END_DATE}"
+      market = "${ISO_MARKET}"
+      ${ISO_AUTH_PARAMS}
+    }
+    connection_timeout_ms = 30000
+    retry = 3
+    retry_backoff_multiplier_ms = 2000
+    retry_backoff_max_ms = 60000
+    format = "${ISO_FORMAT}"
+    rate_limit_sleep_ms = 250
+    retry_strategy = "exponential_backoff"
+    schema = {
+      fields {
+        timestamp = string
+        node_id = string
+        node_name = string
+        zone = string
+        market = string
+        lmp = double
+        congestion = double
+        losses = double
+        source = string
+        data_type = string
+      }
+    }
+    result_table_name = "iso_lmp"
+  }
+}
+
+transform {
+  # Normalize timestamps to UTC
+  Sql {
+    sql = """
+      SELECT
+        CAST(timestamp AS TIMESTAMP) as timestamp,
+        node_id,
+        node_name,
+        zone,
+        market,
+        CAST(lmp AS DOUBLE) as lmp,
+        CAST(congestion AS DOUBLE) as congestion,
+        CAST(losses AS DOUBLE) as losses,
+        source,
+        data_type,
+        NOW() as ingested_at
+      FROM iso_lmp
+      WHERE lmp IS NOT NULL AND lmp > 0
+    """
+    result_table_name = "iso_lmp_normalized"
+  }
+
+  # Add data quality checks
+  Sql {
+    sql = """
+      SELECT * FROM iso_lmp_normalized
+      WHERE timestamp >= '${ISO_START_DATE}T00:00:00'
+        AND timestamp <= '${ISO_END_DATE}T23:59:59'
+    """
+    result_table_name = "iso_lmp_filtered"
+  }
+}
+
+sink {
+  Kafka {
+    bootstrap.servers = "${AURUM_KAFKA_BOOTSTRAP_SERVERS}"
+    topic = "${ISO_LMP_TOPIC}"
+    producer {
+      acks = "all"
+      enable.idempotence = true
+      max.in.flight.requests.per.connection = 5
+      linger.ms = 500
+      batch.size = 32768
+      retries = 10
+      retry.backoff.ms = 100
+      retry.backoff.max.ms = 10000
+      delivery.timeout.ms = 120000
+      request.timeout.ms = 30000
+    }
+    avro {
+      use.schema.registry = true
+      schema.registry.url = "${AURUM_SCHEMA_REGISTRY_URL}"
+      value.schema.subject = "${ISO_LMP_SUBJECT}"
+      value.schema = """${ISO_LMP_SCHEMA}"""
+      # Key configuration for message routing and partitioning
+      key.serializer = "${ISO_KEY_SERIALIZER:-string}"
+      key.format = "${ISO_KEY_FORMAT:-json}"
+    }
+  }
+}

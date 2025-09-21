@@ -1,0 +1,117 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "properties": {
+    "datasets": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "source_name",
+          "iso_name",
+          "data_type",
+          "market",
+          "schedule",
+          "topic_var",
+          "default_topic",
+          "frequency"
+        ],
+        "properties": {
+          "source_name": {
+            "type": "string",
+            "pattern": "^[a-zA-Z][a-zA-Z0-9_]*$"
+          },
+          "iso_name": {
+            "type": "string"
+          },
+          "data_type": {
+            "type": "string",
+            "enum": [
+              "lmp",
+              "load",
+              "generation_mix",
+              "ancillary_services"
+            ]
+          },
+          "market": {
+            "type": "string",
+            "enum": [
+              "DAM",
+              "RTM"
+            ]
+          },
+          "description": {
+            "type": "string"
+          },
+          "schedule": {
+            "type": "string",
+            "pattern": "^([0-9*,\\-/ ]+|@yearly|@monthly|@weekly|@daily|@midnight|@noon)$"
+          },
+          "topic_var": {
+            "type": "string"
+          },
+          "default_topic": {
+            "type": "string"
+          },
+          "frequency": {
+            "type": "string",
+            "enum": [
+              "HOURLY",
+              "DAILY"
+            ]
+          },
+          "units_var": {
+            "type": "string"
+          },
+          "default_units": {
+            "type": "string"
+          },
+          "window_hours": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "minimum": 0
+          },
+          "window_days": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "minimum": 0
+          },
+          "window_months": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "minimum": 0
+          },
+          "window_years": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "minimum": 0
+          },
+          "dlq_topic": {
+            "type": "string"
+          },
+          "watermark_policy": {
+            "type": "string",
+            "enum": [
+              "exact",
+              "day",
+              "hour",
+              "month",
+              "week"
+            ]
+          }
+        }
+      }
+    }
+  },
+  "required": [
+    "datasets"
+  ]
+}

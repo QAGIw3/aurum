@@ -34,6 +34,12 @@ from .models import (
 from .exceptions import ValidationException, NotFoundException, ForbiddenException
 from .container import get_service
 from .async_service import AsyncScenarioService
+from ..scenarios.feature_flags import (
+    ScenarioOutputFeature,
+    require_scenario_output_feature,
+    check_scenario_output_feature,
+    enforce_scenario_output_limits,
+)
 
 
 router = APIRouter()
@@ -501,6 +507,7 @@ async def cancel_scenario_run(
 
 
 @router.get("/v1/scenarios/{scenario_id}/outputs", response_model=ScenarioOutputListResponse)
+@require_scenario_output_feature(ScenarioOutputFeature.SCENARIO_OUTPUTS_ENABLED)
 async def get_scenario_outputs(
     request: Request,
     scenario_id: str,
@@ -571,6 +578,27 @@ async def get_scenario_outputs(
                 raise ValidationException(
                     field="end_time",
                     message="Invalid ISO 8601 datetime format",
+                    request_id=get_request_id()
+                )
+
+        # Validate feature-specific requirements
+        if start_time or end_time or metric_name or min_value is not None or max_value is not None or tags:
+            # Check if filtering is enabled
+            if not await check_scenario_output_feature(ScenarioOutputFeature.SCENARIO_OUTPUTS_FILTERING):
+                raise ForbiddenException(
+                    resource_type="feature",
+                    resource_id=ScenarioOutputFeature.SCENARIO_OUTPUTS_FILTERING.value,
+                    detail="Scenario output filtering is not enabled for this tenant",
+                    request_id=get_request_id()
+                )
+
+        if limit > 100 or offset > 0:
+            # Check if pagination is enabled
+            if not await check_scenario_output_feature(ScenarioOutputFeature.SCENARIO_OUTPUTS_PAGINATION):
+                raise ForbiddenException(
+                    resource_type="feature",
+                    resource_id=ScenarioOutputFeature.SCENARIO_OUTPUTS_PAGINATION.value,
+                    detail="Scenario output pagination is not enabled for this tenant",
                     request_id=get_request_id()
                 )
 
@@ -681,6 +709,7 @@ async def get_scenario_metrics_latest(
 
 
 @router.post("/v1/scenarios/{scenario_id}/runs:bulk", response_model=BulkScenarioRunResponse, status_code=202)
+@require_scenario_output_feature(ScenarioOutputFeature.BULK_SCENARIO_RUNS)
 async def create_bulk_scenario_runs(
     request: Request,
     scenario_id: str,

@@ -1,0 +1,255 @@
+env {
+  parallelism = 1
+  job.mode = "BATCH"
+}
+
+# Main data source
+source {
+  Http {
+    url = "${EIA_API_BASE_URL}/${EIA_SERIES_PATH}"
+    method = "GET"
+    params {
+      api_key = "${EIA_API_KEY}"
+      start = "${EIA_START}"
+      end = "${EIA_END}"
+      offset = ${EIA_OFFSET}
+      length = ${EIA_LIMIT}
+      sort[0] = "${EIA_SORT}"
+      direction[0] = "${EIA_DIRECTION}"
+      ${EIA_PARAM_OVERRIDES}
+    }
+    connection_timeout_ms = 15000
+    retry = 5
+    retry_backoff_multiplier_ms = 1000
+    retry_backoff_max_ms = 60000
+    format = "json"
+    rate_limit_sleep_ms = 100
+    retry_strategy = "exponential_backoff"
+    schema = {
+      fields {
+        period = string
+        value = string
+        units = string
+        ${EIA_EXTRA_FIELDS}
+      }
+    }
+    result_table_name = "eia_raw_data"
+  }
+}
+
+# Structured logging - start of job
+transform {
+  Sql {
+    sql = """
+      SELECT
+        NOW() as timestamp,
+        'INFO' as level,
+        'Starting EIA data ingestion job' as message,
+        'job_start' as event_type,
+        '${SOURCE_NAME}' as source_name,
+        '${EIA_SERIES_ID}' as dataset,
+        '${JOB_ID:-unknown}' as job_id,
+        '${TASK_ID:-unknown}' as task_id,
+        0.0 as duration_ms,
+        0 as records_processed,
+        0 as bytes_processed,
+        '' as error_code,
+        '' as error_message,
+        '${HOSTNAME:-}' as hostname,
+        '${CONTAINER_ID:-}' as container_id,
+        '${THREAD_ID:-}' as thread_id,
+        toJSONString(map(
+          'session_id', '${SESSION_ID:-unknown}',
+          'api_endpoint', '${EIA_API_BASE_URL}/${EIA_SERIES_PATH}',
+          'start_date', '${EIA_START}',
+          'end_date', '${EIA_END}',
+          'series_id', '${EIA_SERIES_ID}'
+        )) as metadata
+      FROM dual
+      LIMIT 1
+    """
+    result_table_name = "job_start_log"
+  }
+
+  JsonFormat {
+    result_table_name = "structured_logs_start"
+  }
+}
+
+# Data transformation
+transform {
+  Sql {
+    sql = """
+      SELECT
+        period,
+        CAST(value AS DOUBLE) as value,
+        units,
+        source,
+        dataset,
+        metadata,
+        NOW() as processed_at
+      FROM (
+        SELECT
+          period,
+          value,
+          units,
+          '${EIA_SOURCE:-EIA}' as source,
+          '${EIA_DATASET:-unknown}' as dataset,
+          '${EIA_METADATA:-}' as metadata
+        FROM eia_raw_data
+        WHERE value IS NOT NULL AND value != ''
+      )
+    """
+    result_table_name = "eia_transformed"
+  }
+}
+
+# Data quality checks and logging
+transform {
+  Sql {
+    sql = """
+      SELECT
+        COUNT(*) as total_records,
+        COUNT(CASE WHEN value IS NOT NULL AND CAST(value AS DOUBLE) > 0 THEN 1 END) as valid_records,
+        COUNT(CASE WHEN value IS NULL OR value = '' OR CAST(value AS DOUBLE) <= 0 THEN 1 END) as invalid_records
+      FROM eia_transformed
+    """
+    result_table_name = "data_quality_stats"
+  }
+
+  Sql {
+    sql = """
+      SELECT
+        NOW() as timestamp,
+        'INFO' as level,
+        CONCAT(
+          'Data quality check: ',
+          CAST(stats.valid_records AS STRING),
+          '/',
+          CAST(stats.total_records AS STRING),
+          ' records valid (',
+          ROUND(
+            CASE WHEN stats.total_records > 0 THEN (stats.valid_records * 100.0 / stats.total_records) ELSE 0 END,
+            2
+          ),
+          '%)'
+        ) as message,
+        'data_quality' as event_type,
+        '${SOURCE_NAME}' as source_name,
+        '${EIA_SERIES_ID}' as dataset,
+        '${JOB_ID:-unknown}' as job_id,
+        '${TASK_ID:-unknown}' as task_id,
+        0.0 as duration_ms,
+        stats.total_records as records_processed,
+        0 as bytes_processed,
+        '' as error_code,
+        '' as error_message,
+        '${HOSTNAME:-}' as hostname,
+        '${CONTAINER_ID:-}' as container_id,
+        '${THREAD_ID:-}' as thread_id,
+        toJSONString(map(
+          'session_id', '${SESSION_ID:-unknown}',
+          'valid_records', CAST(stats.valid_records AS STRING),
+          'invalid_records', CAST(stats.invalid_records AS STRING),
+          'quality_score', CAST(
+            ROUND(
+              CASE WHEN stats.total_records > 0 THEN (stats.valid_records * 100.0 / stats.total_records) ELSE 0 END,
+              2
+            ) AS STRING
+          )
+        )) as metadata
+      FROM data_quality_stats stats
+      CROSS JOIN (
+        SELECT COUNT(*) as total_records FROM eia_transformed
+      ) t
+    """
+    result_table_name = "quality_log"
+  }
+
+  JsonFormat {
+    result_table_name = "structured_logs_quality"
+  }
+}
+
+# Final data output
+sink {
+  Kafka {
+    bootstrap.servers = "${AURUM_KAFKA_BOOTSTRAP_SERVERS}"
+    topic = "${EIA_TOPIC}"
+    producer {
+      acks = "all"
+      enable.idempotence = true
+      max.in.flight.requests.per.connection = 5
+      linger.ms = 500
+      batch.size = 32768
+      retries = 10
+      retry.backoff.ms = 100
+      retry.backoff.max.ms = 10000
+      delivery.timeout.ms = 120000
+      request.timeout.ms = 30000
+    }
+    avro {
+      use.schema.registry = true
+      schema.registry.url = "${AURUM_SCHEMA_REGISTRY_URL}"
+      value.schema.subject = "${EIA_SUBJECT}"
+      value.schema = """${EIA_SERIES_SCHEMA}"""
+      key.serializer = "${EIA_KEY_SERIALIZER:-string}"
+      key.format = "${EIA_KEY_FORMAT:-json}"
+    }
+    result_table_name = "eia_series_output"
+  }
+}
+
+# Structured logging output
+sink {
+  Kafka {
+    bootstrap.servers = "${AURUM_KAFKA_BOOTSTRAP_SERVERS}"
+    topic = "${LOGGING_TOPIC:-aurum.ops.logs}"
+    producer {
+      acks = "all"
+      enable.idempotence = true
+      max.in.flight.requests.per.connection = 1
+      linger.ms = 100
+      batch.size = 16384
+      retries = 10
+      retry.backoff.ms = 100
+      retry.backoff.max.ms = 10000
+      delivery.timeout.ms = 60000
+      request.timeout.ms = 30000
+      compression.type = "lz4"
+    }
+    json {
+      # Combine all log types
+      sql = """
+        SELECT * FROM structured_logs_start
+        UNION ALL
+        SELECT * FROM structured_logs_quality
+        UNION ALL
+        SELECT
+          NOW() as timestamp,
+          'INFO' as level,
+          'EIA data ingestion completed successfully' as message,
+          'job_complete' as event_type,
+          '${SOURCE_NAME}' as source_name,
+          '${EIA_SERIES_ID}' as dataset,
+          '${JOB_ID:-unknown}' as job_id,
+          '${TASK_ID:-unknown}' as task_id,
+          0.0 as duration_ms,
+          (SELECT COUNT(*) FROM eia_transformed) as records_processed,
+          0 as bytes_processed,
+          '' as error_code,
+          '' as error_message,
+          '${HOSTNAME:-}' as hostname,
+          '${CONTAINER_ID:-}' as container_id,
+          '${THREAD_ID:-}' as thread_id,
+          toJSONString(map(
+            'session_id', '${SESSION_ID:-unknown}',
+            'total_records', CAST((SELECT COUNT(*) FROM eia_transformed) AS STRING)
+          )) as metadata
+        FROM dual
+        LIMIT 1
+      """
+    }
+    result_table_name = "all_structured_logs"
+  }
+}

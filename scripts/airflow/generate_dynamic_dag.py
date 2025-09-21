@@ -103,8 +103,8 @@ with DAG(
         else:
             print(dag_content)
 
-        print("
-📋 DAG Configuration:"        print(f"  • DAG ID: {args.dag_id}")
+        print("📋 DAG Configuration:")
+        print(f"  • DAG ID: {args.dag_id}")
         print(f"  • Schedule: {args.schedule}")
         print(f"  • Max Active Runs: {args.max_active_runs}")
         print(f"  • Catchup: {args.catchup}")
@@ -112,8 +112,8 @@ with DAG(
         for i, config_file in enumerate(args.config_files, 1):
             print(f"    {i}. {config_file}")
 
-        print("
-🚀 Next Steps:"        print("  1. Review the generated DAG file")
+        print("🚀 Next Steps:")
+        print("  1. Review the generated DAG file")
         print("  2. Test with: airflow dags test {args.dag_id}")
         print("  3. Deploy to Airflow environment")
         print("  4. Monitor with: airflow dags list | grep {args.dag_id}")

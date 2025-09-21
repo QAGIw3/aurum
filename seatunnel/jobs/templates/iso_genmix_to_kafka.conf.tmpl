@@ -1,0 +1,91 @@
+env {
+  parallelism = 1
+  job.mode = "BATCH"
+}
+
+source {
+  Http {
+    url = "${ISO_BASE_URL}/${ISO_GENMIX_ENDPOINT}"
+    method = "GET"
+    params {
+      startdate = "${ISO_START_DATE}"
+      enddate = "${ISO_END_DATE}"
+      ${ISO_AUTH_PARAMS}
+    }
+    connection_timeout_ms = 30000
+    retry = 3
+    retry_backoff_multiplier_ms = 2000
+    retry_backoff_max_ms = 60000
+    format = "${ISO_FORMAT}"
+    rate_limit_sleep_ms = 250
+    retry_strategy = "exponential_backoff"
+    schema = {
+      fields {
+        timestamp = string
+        fuel_type = string
+        generation_mw = double
+        zone = string
+        source = string
+        data_type = string
+      }
+    }
+    result_table_name = "iso_genmix"
+  }
+}
+
+transform {
+  # Normalize timestamps to UTC
+  Sql {
+    sql = """
+      SELECT
+        CAST(timestamp AS TIMESTAMP) as timestamp,
+        fuel_type,
+        CAST(generation_mw AS DOUBLE) as generation_mw,
+        zone,
+        source,
+        data_type,
+        NOW() as ingested_at
+      FROM iso_genmix
+      WHERE generation_mw IS NOT NULL AND generation_mw >= 0
+    """
+    result_table_name = "iso_genmix_normalized"
+  }
+
+  # Add data quality checks
+  Sql {
+    sql = """
+      SELECT * FROM iso_genmix_normalized
+      WHERE timestamp >= '${ISO_START_DATE}T00:00:00'
+        AND timestamp <= '${ISO_END_DATE}T23:59:59'
+    """
+    result_table_name = "iso_genmix_filtered"
+  }
+}
+
+sink {
+  Kafka {
+    bootstrap.servers = "${AURUM_KAFKA_BOOTSTRAP_SERVERS}"
+    topic = "${ISO_GENMIX_TOPIC}"
+    producer {
+      acks = "all"
+      enable.idempotence = true
+      max.in.flight.requests.per.connection = 5
+      linger.ms = 500
+      batch.size = 32768
+      retries = 10
+      retry.backoff.ms = 100
+      retry.backoff.max.ms = 10000
+      delivery.timeout.ms = 120000
+      request.timeout.ms = 30000
+    }
+    avro {
+      use.schema.registry = true
+      schema.registry.url = "${AURUM_SCHEMA_REGISTRY_URL}"
+      value.schema.subject = "${ISO_GENMIX_SUBJECT}"
+      value.schema = """${ISO_GENMIX_SCHEMA}"""
+      # Key configuration for message routing and partitioning
+      key.serializer = "${ISO_KEY_SERIALIZER:-string}"
+      key.format = "${ISO_KEY_FORMAT:-json}"
+    }
+  }
+}

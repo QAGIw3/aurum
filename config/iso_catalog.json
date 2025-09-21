@@ -1,0 +1,116 @@
+{
+  "generated_at": "2025-01-21T03:13:49.967221+00:00",
+  "iso_count": 6,
+  "isos": [
+    {
+      "name": "nyiso",
+      "full_name": "New York Independent System Operator",
+      "region": "Northeast",
+      "base_url": "http://mis.nyiso.com/public",
+      "description": "New York electricity market data",
+      "data_types": ["lmp", "load", "generation_mix"],
+      "markets": ["DAM", "RTM"],
+      "zones": ["A", "B", "C", "D", "E", "F", "G", "H", "I", "J", "K"],
+      "rate_limits": {
+        "requests_per_minute": 10,
+        "requests_per_hour": 600
+      },
+      "api_format": "csv",
+      "authentication": "none",
+      "price_nodes_available": true,
+      "ancillary_services_available": false
+    },
+    {
+      "name": "pjm",
+      "full_name": "PJM Interconnection",
+      "region": "Mid-Atlantic",
+      "base_url": "https://api.pjm.com/api/v1",
+      "api_key_required": true,
+      "description": "PJM wholesale electricity market data",
+      "data_types": ["lmp", "load", "generation_mix", "ancillary_services"],
+      "markets": ["DAM", "RTM"],
+      "zones": ["AECO", "AEP", "APS", "ATSI", "BGE", "COMED", "DAYTON", "DEOK", "DOM", "DPL", "DUQ", "EKPC", "JCPL", "METED", "OVEC", "PECO", "PENELEC", "PEPCO", "PPL", "PSEG", "RECO"],
+      "rate_limits": {
+        "requests_per_minute": 200,
+        "requests_per_hour": 12000
+      },
+      "api_format": "json",
+      "authentication": "api_key",
+      "price_nodes_available": true,
+      "ancillary_services_available": true
+    },
+    {
+      "name": "caiso",
+      "full_name": "California Independent System Operator",
+      "region": "California",
+      "base_url": "http://oasis.caiso.com/oasisapi",
+      "description": "California electricity market data",
+      "data_types": ["lmp", "load", "generation_mix", "ancillary_services"],
+      "markets": ["DAM", "RTM"],
+      "zones": ["PGAE", "SCE", "SDGE", "VEA", "PGE", "NEVP", "WALC", "IID"],
+      "rate_limits": {
+        "requests_per_minute": 100,
+        "requests_per_hour": 6000
+      },
+      "api_format": "json",
+      "authentication": "none",
+      "price_nodes_available": true,
+      "ancillary_services_available": true
+    },
+    {
+      "name": "miso",
+      "full_name": "Midcontinent Independent System Operator",
+      "region": "Midwest",
+      "base_url": "https://api.misoenergy.org",
+      "description": "Midwest electricity market data",
+      "data_types": ["lmp", "load", "generation_mix"],
+      "markets": ["DAM", "RTM"],
+      "zones": ["WEC", "WPS", "UPPC", "MGE", "CPLW", "CWLP", "SIP", "ALTW"],
+      "rate_limits": {
+        "requests_per_minute": 50,
+        "requests_per_hour": 3000
+      },
+      "api_format": "json",
+      "authentication": "none",
+      "price_nodes_available": true,
+      "ancillary_services_available": false
+    },
+    {
+      "name": "spp",
+      "full_name": "Southwest Power Pool",
+      "region": "Southwest",
+      "base_url": "https://api.spp.org/api/v1",
+      "description": "Southwest electricity market data",
+      "data_types": ["lmp", "load", "generation_mix"],
+      "markets": ["DAM", "RTM"],
+      "zones": ["AEPW", "EMDE", "GRDA", "INDN", "KACY", "KCPL", "LES", "MKEC", "NPPD", "OKGE", "OPPD", "SECI", "SPRM", "SPS", "WAPA", "WFEC"],
+      "rate_limits": {
+        "requests_per_minute": 30,
+        "requests_per_hour": 1800
+      },
+      "api_format": "json",
+      "authentication": "none",
+      "price_nodes_available": true,
+      "ancillary_services_available": false
+    },
+    {
+      "name": "aeso",
+      "full_name": "Alberta Electric System Operator",
+      "region": "Alberta, Canada",
+      "base_url": "https://api.aeso.ca/api/v1",
+      "api_key_required": true,
+      "description": "Alberta electricity market data",
+      "data_types": ["lmp", "load", "generation_mix"],
+      "markets": ["DAM", "RTM"],
+      "zones": ["Alberta"],
+      "rate_limits": {
+        "requests_per_minute": 100,
+        "requests_per_hour": 6000
+      },
+      "api_format": "json",
+      "authentication": "bearer_token",
+      "price_nodes_available": true,
+      "ancillary_services_available": false
+    }
+  ]
+}

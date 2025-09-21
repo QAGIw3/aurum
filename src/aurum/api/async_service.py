@@ -15,6 +15,7 @@ except ImportError:
 from ..telemetry.context import get_request_id
 from .config import TrinoConfig
 from .models import CurvePoint, CurveDiffPoint, Meta
+from ..scenarios.storage import get_scenario_store
 
 
 class AsyncTrinoClient:
@@ -420,42 +421,30 @@ class AsyncScenarioService:
         offset: int = 0
     ) -> Tuple[List[Any], int, Any]:
         """List scenarios with filtering."""
-        # Placeholder implementation
-        scenarios = []
-        total = 0
-        meta = {"total": total}
+        store = get_scenario_store()
+        scenarios, total = await store.list_scenarios(
+            tenant_id=tenant_id,
+            status=status,
+            limit=limit,
+            offset=offset
+        )
+        meta = {"request_id": get_request_id()}
         return scenarios, total, meta
 
     async def create_scenario(self, scenario_data: Dict[str, Any]) -> Any:
         """Create a new scenario."""
-        # Placeholder implementation
-        scenario = {
-            "id": "placeholder-id",
-            "tenant_id": scenario_data.get("tenant_id"),
-            "name": scenario_data.get("name"),
-            "status": "active",
-            "created_at": "2024-01-01T00:00:00Z",
-            "updated_at": "2024-01-01T00:00:00Z",
-        }
-        return scenario
+        store = get_scenario_store()
+        return await store.create_scenario(scenario_data)
 
     async def get_scenario(self, scenario_id: str) -> Any:
         """Get scenario by ID."""
-        # Placeholder implementation
-        scenario = {
-            "id": scenario_id,
-            "tenant_id": "test-tenant",
-            "name": "Test Scenario",
-            "status": "active",
-            "created_at": "2024-01-01T00:00:00Z",
-            "updated_at": "2024-01-01T00:00:00Z",
-        }
-        return scenario
+        store = get_scenario_store()
+        return await store.get_scenario(scenario_id)
 
     async def delete_scenario(self, scenario_id: str) -> bool:
         """Delete scenario by ID."""
-        # Placeholder implementation
-        return True
+        store = get_scenario_store()
+        return await store.delete_scenario(scenario_id)
 
     async def list_scenario_runs(
         self,
@@ -464,48 +453,29 @@ class AsyncScenarioService:
         offset: int = 0
     ) -> Tuple[List[Any], int, Any]:
         """List runs for a scenario."""
-        # Placeholder implementation
-        runs = []
-        total = 0
-        meta = {"total": total}
+        store = get_scenario_store()
+        runs, total = await store.list_runs(
+            scenario_id=scenario_id,
+            limit=limit,
+            offset=offset
+        )
+        meta = {"request_id": get_request_id()}
         return runs, total, meta
 
     async def create_scenario_run(self, scenario_id: str, options: Dict[str, Any]) -> Any:
         """Create a new scenario run."""
-        # Placeholder implementation
-        run = {
-            "id": "placeholder-run-id",
-            "scenario_id": scenario_id,
-            "status": "pending",
-            "priority": options.get("priority", "normal"),
-            "created_at": "2024-01-01T00:00:00Z",
-        }
-        return run
+        store = get_scenario_store()
+        return await store.create_run(scenario_id, options)
 
     async def get_scenario_run(self, scenario_id: str, run_id: str) -> Any:
         """Get scenario run by ID."""
-        # Placeholder implementation
-        run = {
-            "id": run_id,
-            "scenario_id": scenario_id,
-            "status": "running",
-            "priority": "normal",
-            "started_at": "2024-01-01T00:00:00Z",
-            "created_at": "2024-01-01T00:00:00Z",
-        }
-        return run
+        store = get_scenario_store()
+        return await store.get_run(scenario_id, run_id)
 
     async def update_scenario_run_state(self, run_id: str, state_update: Dict[str, Any]) -> Any:
         """Update scenario run state."""
-        # Placeholder implementation
-        run = {
-            "id": run_id,
-            "scenario_id": "placeholder-scenario-id",
-            "status": state_update.get("state", "unknown"),
-            "priority": "normal",
-            "created_at": "2024-01-01T00:00:00Z",
-        }
-        return run
+        store = get_scenario_store()
+        return await store.update_run_state(run_id, state_update)
 
     async def cancel_scenario_run(self, run_id: str) -> Any:
         """Cancel a scenario run with idempotency and worker signaling."""
@@ -514,19 +484,19 @@ class AsyncScenarioService:
         from .auth import require_permission, Permission
 
         # Get the run first to validate it exists and get tenant info
-        run = ScenarioStore.get_run(run_id)
+        run = await self.get_scenario_run("", run_id)
         if not run:
             return None
 
         # Extract tenant from run
-        tenant_id = run.get("tenant_id")
+        tenant_id = getattr(run, "tenant_id", None)
 
         # Check authorization
         principal = getattr(asyncio.current_task(), "principal", None) if asyncio.current_task() else None
         require_permission(principal, Permission.SCENARIOS_DELETE, tenant_id)
 
         # Check if already cancelled (idempotency)
-        current_status = run.get("status")
+        current_status = getattr(run, "status", "")
         if current_status == "CANCELLED":
             return run
 
@@ -541,7 +511,7 @@ class AsyncScenarioService:
             )
 
         # Update run status to cancelled
-        cancelled_run = ScenarioStore.update_run_state(run_id, state="CANCELLED", tenant_id=tenant_id)
+        cancelled_run = await self.update_scenario_run_state(run_id, {"status": "CANCELLED"})
 
         if cancelled_run:
             # Signal worker to cancel the run
@@ -592,101 +562,22 @@ class AsyncScenarioService:
         start_time_query = time.perf_counter()
 
         try:
-            # Build query for scenario outputs
-            # Note: This would typically query a scenario outputs table
-            # For now, we'll simulate with a structured query
-
-            query_params = {
-                "scenario_id": scenario_id,
-                "limit": limit,
-                "offset": offset,
-            }
-
-            where_clauses = ["scenario_id = %(scenario_id)s"]
-
-            if start_time:
-                where_clauses.append("timestamp >= %(start_time)s")
-                query_params["start_time"] = start_time
-            if end_time:
-                where_clauses.append("timestamp <= %(end_time)s")
-                query_params["end_time"] = end_time
-            if metric_name:
-                where_clauses.append("metric_name = %(metric_name)s")
-                query_params["metric_name"] = metric_name
-            if min_value is not None:
-                where_clauses.append("value >= %(min_value)s")
-                query_params["min_value"] = min_value
-            if max_value is not None:
-                where_clauses.append("value <= %(max_value)s")
-                query_params["max_value"] = max_value
-
-            where_clause = " AND ".join(where_clauses)
-
-            # Build count query
-            count_query = f"""
-                SELECT COUNT(*) as total
-                FROM scenario_outputs
-                WHERE {where_clause}
-            """
-
-            # Build data query
-            data_query = f"""
-                SELECT
-                    timestamp,
-                    metric_name,
-                    value,
-                    unit,
-                    tags
-                FROM scenario_outputs
-                WHERE {where_clause}
-                ORDER BY timestamp DESC
-                LIMIT %(limit)s OFFSET %(offset)s
-            """
-
-            # Execute queries
-            count_result = await self.trino_client.execute_query(count_query, query_params)
-            total = count_result[0]["total"] if count_result else 0
-
-            data_result = await self.trino_client.execute_query(data_query, query_params)
-
-            # Transform results to ScenarioOutputPoint objects
-            outputs = []
-            for row in data_result:
-                output_point = {
-                    "timestamp": row["timestamp"],
-                    "metric_name": row["metric_name"],
-                    "value": row["value"],
-                    "unit": row["unit"],
-                    "tags": row["tags"] or {},
-                }
-                outputs.append(output_point)
-
-            query_time_ms = (time.perf_counter() - start_time_query) * 1000
-
-            # Build filter info for response
-            applied_filter = {
-                "start_time": start_time,
-                "end_time": end_time,
-                "metric_name": metric_name,
-                "min_value": min_value,
-                "max_value": max_value,
-                "tags": tags,
-            }
-
-            meta = {
-                "request_id": get_request_id(),
-                "query_time_ms": round(query_time_ms, 2),
-                "total": total,
-                "count": len(outputs),
-                "offset": offset,
-                "limit": limit,
-                "has_more": (offset + limit) < total,
-            }
-
+            store = get_scenario_store()
+            outputs, total = await store.get_outputs(
+                scenario_run_id=scenario_id,
+                limit=limit,
+                offset=offset,
+                start_time=start_time,
+                end_time=end_time,
+                metric_name=metric_name,
+                min_value=min_value,
+                max_value=max_value,
+                tags=tags
+            )
+            meta = {"request_id": get_request_id()}
             return outputs, total, meta
 
         except Exception as exc:
-            query_time_ms = (time.perf_counter() - start_time_query) * 1000
             from ..telemetry import get_logger
             logger = get_logger(__name__)
             logger.error(f"Failed to get scenario outputs: {exc}")

@@ -1,6 +1,12 @@
 # Aurum
 
-Developer-oriented scaffolding for the Aurum market intelligence platform. Start with the detailed [Aurum Developer Documentation](docs/aurum-developer-documentation.md) for architecture, data contracts, and operational guidance.
+Developer-oriented scaffolding for the Aurum market intelligence platform.
+
+Quick links:
+- Onboarding guide: `docs/onboarding.md`
+- Architecture & deep dive: `docs/aurum-developer-documentation.md`
+- Kubernetes developer flow: `docs/k8s-dev.md`
+- Runbooks (API, ingestion, worker): `docs/runbooks/`
 
 ## Repository layout
 
@@ -225,7 +231,7 @@ curl "http://localhost:8096/health"
 
 ### Kubernetes (kind) option
 
-Prefer to iterate against Kubernetes primitives? `make kind-up` will create the cluster, apply the base manifests, and bootstrap MinIO/lakeFS/Nessie in one shot (see `docs/k8s-dev.md` for a deeper walkthrough). The stack installs Strimzi for Kafka-in-KRaft plus Schema Registry, Airflow, ClickHouse, Vector, and you can layer on Superset/Kafka UI/Grafana with `make kind-apply-ui`.
+Prefer to iterate against Kubernetes primitives? `make kind-up` will create the cluster, apply the base manifests, and bootstrap MinIO/lakeFS/Nessie in one shot (see `docs/k8s-dev.md` for a deeper walkthrough). The stack installs Strimzi for Kafka-in-KRaft plus Schema Registry, Airflow, ClickHouse, Vector, and you can layer on Superset/Kafka UI/Grafana with `make kind-apply-ui`. Grafana includes curated dashboards for API latency/errors, ingestion SLAs, and worker throughput.
 Re-running `make kind-create` while the cluster exists is safe—the helper exits early without touching the node. To rebuild from scratch in one go, run `AURUM_KIND_FORCE_RECREATE=true make kind-create` or call `scripts/k8s/create_kind_cluster.sh --force`.
 The mounted `trino/catalog` directory ships with catalogs for Iceberg, Postgres, Timescale, Kafka, and ClickHouse so federated queries work immediately once the stack is up.
 

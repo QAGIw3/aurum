@@ -1,0 +1,433 @@
+"""
+Template for Airflow DAG with comprehensive SLA monitoring, failure callbacks, and metrics pushing.
+
+This template provides:
+- SLA violation detection and alerting
+- Structured failure callbacks
+- Metrics collection and pushing
+- Integration with structured logging
+- Data quality monitoring
+- Performance tracking
+"""
+
+from datetime import datetime, timedelta
+from airflow import DAG
+from airflow.operators.python import PythonOperator
+from airflow.operators.bash import BashOperator
+from airflow.operators.empty import EmptyOperator
+
+# Import our monitoring components
+try:
+    from aurum.sla import SLAMonitor, SLAConfig, FailureCallbackManager, MetricsPusher
+    from aurum.logging import StructuredLogger, LogLevel
+    MONITORING_AVAILABLE = True
+except ImportError:
+    MONITORING_AVAILABLE = False
+
+# SLA Configuration
+SLA_CONFIG = {
+    "max_execution_time_minutes": 60,
+    "max_error_rate_percent": 5.0,
+    "min_records_per_hour": 100,
+    "max_data_age_hours": 24,
+    "sla_check_interval_minutes": 5,
+    "alert_cooldown_minutes": 15,
+    "dataset_overrides": {
+        # Add dataset-specific overrides here
+        # "critical_dataset": {"max_execution_time_minutes": 30}
+    }
+}
+
+# Default DAG arguments with monitoring
+DEFAULT_ARGS = {
+    "owner": "aurum-data",
+    "depends_on_past": False,
+    "email_on_failure": True,
+    "email": ["aurum-ops@example.com"],
+    "retries": 3,
+    "retry_delay": timedelta(minutes=10),
+    "retry_exponential_backoff": True,
+    "max_retry_delay": timedelta(minutes=60),
+    "execution_timeout": timedelta(minutes=45),
+    # Add failure callback
+    "on_failure_callback": failure_callback if MONITORING_AVAILABLE else None,
+    "on_success_callback": success_callback if MONITORING_AVAILABLE else None,
+}
+
+def failure_callback(context):
+    """Comprehensive failure callback with SLA monitoring."""
+    if not MONITORING_AVAILABLE:
+        return
+
+    try:
+        # Initialize monitoring components
+        sla_monitor = SLAMonitor(SLAConfig(**SLA_CONFIG))
+        callback_manager = FailureCallbackManager()
+        metrics_pusher = MetricsPusher()
+
+        dag_id = context['dag'].dag_id
+        task_id = context['task_instance'].task_id
+        execution_date = context['execution_date']
+
+        # Log failure
+        logger = StructuredLogger(
+            source_name=f"airflow.{dag_id}",
+            dataset=context.get('dataset', 'unknown')
+        )
+
+        exception = context.get('exception')
+        if exception:
+            logger.log_error(exception, context="dag_failure")
+
+        # Execute failure callbacks
+        callback_manager.execute_callbacks(context, exception)
+
+        # Check for SLA violations
+        task_instance = context['task_instance']
+        violations = sla_monitor.check_dag_sla(
+            dag_id=dag_id,
+            task_id=task_id,
+            execution_time=context.get('task_instance').duration or 0,
+            records_processed=context.get('records_processed', 0),
+            error_count=context.get('error_count', 0),
+            data_quality_score=context.get('data_quality_score'),
+            last_success_time=context.get('last_success_time'),
+            **context
+        )
+
+        # Process violations for alerting
+        alert_manager = AlertManager()
+        for violation in violations:
+            alert_manager.process_violation(violation.__dict__)
+
+        # Push failure metrics
+        metrics_pusher.collect_metrics(
+            dag_id=dag_id,
+            task_id=task_id,
+            execution_date=execution_date.isoformat(),
+            state='failed',
+            try_number=task_instance.try_number,
+            max_tries=task_instance.max_tries,
+            error_count=1,
+            **context
+        )
+        metrics_pusher.push_metrics()
+
+        logger.log(
+            LogLevel.ERROR,
+            f"DAG failure handled: {dag_id}.{task_id}",
+            "dag_failure_handled",
+            violations_count=len(violations)
+        )
+
+    except Exception as e:
+        print(f"Error in failure callback: {e}")
+
+def success_callback(context):
+    """Success callback with metrics collection."""
+    if not MONITORING_AVAILABLE:
+        return
+
+    try:
+        # Initialize monitoring components
+        sla_monitor = SLAMonitor(SLAConfig(**SLA_CONFIG))
+        metrics_pusher = MetricsPusher()
+
+        dag_id = context['dag'].dag_id
+        task_id = context['task_instance'].task_id
+        execution_date = context['execution_date']
+
+        # Log success
+        logger = StructuredLogger(
+            source_name=f"airflow.{dag_id}",
+            dataset=context.get('dataset', 'unknown')
+        )
+
+        logger.log(
+            LogLevel.INFO,
+            f"DAG completed successfully: {dag_id}.{task_id}",
+            "dag_success",
+            **context
+        )
+
+        # Record successful state for SLA monitoring
+        task_instance = context['task_instance']
+        sla_monitor.record_dag_state(
+            dag_id=dag_id,
+            state='success',
+            execution_time=task_instance.duration or 0,
+            records_processed=context.get('records_processed', 0),
+            **context
+        )
+
+        # Push success metrics
+        metrics_pusher.collect_metrics(
+            dag_id=dag_id,
+            task_id=task_id,
+            execution_date=execution_date.isoformat(),
+            state='success',
+            try_number=task_instance.try_number,
+            max_tries=task_instance.max_tries,
+            duration_seconds=task_instance.duration or 0,
+            records_processed=context.get('records_processed', 0),
+            data_quality_score=context.get('data_quality_score', 0.95),
+            **context
+        )
+        metrics_pusher.push_metrics()
+
+    except Exception as e:
+        print(f"Error in success callback: {e}")
+
+def create_monitored_dag(
+    dag_id: str,
+    description: str,
+    schedule_interval: str = "0 6 * * *",
+    start_date: datetime = None,
+    dataset: str = "unknown",
+    sla_config: dict = None,
+    **dag_kwargs
+):
+    """Create a DAG with comprehensive monitoring and SLA tracking.
+
+    Args:
+        dag_id: DAG identifier
+        description: DAG description
+        schedule_interval: Cron schedule
+        start_date: DAG start date
+        dataset: Dataset name for monitoring
+        sla_config: SLA configuration overrides
+        **dag_kwargs: Additional DAG arguments
+    """
+    if start_date is None:
+        start_date = datetime(2024, 1, 1)
+
+    # Merge SLA configuration
+    merged_sla_config = SLA_CONFIG.copy()
+    if sla_config:
+        merged_sla_config.update(sla_config)
+
+    # Create DAG with monitoring callbacks
+    dag_args = DEFAULT_ARGS.copy()
+    dag_args.update(dag_kwargs)
+
+    dag = DAG(
+        dag_id=dag_id,
+        description=description,
+        default_args=dag_args,
+        schedule_interval=schedule_interval,
+        start_date=start_date,
+        catchup=False,
+        max_active_runs=1,
+        tags=["aurum", "monitored", dataset],
+        # Add monitoring context
+        user_defined_macros={
+            "dataset": dataset,
+            "sla_config": merged_sla_config
+        },
+        user_defined_filters={
+            "sla_check": lambda x: x  # Placeholder for SLA checking
+        }
+    )
+
+    return dag
+
+def create_monitored_task(
+    task_id: str,
+    python_callable: callable = None,
+    bash_command: str = None,
+    sla_config: dict = None,
+    **task_kwargs
+):
+    """Create a task with SLA monitoring and metrics collection.
+
+    Args:
+        task_id: Task identifier
+        python_callable: Python function for PythonOperator
+        bash_command: Shell command for BashOperator
+        sla_config: SLA configuration for this task
+        **task_kwargs: Additional task arguments
+    """
+    if python_callable:
+        task = PythonOperator(
+            task_id=task_id,
+            python_callable=python_callable,
+            **task_kwargs
+        )
+    elif bash_command:
+        task = BashOperator(
+            task_id=task_id,
+            bash_command=bash_command,
+            **task_kwargs
+        )
+    else:
+        raise ValueError("Either python_callable or bash_command must be provided")
+
+    # Add monitoring context to task
+    if not hasattr(task, 'execution_context'):
+        task.execution_context = {}
+
+    return task
+
+# Example usage and template patterns:
+
+"""
+# Example: Create a monitored DAG for EIA data ingestion
+
+dag = create_monitored_dag(
+    dag_id="eia_monitored_ingestion",
+    description="EIA data ingestion with comprehensive monitoring",
+    dataset="eia",
+    sla_config={
+        "max_execution_time_minutes": 45,
+        "dataset_overrides": {
+            "eia": {"max_error_rate_percent": 2.0}
+        }
+    }
+)
+
+# Example: Create monitored tasks
+
+def process_eia_data(**context):
+    # Your data processing logic here
+    logger = StructuredLogger("eia_processor", dataset="eia")
+
+    try:
+        logger.start_operation("data_processing")
+
+        # Process data
+        records_processed = 1000
+        data_quality_score = 0.95
+
+        logger.log_data_quality(
+            records_processed=records_processed,
+            records_valid=int(records_processed * data_quality_score),
+            records_invalid=int(records_processed * (1 - data_quality_score))
+        )
+
+        logger.end_operation("data_processing", success=True)
+
+        # Return metrics for monitoring
+        return {
+            "records_processed": records_processed,
+            "data_quality_score": data_quality_score
+        }
+
+    except Exception as e:
+        logger.log_error(e, context="data_processing")
+        raise
+
+def check_eia_sla(**context):
+    # SLA checking logic
+    if MONITORING_AVAILABLE:
+        sla_monitor = SLAMonitor(SLAConfig(**SLA_CONFIG))
+        # Check SLA compliance and handle violations
+        pass
+
+# Create tasks
+start_task = EmptyOperator(
+    task_id="start",
+    dag=dag
+)
+
+process_task = create_monitored_task(
+    task_id="process_eia_data",
+    python_callable=process_eia_data,
+    execution_timeout=timedelta(minutes=30),
+    sla_config={"max_execution_time_minutes": 30}
+)
+
+sla_check_task = create_monitored_task(
+    task_id="sla_check",
+    python_callable=check_eia_sla
+)
+
+end_task = EmptyOperator(
+    task_id="end",
+    dag=dag
+)
+
+# Set up task dependencies
+start_task >> process_task >> sla_check_task >> end_task
+
+# Example: Custom failure callback for specific error handling
+
+def custom_failure_callback(context):
+    # Custom failure handling logic
+    logger = StructuredLogger("custom_handler")
+    logger.log(
+        LogLevel.ERROR,
+        "Custom failure handling triggered",
+        "custom_failure_callback",
+        **context
+    )
+
+    # Add custom failure callback
+    callback_manager = FailureCallbackManager()
+    callback_manager.add_callback(
+        FailureCallback(
+            name="custom_handler",
+            callback_func=custom_failure_callback,
+            priority=15
+        )
+    )
+"""
+
+# Additional utility functions for monitoring
+
+def get_dag_health_status(dag_id: str, hours: int = 24) -> dict:
+    """Get health status for a DAG.
+
+    Args:
+        dag_id: DAG identifier
+        hours: Time window in hours
+
+    Returns:
+        Dictionary with health status
+    """
+    if not MONITORING_AVAILABLE:
+        return {"status": "monitoring_unavailable"}
+
+    try:
+        metrics_pusher = MetricsPusher()
+        sla_monitor = SLAMonitor(SLAConfig())
+
+        # Get metrics summary
+        metrics_summary = metrics_pusher.get_dag_performance_summary(dag_id, hours)
+
+        # Get SLA status
+        sla_status = sla_monitor.get_sla_status(dag_id)
+
+        return {
+            "dag_id": dag_id,
+            "metrics": metrics_summary,
+            "sla_status": sla_status,
+            "overall_health": _calculate_overall_health(metrics_summary, sla_status)
+        }
+
+    except Exception as e:
+        return {"status": "error", "error": str(e)}
+
+def _calculate_overall_health(metrics: dict, sla_status: dict) -> str:
+    """Calculate overall health status from metrics and SLA status.
+
+    Args:
+        metrics: Metrics summary
+        sla_status: SLA status
+
+    Returns:
+        Overall health status
+    """
+    # High error rate or SLA violations = unhealthy
+    if metrics.get("failed_runs", 0) > 0:
+        return "unhealthy"
+
+    if sla_status.get("recent_violations", 0) > 2:
+        return "unhealthy"
+
+    if sla_status.get("status") == "critical":
+        return "critical"
+
+    if sla_status.get("status") == "warning":
+        return "warning"
+
+    return "healthy"

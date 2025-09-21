@@ -1,0 +1,61 @@
+transform {
+  # Generate structured logs from job execution
+  Sql {
+    sql = """
+      SELECT
+        NOW() as timestamp,
+        '${LOG_LEVEL:-INFO}' as level,
+        '${LOG_MESSAGE:-Job execution completed}' as message,
+        '${LOG_EVENT_TYPE:-job_complete}' as event_type,
+        '${SOURCE_NAME}' as source_name,
+        '${DATASET:-unknown}' as dataset,
+        '${JOB_ID:-unknown}' as job_id,
+        '${TASK_ID:-unknown}' as task_id,
+        CAST('${DURATION_MS:-0}' AS DOUBLE) as duration_ms,
+        CAST('${RECORDS_PROCESSED:-0}' AS BIGINT) as records_processed,
+        CAST('${BYTES_PROCESSED:-0}' AS BIGINT) as bytes_processed,
+        '${ERROR_CODE:-}' as error_code,
+        '${ERROR_MESSAGE:-}' as error_message,
+        '${HOSTNAME:-}' as hostname,
+        '${CONTAINER_ID:-}' as container_id,
+        '${THREAD_ID:-}' as thread_id,
+        toJSONString(map(
+          'session_id', '${SESSION_ID:-unknown}',
+          'batch_id', '${BATCH_ID:-}',
+          'retry_count', '${RETRY_COUNT:-0}',
+          'data_quality_score', '${DATA_QUALITY_SCORE:-}',
+          'api_endpoint', '${API_ENDPOINT:-}',
+          'http_status_code', '${HTTP_STATUS_CODE:-}'
+        )) as metadata
+      FROM dual
+      LIMIT 1
+    """
+    result_table_name = "log_entry"
+  }
+
+  # Convert log entry to JSON format for Kafka
+  JsonFormat {
+    schema = {
+      fields {
+        timestamp = string
+        level = string
+        message = string
+        event_type = string
+        source_name = string
+        dataset = string
+        job_id = string
+        task_id = string
+        duration_ms = double
+        records_processed = long
+        bytes_processed = long
+        error_code = string
+        error_message = string
+        hostname = string
+        container_id = string
+        thread_id = string
+        metadata = string
+      }
+    }
+    result_table_name = "structured_logs"
+  }
+}
