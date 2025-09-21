@@ -1,0 +1,12 @@
+{
+  "generated_at": "2025-01-01T00:00:00+00:00",
+  "dataset_count": 230,
+  "with_counts": true,
+  "missing_counts": [],
+  "warnings": {},
+  "diff": {
+    "added_paths": [],
+    "removed_paths": [],
+    "changed": []
+  }
+}

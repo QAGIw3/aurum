@@ -20,7 +20,7 @@ format:
 bootstrap:
 	docker compose -f compose/docker-compose.dev.yml --profile bootstrap up --exit-code-from bootstrap
 
-.PHONY: kind-create kind-delete kind-apply kind-reset kind-bootstrap kind-apply-ui kind-delete-ui kind-up kind-down kind-load-api kind-load-worker kafka-register-schemas kafka-set-compat
+.PHONY: kind-create kind-delete kind-apply kind-reset kind-bootstrap kind-apply-ui kind-delete-ui kind-up kind-down kind-load-api kind-load-worker kafka-register-schemas kafka-set-compat kafka-apply-topics kafka-apply-topics-dry-run
 
 kind-create:
 	scripts/k8s/create_kind_cluster.sh
@@ -79,6 +79,12 @@ kafka-set-compat:
 
 kafka-bootstrap:
 	scripts/kafka/bootstrap.sh --schema-registry-url $${SCHEMA_REGISTRY_URL:-http://localhost:8081}
+
+kafka-apply-topics:
+	python scripts/kafka/manage_topics.py --bootstrap-servers $${KAFKA_BOOTSTRAP:-localhost:9092} --config $${KAFKA_TOPICS_CONFIG:-config/kafka_topics.json}
+
+kafka-apply-topics-dry-run:
+	python scripts/kafka/manage_topics.py --bootstrap-servers $${KAFKA_BOOTSTRAP:-localhost:9092} --config $${KAFKA_TOPICS_CONFIG:-config/kafka_topics.json} --dry-run
 
 .PHONY: eia-validate-config airflow-eia-vars
 

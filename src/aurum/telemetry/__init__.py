@@ -4,20 +4,66 @@ from __future__ import annotations
 import logging
 import os
 import socket
-from typing import Optional
+from typing import Optional, Any
 
-from opentelemetry import trace
-from opentelemetry.sdk.resources import Resource
-from opentelemetry.sdk.trace import TracerProvider
-from opentelemetry.sdk.trace.export import BatchSpanProcessor
-from opentelemetry.sdk.trace.sampling import TraceIdRatioBased
-from opentelemetry.exporter.otlp.proto.grpc.trace_exporter import OTLPSpanExporter
-from opentelemetry._logs import set_logger_provider
-from opentelemetry.sdk._logs import LoggerProvider
-from opentelemetry.sdk._logs.export import BatchLogRecordProcessor
-from opentelemetry.exporter.otlp.proto.grpc._log_exporter import OTLPLogExporter
-from opentelemetry.instrumentation.logging import LoggingInstrumentor
-from opentelemetry.instrumentation.requests import RequestsInstrumentor
+try:
+    from opentelemetry import trace
+    from opentelemetry.sdk.resources import Resource
+    from opentelemetry.sdk.trace import TracerProvider
+    from opentelemetry.sdk.trace.export import BatchSpanProcessor
+    from opentelemetry.sdk.trace.sampling import TraceIdRatioBased
+    from opentelemetry.exporter.otlp.proto.grpc.trace_exporter import OTLPSpanExporter
+    from opentelemetry._logs import set_logger_provider
+    from opentelemetry.sdk._logs import LoggerProvider
+    from opentelemetry.sdk._logs.export import BatchLogRecordProcessor
+    from opentelemetry.exporter.otlp.proto.grpc._log_exporter import OTLPLogExporter
+    from opentelemetry.instrumentation.logging import LoggingInstrumentor
+    from opentelemetry.instrumentation.requests import RequestsInstrumentor
+    OTEL_AVAILABLE = True
+except ImportError:  # pragma: no cover - telemetry optional
+    trace = None  # type: ignore[assignment]
+
+    class _NoOpSpan:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+        def set_attribute(self, *args, **kwargs):
+            return None
+
+        def is_recording(self) -> bool:
+            return False
+
+    class _NoOpTracer:
+        def start_as_current_span(self, _name: str):
+            return _NoOpSpan()
+
+    class _NoOpTraceModule:
+        @staticmethod
+        def get_tracer(_name: str) -> _NoOpTracer:
+            return _NoOpTracer()
+
+        @staticmethod
+        def get_tracer_provider() -> None:
+            return None
+
+        @staticmethod
+        def set_tracer_provider(_provider) -> None:
+            return None
+
+    trace = _NoOpTraceModule()  # type: ignore[assignment]
+    Resource = TracerProvider = BatchSpanProcessor = TraceIdRatioBased = OTLPSpanExporter = None  # type: ignore
+    set_logger_provider = lambda *args, **kwargs: None  # type: ignore
+    LoggerProvider = BatchLogRecordProcessor = OTLPLogExporter = None  # type: ignore
+
+    class _NoOpInstrumentor:
+        def instrument(self, *args, **kwargs):
+            return None
+
+    LoggingInstrumentor = RequestsInstrumentor = _NoOpInstrumentor  # type: ignore
+    OTEL_AVAILABLE = False
 
 try:  # Optional instrumentation depending on extras installed
     from opentelemetry.instrumentation.fastapi import FastAPIInstrumentor  # type: ignore
@@ -59,6 +105,8 @@ def configure_telemetry(
 ) -> None:
     """Initialise tracing and logging exporters if configured via environment."""
     global _INITIALISED
+    if not OTEL_AVAILABLE:
+        return None
     if not _INITIALISED:
         resolved_service_name = os.getenv("AURUM_OTEL_SERVICE_NAME", service_name)
         namespace = os.getenv("AURUM_OTEL_SERVICE_NAMESPACE", "aurum")
@@ -113,7 +161,7 @@ def configure_telemetry(
             _logger.warning("Failed to instrument FastAPI app: %s", exc)
 
 
-def get_tracer(name: str) -> trace.Tracer:
+def get_tracer(name: str) -> Any:
     """Return a tracer bound to the configured provider."""
     return trace.get_tracer(name)
 

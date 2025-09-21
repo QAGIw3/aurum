@@ -207,7 +207,8 @@ Stateful services now persist their data under `.kind-data/` on the host (Postgr
 Nightly CronJobs dump Postgres and Timescale to `.kind-data/backups/` (retaining seven days) and mirror the MinIO `aurum` bucket for quick restores. Check `k8s/base/backups.yaml` if you need to change schedules or retention windows.
 
 Run `make kafka-bootstrap` (optionally export `SCHEMA_REGISTRY_URL`) after the Schema Registry is online to publish the shared Avro contracts and enforce `BACKWARD` compatibility in one step. Individual commands remain available via `make kafka-register-schemas` and `make kafka-set-compat` (override the level with `COMPATIBILITY_LEVEL`).
-Set `AURUM_DLQ_TOPIC` (or pass `--dlq-topic`) when running the ingestion helpers to capture failures in `aurum.ingest.error.v1` alongside the ingest attempt metadata.
+Apply topic definitions and retention policies with `make kafka-apply-topics` (preview changes via `make kafka-apply-topics-dry-run`). The plan in `config/kafka_topics.json` seeds the canonical `aurum.curve.observation.v1` topic, its dead-letter companion `aurum.curve.observation.dlq`, and shared `aurum.ingest.error.v1` stream with sane defaults.
+Set `AURUM_DLQ_TOPIC` (or pass `--dlq-topic`) when running the ingestion helpers to capture failures in `aurum.curve.observation.dlq`; generic ingestion pipelines continue to fall back to `aurum.ingest.error.v1` for structured error payloads.
 
 **Operational follow-up**
 - Register the updated Avro subjects after deploying (`iso.lmp.v1`, `iso.load.v1`, and `iso.genmix.v1` now cover AESO/MISO/SPP/CAISO). Run `make kafka-register-schemas` followed by
@@ -375,6 +376,7 @@ python -m aurum.parsers.runner --as-of 2025-09-12 --format csv files/EOD_PW_2025
 ```
 
 Outputs are written to `./artifacts` by default.
+The runner enriches currency/unit metadata via the shared mapper, automatically shunts rows that miss core quality checks (missing currency, invalid tenor, etc.) into a quarantine dataset, and writes a JSONL DLQ payload mirroring `aurum.ingest.error.v1`. Override destinations with `--quarantine-dir`, `--quarantine-format`, and `--dlq-json-dir` (or disable the DLQ file via `--no-dlq-json`).
 
 ### S3 output
 

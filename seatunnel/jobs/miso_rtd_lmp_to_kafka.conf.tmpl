@@ -1,0 +1,139 @@
+# MISO RT Data Broker LMP → Kafka (Avro)
+#
+# This job fetches JSON payloads from the MISO Data Broker getLMPConsolidatedTable API,
+# reconstructs five-minute intervals using the supplied date/hour-min fields, enriches with
+# location metadata, and publishes iso.lmp.v1 records to Kafka.
+
+env {
+  job.mode = "BATCH"
+  parallelism = 1
+}
+
+source {
+  Http {
+    url = "${MISO_RTD_ENDPOINT}"
+    method = "GET"
+    headers {
+      Authorization = "${MISO_RTD_AUTH_HEADER}"
+    }
+    params {
+      start = "${MISO_RTD_START}"
+      end = "${MISO_RTD_END}"
+      market = "${MISO_RTD_MARKET_PARAM}"
+      region = "${MISO_RTD_REGION_PARAM}"
+    }
+    connection_timeout_ms = 20000
+    retry { interval_ms = 8000, max_retries = 10 }
+    format = "json"
+    schema = {
+      fields {
+        ${MISO_RTD_REF_FIELD} = string
+        ${MISO_RTD_HOURMIN_FIELD} = string
+        ${MISO_RTD_NODE_FIELD} = string
+        ${MISO_RTD_NODE_ID_FIELD} = string
+        ${MISO_RTD_LMP_FIELD} = string
+        ${MISO_RTD_MCC_FIELD} = string
+        ${MISO_RTD_MLC_FIELD} = string
+      }
+    }
+    jsonpath = "${MISO_RTD_JSONPATH}"
+    result_table_name = "miso_rtd_raw"
+  }
+  LocalFile {
+    path = "${ISO_LOCATION_REGISTRY}"
+    format = "csv"
+    csv {
+      delimiter = ","
+      header = true
+    }
+    schema {
+      fields {
+        iso = string
+        location_id = string
+        location_name = string
+        location_type = string
+        zone = string
+        hub = string
+        timezone = string
+      }
+    }
+    result_table_name = "iso_registry"
+  }
+}
+
+transform {
+  Sql {
+    source_table_name = "miso_rtd_raw"
+    result_table_name = "miso_rtd_normalized"
+    query = """
+      SELECT
+        'MISO' AS iso_code,
+        UPPER('${MISO_RTD_MARKET}') AS market,
+        CAST(
+          DATEDIFF(
+            TO_DATE(TO_TIMESTAMP(CONCAT('${MISO_RTD_DATE}', ' ', CAST(${MISO_RTD_HOURMIN_EXPR} AS STRING)), '${MISO_RTD_COMBINED_FORMAT}')),
+            TO_DATE('1970-01-01')
+          ) AS INT
+        ) AS delivery_date,
+        CAST(
+          UNIX_TIMESTAMP(
+            TO_TIMESTAMP(CONCAT('${MISO_RTD_DATE}', ' ', CAST(${MISO_RTD_HOURMIN_EXPR} AS STRING)), '${MISO_RTD_COMBINED_FORMAT}')
+          ) * 1000000 AS BIGINT
+        ) AS interval_start,
+        CAST(
+          UNIX_TIMESTAMP(
+            TO_TIMESTAMP(CONCAT('${MISO_RTD_DATE}', ' ', CAST(${MISO_RTD_HOURMIN_EXPR} AS STRING)), '${MISO_RTD_COMBINED_FORMAT}')
+          ) * 1000000 + ${MISO_RTD_INTERVAL_SECONDS} * 1000000 AS BIGINT
+        ) AS interval_end,
+        ${MISO_RTD_INTERVAL_SECONDS} / 60 AS interval_minutes,
+        CAST(${MISO_RTD_NODE_ID_EXPR} AS STRING) AS location_id,
+        COALESCE(reg.location_name, CAST(${MISO_RTD_NODE_EXPR} AS STRING)) AS location_name,
+        COALESCE(reg.location_type, 'NODE') AS location_type,
+        reg.zone AS zone,
+        reg.hub AS hub,
+        reg.timezone AS timezone,
+        CAST(${MISO_RTD_LMP_EXPR} AS DOUBLE) AS price_total,
+        CAST(${MISO_RTD_LMP_EXPR} AS DOUBLE)
+          - COALESCE(CAST(${MISO_RTD_MCC_EXPR} AS DOUBLE), 0)
+          - COALESCE(CAST(${MISO_RTD_MLC_EXPR} AS DOUBLE), 0) AS price_energy,
+        CAST(${MISO_RTD_MCC_EXPR} AS DOUBLE) AS price_congestion,
+        CAST(${MISO_RTD_MLC_EXPR} AS DOUBLE) AS price_loss,
+        'USD' AS currency,
+        'MWh' AS uom,
+        CAST(${MISO_RTD_NODE_EXPR} AS STRING) AS settlement_point,
+        CAST(${MISO_RTD_REF_EXPR} AS STRING) AS source_run_id,
+        CAST(UNIX_TIMESTAMP() * 1000000 AS BIGINT) AS ingest_ts,
+        SHA2(
+          CONCAT_WS('|', CAST(${MISO_RTD_REF_EXPR} AS STRING), CAST(${MISO_RTD_HOURMIN_EXPR} AS STRING), CAST(${MISO_RTD_NODE_ID_EXPR} AS STRING), CAST(${MISO_RTD_LMP_EXPR} AS STRING)),
+          256
+        ) AS record_hash,
+        NULL AS metadata
+      FROM miso_rtd_raw raw
+      LEFT JOIN iso_registry reg
+        ON upper(reg.iso) = 'MISO'
+       AND upper(reg.location_id) = upper(CAST(${MISO_RTD_NODE_ID_EXPR} AS STRING))
+      WHERE ${MISO_RTD_LMP_EXPR} IS NOT NULL
+    """
+  }
+}
+
+sink {
+  Kafka {
+    plugin_input = "miso_rtd_normalized"
+    bootstrap.servers = "${KAFKA_BOOTSTRAP_SERVERS}"
+    topic = "${MISO_RTD_TOPIC}"
+    semantic = "AT_LEAST_ONCE"
+    format = "avro"
+    avro {
+      use.schema.registry = true
+      schema.registry.url = "${SCHEMA_REGISTRY_URL}"
+      value.schema.subject = "${MISO_RTD_SUBJECT}"
+      value.schema = """${ISO_LMP_SCHEMA}"""
+    }
+    producer {
+      linger.ms = 500
+      batch.size = 32768
+      retries = 5
+    }
+  }
+}

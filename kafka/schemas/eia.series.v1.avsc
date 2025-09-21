@@ -63,6 +63,30 @@
       "default": null
     },
     {
+      "name": "canonical_unit",
+      "doc": "Normalized unit string after applying Aurum unit mappings.",
+      "type": ["null", "string"],
+      "default": null
+    },
+    {
+      "name": "canonical_currency",
+      "doc": "Canonical currency code derived from unit normalization when applicable.",
+      "type": ["null", "string"],
+      "default": null
+    },
+    {
+      "name": "canonical_value",
+      "doc": "Value converted into the canonical unit when a deterministic scalar conversion is configured.",
+      "type": ["null", "double"],
+      "default": null
+    },
+    {
+      "name": "conversion_factor",
+      "doc": "Scalar multiplier applied to raw value to obtain canonical_value.",
+      "type": ["null", "double"],
+      "default": null
+    },
+    {
       "name": "area",
       "doc": "Geographic area or ISO code tied to the series (if supplied).",
       "type": ["null", "string"],

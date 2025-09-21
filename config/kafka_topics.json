@@ -1,0 +1,55 @@
+{
+  "defaults": {
+    "partitions": 3,
+    "replication_factor": 3,
+    "config": {
+      "cleanup.policy": "delete",
+      "min.insync.replicas": "2"
+    },
+    "acl": {
+      "host": "*",
+      "permission": "ALLOW",
+      "pattern": "LITERAL"
+    }
+  },
+  "topics": [
+    {
+      "name": "aurum.curve.observation.v1",
+      "partitions": 12,
+      "replication_factor": 3,
+      "config": {
+        "retention.ms": "604800000"
+      },
+      "acls": [
+        {"principal": "User:aurum-ingest", "operations": ["WRITE", "DESCRIBE", "DESCRIBE_CONFIGS"]},
+        {"principal": "User:aurum-api", "operations": ["READ", "DESCRIBE"]},
+        {"principal": "User:aurum-worker", "operations": ["READ", "DESCRIBE"]},
+        {"principal": "User:aurum-dbt", "operations": ["READ", "DESCRIBE"]}
+      ]
+    },
+    {
+      "name": "aurum.curve.observation.dlq",
+      "partitions": 3,
+      "replication_factor": 3,
+      "config": {
+        "retention.ms": "2592000000"
+      },
+      "acls": [
+        {"principal": "User:aurum-ingest", "operations": ["WRITE", "DESCRIBE", "DESCRIBE_CONFIGS"]},
+        {"principal": "User:aurum-ops", "operations": ["READ", "DESCRIBE"]}
+      ]
+    },
+    {
+      "name": "aurum.ingest.error.v1",
+      "partitions": 3,
+      "replication_factor": 3,
+      "config": {
+        "retention.ms": "1209600000"
+      },
+      "acls": [
+        {"principal": "User:aurum-ingest", "operations": ["WRITE", "DESCRIBE", "DESCRIBE_CONFIGS"]},
+        {"principal": "User:aurum-ops", "operations": ["READ", "DESCRIBE"]}
+      ]
+    }
+  ]
+}

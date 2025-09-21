@@ -185,6 +185,10 @@ class EiaSeriesPoint(BaseModel):
     value: float | None = None
     raw_value: str | None = None
     unit: str | None = None
+    canonical_unit: str | None = None
+    canonical_currency: str | None = None
+    canonical_value: float | None = None
+    conversion_factor: float | None = None
     area: str | None = None
     sector: str | None = None
     seasonal_adjustment: str | None = None
@@ -205,6 +209,8 @@ class EiaSeriesDimensionsData(BaseModel):
     area: list[str] | None = None
     sector: list[str] | None = None
     unit: list[str] | None = None
+    canonical_unit: list[str] | None = None
+    canonical_currency: list[str] | None = None
     frequency: list[str] | None = None
     source: list[str] | None = None
 

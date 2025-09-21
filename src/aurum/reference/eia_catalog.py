@@ -26,6 +26,10 @@ class EiaDataset:
     end_period: str | None
     default_frequency: str | None
     default_date_format: str | None
+    browser_total: int | None
+    browser_frequency: str | None
+    browser_date_format: str | None
+    warnings: tuple[str, ...]
 
 
 class CatalogNotFoundError(FileNotFoundError):
@@ -67,6 +71,10 @@ def iter_datasets(path: Path | None = None) -> Iterable[EiaDataset]:
             end_period=dataset.get("end_period"),
             default_frequency=dataset.get("default_frequency"),
             default_date_format=dataset.get("default_date_format"),
+            browser_total=dataset.get("browser_total"),
+            browser_frequency=dataset.get("browser_frequency"),
+            browser_date_format=dataset.get("browser_date_format"),
+            warnings=tuple(dataset.get("warnings", [])),
         )
 
 

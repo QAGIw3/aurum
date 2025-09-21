@@ -164,9 +164,9 @@ flowchart LR
 **`iceberg.market.curve_observation`** -- normalized long-form rows (monthly and strips)
 
 * `asof_date` (DATE), `source_file` (STRING), `sheet_name` (STRING)
-* Identity: `asset_class`, `region`, `iso`, `location`, `market`, `product`, `block`, `spark_location`
-* Price shape: `price_type` (Mid/Bid/Ask), `units_raw`
-* Tenor: `tenor_type` (MONTHLY/CALENDAR/SEASON/QUARTER), `contract_month` (DATE), `tenor_label` (STRING)
+* Identity: `asset_class`, `iso`, `region`, `location`, `market`, `product`, `block`, `spark_location`
+* Price shape: `price_type` (MID/BID/ASK/LAST/SETTLE/INDEX/STRIP/CUSTOM), `units_raw`, `currency`, `per_unit`
+* Tenor: `tenor_type` (MONTHLY/QUARTER/SEASON/CALENDAR/STRIP/CUSTOM), `contract_month` (DATE), `tenor_label` (STRING)
 * Values: `value`, `bid`, `ask`, `mid`
 * Lineage: `curve_key` (hash of identity), `version_hash` (file + sheet + asof), `_ingest_ts`
 
@@ -179,6 +179,7 @@ flowchart LR
 ### Event contracts (Kafka/Avro)
 
 * `aurum.curve.observation.v1` -- mirrors `curve_observation` rows
+* `aurum.curve.observation.dlq` -- dead-letter queue for rejected canonical rows (JSON payload mirroring `aurum.ingest.error.v1` semantics)
 * `aurum.qa.result.v1` -- Great Expectations outcomes
 * `aurum.scenario.request.v1` --> `aurum.scenario.output.v1` -- async scenarios
 * `aurum.alert.v1` -- operational and data quality alerts
@@ -257,8 +258,9 @@ Set lakeFS credentials when using branch commits: `AURUM_LAKEFS_ENDPOINT`, `AURU
 
 1. Create Iceberg schemas with Trino: `trino -f trino/ddl/iceberg_market.sql`
 2. Apply Postgres, Timescale, and ClickHouse DDLs.
-3. Register Avro schemas in Schema Registry with `make kafka-register-schemas` (set `SCHEMA_REGISTRY_URL` or use `--dry-run` on the underlying script if you need a preview).
-4. Start Airflow; set `AURUM_EOD_ASOF=YYYY-MM-DD` in environment.
+3. Apply Kafka topics/ACLs with `make kafka-apply-topics` (or `make kafka-apply-topics-dry-run` to preview changes declared in `config/kafka_topics.json`).
+4. Register Avro schemas in Schema Registry with `make kafka-register-schemas` (set `SCHEMA_REGISTRY_URL` or use `--dry-run` on the underlying script if you need a preview).
+5. Start Airflow; set `AURUM_EOD_ASOF=YYYY-MM-DD` in environment.
 
 ### Developer workflow
 
@@ -267,6 +269,7 @@ Set lakeFS credentials when using branch commits: `AURUM_LAKEFS_ENDPOINT`, `AURU
 * **CLI:** `python -m aurum.parsers.runner --as-of YYYY-MM-DD files/*.xlsx` to materialize canonical CSV/Parquet locally.
 * **Helper:** `python scripts/ingest_daily.py --as-of YYYY-MM-DD --write-iceberg --lakefs-commit files/EOD_*.xlsx` to run the full workflow in one command.
 * **Output:** set `AURUM_PARSED_OUTPUT_URI` (e.g., `s3://aurum/curated/curves`) to push parser outputs directly to MinIO/lakeFS; otherwise files land in `AURUM_PARSED_OUTPUT_DIR`.
+* **Quarantine & DLQ:** failing rows are written to `<output>/quarantine` (override with `AURUM_QUARANTINE_DIR` or `--quarantine-dir`) and mirrored as JSONL payloads following `aurum.ingest.error.v1` semantics unless `--no-dlq-json` is set.
 * **Iceberg:** export `AURUM_WRITE_ICEBERG=1` (and Nessie env vars) or use `--write-iceberg` to append rows via pyiceberg.
 * **dbt:** iterate on models: `dbt run -m stg,int,mart`.
 * **APIs:** run local API service (FastAPI/Flask/Vert.x) against Trino and Redis.
@@ -345,6 +348,7 @@ Set lakeFS credentials when using branch commits: `AURUM_LAKEFS_ENDPOINT`, `AURU
 ### Great Expectations
 
 * **Schema suite:** columns present, non-null keys.
+* **Landing suite:** validates enriched rows (currency/per_unit present, tenor + price enums) before persistence.
 * **Business suite:** `Mid` approximately equals `(Bid + Ask) / 2` within epsilon; ranges by asset_class.
 * **Tenor suite:** monthly continuity, no duplicates.
 * Fail-close pipeline on red; emit `aurum.alert.v1`.

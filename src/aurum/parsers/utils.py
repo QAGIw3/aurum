@@ -9,6 +9,7 @@ from typing import Any, Iterable, Mapping, Optional, Sequence
 import pandas as pd
 
 from .vendor_curves.schema import CANONICAL_COLUMNS
+from aurum.reference.curve_schema import CURVE_IDENTITY_FIELDS, CurveTenorType
 
 _ASOF_PATTERNS: Sequence[re.Pattern[str]] = (
     re.compile(r"as[-_\s]*of\s*[:=-]?\s*(?P<value>\d{1,2}[/-]\d{1,2}[/-]\d{2,4})", re.IGNORECASE),
@@ -96,17 +97,7 @@ def detect_units_row(df: pd.DataFrame, *, header_rows: int = 12, scan_columns: i
 
 def compute_curve_key(identity: Mapping[str, Optional[str]], *, separator: str = "|") -> str:
     """Compute a deterministic curve key from identity components."""
-    ordered_fields = (
-        "asset_class",
-        "iso",
-        "region",
-        "location",
-        "market",
-        "product",
-        "block",
-        "spark_location",
-    )
-    pieces = [normalise_token(identity.get(field)) for field in ordered_fields]
+    pieces = [normalise_token(identity.get(field)) for field in CURVE_IDENTITY_FIELDS]
     raw = separator.join(pieces)
     digest = hashlib.sha256(raw.encode("utf-8")).hexdigest()
     return digest
@@ -198,22 +189,22 @@ def to_float(value: Any) -> Optional[float]:
 
 def infer_tenor_type(label: object) -> str:
     if isinstance(label, (datetime, pd.Timestamp)):
-        return "MONTHLY"
+        return CurveTenorType.MONTHLY.value
     if not isinstance(label, str):
-        return "MONTHLY"
+        return CurveTenorType.MONTHLY.value
     upper = label.upper()
     if upper.startswith("CALENDAR"):
-        return "CALENDAR"
+        return CurveTenorType.CALENDAR.value
     if any(
         upper.startswith(prefix)
         for prefix in ("WINTER", "SUMMER", "SPRING", "FALL", "AUTUMN")
     ):
-        return "SEASON"
+        return CurveTenorType.SEASON.value
     if any(token in upper for token in ("BAL", "STRIP")):
-        return "SEASON"
+        return CurveTenorType.SEASON.value
     if re.match(r"^Q\d", upper):
-        return "QUARTER"
-    return "MONTHLY"
+        return CurveTenorType.QUARTER.value
+    return CurveTenorType.MONTHLY.value
 
 
 def normalise_tenor_label(label: object) -> str:

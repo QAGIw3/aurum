@@ -225,6 +225,42 @@ def test_reference_schemas_serialization_roundtrip() -> None:
                 and isinstance(decoded["ingest_ts"], datetime)
             ),
         },
+        "curve.observation.v1.avsc": {
+            "record": {
+                "asof_date": date(2024, 1, 1),
+                "source_file": "vendor_curve.xlsx",
+                "sheet_name": "Fixed Prices - Mid",
+                "asset_class": "power",
+                "region": "US",
+                "iso": "PJM",
+                "location": "AECO",
+                "market": "DA",
+                "product": "power",
+                "block": "ON_PEAK",
+                "spark_location": "AECO HUB",
+                "price_type": "MID",
+                "units_raw": "USD/MWh",
+                "currency": "USD",
+                "per_unit": "MWh",
+                "tenor_type": "MONTHLY",
+                "contract_month": date(2024, 1, 1),
+                "tenor_label": "2024-01",
+                "value": 45.5,
+                "bid": 45.0,
+                "ask": 46.0,
+                "mid": 45.5,
+                "curve_key": "c" * 64,
+                "version_hash": "d" * 64,
+                "_ingest_ts": now_ts,
+            },
+            "assertions": lambda decoded: (
+                decoded["asset_class"] == "power"
+                and decoded["price_type"] == "MID"
+                and decoded["tenor_type"] == "MONTHLY"
+                and decoded["currency"] == "USD"
+                and isinstance(decoded["_ingest_ts"], datetime)
+            ),
+        },
         "cpi.series.v1.avsc": {
             "record": {
                 "series_id": "CPIAUCSL",

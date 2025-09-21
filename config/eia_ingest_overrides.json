@@ -1,0 +1,334 @@
+{
+  "natural-gas/stor/wkly": {
+    "schedule": "0 9 * * 5",
+    "topic_var": "aurum_eia_ng_storage_topic",
+    "default_topic": "aurum.ref.eia.ng.storage.v1",
+    "series_id_expr": "series",
+    "frequency": "WEEKLY",
+    "units_var": "aurum_eia_ng_storage_units",
+    "default_units": "BCF",
+    "area_expr": "duoarea",
+    "sector_expr": "process",
+    "description_expr": "`series-description`",
+    "source_expr": "COALESCE(source, 'EIA')",
+    "dataset_expr": "COALESCE(dataset, 'nat_gas_storage')",
+    "metadata_expr": "NULL",
+    "filter_expr": "TRUE",
+    "param_overrides": [
+      {
+        "data[0]": "value"
+      }
+    ],
+    "source_name": "eia_ng_storage",
+    "unit_conversion": {
+      "source_unit": "BCF",
+      "target_unit": "MMcf",
+      "factor": 1000.0
+    }
+  },
+  "electricity/rto/daily-region-data": {
+    "schedule": "15 5 * * *",
+    "topic_var": "aurum_eia_rto_region_topic",
+    "default_topic": "aurum.ref.eia.rto.region.daily.v1",
+    "series_id_expr": "CONCAT(respondent, '_', type)",
+    "frequency": "DAILY",
+    "units_var": "aurum_eia_rto_region_units",
+    "default_units": "MWh",
+    "area_expr": "respondent",
+    "sector_expr": "type",
+    "description_expr": "`type-name`",
+    "source_expr": "COALESCE(source, 'EIA')",
+    "dataset_expr": "COALESCE(dataset, 'rto_daily_region')",
+    "metadata_expr": "NULL",
+    "filter_expr": "respondent IS NOT NULL",
+    "param_overrides": [
+      {
+        "data[0]": "value"
+      }
+    ],
+    "source_name": "eia_rto_region_daily",
+    "unit_conversion": {
+      "source_unit": "MWh",
+      "target_unit": "GWh",
+      "factor": 0.001
+    }
+  },
+  "electricity/rto/daily-fuel-type-data": {
+    "schedule": "20 5 * * *",
+    "topic_var": "aurum_eia_rto_fuel_topic",
+    "default_topic": "aurum.ref.eia.rto.fuel.daily.v1",
+    "series_id_expr": "CONCAT(respondent, '_', fueltype)",
+    "frequency": "DAILY",
+    "units_var": "aurum_eia_rto_fuel_units",
+    "default_units": "MWh",
+    "area_expr": "respondent",
+    "sector_expr": "fueltype",
+    "description_expr": "`fueltype-name`",
+    "source_expr": "COALESCE(source, 'EIA')",
+    "dataset_expr": "COALESCE(dataset, 'rto_daily_fuel')",
+    "metadata_expr": "NULL",
+    "filter_expr": "respondent IS NOT NULL",
+    "param_overrides": [
+      {
+        "data[0]": "value"
+      }
+    ],
+    "source_name": "eia_rto_fuel_daily"
+  },
+  "electricity/rto/daily-interchange-data": {
+    "schedule": "25 5 * * *",
+    "topic_var": "aurum_eia_rto_interchange_topic",
+    "default_topic": "aurum.ref.eia.rto.interchange.daily.v1",
+    "series_id_expr": "CONCAT(fromba, '_', toba)",
+    "frequency": "DAILY",
+    "units_var": "aurum_eia_rto_interchange_units",
+    "default_units": "MWh",
+    "area_expr": "fromba",
+    "sector_expr": "toba",
+    "description_expr": "CONCAT(`fromba-name`, '->', `toba-name`)",
+    "source_expr": "COALESCE(source, 'EIA')",
+    "dataset_expr": "COALESCE(dataset, 'rto_daily_interchange')",
+    "metadata_expr": "NULL",
+    "filter_expr": "fromba IS NOT NULL",
+    "param_overrides": [
+      {
+        "data[0]": "value"
+      }
+    ],
+    "source_name": "eia_rto_interchange_daily"
+  },
+  "electricity/rto/daily-region-sub-ba-data": {
+    "schedule": "30 5 * * *",
+    "topic_var": "aurum_eia_rto_subregion_topic",
+    "default_topic": "aurum.ref.eia.rto.subregion.daily.v1",
+    "series_id_expr": "CONCAT(parent, '_', subba)",
+    "frequency": "DAILY",
+    "units_var": "aurum_eia_rto_subregion_units",
+    "default_units": "MWh",
+    "area_expr": "parent",
+    "sector_expr": "subba",
+    "description_expr": "`subba-name`",
+    "source_expr": "COALESCE(source, 'EIA')",
+    "dataset_expr": "COALESCE(dataset, 'rto_daily_subregion')",
+    "metadata_expr": "NULL",
+    "filter_expr": "parent IS NOT NULL",
+    "param_overrides": [
+      {
+        "data[0]": "value"
+      }
+    ],
+    "source_name": "eia_rto_subregion_daily"
+  },
+  "electricity/electric-power-operational-data": {
+    "schedule": "0 12 * * *",
+    "topic_var": "aurum_eia_electric_operational_topic",
+    "default_topic": "aurum.ref.eia.electric.operational.v1",
+    "series_id_expr": "CONCAT(location, '_', sectorid, '_', fueltypeid, '_', period)",
+    "frequency": "MONTHLY",
+    "units_var": "aurum_eia_electric_operational_units",
+    "default_units": "native",
+    "area_expr": "location",
+    "sector_expr": "sectorid",
+    "description_expr": "CONCAT(`sector-description`, ' / ', `fueltype-description`)",
+    "source_expr": "COALESCE(source, 'EIA')",
+    "dataset_expr": "COALESCE(dataset, 'electric_power_operational')",
+    "metadata_expr": "NULL",
+    "filter_expr": "period IS NOT NULL",
+    "param_overrides": [
+      {
+        "data[0]": "generation"
+      },
+      {
+        "data[1]": "receipts"
+      },
+      {
+        "data[2]": "stocks"
+      }
+    ],
+    "source_name": "eia_electric_operational"
+  },
+  "electricity/operating-generator-capacity": {
+    "schedule": "0 6 1 * *",
+    "topic_var": "aurum_eia_generator_capacity_topic",
+    "default_topic": "aurum.ref.eia.electric.generator.capacity.v1",
+    "series_id_expr": "CONCAT(stateid, '_', plantid, '_', generatorid, '_', period)",
+    "frequency": "MONTHLY",
+    "units_var": "aurum_eia_generator_capacity_units",
+    "default_units": "MW",
+    "area_expr": "stateid",
+    "sector_expr": "sector",
+    "description_expr": "CONCAT(`plant-name`, ' / ', generatorid)",
+    "source_expr": "COALESCE(source, 'EIA')",
+    "dataset_expr": "COALESCE(dataset, 'operating_generator_capacity')",
+    "metadata_expr": "NULL",
+    "filter_expr": "plantid IS NOT NULL",
+    "param_overrides": [
+      {
+        "data[0]": "nameplate-capacity-mw"
+      },
+      {
+        "data[1]": "net-summer-capacity-mw"
+      },
+      {
+        "data[2]": "net-winter-capacity-mw"
+      },
+      {
+        "data[3]": "operating-year-month"
+      },
+      {
+        "data[4]": "planned-retirement-year-month"
+      }
+    ],
+    "source_name": "eia_operating_generator_capacity"
+  },
+  "coal/consumption-and-quality": {
+    "schedule": "0 7 1 * *",
+    "topic_var": "aurum_eia_coal_consumption_topic",
+    "default_topic": "aurum.ref.eia.coal.consumption.v1",
+    "series_id_expr": "CONCAT(location, '_', sector, '_', period)",
+    "frequency": "QUARTERLY",
+    "units_var": "aurum_eia_coal_units",
+    "default_units": "short_tons",
+    "area_expr": "location",
+    "sector_expr": "sector",
+    "description_expr": "CONCAT(`sector-description`, ' / ', `location-description`)",
+    "source_expr": "COALESCE(source, 'EIA')",
+    "dataset_expr": "COALESCE(dataset, 'coal_consumption_quality')",
+    "metadata_expr": "NULL",
+    "filter_expr": "period IS NOT NULL",
+    "param_overrides": [
+      {
+        "data[0]": "consumption"
+      },
+      {
+        "data[1]": "price"
+      },
+      {
+        "data[2]": "heat-content"
+      },
+      {
+        "data[3]": "sulfur-content"
+      },
+      {
+        "data[4]": "ash-content"
+      }
+    ],
+    "source_name": "eia_coal_consumption_quality"
+  },
+  "natural-gas/move/state": {
+    "schedule": "0 8 * * *",
+    "topic_var": "aurum_eia_gas_pipeline_topic",
+    "default_topic": "aurum.ref.eia.natgas.pipeline.v1",
+    "series_id_expr": "series",
+    "frequency": "MONTHLY",
+    "units_var": "aurum_eia_gas_pipeline_units",
+    "default_units": "MMcf",
+    "area_expr": "receiving_region",
+    "sector_expr": "delivering_region",
+    "description_expr": "CONCAT(`receiving-region-name`, ' <- ', `delivering-region-name`)",
+    "source_expr": "COALESCE(source, 'EIA')",
+    "dataset_expr": "COALESCE(dataset, 'natgas_pipeline_flows')",
+    "metadata_expr": "NULL",
+    "filter_expr": "receiving_region IS NOT NULL",
+    "param_overrides": [
+      {
+        "data[0]": "value"
+      }
+    ],
+    "source_name": "eia_natural_gas_pipeline_flows"
+  },
+  "electricity/retail-sales": {
+    "schedule": "30 7 1 * *",
+    "topic_var": "aurum_eia_retail_sales_topic",
+    "default_topic": "aurum.ref.eia.electric.retail.sales.v1",
+    "series_id_expr": "CONCAT(stateid, '_', sectorid, '_', period)",
+    "frequency": "MONTHLY",
+    "units_var": "aurum_eia_retail_sales_units",
+    "default_units": "kWh",
+    "area_expr": "stateid",
+    "sector_expr": "sectorid",
+    "description_expr": "CONCAT(`sector-description`, ' / ', `state-description`)",
+    "source_expr": "COALESCE(source, 'EIA')",
+    "dataset_expr": "COALESCE(dataset, 'electric_retail_sales')",
+    "metadata_expr": "NULL",
+    "filter_expr": "period IS NOT NULL",
+    "param_overrides": [
+      {
+        "data[0]": "sales"
+      },
+      {
+        "data[1]": "revenue"
+      },
+      {
+        "data[2]": "price"
+      },
+      {
+        "data[3]": "customers"
+      }
+    ],
+    "source_name": "eia_electric_retail_sales"
+  },
+  "electricity/rto/fuel-type-data": {
+    "schedule": "*/30 * * * *",
+    "topic_var": "aurum_eia_fuelmix_topic",
+    "default_topic": "aurum.ref.eia.fuelmix.v1",
+    "series_id_expr": "CONCAT(respondent, '_', fueltype, '_', period)",
+    "frequency": "HOURLY",
+    "area_expr": "respondent",
+    "sector_expr": "fueltype",
+    "description_expr": "`fueltype-name`",
+    "param_overrides": [
+      {
+        "data[0]": "value"
+      }
+    ],
+    "source_name": "eia_electric_power_flow_indicators"
+  },
+  "electricity/rto/region-data": {
+    "schedule": "0 * * * *",
+    "topic_var": "aurum_eia_iso_load_topic",
+    "default_topic": "aurum.ref.eia.iso.load.hourly.v1",
+    "series_id_expr": "CONCAT(respondent, '_', type, '_', period)",
+    "frequency": "HOURLY",
+    "units_var": "aurum_eia_iso_load_units",
+    "default_units": "MW",
+    "area_expr": "respondent",
+    "sector_expr": "type",
+    "description_expr": "`type-name`",
+    "source_expr": "COALESCE(source, 'EIA')",
+    "dataset_expr": "COALESCE(dataset, 'iso_hourly_load')",
+    "metadata_expr": "NULL",
+    "filter_expr": "iso IS NOT NULL",
+    "param_overrides": [
+      {
+        "data[0]": "value"
+      }
+    ],
+    "source_name": "eia_load_iso_hourly"
+  },
+  "coal/market-sales-price": {
+    "schedule": "0 8 1 * *",
+    "topic_var": "aurum_eia_coal_prices_topic",
+    "default_topic": "aurum.ref.eia.coal.prices.v1",
+    "series_id_expr": "CONCAT(stateRegionId, '_', marketTypeId, '_', period)",
+    "frequency": "ANNUAL",
+    "units_var": "aurum_eia_coal_prices_units",
+    "default_units": "USD/short_ton",
+    "area_expr": "stateRegionId",
+    "sector_expr": "marketTypeId",
+    "description_expr": "CONCAT(region, ' ', price_type)",
+    "source_expr": "COALESCE(source, 'EIA')",
+    "dataset_expr": "COALESCE(dataset, 'coal_prices')",
+    "metadata_expr": "NULL",
+    "filter_expr": "period IS NOT NULL",
+    "param_overrides": [
+      {
+        "data[0]": "price"
+      },
+      {
+        "data[1]": "sales"
+      }
+    ],
+    "source_name": "eia_coal_prices"
+  }
+}

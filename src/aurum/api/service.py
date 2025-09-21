@@ -350,6 +350,7 @@ def _build_sql_eia_series(
     effective_offset = 0 if comparison_cursor else offset
     select_cols = (
         "series_id, period, period_start, period_end, frequency, value, raw_value, unit, "
+        "canonical_unit, canonical_currency, canonical_value, conversion_factor, "
         "area, sector, seasonal_adjustment, description, source, dataset, metadata, ingest_ts"
     )
     return (
@@ -479,6 +480,8 @@ def query_eia_series_dimensions(
         "ARRAY_AGG(DISTINCT area) FILTER (WHERE area IS NOT NULL) AS area_values, "
         "ARRAY_AGG(DISTINCT sector) FILTER (WHERE sector IS NOT NULL) AS sector_values, "
         "ARRAY_AGG(DISTINCT unit) FILTER (WHERE unit IS NOT NULL) AS unit_values, "
+        "ARRAY_AGG(DISTINCT canonical_unit) FILTER (WHERE canonical_unit IS NOT NULL) AS canonical_unit_values, "
+        "ARRAY_AGG(DISTINCT canonical_currency) FILTER (WHERE canonical_currency IS NOT NULL) AS canonical_currency_values, "
         "ARRAY_AGG(DISTINCT frequency) FILTER (WHERE frequency IS NOT NULL) AS frequency_values, "
         "ARRAY_AGG(DISTINCT source) FILTER (WHERE source IS NOT NULL) AS source_values "
         f"FROM timescale.public.eia_series_timeseries{where}"
@@ -510,6 +513,8 @@ def query_eia_series_dimensions(
         "area": [],
         "sector": [],
         "unit": [],
+        "canonical_unit": [],
+        "canonical_currency": [],
         "frequency": [],
         "source": [],
     }
@@ -523,8 +528,10 @@ def query_eia_series_dimensions(
                 "area": row[1],
                 "sector": row[2],
                 "unit": row[3],
-                "frequency": row[4],
-                "source": row[5],
+                "canonical_unit": row[4],
+                "canonical_currency": row[5],
+                "frequency": row[6],
+                "source": row[7],
             }
             for key, values in mapping.items():
                 if not values:

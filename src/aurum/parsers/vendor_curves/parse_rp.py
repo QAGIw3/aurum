@@ -11,6 +11,7 @@ import pandas as pd
 from . import register
 from .schema import CANONICAL_COLUMNS
 from ...reference import infer_default_units, map_units
+from ...reference.curve_schema import CurveAssetClass, CurvePriceType
 from ..utils import (
     compute_curve_key,
     compute_version_hash,
@@ -143,7 +144,7 @@ def _extract_records(
                 "asof_date": asof,
                 "source_file": source_file,
                 "sheet_name": sheet_name,
-                "asset_class": "renewable",
+                "asset_class": CurveAssetClass.RENEWABLE.value,
                 "region": region,
                 "iso": identity.get("iso"),
                 "location": identity.get("location"),
@@ -151,7 +152,7 @@ def _extract_records(
                 "product": identity.get("product"),
                 "block": identity.get("block"),
                 "spark_location": None,
-                "price_type": "MID",
+                "price_type": CurvePriceType.MID.value,
                 "units_raw": units_raw,
                 "currency": currency,
                 "per_unit": per_unit,
@@ -164,7 +165,7 @@ def _extract_records(
                 "mid": None,
                 "curve_key": compute_curve_key(
                     {
-                        "asset_class": "renewable",
+                        "asset_class": CurveAssetClass.RENEWABLE.value,
                         "region": region,
                         "iso": identity.get("iso"),
                         "location": identity.get("location"),

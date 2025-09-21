@@ -3,6 +3,7 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
+export REPO_ROOT
 ISO_LMP_SCHEMA_PATH="${ISO_LMP_SCHEMA_PATH:-${REPO_ROOT}/kafka/schemas/iso.lmp.v1.avsc}"
 NOAA_GHCND_SCHEMA_PATH="${REPO_ROOT}/kafka/schemas/noaa.weather.v1.avsc"
 EIA_SERIES_SCHEMA_PATH="${REPO_ROOT}/kafka/schemas/eia.series.v1.avsc"
@@ -195,6 +196,8 @@ case "${JOB_NAME}" in
     export EIA_SERIES_ID_EXPR="${EIA_SERIES_ID_EXPR:-'${EIA_SERIES_ID}'}"
     export EIA_FILTER_EXPR="${EIA_FILTER_EXPR:-TRUE}"
     export EIA_PARAM_OVERRIDES_JSON="${EIA_PARAM_OVERRIDES_JSON:-[]}"
+    export EIA_PERIOD_COLUMN="${EIA_PERIOD_COLUMN:-period}"
+    export EIA_DATE_FORMAT="${EIA_DATE_FORMAT:-}"
     if [[ -z "${EIA_PARAM_OVERRIDES_JSON}" || "${EIA_PARAM_OVERRIDES_JSON}" == "[]" ]]; then
       EIA_PARAM_OVERRIDES=""
     else
@@ -238,6 +241,89 @@ PY
       fi
     fi
     export EIA_PARAM_OVERRIDES
+    if [[ -z "${EIA_PERIOD_START_EXPR:-}" || -z "${EIA_PERIOD_END_EXPR:-}" ]]; then
+      if ! eval "$(python3 - <<'PY'
+import os
+import shlex
+import sys
+from pathlib import Path
+
+repo_root = Path(os.environ.get("REPO_ROOT", Path.cwd()))
+sys.path.insert(0, str(repo_root / "src"))
+
+from aurum.eia.periods import PeriodParseError, build_sql_period_expressions
+
+frequency = os.environ.get("EIA_FREQUENCY", "")
+column = os.environ.get("EIA_PERIOD_COLUMN", "period")
+
+try:
+    start_expr, end_expr = build_sql_period_expressions(frequency, period_column=column)
+except PeriodParseError as exc:
+    print(exc, file=sys.stderr)
+    sys.exit(1)
+
+print(f"EIA_PERIOD_START_EXPR={shlex.quote(start_expr)}")
+print(f"EIA_PERIOD_END_EXPR={shlex.quote(end_expr)}")
+PY
+)"; then
+        echo "Failed to derive period expressions for frequency ${EIA_FREQUENCY}" >&2
+        exit 1
+      fi
+    fi
+    export EIA_PERIOD_START_EXPR
+    export EIA_PERIOD_END_EXPR
+    export EIA_CANONICAL_UNIT="${EIA_CANONICAL_UNIT:-}"
+    export EIA_CANONICAL_CURRENCY="${EIA_CANONICAL_CURRENCY:-}"
+    export EIA_UNIT_CONVERSION_JSON="${EIA_UNIT_CONVERSION_JSON:-null}"
+    if [[ -z "${EIA_CANONICAL_UNIT_EXPR:-}" || -z "${EIA_CANONICAL_VALUE_EXPR:-}" ]]; then
+      if ! eval "$(python3 - <<'PY'
+import json
+import os
+import shlex
+import sys
+
+canonical_unit = os.environ.get("EIA_CANONICAL_UNIT")
+canonical_currency = os.environ.get("EIA_CANONICAL_CURRENCY")
+conversion_raw = os.environ.get("EIA_UNIT_CONVERSION_JSON", "null")
+default_unit = os.environ.get("EIA_UNITS", "")
+
+try:
+    conversion = None if conversion_raw in {"", "null", "None"} else json.loads(conversion_raw)
+except json.JSONDecodeError as exc:
+    print(f"Invalid JSON for EIA_UNIT_CONVERSION_JSON: {exc}", file=sys.stderr)
+    sys.exit(1)
+
+if conversion:
+    factor = float(conversion.get("factor", 1.0))
+    target_unit = conversion.get("target_unit") or canonical_unit or conversion.get("source_unit")
+    canonical_value_expr = f"CASE WHEN value IS NULL OR value = '' THEN NULL ELSE CAST(value AS DOUBLE) * {factor} END"
+    conversion_factor_expr = str(factor)
+    canonical_unit_expr = f"'{target_unit}'" if target_unit else (
+        f"COALESCE(units, '{default_unit}')" if default_unit else "units"
+    )
+else:
+    canonical_value_expr = "CASE WHEN value IS NULL OR value = '' THEN NULL ELSE CAST(value AS DOUBLE) END"
+    conversion_factor_expr = "NULL"
+    canonical_unit_expr = (
+        f"'{canonical_unit}'" if canonical_unit else (f"COALESCE(units, '{default_unit}')" if default_unit else "units")
+    )
+
+canonical_currency_expr = f"'{canonical_currency}'" if canonical_currency else "NULL"
+
+print(f"EIA_CANONICAL_VALUE_EXPR={shlex.quote(canonical_value_expr)}")
+print(f"EIA_CONVERSION_FACTOR_EXPR={shlex.quote(conversion_factor_expr)}")
+print(f"EIA_CANONICAL_UNIT_EXPR={shlex.quote(canonical_unit_expr)}")
+print(f"EIA_CANONICAL_CURRENCY_EXPR={shlex.quote(canonical_currency_expr)}")
+PY
+)"; then
+        echo "Failed to derive unit normalization expressions" >&2
+        exit 1
+      fi
+    fi
+    export EIA_CANONICAL_VALUE_EXPR
+    export EIA_CONVERSION_FACTOR_EXPR
+    export EIA_CANONICAL_UNIT_EXPR
+    export EIA_CANONICAL_CURRENCY_EXPR
     if [[ -z "${EIA_SERIES_SCHEMA:-}" ]]; then
       EIA_SERIES_SCHEMA="$(render_schema "${EIA_SERIES_SCHEMA_PATH}")"
     fi
@@ -813,6 +899,45 @@ PY
     export MISO_INTERVAL_SECONDS
     export MISO_CURRENCY="${MISO_CURRENCY:-USD}"
     export MISO_UOM="${MISO_UOM:-MWh}"
+    ensure_iso_lmp_schema
+    ;;
+  miso_rtd_lmp_to_kafka)
+    REQUIRED_VARS=(
+      MISO_RTD_ENDPOINT
+      MISO_RTD_START
+      MISO_RTD_END
+      MISO_RTD_TOPIC
+      KAFKA_BOOTSTRAP_SERVERS
+      SCHEMA_REGISTRY_URL
+    )
+    export MISO_RTD_MARKET="${MISO_RTD_MARKET:-RTM}"
+    export MISO_RTD_REGION="${MISO_RTD_REGION:-ALL}"
+    export MISO_RTD_MARKET_PARAM="${MISO_RTD_MARKET_PARAM:-${MISO_RTD_MARKET}}"
+    export MISO_RTD_REGION_PARAM="${MISO_RTD_REGION_PARAM:-${MISO_RTD_REGION}}"
+    export MISO_RTD_AUTH_HEADER="${MISO_RTD_AUTH_HEADER:-}"
+    export MISO_RTD_JSONPATH="${MISO_RTD_JSONPATH:-\$.Items[*].Rows[*]}"
+    export MISO_RTD_REF_FIELD="${MISO_RTD_REF_FIELD:-RefId}"
+    export MISO_RTD_REF_EXPR="${MISO_RTD_REF_EXPR:-\`${MISO_RTD_REF_FIELD}\`}"
+    export MISO_RTD_HOURMIN_FIELD="${MISO_RTD_HOURMIN_FIELD:-HourAndMin}"
+    export MISO_RTD_HOURMIN_EXPR="${MISO_RTD_HOURMIN_EXPR:-\`${MISO_RTD_HOURMIN_FIELD}\`}"
+    export MISO_RTD_NODE_FIELD="${MISO_RTD_NODE_FIELD:-SettlementLocation}"
+    export MISO_RTD_NODE_EXPR="${MISO_RTD_NODE_EXPR:-\`${MISO_RTD_NODE_FIELD}\`}"
+    export MISO_RTD_NODE_ID_FIELD="${MISO_RTD_NODE_ID_FIELD:-LocationId}"
+    export MISO_RTD_NODE_ID_EXPR="${MISO_RTD_NODE_ID_EXPR:-\`${MISO_RTD_NODE_ID_FIELD}\`}"
+    export MISO_RTD_LMP_FIELD="${MISO_RTD_LMP_FIELD:-SystemMarginalPrice}"
+    export MISO_RTD_LMP_EXPR="${MISO_RTD_LMP_EXPR:-\`${MISO_RTD_LMP_FIELD}\`}"
+    export MISO_RTD_MCC_FIELD="${MISO_RTD_MCC_FIELD:-MarginalCongestionComponent}"
+    export MISO_RTD_MCC_EXPR="${MISO_RTD_MCC_EXPR:-\`${MISO_RTD_MCC_FIELD}\`}"
+    export MISO_RTD_MLC_FIELD="${MISO_RTD_MLC_FIELD:-MarginalLossComponent}"
+    export MISO_RTD_MLC_EXPR="${MISO_RTD_MLC_EXPR:-\`${MISO_RTD_MLC_FIELD}\`}"
+    export MISO_RTD_INTERVAL_SECONDS="${MISO_RTD_INTERVAL_SECONDS:-300}"
+    export MISO_RTD_TOPIC="${MISO_RTD_TOPIC:-aurum.iso.miso.lmp.v1}"
+    export MISO_RTD_SUBJECT="${MISO_RTD_SUBJECT:-${MISO_RTD_TOPIC}-value}"
+    export MISO_RTD_COMBINED_FORMAT="${MISO_RTD_COMBINED_FORMAT:-yyyy-MM-dd HH:mm}"
+    if [[ -z "${MISO_RTD_DATE:-}" ]]; then
+      MISO_RTD_DATE="${MISO_RTD_START%%T*}"
+    fi
+    export MISO_RTD_DATE
     ensure_iso_lmp_schema
     ;;
   isone_lmp_to_kafka)

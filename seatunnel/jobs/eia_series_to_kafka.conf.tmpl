@@ -74,36 +74,8 @@ transform {
       SELECT
         ${EIA_SERIES_ID_EXPR}                                      AS series_id,
         period                                                     AS period,
-        CASE UPPER('${EIA_FREQUENCY}')
-          WHEN 'ANNUAL' THEN CAST(UNIX_TIMESTAMP(CONCAT(period, '-01-01'), 'yyyy-MM-dd') * 1000000 AS BIGINT)
-          WHEN 'QUARTERLY' THEN CAST(UNIX_TIMESTAMP(concat(substr(period, 1, 4), '-', CASE RIGHT(period, 2)
-              WHEN 'Q1' THEN '01'
-              WHEN 'Q2' THEN '04'
-              WHEN 'Q3' THEN '07'
-              WHEN 'Q4' THEN '10'
-              ELSE '01'
-            END, '-01'), 'yyyy-MM-dd') * 1000000 AS BIGINT)
-          WHEN 'MONTHLY' THEN CAST(UNIX_TIMESTAMP(CONCAT(period, '-01'), 'yyyy-MM-dd') * 1000000 AS BIGINT)
-          WHEN 'WEEKLY' THEN CAST(UNIX_TIMESTAMP(to_timestamp(period, 'yyyy-MM-dd')) * 1000000 AS BIGINT)
-          WHEN 'DAILY' THEN CAST(UNIX_TIMESTAMP(to_timestamp(period, 'yyyy-MM-dd')) * 1000000 AS BIGINT)
-          WHEN 'HOURLY' THEN CAST(UNIX_TIMESTAMP(SUBSTR(period, 1, 19), 'yyyy-MM-dd''T''HH:mm:ss') * 1000000 AS BIGINT)
-          ELSE CAST(NULL AS BIGINT)
-        END                                                        AS period_start,
-        CASE UPPER('${EIA_FREQUENCY}')
-          WHEN 'ANNUAL' THEN CAST(UNIX_TIMESTAMP(add_months(to_timestamp(CONCAT(period, '-01-01'), 'yyyy-MM-dd'), 12)) * 1000000 AS BIGINT)
-          WHEN 'QUARTERLY' THEN CAST(UNIX_TIMESTAMP(add_months(to_timestamp(concat(substr(period, 1, 4), '-', CASE RIGHT(period, 2)
-              WHEN 'Q1' THEN '01'
-              WHEN 'Q2' THEN '04'
-              WHEN 'Q3' THEN '07'
-              WHEN 'Q4' THEN '10'
-              ELSE '01'
-            END, '-01'), 'yyyy-MM-dd'), 3)) * 1000000 AS BIGINT)
-          WHEN 'MONTHLY' THEN CAST(UNIX_TIMESTAMP(add_months(to_timestamp(CONCAT(period, '-01'), 'yyyy-MM-dd'), 1)) * 1000000 AS BIGINT)
-          WHEN 'WEEKLY' THEN CAST(UNIX_TIMESTAMP(to_timestamp(period, 'yyyy-MM-dd') + INTERVAL 7 DAYS) * 1000000 AS BIGINT)
-          WHEN 'DAILY' THEN CAST(UNIX_TIMESTAMP(to_timestamp(period, 'yyyy-MM-dd') + INTERVAL 1 DAY) * 1000000 AS BIGINT)
-          WHEN 'HOURLY' THEN CAST((UNIX_TIMESTAMP(SUBSTR(period, 1, 19), 'yyyy-MM-dd''T''HH:mm:ss') + 3600) * 1000000 AS BIGINT)
-          ELSE CAST(NULL AS BIGINT)
-        END                                                        AS period_end,
+        ${EIA_PERIOD_START_EXPR}                                     AS period_start,
+        ${EIA_PERIOD_END_EXPR}                                       AS period_end,
         '${EIA_FREQUENCY}'                                         AS frequency,
         CASE
           WHEN value IS NULL OR value = '' THEN NULL
@@ -111,6 +83,10 @@ transform {
         END                                                        AS value,
         CAST(value AS STRING)                                      AS raw_value,
         COALESCE(units, '${EIA_UNITS}')                            AS unit,
+        ${EIA_CANONICAL_UNIT_EXPR}                                 AS canonical_unit,
+        ${EIA_CANONICAL_CURRENCY_EXPR}                             AS canonical_currency,
+        ${EIA_CANONICAL_VALUE_EXPR}                                AS canonical_value,
+        ${EIA_CONVERSION_FACTOR_EXPR}                              AS conversion_factor,
         ${EIA_AREA_EXPR}                                           AS area,
         ${EIA_SECTOR_EXPR}                                         AS sector,
         '${EIA_SEASONAL_ADJUSTMENT}'                               AS seasonal_adjustment,

@@ -16,7 +16,10 @@ from dataclasses import replace
 from typing import Any, Dict, List, Optional, Set
 
 from fastapi import Depends, FastAPI, HTTPException, Response, Request
-from opentelemetry import trace
+try:
+    from opentelemetry import trace
+except ImportError:  # pragma: no cover - optional dependency
+    trace = None  # type: ignore[assignment]
 from ._fastapi_compat import Query, Path
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.gzip import GZipMiddleware
@@ -179,8 +182,8 @@ async def _access_log_middleware(request, call_next):  # type: ignore[no-redef]
     request_id = request.headers.get("x-request-id") or str(uuid.uuid4())
     token = set_request_id(request_id)
     request.state.request_id = request_id
-    span = trace.get_current_span()
-    if span.is_recording():  # pragma: no branch - inexpensive check
+    span = trace.get_current_span() if trace else None
+    if span is not None and getattr(span, "is_recording", lambda: False)():  # pragma: no branch - inexpensive check
         span.set_attribute("aurum.request_id", request_id)
         span.set_attribute("http.request_id", request_id)
     start = time.perf_counter()
@@ -1297,6 +1300,22 @@ def list_eia_series(
         elif raw_value is not None:
             raw_value = str(raw_value)
 
+        canonical_value = row.get("canonical_value")
+        if isinstance(canonical_value, Decimal):
+            canonical_value = float(canonical_value)
+        elif canonical_value is not None:
+            try:
+                canonical_value = float(canonical_value)
+            except (TypeError, ValueError):
+                canonical_value = None
+
+        conversion_factor = row.get("conversion_factor")
+        if conversion_factor is not None:
+            try:
+                conversion_factor = float(conversion_factor)
+            except (TypeError, ValueError):
+                conversion_factor = None
+
         item = EiaSeriesPoint(
             series_id=str(series_value),
             period=str(row.get("period")),
@@ -1306,6 +1325,10 @@ def list_eia_series(
             value=value,
             raw_value=raw_value,
             unit=row.get("unit"),
+            canonical_unit=row.get("canonical_unit"),
+            canonical_currency=row.get("canonical_currency"),
+            canonical_value=canonical_value,
+            conversion_factor=conversion_factor,
             area=row.get("area"),
             sector=row.get("sector"),
             seasonal_adjustment=row.get("seasonal_adjustment"),
@@ -1352,7 +1375,7 @@ def list_eia_series(
     response_model=EiaSeriesDimensionsResponse,
     tags=["Metadata", "EIA"],
     summary="List EIA series dimensions",
-    description="Return distinct dimension values (dataset, area, sector, unit, frequency, source) for EIA series observations.",
+    description="Return distinct dimension values (dataset, area, sector, unit, canonical_unit, canonical_currency, frequency, source) for EIA series observations.",
 )
 def list_eia_series_dimensions(
     request: Request,

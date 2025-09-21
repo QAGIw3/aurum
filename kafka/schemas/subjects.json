@@ -41,6 +41,7 @@
   "aurum.ref.fx.rate.v1-value": "fx.rate.v1.avsc",
   "aurum.ref.fuel.natural_gas.v1-value": "fuel.curve.v1.avsc",
   "aurum.ref.fuel.co2.v1-value": "fuel.curve.v1.avsc",
+  "aurum.curve.observation.v1-value": "curve.observation.v1.avsc",
   "aurum.scenario.request.v1-value": "scenario.request.v1.avsc",
   "aurum.scenario.output.v1-value": "scenario.output.v1.avsc",
   "aurum.ingest.error.v1": "ingest.error.v1.avsc"

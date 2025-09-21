@@ -12,7 +12,10 @@ from typing import Any, Dict, Iterable, List, Optional
 
 import json
 
-from opentelemetry import propagate
+try:
+    from opentelemetry import propagate
+except ImportError:  # pragma: no cover - optional dependency
+    propagate = None  # type: ignore[assignment]
 
 from aurum.scenarios import DriverType, ScenarioAssumption
 from aurum.telemetry import get_tracer
@@ -779,7 +782,8 @@ def _maybe_emit_scenario_request(scenario: ScenarioRecord, run: ScenarioRunRecor
                 span.set_attribute("aurum.run_id", run.run_id)
                 span.set_attribute("tenant.id", scenario.tenant_id)
             carrier: Dict[str, str] = {}
-            propagate.inject(carrier)
+            if propagate is not None:
+                propagate.inject(carrier)
             headers = [("run_id", run.run_id.encode("utf-8"))]
             request_id = get_request_id()
             if request_id:

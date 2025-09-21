@@ -90,3 +90,61 @@ Pass `--cursor`, `--prev-cursor`, or `--json` to tailor pagination and formattin
 - **API returns 503:** confirm the API container is part of the compose profile and the health endpoint (`/health`) succeeds.
 - **Empty CLI/API responses:** verify the tenant header matches the tenant used when producing the scenario request.
 - **Expectation failures in DAGs:** inspect `ge/expectations/scenario_output.json` for the enforced value ranges and adjust environment overrides (e.g., `GE_SCENARIO_METRIC_MID_MAX`) when tuning thresholds.
+
+### MISO RT LMP ingestion sanity check
+
+The new MISO Data Broker integration produces five-minute LMP observations through both the Python ingest script and the optional SeaTunnel job.
+
+1. Export credentials and request parameters (values below are placeholders – adjust the window, market, and region for your test):
+
+   ```bash
+   export AURUM_MISO_RTDB_BASE=https://api.misoenergy.org
+   export AURUM_MISO_RTDB_ENDPOINT=/MISORTDBService/rest/data/getLMPConsolidatedTable
+   export AURUM_MISO_RTDB_MARKET=RTM
+   export AURUM_MISO_RTDB_REGION=ALL
+   export AURUM_MISO_RTDB_HEADERS="Ocp-Apim-Subscription-Key:demo-key"
+   export START_TS=2024-05-01T10:00:00-05:00
+   export END_TS=2024-05-01T10:15:00-05:00
+   ```
+
+2. Fetch a sample payload directly (useful when debugging credentials or query parameters):
+
+   ```bash
+   curl -H "${AURUM_MISO_RTDB_HEADERS%%||*}" \
+     "${AURUM_MISO_RTDB_BASE}${AURUM_MISO_RTDB_ENDPOINT}?start=${START_TS}&end=${END_TS}&market=${AURUM_MISO_RTDB_MARKET}&region=${AURUM_MISO_RTDB_REGION}" | jq .
+   ```
+
+   The response should contain `RefId`, `HourAndMin`, and price components for one or more settlement locations.
+
+3. Dry-run the Python publisher to confirm the JSON→Avro mapping:
+
+   ```bash
+   ${VENV_PYTHON:-venv311/bin/python} scripts/ingest/miso_rtdb_to_kafka.py \
+     --base-url "$AURUM_MISO_RTDB_BASE" \
+     --endpoint "$AURUM_MISO_RTDB_ENDPOINT" \
+     --start "$START_TS" --end "$END_TS" \
+     --market "$AURUM_MISO_RTDB_MARKET" --region "$AURUM_MISO_RTDB_REGION" \
+     --interval-seconds 300 --dry-run | jq '.[0]'
+   ```
+
+   Replace `--dry-run` with Kafka/Schema Registry coordinates to publish records (`--bootstrap-servers`, `--schema-registry`).
+
+4. Render the SeaTunnel job if you prefer a containerised ingest:
+
+   ```bash
+   MISO_RTD_ENDPOINT="$AURUM_MISO_RTDB_BASE$AURUM_MISO_RTDB_ENDPOINT" \
+   MISO_RTD_START="$START_TS" MISO_RTD_END="$END_TS" \
+   MISO_RTD_TOPIC=aurum.iso.miso.lmp.v1 \
+   MISO_RTD_HEADERS="$AURUM_MISO_RTDB_HEADERS" \
+   KAFKA_BOOTSTRAP_SERVERS=broker:29092 \
+   SCHEMA_REGISTRY_URL=http://schema-registry:8081 \
+   scripts/seatunnel/run_job.sh miso_rtd_lmp_to_kafka --render-only
+   ```
+
+5. Register or update schemas after changing LMP ingestion logic:
+
+   ```bash
+   make kafka-register-schemas kafka-set-compat
+   ```
+
+Use the existing LMP QA dashboards (or `trino/ddl/iso_lmp_views.sql`) to confirm the new records appear alongside other ISO feeds.
