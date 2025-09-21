@@ -1,0 +1,77 @@
+{
+  "expectation_suite_name": "external_timeseries_obs",
+  "meta": {
+    "notes": "Validates external timeseries observations from Kafka to Iceberg."
+  },
+  "expectations": [
+    {
+      "expectation_type": "expect_column_values_to_not_be_null",
+      "kwargs": {"column": "provider"}
+    },
+    {
+      "expectation_type": "expect_column_values_to_not_be_null",
+      "kwargs": {"column": "series_id"}
+    },
+    {
+      "expectation_type": "expect_column_values_to_not_be_null",
+      "kwargs": {"column": "ts"}
+    },
+    {
+      "expectation_type": "expect_column_values_to_not_be_null",
+      "kwargs": {"column": "asof_date"}
+    },
+    {
+      "expectation_type": "expect_column_values_to_not_be_null",
+      "kwargs": {"column": "ingest_ts"}
+    },
+    {
+      "expectation_type": "expect_column_values_to_be_in_set",
+      "kwargs": {
+        "column": "provider",
+        "value_set": ["FRED", "EIA", "BLS", "OECD"]
+      }
+    },
+    {
+      "expectation_type": "expect_column_values_to_be_between",
+      "kwargs": {
+        "column": "ts",
+        "min_value": "1900-01-01 00:00:00",
+        "max_value": "2030-12-31 23:59:59"
+      },
+      "meta": {"notes": "Observation timestamps should be within historical range"}
+    },
+    {
+      "expectation_type": "expect_column_values_to_be_between",
+      "kwargs": {
+        "column": "asof_date",
+        "min_value": "1900-01-01",
+        "max_value": "2030-12-31"
+      },
+      "meta": {"notes": "As-of dates should be within historical range"}
+    },
+    {
+      "expectation_type": "expect_column_values_to_be_between",
+      "kwargs": {
+        "column": "ingest_ts",
+        "min_value": "2024-01-01 00:00:00",
+        "max_value": "2025-12-31 23:59:59"
+      },
+      "meta": {"notes": "Ingest timestamps should be recent"}
+    },
+    {
+      "expectation_type": "expect_column_values_to_be_between",
+      "kwargs": {
+        "column": "value",
+        "min_value": -1000000,
+        "max_value": 1000000
+      },
+      "meta": {"notes": "Values should be within plausible numeric range"}
+    },
+    {
+      "expectation_type": "expect_column_values_to_not_be_null",
+      "kwargs": {"column": "value"},
+      "mostly": 0.9,
+      "meta": {"notes": "Most observations should have values (90% threshold)"}
+    }
+  ]
+}

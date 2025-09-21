@@ -1,0 +1,88 @@
+expectation_suite_name: external_dbt_outputs
+meta:
+  notes: "Validates dbt outputs for external data pipeline to ensure data quality."
+expectations:
+  - expectation_type: expect_column_values_to_not_be_null
+    kwargs:
+      column: provider
+    table: stg_external__series_catalog
+  - expectation_type: expect_column_values_to_not_be_null
+    kwargs:
+      column: series_id
+    table: stg_external__series_catalog
+  - expectation_type: expect_column_values_to_not_be_null
+    kwargs:
+      column: title
+    table: stg_external__series_catalog
+  - expectation_type: expect_multicolumn_values_to_be_unique
+    kwargs:
+      column_list:
+        - provider
+        - series_id
+        - version
+    table: stg_external__series_catalog
+
+  - expectation_type: expect_column_values_to_not_be_null
+    kwargs:
+      column: provider
+    table: stg_external__obs
+  - expectation_type: expect_column_values_to_not_be_null
+    kwargs:
+      column: series_id
+    table: stg_external__obs
+  - expectation_type: expect_column_values_to_not_be_null
+    kwargs:
+      column: ts
+    table: stg_external__obs
+  - expectation_type: expect_multicolumn_values_to_be_unique
+    kwargs:
+      column_list:
+        - provider
+        - series_id
+        - ts
+        - asof_date
+    table: stg_external__obs
+
+  - expectation_type: expect_column_values_to_not_be_null
+    kwargs:
+      column: provider
+    table: int_external__obs_conformed
+  - expectation_type: expect_column_values_to_not_be_null
+    kwargs:
+      column: value_usd_per_mwh
+    table: int_external__obs_conformed
+    meta:
+      notes: "Most conformed observations should have valid values"
+    mostly: 0.95
+  - expectation_type: expect_column_values_to_be_in_set
+    kwargs:
+      column: quality_status
+      value_set:
+        - NULL_VALUE
+        - ZERO_VALUE
+        - VALID
+    table: int_external__obs_conformed
+
+  - expectation_type: expect_column_values_to_not_be_null
+    kwargs:
+      column: curve_key
+    table: cur_external__obs_mapped
+  - expectation_type: expect_column_values_to_not_be_null
+    kwargs:
+      column: mid
+    table: cur_external__obs_mapped
+  - expectation_type: expect_column_values_to_be_between
+    kwargs:
+      column: mid
+      min_value: -1000
+      max_value: 1000
+    table: cur_external__obs_mapped
+    meta:
+      notes: "Mapped prices should be in plausible range"
+  - expectation_type: expect_multicolumn_values_to_be_unique
+    kwargs:
+      column_list:
+        - curve_key
+        - tenor_label
+        - asof_date
+    table: cur_external__obs_mapped

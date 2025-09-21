@@ -249,3 +249,52 @@ models:
       - name: ingest_ts
         tests:
           - not_null
+
+  - name: stg_external__series_catalog
+    description: Staging model for external series catalog data with deduplication.
+    tests:
+      - unique_combination:
+          combination_of_columns:
+            - provider
+            - series_id
+            - version
+    columns:
+      - name: provider
+        tests:
+          - not_null
+      - name: series_id
+        tests:
+          - not_null
+      - name: title
+        tests:
+          - not_null
+      - name: ingest_ts
+        tests:
+          - not_null
+      - name: version
+
+  - name: stg_external__obs
+    description: Staging model for external timeseries observations with deduplication.
+    tests:
+      - unique_combination:
+          combination_of_columns:
+            - provider
+            - series_id
+            - ts
+            - asof_date
+    columns:
+      - name: provider
+        tests:
+          - not_null
+      - name: series_id
+        tests:
+          - not_null
+      - name: ts
+        tests:
+          - not_null
+      - name: asof_date
+        tests:
+          - not_null
+      - name: ingest_ts
+        tests:
+          - not_null

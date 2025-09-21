@@ -166,3 +166,64 @@ sources:
           - name: region_id
             tests:
               - not_null
+  - name: iceberg_external
+    description: Iceberg external data schema for third-party time series and catalog data.
+    schema: "{{ 'external' if target.name != 'duckdb' else target.schema ~ '_external' }}"
+    freshness:
+      warn_after: {count: 6, period: hour}
+      error_after: {count: 12, period: hour}
+    tables:
+      - name: series_catalog
+        description: External series catalog from upstream providers (FRED, EIA, etc.).
+        loaded_at_field: _ingest_ts
+        columns:
+          - name: provider
+            tests:
+              - not_null
+          - name: series_id
+            tests:
+              - not_null
+          - name: dataset_code
+          - name: title
+            tests:
+              - not_null
+          - name: unit_code
+          - name: frequency_code
+          - name: geo_id
+          - name: start_ts
+          - name: end_ts
+          - name: last_observation_ts
+          - name: asof_date
+          - name: created_at
+          - name: updated_at
+          - name: ingest_ts
+            tests:
+              - not_null
+          - name: version
+      - name: timeseries_observation
+        description: External timeseries observations from upstream providers.
+        loaded_at_field: _ingest_ts
+        columns:
+          - name: provider
+            tests:
+              - not_null
+          - name: series_id
+            tests:
+              - not_null
+          - name: ts
+            tests:
+              - not_null
+          - name: asof_date
+            tests:
+              - not_null
+          - name: value
+          - name: value_raw
+          - name: unit_code
+          - name: geo_id
+          - name: dataset_code
+          - name: frequency_code
+          - name: status
+          - name: quality_flag
+          - name: ingest_ts
+            tests:
+              - not_null

@@ -7,7 +7,7 @@ from enum import Enum
 from typing import Any, Dict, List, Literal, Optional
 from uuid import UUID
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 from .models import AurumBaseModel
 
@@ -225,7 +225,7 @@ class BulkScenarioRunItem(AurumBaseModel):
     environment: Dict[str, str] = Field(default_factory=dict, description="Environment variables")
     parameters: Dict[str, Any] = Field(default_factory=dict, description="Runtime parameters")
 
-    @validator("idempotency_key")
+    @field_validator("idempotency_key")
     def validate_idempotency_key(cls, v):
         """Validate idempotency key format."""
         if v is not None:

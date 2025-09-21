@@ -94,3 +94,75 @@ models:
         description: Currency resolved from canonical metadata or unit mappings.
       - name: unit_normalized
         description: Unit denominator resolved from canonical metadata or unit mappings.
+
+  - name: int_external__obs_conformed
+    description: Conformance layer standardizing external observations across providers.
+    tests:
+      - unique_combination:
+          combination_of_columns:
+            - provider
+            - series_id
+            - ts_utc
+            - asof_date
+    columns:
+      - name: provider
+        tests:
+          - not_null
+      - name: series_id
+        tests:
+          - not_null
+      - name: ts_utc
+        tests:
+          - not_null
+      - name: asof_date
+        tests:
+          - not_null
+      - name: value_usd_per_mwh
+        description: Standardized value in USD/MWh after unit conversions.
+      - name: value_raw
+        description: Original raw value before standardization.
+      - name: frequency_code_normalized
+        tests:
+          - not_null
+      - name: unit_code_canonical
+        tests:
+          - not_null
+      - name: canonical_region_id
+        description: Canonical geography identifier from external geo mapping
+      - name: canonical_region_name
+        description: Human readable geography name from external geo mapping
+      - name: provider_geo_code
+        description: Original provider-specific geography code
+      - name: quality_status
+        description: Data quality status indicator.
+        tests:
+          - accepted_values:
+              values: ['NULL_VALUE', 'ZERO_VALUE', 'VALID']
+      - name: conformed_at
+        tests:
+          - not_null
+
+  - name: int_external__geo_mapping
+    description: Intermediate model mapping provider geo codes to canonical geographies.
+    tests:
+      - unique_combination:
+          combination_of_columns:
+            - provider
+            - provider_geo_code
+    columns:
+      - name: provider
+        tests:
+          - not_null
+      - name: provider_geo_code
+        tests:
+          - not_null
+      - name: state_code
+        description: Canonical state code (ISO 3166-2)
+      - name: country_code
+        description: Canonical country code (ISO 3166-1 alpha-2)
+        tests:
+          - not_null
+      - name: canonical_region_id
+        description: Reference to canonical geographies table
+      - name: canonical_region_name
+        description: Human readable name from canonical geographies

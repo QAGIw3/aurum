@@ -107,3 +107,71 @@ spec:
             summary: "Ingestion watermark approaching SLA"
             description: "At least one ingestion watermark exceeds 1 hour"
             runbook: "docs/runbooks/ingestion.md#staleness"
+    - name: aurum-external-data
+      rules:
+        - alert: AurumExternalDataFreshnessSLOViolation
+          expr: |
+            max(aurum_external_data_freshness_seconds{provider!=""}) > 86400
+          for: 15m
+          labels:
+            severity: critical
+            service: external-data
+          annotations:
+            summary: "External data freshness SLO violation"
+            description: "External data provider freshness exceeds 24 hours"
+            runbook: "docs/runbooks/external-data.md#freshness-slo"
+        - alert: AurumExternalDataFreshnessWarning
+          expr: |
+            max(aurum_external_data_freshness_seconds{provider!=""}) > 43200
+          for: 30m
+          labels:
+            severity: warning
+            service: external-data
+          annotations:
+            summary: "External data freshness approaching SLO"
+            description: "External data provider freshness exceeds 12 hours"
+            runbook: "docs/runbooks/external-data.md#freshness-slo"
+        - alert: AurumExternalDataIngestionFailures
+          expr: |
+            sum(rate(aurum_external_ingestion_failures_total[15m])) > 0
+          for: 5m
+          labels:
+            severity: warning
+            service: external-data
+          annotations:
+            summary: "External data ingestion failures detected"
+            description: "External data ingestion has failed in the last 15 minutes"
+            runbook: "docs/runbooks/external-data.md#ingestion-failures"
+        - alert: AurumExternalDataGEValidationFailures
+          expr: |
+            sum(rate(aurum_external_ge_validation_failures_total[10m])) > 0
+          for: 5m
+          labels:
+            severity: critical
+            service: external-data
+          annotations:
+            summary: "Great Expectations validation failures"
+            description: "External data failed Great Expectations validation"
+            runbook: "docs/runbooks/external-data.md#ge-failures"
+        - alert: AurumExternalDataMappingCoverageLow
+          expr: |
+            sum(aurum_external_series_mapped_total) / sum(aurum_external_series_total) < 0.8
+          for: 1h
+          labels:
+            severity: warning
+            service: external-data
+          annotations:
+            summary: "External data mapping coverage below threshold"
+            description: "Less than 80% of external series are mapped to curves"
+            runbook: "docs/runbooks/external-data.md#mapping-coverage"
+        - alert: AurumExternalDataQualityDegraded
+          expr: |
+            avg(aurum_external_data_quality_score) < 0.9
+          for: 30m
+          labels:
+            severity: warning
+            service: external-data
+          annotations:
+            summary: "External data quality degraded"
+            description: "Overall external data quality score below 0.9 for 30 minutes"
+            runbook: "docs/runbooks/external-data.md#quality-degradation"

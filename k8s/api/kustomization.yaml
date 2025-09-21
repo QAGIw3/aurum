@@ -6,7 +6,7 @@ resources:
   - secret.yaml
   - deployment.yaml
   - service.yaml
-  - servicemonitor.yaml
+#  - servicemonitor.yaml
   - ingressroute.yaml
   - pdb.yaml
   - networkpolicy.yaml

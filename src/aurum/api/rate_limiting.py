@@ -570,4 +570,49 @@ def create_rate_limit_manager(storage_backend: str = "memory") -> RateLimitManag
         )
     )
 
+    # Add external data endpoint rules
+    manager.add_rule(
+        RateLimitRule(
+            name="external_providers",
+            requests_per_window=100,
+            window_seconds=60,
+            burst_limit=20,
+            algorithm=RateLimitAlgorithm.TOKEN_BUCKET,
+            endpoint_patterns=["/v1/external/providers"]
+        )
+    )
+
+    manager.add_rule(
+        RateLimitRule(
+            name="external_series",
+            requests_per_window=200,
+            window_seconds=60,
+            burst_limit=30,
+            algorithm=RateLimitAlgorithm.TOKEN_BUCKET,
+            endpoint_patterns=["/v1/external/series"]
+        )
+    )
+
+    manager.add_rule(
+        RateLimitRule(
+            name="external_observations",
+            requests_per_window=50,
+            window_seconds=60,
+            burst_limit=10,
+            algorithm=RateLimitAlgorithm.TOKEN_BUCKET,
+            endpoint_patterns=["/v1/external/series/*/observations"]
+        )
+    )
+
+    manager.add_rule(
+        RateLimitRule(
+            name="external_metadata",
+            requests_per_window=100,
+            window_seconds=60,
+            burst_limit=25,
+            algorithm=RateLimitAlgorithm.TOKEN_BUCKET,
+            endpoint_patterns=["/v1/metadata/external"]
+        )
+    )
+
     return manager

@@ -105,6 +105,16 @@ from .models import (
     DroughtDimensions,
     DroughtDimensionsResponse,
     DroughtInfoResponse,
+    # External models
+    ExternalProvider,
+    ExternalSeries,
+    ExternalObservation,
+    ExternalProvidersResponse,
+    ExternalSeriesResponse,
+    ExternalObservationsResponse,
+    ExternalMetadataResponse,
+    ExternalSeriesQueryParams,
+    ExternalObservationsQueryParams,
 )
 import aurum.observability.metrics as observability_metrics
 from aurum.observability.metrics import (

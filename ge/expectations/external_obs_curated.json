@@ -1,0 +1,109 @@
+{
+  "expectation_suite_name": "external_obs_curated",
+  "meta": {
+    "notes": "Validates curated external observations in curve_observation format."
+  },
+  "expectations": [
+    {
+      "expectation_type": "expect_column_values_to_not_be_null",
+      "kwargs": {"column": "asof_date"}
+    },
+    {
+      "expectation_type": "expect_column_values_to_not_be_null",
+      "kwargs": {"column": "curve_key"}
+    },
+    {
+      "expectation_type": "expect_column_values_to_not_be_null",
+      "kwargs": {"column": "mid"}
+    },
+    {
+      "expectation_type": "expect_column_values_to_not_be_null",
+      "kwargs": {"column": "asset_class"}
+    },
+    {
+      "expectation_type": "expect_column_values_to_not_be_null",
+      "kwargs": {"column": "iso"}
+    },
+    {
+      "expectation_type": "expect_column_values_to_not_be_null",
+      "kwargs": {"column": "market"}
+    },
+    {
+      "expectation_type": "expect_column_values_to_not_be_null",
+      "kwargs": {"column": "product"}
+    },
+    {
+      "expectation_type": "expect_column_values_to_not_be_null",
+      "kwargs": {"column": "tenor_type"}
+    },
+    {
+      "expectation_type": "expect_column_values_to_not_be_null",
+      "kwargs": {"column": "_ingest_ts"}
+    },
+    {
+      "expectation_type": "expect_column_values_to_be_in_set",
+      "kwargs": {
+        "column": "asset_class",
+        "value_set": ["power", "renewable", "gas", "carbon", "storage", "other"]
+      }
+    },
+    {
+      "expectation_type": "expect_column_values_to_be_in_set",
+      "kwargs": {
+        "column": "iso",
+        "value_set": ["EXTERNAL", "CAISO", "PJM", "MISO", "SPP", "NYISO", "AISO"]
+      }
+    },
+    {
+      "expectation_type": "expect_column_values_to_be_in_set",
+      "kwargs": {
+        "column": "market",
+        "value_set": ["DAY_AHEAD", "REAL_TIME", "FORWARD"]
+      }
+    },
+    {
+      "expectation_type": "expect_column_values_to_be_in_set",
+      "kwargs": {
+        "column": "product",
+        "value_set": ["LMP", "LOAD", "GENERATION", "CUSTOM"]
+      }
+    },
+    {
+      "expectation_type": "expect_column_values_to_be_in_set",
+      "kwargs": {
+        "column": "tenor_type",
+        "value_set": ["DAILY", "MONTHLY", "QUARTERLY", "CALENDAR", "STRIP", "CUSTOM"]
+      }
+    },
+    {
+      "expectation_type": "expect_column_values_to_be_between",
+      "kwargs": {
+        "column": "mid",
+        "min_value": -1000,
+        "max_value": 1000
+      },
+      "meta": {"notes": "Prices should be in plausible USD/MWh range"}
+    },
+    {
+      "expectation_type": "expect_column_values_to_be_between",
+      "kwargs": {
+        "column": "asof_date",
+        "min_value": "2015-01-01",
+        "max_value": "2030-12-31"
+      },
+      "meta": {"notes": "As-of dates should be within valid business range"}
+    },
+    {
+      "expectation_type": "expect_multicolumn_values_to_be_unique",
+      "kwargs": {
+        "column_list": ["curve_key", "tenor_label", "asof_date"]
+      },
+      "meta": {"notes": "Curve observations should be unique by key, tenor, and date"}
+    },
+    {
+      "expectation_type": "expect_column_values_to_not_be_null",
+      "kwargs": {"column": "lineage_tags"},
+      "meta": {"notes": "All records should have lineage tracking"}
+    }
+  ]
+}

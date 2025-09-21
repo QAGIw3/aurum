@@ -1,0 +1,61 @@
+name: External Contracts
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'sql/iceberg/**'
+      - 'sql/merge/**'
+      - 'kafka/schemas/**'
+      - 'tests/kafka/**'
+      - 'scripts/trino/**'
+      - 'scripts/test_fixtures/**'
+      - 'testdata/external/**'
+      - 'pyproject.toml'
+      - 'requirements-dev.txt'
+      - '.sqlfluff'
+      - '.github/workflows/external-contracts.yml'
+  pull_request:
+    paths:
+      - 'sql/iceberg/**'
+      - 'sql/merge/**'
+      - 'kafka/schemas/**'
+      - 'tests/kafka/**'
+      - 'scripts/trino/**'
+      - 'scripts/test_fixtures/**'
+      - 'testdata/external/**'
+      - 'pyproject.toml'
+      - 'requirements-dev.txt'
+      - '.sqlfluff'
+
+permissions:
+  contents: read
+
+jobs:
+  contracts:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.10'
+          cache: 'pip'
+          cache-dependency-path: |
+            requirements-dev.txt
+            pyproject.toml
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements-dev.txt
+
+      - name: Lint SQL contracts
+        run: python -m sqlfluff lint sql/iceberg/external sql/merge
+
+      - name: Validate Avro schemas
+        run: pytest tests/kafka/test_schemas.py
+
+      - name: Run Trino external contract smoke test
+        run: ./scripts/trino/test_external_contracts.sh

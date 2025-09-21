@@ -198,6 +198,59 @@ SCHEMA_CONTRACTS: tuple[SchemaContract, ...] = (
         required_fields=frozenset({"station_id", "date", "element", "ingest_ts"}),
     ),
     SchemaContract(
+        name="External Timeseries Observation",
+        schema_pattern=re.compile(r"^ExtTimeseriesObsV\d+$"),
+        subject_patterns=(
+            re.compile(r"^aurum\.ext\.timeseries\.obs\.v\d+(?:-(?:key|value))?$"),
+        ),
+        required_fields=frozenset(
+            {
+                "provider",
+                "series_id",
+                "ts",
+                "asof_date",
+                "value",
+                "value_raw",
+                "unit_code",
+                "geo_id",
+                "dataset_code",
+                "frequency_code",
+                "status",
+                "ingest_ts",
+                "source_event_id",
+                "metadata",
+            }
+        ),
+        expected_compatibility="BACKWARD",
+    ),
+    SchemaContract(
+        name="External Series Catalog Upsert",
+        schema_pattern=re.compile(r"^ExtSeriesCatalogUpsertV\d+$"),
+        subject_patterns=(
+            re.compile(r"^aurum\.ext\.series_catalog\.upsert\.v\d+(?:-(?:key|value))?$"),
+        ),
+        required_fields=frozenset(
+            {
+                "provider",
+                "series_id",
+                "dataset_code",
+                "title",
+                "unit_code",
+                "frequency_code",
+                "geo_id",
+                "status",
+                "category",
+                "source_url",
+                "last_observation_ts",
+                "asof_date",
+                "ingest_ts",
+                "metadata",
+                "version",
+            }
+        ),
+        expected_compatibility="BACKWARD",
+    ),
+    SchemaContract(
         name="QA Result",
         schema_pattern=re.compile(r"^qa\.result\.v\d+$"),
         subject_patterns=(

@@ -1,0 +1,2 @@
+external_provider,external_series_id,curve_key,mapping_confidence,mapping_method,mapping_notes,is_active,created_by
+FRED,DGS10,US_TREASURY_10YR_1.0,mapping_confidence,mapping_method,mapping_notes,is_active,created_by

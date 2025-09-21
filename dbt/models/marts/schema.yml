@@ -407,6 +407,81 @@ models:
       - name: source_url
         tests:
           - not_null
+  - name: mart_external__geo
+    description: Canonical geography dimension for external data providers.
+    tests:
+      - unique_combination:
+          combination_of_columns:
+            - provider
+            - provider_geo_code
+    columns:
+      - name: geo_key
+        tests:
+          - not_null
+          - unique
+      - name: provider
+        tests:
+          - not_null
+      - name: provider_geo_code
+        tests:
+          - not_null
+      - name: state_code
+        description: Canonical state code (ISO 3166-2)
+      - name: country_code
+        description: Canonical country code (ISO 3166-1 alpha-2)
+        tests:
+          - not_null
+      - name: zone_name
+        description: Provider-specific zone or region name
+      - name: geography_type
+        description: Type of geography (ISO_ZONE, PROVINCE, etc.)
+      - name: canonical_region_id
+        description: Reference to canonical geographies table
+      - name: canonical_region_name
+        description: Human readable name from canonical geographies
+      - name: mapping_status
+        description: Whether the geo code was successfully mapped to canonical geographies
+        tests:
+          - accepted_values:
+              values: ['MAPPED', 'UNMAPPED']
+
+  - name: cur_external__obs_mapped
+    description: Curated external observations transformed to match curve_observation format.
+    tests:
+      - unique_combination:
+          combination_of_columns:
+            - curve_key
+            - tenor_label
+            - asof_date
+    columns:
+      - name: asof_date
+        tests:
+          - not_null
+      - name: curve_key
+        tests:
+          - not_null
+      - name: mid
+        description: Standardized value in USD/MWh
+      - name: asset_class
+        tests:
+          - not_null
+      - name: iso
+        tests:
+          - not_null
+      - name: market
+        tests:
+          - not_null
+      - name: product
+        tests:
+          - not_null
+      - name: tenor_type
+        tests:
+          - not_null
+      - name: _ingest_ts
+        tests:
+          - not_null
+      - name: lineage_tags
+        description: Data lineage tracking information
 
 exposures:
   - name: scenario_outputs_mart

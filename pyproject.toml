@@ -51,7 +51,8 @@ testing = [
 ]
 quality = [
   "ruff>=0.5",
-  "mypy>=1.10"
+  "mypy>=1.10",
+  "sqlfluff>=3.0"
 ]
 iceberg = [
   "pyiceberg>=0.16.0",

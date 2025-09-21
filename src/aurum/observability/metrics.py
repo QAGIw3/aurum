@@ -102,6 +102,42 @@ if PROMETHEUS_AVAILABLE:  # pragma: no branch - simplify instrumentation when av
         "aurum_active_connections",
         "Active API connections",
     )
+    # External API metrics
+    EXTERNAL_API_REQUEST_COUNTER = Counter(
+        "aurum_external_api_requests_total",
+        "External API request counter",
+        ["endpoint", "status"],
+    )
+    EXTERNAL_API_LATENCY = Histogram(
+        "aurum_external_api_request_duration_seconds",
+        "External API request duration in seconds",
+        ["endpoint"],
+    )
+    EXTERNAL_CACHE_HIT_COUNTER = Counter(
+        "aurum_external_cache_hits_total",
+        "External API cache hit counter",
+        ["endpoint"],
+    )
+    EXTERNAL_CACHE_MISS_COUNTER = Counter(
+        "aurum_external_cache_misses_total",
+        "External API cache miss counter",
+        ["endpoint"],
+    )
+    EXTERNAL_DAO_QUERY_COUNTER = Counter(
+        "aurum_external_dao_queries_total",
+        "External DAO query counter",
+        ["operation", "status"],
+    )
+    EXTERNAL_DAO_LATENCY = Histogram(
+        "aurum_external_dao_query_duration_seconds",
+        "External DAO query duration in seconds",
+        ["operation"],
+    )
+    EXTERNAL_CURVE_MAPPING_COUNTER = Counter(
+        "aurum_external_curve_mappings_total",
+        "External to curve mapping counter",
+        ["mapping_type"],
+    )
 
     CONTENT_TYPE_LATEST = _PROM_CONTENT_TYPE
     generate_latest = _prom_generate_latest
@@ -135,6 +171,11 @@ else:  # pragma: no cover - Prometheus not present
     CACHE_HIT_COUNTER = CACHE_MISS_COUNTER = None
     DB_QUERY_DURATION = None
     QUEUE_SIZE_GAUGE = ACTIVE_CONNECTIONS_GAUGE = None
+    # External API metrics
+    EXTERNAL_API_REQUEST_COUNTER = EXTERNAL_API_LATENCY = None
+    EXTERNAL_CACHE_HIT_COUNTER = EXTERNAL_CACHE_MISS_COUNTER = None
+    EXTERNAL_DAO_QUERY_COUNTER = EXTERNAL_DAO_LATENCY = None
+    EXTERNAL_CURVE_MAPPING_COUNTER = None
     CONTENT_TYPE_LATEST = "text/plain; version=0.0.4; charset=utf-8"
 
     def generate_latest():  # type: ignore[misc]
