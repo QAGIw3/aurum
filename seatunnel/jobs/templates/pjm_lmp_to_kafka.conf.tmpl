@@ -5,8 +5,8 @@
 #   PJM_TOPIC                - Kafka topic (e.g. aurum.iso.pjm.lmp.v1)
 #   PJM_INTERVAL_START       - Interval start in ISO 8601 (e.g. 2024-01-01T00:00:00-05:00)
 #   PJM_INTERVAL_END         - Interval end in ISO 8601 (exclusive)
-#   KAFKA_BOOTSTRAP_SERVERS  - Kafka brokers
-#   SCHEMA_REGISTRY_URL      - Schema Registry endpoint
+#   AURUM_KAFKA_BOOTSTRAP_SERVERS  - Kafka brokers
+#   AURUM_SCHEMA_REGISTRY_URL      - Schema Registry endpoint
 #
 # Optional environment variables:
 #   PJM_ENDPOINT             - API endpoint (default https://api.pjm.com/api/v1/da_hrl_lmps)
@@ -119,13 +119,13 @@ transform {
 sink {
   Kafka {
     plugin_input = "pjm_normalized"
-    bootstrap.servers = "${KAFKA_BOOTSTRAP_SERVERS}"
+    bootstrap.servers = "${AURUM_KAFKA_BOOTSTRAP_SERVERS}"
     topic = "${PJM_TOPIC}"
     semantic = "AT_LEAST_ONCE"
     format = "avro"
     avro {
       use.schema.registry = true
-      schema.registry.url = "${SCHEMA_REGISTRY_URL}"
+      schema.registry.url = "${AURUM_SCHEMA_REGISTRY_URL}"
       value.schema.subject = "${PJM_SUBJECT}"
       value.schema = """${ISO_LMP_SCHEMA}"""
     }

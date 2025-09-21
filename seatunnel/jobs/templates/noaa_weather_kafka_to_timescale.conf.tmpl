@@ -1,11 +1,11 @@
 # NOAA weather topic → TimescaleDB (JDBC)
 #
 # Required environment variables:
-#   KAFKA_BOOTSTRAP_SERVERS  - Kafka brokers
-#   SCHEMA_REGISTRY_URL      - Schema Registry endpoint
-#   TIMESCALE_JDBC_URL       - JDBC URL for TimescaleDB (e.g. jdbc:postgresql://timescale:5432/timeseries)
-#   TIMESCALE_USER           - Timescale username
-#   TIMESCALE_PASSWORD       - Timescale password
+#   AURUM_KAFKA_BOOTSTRAP_SERVERS  - Kafka brokers
+#   AURUM_SCHEMA_REGISTRY_URL      - Schema Registry endpoint
+#   AURUM_TIMESCALE_JDBC_URL       - JDBC URL for TimescaleDB (e.g. jdbc:postgresql://timescale:5432/timeseries)
+#   AURUM_TIMESCALE_USER           - Timescale username
+#   AURUM_TIMESCALE_PASSWORD       - Timescale password
 #
 # Optional environment variables:
 #   NOAA_TOPIC_PATTERN       - Regex pattern for topics (default aurum\\.ref\\.noaa\\.weather\\.v1)
@@ -19,12 +19,12 @@ env {
 
 source {
   Kafka {
-    bootstrap.servers = "${KAFKA_BOOTSTRAP_SERVERS}"
+    bootstrap.servers = "${AURUM_KAFKA_BOOTSTRAP_SERVERS}"
     pattern = "${NOAA_TOPIC_PATTERN}"
     format = "avro"
     start_mode = "latest"
     avro {
-      schema.registry.url = "${SCHEMA_REGISTRY_URL}"
+      schema.registry.url = "${AURUM_SCHEMA_REGISTRY_URL}"
     }
     result_table_name = "noaa_raw"
   }
@@ -61,9 +61,9 @@ transform {
 sink {
   Jdbc {
     driver = "org.postgresql.Driver"
-    url = "${TIMESCALE_JDBC_URL}"
-    user = "${TIMESCALE_USER}"
-    password = "${TIMESCALE_PASSWORD}"
+    url = "${AURUM_TIMESCALE_JDBC_URL}"
+    user = "${AURUM_TIMESCALE_USER}"
+    password = "${AURUM_TIMESCALE_PASSWORD}"
     table = "${NOAA_TABLE}"
     primary_keys = ["station_id", "observation_date", "element"]
     save_mode = "${NOAA_SAVE_MODE}"

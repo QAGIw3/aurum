@@ -1,8 +1,8 @@
 # NYISO day-ahead LBMP → Kafka (Avro)
 # Required environment variables:
 #   NYISO_URL                - HTTP endpoint returning CSV data
-#   KAFKA_BOOTSTRAP_SERVERS  - Kafka brokers
-#   SCHEMA_REGISTRY_URL      - Schema Registry endpoint
+#   AURUM_KAFKA_BOOTSTRAP_SERVERS  - Kafka brokers
+#   AURUM_SCHEMA_REGISTRY_URL      - Schema Registry endpoint
 #   NYISO_TOPIC              - Kafka topic (default aurum.iso.nyiso.lmp.v1)
 # Optional environment variables:
 #   NYISO_SUBJECT            - Schema Registry subject (default <topic>-value)
@@ -89,13 +89,13 @@ transform {
 sink {
   Kafka {
     plugin_input = "nyiso_normalized"
-    bootstrap.servers = "${KAFKA_BOOTSTRAP_SERVERS}"
+    bootstrap.servers = "${AURUM_KAFKA_BOOTSTRAP_SERVERS}"
     topic = "${NYISO_TOPIC}"
     semantic = "AT_LEAST_ONCE"
     format = "avro"
     avro {
       use.schema.registry = true
-      schema.registry.url = "${SCHEMA_REGISTRY_URL}"
+      schema.registry.url = "${AURUM_SCHEMA_REGISTRY_URL}"
       value.schema.subject = "${NYISO_SUBJECT}"
       value.schema = """${ISO_LMP_SCHEMA}"""
     }

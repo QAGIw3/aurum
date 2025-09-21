@@ -46,6 +46,7 @@ class RateLimitConfig:
     burst: int = 20
     overrides: Dict[str, Tuple[int, int]] = field(default_factory=dict)
     identifier_header: str | None = None
+    whitelist: Tuple[str, ...] = field(default_factory=tuple)
 
     @classmethod
     def from_env(cls) -> "RateLimitConfig":
@@ -71,7 +72,20 @@ class RateLimitConfig:
                 except ValueError:
                     continue
         identifier_header = os.getenv("AURUM_API_RATE_LIMIT_HEADER")
-        return cls(rps=rps, burst=burst, overrides=overrides, identifier_header=identifier_header)
+        whitelist_env = os.getenv("AURUM_API_RATE_LIMIT_WHITELIST", "")
+        whitelist: Tuple[str, ...]
+        if whitelist_env:
+            whitelist = tuple(item.strip() for item in whitelist_env.split(",") if item.strip())
+        else:
+            whitelist = ()
+
+        return cls(
+            rps=rps,
+            burst=burst,
+            overrides=overrides,
+            identifier_header=identifier_header,
+            whitelist=whitelist,
+        )
 
     @classmethod
     def from_settings(cls, settings: AurumSettings) -> "RateLimitConfig":
@@ -82,6 +96,7 @@ class RateLimitConfig:
             burst=rl.burst,
             overrides=overrides,
             identifier_header=rl.identifier_header,
+            whitelist=tuple(rl.whitelist),
         )
 
     def limits_for_path(self, path: str) -> Tuple[int, int]:
@@ -92,6 +107,15 @@ class RateLimitConfig:
                 match_prefix = prefix
                 selected = values
         return selected
+
+    def is_whitelisted(self, *identifiers: Optional[str]) -> bool:
+        if not self.whitelist:
+            return False
+        candidates = {identifier for identifier in identifiers if identifier}
+        if not candidates:
+            return False
+        whitelist_set = set(self.whitelist)
+        return any(candidate in whitelist_set for candidate in candidates)
 
 
 def _redis_client(cache_cfg: CacheConfig):
@@ -119,13 +143,24 @@ class RateLimitMiddleware:
             await self.app(scope, receive, send)
             return
         request = Request(scope)
+        metrics_path = "/metrics"
+        settings = getattr(request.app.state, "settings", None)
+        if isinstance(settings, AurumSettings):
+            configured_path = settings.api.metrics.path
+            metrics_path = configured_path if configured_path.startswith("/") else f"/{configured_path}"
         # Skip rate limiting for health and metrics endpoints
-        if request.url.path in {"/health", "/metrics", "/ready"}:
+        if request.url.path in {"/health", metrics_path, "/ready"}:
             await self.app(scope, receive, send)
             return
         path = request.url.path
         rps, burst = self.rl_cfg.limits_for_path(path)
-        key = self._rate_key(request, path)
+        identifier, tenant_id, header_identifier, client_ip = self._resolve_identity(request)
+
+        if self.rl_cfg.is_whitelisted(identifier, tenant_id, header_identifier, client_ip):
+            await self.app(scope, receive, send)
+            return
+
+        key = self._rate_key(path, identifier)
         allowed, remaining, reset = await self._allow(key, rps=rps, burst=burst)
         if not allowed:
             await self._reject(scope, receive, send, remaining=0, reset=reset)
@@ -136,9 +171,9 @@ class RateLimitMiddleware:
         async def send_with_headers(message: dict[str, Any]) -> None:
             if message.get("type") == "http.response.start":
                 headers = list(message.get("headers") or [])
-                headers.append((b"x-ratelimit-limit", str(limit_total).encode("ascii")))
-                headers.append((b"x-ratelimit-remaining", str(max(0, remaining)).encode("ascii")))
-                headers.append((b"x-ratelimit-reset", str(reset).encode("ascii")))
+                headers.append((b"X-RateLimit-Limit", str(limit_total).encode("ascii")))
+                headers.append((b"X-RateLimit-Remaining", str(max(0, remaining)).encode("ascii")))
+                headers.append((b"X-RateLimit-Reset", str(reset).encode("ascii")))
                 message["headers"] = headers
             await send(message)
 
@@ -189,14 +224,37 @@ class RateLimitMiddleware:
         client = request.client
         return client.host if client else "unknown"
 
-    def _rate_key(self, request: Request, path: str) -> str:
+    def _rate_key(self, path: str, identifier: str) -> str:
+        return f"{path}:{identifier}"
+
+    def _resolve_identity(
+        self, request: Request
+    ) -> tuple[str, Optional[str], Optional[str], str]:
         principal = getattr(request.state, "principal", {}) or {}
         tenant = principal.get("tenant")
-        header_identifier = None
+        header_identifier: Optional[str] = None
         if self.rl_cfg.identifier_header:
-            header_identifier = request.headers.get(self.rl_cfg.identifier_header)
-        identifier = tenant or header_identifier or self._client_ip(request)
-        return f"{path}:{identifier}"
+            raw_header = request.headers.get(self.rl_cfg.identifier_header)
+            if raw_header:
+                stripped = raw_header.strip()
+                header_identifier = stripped or None
+        if tenant is None:
+            raw_tenant = request.headers.get("X-Aurum-Tenant")
+            if raw_tenant:
+                stripped_tenant = raw_tenant.strip()
+                tenant = stripped_tenant or None
+        client_ip = self._client_ip(request)
+
+        if tenant and header_identifier:
+            identifier = f"{tenant}:{header_identifier}"
+        elif tenant:
+            identifier = tenant
+        elif header_identifier:
+            identifier = header_identifier
+        else:
+            identifier = client_ip
+
+        return identifier, tenant, header_identifier, client_ip
 
     async def _reject(self, scope: Scope, receive: Receive, send: Send, *, remaining: int, reset: int) -> None:
         headers = {"Retry-After": str(reset), "X-RateLimit-Limit": str(self.rl_cfg.rps + self.rl_cfg.burst), "X-RateLimit-Remaining": str(remaining), "X-RateLimit-Reset": str(reset)}

@@ -7,8 +7,8 @@
 #   EIA_SERIES_ID           - Series identifier stored in the record
 #   EIA_FREQUENCY           - Value for the Avro frequency enum (ANNUAL, MONTHLY, etc.)
 #   EIA_TOPIC               - Kafka topic to emit to
-#   KAFKA_BOOTSTRAP_SERVERS - Kafka brokers
-#   SCHEMA_REGISTRY_URL     - Confluent Schema Registry endpoint
+#   AURUM_KAFKA_BOOTSTRAP_SERVERS - Kafka brokers
+#   AURUM_SCHEMA_REGISTRY_URL     - Confluent Schema Registry endpoint
 #
 # Optional environment variables:
 #   EIA_START               - Start period (YYYY-MM-DD or dataset-supported token)
@@ -106,13 +106,13 @@ transform {
 sink {
   Kafka {
     plugin_input = "eia_normalized"
-    bootstrap.servers = "${KAFKA_BOOTSTRAP_SERVERS}"
+    bootstrap.servers = "${AURUM_KAFKA_BOOTSTRAP_SERVERS}"
     topic = "${EIA_TOPIC}"
     semantic = "AT_LEAST_ONCE"
     format = "avro"
     avro {
       use.schema.registry = true
-      schema.registry.url = "${SCHEMA_REGISTRY_URL}"
+      schema.registry.url = "${AURUM_SCHEMA_REGISTRY_URL}"
       value.schema.subject = "${EIA_SUBJECT}"
       value.schema = """${EIA_SERIES_SCHEMA}"""
     }

@@ -2,7 +2,6 @@
 from __future__ import annotations
 
 from enum import Enum
-from typing import ClassVar
 
 
 def _normalise_token(token: str) -> str:
@@ -13,7 +12,9 @@ def _normalise_token(token: str) -> str:
 class CaseInsensitiveStrEnum(str, Enum):
     """``Enum`` base that accepts case-insensitive tokens and relaxed separators."""
 
-    _DEFAULT_: ClassVar["CaseInsensitiveStrEnum" | None] = None
+    @classmethod
+    def default(cls) -> "CaseInsensitiveStrEnum | None":
+        return None
 
     def __str__(self) -> str:  # pragma: no cover - simple proxy
         return str(self.value)
@@ -25,7 +26,7 @@ class CaseInsensitiveStrEnum(str, Enum):
             for member in cls:  # pragma: no branch - bounded iteration
                 if normalised == _normalise_token(member.value) or normalised == _normalise_token(member.name):
                     return member
-            default = getattr(cls, "_DEFAULT_", None)
+            default = cls.default()
             if isinstance(default, cls):
                 return default
         return None
@@ -42,7 +43,9 @@ class IsoCode(CaseInsensitiveStrEnum):
     AESO = "AESO"
     OTHER = "OTHER"
 
-    _DEFAULT_: ClassVar["IsoCode"] = OTHER
+    @classmethod
+    def default(cls) -> "IsoCode | None":
+        return cls.OTHER
 
 
 class IsoMarket(CaseInsensitiveStrEnum):
@@ -58,7 +61,9 @@ class IsoMarket(CaseInsensitiveStrEnum):
     REAL_TIME_EXPOST = "REAL_TIME_EXPOST"
     UNKNOWN = "UNKNOWN"
 
-    _DEFAULT_: ClassVar["IsoMarket"] = UNKNOWN
+    @classmethod
+    def default(cls) -> "IsoMarket | None":
+        return cls.UNKNOWN
 
 
 class PriceBlock(CaseInsensitiveStrEnum):
@@ -68,7 +73,9 @@ class PriceBlock(CaseInsensitiveStrEnum):
     SUPER_OFF_PEAK = "SUPER_OFF_PEAK"
     CUSTOM = "CUSTOM"
 
-    _DEFAULT_: ClassVar["PriceBlock"] = CUSTOM
+    @classmethod
+    def default(cls) -> "PriceBlock | None":
+        return cls.CUSTOM
 
 
 class UnitOfMeasure(CaseInsensitiveStrEnum):
@@ -84,7 +91,9 @@ class UnitOfMeasure(CaseInsensitiveStrEnum):
     KG = "KG"
     OTHER = "OTHER"
 
-    _DEFAULT_: ClassVar["UnitOfMeasure"] = OTHER
+    @classmethod
+    def default(cls) -> "UnitOfMeasure | None":
+        return cls.OTHER
 
 
 class CurrencyCode(CaseInsensitiveStrEnum):
@@ -102,7 +111,9 @@ class CurrencyCode(CaseInsensitiveStrEnum):
     DKK = "DKK"
     OTHER = "OTHER"
 
-    _DEFAULT_: ClassVar["CurrencyCode"] = OTHER
+    @classmethod
+    def default(cls) -> "CurrencyCode | None":
+        return cls.OTHER
 
 
 __all__ = [

@@ -5,8 +5,8 @@
 #   CPI_FREQUENCY          - Frequency enum value (MONTHLY, QUARTERLY, etc.)
 #   CPI_SEASONAL_ADJ       - Seasonal adjustment (SA/NSA)
 #   CPI_TOPIC              - Kafka topic (default aurum.ref.cpi.series.v1)
-#   KAFKA_BOOTSTRAP_SERVERS - Kafka brokers
-#   SCHEMA_REGISTRY_URL    - Schema Registry endpoint
+#   AURUM_KAFKA_BOOTSTRAP_SERVERS - Kafka brokers
+#   AURUM_SCHEMA_REGISTRY_URL    - Schema Registry endpoint
 #   FRED_API_KEY           - FRED API key
 #
 # Optional environment variables:
@@ -72,13 +72,13 @@ transform {
 sink {
   Kafka {
     plugin_input = "cpi_normalized"
-    bootstrap.servers = "${KAFKA_BOOTSTRAP_SERVERS}"
+    bootstrap.servers = "${AURUM_KAFKA_BOOTSTRAP_SERVERS}"
     topic = "${CPI_TOPIC}"
     semantic = "AT_LEAST_ONCE"
     format = "avro"
     avro {
       use.schema.registry = true
-      schema.registry.url = "${SCHEMA_REGISTRY_URL}"
+      schema.registry.url = "${AURUM_SCHEMA_REGISTRY_URL}"
       value.schema.subject = "${CPI_SUBJECT}"
       value.schema = """${CPI_SCHEMA}"""
     }

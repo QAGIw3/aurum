@@ -80,7 +80,7 @@ select
     mid,
     bid,
     ask,
-    lower(to_hex(md5(to_utf8(curve_key || '|calendar|' || cast(year(contract_month) as varchar) || '|' || cast(asof_date as varchar))))) as version_hash,
+    {{ aurum_text_hash("curve_key || '|calendar|' || cast(year(contract_month) as varchar) || '|' || cast(asof_date as varchar)") }} as version_hash,
     _ingest_ts
-from calendarized;
+from calendarized
 

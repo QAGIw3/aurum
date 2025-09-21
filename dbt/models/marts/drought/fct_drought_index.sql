@@ -34,6 +34,6 @@ SELECT
     l.ingest_job_id,
     l.tenant_id
 FROM latest AS l
-LEFT JOIN {{ source('iceberg_ref', 'geographies') }} AS g
+LEFT JOIN {{ iceberg_relation('ref', 'geographies', 'geographies') }} AS g
     ON g.region_type = l.region_type
    AND g.region_id = l.region_id

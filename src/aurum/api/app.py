@@ -2,12 +2,17 @@ from __future__ import annotations
 
 """Application factory for the Aurum API."""
 
+import sys
+import types
+
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.gzip import GZipMiddleware
 
 from aurum.core import AurumSettings
 from aurum.telemetry import configure_telemetry
+
+from . import routes as _routes
 
 from .auth import AuthMiddleware, OIDCConfig
 from .config import CacheConfig
@@ -63,3 +68,41 @@ def create_app(settings: AurumSettings | None = None) -> FastAPI:
 app = create_app()
 
 __all__ = ["create_app", "app"]
+
+
+_ROUTE_EXPORTS = {
+    "_CACHE",
+    "_metadata_cache_get_or_set",
+    "_persist_ppa_valuation_records",
+    "_get_principal",
+    "_check_trino_ready",
+    "_check_timescale_ready",
+    "_check_redis_ready",
+    "_is_admin",
+    "ADMIN_GROUPS",
+    "METADATA_CACHE_TTL",
+    "SCENARIO_OUTPUT_CACHE_TTL",
+    "SCENARIO_METRIC_CACHE_TTL",
+}
+
+
+class _AppModule(types.ModuleType):
+    """Proxy module exposing legacy attributes from ``routes``."""
+
+    def __getattr__(self, name: str):  # pragma: no cover - trivial delegation
+        if name == "router":
+            return _routes.router
+        if name in _ROUTE_EXPORTS:
+            return getattr(_routes, name)
+        raise AttributeError(f"module 'aurum.api.app' has no attribute '{name}'")
+
+    def __setattr__(self, name: str, value):  # pragma: no cover - delegation
+        if name in _ROUTE_EXPORTS:
+            setattr(_routes, name, value)
+        else:
+            super().__setattr__(name, value)
+
+
+_module = sys.modules[__name__]
+if not isinstance(_module, _AppModule):  # pragma: no cover - initialization guard
+    _module.__class__ = _AppModule

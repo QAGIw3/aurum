@@ -11,7 +11,10 @@ from calendar import monthrange
 from datetime import date, datetime, timezone
 from typing import Any, Dict, Iterable, List, Mapping, Optional, Sequence, Tuple
 
-import psycopg
+try:  # pragma: no cover - optional dependency
+    import psycopg
+except ModuleNotFoundError:  # pragma: no cover - allow stubbing in tests
+    psycopg = None  # type: ignore[assignment]
 
 from aurum.core import AurumSettings
 
@@ -128,6 +131,8 @@ def _eia_series_base_table() -> str:
 def _fetch_timescale_rows(sql: str, params: Mapping[str, object]) -> Tuple[List[Dict[str, Any]], float]:
     start_time = time.perf_counter()
     rows: List[Dict[str, Any]] = []
+    if psycopg is None:  # pragma: no cover - guard when dependency missing
+        raise RuntimeError("psycopg is required for Timescale queries")
     with psycopg.connect(_timescale_dsn(), autocommit=True) as conn:
         with conn.cursor() as cur:
             cur.execute(sql, params)
@@ -1617,9 +1622,13 @@ class _IsoLmpInMemoryCache:
 
 
 _ISO_LMP_MEMORY_CACHE = _IsoLmpInMemoryCache()
+_ISO_LMP_CACHE_TTL_OVERRIDE: int | None = None
+_ISO_LMP_INMEM_TTL_OVERRIDE: int | None = None
 
 
 def _iso_lmp_effective_ttl(cache_cfg: CacheConfig) -> int:
+    if _ISO_LMP_CACHE_TTL_OVERRIDE is not None:
+        return max(0, _ISO_LMP_CACHE_TTL_OVERRIDE)
     ttl = _settings().api.cache.iso_lmp_cache_ttl
     if ttl is not None:
         return max(0, ttl)
@@ -1627,6 +1636,8 @@ def _iso_lmp_effective_ttl(cache_cfg: CacheConfig) -> int:
 
 
 def _iso_lmp_memory_ttl() -> int:
+    if _ISO_LMP_INMEM_TTL_OVERRIDE is not None:
+        return max(0, _ISO_LMP_INMEM_TTL_OVERRIDE)
     ttl = _settings().api.cache.iso_lmp_inmemory_ttl
     return max(0, ttl)
 
@@ -1743,6 +1754,8 @@ def query_iso_lmp_hourly(
     iso_code: str | None = None,
     market: str | None = None,
     location_id: str | None = None,
+    start: datetime | None = None,
+    end: datetime | None = None,
     limit: int = 500,
     cache_cfg: CacheConfig | None = None,
 ) -> Tuple[List[Dict[str, Any]], float]:
@@ -1760,6 +1773,12 @@ def query_iso_lmp_hourly(
     if location_id:
         sql += " AND upper(location_id) = upper(%(location_id)s)"
         params["location_id"] = location_id
+    if start:
+        sql += " AND interval_start >= %(start)s"
+        params["start"] = start
+    if end:
+        sql += " AND interval_start <= %(end)s"
+        params["end"] = end
     sql += " ORDER BY interval_start DESC LIMIT %(limit)s"
     return _cached_iso_lmp_query("hourly", sql, params, cache_cfg=cache_cfg)
 
@@ -1769,6 +1788,8 @@ def query_iso_lmp_daily(
     iso_code: str | None = None,
     market: str | None = None,
     location_id: str | None = None,
+    start: datetime | None = None,
+    end: datetime | None = None,
     limit: int = 500,
     cache_cfg: CacheConfig | None = None,
 ) -> Tuple[List[Dict[str, Any]], float]:
@@ -1786,6 +1807,12 @@ def query_iso_lmp_daily(
     if location_id:
         sql += " AND upper(location_id) = upper(%(location_id)s)"
         params["location_id"] = location_id
+    if start:
+        sql += " AND interval_start >= %(start)s"
+        params["start"] = start
+    if end:
+        sql += " AND interval_start <= %(end)s"
+        params["end"] = end
     sql += " ORDER BY interval_start DESC LIMIT %(limit)s"
     return _cached_iso_lmp_query("daily", sql, params, cache_cfg=cache_cfg)
 
@@ -2148,3 +2175,113 @@ def query_dimensions(
         except Exception:
             pass
     return results, counts if include_counts else None
+
+
+# Async service function stubs for new modules
+async def fetch_curve_data(
+    asof: Optional[str] = None,
+    iso: Optional[str] = None,
+    market: Optional[str] = None,
+    location: Optional[str] = None,
+    product: Optional[str] = None,
+    block: Optional[str] = None,
+    pagination: Optional[Any] = None,
+    cursor: Optional[Any] = None,
+    prev_cursor: Optional[str] = None,
+) -> Tuple[List[Any], Any]:
+    """Fetch curve data - placeholder for async implementation."""
+    # This would be implemented with the AsyncCurveService
+    raise NotImplementedError("Use AsyncCurveService for curve data")
+
+
+async def fetch_curve_diff_data(
+    asof_a: str,
+    asof_b: str,
+    iso: Optional[str] = None,
+    market: Optional[str] = None,
+    location: Optional[str] = None,
+    product: Optional[str] = None,
+    block: Optional[str] = None,
+    pagination: Optional[Any] = None,
+) -> Tuple[List[Any], Any]:
+    """Fetch curve diff data - placeholder for async implementation."""
+    # This would be implemented with the AsyncCurveService
+    raise NotImplementedError("Use AsyncCurveService for curve diff data")
+
+
+async def fetch_curve_strips_data(
+    strip_type: str,
+    iso: Optional[str] = None,
+    market: Optional[str] = None,
+    location: Optional[str] = None,
+    product: Optional[str] = None,
+    block: Optional[str] = None,
+    pagination: Optional[Any] = None,
+) -> Tuple[List[Any], Any]:
+    """Fetch curve strips data - placeholder for async implementation."""
+    # This would be implemented with the AsyncCurveService
+    raise NotImplementedError("Use AsyncCurveService for curve strips data")
+
+
+async def fetch_metadata_dimensions(
+    asof: Optional[str] = None,
+    include_counts: bool = False,
+) -> Tuple[Dict, Optional[Dict]]:
+    """Fetch metadata dimensions - placeholder for async implementation."""
+    # This would be implemented with the AsyncMetadataService
+    raise NotImplementedError("Use AsyncMetadataService for metadata dimensions")
+
+
+async def fetch_iso_locations(
+    iso: Optional[str] = None,
+    location_ids: Optional[List[str]] = None,
+    prefix: Optional[str] = None,
+) -> List[Dict]:
+    """Fetch ISO locations - placeholder for async implementation."""
+    # This would be implemented with the AsyncMetadataService
+    raise NotImplementedError("Use AsyncMetadataService for ISO locations")
+
+
+async def fetch_units_canonical() -> List[Dict]:
+    """Fetch canonical units - placeholder for async implementation."""
+    # This would be implemented with the AsyncMetadataService
+    raise NotImplementedError("Use AsyncMetadataService for canonical units")
+
+
+async def fetch_units_mapping(prefix: Optional[str] = None) -> List[Dict]:
+    """Fetch units mapping - placeholder for async implementation."""
+    # This would be implemented with the AsyncMetadataService
+    raise NotImplementedError("Use AsyncMetadataService for units mapping")
+
+
+async def fetch_calendars() -> List[Dict]:
+    """Fetch calendars - placeholder for async implementation."""
+    # This would be implemented with the AsyncMetadataService
+    raise NotImplementedError("Use AsyncMetadataService for calendars")
+
+
+async def fetch_calendar_blocks(name: str) -> List[Dict]:
+    """Fetch calendar blocks - placeholder for async implementation."""
+    # This would be implemented with the AsyncMetadataService
+    raise NotImplementedError("Use AsyncMetadataService for calendar blocks")
+
+
+async def fetch_calendar_hours(
+    name: str,
+    block: str,
+    date: Optional[str] = None,
+    end: Optional[str] = None,
+) -> List[Dict]:
+    """Fetch calendar hours - placeholder for async implementation."""
+    # This would be implemented with the AsyncMetadataService
+    raise NotImplementedError("Use AsyncMetadataService for calendar hours")
+
+
+async def invalidate_curve_cache(
+    iso: Optional[str] = None,
+    market: Optional[str] = None,
+    location: Optional[str] = None,
+) -> None:
+    """Invalidate curve cache - placeholder for async implementation."""
+    # This would be implemented with the CacheManager
+    raise NotImplementedError("Use CacheManager for cache invalidation")

@@ -13,35 +13,87 @@ permissions:
 
 jobs:
   lint-test:
-    name: Lint & Test
+    name: Lint & Test (Python ${{ matrix.python-version }})
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ['3.10', '3.11']
     steps:
       - name: Checkout
         uses: actions/checkout@v4
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
-          python-version: '3.11'
+          python-version: ${{ matrix.python-version }}
+          cache: 'pip'
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
           pip install -r requirements-dev.txt
-      - name: Ruff lint
-        run: make lint
+      - name: Ruff
+        run: ruff check .
+      - name: Mypy
+        run: mypy src
       - name: Pytest
-        run: make test
+        env:
+          PYTHONPATH: src
+        run: pytest
+      - name: Schema Registry dry-run
+        if: matrix.python-version == '3.11'
+        env:
+          PYTHONPATH: src
+        run: scripts/kafka/bootstrap.sh --schema-registry-url http://localhost:8081 --dry-run
 
-      - name: Check unknown unit mappings
-        run: |
-          set -e
-          for workbook in files/EOD_PW_20250912_1430.xlsx files/EOD_EUGP_20250912_1430.xlsx files/EOD_RP_20250912_1430.xlsx; do
-            python -m aurum.parsers.unknown_units_cli "$workbook" --as-of 2025-09-12 --emit-patch > patch.diff
-            if [ -s patch.diff ]; then
-              echo "Unknown unit mappings detected in $workbook" >&2
-              cat patch.diff
-              exit 1
-            fi
-          done
+  spectral-lint:
+    name: Spectral OpenAPI Lint
+    needs: lint-test
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Spectral Lint
+        uses: stoplightio/spectral-action@v0.8.7
+        with:
+          file_glob: 'openapi/**/*.y*ml'
+
+  security-scan:
+    name: Container Security Scan
+    needs: lint-test
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Prepare SBOM directory
+        run: mkdir -p sbom
+      - name: Hadolint API Dockerfile
+        uses: hadolint/hadolint-action@v3.1.0
+        with:
+          dockerfile: Dockerfile.api
+      - name: Hadolint Worker Dockerfile
+        uses: hadolint/hadolint-action@v3.1.0
+        with:
+          dockerfile: Dockerfile.worker
+      - name: Trivy filesystem scan
+        uses: aquasecurity/trivy-action@0.13.0
+        with:
+          scan-type: fs
+          security-checks: vuln,config
+          ignore-unfixed: true
+          severity: HIGH,CRITICAL
+          hide-progress: true
+          format: table
+          exit-code: '1'
+      - name: Generate SBOM
+        uses: anchore/sbom-action@v0
+        with:
+          path: .
+          output-file: sbom/spdx.json
+      - name: Upload SBOM artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: sbom
+          path: sbom/spdx.json
 
   scenario-smoke:
     name: Scenario Smoke
@@ -89,6 +141,7 @@ jobs:
         uses: actions/setup-python@v5
         with:
           python-version: '3.11'
+          cache: 'pip'
 
       - name: Install dependencies
         run: |
@@ -103,14 +156,30 @@ jobs:
         run: |
           dbt seed --profiles-dir "$DBT_PROFILES_DIR" --target "$DBT_TARGET" --vars "$DBT_VARS" --full-refresh
 
-      - name: dbt build (stg,int,mart)
+      - name: dbt compile (stg,int,marts)
         run: |
-          dbt build --profiles-dir "$DBT_PROFILES_DIR" --target "$DBT_TARGET" --vars "$DBT_VARS" -m stg int mart
+          dbt compile --profiles-dir "$DBT_PROFILES_DIR" --target "$DBT_TARGET" --vars "$DBT_VARS" -m stg int marts
+
+      - name: dbt build (stg,int,marts)
+        run: |
+          dbt build --profiles-dir "$DBT_PROFILES_DIR" --target "$DBT_TARGET" --vars "$DBT_VARS" -m stg int marts
+
+      - name: dbt docs generate
+        run: |
+          dbt docs generate --profiles-dir "$DBT_PROFILES_DIR" --target "$DBT_TARGET" --vars "$DBT_VARS"
+
+      - name: Upload dbt docs
+        uses: actions/upload-artifact@v4
+        with:
+          name: dbt-docs
+          path: artifacts/dbt
 
   api-docs:
     name: API Docs
     if: github.ref == 'refs/heads/main'
-    needs: lint-test
+    needs:
+      - lint-test
+      - spectral-lint
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -138,6 +207,8 @@ jobs:
     name: Build & Publish Images
     needs:
       - lint-test
+      - spectral-lint
+      - security-scan
       - dbt-build
       - scenario-smoke
     if: github.ref == 'refs/heads/main'

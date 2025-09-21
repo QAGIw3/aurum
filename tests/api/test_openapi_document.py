@@ -83,17 +83,8 @@ def test_openapi_includes_fastapi_routes():
     missing = {(path, method) for path, method in _iter_api_routes() if (path, method) not in documented}
     allowed_missing = {
         ("/health", "get"),
-        ("/v1/metadata/calendars", "get"),
-        ("/v1/metadata/calendars/{}/blocks", "get"),
-        ("/v1/metadata/calendars/{}/expand", "get"),
-        ("/v1/metadata/calendars/{}/hours", "get"),
-        ("/v1/metadata/eia/datasets", "get"),
-        ("/v1/metadata/eia/datasets/{}", "get"),
-        ("/v1/metadata/locations", "get"),
-        ("/v1/metadata/locations/{}/{}", "get"),
-        ("/v1/metadata/units", "get"),
-        ("/v1/metadata/units/mapping", "get"),
         ("/v1/admin/cache/scenario/{}/invalidate", "post"),
+        ("/v1/admin/cache/curves/invalidate", "post"),
     }
     # allowlist explicitly documented differences while enforcing no new gaps
     assert missing.issubset(allowed_missing), f"OpenAPI spec missing operations: {sorted(missing)}"

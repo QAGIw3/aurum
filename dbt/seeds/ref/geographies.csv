@@ -1,0 +1,4 @@
+region_type,region_id,region_name,parent_region_id
+STATE,CA,California,US
+STATE,NY,New York,US
+STATE,TX,Texas,US

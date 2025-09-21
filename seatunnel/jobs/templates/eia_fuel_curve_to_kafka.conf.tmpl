@@ -9,8 +9,8 @@
 #   FUEL_FREQUENCY          - Observation frequency label
 #   FUEL_TOPIC              - Kafka topic to publish to
 #   FUEL_UNITS              - Units string stored in the Avro record
-#   KAFKA_BOOTSTRAP_SERVERS - Kafka brokers (host:port)
-#   SCHEMA_REGISTRY_URL     - Confluent Schema Registry endpoint
+#   AURUM_KAFKA_BOOTSTRAP_SERVERS - Kafka brokers (host:port)
+#   AURUM_SCHEMA_REGISTRY_URL     - Confluent Schema Registry endpoint
 #
 # Optional environment variables:
 #   FUEL_START              - Start period (YYYY-MM-DD or dataset token)
@@ -95,13 +95,13 @@ transform {
 sink {
   Kafka {
     plugin_input = "fuel_normalized"
-    bootstrap.servers = "${KAFKA_BOOTSTRAP_SERVERS}"
+    bootstrap.servers = "${AURUM_KAFKA_BOOTSTRAP_SERVERS}"
     topic = "${FUEL_TOPIC}"
     semantic = "AT_LEAST_ONCE"
     format = "avro"
     avro {
       use.schema.registry = true
-      schema.registry.url = "${SCHEMA_REGISTRY_URL}"
+      schema.registry.url = "${AURUM_SCHEMA_REGISTRY_URL}"
       value.schema.subject = "${FUEL_SUBJECT}"
       value.schema = """${FUEL_SCHEMA}"""
     }

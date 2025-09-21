@@ -11,8 +11,8 @@
 #   NOAA_GHCND_OFFSET       - Offset for pagination (default 1)
 #   NOAA_GHCND_STATION_LIMIT- Number of station metadata rows to fetch (default 1000)
 #   NOAA_GHCND_TOPIC        - Kafka topic to write (e.g. aurum.ref.noaa.weather.v1)
-#   KAFKA_BOOTSTRAP_SERVERS - Comma separated brokers (host:port)
-#   SCHEMA_REGISTRY_URL     - Confluent Schema Registry endpoint
+#   AURUM_KAFKA_BOOTSTRAP_SERVERS - Comma separated brokers (host:port)
+#   AURUM_SCHEMA_REGISTRY_URL     - Confluent Schema Registry endpoint
 #
 # Optional environment variables:
 #   NOAA_GHCND_STATION      - Filter for specific station id
@@ -140,13 +140,13 @@ sink {
   Kafka {
     # Wire the output table explicitly for Zeta engine
     plugin_input = "noaa_normalized"
-    bootstrap.servers = "${KAFKA_BOOTSTRAP_SERVERS}"
+    bootstrap.servers = "${AURUM_KAFKA_BOOTSTRAP_SERVERS}"
     topic = "${NOAA_GHCND_TOPIC}"
     semantic = "AT_LEAST_ONCE"
     format = "avro"
     avro {
       use.schema.registry = true
-      schema.registry.url = "${SCHEMA_REGISTRY_URL}"
+      schema.registry.url = "${AURUM_SCHEMA_REGISTRY_URL}"
       value.schema.subject = "${NOAA_GHCND_SUBJECT}"
       value.schema = """${NOAA_GHCND_SCHEMA}"""
     }

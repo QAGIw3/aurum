@@ -56,7 +56,7 @@ Usage: scripts/seatunnel/run_job.sh <job-name> [--render-only] [--image IMAGE]
        scripts/seatunnel/run_job.sh --list
        scripts/seatunnel/run_job.sh --describe <job-name>
 
-Render a SeaTunnel job template (seatunnel/jobs/<job-name>.conf.tmpl) using the
+Render a SeaTunnel job template (seatunnel/jobs/templates/<job-name>.conf.tmpl) using the
 current environment and optionally execute it inside a container.
 
 Options:
@@ -72,7 +72,7 @@ Environment:
 
 Examples:
   NOAA_GHCND_TOKEN=... NOAA_GHCND_START_DATE=2024-01-01 NOAA_GHCND_END_DATE=2024-01-02 \
-  NOAA_GHCND_TOPIC=aurum.ref.noaa.weather.v1 KAFKA_BOOTSTRAP_SERVERS=localhost:9092 \
+  NOAA_GHCND_TOPIC=aurum.ref.noaa.weather.v1 AURUM_KAFKA_BOOTSTRAP_SERVERS=localhost:9092 \
   scripts/seatunnel/run_job.sh noaa_ghcnd_to_kafka
 
   # Render only and inspect the config
@@ -132,7 +132,7 @@ while [[ $# > 0 ]]; do
 done
 
 if [[ "${LIST_ONLY}" == "true" ]]; then
-  for f in seatunnel/jobs/*.conf.tmpl; do
+  for f in seatunnel/jobs/templates/*.conf.tmpl; do
     bn="$(basename "$f")"
     echo "${bn%.conf.tmpl}"
   done | sort
@@ -144,7 +144,7 @@ if [[ -z "${JOB_NAME}" ]]; then
   exit 1
 fi
 
-TEMPLATE="seatunnel/jobs/${JOB_NAME}.conf.tmpl"
+TEMPLATE="seatunnel/jobs/templates/${JOB_NAME}.conf.tmpl"
 if [[ ! -f "${TEMPLATE}" ]]; then
   echo "Template not found: ${TEMPLATE}" >&2
   exit 1
@@ -159,8 +159,8 @@ case "${JOB_NAME}" in
       NOAA_GHCND_START_DATE
       NOAA_GHCND_END_DATE
       NOAA_GHCND_TOPIC
-      KAFKA_BOOTSTRAP_SERVERS
-      SCHEMA_REGISTRY_URL
+      AURUM_KAFKA_BOOTSTRAP_SERVERS
+      AURUM_SCHEMA_REGISTRY_URL
     )
     if [[ "${DESCRIBE_ONLY}" != "true" ]]; then
       export NOAA_GHCND_BASE_URL="${NOAA_GHCND_BASE_URL:-https://www.ncdc.noaa.gov/cdo-web/api/v2}"
@@ -184,8 +184,8 @@ case "${JOB_NAME}" in
       EIA_SERIES_ID
       EIA_FREQUENCY
       EIA_TOPIC
-      KAFKA_BOOTSTRAP_SERVERS
-      SCHEMA_REGISTRY_URL
+      AURUM_KAFKA_BOOTSTRAP_SERVERS
+      AURUM_SCHEMA_REGISTRY_URL
     )
     export EIA_API_BASE_URL="${EIA_API_BASE_URL:-https://api.eia.gov/v2}"
     export EIA_START="${EIA_START:-2024-01-01}"
@@ -393,8 +393,8 @@ PY
       EIA_BULK_URL
       EIA_BULK_TOPIC
       EIA_BULK_FREQUENCY
-      KAFKA_BOOTSTRAP_SERVERS
-      SCHEMA_REGISTRY_URL
+      AURUM_KAFKA_BOOTSTRAP_SERVERS
+      AURUM_SCHEMA_REGISTRY_URL
     )
     export EIA_BULK_SERIES_ID_EXPR="${EIA_BULK_SERIES_ID_EXPR:-series_id}"
     export EIA_BULK_PERIOD_EXPR="${EIA_BULK_PERIOD_EXPR:-period}"
@@ -478,8 +478,8 @@ PY
       FUEL_FREQUENCY
       FUEL_TOPIC
       FUEL_UNITS
-      KAFKA_BOOTSTRAP_SERVERS
-      SCHEMA_REGISTRY_URL
+      AURUM_KAFKA_BOOTSTRAP_SERVERS
+      AURUM_SCHEMA_REGISTRY_URL
     )
     export EIA_API_BASE_URL="${EIA_API_BASE_URL:-https://api.eia.gov/v2}"
     export FUEL_START="${FUEL_START:-}"
@@ -509,8 +509,8 @@ PY
       FRED_FREQUENCY
       FRED_SEASONAL_ADJ
       FRED_TOPIC
-      KAFKA_BOOTSTRAP_SERVERS
-      SCHEMA_REGISTRY_URL
+      AURUM_KAFKA_BOOTSTRAP_SERVERS
+      AURUM_SCHEMA_REGISTRY_URL
     )
     export FRED_START_DATE="${FRED_START_DATE:-}"
     export FRED_END_DATE="${FRED_END_DATE:-}"
@@ -530,8 +530,8 @@ PY
       CPI_FREQUENCY
       CPI_SEASONAL_ADJ
       CPI_TOPIC
-      KAFKA_BOOTSTRAP_SERVERS
-      SCHEMA_REGISTRY_URL
+      AURUM_KAFKA_BOOTSTRAP_SERVERS
+      AURUM_SCHEMA_REGISTRY_URL
     )
     export CPI_AREA="${CPI_AREA:-US}"
     export CPI_UNITS="${CPI_UNITS:-Index}"
@@ -549,8 +549,8 @@ PY
       PJM_TOPIC
       PJM_INTERVAL_START
       PJM_INTERVAL_END
-      KAFKA_BOOTSTRAP_SERVERS
-      SCHEMA_REGISTRY_URL
+      AURUM_KAFKA_BOOTSTRAP_SERVERS
+      AURUM_SCHEMA_REGISTRY_URL
     )
     export PJM_ENDPOINT="${PJM_ENDPOINT:-https://api.pjm.com/api/v1/da_hrl_lmps}"
     export PJM_ROW_LIMIT="${PJM_ROW_LIMIT:-10000}"
@@ -571,8 +571,8 @@ PY
       PJM_INTERVAL_START
       PJM_INTERVAL_END
       PJM_LOAD_TOPIC
-      KAFKA_BOOTSTRAP_SERVERS
-      SCHEMA_REGISTRY_URL
+      AURUM_KAFKA_BOOTSTRAP_SERVERS
+      AURUM_SCHEMA_REGISTRY_URL
     )
     export PJM_API_KEY="${PJM_API_KEY:-}"
     export PJM_LOAD_SUBJECT="${PJM_LOAD_SUBJECT:-${PJM_LOAD_TOPIC}-value}"
@@ -588,8 +588,8 @@ PY
       MISO_LOAD_INTERVAL_START
       MISO_LOAD_INTERVAL_END
       MISO_LOAD_TOPIC
-      KAFKA_BOOTSTRAP_SERVERS
-      SCHEMA_REGISTRY_URL
+      AURUM_KAFKA_BOOTSTRAP_SERVERS
+      AURUM_SCHEMA_REGISTRY_URL
     )
     export MISO_LOAD_AUTH_HEADER="${MISO_LOAD_AUTH_HEADER:-}"
     export MISO_LOAD_JSONPATH="${MISO_LOAD_JSONPATH:-$$.data[*]}"
@@ -617,8 +617,8 @@ PY
       SPP_LOAD_INTERVAL_START
       SPP_LOAD_INTERVAL_END
       SPP_LOAD_TOPIC
-      KAFKA_BOOTSTRAP_SERVERS
-      SCHEMA_REGISTRY_URL
+      AURUM_KAFKA_BOOTSTRAP_SERVERS
+      AURUM_SCHEMA_REGISTRY_URL
     )
     export SPP_LOAD_AUTH_HEADER="${SPP_LOAD_AUTH_HEADER:-}"
     export SPP_LOAD_JSONPATH="${SPP_LOAD_JSONPATH:-$$.data[*]}"
@@ -646,8 +646,8 @@ PY
       CAISO_LOAD_INTERVAL_START
       CAISO_LOAD_INTERVAL_END
       CAISO_LOAD_TOPIC
-      KAFKA_BOOTSTRAP_SERVERS
-      SCHEMA_REGISTRY_URL
+      AURUM_KAFKA_BOOTSTRAP_SERVERS
+      AURUM_SCHEMA_REGISTRY_URL
     )
     export CAISO_LOAD_AUTH_HEADER="${CAISO_LOAD_AUTH_HEADER:-}"
     export CAISO_LOAD_JSONPATH="${CAISO_LOAD_JSONPATH:-$$.data[*]}"
@@ -675,8 +675,8 @@ PY
       AESO_LOAD_INTERVAL_START
       AESO_LOAD_INTERVAL_END
       AESO_LOAD_TOPIC
-      KAFKA_BOOTSTRAP_SERVERS
-      SCHEMA_REGISTRY_URL
+      AURUM_KAFKA_BOOTSTRAP_SERVERS
+      AURUM_SCHEMA_REGISTRY_URL
     )
     export AESO_LOAD_API_KEY="${AESO_LOAD_API_KEY:-}"
     export AESO_LOAD_JSONPATH="${AESO_LOAD_JSONPATH:-$$.data[*]}"
@@ -705,8 +705,8 @@ PY
       PJM_INTERVAL_START
       PJM_INTERVAL_END
       PJM_GENMIX_TOPIC
-      KAFKA_BOOTSTRAP_SERVERS
-      SCHEMA_REGISTRY_URL
+      AURUM_KAFKA_BOOTSTRAP_SERVERS
+      AURUM_SCHEMA_REGISTRY_URL
     )
     export PJM_API_KEY="${PJM_API_KEY:-}"
     export PJM_GENMIX_SUBJECT="${PJM_GENMIX_SUBJECT:-${PJM_GENMIX_TOPIC}-value}"
@@ -722,8 +722,8 @@ PY
       MISO_GENMIX_INTERVAL_START
       MISO_GENMIX_INTERVAL_END
       MISO_GENMIX_TOPIC
-      KAFKA_BOOTSTRAP_SERVERS
-      SCHEMA_REGISTRY_URL
+      AURUM_KAFKA_BOOTSTRAP_SERVERS
+      AURUM_SCHEMA_REGISTRY_URL
     )
     export MISO_GENMIX_AUTH_HEADER="${MISO_GENMIX_AUTH_HEADER:-}"
     export MISO_GENMIX_JSONPATH="${MISO_GENMIX_JSONPATH:-$$.data[*]}"
@@ -750,8 +750,8 @@ PY
       SPP_GENMIX_INTERVAL_START
       SPP_GENMIX_INTERVAL_END
       SPP_GENMIX_TOPIC
-      KAFKA_BOOTSTRAP_SERVERS
-      SCHEMA_REGISTRY_URL
+      AURUM_KAFKA_BOOTSTRAP_SERVERS
+      AURUM_SCHEMA_REGISTRY_URL
     )
     export SPP_GENMIX_AUTH_HEADER="${SPP_GENMIX_AUTH_HEADER:-}"
     export SPP_GENMIX_JSONPATH="${SPP_GENMIX_JSONPATH:-$$.data[*]}"
@@ -778,8 +778,8 @@ PY
       CAISO_GENMIX_INTERVAL_START
       CAISO_GENMIX_INTERVAL_END
       CAISO_GENMIX_TOPIC
-      KAFKA_BOOTSTRAP_SERVERS
-      SCHEMA_REGISTRY_URL
+      AURUM_KAFKA_BOOTSTRAP_SERVERS
+      AURUM_SCHEMA_REGISTRY_URL
     )
     export CAISO_GENMIX_AUTH_HEADER="${CAISO_GENMIX_AUTH_HEADER:-}"
     export CAISO_GENMIX_JSONPATH="${CAISO_GENMIX_JSONPATH:-$$.data[*]}"
@@ -806,8 +806,8 @@ PY
       AESO_GENMIX_INTERVAL_START
       AESO_GENMIX_INTERVAL_END
       AESO_GENMIX_TOPIC
-      KAFKA_BOOTSTRAP_SERVERS
-      SCHEMA_REGISTRY_URL
+      AURUM_KAFKA_BOOTSTRAP_SERVERS
+      AURUM_SCHEMA_REGISTRY_URL
     )
     export AESO_GENMIX_API_KEY="${AESO_GENMIX_API_KEY:-}"
     export AESO_GENMIX_JSONPATH="${AESO_GENMIX_JSONPATH:-$$.data[*]}"
@@ -834,8 +834,8 @@ PY
       PJM_ROW_LIMIT
       PJM_PNODES_TOPIC
       PJM_PNODES_EFFECTIVE_START
-      KAFKA_BOOTSTRAP_SERVERS
-      SCHEMA_REGISTRY_URL
+      AURUM_KAFKA_BOOTSTRAP_SERVERS
+      AURUM_SCHEMA_REGISTRY_URL
     )
     export PJM_API_KEY="${PJM_API_KEY:-}"
     export PJM_PNODES_SUBJECT="${PJM_PNODES_SUBJECT:-${PJM_PNODES_TOPIC}-value}"
@@ -849,8 +849,8 @@ PY
     REQUIRED_VARS=(
       AESO_ENDPOINT
       AESO_TOPIC
-      KAFKA_BOOTSTRAP_SERVERS
-      SCHEMA_REGISTRY_URL
+      AURUM_KAFKA_BOOTSTRAP_SERVERS
+      AURUM_SCHEMA_REGISTRY_URL
     )
     export AESO_API_KEY="${AESO_API_KEY:-}"
     export AESO_START="${AESO_START:-}"
@@ -860,11 +860,11 @@ PY
     ;;
   iso_lmp_kafka_to_timescale)
     REQUIRED_VARS=(
-      KAFKA_BOOTSTRAP_SERVERS
-      SCHEMA_REGISTRY_URL
-      TIMESCALE_JDBC_URL
-      TIMESCALE_USER
-      TIMESCALE_PASSWORD
+      AURUM_KAFKA_BOOTSTRAP_SERVERS
+      AURUM_SCHEMA_REGISTRY_URL
+      AURUM_TIMESCALE_JDBC_URL
+      AURUM_TIMESCALE_USER
+      AURUM_TIMESCALE_PASSWORD
     )
     export ISO_LMP_TOPIC_PATTERN="${ISO_LMP_TOPIC_PATTERN:-aurum\\.iso\\..*\\.lmp\\.v1}"
     export ISO_LMP_TABLE="${ISO_LMP_TABLE:-iso_lmp_timeseries}"
@@ -872,11 +872,11 @@ PY
     ;;
   iso_load_kafka_to_timescale)
     REQUIRED_VARS=(
-      KAFKA_BOOTSTRAP_SERVERS
-      SCHEMA_REGISTRY_URL
-      TIMESCALE_JDBC_URL
-      TIMESCALE_USER
-      TIMESCALE_PASSWORD
+      AURUM_KAFKA_BOOTSTRAP_SERVERS
+      AURUM_SCHEMA_REGISTRY_URL
+      AURUM_TIMESCALE_JDBC_URL
+      AURUM_TIMESCALE_USER
+      AURUM_TIMESCALE_PASSWORD
     )
     export ISO_LOAD_TOPIC_PATTERN="${ISO_LOAD_TOPIC_PATTERN:-aurum\\.iso\\..*\\.load\\.v1}"
     export ISO_LOAD_TABLE="${ISO_LOAD_TABLE:-load_timeseries}"
@@ -886,8 +886,8 @@ PY
   miso_asm_to_kafka)
     REQUIRED_VARS=(
       MISO_ASM_URL
-      KAFKA_BOOTSTRAP_SERVERS
-      SCHEMA_REGISTRY_URL
+      AURUM_KAFKA_BOOTSTRAP_SERVERS
+      AURUM_SCHEMA_REGISTRY_URL
       ISO_ASM_SCHEMA
     )
     export MISO_ASM_TOPIC="${MISO_ASM_TOPIC:-aurum.iso.miso.asm.v1}"
@@ -902,11 +902,11 @@ PY
     ;;
   eia_series_kafka_to_timescale)
     REQUIRED_VARS=(
-      KAFKA_BOOTSTRAP_SERVERS
-      SCHEMA_REGISTRY_URL
-      TIMESCALE_JDBC_URL
-      TIMESCALE_USER
-      TIMESCALE_PASSWORD
+      AURUM_KAFKA_BOOTSTRAP_SERVERS
+      AURUM_SCHEMA_REGISTRY_URL
+      AURUM_TIMESCALE_JDBC_URL
+      AURUM_TIMESCALE_USER
+      AURUM_TIMESCALE_PASSWORD
     )
     export EIA_TOPIC_PATTERN="${EIA_TOPIC_PATTERN:-aurum\\.ref\\.eia\\..*\\.v1}"
     export EIA_SERIES_TABLE="${EIA_SERIES_TABLE:-eia_series_timeseries}"
@@ -914,11 +914,11 @@ PY
     ;;
   fred_series_kafka_to_timescale)
     REQUIRED_VARS=(
-      KAFKA_BOOTSTRAP_SERVERS
-      SCHEMA_REGISTRY_URL
-      TIMESCALE_JDBC_URL
-      TIMESCALE_USER
-      TIMESCALE_PASSWORD
+      AURUM_KAFKA_BOOTSTRAP_SERVERS
+      AURUM_SCHEMA_REGISTRY_URL
+      AURUM_TIMESCALE_JDBC_URL
+      AURUM_TIMESCALE_USER
+      AURUM_TIMESCALE_PASSWORD
     )
     export FRED_TOPIC_PATTERN="${FRED_TOPIC_PATTERN:-aurum\\.ref\\.fred\\..*\\.v1}"
     export FRED_SERIES_TABLE="${FRED_SERIES_TABLE:-fred_series_timeseries}"
@@ -926,11 +926,11 @@ PY
     ;;
   cpi_series_kafka_to_timescale)
     REQUIRED_VARS=(
-      KAFKA_BOOTSTRAP_SERVERS
-      SCHEMA_REGISTRY_URL
-      TIMESCALE_JDBC_URL
-      TIMESCALE_USER
-      TIMESCALE_PASSWORD
+      AURUM_KAFKA_BOOTSTRAP_SERVERS
+      AURUM_SCHEMA_REGISTRY_URL
+      AURUM_TIMESCALE_JDBC_URL
+      AURUM_TIMESCALE_USER
+      AURUM_TIMESCALE_PASSWORD
     )
     export CPI_TOPIC_PATTERN="${CPI_TOPIC_PATTERN:-aurum\\.ref\\.cpi\\..*\\.v1}"
     export CPI_SERIES_TABLE="${CPI_SERIES_TABLE:-cpi_series_timeseries}"
@@ -938,11 +938,11 @@ PY
     ;;
   noaa_weather_kafka_to_timescale)
     REQUIRED_VARS=(
-      KAFKA_BOOTSTRAP_SERVERS
-      SCHEMA_REGISTRY_URL
-      TIMESCALE_JDBC_URL
-      TIMESCALE_USER
-      TIMESCALE_PASSWORD
+      AURUM_KAFKA_BOOTSTRAP_SERVERS
+      AURUM_SCHEMA_REGISTRY_URL
+      AURUM_TIMESCALE_JDBC_URL
+      AURUM_TIMESCALE_USER
+      AURUM_TIMESCALE_PASSWORD
     )
     export NOAA_TOPIC_PATTERN="${NOAA_TOPIC_PATTERN:-aurum\\.ref\\.noaa\\.weather\\.v1}"
     export NOAA_TABLE="${NOAA_TABLE:-noaa_weather_timeseries}"
@@ -951,8 +951,8 @@ PY
   nyiso_lmp_to_kafka)
     REQUIRED_VARS=(
       NYISO_URL
-      KAFKA_BOOTSTRAP_SERVERS
-      SCHEMA_REGISTRY_URL
+      AURUM_KAFKA_BOOTSTRAP_SERVERS
+      AURUM_SCHEMA_REGISTRY_URL
     )
     export NYISO_TOPIC="${NYISO_TOPIC:-aurum.iso.nyiso.lmp.v1}"
     export NYISO_SUBJECT="${NYISO_SUBJECT:-${NYISO_TOPIC}-value}"
@@ -962,8 +962,8 @@ PY
     REQUIRED_VARS=(
       MISO_URL
       MISO_MARKET
-      KAFKA_BOOTSTRAP_SERVERS
-      SCHEMA_REGISTRY_URL
+      AURUM_KAFKA_BOOTSTRAP_SERVERS
+      AURUM_SCHEMA_REGISTRY_URL
     )
     export MISO_TOPIC="${MISO_TOPIC:-aurum.iso.miso.lmp.v1}"
     export MISO_SUBJECT="${MISO_SUBJECT:-${MISO_TOPIC}-value}"
@@ -996,8 +996,8 @@ PY
       MISO_RTD_START
       MISO_RTD_END
       MISO_RTD_TOPIC
-      KAFKA_BOOTSTRAP_SERVERS
-      SCHEMA_REGISTRY_URL
+      AURUM_KAFKA_BOOTSTRAP_SERVERS
+      AURUM_SCHEMA_REGISTRY_URL
     )
     export MISO_RTD_MARKET="${MISO_RTD_MARKET:-RTM}"
     export MISO_RTD_REGION="${MISO_RTD_REGION:-ALL}"
@@ -1035,8 +1035,8 @@ PY
       ISONE_START
       ISONE_END
       ISONE_MARKET
-      KAFKA_BOOTSTRAP_SERVERS
-      SCHEMA_REGISTRY_URL
+      AURUM_KAFKA_BOOTSTRAP_SERVERS
+      AURUM_SCHEMA_REGISTRY_URL
     )
     export ISONE_TOPIC="${ISONE_TOPIC:-aurum.iso.isone.lmp.v1}"
     export ISONE_SUBJECT="${ISONE_SUBJECT:-${ISONE_TOPIC}-value}"
@@ -1057,8 +1057,8 @@ PY
   caiso_lmp_to_kafka)
     REQUIRED_VARS=(
       CAISO_INPUT_JSON
-      KAFKA_BOOTSTRAP_SERVERS
-      SCHEMA_REGISTRY_URL
+      AURUM_KAFKA_BOOTSTRAP_SERVERS
+      AURUM_SCHEMA_REGISTRY_URL
     )
     export CAISO_TOPIC="${CAISO_TOPIC:-aurum.iso.caiso.lmp.v1}"
     export CAISO_SUBJECT="${CAISO_SUBJECT:-${CAISO_TOPIC}-value}"
@@ -1069,8 +1069,8 @@ PY
   ercot_lmp_to_kafka)
     REQUIRED_VARS=(
       ERCOT_INPUT_JSON
-      KAFKA_BOOTSTRAP_SERVERS
-      SCHEMA_REGISTRY_URL
+      AURUM_KAFKA_BOOTSTRAP_SERVERS
+      AURUM_SCHEMA_REGISTRY_URL
     )
     export ERCOT_TOPIC="${ERCOT_TOPIC:-aurum.iso.ercot.lmp.v1}"
     export ERCOT_SUBJECT="${ERCOT_SUBJECT:-${ERCOT_TOPIC}-value}"
@@ -1081,8 +1081,8 @@ PY
   spp_lmp_to_kafka)
     REQUIRED_VARS=(
       SPP_INPUT_JSON
-      KAFKA_BOOTSTRAP_SERVERS
-      SCHEMA_REGISTRY_URL
+      AURUM_KAFKA_BOOTSTRAP_SERVERS
+      AURUM_SCHEMA_REGISTRY_URL
     )
     export SPP_TOPIC="${SPP_TOPIC:-aurum.iso.spp.lmp.v1}"
     export SPP_SUBJECT="${SPP_SUBJECT:-${SPP_TOPIC}-value}"
@@ -1134,21 +1134,12 @@ OUTPUT_DIR="${SEATUNNEL_OUTPUT_DIR:-seatunnel/jobs/generated}"
 mkdir -p "${OUTPUT_DIR}"
 OUTPUT_CONFIG="${OUTPUT_DIR}/${JOB_NAME}.conf"
 
-if command -v envsubst >/dev/null 2>&1; then
-  envsubst < "${TEMPLATE}" > "${OUTPUT_CONFIG}"
-else
-  python3 - <<'PY' "${TEMPLATE}" "${OUTPUT_CONFIG}"
-import os
-import sys
-from pathlib import Path
-from string import Template
+render_args=(--job "${JOB_NAME}" --template "${TEMPLATE}" --output "${OUTPUT_CONFIG}")
+for var in "${REQUIRED_VARS[@]}"; do
+  render_args+=(--required "${var}")
+done
 
-template_path, output_path = sys.argv[1:3]
-content = Path(template_path).read_text(encoding="utf-8")
-rendered = Template(content).substitute(os.environ)
-Path(output_path).write_text(rendered, encoding="utf-8")
-PY
-fi
+PYTHONPATH="${REPO_ROOT}/src${PYTHONPATH:+:${PYTHONPATH}}" python3 -m aurum.seatunnel.renderer "${render_args[@]}"
 
 if [[ "${RENDER_ONLY}" == "true" ]]; then
   cat "${OUTPUT_CONFIG}"
@@ -1167,8 +1158,8 @@ if ! command -v docker >/dev/null 2>&1; then
 fi
 
 # Default to compose service hosts if not provided
-export KAFKA_BOOTSTRAP_SERVERS="${KAFKA_BOOTSTRAP_SERVERS:-kafka:9092}"
-export SCHEMA_REGISTRY_URL="${SCHEMA_REGISTRY_URL:-http://schema-registry:8081}"
+export AURUM_KAFKA_BOOTSTRAP_SERVERS="${AURUM_KAFKA_BOOTSTRAP_SERVERS:-kafka:9092}"
+export AURUM_SCHEMA_REGISTRY_URL="${AURUM_SCHEMA_REGISTRY_URL:-http://schema-registry:8081}"
 
 DOCKER_ARGS=(--rm -v "$(pwd)":"/workspace" -w /workspace -e SEATUNNEL_HOME=/opt/seatunnel)
 if [[ -n "${DOCKER_NETWORK:-}" ]]; then

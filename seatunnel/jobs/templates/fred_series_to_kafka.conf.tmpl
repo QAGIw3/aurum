@@ -6,8 +6,8 @@
 #   FRED_FREQUENCY          - Frequency enum value (ANNUAL/QUARTERLY/MONTHLY/WEEKLY/BIWEEKLY/DAILY/BUSINESS_DAILY)
 #   FRED_SEASONAL_ADJ       - Seasonal adjustment token (SA/NSA/UNKNOWN)
 #   FRED_TOPIC              - Kafka topic (e.g. aurum.ref.fred.series.v1)
-#   KAFKA_BOOTSTRAP_SERVERS - Kafka brokers
-#   SCHEMA_REGISTRY_URL     - Schema Registry endpoint
+#   AURUM_KAFKA_BOOTSTRAP_SERVERS - Kafka brokers
+#   AURUM_SCHEMA_REGISTRY_URL     - Schema Registry endpoint
 #
 # Optional environment variables:
 #   FRED_START_DATE         - Observation start (YYYY-MM-DD)
@@ -79,13 +79,13 @@ transform {
 sink {
   Kafka {
     plugin_input = "fred_normalized"
-    bootstrap.servers = "${KAFKA_BOOTSTRAP_SERVERS}"
+    bootstrap.servers = "${AURUM_KAFKA_BOOTSTRAP_SERVERS}"
     topic = "${FRED_TOPIC}"
     semantic = "AT_LEAST_ONCE"
     format = "avro"
     avro {
       use.schema.registry = true
-      schema.registry.url = "${SCHEMA_REGISTRY_URL}"
+      schema.registry.url = "${AURUM_SCHEMA_REGISTRY_URL}"
       value.schema.subject = "${FRED_SUBJECT}"
       value.schema = """${FRED_SERIES_SCHEMA}"""
     }

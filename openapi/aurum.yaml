@@ -139,7 +139,7 @@ paths:
   /v1/iso/lmp/hourly:
     get:
       summary: Hourly ISO LMP aggregates
-      description: Return aggregated hourly ISO LMP values for the last 30 days.
+      description: Return aggregated hourly ISO LMP values, optionally filtered by interval_start.
       operationId: listIsoLmpHourlyAggregates
       security:
         - oauth2: [aurum]
@@ -156,6 +156,18 @@ paths:
           in: query
           schema:
             type: string
+        - name: start
+          in: query
+          schema:
+            type: string
+            format: date-time
+          description: Earliest interval_start (inclusive).
+        - name: end
+          in: query
+          schema:
+            type: string
+            format: date-time
+          description: Latest interval_start (inclusive).
         - name: limit
           in: query
           schema:
@@ -188,10 +200,12 @@ paths:
                 format: binary
         '401':
           $ref: '#/components/responses/Unauthorized'
+        '400':
+          description: Invalid time range supplied.
   /v1/iso/lmp/daily:
     get:
       summary: Daily ISO LMP aggregates
-      description: Return daily ISO LMP aggregates for the past year.
+      description: Return daily ISO LMP aggregates, optionally filtered by interval_start.
       operationId: listIsoLmpDailyAggregates
       security:
         - oauth2: [aurum]
@@ -208,6 +222,18 @@ paths:
           in: query
           schema:
             type: string
+        - name: start
+          in: query
+          schema:
+            type: string
+            format: date-time
+          description: Earliest interval_start (inclusive).
+        - name: end
+          in: query
+          schema:
+            type: string
+            format: date-time
+          description: Latest interval_start (inclusive).
         - name: limit
           in: query
           schema:
@@ -240,6 +266,8 @@ paths:
                 format: binary
         '401':
           $ref: '#/components/responses/Unauthorized'
+        '400':
+          description: Invalid time range supplied.
   /v1/iso/lmp/negative:
     get:
       summary: Recent negative ISO LMP events
@@ -1260,8 +1288,42 @@ paths:
                 properties:
                   status:
                     type: string
+                    example: ready
+                  checks:
+                    type: object
+                    additionalProperties:
+                      type: boolean
         '503':
           description: Dependencies unavailable.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  detail:
+                    type: object
+                    properties:
+                      status:
+                        type: string
+                        example: unavailable
+                      checks:
+                        type: object
+                        additionalProperties:
+                          type: boolean
+  /metrics:
+    get:
+      summary: Prometheus metrics
+      operationId: getMetrics
+      tags:
+        - System
+      security: []
+      responses:
+        '200':
+          description: Prometheus metrics payload.
+          content:
+            text/plain:
+              schema:
+                type: string
   /v1/metadata/dimensions:
     get:
       summary: List distinct dimension values useful for filters.
@@ -1302,6 +1364,333 @@ paths:
                 $ref: '#/components/schemas/DimensionsResponse'
         '401':
           $ref: '#/components/responses/Unauthorized'
+  /v1/metadata/locations:
+    get:
+      summary: List ISO locations
+      operationId: listIsoLocations
+      tags:
+        - Metadata
+      security:
+        - oauth2: [aurum]
+      parameters:
+        - name: iso
+          in: query
+          required: false
+          schema:
+            type: string
+          description: Filter by ISO code (e.g., PJM, CAISO)
+        - name: prefix
+          in: query
+          required: false
+          schema:
+            type: string
+          description: Case-insensitive startswith filter applied to id or name
+      responses:
+        '200':
+          description: ISO location metadata returned.
+          headers:
+            ETag:
+              description: Strong entity tag for cache validation.
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/IsoLocationsResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+  /v1/metadata/locations/{iso}/{location_id}:
+    get:
+      summary: Get ISO location
+      operationId: getIsoLocation
+      tags:
+        - Metadata
+      security:
+        - oauth2: [aurum]
+      parameters:
+        - name: iso
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: location_id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: ISO location metadata returned.
+          headers:
+            ETag:
+              description: Strong entity tag for cache validation.
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/IsoLocationResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          description: Location not found
+  /v1/metadata/units:
+    get:
+      summary: List canonical currencies and units
+      operationId: listUnits
+      tags:
+        - Metadata
+        - Units
+      security:
+        - oauth2: [aurum]
+      parameters:
+        - name: prefix
+          in: query
+          required: false
+          schema:
+            type: string
+          description: Optional case-insensitive startswith filter
+      responses:
+        '200':
+          description: Canonical currency and unit lists returned.
+          headers:
+            ETag:
+              description: Strong entity tag for cache validation.
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UnitsCanonicalResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+  /v1/metadata/units/mapping:
+    get:
+      summary: List unit mappings
+      operationId: listUnitMappings
+      tags:
+        - Metadata
+        - Units
+      security:
+        - oauth2: [aurum]
+      parameters:
+        - name: prefix
+          in: query
+          required: false
+          schema:
+            type: string
+          description: Case-insensitive startswith filter on the raw units string
+      responses:
+        '200':
+          description: Unit mappings returned.
+          headers:
+            ETag:
+              description: Strong entity tag for cache validation.
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UnitsMappingResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+  /v1/metadata/calendars:
+    get:
+      summary: List calendars
+      operationId: listCalendars
+      tags:
+        - Metadata
+      security:
+        - oauth2: [aurum]
+      responses:
+        '200':
+          description: Calendar metadata returned.
+          headers:
+            ETag:
+              description: Strong entity tag for cache validation.
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CalendarsResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+  /v1/metadata/calendars/{name}/blocks:
+    get:
+      summary: List calendar blocks
+      operationId: listCalendarBlocks
+      tags:
+        - Metadata
+      security:
+        - oauth2: [aurum]
+      parameters:
+        - name: name
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Calendar block names returned.
+          headers:
+            ETag:
+              description: Strong entity tag for cache validation.
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CalendarBlocksResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          description: Calendar not found
+  /v1/metadata/calendars/{name}/hours:
+    get:
+      summary: Block hours for a date
+      operationId: listCalendarHours
+      tags:
+        - Metadata
+      security:
+        - oauth2: [aurum]
+      parameters:
+        - name: name
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: block
+          in: query
+          required: true
+          schema:
+            type: string
+        - name: date
+          in: query
+          required: true
+          schema:
+            type: string
+            format: date
+      responses:
+        '200':
+          description: Calendar block hours returned.
+          headers:
+            ETag:
+              description: Strong entity tag for cache validation.
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CalendarHoursResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+  /v1/metadata/calendars/{name}/expand:
+    get:
+      summary: Expand block over date range
+      operationId: expandCalendarBlock
+      tags:
+        - Metadata
+      security:
+        - oauth2: [aurum]
+      parameters:
+        - name: name
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: block
+          in: query
+          required: true
+          schema:
+            type: string
+        - name: start
+          in: query
+          required: true
+          schema:
+            type: string
+            format: date
+        - name: end
+          in: query
+          required: true
+          schema:
+            type: string
+            format: date
+      responses:
+        '200':
+          description: Calendar block occurrences returned.
+          headers:
+            ETag:
+              description: Strong entity tag for cache validation.
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CalendarHoursResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+  /v1/metadata/eia/datasets:
+    get:
+      summary: List EIA datasets
+      operationId: listEiaDatasets
+      tags:
+        - Metadata
+        - EIA
+      security:
+        - oauth2: [aurum]
+      parameters:
+        - name: prefix
+          in: query
+          required: false
+          schema:
+            type: string
+          description: Case-insensitive startswith filter applied to dataset path or name
+      responses:
+        '200':
+          description: EIA datasets returned.
+          headers:
+            ETag:
+              description: Strong entity tag for cache validation.
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/EiaDatasetsResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+  /v1/metadata/eia/datasets/{dataset_path}:
+    get:
+      summary: Get EIA dataset
+      operationId: getEiaDataset
+      tags:
+        - Metadata
+        - EIA
+      security:
+        - oauth2: [aurum]
+      parameters:
+        - name: dataset_path
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Detailed dataset metadata returned.
+          headers:
+            ETag:
+              description: Strong entity tag for cache validation.
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/EiaDatasetResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          description: Dataset not found
   /v1/curves/strips:
     get:
       summary: Retrieve non-monthly (strip) curves by type.
@@ -1523,6 +1912,73 @@ paths:
                 $ref: '#/components/schemas/EiaSeriesDimensionsResponse'
         '401':
           $ref: '#/components/responses/Unauthorized'
+  /v1/admin/cache/eia/series/invalidate:
+    post:
+      summary: Invalidate cached EIA series queries
+      operationId: invalidateEiaSeriesCache
+      tags:
+        - Admin
+      responses:
+        '200':
+          description: Cache purge result
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CachePurgeResponse'
+  /v1/admin/cache/metadata/{scope}/invalidate:
+    post:
+      summary: Invalidate metadata caches
+      operationId: invalidateMetadataCache
+      tags:
+        - Admin
+      parameters:
+        - name: scope
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: iso
+          in: query
+          required: false
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Cache purge result
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CachePurgeResponse'
+  /v1/drought/layers:
+    get:
+      summary: List drought vector layers
+      operationId: listDroughtLayers
+      tags:
+        - Drought
+      responses:
+        '200':
+          description: Vector layers metadata
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DroughtVectorResponse'
+  /health:
+    get:
+      summary: Health check
+      operationId: getHealth
+      tags:
+        - System
+      responses:
+        '200':
+          description: API is healthy
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    example: ok
 
 components:
   securitySchemes:
@@ -1994,6 +2450,121 @@ components:
           type: array
           items:
             $ref: '#/components/schemas/DimensionCount'
+    IsoLocationOut:
+      type: object
+      required: [iso, location_id]
+      properties:
+        iso:
+          type: string
+        location_id:
+          type: string
+        location_name:
+          type: string
+          nullable: true
+        location_type:
+          type: string
+          nullable: true
+        zone:
+          type: string
+          nullable: true
+        hub:
+          type: string
+          nullable: true
+        timezone:
+          type: string
+          nullable: true
+    IsoLocationsResponse:
+      type: object
+      properties:
+        meta:
+          $ref: '#/components/schemas/Meta'
+        data:
+          type: array
+          items:
+            $ref: '#/components/schemas/IsoLocationOut'
+    IsoLocationResponse:
+      type: object
+      properties:
+        meta:
+          $ref: '#/components/schemas/Meta'
+        data:
+          $ref: '#/components/schemas/IsoLocationOut'
+    UnitsCanonical:
+      type: object
+      required: [currencies, units]
+      properties:
+        currencies:
+          type: array
+          items:
+            type: string
+        units:
+          type: array
+          items:
+            type: string
+    UnitsCanonicalResponse:
+      type: object
+      properties:
+        meta:
+          $ref: '#/components/schemas/Meta'
+        data:
+          $ref: '#/components/schemas/UnitsCanonical'
+    UnitMappingOut:
+      type: object
+      required: [units_raw]
+      properties:
+        units_raw:
+          type: string
+        currency:
+          type: string
+          nullable: true
+        per_unit:
+          type: string
+          nullable: true
+    UnitsMappingResponse:
+      type: object
+      properties:
+        meta:
+          $ref: '#/components/schemas/Meta'
+        data:
+          type: array
+          items:
+            $ref: '#/components/schemas/UnitMappingOut'
+    CalendarOut:
+      type: object
+      required: [name, timezone]
+      properties:
+        name:
+          type: string
+        timezone:
+          type: string
+    CalendarsResponse:
+      type: object
+      properties:
+        meta:
+          $ref: '#/components/schemas/Meta'
+        data:
+          type: array
+          items:
+            $ref: '#/components/schemas/CalendarOut'
+    CalendarBlocksResponse:
+      type: object
+      properties:
+        meta:
+          $ref: '#/components/schemas/Meta'
+        data:
+          type: array
+          items:
+            type: string
+    CalendarHoursResponse:
+      type: object
+      properties:
+        meta:
+          $ref: '#/components/schemas/Meta'
+        data:
+          type: array
+          items:
+            type: string
+            format: date-time
     CreateScenarioRequest:
       type: object
       required: [tenant_id, name, assumptions]
@@ -2329,6 +2900,81 @@ components:
           type: string
         tenor_type:
           type: string
+    EiaDatasetBriefOut:
+      type: object
+      required: [path]
+      properties:
+        path:
+          type: string
+        name:
+          type: string
+          nullable: true
+        description:
+          type: string
+          nullable: true
+        default_frequency:
+          type: string
+          nullable: true
+        start_period:
+          type: string
+          nullable: true
+        end_period:
+          type: string
+          nullable: true
+    EiaDatasetsResponse:
+      type: object
+      properties:
+        meta:
+          $ref: '#/components/schemas/Meta'
+        data:
+          type: array
+          items:
+            $ref: '#/components/schemas/EiaDatasetBriefOut'
+    EiaDatasetDetailOut:
+      type: object
+      required: [path, frequencies, facets, data_columns]
+      properties:
+        path:
+          type: string
+        name:
+          type: string
+          nullable: true
+        description:
+          type: string
+          nullable: true
+        frequencies:
+          type: array
+          items:
+            type: object
+            additionalProperties: true
+        facets:
+          type: array
+          items:
+            type: object
+            additionalProperties: true
+        data_columns:
+          type: array
+          items:
+            type: string
+        start_period:
+          type: string
+          nullable: true
+        end_period:
+          type: string
+          nullable: true
+        default_frequency:
+          type: string
+          nullable: true
+        default_date_format:
+          type: string
+          nullable: true
+    EiaDatasetResponse:
+      type: object
+      properties:
+        meta:
+          $ref: '#/components/schemas/Meta'
+        data:
+          $ref: '#/components/schemas/EiaDatasetDetailOut'
     EiaSeriesPoint:
       type: object
       required: [series_id, period, period_start]

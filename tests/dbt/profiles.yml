@@ -3,6 +3,6 @@ aurum:
   outputs:
     duckdb:
       type: duckdb
-      path: ../../artifacts/dbt/warehouse.duckdb
+      path: artifacts/dbt/warehouse.duckdb
       threads: 1
       schema: analytics

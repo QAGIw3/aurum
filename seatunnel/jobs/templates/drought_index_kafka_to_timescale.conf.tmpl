@@ -1,11 +1,11 @@
 # Drought index topic → Timescale hypertable (public.drought_index_timeseries)
 #
 # Required environment variables:
-#   KAFKA_BOOTSTRAP_SERVERS  - Kafka brokers
-#   SCHEMA_REGISTRY_URL      - Schema Registry endpoint
-#   TIMESCALE_JDBC_URL       - JDBC URL for TimescaleDB
-#   TIMESCALE_USER           - Timescale username
-#   TIMESCALE_PASSWORD       - Timescale password
+#   AURUM_KAFKA_BOOTSTRAP_SERVERS  - Kafka brokers
+#   AURUM_SCHEMA_REGISTRY_URL      - Schema Registry endpoint
+#   AURUM_TIMESCALE_JDBC_URL       - JDBC URL for TimescaleDB
+#   AURUM_TIMESCALE_USER           - Timescale username
+#   AURUM_TIMESCALE_PASSWORD       - Timescale password
 #
 
 env {
@@ -15,12 +15,12 @@ env {
 
 source {
   Kafka {
-    bootstrap.servers = "${KAFKA_BOOTSTRAP_SERVERS}"
+    bootstrap.servers = "${AURUM_KAFKA_BOOTSTRAP_SERVERS}"
     topic = "aurum.drought.index.v1"
     format = "avro"
     start_mode = "latest"
     avro {
-      schema.registry.url = "${SCHEMA_REGISTRY_URL}"
+      schema.registry.url = "${AURUM_SCHEMA_REGISTRY_URL}"
     }
     result_table_name = "drought_index_raw"
   }
@@ -55,9 +55,9 @@ sink {
   Jdbc {
     plugin_input = "drought_index_timescale"
     driver = "org.postgresql.Driver"
-    url = "${TIMESCALE_JDBC_URL}"
-    user = "${TIMESCALE_USER}"
-    password = "${TIMESCALE_PASSWORD}"
+    url = "${AURUM_TIMESCALE_JDBC_URL}"
+    user = "${AURUM_TIMESCALE_USER}"
+    password = "${AURUM_TIMESCALE_PASSWORD}"
     table = "public.drought_index_timeseries"
     primary_keys = ["series_id", "valid_time"]
     save_mode = "upsert"

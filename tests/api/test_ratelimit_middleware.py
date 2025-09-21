@@ -1,68 +1,153 @@
+from __future__ import annotations
+
 import importlib
+import sys
+import types
+from dataclasses import dataclass
+from pathlib import Path
+from typing import Dict, Optional, Tuple
 
 import pytest
 
+PROJECT_SRC = Path(__file__).resolve().parents[2] / "src"
+if str(PROJECT_SRC) not in sys.path:
+    sys.path.insert(0, str(PROJECT_SRC))
 
-def _reload_app(monkeypatch: pytest.MonkeyPatch, rps: int, burst: int):
-    monkeypatch.setenv("AURUM_API_RATE_LIMIT_RPS", str(rps))
-    monkeypatch.setenv("AURUM_API_RATE_LIMIT_BURST", str(burst))
-    monkeypatch.setenv("AURUM_API_AUTH_DISABLED", "1")
-    # Ensure no Redis URL to exercise in-memory path
-    monkeypatch.delenv("AURUM_API_REDIS_URL", raising=False)
-    # Reload module to reconstruct app with new middleware config
-    import sys
+API_PACKAGE = "aurum.api"
+api_path = PROJECT_SRC / "aurum" / "api"
+if API_PACKAGE not in sys.modules:
+    api_stub = types.ModuleType(API_PACKAGE)
+    api_stub.__path__ = [str(api_path)]  # type: ignore[attr-defined]
+    sys.modules[API_PACKAGE] = api_stub
 
-    if "aurum.api.app" in sys.modules:
-        importlib.reload(sys.modules["aurum.api.app"])  # type: ignore[arg-type]
-    else:
-        import aurum.api.app  # noqa: F401
-    mod = importlib.import_module("aurum.api.app")
-    return mod
+
+@dataclass
+class DummyCacheConfig:
+    redis_url: Optional[str] = None
+    ttl_seconds: int = 0
+    namespace: str = "test"
+    mode: str = "standalone"
+    sentinel_endpoints: Tuple[Tuple[str, int], ...] = ()
+    sentinel_master: Optional[str] = None
+    cluster_nodes: Tuple[str, ...] = ()
+    username: Optional[str] = None
+    password: Optional[str] = None
+    socket_timeout: float = 1.5
+    connect_timeout: float = 1.5
+
+
+@dataclass
+class DummyRateLimitConfig:
+    rps: int
+    burst: int
+    overrides: Dict[str, Tuple[int, int]]
+    identifier_header: Optional[str]
+    whitelist: Tuple[str, ...]
+
+    def limits_for_path(self, path: str) -> Tuple[int, int]:
+        for prefix, limits in self.overrides.items():
+            if path.startswith(prefix):
+                return limits
+        return self.rps, self.burst
+
+    def is_whitelisted(self, *identifiers: Optional[str]) -> bool:
+        if not self.whitelist:
+            return False
+        candidates = {value for value in identifiers if value}
+        if not candidates:
+            return False
+        whitelist_set = set(self.whitelist)
+        return any(candidate in whitelist_set for candidate in candidates)
+
+
+def _build_app(rl_cfg: DummyRateLimitConfig):
+    pytest.importorskip("fastapi", reason="fastapi not installed")
+    from starlette.applications import Starlette
+    from starlette.responses import JSONResponse
+    from starlette.routing import Route
+
+    RateLimitMiddleware = importlib.import_module("aurum.api.ratelimit").RateLimitMiddleware
+
+    async def handler(request):
+        return JSONResponse({"ok": True})
+
+    app = Starlette(routes=[Route("/ping", handler)])
+    app.add_middleware(RateLimitMiddleware, cache_cfg=DummyCacheConfig(), rl_cfg=rl_cfg)
+    return app
 
 
 def test_rate_limit_returns_429(monkeypatch: pytest.MonkeyPatch):
-    pytest.importorskip("fastapi", reason="fastapi not installed")
-    import importlib
     from fastapi.testclient import TestClient
 
-    # Freeze time so both requests fall into the same 1-second window
-    monkeypatch.setattr("aurum.api.ratelimit.time.time", lambda: 1000000)
-    mod = _reload_app(monkeypatch, rps=1, burst=0)
-    app = getattr(mod, "app")
+    rl_cfg = DummyRateLimitConfig(rps=1, burst=0, overrides={}, identifier_header=None, whitelist=())
+    app = _build_app(rl_cfg)
+    rl_module = importlib.import_module("aurum.api.ratelimit")
+    monkeypatch.setattr(rl_module.time, "time", lambda: 1_000_000)
 
     client = TestClient(app)
-    r1 = client.get("/v1/metadata/units")
-    assert r1.status_code == 200
-    r2 = client.get("/v1/metadata/units")
-    assert r2.status_code == 429
-    # Response should include Retry-After and rate limit headers
-    assert r2.headers.get("retry-after") == "1"
-    assert r2.headers.get("x-ratelimit-limit") == "1"
-    assert r2.headers.get("x-ratelimit-remaining") == "0"
-    # restore default app for other tests
-    monkeypatch.delenv("AURUM_API_RATE_LIMIT_RPS", raising=False)
-    monkeypatch.delenv("AURUM_API_RATE_LIMIT_BURST", raising=False)
-    if "aurum.api.app" in __import__("sys").modules:
-        importlib.reload(__import__("sys").modules["aurum.api.app"])  # type: ignore[arg-type]
+
+    assert client.get("/ping").status_code == 200
+    resp = client.get("/ping")
+    assert resp.status_code == 429
+    assert resp.headers.get("Retry-After") == "1"
+    assert resp.headers.get("X-RateLimit-Limit") == "1"
+    assert resp.headers.get("X-RateLimit-Remaining") == "0"
 
 
 def test_rate_limit_counts_per_client_ip(monkeypatch: pytest.MonkeyPatch):
-    pytest.importorskip("fastapi", reason="fastapi not installed")
     from fastapi.testclient import TestClient
 
-    monkeypatch.setattr("aurum.api.ratelimit.time.time", lambda: 2000000)
-    mod = _reload_app(monkeypatch, rps=1, burst=0)
-    app = getattr(mod, "app")
+    rl_cfg = DummyRateLimitConfig(rps=1, burst=0, overrides={}, identifier_header=None, whitelist=())
+    app = _build_app(rl_cfg)
+    rl_module = importlib.import_module("aurum.api.ratelimit")
+    monkeypatch.setattr(rl_module.time, "time", lambda: 2_000_000)
+
     client = TestClient(app)
 
-    h1 = {"x-forwarded-for": "1.1.1.1"}
-    h2 = {"x-forwarded-for": "2.2.2.2"}
-    r1 = client.get("/v1/metadata/units", headers=h1)
-    r2 = client.get("/v1/metadata/units", headers=h2)
-    assert r1.status_code == 200
-    assert r2.status_code == 200
-    # restore default app for other tests
-    monkeypatch.delenv("AURUM_API_RATE_LIMIT_RPS", raising=False)
-    monkeypatch.delenv("AURUM_API_RATE_LIMIT_BURST", raising=False)
-    if "aurum.api.app" in __import__("sys").modules:
-        importlib.reload(__import__("sys").modules["aurum.api.app"])  # type: ignore[arg-type]
+    assert client.get("/ping", headers={"x-forwarded-for": "1.1.1.1"}).status_code == 200
+    assert client.get("/ping", headers={"x-forwarded-for": "2.2.2.2"}).status_code == 200
+
+
+def test_rate_limit_whitelist(monkeypatch: pytest.MonkeyPatch):
+    from fastapi.testclient import TestClient
+
+    rl_cfg = DummyRateLimitConfig(
+        rps=1,
+        burst=0,
+        overrides={},
+        identifier_header="X-Client-Id",
+        whitelist=("vip-client",),
+    )
+    app = _build_app(rl_cfg)
+    rl_module = importlib.import_module("aurum.api.ratelimit")
+    monkeypatch.setattr(rl_module.time, "time", lambda: 4_000_000)
+
+    client = TestClient(app)
+
+    headers = {"X-Client-Id": "vip-client"}
+    assert client.get("/ping", headers=headers).status_code == 200
+    assert client.get("/ping", headers=headers).status_code == 200
+
+
+def test_rate_limit_combines_tenant_and_header(monkeypatch: pytest.MonkeyPatch):
+    from fastapi.testclient import TestClient
+
+    rl_cfg = DummyRateLimitConfig(
+        rps=1,
+        burst=0,
+        overrides={},
+        identifier_header="X-Client-Id",
+        whitelist=(),
+    )
+    app = _build_app(rl_cfg)
+    rl_module = importlib.import_module("aurum.api.ratelimit")
+    monkeypatch.setattr(rl_module.time, "time", lambda: 5_000_000)
+
+    client = TestClient(app)
+
+    headers_a = {"X-Client-Id": "client-1", "X-Aurum-Tenant": "tenant-a"}
+    headers_b = {"X-Client-Id": "client-1", "X-Aurum-Tenant": "tenant-b"}
+
+    assert client.get("/ping", headers=headers_a).status_code == 200
+    assert client.get("/ping", headers=headers_b).status_code == 200
+    assert client.get("/ping", headers=headers_a).status_code == 429

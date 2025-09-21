@@ -4,8 +4,11 @@ models:
   - name: int_curve_monthly
     description: Intermediate model filtering to monthly tenors and latest copies per ingest.
     tests:
-      - unique:
-          column_name: "curve_key || '|' || tenor_label || '|' || cast(asof_date as varchar)"
+      - unique_combination:
+          combination_of_columns:
+            - curve_key
+            - tenor_label
+            - asof_date
     columns:
       - name: asof_date
         tests:
@@ -17,8 +20,11 @@ models:
   - name: int_curve_calendar
     description: Calendar strips derived by averaging monthly curves.
     tests:
-      - unique:
-          column_name: "curve_key || '|' || tenor_label || '|' || cast(asof_date as varchar)"
+      - unique_combination:
+          combination_of_columns:
+            - curve_key
+            - tenor_label
+            - asof_date
     columns:
       - name: asof_date
         tests:
@@ -33,8 +39,11 @@ models:
   - name: int_curve_quarter
     description: Quarterly strips derived by averaging monthly curves.
     tests:
-      - unique:
-          column_name: "curve_key || '|' || tenor_label || '|' || cast(asof_date as varchar)"
+      - unique_combination:
+          combination_of_columns:
+            - curve_key
+            - tenor_label
+            - asof_date
     columns:
       - name: asof_date
         tests:

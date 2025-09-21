@@ -715,10 +715,14 @@ def test_ready_endpoint(monkeypatch):
     from aurum.api import app as api_app
 
     monkeypatch.setattr(api_app, "_check_trino_ready", lambda cfg: True)
+    monkeypatch.setattr(api_app, "_check_timescale_ready", lambda dsn: True)
+    monkeypatch.setattr(api_app, "_check_redis_ready", lambda cfg: True)
     client = TestClient(api_app.app)
     resp = client.get("/ready")
     assert resp.status_code == 200
-    assert resp.json()["status"] == "ready"
+    payload = resp.json()
+    assert payload["status"] == "ready"
+    assert payload["checks"] == {"trino": True, "timescale": True, "redis": True}
 
 
 def test_ready_endpoint_unavailable(monkeypatch):
@@ -726,10 +730,15 @@ def test_ready_endpoint_unavailable(monkeypatch):
     from fastapi.testclient import TestClient
     from aurum.api import app as api_app
 
-    monkeypatch.setattr(api_app, "_check_trino_ready", lambda cfg: False)
+    monkeypatch.setattr(api_app, "_check_trino_ready", lambda cfg: True)
+    monkeypatch.setattr(api_app, "_check_timescale_ready", lambda dsn: False)
+    monkeypatch.setattr(api_app, "_check_redis_ready", lambda cfg: True)
     client = TestClient(api_app.app)
     resp = client.get("/ready")
     assert resp.status_code == 503
+    detail = resp.json().get("detail", {})
+    assert detail.get("status") == "unavailable"
+    assert detail.get("checks", {}).get("timescale") is False
 
 
 def test_strips_endpoint(monkeypatch):

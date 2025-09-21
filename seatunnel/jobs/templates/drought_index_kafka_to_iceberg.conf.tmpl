@@ -1,8 +1,8 @@
 # Drought index topic → Iceberg (environment.drought_index)
 #
 # Required environment variables:
-#   KAFKA_BOOTSTRAP_SERVERS    - Kafka brokers
-#   SCHEMA_REGISTRY_URL        - Schema Registry endpoint
+#   AURUM_KAFKA_BOOTSTRAP_SERVERS    - Kafka brokers
+#   AURUM_SCHEMA_REGISTRY_URL        - Schema Registry endpoint
 #   ICEBERG_CATALOG_NAME       - Iceberg catalog name (e.g. nessie)
 #   ICEBERG_CATALOG_TYPE       - Catalog type (nessie, hive, rest)
 #   ICEBERG_URI                - Catalog endpoint / Hive metastore URI
@@ -23,12 +23,12 @@ env {
 
 source {
   Kafka {
-    bootstrap.servers = "${KAFKA_BOOTSTRAP_SERVERS}"
+    bootstrap.servers = "${AURUM_KAFKA_BOOTSTRAP_SERVERS}"
     topic = "aurum.drought.index.v1"
     format = "avro"
     start_mode = "latest"
     avro {
-      schema.registry.url = "${SCHEMA_REGISTRY_URL}"
+      schema.registry.url = "${AURUM_SCHEMA_REGISTRY_URL}"
     }
     result_table_name = "drought_index_raw"
   }

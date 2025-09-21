@@ -2,7 +2,11 @@ from __future__ import annotations
 
 import pathlib
 
+import pytest
 import yaml
+
+pytest.importorskip("openapi_spec_validator")
+
 from openapi_spec_validator import validate_spec
 from openapi_spec_validator.validation.exceptions import OpenAPIValidationError
 

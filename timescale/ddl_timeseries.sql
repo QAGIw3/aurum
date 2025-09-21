@@ -196,6 +196,16 @@ SELECT create_hypertable('public.load_timeseries', 'interval_start', if_not_exis
 CREATE INDEX IF NOT EXISTS idx_iso_load_lookup
     ON public.load_timeseries (iso_code, area, interval_start DESC);
 
+ALTER TABLE IF EXISTS public.load_timeseries
+    SET (
+        timescaledb.compress = true,
+        timescaledb.compress_segmentby = 'iso_code,area',
+        timescaledb.compress_orderby = 'interval_start DESC'
+    );
+
+SELECT add_compression_policy('public.load_timeseries', INTERVAL '14 days', if_not_exists => TRUE);
+SELECT add_retention_policy('public.load_timeseries', INTERVAL '1825 days', if_not_exists => TRUE);
+
 DO $$
 BEGIN
     IF NOT EXISTS (
@@ -316,3 +326,91 @@ CREATE TABLE IF NOT EXISTS public.ops_metrics (
 
 SELECT create_hypertable('public.ops_metrics', 'ts', if_not_exists => TRUE, migrate_data => TRUE);
 CREATE INDEX IF NOT EXISTS idx_ops_metrics_metric_ts ON public.ops_metrics(metric, ts DESC);
+
+ALTER TABLE IF EXISTS public.ops_metrics
+    SET (
+        timescaledb.compress = true,
+        timescaledb.compress_segmentby = 'metric',
+        timescaledb.compress_orderby = 'ts DESC'
+    );
+
+SELECT add_compression_policy('public.ops_metrics', INTERVAL '7 days', if_not_exists => TRUE);
+SELECT add_retention_policy('public.ops_metrics', INTERVAL '365 days', if_not_exists => TRUE);
+
+DO $$
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1 FROM pg_catalog.pg_class c
+        JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace
+        WHERE n.nspname = 'public' AND c.relname = 'ops_metrics_agg_5m'
+    ) THEN
+        EXECUTE $DDL$
+            CREATE MATERIALIZED VIEW public.ops_metrics_agg_5m
+            WITH (timescaledb.continuous) AS
+            SELECT
+                time_bucket('5 minutes', ts) AS bucket_start,
+                metric,
+                labels,
+                avg(value) AS value_avg,
+                min(value) AS value_min,
+                max(value) AS value_max,
+                stddev_pop(value) AS value_stddev,
+                count(*) AS sample_count
+            FROM public.ops_metrics
+            GROUP BY 1, 2, 3
+            WITH NO DATA;
+        $DDL$;
+    END IF;
+END$$;
+
+CREATE INDEX IF NOT EXISTS idx_ops_metrics_agg_5m_key
+    ON public.ops_metrics_agg_5m (metric, bucket_start DESC);
+CREATE INDEX IF NOT EXISTS idx_ops_metrics_agg_5m_labels
+    ON public.ops_metrics_agg_5m USING GIN (labels);
+
+SELECT add_continuous_aggregate_policy(
+    'public.ops_metrics_agg_5m',
+    start_offset => INTERVAL '2 days',
+    end_offset => INTERVAL '5 minutes',
+    schedule_interval => INTERVAL '5 minutes',
+    if_not_exists => TRUE
+);
+
+DO $$
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1 FROM pg_catalog.pg_class c
+        JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace
+        WHERE n.nspname = 'public' AND c.relname = 'ops_metrics_agg_1h'
+    ) THEN
+        EXECUTE $DDL$
+            CREATE MATERIALIZED VIEW public.ops_metrics_agg_1h
+            WITH (timescaledb.continuous) AS
+            SELECT
+                time_bucket('1 hour', ts) AS bucket_start,
+                metric,
+                labels,
+                avg(value) AS value_avg,
+                min(value) AS value_min,
+                max(value) AS value_max,
+                stddev_pop(value) AS value_stddev,
+                count(*) AS sample_count
+            FROM public.ops_metrics
+            GROUP BY 1, 2, 3
+            WITH NO DATA;
+        $DDL$;
+    END IF;
+END$$;
+
+CREATE INDEX IF NOT EXISTS idx_ops_metrics_agg_1h_key
+    ON public.ops_metrics_agg_1h (metric, bucket_start DESC);
+CREATE INDEX IF NOT EXISTS idx_ops_metrics_agg_1h_labels
+    ON public.ops_metrics_agg_1h USING GIN (labels);
+
+SELECT add_continuous_aggregate_policy(
+    'public.ops_metrics_agg_1h',
+    start_offset => INTERVAL '30 days',
+    end_offset => INTERVAL '1 hour',
+    schedule_interval => INTERVAL '1 hour',
+    if_not_exists => TRUE
+);

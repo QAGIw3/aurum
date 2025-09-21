@@ -1,9 +1,55 @@
 """Unified pagination utilities for API responses."""
 from __future__ import annotations
 
-from typing import Iterable, Tuple
+import base64
+import json
+import time
+from dataclasses import dataclass
+from typing import Any, Dict, Iterable, Optional, Tuple
 
 from .models import AurumBaseModel, PaginationMeta
+
+
+@dataclass
+class OffsetLimit:
+    """Offset and limit for pagination."""
+    limit: int
+    offset: int = 0
+
+
+@dataclass
+class Cursor:
+    """Cursor for stable pagination."""
+    offset: int
+    limit: int
+    timestamp: float
+    filters: Dict[str, Any]
+
+    def to_string(self) -> str:
+        """Convert cursor to base64-encoded string."""
+        data = {
+            "offset": self.offset,
+            "limit": self.limit,
+            "timestamp": self.timestamp,
+            "filters": self.filters,
+        }
+        json_str = json.dumps(data, default=str)
+        return base64.b64encode(json_str.encode()).decode()
+
+    @classmethod
+    def from_string(cls, cursor_str: str) -> "Cursor":
+        """Create cursor from base64-encoded string."""
+        try:
+            json_str = base64.b64decode(cursor_str.encode()).decode()
+            data = json.loads(json_str)
+            return cls(
+                offset=data["offset"],
+                limit=data["limit"],
+                timestamp=data["timestamp"],
+                filters=data["filters"],
+            )
+        except Exception as exc:
+            raise ValueError(f"Invalid cursor format: {exc}") from exc
 
 
 class OffsetPage(AurumBaseModel):

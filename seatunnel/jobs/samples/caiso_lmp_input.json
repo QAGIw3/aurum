@@ -1,0 +1,11 @@
+[
+  {
+    "trading_hub": "TH_NP15",
+    "interval_start": "2024-01-01T00:00:00Z",
+    "interval_end": "2024-01-01T00:05:00Z",
+    "price": 37.45,
+    "lmp_type": "LMP",
+    "unit": "USD/MWh",
+    "location": "NP15"
+  }
+]

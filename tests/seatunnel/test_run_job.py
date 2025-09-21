@@ -39,8 +39,8 @@ def extract_value_schema(config_path: Path) -> dict:
                 "NOAA_GHCND_START_DATE": "2024-01-01",
                 "NOAA_GHCND_END_DATE": "2024-01-02",
                 "NOAA_GHCND_TOPIC": "aurum.ref.noaa.weather.v1",
-                "KAFKA_BOOTSTRAP_SERVERS": "localhost:9092",
-                "SCHEMA_REGISTRY_URL": "http://localhost:8081",
+                "AURUM_KAFKA_BOOTSTRAP_SERVERS": "localhost:9092",
+                "AURUM_SCHEMA_REGISTRY_URL": "http://localhost:8081",
             },
             "NOAA_GHCND_TOKEN",
         ),
@@ -49,8 +49,8 @@ def extract_value_schema(config_path: Path) -> dict:
             {
                 "MISO_ASM_URL": "https://example.com/asm",
                 "MISO_ASM_MARKET": "DAY_AHEAD_EXANTE",
-                "KAFKA_BOOTSTRAP_SERVERS": "localhost:9092",
-                "SCHEMA_REGISTRY_URL": "http://localhost:8081",
+                "AURUM_KAFKA_BOOTSTRAP_SERVERS": "localhost:9092",
+                "AURUM_SCHEMA_REGISTRY_URL": "http://localhost:8081",
                 "ISO_ASM_SCHEMA": ISO_ASM_SCHEMA_PATH.read_text(encoding="utf-8"),
             },
             "MISO_ASM_URL",
@@ -63,8 +63,8 @@ def extract_value_schema(config_path: Path) -> dict:
                 "EIA_SERIES_ID": "EBA.ALL.D.H",
                 "EIA_FREQUENCY": "HOURLY",
                 "EIA_TOPIC": "aurum.ref.eia.series.v1",
-                "KAFKA_BOOTSTRAP_SERVERS": "localhost:9092",
-                "SCHEMA_REGISTRY_URL": "http://localhost:8081",
+                "AURUM_KAFKA_BOOTSTRAP_SERVERS": "localhost:9092",
+                "AURUM_SCHEMA_REGISTRY_URL": "http://localhost:8081",
             },
             "EIA_API_KEY",
         ),
@@ -76,8 +76,8 @@ def extract_value_schema(config_path: Path) -> dict:
                 "FRED_FREQUENCY": "DAILY",
                 "FRED_SEASONAL_ADJ": "NSA",
                 "FRED_TOPIC": "aurum.ref.fred.series.v1",
-                "KAFKA_BOOTSTRAP_SERVERS": "localhost:9092",
-                "SCHEMA_REGISTRY_URL": "http://localhost:8081",
+                "AURUM_KAFKA_BOOTSTRAP_SERVERS": "localhost:9092",
+                "AURUM_SCHEMA_REGISTRY_URL": "http://localhost:8081",
             },
             "FRED_API_KEY",
         ),
@@ -88,39 +88,39 @@ def extract_value_schema(config_path: Path) -> dict:
                 "PJM_TOPIC": "aurum.iso.pjm.lmp.v1",
                 "PJM_INTERVAL_START": "2024-01-01T00:00:00-05:00",
                 "PJM_INTERVAL_END": "2024-01-01T01:00:00-05:00",
-                "KAFKA_BOOTSTRAP_SERVERS": "localhost:9092",
-                "SCHEMA_REGISTRY_URL": "http://localhost:8081",
+                "AURUM_KAFKA_BOOTSTRAP_SERVERS": "localhost:9092",
+                "AURUM_SCHEMA_REGISTRY_URL": "http://localhost:8081",
             },
             "PJM_API_KEY",
         ),
         (
             "iso_lmp_kafka_to_timescale",
             {
-                "KAFKA_BOOTSTRAP_SERVERS": "localhost:9092",
-                "SCHEMA_REGISTRY_URL": "http://localhost:8081",
-                "TIMESCALE_JDBC_URL": "jdbc:postgresql://timescale:5432/timeseries",
-                "TIMESCALE_USER": "ts",
-                "TIMESCALE_PASSWORD": "ts",
+                "AURUM_KAFKA_BOOTSTRAP_SERVERS": "localhost:9092",
+                "AURUM_SCHEMA_REGISTRY_URL": "http://localhost:8081",
+                "AURUM_TIMESCALE_JDBC_URL": "jdbc:postgresql://timescale:5432/timeseries",
+                "AURUM_TIMESCALE_USER": "ts",
+                "AURUM_TIMESCALE_PASSWORD": "ts",
             },
-            "KAFKA_BOOTSTRAP_SERVERS",
+            "AURUM_KAFKA_BOOTSTRAP_SERVERS",
         ),
         (
             "iso_load_kafka_to_timescale",
             {
-                "KAFKA_BOOTSTRAP_SERVERS": "localhost:9092",
-                "SCHEMA_REGISTRY_URL": "http://localhost:8081",
-                "TIMESCALE_JDBC_URL": "jdbc:postgresql://timescale:5432/timeseries",
-                "TIMESCALE_USER": "ts",
-                "TIMESCALE_PASSWORD": "ts",
+                "AURUM_KAFKA_BOOTSTRAP_SERVERS": "localhost:9092",
+                "AURUM_SCHEMA_REGISTRY_URL": "http://localhost:8081",
+                "AURUM_TIMESCALE_JDBC_URL": "jdbc:postgresql://timescale:5432/timeseries",
+                "AURUM_TIMESCALE_USER": "ts",
+                "AURUM_TIMESCALE_PASSWORD": "ts",
             },
-            "TIMESCALE_USER",
+            "AURUM_TIMESCALE_USER",
         ),
         (
             "nyiso_lmp_to_kafka",
             {
                 "NYISO_URL": "https://example.com/nyiso.csv",
-                "KAFKA_BOOTSTRAP_SERVERS": "localhost:9092",
-                "SCHEMA_REGISTRY_URL": "http://localhost:8081",
+                "AURUM_KAFKA_BOOTSTRAP_SERVERS": "localhost:9092",
+                "AURUM_SCHEMA_REGISTRY_URL": "http://localhost:8081",
                 "SEATUNNEL_OUTPUT_DIR": str(Path("/tmp")),
             },
             "NYISO_URL",
@@ -135,8 +135,8 @@ def extract_value_schema(config_path: Path) -> dict:
                 "FUEL_FREQUENCY": "DAILY",
                 "FUEL_TOPIC": "aurum.ref.fuel.natural_gas.v1",
                 "FUEL_UNITS": "USD/MMBtu",
-                "KAFKA_BOOTSTRAP_SERVERS": "localhost:9092",
-                "SCHEMA_REGISTRY_URL": "http://localhost:8081",
+                "AURUM_KAFKA_BOOTSTRAP_SERVERS": "localhost:9092",
+                "AURUM_SCHEMA_REGISTRY_URL": "http://localhost:8081",
             },
             "FUEL_SERIES_ID",
         ),
@@ -146,8 +146,8 @@ def extract_value_schema(config_path: Path) -> dict:
                 "EIA_BULK_URL": "https://example.com/bulk.zip",
                 "EIA_BULK_TOPIC": "aurum.ref.eia.bulk.test.v1",
                 "EIA_BULK_FREQUENCY": "MONTHLY",
-                "KAFKA_BOOTSTRAP_SERVERS": "localhost:9092",
-                "SCHEMA_REGISTRY_URL": "http://localhost:8081",
+                "AURUM_KAFKA_BOOTSTRAP_SERVERS": "localhost:9092",
+                "AURUM_SCHEMA_REGISTRY_URL": "http://localhost:8081",
             },
             "EIA_BULK_URL",
         ),
@@ -158,8 +158,8 @@ def extract_value_schema(config_path: Path) -> dict:
                 "MISO_LOAD_INTERVAL_START": "2024-01-01T00:00:00Z",
                 "MISO_LOAD_INTERVAL_END": "2024-01-01T01:00:00Z",
                 "MISO_LOAD_TOPIC": "aurum.iso.miso.load.v1",
-                "KAFKA_BOOTSTRAP_SERVERS": "localhost:9092",
-                "SCHEMA_REGISTRY_URL": "http://localhost:8081",
+                "AURUM_KAFKA_BOOTSTRAP_SERVERS": "localhost:9092",
+                "AURUM_SCHEMA_REGISTRY_URL": "http://localhost:8081",
             },
             "MISO_LOAD_ENDPOINT",
         ),
@@ -170,8 +170,8 @@ def extract_value_schema(config_path: Path) -> dict:
                 "SPP_LOAD_INTERVAL_START": "2024-01-01T00:00:00Z",
                 "SPP_LOAD_INTERVAL_END": "2024-01-01T01:00:00Z",
                 "SPP_LOAD_TOPIC": "aurum.iso.spp.load.v1",
-                "KAFKA_BOOTSTRAP_SERVERS": "localhost:9092",
-                "SCHEMA_REGISTRY_URL": "http://localhost:8081",
+                "AURUM_KAFKA_BOOTSTRAP_SERVERS": "localhost:9092",
+                "AURUM_SCHEMA_REGISTRY_URL": "http://localhost:8081",
             },
             "SPP_LOAD_ENDPOINT",
         ),
@@ -182,8 +182,8 @@ def extract_value_schema(config_path: Path) -> dict:
                 "CAISO_LOAD_INTERVAL_START": "2024-01-01T00:00:00Z",
                 "CAISO_LOAD_INTERVAL_END": "2024-01-01T01:00:00Z",
                 "CAISO_LOAD_TOPIC": "aurum.iso.caiso.load.v1",
-                "KAFKA_BOOTSTRAP_SERVERS": "localhost:9092",
-                "SCHEMA_REGISTRY_URL": "http://localhost:8081",
+                "AURUM_KAFKA_BOOTSTRAP_SERVERS": "localhost:9092",
+                "AURUM_SCHEMA_REGISTRY_URL": "http://localhost:8081",
             },
             "CAISO_LOAD_ENDPOINT",
         ),
@@ -195,8 +195,8 @@ def extract_value_schema(config_path: Path) -> dict:
                 "AESO_LOAD_INTERVAL_END": "2024-01-01T00:10:00Z",
                 "AESO_LOAD_TOPIC": "aurum.iso.aeso.load.v1",
                 "AESO_LOAD_API_KEY": "sample",
-                "KAFKA_BOOTSTRAP_SERVERS": "localhost:9092",
-                "SCHEMA_REGISTRY_URL": "http://localhost:8081",
+                "AURUM_KAFKA_BOOTSTRAP_SERVERS": "localhost:9092",
+                "AURUM_SCHEMA_REGISTRY_URL": "http://localhost:8081",
             },
             "AESO_LOAD_ENDPOINT",
         ),
@@ -207,8 +207,8 @@ def extract_value_schema(config_path: Path) -> dict:
                 "MISO_GENMIX_INTERVAL_START": "2024-01-01T00:00:00Z",
                 "MISO_GENMIX_INTERVAL_END": "2024-01-01T01:00:00Z",
                 "MISO_GENMIX_TOPIC": "aurum.iso.miso.genmix.v1",
-                "KAFKA_BOOTSTRAP_SERVERS": "localhost:9092",
-                "SCHEMA_REGISTRY_URL": "http://localhost:8081",
+                "AURUM_KAFKA_BOOTSTRAP_SERVERS": "localhost:9092",
+                "AURUM_SCHEMA_REGISTRY_URL": "http://localhost:8081",
             },
             "MISO_GENMIX_ENDPOINT",
         ),
@@ -219,8 +219,8 @@ def extract_value_schema(config_path: Path) -> dict:
                 "SPP_GENMIX_INTERVAL_START": "2024-01-01T00:00:00Z",
                 "SPP_GENMIX_INTERVAL_END": "2024-01-01T01:00:00Z",
                 "SPP_GENMIX_TOPIC": "aurum.iso.spp.genmix.v1",
-                "KAFKA_BOOTSTRAP_SERVERS": "localhost:9092",
-                "SCHEMA_REGISTRY_URL": "http://localhost:8081",
+                "AURUM_KAFKA_BOOTSTRAP_SERVERS": "localhost:9092",
+                "AURUM_SCHEMA_REGISTRY_URL": "http://localhost:8081",
             },
             "SPP_GENMIX_ENDPOINT",
         ),
@@ -231,8 +231,8 @@ def extract_value_schema(config_path: Path) -> dict:
                 "CAISO_GENMIX_INTERVAL_START": "2024-01-01T00:00:00Z",
                 "CAISO_GENMIX_INTERVAL_END": "2024-01-01T01:00:00Z",
                 "CAISO_GENMIX_TOPIC": "aurum.iso.caiso.genmix.v1",
-                "KAFKA_BOOTSTRAP_SERVERS": "localhost:9092",
-                "SCHEMA_REGISTRY_URL": "http://localhost:8081",
+                "AURUM_KAFKA_BOOTSTRAP_SERVERS": "localhost:9092",
+                "AURUM_SCHEMA_REGISTRY_URL": "http://localhost:8081",
             },
             "CAISO_GENMIX_ENDPOINT",
         ),
@@ -244,8 +244,8 @@ def extract_value_schema(config_path: Path) -> dict:
                 "AESO_GENMIX_INTERVAL_END": "2024-01-01T00:10:00Z",
                 "AESO_GENMIX_TOPIC": "aurum.iso.aeso.genmix.v1",
                 "AESO_GENMIX_API_KEY": "sample",
-                "KAFKA_BOOTSTRAP_SERVERS": "localhost:9092",
-                "SCHEMA_REGISTRY_URL": "http://localhost:8081",
+                "AURUM_KAFKA_BOOTSTRAP_SERVERS": "localhost:9092",
+                "AURUM_SCHEMA_REGISTRY_URL": "http://localhost:8081",
             },
             "AESO_GENMIX_ENDPOINT",
         ),
@@ -278,8 +278,8 @@ def test_run_job_renders_config(tmp_path: Path) -> None:
             "NOAA_GHCND_START_DATE": "2024-01-01",
             "NOAA_GHCND_END_DATE": "2024-01-02",
             "NOAA_GHCND_TOPIC": "aurum.ref.noaa.weather.v1",
-            "KAFKA_BOOTSTRAP_SERVERS": "localhost:9092",
-            "SCHEMA_REGISTRY_URL": "http://localhost:8081",
+            "AURUM_KAFKA_BOOTSTRAP_SERVERS": "localhost:9092",
+            "AURUM_SCHEMA_REGISTRY_URL": "http://localhost:8081",
             "SEATUNNEL_OUTPUT_DIR": str(tmp_path),
             "NOAA_GHCND_UNIT_CODE": "degC",
         }
@@ -309,6 +309,46 @@ def test_run_job_renders_config(tmp_path: Path) -> None:
     assert rendered_schema == expected_schema
 
 
+def test_miso_asm_job_renders_config(tmp_path: Path) -> None:
+    env = os.environ.copy()
+    env.update(
+        {
+            "MISO_ASM_URL": "https://example.com/asm",
+            "MISO_ASM_MARKET": "DAY_AHEAD_EXPOST",
+            "MISO_ASM_TOPIC": "aurum.iso.miso.asm.test.v1",
+            "MISO_ASM_SUBJECT": "aurum.iso.miso.asm.test.v1-value",
+            "MISO_ASM_AUTH_HEADER": "Bearer token",
+            "MISO_ASM_CURRENCY": "USD",
+            "MISO_ASM_UOM": "MWh",
+            "AURUM_KAFKA_BOOTSTRAP_SERVERS": "localhost:9092",
+            "AURUM_SCHEMA_REGISTRY_URL": "http://localhost:8081",
+            "ISO_ASM_SCHEMA": ISO_ASM_SCHEMA_PATH.read_text(encoding="utf-8"),
+            "SEATUNNEL_OUTPUT_DIR": str(tmp_path),
+        }
+    )
+
+    subprocess.run(
+        ["bash", str(SCRIPT_PATH), "miso_asm_to_kafka", "--render-only"],
+        cwd=REPO_ROOT,
+        env=env,
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+
+    rendered_path = tmp_path / "miso_asm_to_kafka.conf"
+    rendered = rendered_path.read_text(encoding="utf-8")
+
+    assert "https://example.com/asm" in rendered
+    assert "DAY_AHEAD_EXPOST" in rendered
+    assert "aurum.iso.miso.asm.test.v1" in rendered
+    assert "Bearer token" in rendered
+
+    rendered_schema = extract_value_schema(rendered_path)
+    expected_schema = json.loads(ISO_ASM_SCHEMA_PATH.read_text(encoding="utf-8"))
+    assert rendered_schema == expected_schema
+
+
 @pytest.mark.parametrize(
     "job_name, env_vars",
     [
@@ -319,8 +359,8 @@ def test_run_job_renders_config(tmp_path: Path) -> None:
                 "MISO_LOAD_INTERVAL_START": "2024-01-01T00:00:00Z",
                 "MISO_LOAD_INTERVAL_END": "2024-01-01T01:00:00Z",
                 "MISO_LOAD_TOPIC": "aurum.iso.miso.load.v1",
-                "KAFKA_BOOTSTRAP_SERVERS": "localhost:9092",
-                "SCHEMA_REGISTRY_URL": "http://localhost:8081",
+                "AURUM_KAFKA_BOOTSTRAP_SERVERS": "localhost:9092",
+                "AURUM_SCHEMA_REGISTRY_URL": "http://localhost:8081",
             },
         ),
         (
@@ -330,8 +370,8 @@ def test_run_job_renders_config(tmp_path: Path) -> None:
                 "SPP_LOAD_INTERVAL_START": "2024-01-01T00:00:00Z",
                 "SPP_LOAD_INTERVAL_END": "2024-01-01T01:00:00Z",
                 "SPP_LOAD_TOPIC": "aurum.iso.spp.load.v1",
-                "KAFKA_BOOTSTRAP_SERVERS": "localhost:9092",
-                "SCHEMA_REGISTRY_URL": "http://localhost:8081",
+                "AURUM_KAFKA_BOOTSTRAP_SERVERS": "localhost:9092",
+                "AURUM_SCHEMA_REGISTRY_URL": "http://localhost:8081",
             },
         ),
         (
@@ -341,8 +381,8 @@ def test_run_job_renders_config(tmp_path: Path) -> None:
                 "CAISO_LOAD_INTERVAL_START": "2024-01-01T00:00:00Z",
                 "CAISO_LOAD_INTERVAL_END": "2024-01-01T01:00:00Z",
                 "CAISO_LOAD_TOPIC": "aurum.iso.caiso.load.v1",
-                "KAFKA_BOOTSTRAP_SERVERS": "localhost:9092",
-                "SCHEMA_REGISTRY_URL": "http://localhost:8081",
+                "AURUM_KAFKA_BOOTSTRAP_SERVERS": "localhost:9092",
+                "AURUM_SCHEMA_REGISTRY_URL": "http://localhost:8081",
             },
         ),
         (
@@ -353,8 +393,8 @@ def test_run_job_renders_config(tmp_path: Path) -> None:
                 "AESO_LOAD_INTERVAL_END": "2024-01-01T00:10:00Z",
                 "AESO_LOAD_TOPIC": "aurum.iso.aeso.load.v1",
                 "AESO_LOAD_API_KEY": "key",
-                "KAFKA_BOOTSTRAP_SERVERS": "localhost:9092",
-                "SCHEMA_REGISTRY_URL": "http://localhost:8081",
+                "AURUM_KAFKA_BOOTSTRAP_SERVERS": "localhost:9092",
+                "AURUM_SCHEMA_REGISTRY_URL": "http://localhost:8081",
             },
         ),
     ],
@@ -389,8 +429,8 @@ def test_iso_load_jobs_render_schema(job_name: str, env_vars: dict[str, str], tm
                 "MISO_GENMIX_INTERVAL_START": "2024-01-01T00:00:00Z",
                 "MISO_GENMIX_INTERVAL_END": "2024-01-01T01:00:00Z",
                 "MISO_GENMIX_TOPIC": "aurum.iso.miso.genmix.v1",
-                "KAFKA_BOOTSTRAP_SERVERS": "localhost:9092",
-                "SCHEMA_REGISTRY_URL": "http://localhost:8081",
+                "AURUM_KAFKA_BOOTSTRAP_SERVERS": "localhost:9092",
+                "AURUM_SCHEMA_REGISTRY_URL": "http://localhost:8081",
             },
         ),
         (
@@ -400,8 +440,8 @@ def test_iso_load_jobs_render_schema(job_name: str, env_vars: dict[str, str], tm
                 "SPP_GENMIX_INTERVAL_START": "2024-01-01T00:00:00Z",
                 "SPP_GENMIX_INTERVAL_END": "2024-01-01T01:00:00Z",
                 "SPP_GENMIX_TOPIC": "aurum.iso.spp.genmix.v1",
-                "KAFKA_BOOTSTRAP_SERVERS": "localhost:9092",
-                "SCHEMA_REGISTRY_URL": "http://localhost:8081",
+                "AURUM_KAFKA_BOOTSTRAP_SERVERS": "localhost:9092",
+                "AURUM_SCHEMA_REGISTRY_URL": "http://localhost:8081",
             },
         ),
         (
@@ -411,8 +451,8 @@ def test_iso_load_jobs_render_schema(job_name: str, env_vars: dict[str, str], tm
                 "CAISO_GENMIX_INTERVAL_START": "2024-01-01T00:00:00Z",
                 "CAISO_GENMIX_INTERVAL_END": "2024-01-01T01:00:00Z",
                 "CAISO_GENMIX_TOPIC": "aurum.iso.caiso.genmix.v1",
-                "KAFKA_BOOTSTRAP_SERVERS": "localhost:9092",
-                "SCHEMA_REGISTRY_URL": "http://localhost:8081",
+                "AURUM_KAFKA_BOOTSTRAP_SERVERS": "localhost:9092",
+                "AURUM_SCHEMA_REGISTRY_URL": "http://localhost:8081",
             },
         ),
         (
@@ -423,8 +463,8 @@ def test_iso_load_jobs_render_schema(job_name: str, env_vars: dict[str, str], tm
                 "AESO_GENMIX_INTERVAL_END": "2024-01-01T00:10:00Z",
                 "AESO_GENMIX_TOPIC": "aurum.iso.aeso.genmix.v1",
                 "AESO_GENMIX_API_KEY": "key",
-                "KAFKA_BOOTSTRAP_SERVERS": "localhost:9092",
-                "SCHEMA_REGISTRY_URL": "http://localhost:8081",
+                "AURUM_KAFKA_BOOTSTRAP_SERVERS": "localhost:9092",
+                "AURUM_SCHEMA_REGISTRY_URL": "http://localhost:8081",
             },
         ),
     ],
@@ -478,7 +518,7 @@ def test_describe_job() -> None:
     assert "Required vars:" in out
     assert "NOAA_GHCND_TOKEN" in out
     assert "NOAA_GHCND_START_DATE" in out
-    assert "KAFKA_BOOTSTRAP_SERVERS" in out
+    assert "AURUM_KAFKA_BOOTSTRAP_SERVERS" in out
 
 
 def test_eia_job_renders_config(tmp_path: Path) -> None:
@@ -490,8 +530,8 @@ def test_eia_job_renders_config(tmp_path: Path) -> None:
             "EIA_SERIES_ID": "EBA.ALL.D.H",
             "EIA_FREQUENCY": "HOURLY",
             "EIA_TOPIC": "aurum.ref.eia.series.v1",
-            "KAFKA_BOOTSTRAP_SERVERS": "localhost:9092",
-            "SCHEMA_REGISTRY_URL": "http://localhost:8081",
+            "AURUM_KAFKA_BOOTSTRAP_SERVERS": "localhost:9092",
+            "AURUM_SCHEMA_REGISTRY_URL": "http://localhost:8081",
             "SEATUNNEL_OUTPUT_DIR": str(tmp_path),
             "EIA_UNITS": "USD/MWh",
             "EIA_SEASONAL_ADJUSTMENT": "UNKNOWN",
@@ -534,8 +574,8 @@ def test_eia_job_supports_series_expr(tmp_path: Path) -> None:
             "EIA_FREQUENCY": "WEEKLY",
             "EIA_TOPIC": "aurum.ref.eia.ng.storage.v1",
             "EIA_FILTER_EXPR": "series LIKE 'NW2%'",
-            "KAFKA_BOOTSTRAP_SERVERS": "localhost:9092",
-            "SCHEMA_REGISTRY_URL": "http://localhost:8081",
+            "AURUM_KAFKA_BOOTSTRAP_SERVERS": "localhost:9092",
+            "AURUM_SCHEMA_REGISTRY_URL": "http://localhost:8081",
             "SEATUNNEL_OUTPUT_DIR": str(tmp_path),
         }
     )
@@ -563,8 +603,8 @@ def test_eia_bulk_job_renders_config(tmp_path: Path) -> None:
             "EIA_BULK_URL": "https://example.com/bulk.zip",
             "EIA_BULK_TOPIC": "aurum.ref.eia.bulk.test.v1",
             "EIA_BULK_FREQUENCY": "MONTHLY",
-            "KAFKA_BOOTSTRAP_SERVERS": "localhost:9092",
-            "SCHEMA_REGISTRY_URL": "http://localhost:8081",
+            "AURUM_KAFKA_BOOTSTRAP_SERVERS": "localhost:9092",
+            "AURUM_SCHEMA_REGISTRY_URL": "http://localhost:8081",
             "SEATUNNEL_OUTPUT_DIR": str(tmp_path),
         }
     )
@@ -596,8 +636,8 @@ def test_eia_job_renders_param_overrides(tmp_path: Path) -> None:
             "EIA_TOPIC": "aurum.ref.eia.ng.storage.v1",
             "EIA_PARAM_OVERRIDES_JSON": '[{"facets[duoarea][]":"R31"},{"data[0]":"value"}]',
             "EIA_FREQUENCY": "WEEKLY",
-            "KAFKA_BOOTSTRAP_SERVERS": "localhost:9092",
-            "SCHEMA_REGISTRY_URL": "http://localhost:8081",
+            "AURUM_KAFKA_BOOTSTRAP_SERVERS": "localhost:9092",
+            "AURUM_SCHEMA_REGISTRY_URL": "http://localhost:8081",
             "SEATUNNEL_OUTPUT_DIR": str(tmp_path),
         }
     )
@@ -632,8 +672,8 @@ def test_fuel_curve_job_renders_config(tmp_path: Path) -> None:
             "FUEL_BENCHMARK_EXPR": "'Henry Hub'",
             "FUEL_REGION_EXPR": "'US_Gulf'",
             "FUEL_CURRENCY": "USD",
-            "KAFKA_BOOTSTRAP_SERVERS": "localhost:9092",
-            "SCHEMA_REGISTRY_URL": "http://localhost:8081",
+            "AURUM_KAFKA_BOOTSTRAP_SERVERS": "localhost:9092",
+            "AURUM_SCHEMA_REGISTRY_URL": "http://localhost:8081",
             "SEATUNNEL_OUTPUT_DIR": str(tmp_path),
         }
     )
@@ -669,8 +709,8 @@ def test_fred_job_renders_config(tmp_path: Path) -> None:
             "FRED_FREQUENCY": "DAILY",
             "FRED_SEASONAL_ADJ": "NSA",
             "FRED_TOPIC": "aurum.ref.fred.series.v1",
-            "KAFKA_BOOTSTRAP_SERVERS": "localhost:9092",
-            "SCHEMA_REGISTRY_URL": "http://localhost:8081",
+            "AURUM_KAFKA_BOOTSTRAP_SERVERS": "localhost:9092",
+            "AURUM_SCHEMA_REGISTRY_URL": "http://localhost:8081",
             "FRED_UNITS": "Percent",
             "SEATUNNEL_OUTPUT_DIR": str(tmp_path),
         }
@@ -705,8 +745,8 @@ def test_pjm_job_renders_config(tmp_path: Path) -> None:
             "PJM_TOPIC": "aurum.iso.pjm.lmp.v1",
             "PJM_INTERVAL_START": "2024-01-01T00:00:00-05:00",
             "PJM_INTERVAL_END": "2024-01-01T01:00:00-05:00",
-            "KAFKA_BOOTSTRAP_SERVERS": "localhost:9092",
-            "SCHEMA_REGISTRY_URL": "http://localhost:8081",
+            "AURUM_KAFKA_BOOTSTRAP_SERVERS": "localhost:9092",
+            "AURUM_SCHEMA_REGISTRY_URL": "http://localhost:8081",
             "SEATUNNEL_OUTPUT_DIR": str(tmp_path),
         }
     )
@@ -731,11 +771,11 @@ def test_iso_lmp_timescale_job_renders_config(tmp_path: Path) -> None:
     env = os.environ.copy()
     env.update(
         {
-            "KAFKA_BOOTSTRAP_SERVERS": "localhost:9092",
-            "SCHEMA_REGISTRY_URL": "http://localhost:8081",
-            "TIMESCALE_JDBC_URL": "jdbc:postgresql://timescale:5432/timeseries",
-            "TIMESCALE_USER": "ts",
-            "TIMESCALE_PASSWORD": "ts",
+            "AURUM_KAFKA_BOOTSTRAP_SERVERS": "localhost:9092",
+            "AURUM_SCHEMA_REGISTRY_URL": "http://localhost:8081",
+            "AURUM_TIMESCALE_JDBC_URL": "jdbc:postgresql://timescale:5432/timeseries",
+            "AURUM_TIMESCALE_USER": "ts",
+            "AURUM_TIMESCALE_PASSWORD": "ts",
             "SEATUNNEL_OUTPUT_DIR": str(tmp_path),
         }
     )
@@ -760,11 +800,11 @@ def test_iso_load_timescale_job_renders_config(tmp_path: Path) -> None:
     env = os.environ.copy()
     env.update(
         {
-            "KAFKA_BOOTSTRAP_SERVERS": "localhost:9092",
-            "SCHEMA_REGISTRY_URL": "http://localhost:8081",
-            "TIMESCALE_JDBC_URL": "jdbc:postgresql://timescale:5432/timeseries",
-            "TIMESCALE_USER": "ts",
-            "TIMESCALE_PASSWORD": "ts",
+            "AURUM_KAFKA_BOOTSTRAP_SERVERS": "localhost:9092",
+            "AURUM_SCHEMA_REGISTRY_URL": "http://localhost:8081",
+            "AURUM_TIMESCALE_JDBC_URL": "jdbc:postgresql://timescale:5432/timeseries",
+            "AURUM_TIMESCALE_USER": "ts",
+            "AURUM_TIMESCALE_PASSWORD": "ts",
             "SEATUNNEL_OUTPUT_DIR": str(tmp_path),
         }
     )
@@ -791,8 +831,13 @@ def test_miso_asm_job_renders_config(tmp_path: Path) -> None:
         {
             "MISO_ASM_URL": "https://example.com/api",
             "MISO_ASM_MARKET": "DAY_AHEAD_EXANTE",
-            "KAFKA_BOOTSTRAP_SERVERS": "localhost:9092",
-            "SCHEMA_REGISTRY_URL": "http://localhost:8081",
+            "MISO_ASM_TOPIC": "aurum.iso.miso.asm.test.v1",
+            "MISO_ASM_SUBJECT": "aurum.iso.miso.asm.test.v1-value",
+            "MISO_ASM_AUTH_HEADER": "Bearer token",
+            "MISO_ASM_CURRENCY": "USD",
+            "MISO_ASM_UOM": "MWh",
+            "AURUM_KAFKA_BOOTSTRAP_SERVERS": "localhost:9092",
+            "AURUM_SCHEMA_REGISTRY_URL": "http://localhost:8081",
             "ISO_ASM_SCHEMA": ISO_ASM_SCHEMA_PATH.read_text(encoding="utf-8"),
             "SEATUNNEL_OUTPUT_DIR": str(tmp_path),
         }
@@ -811,7 +856,8 @@ def test_miso_asm_job_renders_config(tmp_path: Path) -> None:
     rendered = rendered_path.read_text(encoding="utf-8")
 
     assert 'miso_asm_normalized' in rendered
-    assert 'aurum.iso.miso.asm.v1' in rendered
+    assert 'aurum.iso.miso.asm.test.v1' in rendered
+    assert 'Bearer token' in rendered
 
 
 def test_nyiso_job_renders_config(tmp_path: Path) -> None:
@@ -819,8 +865,8 @@ def test_nyiso_job_renders_config(tmp_path: Path) -> None:
     env.update(
         {
             "NYISO_URL": "https://example.com/nyiso.csv",
-            "KAFKA_BOOTSTRAP_SERVERS": "localhost:9092",
-            "SCHEMA_REGISTRY_URL": "http://localhost:8081",
+            "AURUM_KAFKA_BOOTSTRAP_SERVERS": "localhost:9092",
+            "AURUM_SCHEMA_REGISTRY_URL": "http://localhost:8081",
             "SEATUNNEL_OUTPUT_DIR": str(tmp_path),
         }
     )
@@ -843,11 +889,11 @@ def test_eia_series_timescale_job_renders_config(tmp_path: Path) -> None:
     env = os.environ.copy()
     env.update(
         {
-            "KAFKA_BOOTSTRAP_SERVERS": "localhost:9092",
-            "SCHEMA_REGISTRY_URL": "http://localhost:8081",
-            "TIMESCALE_JDBC_URL": "jdbc:postgresql://timescale:5432/timeseries",
-            "TIMESCALE_USER": "ts",
-            "TIMESCALE_PASSWORD": "ts",
+            "AURUM_KAFKA_BOOTSTRAP_SERVERS": "localhost:9092",
+            "AURUM_SCHEMA_REGISTRY_URL": "http://localhost:8081",
+            "AURUM_TIMESCALE_JDBC_URL": "jdbc:postgresql://timescale:5432/timeseries",
+            "AURUM_TIMESCALE_USER": "ts",
+            "AURUM_TIMESCALE_PASSWORD": "ts",
             "SEATUNNEL_OUTPUT_DIR": str(tmp_path),
         }
     )
@@ -872,11 +918,11 @@ def test_noaa_weather_timescale_job_renders_config(tmp_path: Path) -> None:
     env = os.environ.copy()
     env.update(
         {
-            "KAFKA_BOOTSTRAP_SERVERS": "localhost:9092",
-            "SCHEMA_REGISTRY_URL": "http://localhost:8081",
-            "TIMESCALE_JDBC_URL": "jdbc:postgresql://timescale:5432/timeseries",
-            "TIMESCALE_USER": "ts",
-            "TIMESCALE_PASSWORD": "ts",
+            "AURUM_KAFKA_BOOTSTRAP_SERVERS": "localhost:9092",
+            "AURUM_SCHEMA_REGISTRY_URL": "http://localhost:8081",
+            "AURUM_TIMESCALE_JDBC_URL": "jdbc:postgresql://timescale:5432/timeseries",
+            "AURUM_TIMESCALE_USER": "ts",
+            "AURUM_TIMESCALE_PASSWORD": "ts",
             "SEATUNNEL_OUTPUT_DIR": str(tmp_path),
         }
     )
@@ -901,8 +947,8 @@ def test_iso_jobs_render_canonical_schema(tmp_path: Path) -> None:
     iso_schema = json.loads(ISO_LMP_SCHEMA_PATH.read_text(encoding="utf-8"))
 
     base_env = {
-        "KAFKA_BOOTSTRAP_SERVERS": "localhost:9092",
-        "SCHEMA_REGISTRY_URL": "http://localhost:8081",
+        "AURUM_KAFKA_BOOTSTRAP_SERVERS": "localhost:9092",
+        "AURUM_SCHEMA_REGISTRY_URL": "http://localhost:8081",
         "SEATUNNEL_OUTPUT_DIR": str(tmp_path),
     }
 
@@ -956,8 +1002,8 @@ def test_localfile_jobs_have_sink_plugin_input(tmp_path: Path) -> None:
     sample = tmp_path / "sample.json"
     sample.write_text("[{\"x\":1}]", encoding="utf-8")
     base_env = {
-        "KAFKA_BOOTSTRAP_SERVERS": "localhost:9092",
-        "SCHEMA_REGISTRY_URL": "http://localhost:8081",
+        "AURUM_KAFKA_BOOTSTRAP_SERVERS": "localhost:9092",
+        "AURUM_SCHEMA_REGISTRY_URL": "http://localhost:8081",
     }
     jobs: list[tuple[str, dict[str, str]]] = [
         ("caiso_lmp_to_kafka", {"CAISO_INPUT_JSON": str(sample)}),
@@ -975,8 +1021,8 @@ def test_localfile_jobs_have_sink_plugin_input(tmp_path: Path) -> None:
 
 def test_http_jobs_have_schema_jsonpath_and_sink_plugin_input(tmp_path: Path) -> None:
     base_env = {
-        "KAFKA_BOOTSTRAP_SERVERS": "localhost:9092",
-        "SCHEMA_REGISTRY_URL": "http://localhost:8081",
+        "AURUM_KAFKA_BOOTSTRAP_SERVERS": "localhost:9092",
+        "AURUM_SCHEMA_REGISTRY_URL": "http://localhost:8081",
     }
     cases: list[tuple[str, dict[str, str]]] = [
         (
@@ -1034,8 +1080,8 @@ def test_pjm_jobs_render_configs(tmp_path: Path) -> None:
     env = os.environ.copy()
     env.update({
         "SEATUNNEL_OUTPUT_DIR": str(tmp_path),
-        "KAFKA_BOOTSTRAP_SERVERS": "localhost:9092",
-        "SCHEMA_REGISTRY_URL": "http://localhost:8081",
+        "AURUM_KAFKA_BOOTSTRAP_SERVERS": "localhost:9092",
+        "AURUM_SCHEMA_REGISTRY_URL": "http://localhost:8081",
         "PJM_API_KEY": "token",
         "PJM_ROW_LIMIT": "1000",
     })

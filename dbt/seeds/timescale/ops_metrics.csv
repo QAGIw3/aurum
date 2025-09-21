@@ -1,0 +1,4 @@
+id,metric,labels,ts,value,created_at
+1,worker.throughput,"{\"queue\":\"scenario\"}",2024-03-01 00:00:00,125.0,2024-03-01 00:00:05
+2,worker.throughput,"{\"queue\":\"scenario\"}",2024-03-01 01:00:00,118.0,2024-03-01 01:00:05
+3,seatunnel.pipeline_latency,"{\"job\":\"eia_series_to_timescale\"}",2024-03-01 01:05:00,0.95,2024-03-01 01:05:02

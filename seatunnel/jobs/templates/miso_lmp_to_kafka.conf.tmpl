@@ -3,8 +3,8 @@
 # Required environment variables:
 #   MISO_URL                - HTTPS URL for the CSV report (see MISO Market Reports)
 #   MISO_MARKET             - Market run (DAY_AHEAD or REAL_TIME)
-#   KAFKA_BOOTSTRAP_SERVERS - Kafka brokers
-#   SCHEMA_REGISTRY_URL     - Schema Registry endpoint
+#   AURUM_KAFKA_BOOTSTRAP_SERVERS - Kafka brokers
+#   AURUM_SCHEMA_REGISTRY_URL     - Schema Registry endpoint
 #
 # Optional environment variables:
 #   MISO_TOPIC              - Kafka topic (default aurum.iso.miso.lmp.v1)
@@ -118,13 +118,13 @@ transform {
 sink {
   Kafka {
     plugin_input = "miso_normalized"
-    bootstrap.servers = "${KAFKA_BOOTSTRAP_SERVERS}"
+    bootstrap.servers = "${AURUM_KAFKA_BOOTSTRAP_SERVERS}"
     topic = "${MISO_TOPIC}"
     semantic = "AT_LEAST_ONCE"
     format = "avro"
     avro {
       use.schema.registry = true
-      schema.registry.url = "${SCHEMA_REGISTRY_URL}"
+      schema.registry.url = "${AURUM_SCHEMA_REGISTRY_URL}"
       value.schema.subject = "${MISO_SUBJECT}"
       value.schema = """${ISO_LMP_SCHEMA}"""
     }

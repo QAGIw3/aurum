@@ -1,0 +1,4 @@
+series_id,period,period_start,period_end,frequency,value,raw_value,unit,canonical_unit,canonical_currency,canonical_value,conversion_factor,area,sector,seasonal_adjustment,description,source,dataset,metadata,ingest_ts
+ELEC.PRICE.MIDWEST,2024-01,2024-01-01,2024-01-31,monthly,45.2,45.2,USD/MWh,MWh,USD,45.2,1.0,Midwest,Commercial,Not Seasonally Adjusted,Sample Midwestern power price,EIA,STEO,"{}",2024-01-31 12:00:00
+ELEC.PRICE.MIDWEST,2024-02,2024-02-01,2024-02-29,monthly,46.1,46.1,USD/MWh,MWh,USD,46.1,1.0,Midwest,Commercial,Not Seasonally Adjusted,Sample Midwestern power price,EIA,STEO,"{}",2024-02-29 12:00:00
+ELEC.DEMAND.NORTHWEST,2024-W01,2024-01-01,2024-01-07,weekly,1025.0,1025.0,MWh,MWh,USD,1025.0,1.0,Northwest,Industrial,Seasonally Adjusted,Sample Northwest demand,EIA,Weekly,"{}",2024-01-07 18:30:00

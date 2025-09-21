@@ -4,15 +4,20 @@ models:
   - name: publish_curve_observation
     description: Incremental publish step that materializes the canonical curve table from landing data.
     tests:
-      - unique:
-          column_name: "curve_key || '|' || tenor_label || '|' || cast(asof_date as varchar)"
+      - unique_combination:
+          combination_of_columns:
+            - curve_key
+            - tenor_label
+            - asof_date
     meta:
       notes: "Add data tests for measurement tolerance once Iceberg fixtures are available."
   - name: mart_curve_latest
     description: Business mart exposing the latest available curve per identity and tenor.
     tests:
-      - unique:
-          column_name: "curve_key || '|' || tenor_label"
+      - unique_combination:
+          combination_of_columns:
+            - curve_key
+            - tenor_label
     columns:
       - name: mid
         tests:
@@ -24,8 +29,13 @@ models:
   - name: mart_scenario_output
     description: Latest scenario outputs materialized as a Trino view.
     tests:
-      - unique:
-          column_name: "tenant_id || '|' || scenario_id || '|' || run_id || '|' || metric || '|' || tenor_label"
+      - unique_combination:
+          combination_of_columns:
+            - tenant_id
+            - scenario_id
+            - run_id
+            - metric
+            - tenor_label
     columns:
       - name: scenario_id
         tests:
@@ -47,8 +57,11 @@ models:
   - name: mart_scenario_metric_latest
     description: Helper view exposing the latest value per scenario and metric.
     tests:
-      - unique:
-          column_name: "tenant_id || '|' || scenario_id || '|' || metric"
+      - unique_combination:
+          combination_of_columns:
+            - tenant_id
+            - scenario_id
+            - metric
     columns:
       - name: scenario_id
         tests:
@@ -70,8 +83,12 @@ models:
   - name: mart_ppa_valuation
     description: Persisted PPA valuation cashflows and summary metrics.
     tests:
-      - unique:
-          column_name: "ppa_contract_id || '|' || scenario_id || '|' || metric || '|' || coalesce(cast(period_start as varchar), '')"
+      - unique_combination:
+          combination_of_columns:
+            - ppa_contract_id
+            - scenario_id
+            - metric
+            - period_start
     columns:
       - name: ppa_contract_id
         tests:
@@ -85,8 +102,9 @@ models:
   - name: mart_eia_series_latest
     description: Latest observation per series identifier with normalized units and currency.
     tests:
-      - unique:
-          column_name: "series_id"
+      - unique_combination:
+          combination_of_columns:
+            - series_id
     columns:
       - name: value
         tests:
@@ -115,8 +133,10 @@ models:
   - name: fct_drought_index
     description: Latest drought index value per series_id and valid_date with geography context.
     tests:
-      - unique:
-          column_name: "series_id || '|' || cast(valid_date as varchar)"
+      - unique_combination:
+          combination_of_columns:
+            - series_id
+            - valid_date
     columns:
       - name: value
         tests:
@@ -130,8 +150,11 @@ models:
   - name: fct_usdm_area
     description: Latest USDM severity fractions by geography.
     tests:
-      - unique:
-          column_name: "region_type || '|' || region_id || '|' || cast(valid_date as varchar)"
+      - unique_combination:
+          combination_of_columns:
+            - region_type
+            - region_id
+            - valid_date
     columns:
       - name: d0_frac
         tests:
@@ -141,8 +164,10 @@ models:
   - name: fct_vector_event
     description: Latest vector overlay per layer/event with geometry.
     tests:
-      - unique:
-          column_name: "layer || '|' || event_id"
+      - unique_combination:
+          combination_of_columns:
+            - layer
+            - event_id
     columns:
       - name: source_url
         tests:

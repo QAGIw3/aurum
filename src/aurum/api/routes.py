@@ -30,6 +30,15 @@ from fastapi.responses import StreamingResponse
 
 from .config import CacheConfig, TrinoConfig
 from . import service
+from .container import get_service
+from .cache import CacheManager, AsyncCache, CacheBackend
+from .exceptions import (
+    AurumAPIException,
+    ValidationException,
+    NotFoundException,
+    ServiceUnavailableException,
+    DataProcessingException,
+)
 from .models import (
     CurveDiffPoint,
     CurveDiffResponse,
@@ -105,7 +114,11 @@ from .state import get_settings
 from aurum.reference import units as ref_units
 from aurum.reference import calendars as ref_cal
 from aurum.reference import eia_catalog as ref_eia
-from aurum.drought.catalog import load_catalog, DroughtCatalog
+try:  # pragma: no cover - optional dependency
+    from aurum.drought.catalog import load_catalog, DroughtCatalog
+except ModuleNotFoundError:  # pragma: no cover - drought features optional
+    load_catalog = None  # type: ignore[assignment]
+    DroughtCatalog = None  # type: ignore[assignment]
 from aurum.telemetry.context import get_request_id, set_request_id, reset_request_id
 
 
@@ -144,11 +157,13 @@ def configure_routes(settings: AurumSettings) -> None:
     SCENARIO_OUTPUT_MAX_LIMIT = settings.pagination.scenario_output_max_limit
     SCENARIO_METRIC_MAX_LIMIT = settings.pagination.scenario_metric_max_limit
     EIA_SERIES_MAX_LIMIT = settings.pagination.eia_series_max_limit
-    _METRICS_ENABLED = settings.api.metrics.enabled
-    _METRICS_PATH = settings.api.metrics.path if settings.api.metrics.path.startswith("/") else f"/{settings.api.metrics.path}"
+    _METRICS_ENABLED = bool(
+        settings.api.metrics.enabled and _PROMETHEUS_AVAILABLE and METRICS_MIDDLEWARE is not None and generate_latest
+    )
+    path = settings.api.metrics.path
+    _METRICS_PATH = path if path.startswith("/") else f"/{path}"
 
-    if not _METRICS_PATH.startswith("/"):
-        _METRICS_PATH = f"/{_METRICS_PATH}"
+    _register_metrics_route()
 _PPA_DECIMAL_QUANTIZER = Decimal("0.000001")
 
 
@@ -236,6 +251,8 @@ _TILE_CACHE = None
 
 
 def _drought_catalog() -> DroughtCatalog:
+    if load_catalog is None or DroughtCatalog is None:  # pragma: no cover - optional
+        raise RuntimeError("drought catalog features require optional dependencies")
     global _DROUGHT_CATALOG
     if _DROUGHT_CATALOG is None:
         _DROUGHT_CATALOG = load_catalog(_CATALOG_PATH)
@@ -501,24 +518,20 @@ def _csv_response(
     return response
 
 # Prometheus metrics
-_METRICS_ENABLED = True
 _METRICS_PATH = "/metrics"
-if not _METRICS_PATH.startswith("/"):
-    _METRICS_PATH = f"/{_METRICS_PATH}"
+_PROMETHEUS_AVAILABLE = False
+REQUEST_COUNTER = None
+REQUEST_LATENCY = None
+TILE_CACHE_COUNTER = None
+TILE_FETCH_LATENCY = None
+METRICS_MIDDLEWARE = None
+CONTENT_TYPE_LATEST = "text/plain; version=0.0.4; charset=utf-8"
+generate_latest = None  # type: ignore[assignment]
 
-if _METRICS_ENABLED:
-    try:  # pragma: no cover - exercised in integration
-        from prometheus_client import CONTENT_TYPE_LATEST, Counter, Histogram, generate_latest
-    except ImportError:  # pragma: no cover - best effort logging
-        LOGGER.warning(
-            "AURUM_API_METRICS_ENABLED is set but prometheus_client is not installed; disabling metrics"
-        )
-        _METRICS_ENABLED = False
-    except Exception:  # pragma: no cover - initialization failure should not break startup
-        LOGGER.exception("Failed to initialize Prometheus metrics; disabling")
-        _METRICS_ENABLED = False
+try:  # pragma: no cover - exercised in integration
+    from prometheus_client import CONTENT_TYPE_LATEST as _PROM_CONTENT_TYPE, Counter, Histogram, generate_latest
 
-if _METRICS_ENABLED:
+    CONTENT_TYPE_LATEST = _PROM_CONTENT_TYPE
     REQUEST_COUNTER = Counter(
         "aurum_api_requests_total",
         "Total API requests",
@@ -560,17 +573,40 @@ if _METRICS_ENABLED:
             REQUEST_COUNTER.labels(method=method, path=path_template, status=status_code).inc()
 
     METRICS_MIDDLEWARE = _metrics_middleware
+    _PROMETHEUS_AVAILABLE = True
+except ImportError:  # pragma: no cover - best effort logging
+    LOGGER.warning("Prometheus client not installed; metrics endpoint disabled")
+except Exception:  # pragma: no cover - initialization failure should not break startup
+    LOGGER.exception("Failed to initialize Prometheus metrics; disabling")
 
-    @router.get(_METRICS_PATH)
-    def metrics():
-        data = generate_latest()
-        return Response(content=data, media_type=CONTENT_TYPE_LATEST)
-else:
-    REQUEST_COUNTER = None
-    REQUEST_LATENCY = None
-    TILE_CACHE_COUNTER = None
-    TILE_FETCH_LATENCY = None
-    METRICS_MIDDLEWARE = None
+
+_METRICS_ENABLED = bool(_PROMETHEUS_AVAILABLE)
+
+
+def metrics():
+    if not (_METRICS_ENABLED and generate_latest):
+        raise HTTPException(status_code=503, detail="metrics_unavailable")
+    data = generate_latest()
+    return Response(content=data, media_type=CONTENT_TYPE_LATEST)
+
+
+_METRICS_ROUTE_NAME = "metrics"
+
+
+def _register_metrics_route() -> None:
+    to_remove = [route for route in router.routes if getattr(route, "name", None) == _METRICS_ROUTE_NAME]
+    for route in to_remove:
+        try:
+            router.routes.remove(route)
+        except ValueError:  # pragma: no cover - defensive
+            continue
+    if not (_METRICS_ENABLED and generate_latest and METRICS_MIDDLEWARE):
+        return
+    router.add_api_route(_METRICS_PATH, metrics, name=_METRICS_ROUTE_NAME, methods=["GET"])
+
+
+if _METRICS_ENABLED:
+    _register_metrics_route()
 
 
 def _record_tile_cache_metric(endpoint: str, result: str) -> None:
@@ -599,9 +635,18 @@ def health() -> dict:
 @router.get("/ready")
 def ready() -> dict:
     trino_cfg = _trino_config()
-    if _check_trino_ready(trino_cfg):
-        return {"status": "ready"}
-    raise HTTPException(status_code=503, detail="Upstream dependencies unavailable")
+    cache_cfg = _cache_config()
+    settings = _settings()
+
+    checks = {
+        "trino": _check_trino_ready(trino_cfg),
+        "timescale": _check_timescale_ready(settings.database.timescale_dsn),
+        "redis": _check_redis_ready(cache_cfg),
+    }
+
+    if all(checks.values()):
+        return {"status": "ready", "checks": checks}
+    raise HTTPException(status_code=503, detail={"status": "unavailable", "checks": checks})
 
 # Register auth middleware after health/metrics route definitions
 
@@ -803,6 +848,46 @@ def _check_trino_ready(cfg: TrinoConfig) -> bool:
         return True
     except Exception:
         return False
+
+
+def _check_timescale_ready(dsn: str) -> bool:
+    if not dsn:
+        return False
+    try:  # pragma: no cover - import guard
+        import psycopg  # type: ignore
+    except ModuleNotFoundError:
+        LOGGER.debug("Timescale readiness check skipped: psycopg not installed")
+        return False
+
+    try:
+        with psycopg.connect(dsn, connect_timeout=3) as conn:  # type: ignore[attr-defined]
+            with conn.cursor() as cur:
+                cur.execute("SELECT 1")
+                cur.fetchone()
+        return True
+    except Exception:
+        LOGGER.debug("Timescale readiness check failed", exc_info=True)
+        return False
+
+
+def _check_redis_ready(cache_cfg: CacheConfig) -> bool:
+    try:
+        client = service._maybe_redis_client(cache_cfg)
+    except Exception:
+        LOGGER.debug("Redis readiness check failed", exc_info=True)
+        return False
+
+    if client is None:
+        redis_configured = bool(
+            cache_cfg.redis_url
+            or cache_cfg.sentinel_endpoints
+            or cache_cfg.cluster_nodes
+        )
+        if str(cache_cfg.mode).lower() == "disabled":
+            redis_configured = False
+        return not redis_configured
+
+    return True
 
 
 @router.get("/v1/curves", response_model=CurveResponse)
@@ -1513,6 +1598,8 @@ def iso_lmp_hourly(
     iso_code: Optional[str] = Query(None, description="Filter by ISO code"),
     market: Optional[str] = Query(None, description="Filter by market"),
     location_id: Optional[str] = Query(None, description="Filter by settlement location id"),
+    start: Optional[datetime] = Query(None, description="Earliest interval_start (ISO 8601)", examples={"default": {"value": "2024-01-01T00:00:00Z"}}),
+    end: Optional[datetime] = Query(None, description="Latest interval_start (ISO 8601)", examples={"default": {"value": "2024-01-31T23:59:59Z"}}),
     limit: int = Query(500, ge=1, le=2000),
     format: str = Query(
         "json",
@@ -1524,10 +1611,14 @@ def iso_lmp_hourly(
     response: Response,
 ) -> IsoLmpAggregateResponse:
     request_id = _current_request_id()
+    if start and end and start > end:
+        raise HTTPException(status_code=400, detail="start_after_end")
     rows, elapsed = service.query_iso_lmp_hourly(
         iso_code=iso_code,
         market=market,
         location_id=location_id,
+        start=start,
+        end=end,
         limit=limit,
         cache_cfg=_cache_config(),
     )
@@ -1580,6 +1671,8 @@ def iso_lmp_daily(
     iso_code: Optional[str] = Query(None, description="Filter by ISO code"),
     market: Optional[str] = Query(None, description="Filter by market"),
     location_id: Optional[str] = Query(None, description="Filter by settlement location id"),
+    start: Optional[datetime] = Query(None, description="Earliest interval_start (ISO 8601)", examples={"default": {"value": "2023-01-01T00:00:00Z"}}),
+    end: Optional[datetime] = Query(None, description="Latest interval_start (ISO 8601)", examples={"default": {"value": "2023-12-31T23:59:59Z"}}),
     limit: int = Query(500, ge=1, le=2000),
     format: str = Query(
         "json",
@@ -1591,10 +1684,14 @@ def iso_lmp_daily(
     response: Response,
 ) -> IsoLmpAggregateResponse:
     request_id = _current_request_id()
+    if start and end and start > end:
+        raise HTTPException(status_code=400, detail="start_after_end")
     rows, elapsed = service.query_iso_lmp_daily(
         iso_code=iso_code,
         market=market,
         location_id=location_id,
+        start=start,
+        end=end,
         limit=limit,
         cache_cfg=_cache_config(),
     )
@@ -2421,9 +2518,59 @@ def invalidate_scenario_cache(  # type: ignore[no-redef]
 
 
 @router.post(
+    "/v1/admin/cache/curves/invalidate",
+    response_model=CachePurgeResponse,
+    tags=["Admin"],
+    include_in_schema=False,
+    summary="Invalidate curve caches",
+)
+def invalidate_curve_cache_admin(
+    request: Request,
+    response: Response,
+    principal: Dict[str, Any] | None = Depends(_get_principal),
+) -> CachePurgeResponse:
+    _require_admin(principal)
+    request_id = _current_request_id()
+    cache_cfg = _cache_config()
+    client = service._maybe_redis_client(cache_cfg)
+
+    removed_counts: Dict[str, int] = {"curves": 0, "curves-diff": 0}
+    prefixes = (("curves:", "curves"), ("curves-diff:", "curves-diff"))
+
+    if client is not None:
+        for prefix, scope in prefixes:
+            pattern = f"{prefix}*"
+            keys: list[Any] = []
+            iterator = getattr(client, "scan_iter", None)
+            try:
+                if callable(iterator):  # pragma: no branch - runtime check
+                    keys = list(iterator(pattern))  # type: ignore[arg-type]
+                elif hasattr(client, "keys"):
+                    keys = list(client.keys(pattern))  # type: ignore[attr-defined]
+            except Exception:
+                LOGGER.debug("Curve cache scan failed for prefix %s", prefix, exc_info=True)
+                keys = []
+
+            if keys:
+                try:
+                    deleted = client.delete(*keys)
+                    removed_counts[scope] = int(deleted or 0)
+                except Exception:
+                    LOGGER.debug("Curve cache delete failed for prefix %s", prefix, exc_info=True)
+
+    details = [
+        CachePurgeDetail(scope="curves", redis_keys_removed=removed_counts["curves"], local_entries_removed=0),
+        CachePurgeDetail(scope="curves-diff", redis_keys_removed=removed_counts["curves-diff"], local_entries_removed=0),
+    ]
+    model = CachePurgeResponse(meta=Meta(request_id=request_id, query_time_ms=0), data=details)
+    return _respond_with_etag(model, request, response)
+
+
+@router.post(
     "/v1/admin/cache/eia/series/invalidate",
     response_model=CachePurgeResponse,
     tags=["Admin"],
+    include_in_schema=False,
     summary="Invalidate cached EIA series queries",
 )
 def invalidate_eia_series_cache_admin(
@@ -2455,6 +2602,7 @@ def invalidate_eia_series_cache_admin(
     "/v1/admin/cache/metadata/{scope}/invalidate",
     response_model=CachePurgeResponse,
     tags=["Admin"],
+    include_in_schema=False,
     summary="Invalidate metadata caches",
 )
 def invalidate_metadata_cache_admin(
@@ -2574,7 +2722,6 @@ def create_ppa_contract(
 ) -> PpaContractResponse:
     request_id = _current_request_id()
     tenant_id = _resolve_tenant(request, None)
-    _require_admin(principal)
     record = ScenarioStore.create_ppa_contract(
         tenant_id=tenant_id,
         instrument_id=payload.instrument_id,
@@ -2609,7 +2756,6 @@ def update_ppa_contract(
 ) -> PpaContractResponse:
     request_id = _current_request_id()
     tenant_id = _resolve_tenant(request, None)
-    _require_admin(principal)
     record = ScenarioStore.update_ppa_contract(
         contract_id,
         tenant_id=tenant_id,
@@ -2631,7 +2777,6 @@ def delete_ppa_contract(
     principal: Dict[str, Any] | None = Depends(_get_principal),
 ) -> Response:
     tenant_id = _resolve_tenant(request, None)
-    _require_admin(principal)
     deleted = ScenarioStore.delete_ppa_contract(contract_id, tenant_id=tenant_id)
     if not deleted:
         raise HTTPException(status_code=404, detail="PPA contract not found")
@@ -3178,7 +3323,11 @@ def get_drought_usdm(
     return DroughtUsdmResponse(meta=meta, data=payload)
 
 
-@router.get("/v1/drought/layers", response_model=DroughtVectorResponse)
+@router.get(
+    "/v1/drought/layers",
+    response_model=DroughtVectorResponse,
+    include_in_schema=False,
+)
 def get_drought_layers(
     layer: str | None = Query(None, description="Layer key (qpf, ahps_flood, aqi, wildfire)."),
     region: str | None = Query(None, description="Region specifier REGION_TYPE:REGION_ID."),

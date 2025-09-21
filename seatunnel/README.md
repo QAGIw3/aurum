@@ -1,6 +1,6 @@
 # SeaTunnel Jobs
 
-This directory contains SeaTunnel job templates used to ingest external data sources into Kafka.
+This directory contains SeaTunnel job templates under `seatunnel/jobs/templates` used to ingest external data sources into Kafka.
 
 ## Usage
 
@@ -24,8 +24,8 @@ This directory contains SeaTunnel job templates used to ingest external data sou
    export NOAA_GHCND_START_DATE=2024-01-01
    export NOAA_GHCND_END_DATE=2024-01-02
    export NOAA_GHCND_TOPIC=aurum.ref.noaa.weather.v1
-   export KAFKA_BOOTSTRAP_SERVERS=localhost:9092
-   export SCHEMA_REGISTRY_URL=http://localhost:8081
+   export AURUM_KAFKA_BOOTSTRAP_SERVERS=localhost:9092
+   export AURUM_SCHEMA_REGISTRY_URL=http://localhost:8081
    # Optional tweaks
    export NOAA_GHCND_UNIT_CODE=degC
    export NOAA_GHCND_STATION_LIMIT=500
@@ -92,13 +92,13 @@ Add additional job templates following the same pattern and extend `scripts/seat
 
 2. Publish NOAA GHCND observations to Kafka (render-only first to verify):
 
-   - Render: `NOAA_GHCND_TOKEN=... NOAA_GHCND_START_DATE=2024-01-01 NOAA_GHCND_END_DATE=2024-01-02 NOAA_GHCND_TOPIC=aurum.ref.noaa.weather.v1 KAFKA_BOOTSTRAP_SERVERS=broker:29092 SCHEMA_REGISTRY_URL=http://schema-registry:8081 make noaa-kafka-render`
-   - Run: `NOAA_GHCND_TOKEN=... NOAA_GHCND_START_DATE=2024-01-01 NOAA_GHCND_END_DATE=2024-01-02 NOAA_GHCND_TOPIC=aurum.ref.noaa.weather.v1 KAFKA_BOOTSTRAP_SERVERS=broker:29092 SCHEMA_REGISTRY_URL=http://schema-registry:8081 make noaa-kafka-run`
+   - Render: `NOAA_GHCND_TOKEN=... NOAA_GHCND_START_DATE=2024-01-01 NOAA_GHCND_END_DATE=2024-01-02 NOAA_GHCND_TOPIC=aurum.ref.noaa.weather.v1 AURUM_KAFKA_BOOTSTRAP_SERVERS=broker:29092 AURUM_SCHEMA_REGISTRY_URL=http://schema-registry:8081 make noaa-kafka-render`
+   - Run: `NOAA_GHCND_TOKEN=... NOAA_GHCND_START_DATE=2024-01-01 NOAA_GHCND_END_DATE=2024-01-02 NOAA_GHCND_TOPIC=aurum.ref.noaa.weather.v1 AURUM_KAFKA_BOOTSTRAP_SERVERS=broker:29092 AURUM_SCHEMA_REGISTRY_URL=http://schema-registry:8081 make noaa-kafka-run`
 
 3. Stream NOAA topic into Timescale:
 
-   - Render: `TIMESCALE_JDBC_URL=jdbc:postgresql://timescale:5432/timeseries TIMESCALE_USER=ts TIMESCALE_PASSWORD=ts SCHEMA_REGISTRY_URL=http://schema-registry:8081 KAFKA_BOOTSTRAP_SERVERS=broker:29092 make noaa-timescale-render`
-   - Run: `TIMESCALE_JDBC_URL=jdbc:postgresql://timescale:5432/timeseries TIMESCALE_USER=ts TIMESCALE_PASSWORD=ts SCHEMA_REGISTRY_URL=http://schema-registry:8081 KAFKA_BOOTSTRAP_SERVERS=broker:29092 make noaa-timescale-run`
+   - Render: `AURUM_TIMESCALE_JDBC_URL=jdbc:postgresql://timescale:5432/timeseries AURUM_TIMESCALE_USER=ts AURUM_TIMESCALE_PASSWORD=ts AURUM_SCHEMA_REGISTRY_URL=http://schema-registry:8081 AURUM_KAFKA_BOOTSTRAP_SERVERS=broker:29092 make noaa-timescale-render`
+   - Run: `AURUM_TIMESCALE_JDBC_URL=jdbc:postgresql://timescale:5432/timeseries AURUM_TIMESCALE_USER=ts AURUM_TIMESCALE_PASSWORD=ts AURUM_SCHEMA_REGISTRY_URL=http://schema-registry:8081 AURUM_KAFKA_BOOTSTRAP_SERVERS=broker:29092 make noaa-timescale-run`
 
 Rendered configs are placed under `seatunnel/jobs/generated` and are git-ignored.
 
@@ -113,12 +113,30 @@ Rendered configs are placed under `seatunnel/jobs/generated` and are git-ignored
 2. Render and run sinks (Kafka → Timescale):
 
    - EIA:
-     `KAFKA_BOOTSTRAP_SERVERS=broker:29092 SCHEMA_REGISTRY_URL=http://schema-registry:8081 TIMESCALE_JDBC_URL=jdbc:postgresql://timescale:5432/timeseries TIMESCALE_USER=ts TIMESCALE_PASSWORD=ts scripts/seatunnel/run_job.sh eia_series_kafka_to_timescale --render-only`
+     `AURUM_KAFKA_BOOTSTRAP_SERVERS=broker:29092 AURUM_SCHEMA_REGISTRY_URL=http://schema-registry:8081 AURUM_TIMESCALE_JDBC_URL=jdbc:postgresql://timescale:5432/timeseries AURUM_TIMESCALE_USER=ts AURUM_TIMESCALE_PASSWORD=ts scripts/seatunnel/run_job.sh eia_series_kafka_to_timescale --render-only`
 
    - FRED:
-     `KAFKA_BOOTSTRAP_SERVERS=broker:29092 SCHEMA_REGISTRY_URL=http://schema-registry:8081 TIMESCALE_JDBC_URL=jdbc:postgresql://timescale:5432/timeseries TIMESCALE_USER=ts TIMESCALE_PASSWORD=ts scripts/seatunnel/run_job.sh fred_series_kafka_to_timescale --render-only`
+     `AURUM_KAFKA_BOOTSTRAP_SERVERS=broker:29092 AURUM_SCHEMA_REGISTRY_URL=http://schema-registry:8081 AURUM_TIMESCALE_JDBC_URL=jdbc:postgresql://timescale:5432/timeseries AURUM_TIMESCALE_USER=ts AURUM_TIMESCALE_PASSWORD=ts scripts/seatunnel/run_job.sh fred_series_kafka_to_timescale --render-only`
 
    - CPI:
-     `KAFKA_BOOTSTRAP_SERVERS=broker:29092 SCHEMA_REGISTRY_URL=http://schema-registry:8081 TIMESCALE_JDBC_URL=jdbc:postgresql://timescale:5432/timeseries TIMESCALE_USER=ts TIMESCALE_PASSWORD=ts scripts/seatunnel/run_job.sh cpi_series_kafka_to_timescale --render-only`
+     `AURUM_KAFKA_BOOTSTRAP_SERVERS=broker:29092 AURUM_SCHEMA_REGISTRY_URL=http://schema-registry:8081 AURUM_TIMESCALE_JDBC_URL=jdbc:postgresql://timescale:5432/timeseries AURUM_TIMESCALE_USER=ts AURUM_TIMESCALE_PASSWORD=ts scripts/seatunnel/run_job.sh cpi_series_kafka_to_timescale --render-only`
 
 3. To execute in kind, copy rendered configs to `/workspace/seatunnel/jobs/generated` on the node and launch a local-mode Job as shown above in the NOAA section.
+
+### Template rendering and validation
+
+The shell wrapper delegates rendering to `python -m aurum.seatunnel.renderer`. The renderer resolves canonical environment variables (`AURUM_*`), validates common connection details (Kafka, Schema Registry, Timescale), and refuses to write a config if required values are missing. You can render a template directly with:
+
+```bash
+PYTHONPATH=src python -m aurum.seatunnel.renderer \
+  --job noaa_weather_kafka_to_timescale \
+  --template seatunnel/jobs/templates/noaa_weather_kafka_to_timescale.conf.tmpl \
+  --output /tmp/noaa.conf \
+  --required AURUM_KAFKA_BOOTSTRAP_SERVERS \
+  --required AURUM_SCHEMA_REGISTRY_URL \
+  --required AURUM_TIMESCALE_JDBC_URL \
+  --required AURUM_TIMESCALE_USER \
+  --required AURUM_TIMESCALE_PASSWORD
+```
+
+Smoke tests in `tests/seatunnel/test_renderer.py` exercise representative templates with sample payloads (for example `seatunnel/jobs/samples/caiso_lmp_input.json`) to ensure rendering stays functional as templates evolve.

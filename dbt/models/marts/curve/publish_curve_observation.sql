@@ -1,3 +1,6 @@
+{% if target.name == 'duckdb' %}
+{{ config(materialized='table', schema='market', alias='curve_observation') }}
+{% else %}
 {{ config(
     materialized='incremental',
     schema='market',
@@ -7,6 +10,8 @@
     on_schema_change='sync',
     tags=['publish']
 ) }}
+{% endif %}
+
 
 with source_rows as (
     select

@@ -47,13 +47,13 @@ transform {
 sink {
   Kafka {
     plugin_input = "caiso_genmix_normalized"
-    bootstrap.servers = "${KAFKA_BOOTSTRAP_SERVERS}"
+    bootstrap.servers = "${AURUM_KAFKA_BOOTSTRAP_SERVERS}"
     topic = "${CAISO_GENMIX_TOPIC}"
     semantic = "AT_LEAST_ONCE"
     format = "avro"
     avro {
       use.schema.registry = true
-      schema.registry.url = "${SCHEMA_REGISTRY_URL}"
+      schema.registry.url = "${AURUM_SCHEMA_REGISTRY_URL}"
       value.schema.subject = "${CAISO_GENMIX_SUBJECT}"
       value.schema = """${ISO_GENMIX_SCHEMA}"""
     }

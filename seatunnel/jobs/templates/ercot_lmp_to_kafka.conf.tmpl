@@ -2,8 +2,8 @@
 #
 # Required environment variables:
 #   ERCOT_INPUT_JSON        - Path to JSON file containing normalized ERCOT LMP records (array of objects)
-#   KAFKA_BOOTSTRAP_SERVERS - Kafka brokers
-#   SCHEMA_REGISTRY_URL     - Schema Registry endpoint
+#   AURUM_KAFKA_BOOTSTRAP_SERVERS - Kafka brokers
+#   AURUM_SCHEMA_REGISTRY_URL     - Schema Registry endpoint
 #
 # Optional environment variables:
 #   ERCOT_TOPIC             - Kafka topic (default aurum.iso.ercot.lmp.v1)
@@ -116,13 +116,13 @@ transform {
 sink {
   Kafka {
     plugin_input = "ercot_normalized"
-    bootstrap.servers = "${KAFKA_BOOTSTRAP_SERVERS}"
+    bootstrap.servers = "${AURUM_KAFKA_BOOTSTRAP_SERVERS}"
     topic = "${ERCOT_TOPIC}"
     semantic = "AT_LEAST_ONCE"
     format = "avro"
     avro {
       use.schema.registry = true
-      schema.registry.url = "${SCHEMA_REGISTRY_URL}"
+      schema.registry.url = "${AURUM_SCHEMA_REGISTRY_URL}"
       value.schema.subject = "${ERCOT_SUBJECT}"
       value.schema = """${ISO_LMP_SCHEMA}"""
     }

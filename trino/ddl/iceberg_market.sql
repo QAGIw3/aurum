@@ -31,7 +31,14 @@ CREATE TABLE IF NOT EXISTS iceberg.raw.curve_landing (
 )
 WITH (
     format = 'PARQUET',
-    partitioning = ARRAY['asof_date']
+    format_version = '2',
+    write_compression = 'ZSTD',
+    write_target_file_size_bytes = 536870912,
+    optimize_rewrite_data_file_threshold = 24,
+    optimize_rewrite_delete_file_threshold = 250,
+    vacuum_min_snapshots_to_keep = 4,
+    vacuum_max_snapshot_age_retention = '7d',
+    partitioning = ARRAY['days(asof_date)']
 );
 
 CREATE TABLE IF NOT EXISTS iceberg.market.curve_observation (
@@ -63,7 +70,14 @@ CREATE TABLE IF NOT EXISTS iceberg.market.curve_observation (
 )
 WITH (
     format = 'PARQUET',
-    partitioning = ARRAY['year(asof_date)', 'month(asof_date)'],
+    format_version = '2',
+    write_compression = 'ZSTD',
+    write_target_file_size_bytes = 536870912,
+    optimize_rewrite_data_file_threshold = 24,
+    optimize_rewrite_delete_file_threshold = 250,
+    vacuum_min_snapshots_to_keep = 4,
+    vacuum_max_snapshot_age_retention = '7d',
+    partitioning = ARRAY['days(asof_date)'],
     write_sort_order = ARRAY['asof_date', 'asset_class', 'iso', 'tenor_label']
 );
 
@@ -97,7 +111,14 @@ CREATE TABLE IF NOT EXISTS iceberg.market.curve_observation_quarantine (
 )
 WITH (
     format = 'PARQUET',
-    partitioning = ARRAY['year(asof_date)', 'month(asof_date)'],
+    format_version = '2',
+    write_compression = 'ZSTD',
+    write_target_file_size_bytes = 536870912,
+    optimize_rewrite_data_file_threshold = 24,
+    optimize_rewrite_delete_file_threshold = 250,
+    vacuum_min_snapshots_to_keep = 4,
+    vacuum_max_snapshot_age_retention = '7d',
+    partitioning = ARRAY['days(asof_date)'],
     write_sort_order = ARRAY['asof_date', 'asset_class', 'iso', 'tenor_label']
 );
 
@@ -121,7 +142,14 @@ CREATE TABLE IF NOT EXISTS iceberg.market.scenario_output (
 )
 WITH (
     format = 'PARQUET',
-    partitioning = ARRAY['scenario_id', 'metric', 'year(asof_date)']
+    format_version = '2',
+    write_compression = 'ZSTD',
+    write_target_file_size_bytes = 536870912,
+    optimize_rewrite_data_file_threshold = 24,
+    optimize_rewrite_delete_file_threshold = 250,
+    vacuum_min_snapshots_to_keep = 4,
+    vacuum_max_snapshot_age_retention = '7d',
+    partitioning = ARRAY['scenario_id', 'metric', 'days(asof_date)']
 );
 
 CREATE TABLE IF NOT EXISTS iceberg.market.ppa_valuation (
@@ -141,7 +169,14 @@ CREATE TABLE IF NOT EXISTS iceberg.market.ppa_valuation (
 )
 WITH (
     format = 'PARQUET',
-    partitioning = ARRAY['ppa_contract_id', 'year(asof_date)']
+    format_version = '2',
+    write_compression = 'ZSTD',
+    write_target_file_size_bytes = 536870912,
+    optimize_rewrite_data_file_threshold = 24,
+    optimize_rewrite_delete_file_threshold = 250,
+    vacuum_min_snapshots_to_keep = 4,
+    vacuum_max_snapshot_age_retention = '7d',
+    partitioning = ARRAY['ppa_contract_id', 'days(asof_date)']
 );
 
 CREATE TABLE IF NOT EXISTS iceberg.market.qa_checks (
@@ -158,7 +193,14 @@ CREATE TABLE IF NOT EXISTS iceberg.market.qa_checks (
 )
 WITH (
     format = 'PARQUET',
-    partitioning = ARRAY['year(asof_date)']
+    format_version = '2',
+    write_compression = 'ZSTD',
+    write_target_file_size_bytes = 536870912,
+    optimize_rewrite_data_file_threshold = 24,
+    optimize_rewrite_delete_file_threshold = 250,
+    vacuum_min_snapshots_to_keep = 4,
+    vacuum_max_snapshot_age_retention = '7d',
+    partitioning = ARRAY['days(asof_date)']
 );
 
 CREATE OR REPLACE VIEW iceberg.market.curve_observation_latest AS

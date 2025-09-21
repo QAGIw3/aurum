@@ -3,8 +3,6 @@
 
 {{ config(materialized='view') }}
 
-{% set iceberg_catalog = var('iceberg_catalog', 'iceberg') %}
-
 with ranked as (
     select
         *,
@@ -12,7 +10,7 @@ with ranked as (
             partition by tenant_id, scenario_id, curve_key, metric, tenor_label
             order by asof_date desc, computed_ts desc nulls last
         ) as rn
-    from {{ iceberg_catalog }}.market.scenario_output
+    from {{ iceberg_relation('market', 'scenario_output', 'scenario_output') }}
     where asof_date is not null
 ),
 latest as (

@@ -7,11 +7,11 @@ env {
 
 source {
   Kafka {
-    bootstrap.servers = "${KAFKA_BOOTSTRAP_SERVERS}"
+    bootstrap.servers = "${AURUM_KAFKA_BOOTSTRAP_SERVERS}"
     pattern = "${CPI_TOPIC_PATTERN}"
     format = "avro"
     start_mode = "latest"
-    avro { schema.registry.url = "${SCHEMA_REGISTRY_URL}" }
+    avro { schema.registry.url = "${AURUM_SCHEMA_REGISTRY_URL}" }
     result_table_name = "cpi_raw"
   }
 }
@@ -41,9 +41,9 @@ sink {
   Jdbc {
     plugin_input = "cpi_enriched"
     driver = "org.postgresql.Driver"
-    url = "${TIMESCALE_JDBC_URL}"
-    user = "${TIMESCALE_USER}"
-    password = "${TIMESCALE_PASSWORD}"
+    url = "${AURUM_TIMESCALE_JDBC_URL}"
+    user = "${AURUM_TIMESCALE_USER}"
+    password = "${AURUM_TIMESCALE_PASSWORD}"
     table = "${CPI_SERIES_TABLE}"
     primary_keys = ["series_id", "period"]
     save_mode = "${CPI_SERIES_SAVE_MODE}"

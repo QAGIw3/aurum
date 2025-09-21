@@ -2,11 +2,25 @@
 from __future__ import annotations
 
 from collections.abc import Mapping, MutableMapping
+import os
 from enum import Enum
 from typing import Any, Dict, Iterable, List
 
 from pydantic import AliasChoices, Field, field_validator
-from pydantic_settings import BaseSettings, SettingsConfigDict
+
+try:  # pragma: no cover - fallback when pydantic-settings is unavailable
+    from pydantic_settings import BaseSettings, SettingsConfigDict
+except ModuleNotFoundError:  # pragma: no cover - lightweight compatibility shim
+    from pydantic import BaseModel as _BaseSettings
+
+    class SettingsConfigDict(dict):
+        pass
+
+    class BaseSettings(_BaseSettings):  # type: ignore[misc]
+        model_config = {}
+
+        def model_copy(self, update=None, deep=False):  # type: ignore[override]
+            return super().model_copy(update=update, deep=deep)
 
 from .models import AurumBaseModel
 
@@ -73,6 +87,7 @@ class RateLimitSettings(AurumBaseModel):
     burst: int = Field(default=20, ge=0, validation_alias=AliasChoices("API_RATE_LIMIT_BURST"))
     identifier_header: str | None = Field(default=None, validation_alias=AliasChoices("API_RATE_LIMIT_HEADER"))
     overrides: dict[str, tuple[int, int]] = Field(default_factory=dict, validation_alias=AliasChoices("API_RATE_LIMIT_OVERRIDES"))
+    whitelist: tuple[str, ...] = Field(default_factory=tuple, validation_alias=AliasChoices("API_RATE_LIMIT_WHITELIST"))
 
     @field_validator("overrides", mode="before")
     @classmethod
@@ -107,9 +122,20 @@ class RateLimitSettings(AurumBaseModel):
             return parsed
         raise TypeError("Invalid rate limit overrides definition")
 
+    @field_validator("whitelist", mode="before")
+    @classmethod
+    def _parse_whitelist(cls, value: Any) -> tuple[str, ...]:
+        if value in (None, ""):
+            return ()
+        if isinstance(value, str):
+            return tuple(item.strip() for item in value.split(",") if item.strip())
+        if isinstance(value, Iterable):  # pragma: no cover - passthrough
+            return tuple(str(item).strip() for item in value if str(item).strip())
+        raise TypeError("Invalid rate limit whitelist definition")
+
 
 class AuthSettings(AurumBaseModel):
-    disabled: bool = Field(default=True, validation_alias=AliasChoices("API_AUTH_DISABLED"))
+    disabled: bool = Field(default=False, validation_alias=AliasChoices("API_AUTH_DISABLED"))
     admin_groups: tuple[str, ...] = Field(default_factory=lambda: ("aurum-admins",), validation_alias=AliasChoices("API_ADMIN_GROUP"))
     oidc_issuer: str | None = Field(default=None, validation_alias=AliasChoices("API_OIDC_ISSUER"))
     oidc_audience: str | None = Field(default=None, validation_alias=AliasChoices("API_OIDC_AUDIENCE"))
@@ -242,11 +268,190 @@ class AurumSettings(BaseSettings):
         overrides: Mapping[str, Any] | None = None,
     ) -> "AurumSettings":
         """Instantiate settings from environment with optional secret overrides."""
-
         settings = cls(**(overrides or {}))
+        env = os.environ
+
+        def update_auth(**kwargs: Any) -> None:
+            nonlocal settings
+            settings = settings.model_copy(
+                update={"auth": settings.auth.model_copy(update=kwargs)},
+                deep=True,
+            )
+
+        def update_api(**kwargs: Any) -> None:
+            nonlocal settings
+            settings = settings.model_copy(
+                update={"api": settings.api.model_copy(update=kwargs)},
+                deep=True,
+            )
+
+        def update_rate_limit(**kwargs: Any) -> None:
+            rate_limit = settings.api.rate_limit.model_copy(update=kwargs)
+            update_api(rate_limit=rate_limit)
+
+        def update_cache(**kwargs: Any) -> None:
+            cache = settings.api.cache.model_copy(update=kwargs)
+            update_api(cache=cache)
+
+        def update_metrics(**kwargs: Any) -> None:
+            metrics = settings.api.metrics.model_copy(update=kwargs)
+            update_api(metrics=metrics)
+
+        def update_pagination(**kwargs: Any) -> None:
+            nonlocal settings
+            settings = settings.model_copy(
+                update={"pagination": settings.pagination.model_copy(update=kwargs)},
+                deep=True,
+            )
+
+        def update_trino(**kwargs: Any) -> None:
+            nonlocal settings
+            settings = settings.model_copy(
+                update={"trino": settings.trino.model_copy(update=kwargs)},
+                deep=True,
+            )
+
+        def update_redis(**kwargs: Any) -> None:
+            nonlocal settings
+            settings = settings.model_copy(
+                update={"redis": settings.redis.model_copy(update=kwargs)},
+                deep=True,
+            )
+
+        def update_database(**kwargs: Any) -> None:
+            nonlocal settings
+            settings = settings.model_copy(
+                update={"database": settings.database.model_copy(update=kwargs)},
+                deep=True,
+            )
+
+        if (value := env.get("AURUM_API_ADMIN_GROUP")) is not None:
+            groups = tuple(item.strip().lower() for item in value.split(",") if item.strip())
+            update_auth(admin_groups=groups)
+        if (value := env.get("AURUM_API_AUTH_DISABLED")) is not None:
+            update_auth(disabled=cls._truthy(value))
+        if (value := env.get("AURUM_API_OIDC_ISSUER")) is not None:
+            update_auth(oidc_issuer=value.strip())
+        if (value := env.get("AURUM_API_OIDC_AUDIENCE")) is not None:
+            update_auth(oidc_audience=value.strip())
+        if (value := env.get("AURUM_API_OIDC_JWKS_URL")) is not None:
+            update_auth(oidc_jwks_url=value.strip())
+        if (value := env.get("AURUM_API_OIDC_CLIENT_ID")) is not None:
+            update_auth(client_id=value.strip())
+        if (value := env.get("AURUM_API_OIDC_CLIENT_SECRET")) is not None:
+            update_auth(client_secret=value.strip())
+        if (value := env.get("AURUM_API_JWT_SECRET")) is not None:
+            update_auth(jwt_secret=value.strip())
+        if (value := env.get("AURUM_API_JWT_LEEWAY")) is not None:
+            update_auth(jwt_leeway_seconds=int(value))
+
+        if (value := env.get("AURUM_API_CORS_ORIGINS")) is not None:
+            origins = tuple(item.strip() for item in value.split(",") if item.strip())
+            update_api(cors_allow_origins=origins)
+        if (value := env.get("AURUM_API_CORS_ALLOW_CREDENTIALS")) is not None:
+            update_api(cors_allow_credentials=cls._truthy(value))
+        if (value := env.get("AURUM_API_GZIP_MIN_BYTES")) is not None:
+            update_api(gzip_min_bytes=int(value))
+        if (value := env.get("AURUM_API_REQUEST_TIMEOUT")) is not None:
+            update_api(request_timeout_seconds=float(value))
+        if (value := env.get("AURUM_API_SCENARIO_OUTPUTS_ENABLED")) is not None:
+            update_api(scenario_outputs_enabled=cls._truthy(value))
+        if (value := env.get("AURUM_API_PPA_WRITE_ENABLED")) is not None:
+            update_api(ppa_write_enabled=cls._truthy(value))
+
+        if (value := env.get("AURUM_API_RATE_LIMIT_ENABLED")) is not None:
+            update_rate_limit(enabled=cls._truthy(value))
+        if (value := env.get("AURUM_API_RATE_LIMIT_RPS")) is not None:
+            update_rate_limit(requests_per_second=int(value))
+        if (value := env.get("AURUM_API_RATE_LIMIT_BURST")) is not None:
+            update_rate_limit(burst=int(value))
+        if (value := env.get("AURUM_API_RATE_LIMIT_HEADER")) is not None:
+            update_rate_limit(identifier_header=value.strip())
+        if (value := env.get("AURUM_API_RATE_LIMIT_OVERRIDES")) is not None:
+            overrides: dict[str, tuple[int, int]] = {}
+            for entry in value.split(","):
+                entry = entry.strip()
+                if not entry or "=" not in entry:
+                    continue
+                path_part, limits_part = entry.split("=", 1)
+                tokens = limits_part.split(":")
+                if len(tokens) != 2:
+                    continue
+                try:
+                    overrides[path_part.strip()] = (int(tokens[0]), int(tokens[1]))
+                except ValueError:
+                    continue
+            if overrides:
+                update_rate_limit(overrides=overrides)
+
+        if (value := env.get("AURUM_API_METRICS_ENABLED")) is not None:
+            update_metrics(enabled=cls._truthy(value))
+        if (value := env.get("AURUM_API_METRICS_PATH")) is not None:
+            update_metrics(path=value.strip())
+
+        if (value := env.get("AURUM_API_INMEMORY_TTL")) is not None:
+            update_cache(in_memory_ttl=int(value))
+        if (value := env.get("AURUM_API_METADATA_REDIS_TTL")) is not None:
+            update_cache(metadata_ttl=int(value))
+        if (value := env.get("AURUM_API_SCENARIO_OUTPUT_TTL")) is not None:
+            update_cache(scenario_output_ttl=int(value))
+        if (value := env.get("AURUM_API_SCENARIO_METRICS_TTL")) is not None:
+            update_cache(scenario_metric_ttl=int(value))
+        if (value := env.get("AURUM_API_CURVE_TTL")) is not None:
+            update_cache(curve_ttl=int(value))
+        if (value := env.get("AURUM_API_CURVE_DIFF_TTL")) is not None:
+            update_cache(curve_diff_ttl=int(value))
+        if (value := env.get("AURUM_API_CURVE_STRIP_TTL")) is not None:
+            update_cache(curve_strip_ttl=int(value))
+        if (value := env.get("AURUM_API_EIA_SERIES_TTL")) is not None:
+            update_cache(eia_series_ttl=int(value))
+        if (value := env.get("AURUM_API_EIA_SERIES_DIMENSIONS_TTL")) is not None:
+            update_cache(eia_series_dimensions_ttl=int(value))
+
+        if (value := env.get("AURUM_API_CURVE_MAX_LIMIT")) is not None:
+            update_pagination(curves_max_limit=int(value))
+        if (value := env.get("AURUM_API_SCENARIO_OUTPUT_MAX_LIMIT")) is not None:
+            update_pagination(scenario_output_max_limit=int(value))
+        if (value := env.get("AURUM_API_SCENARIO_METRIC_MAX_LIMIT")) is not None:
+            update_pagination(scenario_metric_max_limit=int(value))
+        if (value := env.get("AURUM_API_EIA_SERIES_MAX_LIMIT")) is not None:
+            update_pagination(eia_series_max_limit=int(value))
+
+        if (value := env.get("AURUM_API_TRINO_HOST")) is not None:
+            update_trino(host=value.strip())
+        if (value := env.get("AURUM_API_TRINO_PORT")) is not None:
+            update_trino(port=int(value))
+        if (value := env.get("AURUM_API_TRINO_USER")) is not None:
+            update_trino(user=value.strip())
+        if (value := env.get("AURUM_API_TRINO_SCHEME")) is not None:
+            update_trino(http_scheme=value.strip())
+
+        if (value := env.get("AURUM_API_REDIS_URL")) is not None:
+            update_redis(url=value.strip())
+        if (value := env.get("AURUM_API_REDIS_MODE")) is not None:
+            update_redis(mode=value.strip())
+        if (value := env.get("AURUM_API_REDIS_DB")) is not None:
+            update_redis(db=int(value))
+        if (value := env.get("AURUM_API_REDIS_USERNAME")) is not None:
+            update_redis(username=value.strip())
+        if (value := env.get("AURUM_API_REDIS_PASSWORD")) is not None:
+            update_redis(password=value.strip())
+        if (value := env.get("AURUM_API_CACHE_TTL")) is not None:
+            update_redis(ttl_seconds=int(value))
+
+        if (value := env.get("AURUM_TIMESCALE_DSN")) is not None:
+            update_database(timescale_dsn=value.strip())
+        if (value := env.get("AURUM_API_EIA_SERIES_TABLE")) is not None:
+            update_database(eia_series_base_table=value.strip())
+
         if vault_mapping:
             settings = settings._apply_vault_mapping(vault_mapping)
         return settings
+
+    @staticmethod
+    def _truthy(value: str) -> bool:
+        return value.strip().lower() in {"1", "true", "yes", "on"}
+
 
     def _apply_vault_mapping(self, mapping: Mapping[str, Any]) -> "AurumSettings":
         """Return a copy with values overridden from a Vault-style mapping.

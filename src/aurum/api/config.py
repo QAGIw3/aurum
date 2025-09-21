@@ -11,12 +11,12 @@ from aurum.core.settings import RedisMode
 
 @dataclass(frozen=True)
 class TrinoConfig:
-    host: str
-    port: int
-    user: str
-    http_scheme: str
-    catalog: str
-    schema: str
+    host: str = "localhost"
+    port: int = 8080
+    user: str = "aurum"
+    http_scheme: str = "http"
+    catalog: str = "iceberg"
+    schema: str = "market"
     password: str | None = None
 
     @classmethod

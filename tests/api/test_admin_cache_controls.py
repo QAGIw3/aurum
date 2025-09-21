@@ -65,9 +65,22 @@ class FakeRedis:
         return {member.encode("utf-8") for member in members}
 
     def delete(self, *keys: str):
+        removed = 0
         for key in keys:
-            self.store.pop(key, None)
-            self.sets.pop(key, None)
+            key_str = key.decode("utf-8") if isinstance(key, bytes) else str(key)
+            if key_str in self.store:
+                self.store.pop(key_str, None)
+                removed += 1
+            if key_str in self.sets:
+                self.sets.pop(key_str, None)
+        return removed
+
+    def scan_iter(self, pattern: str):
+        from fnmatch import fnmatch
+
+        for key in list(self.store.keys()):
+            if fnmatch(key, pattern):
+                yield key
 
     def srem(self, key: str, *members: Any) -> int:
         target = self.sets.get(key)
@@ -197,6 +210,26 @@ def test_eia_series_cache_invalidate(monkeypatch, api_client):
     assert not fake_redis.store
     assert not fake_redis.sets
 
+
+def test_curve_cache_invalidate(monkeypatch, api_client):
+    from aurum.api import service
+
+    client, api_app = api_client
+    fake_redis = FakeRedis()
+    monkeypatch.setattr(service, "_maybe_redis_client", lambda cfg: fake_redis)
+    monkeypatch.setattr(api_app, "ADMIN_GROUPS", {"aurum-admins"})
+
+    fake_redis.store["curves:hash1"] = "[]"
+    fake_redis.store["curves-diff:hash2"] = "[]"
+
+    _set_admin(client, api_app)
+    resp = client.post("/v1/admin/cache/curves/invalidate")
+    assert resp.status_code == 200
+    payload = resp.json()
+    scopes = {entry["scope"]: entry for entry in payload["data"]}
+    assert scopes["curves"]["redis_keys_removed"] == 1
+    assert scopes["curves-diff"]["redis_keys_removed"] == 1
+    assert not fake_redis.store
 
 def test_metadata_invalidate_requires_admin(monkeypatch, api_client):
     client, api_app = api_client

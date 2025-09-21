@@ -29,7 +29,7 @@ SELECT
     r.ingest_job_id,
     r.tenant_id
 FROM ranked AS r
-LEFT JOIN {{ source('iceberg_ref', 'geographies') }} AS g
+LEFT JOIN {{ iceberg_relation('ref', 'geographies', 'geographies') }} AS g
     ON g.region_type = r.region_type
    AND g.region_id = r.region_id
 WHERE r.rn = 1

@@ -4,6 +4,7 @@ config-version: 2
 profile: "aurum"
 
 model-paths: ["dbt/models"]
+macro-paths: ["dbt/macros"]
 seed-paths: ["dbt/seeds"]
 analysis-paths: ["dbt/analysis"]
 target-path: "artifacts/dbt/target"
@@ -18,15 +19,19 @@ models:
       +schema: stg
     int:
       +schema: int
-    mart:
+    marts:
       +schema: mart
-    publish:
-      +schema: market
 
 seeds:
   aurum:
-    +schema: ref
+    ref:
+      +schema: ref
     raw:
       +schema: raw
     market:
-      +schema: market
+      +schema: market_seed
+    timescale:
+      +schema: public
+      +database: "{{ 'timeseries' if target.name != 'duckdb' else (target.database if target.database else 'main') }}"
+    environment:
+      +schema: environment
