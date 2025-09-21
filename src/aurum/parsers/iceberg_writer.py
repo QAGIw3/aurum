@@ -179,16 +179,17 @@ def _build_ppa_schema():
         NestedField(1, "asof_date", DateType()),
         NestedField(2, "ppa_contract_id", StringType(), required=True),
         NestedField(3, "scenario_id", StringType(), required=True),
-        NestedField(4, "curve_key", StringType()),
-        NestedField(5, "period_start", DateType()),
-        NestedField(6, "period_end", DateType()),
-        NestedField(7, "cashflow", DecimalType(18, 6)),
-        NestedField(8, "npv", DecimalType(18, 6)),
-        NestedField(9, "irr", DoubleType()),
-        NestedField(10, "metric", StringType(), required=True),
-        NestedField(11, "value", DecimalType(18, 6)),
-        NestedField(12, "version_hash", StringType()),
-        NestedField(13, "_ingest_ts", TimestampType()),
+        NestedField(4, "tenant_id", StringType(), required=True),
+        NestedField(5, "curve_key", StringType()),
+        NestedField(6, "period_start", DateType()),
+        NestedField(7, "period_end", DateType()),
+        NestedField(8, "cashflow", DecimalType(18, 6)),
+        NestedField(9, "npv", DecimalType(18, 6)),
+        NestedField(10, "irr", DoubleType()),
+        NestedField(11, "metric", StringType(), required=True),
+        NestedField(12, "value", DecimalType(18, 6)),
+        NestedField(13, "version_hash", StringType()),
+        NestedField(14, "_ingest_ts", TimestampType()),
     )
 
 
@@ -200,9 +201,11 @@ def _build_ppa_partition_spec(schema):
     YearTransform = transforms_module.YearTransform
 
     contract_field = schema.find_field("ppa_contract_id").field_id
+    tenant_field = schema.find_field("tenant_id").field_id
     asof_field = schema.find_field("asof_date").field_id
 
     return PartitionSpec(
+        PartitionField(source_id=tenant_field, transform=IdentityTransform(), name="tenant_id"),
         PartitionField(source_id=contract_field, transform=IdentityTransform(), name="ppa_contract_id"),
         PartitionField(source_id=asof_field, transform=YearTransform(), name="asof_year"),
     )
@@ -321,7 +324,7 @@ def _delete_existing_ppa_rows(table, frame: pd.DataFrame) -> None:
         from pyiceberg.expressions import And, EqualTo  # type: ignore
     except ModuleNotFoundError:
         return
-    key_cols = ["ppa_contract_id", "scenario_id", "period_start", "metric"]
+    key_cols = ["tenant_id", "ppa_contract_id", "scenario_id", "period_start", "metric"]
     if any(col not in frame.columns for col in key_cols):
         return
     unique_keys = frame[key_cols].dropna().drop_duplicates()
@@ -407,6 +410,13 @@ def write_ppa_valuation(
     decimal_columns = ("cashflow", "npv", "value")
     for column in decimal_columns:
         frame[column] = frame[column].apply(_to_quantized_decimal)
+
+    if "tenant_id" in frame.columns:
+        frame["tenant_id"] = frame["tenant_id"].apply(
+            lambda value: str(value) if value is not None and str(value).strip() else None
+        )
+        if frame["tenant_id"].isna().any():
+            raise ValueError("tenant_id is required for PPA valuations")
 
     frame["irr"] = frame["irr"].apply(
         lambda value: float(value) if value is not None and not pd.isna(value) else None

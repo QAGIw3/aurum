@@ -56,6 +56,13 @@ paths:
           schema:
             type: string
           description: Cursor pointing to the previous page; use the `meta.prev_cursor` value from a prior response.
+        - name: format
+          in: query
+          description: Response format (set to `csv` to stream results).
+          schema:
+            type: string
+            enum: [json, csv]
+            default: json
       responses:
         '200':
           description: Curve data retrieved.
@@ -68,6 +75,451 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/CurveResponse'
+            text/csv:
+              schema:
+                type: string
+                format: binary
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+  /v1/iso/lmp/last-24h:
+    get:
+      summary: Latest ISO LMP observations
+      description: Return the most recent 24 hours of ISO LMP records across all markets.
+      operationId: listIsoLmpLast24h
+      security:
+        - oauth2: [aurum]
+      parameters:
+        - name: iso_code
+          in: query
+          schema:
+            type: string
+          description: Filter by ISO code (e.g. MISO, CAISO).
+        - name: market
+          in: query
+          schema:
+            type: string
+          description: Filter by market name (DAY_AHEAD, REAL_TIME, etc.).
+        - name: location_id
+          in: query
+          schema:
+            type: string
+          description: Settlement location identifier filter.
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 2000
+          description: Maximum number of records to return (default 500).
+      responses:
+        '200':
+          description: ISO LMP records returned.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/IsoLmpResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+  /v1/iso/lmp/hourly:
+    get:
+      summary: Hourly ISO LMP aggregates
+      description: Return aggregated hourly ISO LMP values for the last 30 days.
+      operationId: listIsoLmpHourlyAggregates
+      security:
+        - oauth2: [aurum]
+      parameters:
+        - name: iso_code
+          in: query
+          schema:
+            type: string
+        - name: market
+          in: query
+          schema:
+            type: string
+        - name: location_id
+          in: query
+          schema:
+            type: string
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 2000
+          description: Maximum number of rows to return (default 500).
+      responses:
+        '200':
+          description: ISO LMP hourly aggregates returned.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/IsoLmpAggregateResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+  /v1/iso/lmp/daily:
+    get:
+      summary: Daily ISO LMP aggregates
+      description: Return daily ISO LMP aggregates for the past year.
+      operationId: listIsoLmpDailyAggregates
+      security:
+        - oauth2: [aurum]
+      parameters:
+        - name: iso_code
+          in: query
+          schema:
+            type: string
+        - name: market
+          in: query
+          schema:
+            type: string
+        - name: location_id
+          in: query
+          schema:
+            type: string
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 2000
+          description: Maximum number of rows to return (default 500).
+      responses:
+        '200':
+          description: ISO LMP daily aggregates returned.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/IsoLmpAggregateResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+  /v1/iso/lmp/negative:
+    get:
+      summary: Recent negative ISO LMP events
+      description: Return the most negative ISO LMP observations across the last seven days.
+      operationId: listIsoLmpNegativePrices
+      security:
+        - oauth2: [aurum]
+      parameters:
+        - name: iso_code
+          in: query
+          schema:
+            type: string
+        - name: market
+          in: query
+          schema:
+            type: string
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 1000
+          description: Maximum number of rows to return (default 200).
+      responses:
+        '200':
+          description: ISO LMP records returned.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/IsoLmpResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+  /v1/drought/dimensions:
+    get:
+      summary: List available drought datasets, indices, and layers.
+      operationId: listDroughtDimensions
+      security:
+        - oauth2: [aurum]
+      responses:
+        '200':
+          description: Dimension catalogs returned.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DroughtDimensionsResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+  /v1/drought/indices:
+    get:
+      summary: Retrieve drought index time series aggregated by geography.
+      operationId: listDroughtIndices
+      security:
+        - oauth2: [aurum]
+      parameters:
+        - name: dataset
+          in: query
+          schema:
+            type: string
+          required: false
+          description: Source dataset key (nclimgrid, acis, cpc, prism, eddi).
+        - name: index
+          in: query
+          schema:
+            type: string
+          required: false
+          description: Drought index (SPI, SPEI, EDDI, PDSI, QuickDRI, VHI).
+        - name: timescale
+          in: query
+          schema:
+            type: string
+          required: false
+          description: Accumulation timescale such as 1M, 3M, 6M, 12M.
+        - name: region
+          in: query
+          schema:
+            type: string
+          required: false
+          description: Combined region specifier in the form REGION_TYPE:REGION_ID.
+        - name: region_type
+          in: query
+          schema:
+            type: string
+          required: false
+          description: Region type (ISO_NODE, ISO_ZONE, STATE, COUNTY, HUC2, HUC8).
+        - name: region_id
+          in: query
+          schema:
+            type: string
+          required: false
+          description: Region identifier corresponding to the chosen region_type.
+        - name: start
+          in: query
+          schema:
+            type: string
+            format: date
+          required: false
+          description: Inclusive start date (YYYY-MM-DD).
+        - name: end
+          in: query
+          schema:
+            type: string
+            format: date
+          required: false
+          description: Inclusive end date (YYYY-MM-DD).
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 5000
+          required: false
+          description: Maximum number of rows to return (default 250).
+      responses:
+        '200':
+          description: Drought index rows returned.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DroughtIndexResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+  /v1/drought/usdm:
+    get:
+      summary: Retrieve USDM area fractions by geography.
+      operationId: listDroughtUsdm
+      security:
+        - oauth2: [aurum]
+      parameters:
+        - name: region
+          in: query
+          schema:
+            type: string
+          required: false
+          description: Combined region specifier REGION_TYPE:REGION_ID.
+        - name: region_type
+          in: query
+          schema:
+            type: string
+          required: false
+          description: Region type (ISO_ZONE, STATE, COUNTY, HUC2, HUC8, etc.).
+        - name: region_id
+          in: query
+          schema:
+            type: string
+          required: false
+          description: Region identifier value.
+        - name: start
+          in: query
+          schema:
+            type: string
+            format: date
+          required: false
+          description: Inclusive start valid_date.
+        - name: end
+          in: query
+          schema:
+            type: string
+            format: date
+          required: false
+          description: Inclusive end valid_date.
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 5000
+          required: false
+          description: Maximum number of rows to return (default 250).
+      responses:
+        '200':
+          description: USDM area fractions returned.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DroughtUsdmResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+  /v1/drought/layers:
+  /v1/drought/tiles/{dataset}/{index}/{timescale}/{z}/{x}/{y}.png:
+    get:
+      summary: Proxy XYZ tiles for drought rasters.
+      operationId: proxyDroughtTile
+      parameters:
+        - name: dataset
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: index
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: timescale
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: z
+          in: path
+          required: true
+          schema:
+            type: integer
+        - name: x
+          in: path
+          required: true
+          schema:
+            type: integer
+        - name: y
+          in: path
+          required: true
+          schema:
+            type: integer
+        - name: valid_date
+          in: query
+          required: true
+          schema:
+            type: string
+            format: date
+          description: Valid date (YYYY-MM-DD) for the raster.
+      responses:
+        '200':
+          description: PNG tile payload.
+          content:
+            image/png:
+              schema:
+                type: string
+                format: binary
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+  /v1/drought/info/{dataset}/{index}/{timescale}:
+    get:
+      summary: Retrieve info.json metadata for drought raster tiles.
+      operationId: getDroughtTileInfo
+      parameters:
+        - name: dataset
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: index
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: timescale
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: valid_date
+          in: query
+          required: true
+          schema:
+            type: string
+            format: date
+      responses:
+        '200':
+          description: info.json payload returned.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DroughtInfoResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+    get:
+      summary: Retrieve vector overlay events (QPF, AHPS, AQI, wildfire, etc.).
+      operationId: listDroughtLayers
+      security:
+        - oauth2: [aurum]
+      parameters:
+        - name: layer
+          in: query
+          schema:
+            type: string
+          required: false
+          description: Layer key (qpf, ahps_flood, aqi, wildfire).
+        - name: region
+          in: query
+          schema:
+            type: string
+          required: false
+          description: Combined region specifier REGION_TYPE:REGION_ID.
+        - name: region_type
+          in: query
+          schema:
+            type: string
+          required: false
+          description: Region type filter.
+        - name: region_id
+          in: query
+          schema:
+            type: string
+          required: false
+          description: Region identifier filter.
+        - name: start
+          in: query
+          schema:
+            type: string
+            format: date-time
+          required: false
+          description: Earliest valid_start timestamp (ISO 8601).
+        - name: end
+          in: query
+          schema:
+            type: string
+            format: date-time
+          required: false
+          description: Latest valid_end/valid_start timestamp (ISO 8601).
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 5000
+          required: false
+          description: Maximum number of events to return (default 250).
+      responses:
+        '200':
+          description: Vector overlay events returned.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DroughtVectorResponse'
         '401':
           $ref: '#/components/responses/Unauthorized'
   /v1/scenarios:
@@ -380,6 +832,14 @@ paths:
             type: string
           required: false
           description: Cursor pointing to the previous page; use the `meta.prev_cursor` value from a prior response.
+        - name: format
+          in: query
+          required: false
+          description: Response format (set to `csv` to stream results).
+          schema:
+            type: string
+            enum: [json, csv]
+            default: json
       responses:
         '200':
           description: Scenario outputs.
@@ -392,6 +852,10 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/ScenarioOutputResponse'
+            text/csv:
+              schema:
+                type: string
+                format: binary
         '401':
           $ref: '#/components/responses/Unauthorized'
   /v1/scenarios/{id}/metrics/latest:
@@ -913,6 +1377,14 @@ paths:
           schema:
             type: string
           description: Cursor returned from meta.prev_cursor to page backwards
+        - name: format
+          in: query
+          required: false
+          description: Response format (set to `csv` to stream results).
+          schema:
+            type: string
+            enum: [json, csv]
+            default: json
       responses:
         '200':
           description: EIA series observations returned
@@ -924,6 +1396,10 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/EiaSeriesResponse'
+            text/csv:
+              schema:
+                type: string
+                format: binary
         '401':
           $ref: '#/components/responses/Unauthorized'
 
@@ -1164,6 +1640,216 @@ components:
           type: array
           items:
             $ref: '#/components/schemas/CurveDiffPoint'
+    DroughtIndexPoint:
+      type: object
+      required: [series_id, dataset, index, timescale, valid_date, region_type, region_id]
+      properties:
+        series_id:
+          type: string
+        dataset:
+          type: string
+        index:
+          type: string
+        timescale:
+          type: string
+        valid_date:
+          type: string
+          format: date
+        as_of:
+          type: string
+          format: date-time
+          nullable: true
+        value:
+          type: number
+          format: double
+          nullable: true
+        unit:
+          type: string
+          nullable: true
+        poc:
+          type: string
+          nullable: true
+        region_type:
+          type: string
+        region_id:
+          type: string
+        region_name:
+          type: string
+          nullable: true
+        parent_region_id:
+          type: string
+          nullable: true
+        source_url:
+          type: string
+          nullable: true
+        metadata:
+          type: object
+          additionalProperties: true
+          nullable: true
+    DroughtIndexResponse:
+      type: object
+      properties:
+        meta:
+          $ref: '#/components/schemas/Meta'
+        data:
+          type: array
+          items:
+            $ref: '#/components/schemas/DroughtIndexPoint'
+    DroughtUsdmPoint:
+      type: object
+      required: [region_type, region_id, valid_date]
+      properties:
+        region_type:
+          type: string
+        region_id:
+          type: string
+        region_name:
+          type: string
+          nullable: true
+        parent_region_id:
+          type: string
+          nullable: true
+        valid_date:
+          type: string
+          format: date
+        as_of:
+          type: string
+          format: date-time
+          nullable: true
+        d0_frac:
+          type: number
+          format: double
+          nullable: true
+        d1_frac:
+          type: number
+          format: double
+          nullable: true
+        d2_frac:
+          type: number
+          format: double
+          nullable: true
+        d3_frac:
+          type: number
+          format: double
+          nullable: true
+        d4_frac:
+          type: number
+          format: double
+          nullable: true
+        source_url:
+          type: string
+          nullable: true
+        metadata:
+          type: object
+          additionalProperties: true
+          nullable: true
+    DroughtUsdmResponse:
+      type: object
+      properties:
+        meta:
+          $ref: '#/components/schemas/Meta'
+        data:
+          type: array
+          items:
+            $ref: '#/components/schemas/DroughtUsdmPoint'
+    DroughtVectorEventPoint:
+      type: object
+      required: [layer, event_id]
+      properties:
+        layer:
+          type: string
+        event_id:
+          type: string
+        region_type:
+          type: string
+          nullable: true
+        region_id:
+          type: string
+          nullable: true
+        region_name:
+          type: string
+          nullable: true
+        parent_region_id:
+          type: string
+          nullable: true
+        valid_start:
+          type: string
+          format: date-time
+          nullable: true
+        valid_end:
+          type: string
+          format: date-time
+          nullable: true
+        value:
+          type: number
+          format: double
+          nullable: true
+        unit:
+          type: string
+          nullable: true
+        category:
+          type: string
+          nullable: true
+        severity:
+          type: string
+          nullable: true
+        source_url:
+          type: string
+          nullable: true
+        geometry_wkt:
+          type: string
+          nullable: true
+        properties:
+          type: object
+          additionalProperties: true
+          nullable: true
+    DroughtVectorResponse:
+      type: object
+      properties:
+        meta:
+          $ref: '#/components/schemas/Meta'
+        data:
+          type: array
+          items:
+            $ref: '#/components/schemas/DroughtVectorEventPoint'
+    DroughtDimensions:
+      type: object
+      properties:
+        datasets:
+          type: array
+          items:
+            type: string
+        indices:
+          type: array
+          items:
+            type: string
+        timescales:
+          type: array
+          items:
+            type: string
+        layers:
+          type: array
+          items:
+            type: string
+        region_types:
+          type: array
+          items:
+            type: string
+    DroughtDimensionsResponse:
+      type: object
+      properties:
+        meta:
+          $ref: '#/components/schemas/Meta'
+        data:
+          $ref: '#/components/schemas/DroughtDimensions'
+    DroughtInfoResponse:
+      type: object
+      properties:
+        meta:
+          $ref: '#/components/schemas/Meta'
+        data:
+          type: object
+          additionalProperties: true
     DimensionsData:
       type: object
       properties:

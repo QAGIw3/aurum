@@ -1,0 +1,117 @@
+version: 2
+
+sources:
+  - name: iceberg_environment
+    schema: environment
+    tables:
+      - name: drought_index
+        description: "Zonal drought index measurements written from Airflow ingestion."
+        columns:
+          - name: series_id
+            tests:
+              - not_null
+          - name: region_type
+            tests:
+              - not_null
+          - name: region_id
+            tests:
+              - not_null
+          - name: valid_date
+            tests:
+              - not_null
+      - name: usdm_area
+        description: "USDM area fractions by severity and geography."
+        columns:
+          - name: region_type
+            tests:
+              - not_null
+          - name: region_id
+            tests:
+              - not_null
+          - name: valid_date
+            tests:
+              - not_null
+      - name: vector_events
+        description: "Canonicalized vector overlay events (QPF, AHPS, AQI, wildfire, etc.)."
+        columns:
+          - name: layer
+            tests:
+              - not_null
+          - name: event_id
+            tests:
+              - not_null
+  - name: iceberg_ref
+    schema: ref
+    tables:
+      - name: geographies
+        description: "Reference geometries keyed by region_type and region_id."
+        columns:
+          - name: region_type
+            tests:
+              - not_null
+          - name: region_id
+            tests:
+              - not_null
+
+models:
+  - name: stg_drought_index
+    description: "Staging view exposing raw drought index records with JSON metadata."
+    columns:
+      - name: series_id
+        tests: [not_null]
+      - name: region_type
+        tests: [not_null]
+      - name: region_id
+        tests: [not_null]
+      - name: index_id
+        tests: [not_null]
+      - name: valid_date
+        tests: [not_null]
+  - name: stg_usdm_area
+    description: "Staging view for USDM area fractions at the latest ingest."
+    columns:
+      - name: region_type
+        tests: [not_null]
+      - name: region_id
+        tests: [not_null]
+      - name: valid_date
+        tests: [not_null]
+  - name: stg_vector_event
+    description: "Staging view for vector overlays with geometry serialized as WKT."
+    columns:
+      - name: layer
+        tests: [not_null]
+      - name: event_id
+        tests: [not_null]
+      - name: ingest_ts
+        tests: [not_null]
+  - name: fct_drought_index
+    description: "Latest drought index value per series_id and valid_date with geography context."
+    tests:
+      - unique:
+          column_name: "series_id || '|' || cast(valid_date as varchar)"
+    columns:
+      - name: value
+        tests: [not_null]
+      - name: region_type
+        tests: [not_null]
+      - name: region_id
+        tests: [not_null]
+  - name: fct_usdm_area
+    description: "Latest USDM severity fractions by geography."
+    tests:
+      - unique:
+          column_name: "region_type || '|' || region_id || '|' || cast(valid_date as varchar)"
+    columns:
+      - name: d0_frac
+        tests: [not_null]
+      - name: d4_frac
+        description: "Fraction of area under D4 severity (may be zero)."
+  - name: fct_vector_event
+    description: "Latest vector overlay per layer/event with geometry."
+    tests:
+      - unique:
+          column_name: "layer || '|' || event_id"
+    columns:
+      - name: source_url
+        tests: [not_null]

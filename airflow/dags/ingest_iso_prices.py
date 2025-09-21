@@ -10,7 +10,8 @@ from airflow.operators.bash import BashOperator
 from airflow.operators.empty import EmptyOperator
 from airflow.operators.python import PythonOperator
 
-from aurum.airflow_utils import build_failure_callback, build_preflight_callable, metrics
+from aurum.airflow_utils import build_failure_callback, build_preflight_callable
+from aurum.airflow_utils import iso as iso_utils
 
 
 DEFAULT_ARGS: dict[str, Any] = {
@@ -27,47 +28,24 @@ DEFAULT_ARGS: dict[str, Any] = {
 
 BIN_PATH = os.environ.get("AURUM_BIN_PATH", ".venv/bin:$PATH")
 PYTHONPATH_ENTRY = os.environ.get("AURUM_PYTHONPATH_ENTRY", "/opt/airflow/src")
+SOURCES = (
+    iso_utils.IngestSource(
+        "caiso_helper",
+        description="CAISO PRC_LMP helper ingestion",
+        schedule="30 * * * *",
+        target="kafka",
+    ),
+    iso_utils.IngestSource(
+        "ercot_helper",
+        description="ERCOT MIS helper ingestion",
+        schedule="30 * * * *",
+        target="kafka",
+    ),
+)
 
 
 def _register_sources() -> None:
-    # Defer import so the real package is used at runtime inside Airflow workers
-    try:
-        import sys
-        src_path = os.environ.get("AURUM_PYTHONPATH_ENTRY", "/opt/airflow/src")
-        if src_path and src_path not in sys.path:
-            sys.path.insert(0, src_path)
-        from aurum.db import register_ingest_source  # type: ignore
-
-        for name, description in (
-            ("caiso_helper", "CAISO PRC_LMP helper ingestion"),
-            ("ercot_helper", "ERCOT MIS helper ingestion"),
-        ):
-            try:
-                register_ingest_source(
-                    name,
-                    description=description,
-                    schedule="30 * * * *",
-                    target="kafka",
-                )
-            except Exception as exc:  # pragma: no cover
-                print(f"Failed to register ingest source {name}: {exc}")
-    except Exception as exc:  # pragma: no cover
-        print(f"Failed during register_sources setup: {exc}")
-
-
-def _update_watermark(source_name: str, logical_date: datetime) -> None:
-    watermark = logical_date.astimezone(timezone.utc)
-    try:
-        import sys
-        src_path = os.environ.get("AURUM_PYTHONPATH_ENTRY", "/opt/airflow/src")
-        if src_path and src_path not in sys.path:
-            sys.path.insert(0, src_path)
-        from aurum.db import update_ingest_watermark  # type: ignore
-
-        update_ingest_watermark(source_name, "logical_date", watermark)
-        metrics.record_watermark_success(source_name, watermark)
-    except Exception as exc:  # pragma: no cover
-        print(f"Failed to update watermark for {source_name}: {exc}")
+    iso_utils.register_sources(SOURCES)
 
 
 def build_helper_task(task_id: str, command: str, *, pool: str | None = None) -> BashOperator:
@@ -139,12 +117,12 @@ with DAG(
 
     caiso_watermark = PythonOperator(
         task_id="caiso_watermark",
-        python_callable=lambda **ctx: _update_watermark("caiso_helper", ctx["logical_date"]),
+        python_callable=iso_utils.make_watermark_callable("caiso_helper"),
     )
 
     ercot_watermark = PythonOperator(
         task_id="ercot_watermark",
-        python_callable=lambda **ctx: _update_watermark("ercot_helper", ctx["logical_date"]),
+        python_callable=iso_utils.make_watermark_callable("ercot_helper"),
     )
 
     end = EmptyOperator(task_id="end")

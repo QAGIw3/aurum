@@ -6,11 +6,38 @@ from pathlib import Path
 from typing import Any, Dict, List
 
 import os
+import sys
+
+SRC_PATH = os.environ.get("AURUM_PYTHONPATH_ENTRY", "/opt/airflow/src")
+if SRC_PATH and SRC_PATH not in sys.path:
+    sys.path.insert(0, SRC_PATH)
 import tempfile
 
-from airflow.decorators import dag, task, get_current_context
+from airflow.decorators import dag, task
+try:
+    from airflow.decorators import get_current_context  # type: ignore
+except ImportError:  # Airflow <2.4
+    from airflow.operators.python import get_current_context  # type: ignore
 
-from aurum.api.config import TrinoConfig
+try:
+    from aurum.api.config import TrinoConfig  # type: ignore
+except ModuleNotFoundError:  # pragma: no cover - lightweight scheduler fallback
+    from dataclasses import dataclass
+
+    @dataclass(frozen=True)
+    class TrinoConfig:
+        host: str = 'localhost'
+        port: int = 8080
+        user: str = 'airflow'
+        http_scheme: str = 'http'
+
+        @classmethod
+        def from_env(cls) -> 'TrinoConfig':
+            host = os.getenv('AURUM_API_TRINO_HOST', 'trino')
+            port = int(os.getenv('AURUM_API_TRINO_PORT', '8080') or 8080)
+            user = os.getenv('AURUM_API_TRINO_USER', 'airflow')
+            scheme = os.getenv('AURUM_API_TRINO_SCHEME', 'http')
+            return cls(host=host, port=port, user=user, http_scheme=scheme)
 from aurum.drought.pipeline import (
     KafkaConfig,
     discover_raster_workload,

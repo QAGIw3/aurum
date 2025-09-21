@@ -84,10 +84,6 @@ class AssetFetcher:
             head = None
             remote_size = 0
             resume_supported = False
-(asset.url, headers=asset.headers, timeout=30, allow_redirects=True)
-        head.raise_for_status()
-        remote_size = int(head.headers.get("Content-Length", 0))
-        resume_supported = head.headers.get("Accept-Ranges", "").lower() == "bytes"
 
         if destination.exists() and remote_size and destination.stat().st_size == remote_size:
             checksum = self._maybe_checksum(destination, asset)

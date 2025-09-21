@@ -1,0 +1,46 @@
+{
+  "expectation_suite_name": "drought_vector_event",
+  "meta": {
+    "notes": "Structure checks for vector overlay events pushed from Airflow ingestion."
+  },
+  "expectations": [
+    {
+      "expectation_type": "expect_table_columns_to_match_set",
+      "kwargs": {
+        "column_set": [
+          "tenant_id",
+          "schema_version",
+          "ingest_ts",
+          "ingest_job_id",
+          "layer",
+          "event_id",
+          "region_type",
+          "region_id",
+          "valid_start",
+          "valid_end",
+          "value",
+          "unit",
+          "category",
+          "severity",
+          "source_url",
+          "geometry_wkt",
+          "properties"
+        ]
+      }
+    },
+    {"expectation_type": "expect_column_values_to_not_be_null", "kwargs": {"column": "layer"}},
+    {"expectation_type": "expect_column_values_to_not_be_null", "kwargs": {"column": "event_id"}},
+    {
+      "expectation_type": "expect_column_values_to_be_in_set",
+      "kwargs": {
+        "column": "layer",
+        "value_set": ["ahps_flood", "qpf", "aqi", "wildfire"]
+      }
+    },
+    {"expectation_type": "expect_column_values_to_not_be_null", "kwargs": {"column": "ingest_ts"}},
+    {
+      "expectation_type": "expect_column_values_to_match_regex",
+      "kwargs": {"column": "geometry_wkt", "regex": "^(POINT|LINESTRING|POLYGON|MULTI).*", "mostly": 0.95}
+    }
+  ]
+}

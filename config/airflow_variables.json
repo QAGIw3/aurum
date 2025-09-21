@@ -20,6 +20,18 @@
   "aurum_cpi_series_table": "cpi_series_timeseries",
 
   "aurum_iso_lmp_topic_pattern": "aurum\\.iso\\..*\\.lmp\\.v1",
+  "aurum_iso_load_topic_pattern": "aurum\\.iso\\..*\\.load\\.v1",
+  "aurum_iso_load_table": "load_timeseries",
 
-  "aurum_noaa_timescale_table": "noaa_weather_timeseries"
+  "aurum_noaa_timescale_table": "noaa_weather_timeseries",
+  "aurum_ingest_error_topic": "aurum.ingest.error.v1",
+  "aurum_ingest_dlq_lookback_minutes": "15",
+  "aurum_ingest_dlq_warn_threshold": "20",
+  "aurum_ingest_dlq_crit_threshold": "75",
+  "aurum_ingest_dlq_max_messages": "1500",
+  "aurum_timescale_dsn": "postgresql://timescale:timescale@timescale:5432/timeseries",
+  "aurum_miso_asm_exante_url": "https://apim.misoenergy.org/pricing/v1/day-ahead/${YYYY}-${MM}-${DD}/asm-exante",
+  "aurum_miso_asm_expost_url": "https://apim.misoenergy.org/pricing/v1/day-ahead/${YYYY}-${MM}-${DD}/asm-expost",
+  "aurum_miso_asm_topic": "aurum.iso.miso.asm.v1",
+  "aurum_miso_asm_subject": "aurum.iso.miso.asm.v1-value"
 }

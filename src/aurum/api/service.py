@@ -8,8 +8,10 @@ import logging
 import os
 import time
 from calendar import monthrange
-from datetime import date, datetime
-from typing import Any, Dict, Iterable, List, Optional, Tuple
+from datetime import date, datetime, timezone
+from typing import Any, Dict, Iterable, List, Mapping, Optional, Tuple
+
+import psycopg
 
 from .config import CacheConfig, TrinoConfig
 
@@ -19,6 +21,13 @@ EIA_SERIES_BASE_TABLE = os.getenv(
     "AURUM_API_EIA_SERIES_TABLE",
     "mart.mart_eia_series_latest",
 )
+
+
+def _timescale_dsn() -> str:
+    return os.getenv(
+        "AURUM_TIMESCALE_DSN",
+        "postgresql://timescale:timescale@timescale:5432/timeseries",
+    )
 
 
 def _require_trino():
@@ -37,6 +46,34 @@ def _maybe_redis_client(cache_cfg: CacheConfig):
     except ModuleNotFoundError:
         LOGGER.debug("Redis package not available; caching disabled")
         return None
+
+
+def _fetch_timescale_rows(sql: str, params: Mapping[str, object]) -> Tuple[List[Dict[str, Any]], float]:
+    start_time = time.perf_counter()
+    rows: List[Dict[str, Any]] = []
+    with psycopg.connect(_timescale_dsn(), autocommit=True) as conn:
+        with conn.cursor() as cur:
+            cur.execute(sql, params)
+            columns = [col[0] for col in cur.description]
+            for record in cur.fetchall():
+                row: Dict[str, Any] = {}
+                for column, value in zip(columns, record):
+                    if isinstance(value, datetime):
+                        if value.tzinfo is None:
+                            value = value.replace(tzinfo=timezone.utc)
+                        row[column] = value
+                    elif isinstance(value, date):
+                        row[column] = value
+                    elif column == "metadata" and isinstance(value, str):
+                        try:
+                            row[column] = json.loads(value)
+                        except json.JSONDecodeError:
+                            row[column] = None
+                    else:
+                        row[column] = value
+                rows.append(row)
+    elapsed_ms = (time.perf_counter() - start_time) * 1000.0
+    return rows, elapsed_ms
 
     socket_timeout = float(os.getenv("AURUM_API_REDIS_SOCKET_TIMEOUT", "1.5") or 1.5)
     connect_timeout = float(os.getenv("AURUM_API_REDIS_CONNECT_TIMEOUT", "1.5") or 1.5)
@@ -1011,6 +1048,7 @@ def _extract_currency(row: Dict[str, Any]) -> Optional[str]:
 
 
 def _compute_irr(cashflows: List[float], *, tolerance: float = 1e-6, max_iterations: int = 80) -> Optional[float]:
+
     if not cashflows:
         return None
     if all(cf >= 0 for cf in cashflows) or all(cf <= 0 for cf in cashflows):
@@ -1198,8 +1236,12 @@ def query_ppa_contract_valuations(
     metric: Optional[str] = None,
     limit: int = 200,
     offset: int = 0,
+    tenant_id: Optional[str] = None,
 ) -> Tuple[List[Dict[str, Any]], float]:
-    filters: Dict[str, Optional[str]] = {"ppa_contract_id": ppa_contract_id}
+    filters: Dict[str, Optional[str]] = {
+        "ppa_contract_id": ppa_contract_id,
+        "tenant_id": tenant_id,
+    }
     if scenario_id:
         filters["scenario_id"] = scenario_id
     if metric:
@@ -1210,7 +1252,7 @@ def query_ppa_contract_valuations(
         "SELECT cast(asof_date as date) as asof_date, "
         "cast(period_start as date) as period_start, "
         "cast(period_end as date) as period_end, "
-        "scenario_id, curve_key, metric, value, cashflow, npv, irr, version_hash, _ingest_ts "
+        "scenario_id, tenant_id, curve_key, metric, value, cashflow, npv, irr, version_hash, _ingest_ts "
         "FROM iceberg.market.ppa_valuation"
         f"{where} "
         "ORDER BY asof_date DESC, scenario_id, metric, period_start DESC "
@@ -1379,6 +1421,106 @@ def invalidate_scenario_outputs_cache(
         return
 
 
+def query_iso_lmp_last_24h(
+    *,
+    iso_code: str | None = None,
+    market: str | None = None,
+    location_id: str | None = None,
+    limit: int = 500,
+) -> Tuple[List[Dict[str, Any]], float]:
+    sql = (
+        "SELECT iso_code, market, delivery_date, interval_start, interval_end, interval_minutes, "
+        "location_id, location_name, location_type, price_total, price_energy, price_congestion, "
+        "price_loss, currency, uom, settlement_point, source_run_id, ingest_ts, record_hash, metadata "
+        "FROM public.iso_lmp_last_24h WHERE 1 = 1"
+    )
+    params: Dict[str, Any] = {"limit": min(limit, 2000)}
+    if iso_code:
+        sql += " AND iso_code = %(iso_code)s"
+        params["iso_code"] = iso_code.upper()
+    if market:
+        sql += " AND market = %(market)s"
+        params["market"] = market.upper()
+    if location_id:
+        sql += " AND upper(location_id) = upper(%(location_id)s)"
+        params["location_id"] = location_id
+    sql += " ORDER BY interval_start DESC LIMIT %(limit)s"
+    return _fetch_timescale_rows(sql, params)
+
+
+def query_iso_lmp_hourly(
+    *,
+    iso_code: str | None = None,
+    market: str | None = None,
+    location_id: str | None = None,
+    limit: int = 500,
+) -> Tuple[List[Dict[str, Any]], float]:
+    sql = (
+        "SELECT iso_code, market, interval_start, location_id, currency, uom, price_avg, price_min, "
+        "price_max, price_stddev, sample_count FROM public.iso_lmp_hourly WHERE 1 = 1"
+    )
+    params: Dict[str, Any] = {"limit": min(limit, 2000)}
+    if iso_code:
+        sql += " AND iso_code = %(iso_code)s"
+        params["iso_code"] = iso_code.upper()
+    if market:
+        sql += " AND market = %(market)s"
+        params["market"] = market.upper()
+    if location_id:
+        sql += " AND upper(location_id) = upper(%(location_id)s)"
+        params["location_id"] = location_id
+    sql += " ORDER BY interval_start DESC LIMIT %(limit)s"
+    return _fetch_timescale_rows(sql, params)
+
+
+def query_iso_lmp_daily(
+    *,
+    iso_code: str | None = None,
+    market: str | None = None,
+    location_id: str | None = None,
+    limit: int = 500,
+) -> Tuple[List[Dict[str, Any]], float]:
+    sql = (
+        "SELECT iso_code, market, interval_start, location_id, currency, uom, price_avg, price_min, "
+        "price_max, price_stddev, sample_count FROM public.iso_lmp_daily WHERE 1 = 1"
+    )
+    params: Dict[str, Any] = {"limit": min(limit, 2000)}
+    if iso_code:
+        sql += " AND iso_code = %(iso_code)s"
+        params["iso_code"] = iso_code.upper()
+    if market:
+        sql += " AND market = %(market)s"
+        params["market"] = market.upper()
+    if location_id:
+        sql += " AND upper(location_id) = upper(%(location_id)s)"
+        params["location_id"] = location_id
+    sql += " ORDER BY interval_start DESC LIMIT %(limit)s"
+    return _fetch_timescale_rows(sql, params)
+
+
+def query_iso_lmp_negative(
+    *,
+    iso_code: str | None = None,
+    market: str | None = None,
+    limit: int = 200,
+) -> Tuple[List[Dict[str, Any]], float]:
+    sql = (
+        "SELECT iso_code, market, delivery_date, interval_start, interval_end, interval_minutes, "
+        "location_id, location_name, location_type, price_total, price_energy, price_congestion, "
+        "price_loss, currency, uom, settlement_point, source_run_id, ingest_ts, record_hash, metadata "
+        "FROM public.iso_lmp_negative_7d WHERE 1 = 1"
+    )
+    params: Dict[str, Any] = {"limit": min(limit, 1000)}
+    if iso_code:
+        sql += " AND iso_code = %(iso_code)s"
+        params["iso_code"] = iso_code.upper()
+    if market:
+        sql += " AND market = %(market)s"
+        params["market"] = market.upper()
+    sql += " ORDER BY price_total ASC LIMIT %(limit)s"
+    return _fetch_timescale_rows(sql, params)
+
+
 __all__ = [
     "query_curves",
     "query_curves_diff",
@@ -1388,11 +1530,244 @@ __all__ = [
     "query_ppa_valuation",
     "query_ppa_contract_valuations",
     "query_scenario_metrics_latest",
+    "query_iso_lmp_last_24h",
+    "query_iso_lmp_hourly",
+    "query_iso_lmp_daily",
+    "query_iso_lmp_negative",
     "invalidate_scenario_outputs_cache",
     "TrinoConfig",
     "CacheConfig",
 ]
 
+
+
+def query_drought_indices(
+    trino_cfg: TrinoConfig,
+    *,
+    region_type: Optional[str] = None,
+    region_id: Optional[str] = None,
+    dataset: Optional[str] = None,
+    index_id: Optional[str] = None,
+    timescale: Optional[str] = None,
+    start_date: Optional[date] = None,
+    end_date: Optional[date] = None,
+    limit: int = 500,
+) -> Tuple[List[Dict[str, Any]], float]:
+    connect = _require_trino()
+    catalog = os.getenv("AURUM_TRINO_CATALOG", "iceberg")
+    base_conditions: List[str] = []
+    if region_type:
+        base_conditions.append(f"region_type = '{_safe_literal(region_type)}'")
+    if region_id:
+        base_conditions.append(f"region_id = '{_safe_literal(region_id)}'")
+    if dataset:
+        base_conditions.append(f"dataset = '{_safe_literal(dataset)}'")
+    if index_id:
+        base_conditions.append(f"\"index\" = '{_safe_literal(index_id)}'")
+    if timescale:
+        base_conditions.append(f"timescale = '{_safe_literal(timescale)}'")
+    if start_date:
+        base_conditions.append(f"valid_date >= DATE '{_safe_literal(start_date.isoformat())}'")
+    if end_date:
+        base_conditions.append(f"valid_date <= DATE '{_safe_literal(end_date.isoformat())}'")
+    where_clause = ""
+    if base_conditions:
+        where_clause = " AND " + " AND ".join(base_conditions)
+    sql = f"""
+        WITH ranked AS (
+            SELECT
+                di.*, ROW_NUMBER() OVER (
+                    PARTITION BY di.series_id, di.valid_date
+                    ORDER BY di.ingest_ts DESC
+                ) AS rn
+            FROM {catalog}.environment.drought_index AS di
+            WHERE 1 = 1{where_clause}
+        )
+        SELECT
+            series_id,
+            dataset,
+            "index" AS index,
+            timescale,
+            CAST(valid_date AS DATE) AS valid_date,
+            as_of,
+            value,
+            unit,
+            poc,
+            region_type,
+            region_id,
+            g.region_name,
+            g.parent_region_id,
+            source_url,
+            CAST(metadata AS JSON) AS metadata
+        FROM ranked r
+        LEFT JOIN {catalog}.ref.geographies g
+            ON g.region_type = r.region_type
+           AND g.region_id = r.region_id
+        WHERE rn = 1
+        ORDER BY valid_date DESC, series_id
+        LIMIT {int(limit)}
+    """
+    start_time = time.perf_counter()
+    rows: List[Dict[str, Any]] = []
+    with connect(host=trino_cfg.host, port=trino_cfg.port, user=trino_cfg.user, http_scheme=trino_cfg.http_scheme) as conn:  # type: ignore[arg-type]
+        cur = conn.cursor()
+        cur.execute(sql)
+        columns = [c[0] for c in cur.description]
+        for rec in cur.fetchall():
+            row = {col: val for col, val in zip(columns, rec)}
+            metadata = row.get("metadata")
+            if isinstance(metadata, str):
+                try:
+                    row["metadata"] = json.loads(metadata)
+                except json.JSONDecodeError:
+                    row["metadata"] = None
+            rows.append(row)
+    elapsed = (time.perf_counter() - start_time) * 1000.0
+    return rows, elapsed
+
+
+def query_drought_usdm(
+    trino_cfg: TrinoConfig,
+    *,
+    region_type: Optional[str] = None,
+    region_id: Optional[str] = None,
+    start_date: Optional[date] = None,
+    end_date: Optional[date] = None,
+    limit: int = 500,
+) -> Tuple[List[Dict[str, Any]], float]:
+    connect = _require_trino()
+    catalog = os.getenv("AURUM_TRINO_CATALOG", "iceberg")
+    conditions: List[str] = []
+    if region_type:
+        conditions.append(f"region_type = '{_safe_literal(region_type)}'")
+    if region_id:
+        conditions.append(f"region_id = '{_safe_literal(region_id)}'")
+    if start_date:
+        conditions.append(f"valid_date >= DATE '{_safe_literal(start_date.isoformat())}'")
+    if end_date:
+        conditions.append(f"valid_date <= DATE '{_safe_literal(end_date.isoformat())}'")
+    where_sql = ""
+    if conditions:
+        where_sql = " AND " + " AND ".join(conditions)
+    sql = f"""
+        WITH ranked AS (
+            SELECT
+                ua.*, ROW_NUMBER() OVER (
+                    PARTITION BY ua.region_type, ua.region_id, ua.valid_date
+                    ORDER BY ua.ingest_ts DESC
+                ) AS rn
+            FROM {catalog}.environment.usdm_area ua
+            WHERE 1 = 1{where_sql}
+        )
+        SELECT
+            region_type,
+            region_id,
+            CAST(valid_date AS DATE) AS valid_date,
+            as_of,
+            d0_frac,
+            d1_frac,
+            d2_frac,
+            d3_frac,
+            d4_frac,
+            source_url,
+            CAST(metadata AS JSON) AS metadata,
+            g.region_name,
+            g.parent_region_id
+        FROM ranked r
+        LEFT JOIN {catalog}.ref.geographies g
+            ON g.region_type = r.region_type
+           AND g.region_id = r.region_id
+        WHERE rn = 1
+        ORDER BY valid_date DESC
+        LIMIT {int(limit)}
+    """
+    start_time = time.perf_counter()
+    rows: List[Dict[str, Any]] = []
+    with connect(host=trino_cfg.host, port=trino_cfg.port, user=trino_cfg.user, http_scheme=trino_cfg.http_scheme) as conn:  # type: ignore[arg-type]
+        cur = conn.cursor()
+        cur.execute(sql)
+        columns = [c[0] for c in cur.description]
+        for rec in cur.fetchall():
+            row = {col: val for col, val in zip(columns, rec)}
+            metadata = row.get("metadata")
+            if isinstance(metadata, str):
+                try:
+                    row["metadata"] = json.loads(metadata)
+                except json.JSONDecodeError:
+                    row["metadata"] = None
+            rows.append(row)
+    elapsed = (time.perf_counter() - start_time) * 1000.0
+    return rows, elapsed
+
+
+def query_drought_vector_events(
+    trino_cfg: TrinoConfig,
+    *,
+    layer: Optional[str] = None,
+    region_type: Optional[str] = None,
+    region_id: Optional[str] = None,
+    start_time: Optional[datetime] = None,
+    end_time: Optional[datetime] = None,
+    limit: int = 500,
+) -> Tuple[List[Dict[str, Any]], float]:
+    connect = _require_trino()
+    catalog = os.getenv("AURUM_TRINO_CATALOG", "iceberg")
+    conditions: List[str] = []
+    if layer:
+        conditions.append(f"layer = '{_safe_literal(layer)}'")
+    if region_type:
+        conditions.append(f"region_type = '{_safe_literal(region_type)}'")
+    if region_id:
+        conditions.append(f"region_id = '{_safe_literal(region_id)}'")
+    if start_time:
+        conditions.append(f"valid_start >= TIMESTAMP '{_safe_literal(start_time.isoformat(sep=' ', timespec='seconds'))}'")
+    if end_time:
+        conditions.append(f"coalesce(valid_end, valid_start) <= TIMESTAMP '{_safe_literal(end_time.isoformat(sep=' ', timespec='seconds'))}'")
+    where_sql = ""
+    if conditions:
+        where_sql = " WHERE " + " AND ".join(conditions)
+    sql = f"""
+        SELECT
+            ve.layer,
+            ve.event_id,
+            ve.region_type,
+            ve.region_id,
+            g.region_name,
+            g.parent_region_id,
+            ve.valid_start,
+            ve.valid_end,
+            ve.value,
+            ve.unit,
+            ve.category,
+            ve.severity,
+            ve.source_url,
+            ve.geometry_wkt,
+            CAST(ve.properties AS JSON) AS properties
+        FROM {catalog}.environment.vector_events ve
+        LEFT JOIN {catalog}.ref.geographies g
+            ON g.region_type = ve.region_type
+           AND g.region_id = ve.region_id
+        {where_sql}
+        ORDER BY coalesce(ve.valid_start, ve.ingest_ts) DESC
+        LIMIT {int(limit)}
+    """
+    start = time.perf_counter()
+    rows: List[Dict[str, Any]] = []
+    with connect(host=trino_cfg.host, port=trino_cfg.port, user=trino_cfg.user, http_scheme=trino_cfg.http_scheme) as conn:  # type: ignore[arg-type]
+        cur = conn.cursor()
+        cur.execute(sql)
+        columns = [c[0] for c in cur.description]
+        for rec in cur.fetchall():
+            row = {col: val for col, val in zip(columns, rec)}
+            props = row.get("properties")
+            if isinstance(props, str):
+                try:
+                    row["properties"] = json.loads(props)
+                except json.JSONDecodeError:
+                    row["properties"] = None
+            rows.append(row)
+    elapsed = (time.perf_counter() - start) * 1000.0
+    return rows, elapsed
 def query_dimensions(
     trino_cfg: TrinoConfig,
     cache_cfg: CacheConfig,

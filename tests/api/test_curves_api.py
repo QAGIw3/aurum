@@ -1,9 +1,12 @@
+import os
 import sys
 import types
 from datetime import datetime
 from typing import Any
 
 import pytest
+
+os.environ.setdefault("AURUM_API_AUTH_DISABLED", "1")
 
 
 def _ensure_opentelemetry(monkeypatch):
@@ -79,15 +82,6 @@ def _ensure_opentelemetry(monkeypatch):
 
     sdk_logs_export_module = types.ModuleType("opentelemetry.sdk._logs.export")
 
-
-@pytest.fixture(autouse=True)
-def reset_store():
-    from aurum.api.scenario_service import STORE
-
-    STORE.reset()
-    yield
-    STORE.reset()
-
     class _BatchLogRecordProcessor:
         def __init__(self, _exporter):
             pass
@@ -145,6 +139,60 @@ def reset_store():
     monkeypatch.setitem(sys.modules, "opentelemetry.instrumentation.fastapi", fastapi_instr_module)
     monkeypatch.setitem(sys.modules, "opentelemetry.instrumentation.psycopg", psycopg_instr_module)
 
+    if "psycopg" not in sys.modules:
+        psycopg_stub = types.ModuleType("psycopg")
+
+        class _StubConnection:
+            def cursor(self):  # pragma: no cover - safety fallback
+                raise RuntimeError("psycopg stub cursor used in tests")
+
+            def close(self) -> None:  # pragma: no cover - safety fallback
+                return None
+
+        def _stub_connect(*_args, **_kwargs):  # pragma: no cover - safety fallback
+            return _StubConnection()
+
+        psycopg_stub.connect = _stub_connect  # type: ignore[attr-defined]
+        monkeypatch.setitem(sys.modules, "psycopg", psycopg_stub)
+
+    if "psycopg.rows" not in sys.modules:
+        rows_stub = types.ModuleType("psycopg.rows")
+        rows_stub.dict_row = lambda *_args, **_kwargs: None  # type: ignore[assignment]
+        monkeypatch.setitem(sys.modules, "psycopg.rows", rows_stub)
+
+    if "geopandas" not in sys.modules:
+        geopandas_stub = types.ModuleType("geopandas")
+
+        class _GeoDataFrame:  # pragma: no cover - simple placeholder
+            pass
+
+        geopandas_stub.GeoDataFrame = _GeoDataFrame  # type: ignore[attr-defined]
+        monkeypatch.setitem(sys.modules, "geopandas", geopandas_stub)
+
+    if "rasterio" not in sys.modules:
+        rasterio_stub = types.ModuleType("rasterio")
+        rasterio_stub.open = lambda *args, **kwargs: None  # pragma: no cover
+        rasterio_stub.enums = types.SimpleNamespace(Resampling=types.SimpleNamespace(bilinear=1))
+        rasterio_stub.mask = types.SimpleNamespace(mask=lambda *args, **kwargs: (None, None))
+        monkeypatch.setitem(sys.modules, "rasterio", rasterio_stub)
+        monkeypatch.setitem(sys.modules, "rasterio.enums", rasterio_stub.enums)
+        monkeypatch.setitem(sys.modules, "rasterio.mask", rasterio_stub.mask)
+
+    if "shapely" not in sys.modules:
+        shapely_stub = types.ModuleType("shapely")
+        shapely_stub.geometry = types.SimpleNamespace(mapping=lambda geom: geom)
+        monkeypatch.setitem(sys.modules, "shapely", shapely_stub)
+        monkeypatch.setitem(sys.modules, "shapely.geometry", shapely_stub.geometry)
+
+
+@pytest.fixture(autouse=True)
+def reset_store():
+    from aurum.api.scenario_service import STORE
+
+    STORE.reset()
+    yield
+    STORE.reset()
+
 
 def test_list_curves_basic(monkeypatch):
     pytest.importorskip("fastapi", reason="fastapi not installed")
@@ -182,6 +230,41 @@ def test_list_curves_basic(monkeypatch):
     assert "meta" in payload and "data" in payload
     assert payload["data"] and payload["data"][0]["curve_key"] == "abc"
     assert payload["meta"].get("next_cursor") is None
+
+
+def test_list_curves_csv(monkeypatch):
+    pytest.importorskip("fastapi", reason="fastapi not installed")
+    _ensure_opentelemetry(monkeypatch)
+    from fastapi.testclient import TestClient
+    from aurum.api import app as api_app
+    from aurum.api import service
+
+    def fake_query_curves(*args, **kwargs):
+        rows = [
+            {
+                "curve_key": "abc",
+                "tenor_label": "2025-09",
+                "tenor_type": "MONTHLY",
+                "contract_month": "2025-09-01",
+                "asof_date": "2025-09-12",
+                "mid": 42.0,
+                "bid": 41.9,
+                "ask": 42.1,
+                "price_type": "MID",
+            }
+        ]
+        return rows, 5.0
+
+    monkeypatch.setattr(service, "query_curves", fake_query_curves)
+
+    client = TestClient(api_app.app)
+    resp = client.get("/v1/curves", params={"limit": 1, "format": "csv"})
+    assert resp.status_code == 200
+    assert resp.headers.get("content-type", "").startswith("text/csv")
+    body_lines = [line for line in resp.text.splitlines() if line]
+    assert body_lines[0].startswith("curve_key")
+    assert "abc" in body_lines[1]
+    assert resp.headers.get("x-next-cursor") is None
 
 
 def test_list_curves_diff(monkeypatch):
@@ -771,6 +854,7 @@ def test_ppa_valuate(monkeypatch):
     assert body["data"][0]["unit"] == "USD"
     assert persisted["ppa_contract_id"] == "ppa1"
     assert persisted["scenario_id"] == "scn-123"
+    assert persisted["tenant_id"] == "tenant-42"
 
 
 def test_persist_ppa_valuation_records_formats_decimal(monkeypatch):
@@ -814,13 +898,15 @@ def test_persist_ppa_valuation_records_formats_decimal(monkeypatch):
     api_app._persist_ppa_valuation_records(
         ppa_contract_id="ppa-1",
         scenario_id="scn-1",
-        tenant_id=None,
+        tenant_id="tenant-1",
         asof_date=date(2025, 1, 1),
         metrics=metrics,
     )
 
     assert captured_frames, "write_ppa_valuation should receive a dataframe"
     records = captured_frames[0].to_dict(orient="records")
+
+    assert all(row["tenant_id"] == "tenant-1" for row in records)
 
     cashflow_row = next(row for row in records if row["metric"] == "cashflow")
     assert cashflow_row["cashflow"] == Decimal("100.123457")
@@ -901,6 +987,24 @@ def test_ppa_contract_crud(monkeypatch):
     assert missing.status_code == 404
 
 
+def test_ppa_contract_create_requires_admin(monkeypatch):
+    pytest.importorskip("fastapi", reason="fastapi not installed")
+    _ensure_opentelemetry(monkeypatch)
+    from fastapi.testclient import TestClient
+    from aurum.api import app as api_app
+
+    client = TestClient(api_app.app)
+    client.headers.update({"X-Aurum-Tenant": "tenant-111"})
+
+    monkeypatch.setattr(api_app, "ADMIN_GROUPS", {"aurum-admins"})
+
+    resp = client.post(
+        "/v1/ppa/contracts",
+        json={"instrument_id": "instr-9", "terms": {}},
+    )
+    assert resp.status_code == 403
+
+
 def test_ppa_contract_valuations_list(monkeypatch):
     pytest.importorskip("fastapi", reason="fastapi not installed")
     _ensure_opentelemetry(monkeypatch)
@@ -926,10 +1030,12 @@ def test_ppa_contract_valuations_list(monkeypatch):
         metric=None,
         limit,
         offset,
+        tenant_id=None,
     ):
         assert ppa_contract_id == contract_id
         assert limit == 2  # limit + 1 from handler
         assert offset == 0
+        assert tenant_id == "tenant-555"
         return (
             [
                 {
@@ -937,6 +1043,7 @@ def test_ppa_contract_valuations_list(monkeypatch):
                     "period_start": datetime(2025, 9, 1).date(),
                     "period_end": datetime(2025, 9, 30).date(),
                     "scenario_id": "scn-1",
+                    "tenant_id": "tenant-555",
                     "metric": "NPV",
                     "value": 1100.0,
                     "cashflow": 1250.0,
@@ -951,6 +1058,7 @@ def test_ppa_contract_valuations_list(monkeypatch):
                     "period_start": datetime(2025, 10, 1).date(),
                     "period_end": datetime(2025, 10, 31).date(),
                     "scenario_id": "scn-1",
+                    "tenant_id": "tenant-555",
                     "metric": "IRR",
                     "value": 0.08,
                     "cashflow": None,
@@ -991,6 +1099,52 @@ def test_metadata_units_etag(monkeypatch):
 
     cached = client.get("/v1/metadata/units", headers={"If-None-Match": etag})
     assert cached.status_code == 304
+
+
+def test_list_eia_series_csv(monkeypatch):
+    pytest.importorskip("fastapi", reason="fastapi not installed")
+    _ensure_opentelemetry(monkeypatch)
+    from fastapi.testclient import TestClient
+    from aurum.api import app as api_app
+    from aurum.api import service
+    from datetime import datetime
+
+    def fake_query_series(*_args, **_kwargs):
+        rows = [
+            {
+                "series_id": "EBA.PJME-ALL.NG.H",
+                "period": "2024-01-01T01:00:00",
+                "period_start": datetime(2024, 1, 1, 1, 0, 0),
+                "period_end": datetime(2024, 1, 1, 2, 0, 0),
+                "frequency": "HOURLY",
+                "value": 123.4,
+                "raw_value": "123.4",
+                "unit": "MW",
+                "canonical_unit": "MW",
+                "canonical_currency": None,
+                "canonical_value": 123.4,
+                "conversion_factor": None,
+                "area": "PJM",
+                "sector": "ALL",
+                "seasonal_adjustment": None,
+                "description": "Sample",
+                "source": "EIA",
+                "dataset": "EBA",
+                "metadata": {"quality": "FINAL"},
+                "ingest_ts": datetime(2024, 1, 2, 0, 0, 0),
+            }
+        ]
+        return rows, 4.2
+
+    monkeypatch.setattr(service, "query_eia_series", fake_query_series)
+
+    client = TestClient(api_app.app)
+    resp = client.get("/v1/ref/eia/series", params={"limit": 1, "format": "csv"})
+    assert resp.status_code == 200
+    assert resp.headers.get("content-type", "").startswith("text/csv")
+    lines = [line for line in resp.text.splitlines() if line]
+    assert lines[0].startswith("series_id")
+    assert "EBA.PJME-ALL.NG.H" in lines[1]
 
 
 def test_list_eia_series(monkeypatch):
@@ -1060,3 +1214,63 @@ def test_list_eia_series_dimensions(monkeypatch):
     payload = resp.json()
     assert payload["data"]["dataset"] == ["EBA"]
     assert payload["data"]["unit"] == ["MW"]
+
+
+def test_list_scenario_outputs_csv(monkeypatch):
+    pytest.importorskip("fastapi", reason="fastapi not installed")
+    _ensure_opentelemetry(monkeypatch)
+    from datetime import date
+    from fastapi.testclient import TestClient
+    from aurum.api import app as api_app
+    from aurum.api import service
+
+    monkeypatch.setenv("AURUM_API_SCENARIO_OUTPUTS_ENABLED", "1")
+
+    def fake_query(
+        trino_cfg,
+        cache_cfg,
+        *,
+        tenant_id,
+        scenario_id,
+        curve_key,
+        tenor_type,
+        metric,
+        limit,
+        offset,
+        cursor_after,
+        cursor_before,
+        descending,
+    ):
+        rows = [
+            {
+                "tenant_id": tenant_id,
+                "scenario_id": scenario_id,
+                "run_id": "run-1",
+                "asof_date": date(2024, 1, 1),
+                "curve_key": "curve-a",
+                "tenor_type": "MONTHLY",
+                "contract_month": date(2024, 2, 1),
+                "tenor_label": "2024-02",
+                "metric": "mid",
+                "value": 72.5,
+                "band_lower": 70.0,
+                "band_upper": 75.0,
+                "attribution": {"policy": 1.2},
+                "version_hash": "hash123",
+            }
+        ]
+        return rows, 4.8
+
+    monkeypatch.setattr(service, "query_scenario_outputs", fake_query)
+
+    client = TestClient(api_app.app)
+    client.headers.update({"X-Aurum-Tenant": "tenant-123"})
+    resp = client.get(
+        "/v1/scenarios/scn-1/outputs",
+        params={"limit": 20, "format": "csv"},
+    )
+    assert resp.status_code == 200
+    assert resp.headers.get("content-type", "").startswith("text/csv")
+    lines = [line for line in resp.text.splitlines() if line]
+    assert lines[0].startswith("tenant_id")
+    assert "curve-a" in lines[1]

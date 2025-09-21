@@ -8,6 +8,7 @@ ISO_LMP_SCHEMA_PATH="${ISO_LMP_SCHEMA_PATH:-${REPO_ROOT}/kafka/schemas/iso.lmp.v
 NOAA_GHCND_SCHEMA_PATH="${REPO_ROOT}/kafka/schemas/noaa.weather.v1.avsc"
 EIA_SERIES_SCHEMA_PATH="${REPO_ROOT}/kafka/schemas/eia.series.v1.avsc"
 FRED_SERIES_SCHEMA_PATH="${REPO_ROOT}/kafka/schemas/fred.series.v1.avsc"
+ISO_ASM_SCHEMA_PATH="${ISO_ASM_SCHEMA_PATH:-${REPO_ROOT}/kafka/schemas/iso.asm.v1.avsc}"
 
 render_schema() {
   local schema_path="$1"
@@ -36,6 +37,17 @@ ensure_iso_lmp_schema() {
     fi
   fi
   export ISO_LMP_SCHEMA
+}
+
+ensure_iso_asm_schema() {
+  if [[ -z "${ISO_ASM_SCHEMA:-}" ]]; then
+    if [[ -n "${ISO_ASM_SCHEMA_PATH:-}" && -f "${ISO_ASM_SCHEMA_PATH}" ]]; then
+      ISO_ASM_SCHEMA="$(render_schema "${ISO_ASM_SCHEMA_PATH}")"
+    else
+      ISO_ASM_SCHEMA='{"type":"record","name":"IsoAsmRecord","namespace":"aurum.iso","fields":[{"name":"iso_code","type":"string"},{"name":"market","type":"string"},{"name":"product","type":"string"},{"name":"zone","type":"string"},{"name":"preliminary_final","type":["null","string"],"default":null},{"name":"interval_start","type":{"type":"long","logicalType":"timestamp-micros"}},{"name":"interval_end","type":["null",{"type":"long","logicalType":"timestamp-micros"}],"default":null},{"name":"interval_minutes","type":["null","int"],"default":null},{"name":"price_mcp","type":["null","double"],"default":null},{"name":"currency","type":"string","default":"USD"},{"name":"uom","type":"string","default":"MWh"},{"name":"ingest_ts","type":{"type":"long","logicalType":"timestamp-micros"}},{"name":"record_hash","type":"string"},{"name":"metadata","type":["null",{"type":"map","values":"string"}],"default":null}]}'
+    fi
+  fi
+  export ISO_ASM_SCHEMA
 }
 
 usage() {
@@ -856,7 +868,37 @@ PY
     )
     export ISO_LMP_TOPIC_PATTERN="${ISO_LMP_TOPIC_PATTERN:-aurum\\.iso\\..*\\.lmp\\.v1}"
     export ISO_LMP_TABLE="${ISO_LMP_TABLE:-iso_lmp_timeseries}"
-    export ISO_LMP_SAVE_MODE="${ISO_LMP_SAVE_MODE:-append}"
+    export ISO_LMP_SAVE_MODE="${ISO_LMP_SAVE_MODE:-upsert}"
+    ;;
+  iso_load_kafka_to_timescale)
+    REQUIRED_VARS=(
+      KAFKA_BOOTSTRAP_SERVERS
+      SCHEMA_REGISTRY_URL
+      TIMESCALE_JDBC_URL
+      TIMESCALE_USER
+      TIMESCALE_PASSWORD
+    )
+    export ISO_LOAD_TOPIC_PATTERN="${ISO_LOAD_TOPIC_PATTERN:-aurum\\.iso\\..*\\.load\\.v1}"
+    export ISO_LOAD_TABLE="${ISO_LOAD_TABLE:-load_timeseries}"
+    export ISO_LOAD_SAVE_MODE="${ISO_LOAD_SAVE_MODE:-upsert}"
+    export ISO_LOAD_AREA_FALLBACK="${ISO_LOAD_AREA_FALLBACK:-SYSTEM}"
+    ;;
+  miso_asm_to_kafka)
+    REQUIRED_VARS=(
+      MISO_ASM_URL
+      KAFKA_BOOTSTRAP_SERVERS
+      SCHEMA_REGISTRY_URL
+      ISO_ASM_SCHEMA
+    )
+    export MISO_ASM_TOPIC="${MISO_ASM_TOPIC:-aurum.iso.miso.asm.v1}"
+    export MISO_ASM_SUBJECT="${MISO_ASM_SUBJECT:-${MISO_ASM_TOPIC}-value}"
+    export MISO_ASM_AUTH_HEADER="${MISO_ASM_AUTH_HEADER:-}"
+    export MISO_ASM_PAGE_NUMBER="${MISO_ASM_PAGE_NUMBER:-1}"
+    export MISO_ASM_PAGE_SIZE="${MISO_ASM_PAGE_SIZE:-500}"
+    export MISO_ASM_MARKET="${MISO_ASM_MARKET:-DAY_AHEAD_EXANTE}"
+    export MISO_ASM_CURRENCY="${MISO_ASM_CURRENCY:-USD}"
+    export MISO_ASM_UOM="${MISO_ASM_UOM:-MWh}"
+    ensure_iso_asm_schema
     ;;
   eia_series_kafka_to_timescale)
     REQUIRED_VARS=(

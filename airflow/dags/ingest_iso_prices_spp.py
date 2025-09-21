@@ -10,7 +10,8 @@ from airflow.operators.bash import BashOperator
 from airflow.operators.empty import EmptyOperator
 from airflow.operators.python import PythonOperator
 
-from aurum.airflow_utils import build_failure_callback, build_preflight_callable, metrics
+from aurum.airflow_utils import build_failure_callback, build_preflight_callable
+from aurum.airflow_utils import iso as iso_utils
 
 
 DEFAULT_ARGS: dict[str, Any] = {
@@ -29,46 +30,24 @@ BIN_PATH = os.environ.get("AURUM_BIN_PATH", ".venv/bin:$PATH")
 PYTHONPATH_ENTRY = os.environ.get("AURUM_PYTHONPATH_ENTRY", "/opt/airflow/src")
 STAGING_DIR = os.environ.get("AURUM_STAGING_DIR", "files/staging")
 
+SPP_SOURCES = (
+    iso_utils.IngestSource(
+        "spp_da_lmp",
+        description="SPP day-ahead LMP ingestion",
+        schedule="20 * * * *",
+        target="kafka",
+    ),
+    iso_utils.IngestSource(
+        "spp_rt_lmp",
+        description="SPP real-time LMP ingestion",
+        schedule="20 * * * *",
+        target="kafka",
+    ),
+)
+
 
 def _register_sources() -> None:
-    try:
-        import sys
-
-        src_path = os.environ.get("AURUM_PYTHONPATH_ENTRY", "/opt/airflow/src")
-        if src_path and src_path not in sys.path:
-            sys.path.insert(0, src_path)
-        from aurum.db import register_ingest_source  # type: ignore
-
-        register_ingest_source(
-            "spp_da_lmp",
-            description="SPP day-ahead LMP ingestion",
-            schedule="20 * * * *",
-            target="kafka",
-        )
-        register_ingest_source(
-            "spp_rt_lmp",
-            description="SPP real-time LMP ingestion",
-            schedule="20 * * * *",
-            target="kafka",
-        )
-    except Exception as exc:  # pragma: no cover
-        print(f"Failed to register SPP ingest sources: {exc}")
-
-
-def _update_watermark(source_name: str, logical_date: datetime) -> None:
-    watermark = logical_date.astimezone(timezone.utc)
-    try:
-        import sys
-
-        src_path = os.environ.get("AURUM_PYTHONPATH_ENTRY", "/opt/airflow/src")
-        if src_path and src_path not in sys.path:
-            sys.path.insert(0, src_path)
-        from aurum.db import update_ingest_watermark  # type: ignore
-
-        update_ingest_watermark(source_name, "logical_date", watermark)
-        metrics.record_watermark_success(source_name, watermark)
-    except Exception as exc:  # pragma: no cover
-        print(f"Failed to update watermark for {source_name}: {exc}")
+    iso_utils.register_sources(SPP_SOURCES)
 
 
 def _token_flag() -> str:
@@ -127,23 +106,21 @@ def build_pipeline(
     kafka_bootstrap = "{{ var.value.get('aurum_kafka_bootstrap', 'localhost:9092') }}"
     schema_registry = "{{ var.value.get('aurum_schema_registry', 'http://localhost:8081') }}"
 
-    seatunnel_command = "\n".join(
-        [
-            "set -euo pipefail",
-            "if [ \"${AURUM_DEBUG:-0}\" != \"0\" ]; then set -x; fi",
-            "cd /opt/airflow",
-            f"if [ \"${{AURUM_DEBUG:-0}}\" != \"0\" ]; then scripts/seatunnel/run_job.sh --describe spp_lmp_to_kafka; fi",
-            "if [ \"${AURUM_DEBUG:-0}\" != \"0\" ]; then env | grep -E 'DLQ_TOPIC|DLQ_SUBJECT' || true; fi",
-            f"export PATH=\"{BIN_PATH}\"",
-            f"export PYTHONPATH=\"${{PYTHONPATH:-}}:{PYTHONPATH_ENTRY}\"",
-            "export ISO_LMP_SCHEMA_PATH=/opt/airflow/scripts/kafka/schemas/iso.lmp.v1.avsc",
-            (
-                f"AURUM_EXECUTE_SEATUNNEL=0 SPP_INPUT_JSON={staging_path} "
-                f"KAFKA_BOOTSTRAP_SERVERS='{kafka_bootstrap}' "
-                f"SCHEMA_REGISTRY_URL='{schema_registry}' "
-                "scripts/seatunnel/run_job.sh spp_lmp_to_kafka --render-only"
-            ),
-        ]
+    env_line = (
+        f"AURUM_EXECUTE_SEATUNNEL=0 SPP_INPUT_JSON={staging_path} "
+        f"KAFKA_BOOTSTRAP_SERVERS='{kafka_bootstrap}' "
+        f"SCHEMA_REGISTRY_URL='{schema_registry}'"
+    )
+    extra_lines = [
+        "export ISO_LMP_SCHEMA_PATH=/opt/airflow/scripts/kafka/schemas/iso.lmp.v1.avsc",
+    ]
+    seatunnel_command = iso_utils.build_render_command(
+        job_name="spp_lmp_to_kafka",
+        env_assignments=env_line,
+        bin_path=BIN_PATH,
+        pythonpath_entry=PYTHONPATH_ENTRY,
+        debug_dump_env=True,
+        extra_lines=extra_lines,
     )
 
     seatunnel_task = BashOperator(
@@ -152,14 +129,12 @@ def build_pipeline(
         execution_timeout=timedelta(minutes=15),
     )
 
-    run_k8s_command = "\n".join([
-        "set -euo pipefail",
-        "if [ \"${AURUM_DEBUG:-0}\" != \"0\" ]; then set -x; fi",
-        "cd /opt/airflow",
-        f"export PATH=\"{BIN_PATH}\"",
-        f"export PYTHONPATH=\"${{PYTHONPATH:-}}:{PYTHONPATH_ENTRY}\"",
-        "python scripts/k8s/run_seatunnel_job.py --job-name spp_lmp_to_kafka --wait --timeout 600",
-    ])
+    run_k8s_command = iso_utils.build_k8s_command(
+        "spp_lmp_to_kafka",
+        bin_path=BIN_PATH,
+        pythonpath_entry=PYTHONPATH_ENTRY,
+        timeout=600,
+    )
     run_k8s_task = BashOperator(
         task_id=f"spp_{prefix}_execute_k8s",
         bash_command=run_k8s_command,
@@ -168,7 +143,7 @@ def build_pipeline(
 
     watermark_task = PythonOperator(
         task_id=f"spp_{prefix}_watermark",
-        python_callable=lambda **ctx: _update_watermark(source_name, ctx["logical_date"]),
+        python_callable=iso_utils.make_watermark_callable(source_name),
     )
 
     return stage_task, seatunnel_task, run_k8s_task, watermark_task

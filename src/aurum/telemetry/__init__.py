@@ -19,6 +19,7 @@ try:
     from opentelemetry.exporter.otlp.proto.grpc._log_exporter import OTLPLogExporter
     from opentelemetry.instrumentation.logging import LoggingInstrumentor
     from opentelemetry.instrumentation.requests import RequestsInstrumentor
+    from opentelemetry.instrumentation.httpx import HTTPXClientInstrumentor
     OTEL_AVAILABLE = True
 except ImportError:  # pragma: no cover - telemetry optional
     trace = None  # type: ignore[assignment]
@@ -62,7 +63,7 @@ except ImportError:  # pragma: no cover - telemetry optional
         def instrument(self, *args, **kwargs):
             return None
 
-    LoggingInstrumentor = RequestsInstrumentor = _NoOpInstrumentor  # type: ignore
+    LoggingInstrumentor = RequestsInstrumentor = HTTPXClientInstrumentor = _NoOpInstrumentor  # type: ignore
     OTEL_AVAILABLE = False
 
 try:  # Optional instrumentation depending on extras installed
@@ -102,6 +103,7 @@ def configure_telemetry(
     fastapi_app=None,
     enable_requests: bool = True,
     enable_psycopg: bool = False,
+    enable_httpx: bool = True,
 ) -> None:
     """Initialise tracing and logging exporters if configured via environment."""
     global _INITIALISED
@@ -147,6 +149,11 @@ def configure_telemetry(
                 RequestsInstrumentor().instrument()
             except Exception as exc:  # pragma: no cover - instrumentation failure
                 _logger.debug("requests instrumentation not available: %s", exc)
+        if enable_httpx:
+            try:
+                HTTPXClientInstrumentor().instrument()
+            except Exception as exc:  # pragma: no cover - instrumentation failure
+                _logger.debug("httpx instrumentation not available: %s", exc)
         if enable_psycopg and PsycopgInstrumentation:
             try:
                 PsycopgInstrumentation().instrument()

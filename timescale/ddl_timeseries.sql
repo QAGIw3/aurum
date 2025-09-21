@@ -181,18 +181,128 @@ SELECT add_continuous_aggregate_policy(
 );
 
 CREATE TABLE IF NOT EXISTS public.load_timeseries (
-    id UUID DEFAULT gen_random_uuid(),
-    tenant_id UUID,
-    region TEXT NOT NULL,
-    ts TIMESTAMPTZ NOT NULL,
-    value DOUBLE PRECISION NOT NULL,
-    units TEXT DEFAULT 'MW',
-    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
-    , PRIMARY KEY (id, ts)
+    iso_code TEXT NOT NULL,
+    area TEXT NOT NULL DEFAULT 'SYSTEM',
+    interval_start TIMESTAMPTZ NOT NULL,
+    interval_end TIMESTAMPTZ,
+    interval_minutes INTEGER,
+    mw DOUBLE PRECISION NOT NULL,
+    ingest_ts TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    metadata TEXT,
+    PRIMARY KEY (iso_code, area, interval_start)
 );
 
-SELECT create_hypertable('public.load_timeseries', 'ts', if_not_exists => TRUE, migrate_data => TRUE);
-CREATE INDEX IF NOT EXISTS idx_load_region_ts ON public.load_timeseries(region, ts DESC);
+SELECT create_hypertable('public.load_timeseries', 'interval_start', if_not_exists => TRUE, migrate_data => TRUE);
+CREATE INDEX IF NOT EXISTS idx_iso_load_lookup
+    ON public.load_timeseries (iso_code, area, interval_start DESC);
+
+DO $$
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1 FROM pg_catalog.pg_class c
+        JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace
+        WHERE n.nspname = 'public' AND c.relname = 'iso_load_agg_15m'
+    ) THEN
+        EXECUTE $DDL$
+            CREATE MATERIALIZED VIEW public.iso_load_agg_15m
+            WITH (timescaledb.continuous) AS
+            SELECT
+                time_bucket('15 minutes', interval_start) AS bucket_start,
+                iso_code,
+                area,
+                avg(mw) AS mw_avg,
+                min(mw) AS mw_min,
+                max(mw) AS mw_max,
+                stddev_pop(mw) AS mw_stddev,
+                count(*) AS sample_count
+            FROM public.load_timeseries
+            GROUP BY 1, 2, 3
+            WITH NO DATA;
+        $DDL$;
+    END IF;
+END$$;
+
+CREATE INDEX IF NOT EXISTS idx_iso_load_agg_15m_key
+    ON public.iso_load_agg_15m (iso_code, area, bucket_start DESC);
+SELECT add_continuous_aggregate_policy(
+    'public.iso_load_agg_15m',
+    start_offset => INTERVAL '14 days',
+    end_offset => INTERVAL '15 minutes',
+    schedule_interval => INTERVAL '15 minutes',
+    if_not_exists => TRUE
+);
+
+DO $$
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1 FROM pg_catalog.pg_class c
+        JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace
+        WHERE n.nspname = 'public' AND c.relname = 'iso_load_agg_1h'
+    ) THEN
+        EXECUTE $DDL$
+            CREATE MATERIALIZED VIEW public.iso_load_agg_1h
+            WITH (timescaledb.continuous) AS
+            SELECT
+                time_bucket('1 hour', interval_start) AS bucket_start,
+                iso_code,
+                area,
+                avg(mw) AS mw_avg,
+                min(mw) AS mw_min,
+                max(mw) AS mw_max,
+                stddev_pop(mw) AS mw_stddev,
+                count(*) AS sample_count
+            FROM public.load_timeseries
+            GROUP BY 1, 2, 3
+            WITH NO DATA;
+        $DDL$;
+    END IF;
+END$$;
+
+CREATE INDEX IF NOT EXISTS idx_iso_load_agg_1h_key
+    ON public.iso_load_agg_1h (iso_code, area, bucket_start DESC);
+SELECT add_continuous_aggregate_policy(
+    'public.iso_load_agg_1h',
+    start_offset => INTERVAL '90 days',
+    end_offset => INTERVAL '1 hour',
+    schedule_interval => INTERVAL '1 hour',
+    if_not_exists => TRUE
+);
+
+DO $$
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1 FROM pg_catalog.pg_class c
+        JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace
+        WHERE n.nspname = 'public' AND c.relname = 'iso_load_agg_1d'
+    ) THEN
+        EXECUTE $DDL$
+            CREATE MATERIALIZED VIEW public.iso_load_agg_1d
+            WITH (timescaledb.continuous) AS
+            SELECT
+                time_bucket('1 day', interval_start) AS bucket_start,
+                iso_code,
+                area,
+                avg(mw) AS mw_avg,
+                min(mw) AS mw_min,
+                max(mw) AS mw_max,
+                stddev_pop(mw) AS mw_stddev,
+                count(*) AS sample_count
+            FROM public.load_timeseries
+            GROUP BY 1, 2, 3
+            WITH NO DATA;
+        $DDL$;
+    END IF;
+END$$;
+
+CREATE INDEX IF NOT EXISTS idx_iso_load_agg_1d_key
+    ON public.iso_load_agg_1d (iso_code, area, bucket_start DESC);
+SELECT add_continuous_aggregate_policy(
+    'public.iso_load_agg_1d',
+    start_offset => INTERVAL '730 days',
+    end_offset => INTERVAL '1 day',
+    schedule_interval => INTERVAL '1 day',
+    if_not_exists => TRUE
+);
 
 CREATE TABLE IF NOT EXISTS public.ops_metrics (
     id BIGSERIAL,

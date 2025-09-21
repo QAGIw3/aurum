@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 import os
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timedelta
 from typing import Any
 
 from airflow import DAG
@@ -10,7 +10,8 @@ from airflow.operators.bash import BashOperator
 from airflow.operators.empty import EmptyOperator
 from airflow.operators.python import PythonOperator
 
-from aurum.airflow_utils import build_failure_callback, build_preflight_callable, metrics
+from aurum.airflow_utils import build_failure_callback, build_preflight_callable
+from aurum.airflow_utils import iso as iso_utils
 
 
 DEFAULT_ARGS: dict[str, Any] = {
@@ -32,45 +33,20 @@ VAULT_TOKEN = os.environ.get("AURUM_VAULT_TOKEN", "aurum-dev-token")
 VENV_PYTHON = os.environ.get("AURUM_VENV_PYTHON", ".venv/bin/python")
 
 
-def _register_sources() -> None:
-    # Defer import so the real package is used at runtime inside Airflow workers
-    try:
-        import sys
-        src_path = os.environ.get("AURUM_PYTHONPATH_ENTRY", "/opt/airflow/src")
-        if src_path and src_path not in sys.path:
-            sys.path.insert(0, src_path)
-        from aurum.db import register_ingest_source  # type: ignore
-
-        for name, description in (
-            ("nyiso_csv", "NYISO LBMP CSV ingestion"),
-            ("miso_csv", "MISO market report CSV ingestion"),
-        ):
-            try:
-                register_ingest_source(
-                    name,
-                    description=description,
-                    schedule="0 * * * *",
-                    target="kafka",
-                )
-            except Exception as exc:  # pragma: no cover
-                print(f"Failed to register ingest source {name}: {exc}")
-    except Exception as exc:  # pragma: no cover
-        print(f"Failed during register_sources setup: {exc}")
-
-
-def _update_watermark(source_name: str, logical_date: datetime) -> None:
-    watermark = logical_date.astimezone(timezone.utc)
-    try:
-        import sys
-        src_path = os.environ.get("AURUM_PYTHONPATH_ENTRY", "/opt/airflow/src")
-        if src_path and src_path not in sys.path:
-            sys.path.insert(0, src_path)
-        from aurum.db import update_ingest_watermark  # type: ignore
-
-        update_ingest_watermark(source_name, "logical_date", watermark)
-        metrics.record_watermark_success(source_name, watermark)
-    except Exception as exc:  # pragma: no cover
-        print(f"Failed to update watermark for {source_name}: {exc}")
+SOURCES = (
+    iso_utils.IngestSource(
+        "nyiso_csv",
+        description="NYISO LBMP CSV ingestion",
+        schedule="0 * * * *",
+        target="kafka",
+    ),
+    iso_utils.IngestSource(
+        "miso_csv",
+        description="MISO market report CSV ingestion",
+        schedule="0 * * * *",
+        target="kafka",
+    ),
+)
 
 
 def build_seatunnel_task(job_name: str, *, env_assignments: list[str], task_id_override: str | None = None) -> tuple[BashOperator, BashOperator]:
@@ -86,28 +62,23 @@ def build_seatunnel_task(job_name: str, *, env_assignments: list[str], task_id_o
 
     render = BashOperator(
         task_id=task_id_override or f"seatunnel_{job_name}",
-        bash_command=(
-            "set -euo pipefail\n"
-            "if [ \"${AURUM_DEBUG:-0}\" != \"0\" ]; then set -x; fi\n"
-            "cd /opt/airflow\n"
-        f"{pull_cmd}\n"
-        f"if [ \"${{AURUM_DEBUG:-0}}\" != \"0\" ]; then scripts/seatunnel/run_job.sh --describe {job_name}; fi\n"
-        "if [ \"${AURUM_DEBUG:-0}\" != \"0\" ]; then env | grep -E 'DLQ_TOPIC|DLQ_SUBJECT' || true; fi\n"
-        f"export PATH=\"{BIN_PATH}\"\n"
-        f"export PYTHONPATH=\"${{PYTHONPATH:-}}:{PYTHONPATH_ENTRY}\"\n"
-        f"AURUM_EXECUTE_SEATUNNEL=0 {env_line} scripts/seatunnel/run_job.sh {job_name} --render-only"
+        bash_command=iso_utils.build_render_command(
+            job_name=job_name,
+            env_assignments=f"AURUM_EXECUTE_SEATUNNEL=0 {env_line}",
+            bin_path=BIN_PATH,
+            pythonpath_entry=PYTHONPATH_ENTRY,
+            debug_dump_env=True,
+            pre_lines=[pull_cmd],
         ),
         execution_timeout=timedelta(minutes=10),
     )
     exec_k8s = BashOperator(
         task_id=(task_id_override or f"seatunnel_{job_name}") + "_execute_k8s",
-        bash_command=(
-            "set -euo pipefail\n"
-            "if [ \"${AURUM_DEBUG:-0}\" != \"0\" ]; then set -x; fi\n"
-            "cd /opt/airflow\n"
-            f"export PATH=\"{BIN_PATH}\"\n"
-            f"export PYTHONPATH=\"${{PYTHONPATH:-}}:{PYTHONPATH_ENTRY}\"\n"
-            f"python scripts/k8s/run_seatunnel_job.py --job-name {job_name} --wait --timeout 600"
+        bash_command=iso_utils.build_k8s_command(
+            job_name,
+            bin_path=BIN_PATH,
+            pythonpath_entry=PYTHONPATH_ENTRY,
+            timeout=600,
         ),
         execution_timeout=timedelta(minutes=20),
     )
@@ -144,7 +115,7 @@ with DAG(
 
     register_sources = PythonOperator(
         task_id="register_sources",
-        python_callable=_register_sources,
+        python_callable=lambda: iso_utils.register_sources(SOURCES),
     )
 
     nyiso_render, nyiso_exec = build_seatunnel_task(
@@ -181,17 +152,17 @@ with DAG(
 
     nyiso_watermark = PythonOperator(
         task_id="nyiso_watermark",
-        python_callable=lambda **ctx: _update_watermark("nyiso_csv", ctx["logical_date"]),
+        python_callable=iso_utils.make_watermark_callable("nyiso_csv"),
     )
 
     miso_da_watermark = PythonOperator(
         task_id="miso_da_watermark",
-        python_callable=lambda **ctx: _update_watermark("miso_csv", ctx["logical_date"]),
+        python_callable=iso_utils.make_watermark_callable("miso_csv"),
     )
 
     miso_rt_watermark = PythonOperator(
         task_id="miso_rt_watermark",
-        python_callable=lambda **ctx: _update_watermark("miso_csv", ctx["logical_date"]),
+        python_callable=iso_utils.make_watermark_callable("miso_csv"),
     )
 
     end = EmptyOperator(task_id="end")

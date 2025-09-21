@@ -1,15 +1,33 @@
 """Ingest GeoJSON vector overlays from Drought.gov into Kafka."""
 from __future__ import annotations
 
-from datetime import datetime, timezone
+import os
+import sys
+
+SRC_PATH = os.environ.get("AURUM_PYTHONPATH_ENTRY", "/opt/airflow/src")
+if SRC_PATH and SRC_PATH not in sys.path:
+    sys.path.insert(0, SRC_PATH)
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Dict, List
 
-import os
-
-from airflow.decorators import dag, task, get_current_context
+try:
+    import pandas as pd  # type: ignore
+except ModuleNotFoundError:  # pragma: no cover - optional dependency in scheduler image
+    pd = None  # type: ignore
+try:
+    import trino  # type: ignore
+except ModuleNotFoundError:  # pragma: no cover - optional dependency in scheduler image
+    trino = None  # type: ignore
+from airflow.decorators import dag, task
+try:
+    from airflow.decorators import get_current_context  # type: ignore
+except ImportError:  # Airflow <2.4
+    from airflow.operators.python import get_current_context  # type: ignore
 from airflow.utils.trigger_rule import TriggerRule
 
+from aurum.api.config import TrinoConfig
+from aurum.dq import enforce_expectation_suite
 from aurum.drought.pipeline import (
     KafkaConfig,
     discover_vector_assets,
@@ -66,9 +84,62 @@ def drought_vector_layers():
         total_records = sum(item.get("records", 0) for item in results if isinstance(item, dict))
         print(f"vector ingestion complete – records={total_records}")
 
+    @task(trigger_rule=TriggerRule.ALL_DONE)
+    def validate() -> None:
+        if trino is None or pd is None:
+            print("Skipping vector validation: pandas/trino not installed")
+            return
+        context = get_current_context()
+        logical_dt: datetime = context.get("logical_date") or datetime.now(timezone.utc)
+        start_time = logical_dt - timedelta(days=2)
+        config = TrinoConfig.from_env()
+        conn = trino.dbapi.connect(
+            host=config.host,
+            port=config.port,
+            user=config.user,
+            http_scheme=config.http_scheme,
+        )
+        catalog = os.getenv("AURUM_TRINO_CATALOG", "iceberg")
+        table = f"{catalog}.environment.vector_events"
+        query = f"""
+            SELECT
+              tenant_id,
+              schema_version,
+              CAST(ingest_ts AS BIGINT) AS ingest_ts,
+              ingest_job_id,
+              layer,
+              event_id,
+              region_type,
+              region_id,
+              CAST(valid_start AS BIGINT) AS valid_start,
+              CAST(valid_end AS BIGINT) AS valid_end,
+              value,
+              unit,
+              category,
+              severity,
+              source_url,
+              geometry_wkt,
+              properties
+            FROM {table}
+            WHERE ingest_ts >= CAST({int(start_time.timestamp() * 1_000_000)} AS BIGINT)
+            LIMIT 5000
+        """
+        cursor = conn.cursor()
+        cursor.execute(query)
+        rows = cursor.fetchall()
+        columns = [desc[0] for desc in cursor.description]
+        df = pd.DataFrame(rows, columns=columns)
+        if df.empty:
+            print("No vector records available for GE validation window; skipping.")
+            return
+        suite_path = Path(__file__).resolve().parents[2] / "ge" / "expectations" / "drought_vector_event.json"
+        enforce_expectation_suite(df, suite_path, suite_name="drought_vector_event")
+
     assets = discover()
     processed = process.expand(asset=assets)
+    validation = validate()
     summarize(processed)
+    processed >> validation
 
 
 drought_vector_layers()

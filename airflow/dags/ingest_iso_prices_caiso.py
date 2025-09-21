@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 import os
-from datetime import datetime, timedelta, timezone
+from datetime import timedelta
 from typing import Any
 
 from airflow import DAG
@@ -10,7 +10,8 @@ from airflow.operators.bash import BashOperator
 from airflow.operators.empty import EmptyOperator
 from airflow.operators.python import PythonOperator
 
-from aurum.airflow_utils import build_failure_callback, build_preflight_callable, metrics
+from aurum.airflow_utils import build_failure_callback, build_preflight_callable
+from aurum.airflow_utils import iso as iso_utils
 
 
 DEFAULT_ARGS: dict[str, Any] = {
@@ -30,39 +31,18 @@ PYTHONPATH_ENTRY = os.environ.get("AURUM_PYTHONPATH_ENTRY", "/opt/airflow/src")
 STAGING_DIR = os.environ.get("AURUM_STAGING_DIR", "files/staging")
 
 
+SOURCES = (
+    iso_utils.IngestSource(
+        "caiso_prc_lmp",
+        description="CAISO PRC_LMP ingestion",
+        schedule="30 * * * *",
+        target="kafka",
+    ),
+)
+
+
 def _register_sources() -> None:
-    try:
-        import sys
-
-        src_path = os.environ.get("AURUM_PYTHONPATH_ENTRY", "/opt/airflow/src")
-        if src_path and src_path not in sys.path:
-            sys.path.insert(0, src_path)
-        from aurum.db import register_ingest_source  # type: ignore
-
-        register_ingest_source(
-            "caiso_prc_lmp",
-            description="CAISO PRC_LMP ingestion",
-            schedule="30 * * * *",
-            target="kafka",
-        )
-    except Exception as exc:  # pragma: no cover
-        print(f"Failed to register ingest source caiso_prc_lmp: {exc}")
-
-
-def _update_watermark(source_name: str, logical_date: datetime) -> None:
-    watermark = logical_date.astimezone(timezone.utc)
-    try:
-        import sys
-
-        src_path = os.environ.get("AURUM_PYTHONPATH_ENTRY", "/opt/airflow/src")
-        if src_path and src_path not in sys.path:
-            sys.path.insert(0, src_path)
-        from aurum.db import update_ingest_watermark  # type: ignore
-
-        update_ingest_watermark(source_name, "logical_date", watermark)
-        metrics.record_watermark_success(source_name, watermark)
-    except Exception as exc:  # pragma: no cover
-        print(f"Failed to update watermark for {source_name}: {exc}")
+    iso_utils.register_sources(SOURCES)
 
 
 with DAG(
@@ -124,21 +104,15 @@ with DAG(
     kafka_bootstrap = "{{ var.value.get('aurum_kafka_bootstrap', 'localhost:9092') }}"
     schema_registry = "{{ var.value.get('aurum_schema_registry', 'http://localhost:8081') }}"
 
-    seatunnel_command = "\n".join(
-        [
-            "set -euo pipefail",
-            "if [ \"${AURUM_DEBUG:-0}\" != \"0\" ]; then set -x; fi",
-            "cd /opt/airflow",
-            f"if [ \"${{AURUM_DEBUG:-0}}\" != \"0\" ]; then scripts/seatunnel/run_job.sh --describe caiso_lmp_to_kafka; fi",
-            f"export PATH=\"{BIN_PATH}\"",
-            f"export PYTHONPATH=\"${{PYTHONPATH:-}}:{PYTHONPATH_ENTRY}\"",
-            (
-                f"AURUM_EXECUTE_SEATUNNEL=0 CAISO_INPUT_JSON={staging_path} "
-                f"KAFKA_BOOTSTRAP_SERVERS='{kafka_bootstrap}' "
-                f"SCHEMA_REGISTRY_URL='{schema_registry}' "
-                "scripts/seatunnel/run_job.sh caiso_lmp_to_kafka --render-only"
-            ),
-        ]
+    seatunnel_command = iso_utils.build_render_command(
+        job_name="caiso_lmp_to_kafka",
+        env_assignments=(
+            f"AURUM_EXECUTE_SEATUNNEL=0 CAISO_INPUT_JSON={staging_path} "
+            f"KAFKA_BOOTSTRAP_SERVERS='{kafka_bootstrap}' "
+            f"SCHEMA_REGISTRY_URL='{schema_registry}'"
+        ),
+        bin_path=BIN_PATH,
+        pythonpath_entry=PYTHONPATH_ENTRY,
     )
 
     seatunnel_task = BashOperator(
@@ -148,12 +122,11 @@ with DAG(
     )
     exec_k8s = BashOperator(
         task_id="caiso_execute_k8s",
-        bash_command=(
-            "set -euo pipefail\n"
-            "if [ \"${AURUM_DEBUG:-0}\" != \"0\" ]; then set -x; fi\n"
-            f"export PATH=\"{BIN_PATH}\"\n"
-            f"export PYTHONPATH=\"${{PYTHONPATH:-}}:{PYTHONPATH_ENTRY}\"\n"
-            "python scripts/k8s/run_seatunnel_job.py --job-name caiso_lmp_to_kafka --wait --timeout 600"
+        bash_command=iso_utils.build_k8s_command(
+            "caiso_lmp_to_kafka",
+            bin_path=BIN_PATH,
+            pythonpath_entry=PYTHONPATH_ENTRY,
+            timeout=600,
         ),
         execution_timeout=timedelta(minutes=20),
     )
@@ -162,7 +135,7 @@ with DAG(
 
     caiso_watermark = PythonOperator(
         task_id="caiso_watermark",
-        python_callable=lambda **ctx: _update_watermark("caiso_prc_lmp", ctx["logical_date"]),
+        python_callable=iso_utils.make_watermark_callable("caiso_prc_lmp"),
     )
 
     start >> preflight >> register_sources >> stage_caiso >> seatunnel_task >> exec_k8s >> caiso_watermark >> end

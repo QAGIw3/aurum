@@ -3,17 +3,21 @@ from __future__ import annotations
 """FastAPI application exposing curve endpoints."""
 
 import base64
+import csv
 import hashlib
+import io
 import json
 import math
 import os
 import uuid
+from pathlib import Path as FilePath
 from datetime import date, datetime
 import logging
 import time
+import httpx
 from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
 from dataclasses import replace
-from typing import Any, Dict, List, Optional, Set
+from typing import Any, Dict, Iterable, List, Mapping, Optional, Sequence, Set
 
 from fastapi import Depends, FastAPI, HTTPException, Response, Request
 try:
@@ -23,6 +27,7 @@ except ImportError:  # pragma: no cover - optional dependency
 from ._fastapi_compat import Query, Path
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.gzip import GZipMiddleware
+from fastapi.responses import StreamingResponse
 
 from .config import CacheConfig, TrinoConfig
 from . import service
@@ -61,6 +66,10 @@ from .models import (
     IsoLocationOut,
     IsoLocationsResponse,
     IsoLocationResponse,
+    IsoLmpAggregatePoint,
+    IsoLmpAggregateResponse,
+    IsoLmpPoint,
+    IsoLmpResponse,
     UnitsCanonicalResponse,
     UnitsCanonical,
     UnitMappingOut,
@@ -77,6 +86,15 @@ from .models import (
     EiaSeriesResponse,
     EiaSeriesDimensionsData,
     EiaSeriesDimensionsResponse,
+    DroughtIndexPoint,
+    DroughtIndexResponse,
+    DroughtUsdmPoint,
+    DroughtUsdmResponse,
+    DroughtVectorEventPoint,
+    DroughtVectorResponse,
+    DroughtDimensions,
+    DroughtDimensionsResponse,
+    DroughtInfoResponse,
 )
 from .ratelimit import RateLimitConfig, RateLimitMiddleware
 from .auth import AuthMiddleware, OIDCConfig
@@ -86,6 +104,7 @@ from aurum.reference import units as ref_units
 from aurum.reference import calendars as ref_cal
 from aurum.reference import eia_catalog as ref_eia
 from aurum.telemetry import configure_telemetry
+from aurum.drought.catalog import load_catalog, DroughtCatalog
 from aurum.telemetry.context import get_request_id, set_request_id, reset_request_id
 
 
@@ -158,6 +177,45 @@ def _is_admin(principal: Dict[str, Any] | None) -> bool:
 def _require_admin(principal: Dict[str, Any] | None) -> None:
     if not _is_admin(principal):
         raise HTTPException(status_code=403, detail="admin_required")
+
+
+def _parse_region_param(region: str) -> tuple[str, str]:
+    region = region.strip()
+    if not region:
+        raise HTTPException(status_code=400, detail="invalid_region")
+    if ":" not in region:
+        raise HTTPException(status_code=400, detail="invalid_region" )
+    region_type, region_id = region.split(":", 1)
+    region_type = region_type.strip().upper()
+    region_id = region_id.strip()
+    if not region_type or not region_id:
+        raise HTTPException(status_code=400, detail="invalid_region")
+    return region_type, region_id
+
+
+_CATALOG_PATH = FilePath(__file__).resolve().parents[2] / "config" / "droughtgov_catalog.json"
+_DROUGHT_CATALOG: DroughtCatalog | None = None
+_TILE_CACHE_CFG = CacheConfig.from_env()
+_TILE_CACHE = None
+
+
+def _drought_catalog() -> DroughtCatalog:
+    global _DROUGHT_CATALOG
+    if _DROUGHT_CATALOG is None:
+        _DROUGHT_CATALOG = load_catalog(_CATALOG_PATH)
+    return _DROUGHT_CATALOG
+
+
+def _tile_cache():
+    global _TILE_CACHE
+    if _TILE_CACHE is not None:
+        return _TILE_CACHE
+    try:
+        client = service._maybe_redis_client(_TILE_CACHE_CFG)
+    except Exception:
+        client = None
+    _TILE_CACHE = client
+    return _TILE_CACHE
 
 # CORS (configurable via env AURUM_API_CORS_ORIGINS, comma-separated)
 import threading
@@ -356,6 +414,59 @@ def _respond_with_etag(
             response.headers.setdefault(key, value)
     return model
 
+
+def _prepare_csv_value(value: Any) -> str:
+    if value is None:
+        return ""
+    if isinstance(value, (datetime, date)):
+        return value.isoformat()
+    if isinstance(value, Decimal):
+        return format(value, "f")
+    if isinstance(value, (dict, list)):
+        try:
+            return json.dumps(value, default=str)
+        except TypeError:
+            return str(value)
+    return str(value)
+
+
+def _csv_stream(rows: Iterable[Mapping[str, Any]], fieldnames: Sequence[str]) -> Iterable[str]:
+    buffer = io.StringIO()
+    writer = csv.DictWriter(buffer, fieldnames=fieldnames, extrasaction="ignore")
+    writer.writeheader()
+    yield buffer.getvalue()
+    buffer.seek(0)
+    buffer.truncate(0)
+
+    for row in rows:
+        writer.writerow({field: _prepare_csv_value(row.get(field)) for field in fieldnames})
+        yield buffer.getvalue()
+        buffer.seek(0)
+        buffer.truncate(0)
+
+
+def _csv_response(
+    request_id: str,
+    rows: Iterable[Mapping[str, Any]],
+    fieldnames: Sequence[str],
+    filename: str,
+    *,
+    cache_control: Optional[str] = None,
+    next_cursor: Optional[str] = None,
+    prev_cursor: Optional[str] = None,
+) -> StreamingResponse:
+    stream = _csv_stream(rows, fieldnames)
+    response = StreamingResponse(stream, media_type="text/csv; charset=utf-8")
+    response.headers["X-Request-Id"] = request_id
+    if cache_control:
+        response.headers["Cache-Control"] = cache_control
+    if next_cursor:
+        response.headers["X-Next-Cursor"] = next_cursor
+    if prev_cursor:
+        response.headers["X-Prev-Cursor"] = prev_cursor
+    response.headers["Content-Disposition"] = f'attachment; filename="{filename}"'
+    return response
+
 # Prometheus metrics
 _METRICS_ENABLED = os.getenv("AURUM_API_METRICS_ENABLED", "1").strip().lower() in {
     "1",
@@ -390,6 +501,16 @@ if _METRICS_ENABLED:
         "API request duration in seconds",
         ["method", "path"],
     )
+    TILE_CACHE_COUNTER = Counter(
+        "aurum_drought_tile_cache_total",
+        "Drought tile cache lookup results",
+        ["endpoint", "result"],
+    )
+    TILE_FETCH_LATENCY = Histogram(
+        "aurum_drought_tile_fetch_seconds",
+        "Downstream drought tile/info fetch latency in seconds",
+        ["endpoint", "status"],
+    )
 
     @app.middleware("http")
     async def _metrics_middleware(request, call_next):  # type: ignore[no-redef]
@@ -415,6 +536,29 @@ if _METRICS_ENABLED:
     def metrics():
         data = generate_latest()
         return Response(content=data, media_type=CONTENT_TYPE_LATEST)
+else:
+    REQUEST_COUNTER = None
+    REQUEST_LATENCY = None
+    TILE_CACHE_COUNTER = None
+    TILE_FETCH_LATENCY = None
+
+
+def _record_tile_cache_metric(endpoint: str, result: str) -> None:
+    if TILE_CACHE_COUNTER is None:  # pragma: no cover - metrics disabled
+        return
+    try:
+        TILE_CACHE_COUNTER.labels(endpoint=endpoint, result=result).inc()
+    except Exception:  # pragma: no cover - guard against label errors
+        LOGGER.debug("Failed to record tile cache metric", exc_info=True)
+
+
+def _observe_tile_fetch(endpoint: str, status: str, duration: float) -> None:
+    if TILE_FETCH_LATENCY is None:  # pragma: no cover - metrics disabled
+        return
+    try:
+        TILE_FETCH_LATENCY.labels(endpoint=endpoint, status=status).observe(duration)
+    except Exception:  # pragma: no cover
+        LOGGER.debug("Failed to record tile fetch latency", exc_info=True)
 
 
 @app.get("/health")
@@ -574,6 +718,7 @@ def _persist_ppa_valuation_records(
             "asof_date": asof_date,
             "ppa_contract_id": ppa_contract_id,
             "scenario_id": scenario_id,
+            "tenant_id": tenant_id,
             "curve_key": curve_key,
             "period_start": period_start,
             "period_end": period_end,
@@ -654,6 +799,11 @@ def list_curves(
     prev_cursor: Optional[str] = Query(
         None,
         description="Cursor pointing to the previous page; obtained from meta.prev_cursor",
+    ),
+    format: str = Query(
+        "json",
+        pattern="^(json|csv)$",
+        description="Set to 'csv' to stream results as CSV",
     ),
     *,
     response: Response,
@@ -736,6 +886,29 @@ def list_curves(
             if prev_token or forward_token or effective_offset > 0:
                 prev_payload = _extract_cursor_payload(rows[0], CURVE_CURSOR_FIELDS)
                 prev_cursor_value = _encode_cursor({"before": prev_payload})
+
+    if format.lower() == "csv":
+        cache_header = f"public, max-age={CURVE_CACHE_TTL}"
+        fieldnames = [
+            "curve_key",
+            "tenor_label",
+            "tenor_type",
+            "contract_month",
+            "asof_date",
+            "mid",
+            "bid",
+            "ask",
+            "price_type",
+        ]
+        return _csv_response(
+            request_id,
+            rows,
+            fieldnames,
+            filename="curves.csv",
+            cache_control=cache_header,
+            next_cursor=next_cursor,
+            prev_cursor=prev_cursor_value,
+        )
 
     model = CurveResponse(
         meta=Meta(
@@ -1226,6 +1399,117 @@ def calendar_expand(
 
 
 @app.get(
+    "/v1/iso/lmp/last-24h",
+    response_model=IsoLmpResponse,
+    tags=["ISO"],
+    summary="Latest ISO LMP observations",
+    description="Return the most recent 24 hours of ISO LMP records across all markets.",
+)
+def iso_lmp_last_24h(
+    iso_code: Optional[str] = Query(None, description="Filter by ISO code"),
+    market: Optional[str] = Query(None, description="Filter by market"),
+    location_id: Optional[str] = Query(None, description="Filter by settlement location id"),
+    limit: int = Query(500, ge=1, le=2000),
+    *,
+    request: Request,
+    response: Response,
+) -> IsoLmpResponse:
+    request_id = _current_request_id()
+    rows, elapsed = service.query_iso_lmp_last_24h(
+        iso_code=iso_code,
+        market=market,
+        location_id=location_id,
+        limit=limit,
+    )
+    data = [IsoLmpPoint(**row) for row in rows]
+    model = IsoLmpResponse(meta=Meta(request_id=request_id, query_time_ms=int(elapsed)), data=data)
+    return _respond_with_etag(model, request, response)
+
+
+@app.get(
+    "/v1/iso/lmp/hourly",
+    response_model=IsoLmpAggregateResponse,
+    tags=["ISO"],
+    summary="Hourly ISO LMP aggregates",
+    description="Return aggregated hourly ISO LMP values for the last 30 days.",
+)
+def iso_lmp_hourly(
+    iso_code: Optional[str] = Query(None, description="Filter by ISO code"),
+    market: Optional[str] = Query(None, description="Filter by market"),
+    location_id: Optional[str] = Query(None, description="Filter by settlement location id"),
+    limit: int = Query(500, ge=1, le=2000),
+    *,
+    request: Request,
+    response: Response,
+) -> IsoLmpAggregateResponse:
+    request_id = _current_request_id()
+    rows, elapsed = service.query_iso_lmp_hourly(
+        iso_code=iso_code,
+        market=market,
+        location_id=location_id,
+        limit=limit,
+    )
+    data = [IsoLmpAggregatePoint(**row) for row in rows]
+    model = IsoLmpAggregateResponse(meta=Meta(request_id=request_id, query_time_ms=int(elapsed)), data=data)
+    return _respond_with_etag(model, request, response)
+
+
+@app.get(
+    "/v1/iso/lmp/daily",
+    response_model=IsoLmpAggregateResponse,
+    tags=["ISO"],
+    summary="Daily ISO LMP aggregates",
+    description="Return daily ISO LMP aggregates for the past year.",
+)
+def iso_lmp_daily(
+    iso_code: Optional[str] = Query(None, description="Filter by ISO code"),
+    market: Optional[str] = Query(None, description="Filter by market"),
+    location_id: Optional[str] = Query(None, description="Filter by settlement location id"),
+    limit: int = Query(500, ge=1, le=2000),
+    *,
+    request: Request,
+    response: Response,
+) -> IsoLmpAggregateResponse:
+    request_id = _current_request_id()
+    rows, elapsed = service.query_iso_lmp_daily(
+        iso_code=iso_code,
+        market=market,
+        location_id=location_id,
+        limit=limit,
+    )
+    data = [IsoLmpAggregatePoint(**row) for row in rows]
+    model = IsoLmpAggregateResponse(meta=Meta(request_id=request_id, query_time_ms=int(elapsed)), data=data)
+    return _respond_with_etag(model, request, response)
+
+
+@app.get(
+    "/v1/iso/lmp/negative",
+    response_model=IsoLmpResponse,
+    tags=["ISO"],
+    summary="Recent negative ISO LMP events",
+    description="Return the most negative ISO LMP observations across the last seven days.",
+)
+def iso_lmp_negative(
+    iso_code: Optional[str] = Query(None, description="Filter by ISO code"),
+    market: Optional[str] = Query(None, description="Filter by market"),
+    limit: int = Query(200, ge=1, le=1000),
+    *,
+    request: Request,
+    response: Response,
+) -> IsoLmpResponse:
+    request_id = _current_request_id()
+    rows, elapsed = service.query_iso_lmp_negative(
+        iso_code=iso_code,
+        market=market,
+        limit=limit,
+    )
+    data = [IsoLmpPoint(**row) for row in rows]
+    model = IsoLmpResponse(meta=Meta(request_id=request_id, query_time_ms=int(elapsed)), data=data)
+    return _respond_with_etag(model, request, response)
+
+
+
+@app.get(
     "/v1/metadata/eia/datasets",
     response_model=EiaDatasetsResponse,
     tags=["Metadata", "EIA"],
@@ -1331,6 +1615,11 @@ def list_eia_series(
     cursor: Optional[str] = Query(None, description="Opaque cursor for forward pagination"),
     since_cursor: Optional[str] = Query(None, description="Alias for 'cursor' to resume from a previous next_cursor value"),
     prev_cursor: Optional[str] = Query(None, description="Cursor obtained from meta.prev_cursor to navigate backwards"),
+    format: str = Query(
+        "json",
+        pattern="^(json|csv)$",
+        description="Set to 'csv' to stream results as CSV",
+    ),
     *,
     response: Response,
 ) -> EiaSeriesResponse:
@@ -1398,6 +1687,59 @@ def list_eia_series(
     else:
         if more:
             rows = rows[:effective_limit]
+
+    next_cursor = None
+    if more and rows:
+        next_payload = _extract_cursor_payload(rows[-1], EIA_SERIES_CURSOR_FIELDS)
+        next_cursor = _encode_cursor(next_payload)
+
+    prev_cursor_value = None
+    if rows:
+        if descending:
+            if cursor_before and more:
+                prev_payload = _extract_cursor_payload(rows[0], EIA_SERIES_CURSOR_FIELDS)
+                prev_cursor_value = _encode_cursor({"before": prev_payload})
+        else:
+            if prev_token or forward_token or effective_offset > 0:
+                prev_payload = _extract_cursor_payload(rows[0], EIA_SERIES_CURSOR_FIELDS)
+                prev_cursor_value = _encode_cursor({"before": prev_payload})
+
+    if not rows and forward_token and prev_token is None and effective_offset > 0:
+        prev_cursor_value = _encode_cursor({"offset": max(effective_offset - effective_limit, 0)})
+
+    if format.lower() == "csv":
+        cache_header = f"public, max-age={EIA_SERIES_CACHE_TTL}"
+        fieldnames = [
+            "series_id",
+            "period",
+            "period_start",
+            "period_end",
+            "frequency",
+            "value",
+            "raw_value",
+            "unit",
+            "canonical_unit",
+            "canonical_currency",
+            "canonical_value",
+            "conversion_factor",
+            "area",
+            "sector",
+            "seasonal_adjustment",
+            "description",
+            "source",
+            "dataset",
+            "metadata",
+            "ingest_ts",
+        ]
+        return _csv_response(
+            request_id,
+            rows,
+            fieldnames,
+            filename="eia_series.csv",
+            cache_control=cache_header,
+            next_cursor=next_cursor,
+            prev_cursor=prev_cursor_value,
+        )
 
     def _coerce_dt(value: Any) -> Optional[datetime]:
         if isinstance(value, datetime):
@@ -1486,25 +1828,6 @@ def list_eia_series(
             ingest_ts=ingest_ts,
         )
         items.append(item)
-
-    next_cursor = None
-    if more and rows:
-        next_payload = _extract_cursor_payload(rows[-1], EIA_SERIES_CURSOR_FIELDS)
-        next_cursor = _encode_cursor(next_payload)
-
-    prev_cursor_value = None
-    if rows:
-        if descending:
-            if cursor_before and more:
-                prev_payload = _extract_cursor_payload(rows[0], EIA_SERIES_CURSOR_FIELDS)
-                prev_cursor_value = _encode_cursor({"before": prev_payload})
-        else:
-            if prev_token or forward_token or effective_offset > 0:
-                prev_payload = _extract_cursor_payload(rows[0], EIA_SERIES_CURSOR_FIELDS)
-                prev_cursor_value = _encode_cursor({"before": prev_payload})
-
-    if not rows and forward_token and prev_token is None and effective_offset > 0:
-        prev_cursor_value = _encode_cursor({"offset": max(effective_offset - effective_limit, 0)})
 
     meta = Meta(
         request_id=request_id,
@@ -1949,9 +2272,14 @@ def list_ppa_contracts(
 
 
 @app.post("/v1/ppa/contracts", response_model=PpaContractResponse, status_code=201)
-def create_ppa_contract(payload: PpaContractCreate, request: Request) -> PpaContractResponse:
+def create_ppa_contract(
+    payload: PpaContractCreate,
+    request: Request,
+    principal: Dict[str, Any] | None = Depends(_get_principal),
+) -> PpaContractResponse:
     request_id = _current_request_id()
     tenant_id = _resolve_tenant(request, None)
+    _require_admin(principal)
     record = ScenarioStore.create_ppa_contract(
         tenant_id=tenant_id,
         instrument_id=payload.instrument_id,
@@ -1978,9 +2306,15 @@ def get_ppa_contract(contract_id: str, request: Request, response: Response) -> 
 
 
 @app.patch("/v1/ppa/contracts/{contract_id}", response_model=PpaContractResponse)
-def update_ppa_contract(contract_id: str, payload: PpaContractUpdate, request: Request) -> PpaContractResponse:
+def update_ppa_contract(
+    contract_id: str,
+    payload: PpaContractUpdate,
+    request: Request,
+    principal: Dict[str, Any] | None = Depends(_get_principal),
+) -> PpaContractResponse:
     request_id = _current_request_id()
     tenant_id = _resolve_tenant(request, None)
+    _require_admin(principal)
     record = ScenarioStore.update_ppa_contract(
         contract_id,
         tenant_id=tenant_id,
@@ -1996,8 +2330,13 @@ def update_ppa_contract(contract_id: str, payload: PpaContractUpdate, request: R
 
 
 @app.delete("/v1/ppa/contracts/{contract_id}", status_code=204)
-def delete_ppa_contract(contract_id: str, request: Request) -> Response:
+def delete_ppa_contract(
+    contract_id: str,
+    request: Request,
+    principal: Dict[str, Any] | None = Depends(_get_principal),
+) -> Response:
     tenant_id = _resolve_tenant(request, None)
+    _require_admin(principal)
     deleted = ScenarioStore.delete_ppa_contract(contract_id, tenant_id=tenant_id)
     if not deleted:
         raise HTTPException(status_code=404, detail="PPA contract not found")
@@ -2042,6 +2381,7 @@ def list_ppa_contract_valuations(
             metric=metric,
             limit=effective_limit + 1,
             offset=effective_offset,
+            tenant_id=tenant_id,
         )
     except RuntimeError as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
@@ -2169,6 +2509,11 @@ def list_scenario_outputs(
         None,
         description="Cursor pointing to the previous page; obtained from meta.prev_cursor",
     ),
+    format: str = Query(
+        "json",
+        pattern="^(json|csv)$",
+        description="Set to 'csv' to stream results as CSV",
+    ),
 ) -> ScenarioOutputResponse:
     if not _scenario_outputs_enabled():
         raise HTTPException(status_code=503, detail="Scenario outputs not enabled")
@@ -2246,6 +2591,34 @@ def list_scenario_outputs(
             if prev_token or forward_token or effective_offset > 0:
                 prev_payload = _extract_cursor_payload(rows[0], SCENARIO_OUTPUT_CURSOR_FIELDS)
                 prev_cursor_value = _encode_cursor({"before": prev_payload})
+
+    if format.lower() == "csv":
+        cache_header = f"public, max-age={SCENARIO_OUTPUT_CACHE_TTL}"
+        fieldnames = [
+            "tenant_id",
+            "scenario_id",
+            "run_id",
+            "asof_date",
+            "curve_key",
+            "tenor_type",
+            "contract_month",
+            "tenor_label",
+            "metric",
+            "value",
+            "band_lower",
+            "band_upper",
+            "attribution",
+            "version_hash",
+        ]
+        return _csv_response(
+            request_id,
+            rows,
+            fieldnames,
+            filename=f"scenario-{scenario_id}-outputs.csv",
+            cache_control=cache_header,
+            next_cursor=next_cursor,
+            prev_cursor=prev_cursor_value,
+        )
 
     meta = Meta(
         request_id=request_id,
@@ -2378,3 +2751,317 @@ def list_scenario_metrics_latest(
         response,
         extra_headers={"Cache-Control": f"public, max-age={SCENARIO_METRIC_CACHE_TTL}"},
     )
+
+
+@app.get("/v1/drought/dimensions", response_model=DroughtDimensionsResponse)
+def get_drought_dimensions() -> DroughtDimensionsResponse:
+    catalog = _drought_catalog()
+    datasets = sorted({item.dataset for item in catalog.raster_indices})
+    indices = sorted({idx for item in catalog.raster_indices for idx in item.indices})
+    timescales = sorted({ts for item in catalog.raster_indices for ts in item.timescales})
+    layers = sorted({layer.layer for layer in catalog.vector_layers if layer.layer != 'usdm'})
+    region_types = sorted({region.region_type for region in catalog.region_sets})
+    meta = Meta(request_id=_current_request_id(), query_time_ms=0)
+    data = DroughtDimensions(
+        datasets=datasets,
+        indices=indices,
+        timescales=timescales,
+        layers=layers,
+        region_types=region_types,
+    )
+    return DroughtDimensionsResponse(meta=meta, data=data)
+
+
+@app.get("/v1/drought/indices", response_model=DroughtIndexResponse)
+def get_drought_indices(
+    request: Request,
+    dataset: str | None = Query(None, description="Source dataset (nclimgrid, acis, cpc, prism, eddi)."),
+    index: str | None = Query(None, description="Index name (SPI, SPEI, EDDI, PDSI, QuickDRI, VHI)."),
+    timescale: str | None = Query(None, description="Accumulation window such as 1M, 3M, 6M."),
+    region: str | None = Query(None, description="Region specifier REGION_TYPE:REGION_ID."),
+    region_type: str | None = Query(None),
+    region_id: str | None = Query(None),
+    start: date | None = Query(None, description="Inclusive start date (YYYY-MM-DD)."),
+    end: date | None = Query(None, description="Inclusive end date (YYYY-MM-DD)."),
+    limit: int = Query(250, ge=1, le=5000),
+) -> DroughtIndexResponse:
+    parsed_region_type = region_type
+    parsed_region_id = region_id
+    if region:
+        parsed_region_type, parsed_region_id = _parse_region_param(region)
+    trino_cfg = TrinoConfig.from_env()
+    rows, elapsed = service.query_drought_indices(
+        trino_cfg,
+        region_type=parsed_region_type,
+        region_id=parsed_region_id,
+        dataset=dataset,
+        index_id=index,
+        timescale=timescale,
+        start_date=start,
+        end_date=end,
+        limit=limit,
+    )
+    payload: list[DroughtIndexPoint] = []
+    for row in rows:
+        metadata = row.get("metadata")
+        if isinstance(metadata, str):
+            try:
+                metadata = json.loads(metadata)
+            except json.JSONDecodeError:
+                metadata = None
+        payload.append(
+            DroughtIndexPoint(
+                series_id=row["series_id"],
+                dataset=row["dataset"],
+                index=row["index"],
+                timescale=row["timescale"],
+                valid_date=row["valid_date"],
+                as_of=row.get("as_of"),
+                value=row.get("value"),
+                unit=row.get("unit"),
+                poc=row.get("poc"),
+                region_type=row["region_type"],
+                region_id=row["region_id"],
+                region_name=row.get("region_name"),
+                parent_region_id=row.get("parent_region_id"),
+                source_url=row.get("source_url"),
+                metadata=metadata if isinstance(metadata, dict) else None,
+            )
+        )
+    meta = Meta(request_id=_current_request_id(), query_time_ms=int(elapsed))
+    return DroughtIndexResponse(meta=meta, data=payload)
+
+
+@app.get("/v1/drought/usdm", response_model=DroughtUsdmResponse)
+def get_drought_usdm(
+    region: str | None = Query(None, description="Region specifier REGION_TYPE:REGION_ID."),
+    region_type: str | None = Query(None),
+    region_id: str | None = Query(None),
+    start: date | None = Query(None),
+    end: date | None = Query(None),
+    limit: int = Query(250, ge=1, le=5000),
+) -> DroughtUsdmResponse:
+    parsed_region_type = region_type
+    parsed_region_id = region_id
+    if region:
+        parsed_region_type, parsed_region_id = _parse_region_param(region)
+    trino_cfg = TrinoConfig.from_env()
+    rows, elapsed = service.query_drought_usdm(
+        trino_cfg,
+        region_type=parsed_region_type,
+        region_id=parsed_region_id,
+        start_date=start,
+        end_date=end,
+        limit=limit,
+    )
+    payload: list[DroughtUsdmPoint] = []
+    for row in rows:
+        metadata = row.get("metadata")
+        if isinstance(metadata, str):
+            try:
+                metadata = json.loads(metadata)
+            except json.JSONDecodeError:
+                metadata = None
+        payload.append(
+            DroughtUsdmPoint(
+                region_type=row["region_type"],
+                region_id=row["region_id"],
+                region_name=row.get("region_name"),
+                parent_region_id=row.get("parent_region_id"),
+                valid_date=row["valid_date"],
+                as_of=row.get("as_of"),
+                d0_frac=row.get("d0_frac"),
+                d1_frac=row.get("d1_frac"),
+                d2_frac=row.get("d2_frac"),
+                d3_frac=row.get("d3_frac"),
+                d4_frac=row.get("d4_frac"),
+                source_url=row.get("source_url"),
+                metadata=metadata if isinstance(metadata, dict) else None,
+            )
+        )
+    meta = Meta(request_id=_current_request_id(), query_time_ms=int(elapsed))
+    return DroughtUsdmResponse(meta=meta, data=payload)
+
+
+@app.get("/v1/drought/layers", response_model=DroughtVectorResponse)
+def get_drought_layers(
+    layer: str | None = Query(None, description="Layer key (qpf, ahps_flood, aqi, wildfire)."),
+    region: str | None = Query(None, description="Region specifier REGION_TYPE:REGION_ID."),
+    region_type: str | None = Query(None),
+    region_id: str | None = Query(None),
+    start: datetime | None = Query(None),
+    end: datetime | None = Query(None),
+    limit: int = Query(250, ge=1, le=5000),
+) -> DroughtVectorResponse:
+    parsed_region_type = region_type
+    parsed_region_id = region_id
+    if region:
+        parsed_region_type, parsed_region_id = _parse_region_param(region)
+    trino_cfg = TrinoConfig.from_env()
+    rows, elapsed = service.query_drought_vector_events(
+        trino_cfg,
+        layer=layer.lower() if layer else None,
+        region_type=parsed_region_type,
+        region_id=parsed_region_id,
+        start_time=start,
+        end_time=end,
+        limit=limit,
+    )
+    payload: list[DroughtVectorEventPoint] = []
+    for row in rows:
+        props = row.get("properties")
+        if isinstance(props, str):
+            try:
+                props = json.loads(props)
+            except json.JSONDecodeError:
+                props = None
+        payload.append(
+            DroughtVectorEventPoint(
+                layer=row["layer"],
+                event_id=row["event_id"],
+                region_type=row.get("region_type"),
+                region_id=row.get("region_id"),
+                region_name=row.get("region_name"),
+                parent_region_id=row.get("parent_region_id"),
+                valid_start=row.get("valid_start"),
+                valid_end=row.get("valid_end"),
+                value=row.get("value"),
+                unit=row.get("unit"),
+                category=row.get("category"),
+                severity=row.get("severity"),
+                source_url=row.get("source_url"),
+                geometry_wkt=row.get("geometry_wkt"),
+                properties=props if isinstance(props, dict) else None,
+            )
+        )
+    meta = Meta(request_id=_current_request_id(), query_time_ms=int(elapsed))
+    return DroughtVectorResponse(meta=meta, data=payload)
+
+
+@app.get(
+    "/v1/drought/tiles/{dataset}/{index}/{timescale}/{z}/{x}/{y}.png",
+    response_class=Response,
+)
+def proxy_drought_tile(
+    dataset: str,
+    index: str,
+    timescale: str,
+    z: int,
+    x: int,
+    y: int,
+    valid_date: date = Query(..., description="Valid date for the tile (YYYY-MM-DD)."),
+) -> Response:
+    catalog = _drought_catalog()
+    try:
+        raster = catalog.raster_by_name(dataset.lower())
+    except KeyError:
+        raise HTTPException(status_code=404, detail="unknown_dataset")
+    slug = valid_date.isoformat()
+    try:
+        tile_url = raster.xyz_url(index.upper(), timescale.upper(), slug, z, x, y)
+    except Exception:
+        raise HTTPException(status_code=404, detail="tile_not_available")
+
+    cache_client = _tile_cache()
+    cache_key = f"drought:tile:{dataset.lower()}:{index.upper()}:{timescale.upper()}:{slug}:{z}:{x}:{y}"
+    if cache_client is not None:
+        try:
+            cached = cache_client.get(cache_key)
+        except Exception:
+            cached = None
+            _record_tile_cache_metric("tile", "error")
+        if cached:
+            _record_tile_cache_metric("tile", "hit")
+            return Response(content=cached, media_type="image/png")
+        _record_tile_cache_metric("tile", "miss")
+    else:
+        _record_tile_cache_metric("tile", "bypass")
+
+    start_fetch = time.perf_counter()
+    try:
+        with httpx.Client(timeout=20.0) as client:
+            response = client.get(tile_url)
+    except httpx.HTTPError as exc:
+        _observe_tile_fetch("tile", "error", time.perf_counter() - start_fetch)
+        raise HTTPException(status_code=502, detail=f"tile_fetch_failed: {exc}") from exc
+
+    duration = time.perf_counter() - start_fetch
+    if response.status_code != 200:
+        _observe_tile_fetch("tile", "error", duration)
+        raise HTTPException(status_code=response.status_code, detail="tile_fetch_failed")
+
+    _observe_tile_fetch("tile", "success", duration)
+
+    content = response.content
+    if cache_client is not None:
+        try:
+            cache_client.setex(cache_key, _TILE_CACHE_CFG.ttl_seconds, content)
+        except Exception:
+            pass
+    media_type = response.headers.get("Content-Type", "image/png")
+    return Response(content=content, media_type=media_type)
+
+
+@app.get("/v1/drought/info/{dataset}/{index}/{timescale}", response_model=DroughtInfoResponse)
+def get_drought_tile_metadata(
+    dataset: str,
+    index: str,
+    timescale: str,
+    valid_date: date = Query(..., description="Valid date for the raster (YYYY-MM-DD)."),
+) -> DroughtInfoResponse:
+    catalog = _drought_catalog()
+    try:
+        raster = catalog.raster_by_name(dataset.lower())
+    except KeyError:
+        raise HTTPException(status_code=404, detail="unknown_dataset")
+    slug = valid_date.isoformat()
+    try:
+        info_url = raster.info_url(index.upper(), timescale.upper(), slug)
+    except Exception:
+        raise HTTPException(status_code=404, detail="info_not_available")
+
+    cache_client = _tile_cache()
+    cache_key = f"drought:info:{dataset.lower()}:{index.upper()}:{timescale.upper()}:{slug}"
+    if cache_client is not None:
+        try:
+            cached = cache_client.get(cache_key)
+        except Exception:
+            cached = None
+            _record_tile_cache_metric("info", "error")
+        if cached:
+            _record_tile_cache_metric("info", "hit")
+            try:
+                payload = json.loads(cached)
+                meta = Meta(request_id=_current_request_id(), query_time_ms=0)
+                return DroughtInfoResponse(meta=meta, data=payload)
+            except json.JSONDecodeError:
+                LOGGER.debug("Failed to decode cached info payload", exc_info=True)
+        else:
+            _record_tile_cache_metric("info", "miss")
+    else:
+        _record_tile_cache_metric("info", "bypass")
+
+    start_fetch = time.perf_counter()
+    try:
+        with httpx.Client(timeout=15.0) as client:
+            response = client.get(info_url)
+    except httpx.HTTPError as exc:
+        _observe_tile_fetch("info", "error", time.perf_counter() - start_fetch)
+        raise HTTPException(status_code=502, detail=f"info_fetch_failed: {exc}") from exc
+
+    duration = time.perf_counter() - start_fetch
+    if response.status_code != 200:
+        _observe_tile_fetch("info", "error", duration)
+        raise HTTPException(status_code=response.status_code, detail="info_fetch_failed")
+
+    _observe_tile_fetch("info", "success", duration)
+
+    payload = response.json()
+    if cache_client is not None:
+        try:
+            cache_client.setex(cache_key, _TILE_CACHE_CFG.ttl_seconds, response.text)
+        except Exception:
+            pass
+
+    meta = Meta(request_id=_current_request_id(), query_time_ms=0)
+    return DroughtInfoResponse(meta=meta, data=payload)

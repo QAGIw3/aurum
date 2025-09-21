@@ -7,6 +7,22 @@
     {"name": "source", "type": "string"},
     {"name": "error_message", "type": "string"},
     {"name": "context", "type": {"type": "map", "values": "string"}},
-    {"name": "ingest_ts", "type": {"type": "long", "logicalType": "timestamp-micros"}}
+    {
+      "name": "severity",
+      "type": "string",
+      "doc": "Severity classification for the failure (INFO, WARN, ERROR, CRITICAL).",
+      "default": "ERROR"
+    },
+    {
+      "name": "recommended_action",
+      "type": ["null", "string"],
+      "doc": "Optional remediation guidance captured at the point of failure.",
+      "default": null
+    },
+    {
+      "name": "ingest_ts",
+      "type": {"type": "long", "logicalType": "timestamp-micros"},
+      "doc": "Timestamp when the DLQ event was produced (UTC)."
+    }
   ]
 }

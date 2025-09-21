@@ -445,6 +445,7 @@ ddl_statements = [
         asof_date DATE,
         ppa_contract_id VARCHAR,
         scenario_id VARCHAR,
+        tenant_id VARCHAR,
         curve_key VARCHAR,
         period_start DATE,
         period_end DATE,
@@ -458,7 +459,7 @@ ddl_statements = [
     )
     WITH (
         format = 'PARQUET',
-        partitioning = ARRAY['ppa_contract_id', 'year(asof_date)']
+        partitioning = ARRAY['tenant_id', 'ppa_contract_id', 'year(asof_date)']
     )
     """,
 ]
@@ -524,6 +525,7 @@ with connect(host="trino", port=8080, user="aurum", http_scheme="http") as trino
             asof_date,
             ppa_contract_id,
             scenario_id,
+            tenant_id,
             curve_key,
             period_start,
             period_end,
@@ -538,6 +540,7 @@ with connect(host="trino", port=8080, user="aurum", http_scheme="http") as trino
             DATE '{ASOF_DATE}',
             '{CONTRACT_ID}',
             '{SCENARIO_ID}',
+            '{TENANT_ID}',
             '{CURVE_KEY}',
             DATE '{CONTRACT_MONTH}',
             DATE '{CONTRACT_MONTH}',
@@ -557,6 +560,7 @@ with connect(host="trino", port=8080, user="aurum", http_scheme="http") as trino
             asof_date,
             ppa_contract_id,
             scenario_id,
+            tenant_id,
             curve_key,
             period_start,
             period_end,
@@ -571,6 +575,7 @@ with connect(host="trino", port=8080, user="aurum", http_scheme="http") as trino
             DATE '{ASOF_DATE}',
             '{CONTRACT_ID}',
             '{SCENARIO_ID}',
+            '{TENANT_ID}',
             '{CURVE_KEY}',
             DATE '{CONTRACT_MONTH}',
             DATE '{CONTRACT_MONTH}',
@@ -590,6 +595,7 @@ with connect(host="trino", port=8080, user="aurum", http_scheme="http") as trino
             asof_date,
             ppa_contract_id,
             scenario_id,
+            tenant_id,
             curve_key,
             period_start,
             period_end,
@@ -604,6 +610,7 @@ with connect(host="trino", port=8080, user="aurum", http_scheme="http") as trino
             DATE '{ASOF_DATE}',
             '{CONTRACT_ID}',
             '{SCENARIO_ID}',
+            '{TENANT_ID}',
             '{CURVE_KEY}',
             DATE '{CONTRACT_MONTH}',
             DATE '{CONTRACT_MONTH}',
@@ -734,7 +741,13 @@ PY"
       AURUM_OTEL_EXPORTER_ENDPOINT: '${AURUM_OTEL_EXPORTER_ENDPOINT:-}'
       AURUM_OTEL_EXPORTER_INSECURE: "${AURUM_OTEL_EXPORTER_INSECURE:-true}"
     healthcheck:
-      test: ["CMD", "bash", "-lc", "echo ok"]
+      test:
+        [
+          "CMD",
+          "python",
+          "-c",
+          "import os, urllib.request; port = os.getenv('AURUM_SCENARIO_HTTP_PORT') or os.getenv('AURUM_SCENARIO_METRICS_PORT', '9464'); urllib.request.urlopen('http://127.0.0.1:%s/ready' % port)",
+        ]
       interval: 30s
       timeout: 10s
       retries: 3
@@ -767,7 +780,13 @@ PY"
       AURUM_OTEL_EXPORTER_ENDPOINT: '${AURUM_OTEL_EXPORTER_ENDPOINT:-}'
       AURUM_OTEL_EXPORTER_INSECURE: "${AURUM_OTEL_EXPORTER_INSECURE:-true}"
     healthcheck:
-      test: ["CMD", "bash", "-lc", "echo ok"]
+      test:
+        [
+          "CMD",
+          "python",
+          "-c",
+          "import os, urllib.request; port = os.getenv('AURUM_SCENARIO_HTTP_PORT') or os.getenv('AURUM_SCENARIO_METRICS_PORT', '9464'); urllib.request.urlopen('http://127.0.0.1:%s/ready' % port)",
+        ]
       interval: 30s
       timeout: 10s
       retries: 3

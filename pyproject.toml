@@ -68,6 +68,7 @@ api = [
   "opentelemetry-instrumentation-fastapi==0.47b0",
   "opentelemetry-instrumentation-logging==0.47b0",
   "opentelemetry-instrumentation-requests==0.47b0",
+  "opentelemetry-instrumentation-httpx==0.47b0",
   "opentelemetry-instrumentation-psycopg==0.47b0"
 ]
 worker = [
@@ -82,6 +83,10 @@ worker = [
   "xarray>=2024.1",
   "shapely>=2.0",
   "pyproj>=3.6"
+]
+database = [
+  "sqlalchemy>=2.0",
+  "alembic>=1.13"
 ]
 
 

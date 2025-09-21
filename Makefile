@@ -5,6 +5,14 @@ KIND_NAMESPACE ?= aurum-dev
 KIND_API_IMAGE ?= ghcr.io/aurum/aurum-api
 KIND_WORKER_IMAGE ?= ghcr.io/aurum/aurum-worker
 
+.PHONY: db-upgrade db-downgrade
+
+db-upgrade:
+	alembic upgrade head
+
+db-downgrade:
+	alembic downgrade -1
+
 install:
 	python -m venv .venv && . .venv/bin/activate && pip install --upgrade pip && pip install -r requirements-dev.txt
 

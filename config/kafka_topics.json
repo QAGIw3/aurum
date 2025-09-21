@@ -243,6 +243,357 @@
           ]
         }
       ]
+    },
+    {
+      "name": "aurum.iso.miso.load.v1",
+      "partitions": 12,
+      "replication_factor": 3,
+      "config": {
+        "retention.ms": "2592000000"
+      },
+      "acls": [
+        {
+          "principal": "User:aurum-ingest",
+          "operations": [
+            "WRITE",
+            "DESCRIBE",
+            "DESCRIBE_CONFIGS"
+          ]
+        },
+        {
+          "principal": "User:aurum-worker",
+          "operations": [
+            "READ",
+            "DESCRIBE"
+          ]
+        },
+        {
+          "principal": "User:aurum-api",
+          "operations": [
+            "READ",
+            "DESCRIBE"
+          ]
+        },
+        {
+          "principal": "User:aurum-dbt",
+          "operations": [
+            "READ",
+            "DESCRIBE"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "aurum.iso.miso.genmix.v1",
+      "partitions": 12,
+      "replication_factor": 3,
+      "config": {
+        "retention.ms": "2592000000"
+      },
+      "acls": [
+        {
+          "principal": "User:aurum-ingest",
+          "operations": [
+            "WRITE",
+            "DESCRIBE",
+            "DESCRIBE_CONFIGS"
+          ]
+        },
+        {
+          "principal": "User:aurum-worker",
+          "operations": [
+            "READ",
+            "DESCRIBE"
+          ]
+        },
+        {
+          "principal": "User:aurum-api",
+          "operations": [
+            "READ",
+            "DESCRIBE"
+          ]
+        },
+        {
+          "principal": "User:aurum-dbt",
+          "operations": [
+            "READ",
+            "DESCRIBE"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "aurum.iso.caiso.load.v1",
+      "partitions": 12,
+      "replication_factor": 3,
+      "config": {
+        "retention.ms": "2592000000"
+      },
+      "acls": [
+        {
+          "principal": "User:aurum-ingest",
+          "operations": [
+            "WRITE",
+            "DESCRIBE",
+            "DESCRIBE_CONFIGS"
+          ]
+        },
+        {
+          "principal": "User:aurum-worker",
+          "operations": [
+            "READ",
+            "DESCRIBE"
+          ]
+        },
+        {
+          "principal": "User:aurum-api",
+          "operations": [
+            "READ",
+            "DESCRIBE"
+          ]
+        },
+        {
+          "principal": "User:aurum-dbt",
+          "operations": [
+            "READ",
+            "DESCRIBE"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "aurum.iso.caiso.genmix.v1",
+      "partitions": 12,
+      "replication_factor": 3,
+      "config": {
+        "retention.ms": "2592000000"
+      },
+      "acls": [
+        {
+          "principal": "User:aurum-ingest",
+          "operations": [
+            "WRITE",
+            "DESCRIBE",
+            "DESCRIBE_CONFIGS"
+          ]
+        },
+        {
+          "principal": "User:aurum-worker",
+          "operations": [
+            "READ",
+            "DESCRIBE"
+          ]
+        },
+        {
+          "principal": "User:aurum-api",
+          "operations": [
+            "READ",
+            "DESCRIBE"
+          ]
+        },
+        {
+          "principal": "User:aurum-dbt",
+          "operations": [
+            "READ",
+            "DESCRIBE"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "aurum.iso.spp.load.v1",
+      "partitions": 12,
+      "replication_factor": 3,
+      "config": {
+        "retention.ms": "2592000000"
+      },
+      "acls": [
+        {
+          "principal": "User:aurum-ingest",
+          "operations": [
+            "WRITE",
+            "DESCRIBE",
+            "DESCRIBE_CONFIGS"
+          ]
+        },
+        {
+          "principal": "User:aurum-worker",
+          "operations": [
+            "READ",
+            "DESCRIBE"
+          ]
+        },
+        {
+          "principal": "User:aurum-api",
+          "operations": [
+            "READ",
+            "DESCRIBE"
+          ]
+        },
+        {
+          "principal": "User:aurum-dbt",
+          "operations": [
+            "READ",
+            "DESCRIBE"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "aurum.iso.spp.genmix.v1",
+      "partitions": 12,
+      "replication_factor": 3,
+      "config": {
+        "retention.ms": "2592000000"
+      },
+      "acls": [
+        {
+          "principal": "User:aurum-ingest",
+          "operations": [
+            "WRITE",
+            "DESCRIBE",
+            "DESCRIBE_CONFIGS"
+          ]
+        },
+        {
+          "principal": "User:aurum-worker",
+          "operations": [
+            "READ",
+            "DESCRIBE"
+          ]
+        },
+        {
+          "principal": "User:aurum-api",
+          "operations": [
+            "READ",
+            "DESCRIBE"
+          ]
+        },
+        {
+          "principal": "User:aurum-dbt",
+          "operations": [
+            "READ",
+            "DESCRIBE"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "aurum.iso.aeso.load.v1",
+      "partitions": 12,
+      "replication_factor": 3,
+      "config": {
+        "retention.ms": "2592000000"
+      },
+      "acls": [
+        {
+          "principal": "User:aurum-ingest",
+          "operations": [
+            "WRITE",
+            "DESCRIBE",
+            "DESCRIBE_CONFIGS"
+          ]
+        },
+        {
+          "principal": "User:aurum-worker",
+          "operations": [
+            "READ",
+            "DESCRIBE"
+          ]
+        },
+        {
+          "principal": "User:aurum-api",
+          "operations": [
+            "READ",
+            "DESCRIBE"
+          ]
+        },
+        {
+          "principal": "User:aurum-dbt",
+          "operations": [
+            "READ",
+            "DESCRIBE"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "aurum.iso.aeso.genmix.v1",
+      "partitions": 12,
+      "replication_factor": 3,
+      "config": {
+        "retention.ms": "2592000000"
+      },
+      "acls": [
+        {
+          "principal": "User:aurum-ingest",
+          "operations": [
+            "WRITE",
+            "DESCRIBE",
+            "DESCRIBE_CONFIGS"
+          ]
+        },
+        {
+          "principal": "User:aurum-worker",
+          "operations": [
+            "READ",
+            "DESCRIBE"
+          ]
+        },
+        {
+          "principal": "User:aurum-api",
+          "operations": [
+            "READ",
+            "DESCRIBE"
+          ]
+        },
+        {
+          "principal": "User:aurum-dbt",
+          "operations": [
+            "READ",
+            "DESCRIBE"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "aurum.iso.miso.asm.v1",
+      "partitions": 12,
+      "replication_factor": 3,
+      "config": {
+        "retention.ms": "2592000000"
+      },
+      "acls": [
+        {
+          "principal": "User:aurum-ingest",
+          "operations": [
+            "WRITE",
+            "DESCRIBE",
+            "DESCRIBE_CONFIGS"
+          ]
+        },
+        {
+          "principal": "User:aurum-worker",
+          "operations": [
+            "READ",
+            "DESCRIBE"
+          ]
+        },
+        {
+          "principal": "User:aurum-api",
+          "operations": [
+            "READ",
+            "DESCRIBE"
+          ]
+        },
+        {
+          "principal": "User:aurum-dbt",
+          "operations": [
+            "READ",
+            "DESCRIBE"
+          ]
+        }
+      ]
     }
   ]
 }

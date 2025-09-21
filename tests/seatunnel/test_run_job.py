@@ -13,6 +13,7 @@ SCRIPT_PATH = REPO_ROOT / "scripts" / "seatunnel" / "run_job.sh"
 ISO_LMP_SCHEMA_PATH = REPO_ROOT / "kafka" / "schemas" / "iso.lmp.v1.avsc"
 ISO_LOAD_SCHEMA_PATH = REPO_ROOT / "kafka" / "schemas" / "iso.load.v1.avsc"
 ISO_GENMIX_SCHEMA_PATH = REPO_ROOT / "kafka" / "schemas" / "iso.genmix.v1.avsc"
+ISO_ASM_SCHEMA_PATH = REPO_ROOT / "kafka" / "schemas" / "iso.asm.v1.avsc"
 NOAA_GHCND_SCHEMA_PATH = REPO_ROOT / "kafka" / "schemas" / "noaa.weather.v1.avsc"
 EIA_SERIES_SCHEMA_PATH = REPO_ROOT / "kafka" / "schemas" / "eia.series.v1.avsc"
 FRED_SERIES_SCHEMA_PATH = REPO_ROOT / "kafka" / "schemas" / "fred.series.v1.avsc"
@@ -42,6 +43,17 @@ def extract_value_schema(config_path: Path) -> dict:
                 "SCHEMA_REGISTRY_URL": "http://localhost:8081",
             },
             "NOAA_GHCND_TOKEN",
+        ),
+        (
+            "miso_asm_to_kafka",
+            {
+                "MISO_ASM_URL": "https://example.com/asm",
+                "MISO_ASM_MARKET": "DAY_AHEAD_EXANTE",
+                "KAFKA_BOOTSTRAP_SERVERS": "localhost:9092",
+                "SCHEMA_REGISTRY_URL": "http://localhost:8081",
+                "ISO_ASM_SCHEMA": ISO_ASM_SCHEMA_PATH.read_text(encoding="utf-8"),
+            },
+            "MISO_ASM_URL",
         ),
         (
             "eia_series_to_kafka",
@@ -91,6 +103,17 @@ def extract_value_schema(config_path: Path) -> dict:
                 "TIMESCALE_PASSWORD": "ts",
             },
             "KAFKA_BOOTSTRAP_SERVERS",
+        ),
+        (
+            "iso_load_kafka_to_timescale",
+            {
+                "KAFKA_BOOTSTRAP_SERVERS": "localhost:9092",
+                "SCHEMA_REGISTRY_URL": "http://localhost:8081",
+                "TIMESCALE_JDBC_URL": "jdbc:postgresql://timescale:5432/timeseries",
+                "TIMESCALE_USER": "ts",
+                "TIMESCALE_PASSWORD": "ts",
+            },
+            "TIMESCALE_USER",
         ),
         (
             "nyiso_lmp_to_kafka",
@@ -731,6 +754,64 @@ def test_iso_lmp_timescale_job_renders_config(tmp_path: Path) -> None:
 
     assert 'lmp_enriched' in rendered
     assert 'jdbc:postgresql://timescale:5432/timeseries' in rendered
+
+
+def test_iso_load_timescale_job_renders_config(tmp_path: Path) -> None:
+    env = os.environ.copy()
+    env.update(
+        {
+            "KAFKA_BOOTSTRAP_SERVERS": "localhost:9092",
+            "SCHEMA_REGISTRY_URL": "http://localhost:8081",
+            "TIMESCALE_JDBC_URL": "jdbc:postgresql://timescale:5432/timeseries",
+            "TIMESCALE_USER": "ts",
+            "TIMESCALE_PASSWORD": "ts",
+            "SEATUNNEL_OUTPUT_DIR": str(tmp_path),
+        }
+    )
+
+    subprocess.run(
+        ["bash", str(SCRIPT_PATH), "iso_load_kafka_to_timescale", "--render-only"],
+        cwd=REPO_ROOT,
+        env=env,
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+
+    rendered_path = tmp_path / "iso_load_kafka_to_timescale.conf"
+    rendered = rendered_path.read_text(encoding="utf-8")
+
+    assert 'load_enriched' in rendered
+    assert 'load_timeseries' in rendered
+
+
+def test_miso_asm_job_renders_config(tmp_path: Path) -> None:
+    env = os.environ.copy()
+    env.update(
+        {
+            "MISO_ASM_URL": "https://example.com/api",
+            "MISO_ASM_MARKET": "DAY_AHEAD_EXANTE",
+            "KAFKA_BOOTSTRAP_SERVERS": "localhost:9092",
+            "SCHEMA_REGISTRY_URL": "http://localhost:8081",
+            "ISO_ASM_SCHEMA": ISO_ASM_SCHEMA_PATH.read_text(encoding="utf-8"),
+            "SEATUNNEL_OUTPUT_DIR": str(tmp_path),
+        }
+    )
+
+    subprocess.run(
+        ["bash", str(SCRIPT_PATH), "miso_asm_to_kafka", "--render-only"],
+        cwd=REPO_ROOT,
+        env=env,
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+
+    rendered_path = tmp_path / "miso_asm_to_kafka.conf"
+    rendered = rendered_path.read_text(encoding="utf-8")
+
+    assert 'miso_asm_normalized' in rendered
+    assert 'aurum.iso.miso.asm.v1' in rendered
 
 
 def test_nyiso_job_renders_config(tmp_path: Path) -> None:

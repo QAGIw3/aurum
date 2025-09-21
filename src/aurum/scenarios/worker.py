@@ -364,6 +364,11 @@ def _current_ts() -> datetime:
     return datetime.now(timezone.utc)
 
 
+def _backoff_delay(attempt: int, base_seconds: float) -> float:
+    attempt = max(attempt, 1)
+    return base_seconds * (2 ** (attempt - 1))
+
+
 def _resolve_curve_key(request: ScenarioRequest, scenario_id: str, tenant_id: str) -> str:
     if request.curve_def_ids:
         return request.curve_def_ids[0]
@@ -686,6 +691,43 @@ def _append_to_iceberg(records: Iterable[dict[str, object]]) -> None:
         LOGGER.debug("Cache invalidation skipped", exc_info=True)
 
 
+def _publish_outputs(
+    outputs: list[dict[str, object]],
+    *,
+    scenario_req,
+    run_id: str,
+    producer,
+    value_schema,
+    output_topic: str,
+    request_id: str | None,
+) -> bool:
+    if _run_is_cancelled(
+        scenario_id=scenario_req.scenario_id,
+        run_id=run_id,
+        tenant_id=scenario_req.tenant_id,
+    ):
+        LOGGER.info(
+            "Run %s for scenario %s cancelled before writing outputs",
+            run_id,
+            scenario_req.scenario_id,
+        )
+        return False
+
+    _append_to_iceberg(outputs)
+
+    headers_out = _build_produce_headers(run_id, request_id)
+    for output in outputs:
+        avro_payload = _to_avro_payload(output)
+        producer.produce(
+            topic=output_topic,
+            value=avro_payload,
+            value_schema=value_schema,
+            headers=headers_out,
+        )
+    producer.flush(2)
+    return True
+
+
 def _to_avro_payload(record: dict[str, object]) -> dict[str, object]:
     asof_date = record["asof_date"]
     contract_month = record.get("contract_month")
@@ -932,30 +974,17 @@ def run_worker():  # pragma: no cover - integration entrypoint
                                 run_id=run_id,
                                 settings=settings,
                             )
-                            if _run_is_cancelled(
-                                scenario_id=scenario_req.scenario_id,
+                            if not _publish_outputs(
+                                outputs,
+                                scenario_req=scenario_req,
                                 run_id=run_id,
-                                tenant_id=scenario_req.tenant_id,
+                                producer=prod,
+                                value_schema=value_schema,
+                                output_topic=output_topic,
+                                request_id=request_id,
                             ):
-                                LOGGER.info(
-                                    "Run %s for scenario %s cancelled before writing outputs",
-                                    run_id,
-                                    scenario_req.scenario_id,
-                                )
                                 cancelled = True
                                 break
-                            _append_to_iceberg(outputs)
-
-                            headers_out = _build_produce_headers(run_id, request_id)
-                            for output in outputs:
-                                avro_payload = _to_avro_payload(output)
-                                prod.produce(
-                                    topic=output_topic,
-                                    value=avro_payload,
-                                    value_schema=value_schema,
-                                    headers=headers_out,
-                                )
-                            prod.flush(2)
 
                             _maybe_update_run_state(
                                 run_id,
@@ -994,7 +1023,7 @@ def run_worker():  # pragma: no cover - integration entrypoint
                                     REQUEST_FAILURE.inc()
                                 break
 
-                            sleep_time = backoff_seconds * (2 ** (attempts - 1))
+                            sleep_time = _backoff_delay(attempts, backoff_seconds)
                             time.sleep(sleep_time)
 
                 if cancelled:

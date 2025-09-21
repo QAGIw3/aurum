@@ -1,5 +1,12 @@
 replicaCount: 1
 
+autoscaling:
+  enabled: false
+  minReplicas: 1
+  maxReplicas: 5
+  targetCPUUtilizationPercentage: 70
+  targetMemoryUtilizationPercentage: null
+
 nameOverride: ""
 fullnameOverride: ""
 
@@ -22,7 +29,7 @@ config:
   AURUM_SCENARIO_WORKER_GROUP: aurum-scenario-worker
   AURUM_SCENARIO_METRICS_PORT: "9464"
   AURUM_SCENARIO_METRICS_ADDR: 0.0.0.0
-  AURUM_SCENARIO_HTTP_PORT: "8080"
+  AURUM_SCENARIO_HTTP_PORT: ""
   AURUM_SCENARIO_HTTP_ADDR: 0.0.0.0
   AURUM_SCENARIO_MAX_ATTEMPTS: "3"
   AURUM_SCENARIO_RETRY_BACKOFF_SEC: "0.5"

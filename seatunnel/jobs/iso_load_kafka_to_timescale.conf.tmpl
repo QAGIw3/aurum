@@ -1,0 +1,74 @@
+# ISO load Kafka topics → TimescaleDB
+#
+# Required environment variables:
+#   KAFKA_BOOTSTRAP_SERVERS  - Kafka brokers
+#   SCHEMA_REGISTRY_URL      - Schema Registry endpoint
+#   TIMESCALE_JDBC_URL       - JDBC connection string
+#   TIMESCALE_USER           - Timescale username
+#   TIMESCALE_PASSWORD       - Timescale password
+#
+# Optional environment variables:
+#   ISO_LOAD_TOPIC_PATTERN   - Regex pattern for topics (default aurum\\.iso\\..*\\.load\\.v1)
+#   ISO_LOAD_TABLE           - Target table (default load_timeseries)
+#   ISO_LOAD_SAVE_MODE       - Save mode (default upsert)
+#   ISO_LOAD_AREA_FALLBACK   - Replacement string when area is null/empty (default SYSTEM)
+
+env {
+  job.mode = "STREAMING"
+  checkpoint.interval = 60000
+}
+
+source {
+  Kafka {
+    bootstrap.servers = "${KAFKA_BOOTSTRAP_SERVERS}"
+    pattern = "${ISO_LOAD_TOPIC_PATTERN}"
+    format = "avro"
+    start_mode = "latest"
+    avro {
+      schema.registry.url = "${SCHEMA_REGISTRY_URL}"
+    }
+    result_table_name = "load_raw"
+  }
+}
+
+transform {
+  Sql {
+    source_table_name = "load_raw"
+    result_table_name = "load_enriched"
+    query = """
+      SELECT
+        iso_code,
+        CASE
+          WHEN area IS NULL OR TRIM(area) = '' THEN '${ISO_LOAD_AREA_FALLBACK}'
+          ELSE TRIM(area)
+        END AS area,
+        TO_TIMESTAMP(interval_start / 1000000.0) AS interval_start,
+        CASE
+          WHEN interval_end IS NOT NULL THEN TO_TIMESTAMP(interval_end / 1000000.0)
+          ELSE NULL
+        END AS interval_end,
+        interval_minutes,
+        mw,
+        TO_TIMESTAMP(ingest_ts / 1000000.0) AS ingest_ts,
+        CASE
+          WHEN metadata IS NULL THEN NULL
+          ELSE CAST(metadata AS STRING)
+        END AS metadata
+      FROM load_raw
+    """
+  }
+}
+
+sink {
+  Jdbc {
+    plugin_input = "load_enriched"
+    driver = "org.postgresql.Driver"
+    url = "${TIMESCALE_JDBC_URL}"
+    user = "${TIMESCALE_USER}"
+    password = "${TIMESCALE_PASSWORD}"
+    table = "${ISO_LOAD_TABLE}"
+    primary_keys = ["iso_code", "area", "interval_start"]
+    save_mode = "${ISO_LOAD_SAVE_MODE}"
+    connection_check_timeout_sec = 30
+  }
+}

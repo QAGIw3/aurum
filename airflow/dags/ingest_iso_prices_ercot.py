@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 import os
-from datetime import datetime, timedelta
+from datetime import timedelta
 from typing import Any
 
 from airflow import DAG
@@ -11,6 +11,7 @@ from airflow.operators.empty import EmptyOperator
 from airflow.operators.python import PythonOperator
 
 from aurum.airflow_utils import build_failure_callback, build_preflight_callable
+from aurum.airflow_utils import iso as iso_utils
 
 
 DEFAULT_ARGS: dict[str, Any] = {
@@ -36,6 +37,14 @@ def _ercot_token_flag() -> str:
     # otherwise allow Airflow Variable-based token.
     # The bash command will include: ${ERCOT_BEARER_TOKEN:+--bearer-token ${ERCOT_BEARER_TOKEN}}
     return "{% if var.value.get('aurum_ercot_bearer_token', '') %} --bearer-token {{ var.value.get('aurum_ercot_bearer_token') }}{% endif %}"
+SOURCES = (
+    iso_utils.IngestSource(
+        "ercot_mis_lmp",
+        description="ERCOT MIS LMP ingestion",
+        schedule="45 * * * *",
+        target="kafka",
+    ),
+)
 
 
 with DAG(
@@ -104,21 +113,15 @@ with DAG(
     kafka_bootstrap = "{{ var.value.get('aurum_kafka_bootstrap', 'localhost:9092') }}"
     schema_registry = "{{ var.value.get('aurum_schema_registry', 'http://localhost:8081') }}"
 
-    seatunnel_command = "\n".join(
-        [
-            "set -euo pipefail",
-            "if [ \"${AURUM_DEBUG:-0}\" != \"0\" ]; then set -x; fi",
-            "cd /opt/airflow",
-            f"if [ \"${{AURUM_DEBUG:-0}}\" != \"0\" ]; then scripts/seatunnel/run_job.sh --describe ercot_lmp_to_kafka; fi",
-            f"export PATH=\"{BIN_PATH}\"",
-            f"export PYTHONPATH=\"${{PYTHONPATH:-}}:{PYTHONPATH_ENTRY}\"",
-            (
-                f"AURUM_EXECUTE_SEATUNNEL=0 ERCOT_INPUT_JSON={staging_path} "
-                f"KAFKA_BOOTSTRAP_SERVERS='{kafka_bootstrap}' "
-                f"SCHEMA_REGISTRY_URL='{schema_registry}' "
-                "scripts/seatunnel/run_job.sh ercot_lmp_to_kafka --render-only"
-            ),
-        ]
+    seatunnel_command = iso_utils.build_render_command(
+        job_name="ercot_lmp_to_kafka",
+        env_assignments=(
+            f"AURUM_EXECUTE_SEATUNNEL=0 ERCOT_INPUT_JSON={staging_path} "
+            f"KAFKA_BOOTSTRAP_SERVERS='{kafka_bootstrap}' "
+            f"SCHEMA_REGISTRY_URL='{schema_registry}'"
+        ),
+        bin_path=BIN_PATH,
+        pythonpath_entry=PYTHONPATH_ENTRY,
     )
 
     seatunnel_task = BashOperator(
@@ -128,19 +131,27 @@ with DAG(
     )
     exec_k8s = BashOperator(
         task_id="ercot_execute_k8s",
-        bash_command=(
-            "set -euo pipefail\n"
-            "if [ \"${AURUM_DEBUG:-0}\" != \"0\" ]; then set -x; fi\n"
-            "cd /opt/airflow\n"
-            f"export PATH=\"{BIN_PATH}\"\n"
-            f"export PYTHONPATH=\"${{PYTHONPATH:-}}:{PYTHONPATH_ENTRY}\"\n"
-            "python scripts/k8s/run_seatunnel_job.py --job-name ercot_lmp_to_kafka --wait --timeout 600"
+        bash_command=iso_utils.build_k8s_command(
+            "ercot_lmp_to_kafka",
+            bin_path=BIN_PATH,
+            pythonpath_entry=PYTHONPATH_ENTRY,
+            timeout=600,
         ),
         execution_timeout=timedelta(minutes=20),
     )
 
     end = EmptyOperator(task_id="end")
 
-    start >> preflight >> stage_ercot >> seatunnel_task >> exec_k8s >> end
+    register_sources = PythonOperator(
+        task_id="register_sources",
+        python_callable=lambda: iso_utils.register_sources(SOURCES),
+    )
+
+    watermark = PythonOperator(
+        task_id="ercot_watermark",
+        python_callable=iso_utils.make_watermark_callable("ercot_mis_lmp"),
+    )
+
+    start >> preflight >> register_sources >> stage_ercot >> seatunnel_task >> exec_k8s >> watermark >> end
 
     dag.on_failure_callback = build_failure_callback(source="aurum.airflow.ingest_iso_prices_ercot")

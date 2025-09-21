@@ -11,6 +11,7 @@ from airflow.operators.empty import EmptyOperator
 from airflow.operators.python import PythonOperator
 
 from aurum.airflow_utils import build_failure_callback, build_preflight_callable
+from aurum.airflow_utils import iso as iso_utils
 
 
 DEFAULT_ARGS: dict[str, Any] = {
@@ -27,6 +28,16 @@ DEFAULT_ARGS: dict[str, Any] = {
 
 BIN_PATH = os.environ.get("AURUM_BIN_PATH", ".venv/bin:$PATH")
 PYTHONPATH_ENTRY = os.environ.get("AURUM_PYTHONPATH_ENTRY", "/opt/airflow/src")
+
+
+SOURCES = (
+    iso_utils.IngestSource(
+        "isone_ws_lmp",
+        description="ISO-NE web services LMP ingestion",
+        schedule="10 * * * *",
+        target="kafka",
+    ),
+)
 
 
 with DAG(
@@ -52,6 +63,11 @@ with DAG(
             ),
             warn_only_variables=("aurum_isone_timezone",),
         ),
+    )
+
+    register_sources = PythonOperator(
+        task_id="register_sources",
+        python_callable=lambda: iso_utils.register_sources(SOURCES),
     )
 
     # Best-effort pull of ISO-NE WS creds from Vault
@@ -105,8 +121,13 @@ with DAG(
         pool="api_isone",
     )
 
+    watermark = PythonOperator(
+        task_id="isone_watermark",
+        python_callable=iso_utils.make_watermark_callable("isone_ws_lmp"),
+    )
+
     end = EmptyOperator(task_id="end")
 
-    start >> preflight >> isone_ingest >> end
+    start >> preflight >> register_sources >> isone_ingest >> watermark >> end
 
     dag.on_failure_callback = build_failure_callback(source="aurum.airflow.ingest_iso_prices_isone")

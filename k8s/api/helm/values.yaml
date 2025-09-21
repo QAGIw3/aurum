@@ -1,5 +1,12 @@
 replicaCount: 2
 
+autoscaling:
+  enabled: false
+  minReplicas: 2
+  maxReplicas: 5
+  targetCPUUtilizationPercentage: 70
+  targetMemoryUtilizationPercentage: null
+
 nameOverride: ""
 fullnameOverride: ""
 

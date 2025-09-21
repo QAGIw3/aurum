@@ -121,6 +121,56 @@ class UnitsMappingResponse(BaseModel):
     data: list[UnitMappingOut]
 
 
+# ISO LMP models
+
+
+class IsoLmpPoint(BaseModel):
+    iso_code: str
+    market: str
+    delivery_date: date
+    interval_start: datetime
+    interval_end: datetime | None = None
+    interval_minutes: int | None = None
+    location_id: str
+    location_name: str | None = None
+    location_type: str | None = None
+    price_total: float
+    price_energy: float | None = None
+    price_congestion: float | None = None
+    price_loss: float | None = None
+    currency: str
+    uom: str
+    settlement_point: str | None = None
+    source_run_id: str | None = None
+    ingest_ts: datetime | None = None
+    record_hash: str
+    metadata: dict[str, str] | None = None
+
+
+class IsoLmpResponse(BaseModel):
+    meta: Meta
+    data: list[IsoLmpPoint]
+
+
+class IsoLmpAggregatePoint(BaseModel):
+    iso_code: str
+    market: str
+    interval_start: datetime
+    location_id: str
+    currency: str
+    uom: str
+    price_avg: float | None = None
+    price_min: float | None = None
+    price_max: float | None = None
+    price_stddev: float | None = None
+    sample_count: int
+
+
+class IsoLmpAggregateResponse(BaseModel):
+    meta: Meta
+    data: list[IsoLmpAggregatePoint]
+
+
 class CalendarOut(BaseModel):
     name: str
     timezone: str
@@ -218,6 +268,90 @@ class EiaSeriesDimensionsData(BaseModel):
 class EiaSeriesDimensionsResponse(BaseModel):
     meta: Meta
     data: EiaSeriesDimensionsData
+
+
+class DroughtIndexPoint(BaseModel):
+    series_id: str
+    dataset: str
+    index: str
+    timescale: str
+    valid_date: date
+    as_of: datetime | None = None
+    value: float | None = None
+    unit: str | None = None
+    poc: str | None = None
+    region_type: str
+    region_id: str
+    region_name: str | None = None
+    parent_region_id: str | None = None
+    source_url: str | None = None
+    metadata: dict[str, Any] | None = None
+
+class DroughtIndexResponse(BaseModel):
+    meta: Meta
+    data: list[DroughtIndexPoint]
+
+
+class DroughtUsdmPoint(BaseModel):
+    region_type: str
+    region_id: str
+    region_name: str | None = None
+    parent_region_id: str | None = None
+    valid_date: date
+    as_of: datetime | None = None
+    d0_frac: float | None = None
+    d1_frac: float | None = None
+    d2_frac: float | None = None
+    d3_frac: float | None = None
+    d4_frac: float | None = None
+    source_url: str | None = None
+    metadata: dict[str, Any] | None = None
+
+
+class DroughtUsdmResponse(BaseModel):
+    meta: Meta
+    data: list[DroughtUsdmPoint]
+
+
+class DroughtVectorEventPoint(BaseModel):
+    layer: str
+    event_id: str
+    region_type: str | None = None
+    region_id: str | None = None
+    region_name: str | None = None
+    parent_region_id: str | None = None
+    valid_start: datetime | None = None
+    valid_end: datetime | None = None
+    value: float | None = None
+    unit: str | None = None
+    category: str | None = None
+    severity: str | None = None
+    source_url: str | None = None
+    geometry_wkt: str | None = None
+    properties: dict[str, Any] | None = None
+
+
+class DroughtVectorResponse(BaseModel):
+    meta: Meta
+    data: list[DroughtVectorEventPoint]
+
+
+class DroughtDimensions(BaseModel):
+    datasets: list[str]
+    indices: list[str]
+    timescales: list[str]
+    layers: list[str]
+    region_types: list[str]
+
+
+class DroughtDimensionsResponse(BaseModel):
+    meta: Meta
+    data: DroughtDimensions
+
+
+class DroughtInfoResponse(BaseModel):
+    meta: Meta
+    data: dict[str, Any]
 
 __all__ = [
     "Meta",

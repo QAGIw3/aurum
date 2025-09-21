@@ -10,7 +10,8 @@ from airflow.operators.bash import BashOperator
 from airflow.operators.empty import EmptyOperator
 from airflow.operators.python import PythonOperator
 
-from aurum.airflow_utils import build_failure_callback, build_preflight_callable, metrics
+from aurum.airflow_utils import build_failure_callback, build_preflight_callable
+from aurum.airflow_utils import iso as iso_utils
 
 
 
@@ -31,40 +32,18 @@ PYTHONPATH_ENTRY = os.environ.get("AURUM_PYTHONPATH_ENTRY", "/opt/airflow/src")
 VAULT_ADDR = os.environ.get("AURUM_VAULT_ADDR", "http://127.0.0.1:8200")
 VAULT_TOKEN = os.environ.get("AURUM_VAULT_TOKEN", "aurum-dev-token")
 VENV_PYTHON = os.environ.get("AURUM_VENV_PYTHON", ".venv/bin/python")
+AESO_SOURCES = (
+    iso_utils.IngestSource(
+        "aeso_smp",
+        description="AESO system marginal price (SMP)",
+        schedule="*/5 * * * *",
+        target="kafka",
+    ),
+)
 
 
 def _register_sources() -> None:
-    # Defer import so the real package is used at runtime inside Airflow workers
-    try:
-        import sys
-        src_path = os.environ.get("AURUM_PYTHONPATH_ENTRY", "/opt/airflow/src")
-        if src_path and src_path not in sys.path:
-            sys.path.insert(0, src_path)
-        from aurum.db import register_ingest_source  # type: ignore
-
-        register_ingest_source(
-            "aeso_smp",
-            description="AESO system marginal price (SMP)",
-            schedule="*/5 * * * *",
-            target="kafka",
-        )
-    except Exception as exc:  # pragma: no cover
-        print(f"Failed to register ingest source aeso_smp: {exc}")
-
-
-def _update_watermark(source_name: str, logical_date: datetime) -> None:
-    watermark = logical_date.astimezone(timezone.utc)
-    try:
-        import sys
-        src_path = os.environ.get("AURUM_PYTHONPATH_ENTRY", "/opt/airflow/src")
-        if src_path and src_path not in sys.path:
-            sys.path.insert(0, src_path)
-        from aurum.db import update_ingest_watermark  # type: ignore
-
-        update_ingest_watermark(source_name, "logical_date", watermark)
-        metrics.record_watermark_success(source_name, watermark)
-    except Exception as exc:  # pragma: no cover
-        print(f"Failed to update watermark for {source_name}: {exc}")
+    iso_utils.register_sources(AESO_SOURCES)
 
 
 def build_seatunnel_task() -> BashOperator:
@@ -87,32 +66,26 @@ def build_seatunnel_task() -> BashOperator:
 
     seatunnel_render = BashOperator(
         task_id="seatunnel_aeso_lmp_to_kafka",
-        bash_command=(
-            "set -euo pipefail\n"
-            "if [ \"${AURUM_DEBUG:-0}\" != \"0\" ]; then set -x; fi\n"
-            "cd /opt/airflow\n"
-            f"{pull_cmd}"
-            "if [ \"${AURUM_DEBUG:-0}\" != \"0\" ]; then scripts/seatunnel/run_job.sh --describe aeso_lmp_to_kafka; fi\n"
-            "if [ \"${AURUM_DEBUG:-0}\" != \"0\" ]; then env | grep -E 'DLQ_TOPIC|DLQ_SUBJECT' || true; fi\n"
-            f"export PATH=\"{BIN_PATH}\"\n"
-            f"export PYTHONPATH=\"${{PYTHONPATH:-}}:{PYTHONPATH_ENTRY}\"\n"
-            "export ISO_LMP_SCHEMA_PATH=/opt/airflow/scripts/kafka/schemas/iso.lmp.v1.avsc\n"
-            # Render-only when running inside Airflow pods without Docker
-            f"AURUM_EXECUTE_SEATUNNEL=0 {env_line} scripts/seatunnel/run_job.sh aeso_lmp_to_kafka --render-only"
+        bash_command=iso_utils.build_render_command(
+            job_name="aeso_lmp_to_kafka",
+            env_assignments=f"AURUM_EXECUTE_SEATUNNEL=0 {env_line}",
+            bin_path=BIN_PATH,
+            pythonpath_entry=PYTHONPATH_ENTRY,
+            debug_dump_env=True,
+            pre_lines=[pull_cmd.rstrip()],
+            extra_lines=["export ISO_LMP_SCHEMA_PATH=/opt/airflow/scripts/kafka/schemas/iso.lmp.v1.avsc"],
         ),
         execution_timeout=timedelta(minutes=10),
         pool="api_aeso",
     )
     seatunnel_exec = BashOperator(
         task_id="aeso_execute_k8s",
-        bash_command=(
-            "set -euo pipefail\n"
-            "if [ \"${AURUM_DEBUG:-0}\" != \"0\" ]; then set -x; fi\n"
-            "cd /opt/airflow\n"
-            f"export PATH=\"{BIN_PATH}\"\n"
-            f"export PYTHONPATH=\"${{PYTHONPATH:-}}:{PYTHONPATH_ENTRY}\"\n"
-            "export ISO_LMP_SCHEMA_PATH=/opt/airflow/scripts/kafka/schemas/iso.lmp.v1.avsc\n"
-            "python scripts/k8s/run_seatunnel_job.py --job-name aeso_lmp_to_kafka --wait --timeout 600"
+        bash_command=iso_utils.build_k8s_command(
+            "aeso_lmp_to_kafka",
+            bin_path=BIN_PATH,
+            pythonpath_entry=PYTHONPATH_ENTRY,
+            timeout=600,
+            extra_lines=["export ISO_LMP_SCHEMA_PATH=/opt/airflow/scripts/kafka/schemas/iso.lmp.v1.avsc"],
         ),
         execution_timeout=timedelta(minutes=20),
     )
@@ -149,7 +122,7 @@ with DAG(
 
     aeso_watermark = PythonOperator(
         task_id="aeso_watermark",
-        python_callable=lambda **ctx: _update_watermark("aeso_smp", ctx["logical_date"]),
+        python_callable=iso_utils.make_watermark_callable("aeso_smp"),
     )
 
     end = EmptyOperator(task_id="end")

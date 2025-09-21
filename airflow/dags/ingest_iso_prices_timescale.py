@@ -2,7 +2,8 @@
 from __future__ import annotations
 
 import os
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timedelta
+from pathlib import Path
 from typing import Any
 
 from airflow import DAG
@@ -10,7 +11,62 @@ from airflow.operators.bash import BashOperator
 from airflow.operators.empty import EmptyOperator
 from airflow.operators.python import PythonOperator
 
-from aurum.airflow_utils import build_failure_callback, build_preflight_callable, metrics
+from aurum.airflow_utils import build_failure_callback, build_preflight_callable
+from aurum.airflow_utils import iso as iso_utils
+
+
+def _validate_recent() -> None:
+    import pandas as pd
+    import psycopg
+    from airflow.models import Variable  # type: ignore
+
+    from aurum.dq import enforce_expectation_suite
+
+    dsn = os.getenv("AURUM_TIMESCALE_DSN") or Variable.get(
+        "aurum_timescale_dsn",
+        default_var="postgresql://timescale:timescale@timescale:5432/timeseries",
+    )
+    lookback_minutes = int(os.getenv("AURUM_TIMESCALE_DQ_LOOKBACK_MINUTES", "120"))
+    limit = int(os.getenv("AURUM_TIMESCALE_DQ_MAX_ROWS", "5000"))
+
+    query = f"""
+        SELECT
+            iso_code,
+            market,
+            delivery_date,
+            interval_start,
+            interval_end,
+            interval_minutes,
+            location_id,
+            location_name,
+            location_type,
+            price_total,
+            price_energy,
+            price_congestion,
+            price_loss,
+            currency,
+            uom,
+            settlement_point,
+            source_run_id,
+            ingest_ts,
+            record_hash,
+            metadata
+        FROM public.iso_lmp_timeseries
+        WHERE interval_start >= NOW() - INTERVAL '{max(lookback_minutes, 5)} minutes'
+        ORDER BY interval_start DESC
+        LIMIT {limit}
+    """
+
+    with psycopg.connect(dsn, autocommit=True) as conn:
+        df = pd.read_sql(query, conn)
+
+    if df.empty:
+        print("No ISO LMP rows available for DQ validation window; skipping expectations.")
+        return
+
+    suite_path = Path(__file__).resolve().parents[2] / "ge" / "expectations" / "iso_lmp.json"
+    enforce_expectation_suite(df, suite_path)
+    print(f"Validated {len(df)} ISO LMP rows against {suite_path.name} expectations.")
 
 
 
@@ -33,24 +89,15 @@ VENV_PYTHON = os.environ.get("AURUM_VENV_PYTHON", ".venv/bin/python")
 BIN_PATH = os.environ.get("AURUM_BIN_PATH", ".venv/bin:$PATH")
 PYTHONPATH_ENTRY = os.environ.get("AURUM_PYTHONPATH_ENTRY", "/opt/airflow/src")
 
+SOURCES = (
+    iso_utils.IngestSource(
+        "iso_lmp_timescale",
+        description="ISO LMP streaming load into Timescale",
+        schedule="0 * * * *",
+        target="timescale.public.iso_lmp_timeseries",
+    ),
+)
 
-def register_stream_source(**context: Any) -> None:
-    """Ensure the ISO LMP stream ingest source is registered."""
-    try:
-        import sys
-        src_path = os.environ.get("AURUM_PYTHONPATH_ENTRY", "/opt/airflow/src")
-        if src_path and src_path not in sys.path:
-            sys.path.insert(0, src_path)
-        from aurum.db import register_ingest_source  # type: ignore
-
-        register_ingest_source(
-            "iso_lmp_timescale",
-            description="ISO LMP streaming load into Timescale",
-            schedule="0 * * * *",
-            target="timescale.public.iso_lmp_timeseries",
-        )
-    except Exception as exc:  # pragma: no cover
-        print(f"Failed to register ingest source iso_lmp_timescale: {exc}")
 
 
 def build_timescale_task(task_id: str) -> BashOperator:
@@ -113,33 +160,30 @@ with DAG(
                 "aurum_schema_registry",
                 "aurum_timescale_jdbc",
             ),
-            optional_variables=("aurum_iso_lmp_topic_pattern", "aurum_iso_lmp_table"),
+            optional_variables=(
+                "aurum_iso_lmp_topic_pattern",
+                "aurum_iso_lmp_table",
+                "aurum_timescale_dsn",
+            ),
         ),
     )
 
-    register_source = PythonOperator(task_id="register_iso_lmp_source", python_callable=register_stream_source)
+    register_source = PythonOperator(
+        task_id="register_iso_lmp_source",
+        python_callable=lambda: iso_utils.register_sources(SOURCES),
+    )
 
     load_timescale = build_timescale_task(task_id="iso_lmp_kafka_to_timescale")
 
-    def _update_watermark(**context: Any) -> None:
-        logical_date: datetime = context["logical_date"]
-        watermark = logical_date.astimezone(timezone.utc)
-        try:
-            import sys
-            src_path = os.environ.get("AURUM_PYTHONPATH_ENTRY", "/opt/airflow/src")
-            if src_path and src_path not in sys.path:
-                sys.path.insert(0, src_path)
-            from aurum.db import update_ingest_watermark  # type: ignore
+    dq_check = PythonOperator(task_id="iso_lmp_dq_check", python_callable=_validate_recent)
 
-            update_ingest_watermark("iso_lmp_timescale", "logical_date", watermark)
-            metrics.record_watermark_success("iso_lmp_timescale", watermark)
-        except Exception as exc:  # pragma: no cover
-            print(f"Failed to update iso_lmp_timescale watermark: {exc}")
-
-    watermark = PythonOperator(task_id="update_iso_lmp_watermark", python_callable=_update_watermark)
+    watermark = PythonOperator(
+        task_id="update_iso_lmp_watermark",
+        python_callable=iso_utils.make_watermark_callable("iso_lmp_timescale"),
+    )
 
     end = EmptyOperator(task_id="end")
 
-    start >> preflight >> register_source >> load_timescale >> watermark >> end
+    start >> preflight >> register_source >> load_timescale >> dq_check >> watermark >> end
 
     dag.on_failure_callback = build_failure_callback(source="aurum.airflow.ingest_iso_prices_timescale")
