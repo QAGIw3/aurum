@@ -83,6 +83,49 @@ WITH (
     write_sort_order = ARRAY['asof_date', 'asset_class', 'iso', 'tenor_label']
 );
 
+CREATE TABLE IF NOT EXISTS iceberg.fact.fct_curve_observation (
+    curve_key VARCHAR,
+    tenor_label VARCHAR,
+    asof_date DATE,
+    tenor_type VARCHAR,
+    contract_month DATE,
+    iso_code VARCHAR,
+    market_code VARCHAR,
+    product_code VARCHAR,
+    block_code VARCHAR,
+    iso_sk VARCHAR,
+    market_sk VARCHAR,
+    product_sk VARCHAR,
+    block_sk VARCHAR,
+    asof_sk VARCHAR,
+    price_type VARCHAR,
+    currency VARCHAR,
+    per_unit VARCHAR,
+    mid DOUBLE,
+    bid DOUBLE,
+    ask DOUBLE,
+    asset_class VARCHAR,
+    region VARCHAR,
+    location VARCHAR,
+    spark_location VARCHAR,
+    source_file VARCHAR,
+    sheet_name VARCHAR,
+    version_hash VARCHAR,
+    _ingest_ts TIMESTAMP(6),
+    lineage_tags VARCHAR
+)
+WITH (
+    format = 'PARQUET',
+    format_version = '2',
+    write_compression = 'ZSTD',
+    write_target_file_size_bytes = 536870912,
+    optimize_rewrite_data_file_threshold = 24,
+    optimize_rewrite_delete_file_threshold = 250,
+    vacuum_min_snapshots_to_keep = 4,
+    vacuum_max_snapshot_age_retention = '7d',
+    partitioning = ARRAY['days(asof_date)', 'iso_code', 'product_code']
+);
+
 CREATE TABLE IF NOT EXISTS iceberg.market.curve_observation_quarantine (
     asof_date DATE,
     source_file VARCHAR,

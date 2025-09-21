@@ -1,4 +1,4 @@
-.PHONY: help build test deploy lint clean docker-build docker-push k8s-deploy db-migrate security-scan trino-harness reconcile-kafka-lake \
+.PHONY: help build test deploy lint clean docker-build docker-push k8s-deploy db-migrate security-scan trino-harness reconcile-kafka-lake iceberg-maintenance \
 	kind-create kind-apply kind-bootstrap kind-up kind-down kind-apply-ui kind-delete-ui \
 	kafka-bootstrap kafka-register-schemas kafka-set-compat kafka-apply-topics kafka-apply-topics-kind kafka-apply-topics-dry-run \
 	compose-bootstrap
