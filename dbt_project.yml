@@ -20,6 +20,8 @@ models:
       +schema: int
     mart:
       +schema: mart
+    publish:
+      +schema: market
 
 seeds:
   aurum:

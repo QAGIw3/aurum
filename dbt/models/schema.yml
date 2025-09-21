@@ -1,6 +1,22 @@
 version: 2
 
 sources:
+  - name: iceberg_raw
+    description: Iceberg raw landing tables populated by ingestion jobs.
+    schema: raw
+    freshness:
+      warn_after: {count: 6, period: hour}
+      error_after: {count: 12, period: hour}
+    tables:
+      - name: curve_landing
+        description: Landing table written directly by ingestion jobs (includes quarantine reason).
+        loaded_at_field: _ingest_ts
+        columns:
+          - name: curve_key
+            tests:
+              - not_null
+          - name: quarantine_reason
+            description: Reason assigned when a row fails validation.
   - name: iceberg_market
     description: Iceberg curated market tables.
     schema: market
@@ -16,6 +32,13 @@ sources:
             tests:
               - not_null
           - name: _ingest_ts
+            tests:
+              - not_null
+      - name: curve_observation_quarantine
+        description: Repository of quarantined rows awaiting remediation.
+        loaded_at_field: _ingest_ts
+        columns:
+          - name: quarantine_reason
             tests:
               - not_null
       - name: scenario_output
@@ -39,6 +62,21 @@ sources:
               - not_null
 
 models:
+  - name: stg_curve_landing
+    description: Staging model that normalizes landing rows and retains quarantine context.
+    columns:
+      - name: currency
+        tests:
+          - not_null
+      - name: per_unit
+        tests:
+          - not_null
+  - name: stg_curve_quarantine
+    description: Filtered view of landing rows that were quarantined with reasons attached.
+    columns:
+      - name: quarantine_reason
+        tests:
+          - not_null
   - name: stg_curve_observation
     description: Staging model that harmonizes curve observations for downstream consumption.
     columns:
@@ -52,6 +90,11 @@ models:
         description: Normalized currency code for the curve price.
       - name: per_unit
         description: Normalized unit denominator for the curve price.
+  - name: publish_curve_observation
+    description: Incremental publish step that materializes the canonical curve table from landing data.
+    tests:
+      - unique:
+          column_name: "curve_key || '|' || tenor_label || '|' || cast(asof_date as varchar)"
   - name: int_curve_monthly
     description: Intermediate model filtering to monthly tenors and latest copies per ingest.
     tests:
