@@ -1,0 +1,270 @@
+{
+  "metadata": {
+    "version": "1.0.0",
+    "description": "Data source quotas, rate limits, and optimal concurrency settings",
+    "last_updated": "2025-01-21",
+    "sources": [
+      "EIA (Energy Information Administration)",
+      "FRED (Federal Reserve Economic Data)",
+      "CPI (Consumer Price Index via FRED)",
+      "NOAA (National Oceanic and Atmospheric Administration)",
+      "ISO (Independent System Operators)"
+    ]
+  },
+  "data_sources": {
+    "eia": {
+      "name": "Energy Information Administration",
+      "description": "US energy data including electricity, petroleum, natural gas, and renewable energy",
+      "api_documentation": "https://www.eia.gov/opendata/",
+      "quotas": {
+        "requests_per_second": 10,
+        "requests_per_minute": 600,
+        "requests_per_hour": 36000,
+        "requests_per_day": 500000,
+        "concurrent_connections": 5,
+        "data_transfer_limit_gb_per_month": 1000,
+        "notes": "EIA API v2 limits are enforced per API key. Higher limits may be available for registered applications."
+      },
+      "optimal_settings": {
+        "batch_size": 5000,
+        "max_concurrent_jobs": 3,
+        "retry_backoff_seconds": 2,
+        "rate_limit_sleep_ms": 100,
+        "connection_timeout_seconds": 30,
+        "read_timeout_seconds": 120,
+        "max_retries": 5,
+        "retry_strategy": "exponential_backoff",
+        "parallelism": 4,
+        "notes": "Optimal settings based on performance testing. Batch size of 5000 provides good throughput while staying within rate limits."
+      },
+      "cost_model": {
+        "cost_per_call_usd": 0.001,
+        "estimated_monthly_cost_at_scale_usd": 50,
+        "notes": "Cost estimate based on 50K calls per month"
+      }
+    },
+    "fred": {
+      "name": "Federal Reserve Economic Data",
+      "description": "Economic data including interest rates, employment, inflation, and financial indicators",
+      "api_documentation": "https://fred.stlouisfed.org/docs/api/fred/",
+      "quotas": {
+        "requests_per_second": 100,
+        "requests_per_minute": 6000,
+        "requests_per_hour": 360000,
+        "requests_per_day": 2500000,
+        "concurrent_connections": 20,
+        "data_transfer_limit_gb_per_month": 5000,
+        "notes": "FRED API has generous limits but enforces rate limiting. Premium tiers available for higher limits."
+      },
+      "optimal_settings": {
+        "batch_size": 10000,
+        "max_concurrent_jobs": 8,
+        "retry_backoff_seconds": 1,
+        "rate_limit_sleep_ms": 10,
+        "connection_timeout_seconds": 30,
+        "read_timeout_seconds": 60,
+        "max_retries": 3,
+        "retry_strategy": "linear_backoff",
+        "parallelism": 8,
+        "notes": "FRED API can handle high concurrency. Batch size of 10K provides excellent throughput."
+      },
+      "cost_model": {
+        "cost_per_call_usd": 0.0005,
+        "estimated_monthly_cost_at_scale_usd": 25,
+        "notes": "Cost estimate based on 50K calls per month"
+      }
+    },
+    "cpi": {
+      "name": "Consumer Price Index (via FRED)",
+      "description": "Consumer price index data for inflation measurement",
+      "api_documentation": "https://fred.stlouisfed.org/docs/api/fred/",
+      "quotas": {
+        "requests_per_second": 100,
+        "requests_per_minute": 6000,
+        "requests_per_hour": 360000,
+        "requests_per_day": 2500000,
+        "concurrent_connections": 20,
+        "data_transfer_limit_gb_per_month": 1000,
+        "notes": "Same quotas as FRED since CPI data is served through FRED API"
+      },
+      "optimal_settings": {
+        "batch_size": 10000,
+        "max_concurrent_jobs": 6,
+        "retry_backoff_seconds": 1,
+        "rate_limit_sleep_ms": 10,
+        "connection_timeout_seconds": 30,
+        "read_timeout_seconds": 60,
+        "max_retries": 3,
+        "retry_strategy": "linear_backoff",
+        "parallelism": 6,
+        "notes": "CPI data follows FRED patterns. Lower concurrency than pure FRED due to data complexity."
+      },
+      "cost_model": {
+        "cost_per_call_usd": 0.0005,
+        "estimated_monthly_cost_at_scale_usd": 15,
+        "notes": "Cost estimate based on 30K calls per month"
+      }
+    },
+    "noaa": {
+      "name": "National Oceanic and Atmospheric Administration",
+      "description": "Weather and climate data including GHCND (Global Historical Climatology Network Daily)",
+      "api_documentation": "https://www.ncei.noaa.gov/access",
+      "quotas": {
+        "requests_per_second": 5,
+        "requests_per_minute": 300,
+        "requests_per_hour": 18000,
+        "requests_per_day": 100000,
+        "concurrent_connections": 3,
+        "data_transfer_limit_gb_per_month": 500,
+        "notes": "NOAA API has restrictive rate limits. Consider NOAA's data access policies for large datasets."
+      },
+      "optimal_settings": {
+        "batch_size": 1000,
+        "max_concurrent_jobs": 2,
+        "retry_backoff_seconds": 5,
+        "rate_limit_sleep_ms": 200,
+        "connection_timeout_seconds": 60,
+        "read_timeout_seconds": 180,
+        "max_retries": 5,
+        "retry_strategy": "exponential_backoff",
+        "parallelism": 2,
+        "notes": "Conservative settings due to NOAA's restrictive rate limits. Consider bulk data access for large datasets."
+      },
+      "cost_model": {
+        "cost_per_call_usd": 0.0001,
+        "estimated_monthly_cost_at_scale_usd": 10,
+        "notes": "Cost estimate based on 100K calls per month"
+      }
+    },
+    "iso": {
+      "name": "Independent System Operators",
+      "description": "Electricity market data from various ISOs (NYISO, PJM, CAISO, MISO, SPP, AESO)",
+      "api_documentation": "Varies by ISO - see individual ISO websites",
+      "quotas": {
+        "requests_per_second": 2,
+        "requests_per_minute": 120,
+        "requests_per_hour": 7200,
+        "requests_per_day": 50000,
+        "concurrent_connections": 2,
+        "data_transfer_limit_gb_per_month": 200,
+        "notes": "ISO APIs vary significantly. Some require registration, others have very restrictive limits."
+      },
+      "optimal_settings": {
+        "batch_size": 500,
+        "max_concurrent_jobs": 1,
+        "retry_backoff_seconds": 10,
+        "rate_limit_sleep_ms": 500,
+        "connection_timeout_seconds": 90,
+        "read_timeout_seconds": 300,
+        "max_retries": 7,
+        "retry_strategy": "exponential_backoff",
+        "parallelism": 1,
+        "notes": "Very conservative settings due to ISO API restrictions. Consider direct data feeds where available."
+      },
+      "cost_model": {
+        "cost_per_call_usd": 0.002,
+        "estimated_monthly_cost_at_scale_usd": 100,
+        "notes": "Cost estimate based on 50K calls per month. May be higher depending on specific ISO pricing."
+      }
+    }
+  },
+  "global_settings": {
+    "default_batch_size": 1000,
+    "default_max_concurrent_jobs": 3,
+    "default_retry_backoff_seconds": 2,
+    "default_rate_limit_sleep_ms": 100,
+    "default_connection_timeout_seconds": 30,
+    "default_read_timeout_seconds": 120,
+    "default_max_retries": 5,
+    "default_retry_strategy": "exponential_backoff",
+    "default_parallelism": 4,
+    "monitoring": {
+      "throughput_warning_threshold": 100,
+      "error_rate_warning_threshold": 0.05,
+      "memory_usage_warning_mb": 500,
+      "cost_per_gb_threshold_usd": 0.10
+    }
+  },
+  "environment_variables": {
+    "AURUM_EIA_REQUESTS_PER_SECOND": "10",
+    "AURUM_EIA_REQUESTS_PER_MINUTE": "600",
+    "AURUM_EIA_BATCH_SIZE": "5000",
+    "AURUM_EIA_MAX_CONCURRENT_JOBS": "3",
+    "AURUM_EIA_RETRY_BACKOFF_SECONDS": "2",
+    "AURUM_EIA_RATE_LIMIT_SLEEP_MS": "100",
+    "AURUM_FRED_REQUESTS_PER_SECOND": "100",
+    "AURUM_FRED_REQUESTS_PER_MINUTE": "6000",
+    "AURUM_FRED_BATCH_SIZE": "10000",
+    "AURUM_FRED_MAX_CONCURRENT_JOBS": "8",
+    "AURUM_FRED_RETRY_BACKOFF_SECONDS": "1",
+    "AURUM_FRED_RATE_LIMIT_SLEEP_MS": "10",
+    "AURUM_CPI_REQUESTS_PER_SECOND": "100",
+    "AURUM_CPI_REQUESTS_PER_MINUTE": "6000",
+    "AURUM_CPI_BATCH_SIZE": "10000",
+    "AURUM_CPI_MAX_CONCURRENT_JOBS": "6",
+    "AURUM_CPI_RETRY_BACKOFF_SECONDS": "1",
+    "AURUM_CPI_RATE_LIMIT_SLEEP_MS": "10",
+    "AURUM_NOAA_REQUESTS_PER_SECOND": "5",
+    "AURUM_NOAA_REQUESTS_PER_MINUTE": "300",
+    "AURUM_NOAA_BATCH_SIZE": "1000",
+    "AURUM_NOAA_MAX_CONCURRENT_JOBS": "2",
+    "AURUM_NOAA_RETRY_BACKOFF_SECONDS": "5",
+    "AURUM_NOAA_RATE_LIMIT_SLEEP_MS": "200",
+    "AURUM_ISO_REQUESTS_PER_SECOND": "2",
+    "AURUM_ISO_REQUESTS_PER_MINUTE": "120",
+    "AURUM_ISO_BATCH_SIZE": "500",
+    "AURUM_ISO_MAX_CONCURRENT_JOBS": "1",
+    "AURUM_ISO_RETRY_BACKOFF_SECONDS": "10",
+    "AURUM_ISO_RATE_LIMIT_SLEEP_MS": "500",
+    "AURUM_GLOBAL_DEFAULT_BATCH_SIZE": "1000",
+    "AURUM_GLOBAL_DEFAULT_MAX_CONCURRENT_JOBS": "3",
+    "AURUM_GLOBAL_DEFAULT_RETRY_BACKOFF_SECONDS": "2",
+    "AURUM_GLOBAL_DEFAULT_RATE_LIMIT_SLEEP_MS": "100",
+    "AURUM_GLOBAL_THROUGHPUT_WARNING_THRESHOLD": "100",
+    "AURUM_GLOBAL_ERROR_RATE_WARNING_THRESHOLD": "0.05",
+    "AURUM_GLOBAL_MEMORY_USAGE_WARNING_MB": "500",
+    "AURUM_GLOBAL_COST_PER_GB_THRESHOLD_USD": "0.10"
+  },
+  "deployment_profiles": {
+    "development": {
+      "description": "Development environment with relaxed limits for testing",
+      "multipliers": {
+        "requests_per_second": 0.5,
+        "requests_per_minute": 0.5,
+        "batch_size": 0.5,
+        "max_concurrent_jobs": 0.5
+      },
+      "notes": "Use for local development and testing. Not for production workloads."
+    },
+    "staging": {
+      "description": "Staging environment with production-like limits",
+      "multipliers": {
+        "requests_per_second": 0.8,
+        "requests_per_minute": 0.8,
+        "batch_size": 0.8,
+        "max_concurrent_jobs": 0.8
+      },
+      "notes": "Use for pre-production testing and performance validation."
+    },
+    "production": {
+      "description": "Production environment with full limits",
+      "multipliers": {
+        "requests_per_second": 1.0,
+        "requests_per_minute": 1.0,
+        "batch_size": 1.0,
+        "max_concurrent_jobs": 1.0
+      },
+      "notes": "Full production limits. Monitor closely and adjust based on actual usage."
+    },
+    "high_volume": {
+      "description": "High-volume processing with optimized settings",
+      "multipliers": {
+        "requests_per_second": 1.2,
+        "requests_per_minute": 1.2,
+        "batch_size": 1.5,
+        "max_concurrent_jobs": 1.5
+      },
+      "notes": "For high-volume processing scenarios. Requires careful monitoring."
+    }
+  }
+}

@@ -1,0 +1,4 @@
+provider,series_id,ts,asof_date,value,value_raw,unit_code,geo_id,dataset_code,frequency_code,status,quality_flag,ingest_ts,source_event_id,metadata,updated_at
+FRED,DGS10,2024-05-01T00:00:00Z,2024-05-01,4.12,4.12,PCT,US,H15,DAILY,FINAL,,2024-05-01T12:00:00Z,fred-evt-001,"{\"release\": \"H.15\"}",2024-05-01T12:00:00Z
+FRED,DGS10,2024-05-02T00:00:00Z,2024-05-02,4.15,4.15,PCT,US,H15,DAILY,FINAL,,2024-05-02T12:00:00Z,fred-evt-002,"{\"release\": \"H.15\"}",2024-05-02T12:00:00Z
+EIA,NG.RNGWHHD.D,2024-05-01T00:00:00Z,2024-05-01,2.15,2.15,USD,US,STEO,DAILY,PRELIMINARY,,2024-05-01T13:00:00Z,eia-evt-001,"{\"hub\": \"Henry Hub\"}",2024-05-01T13:00:00Z

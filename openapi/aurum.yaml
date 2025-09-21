@@ -2028,6 +2028,225 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/DroughtVectorResponse'
+  /v1/external/providers:
+    get:
+      summary: List external data providers
+      operationId: listExternalProviders
+      security:
+        - oauth2: [aurum]
+      tags:
+        - External
+      parameters:
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 1000
+          description: Maximum number of providers to return
+        - name: offset
+          in: query
+          schema:
+            type: integer
+            minimum: 0
+          description: Offset for pagination
+        - name: cursor
+          in: query
+          schema:
+            type: string
+          description: Opaque cursor for stable pagination
+      responses:
+        '200':
+          description: List of external providers
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ExternalProvidersResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+  /v1/external/series:
+    get:
+      summary: List external series
+      operationId: listExternalSeries
+      security:
+        - oauth2: [aurum]
+      tags:
+        - External
+      parameters:
+        - name: provider
+          in: query
+          schema:
+            type: string
+          description: Filter by provider
+        - name: frequency
+          in: query
+          schema:
+            type: string
+            enum: [daily, weekly, monthly, quarterly, yearly]
+          description: Filter by frequency
+        - name: asof
+          in: query
+          schema:
+            type: string
+            format: date
+          description: As-of date filter
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 1000
+          description: Maximum number of series to return
+        - name: offset
+          in: query
+          schema:
+            type: integer
+            minimum: 0
+          description: Offset for pagination
+        - name: cursor
+          in: query
+          schema:
+            type: string
+          description: Opaque cursor for stable pagination
+      responses:
+        '200':
+          description: List of external series
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ExternalSeriesResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '422':
+          $ref: '#/components/responses/UnprocessableEntity'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+  /v1/external/series/{series_id}/observations:
+    get:
+      summary: Get observations for an external series
+      operationId: getExternalSeriesObservations
+      security:
+        - oauth2: [aurum]
+      tags:
+        - External
+      parameters:
+        - name: series_id
+          in: path
+          required: true
+          schema:
+            type: string
+          description: Series identifier
+        - name: start_date
+          in: query
+          schema:
+            type: string
+            format: date
+          description: Start date for observations
+        - name: end_date
+          in: query
+          schema:
+            type: string
+            format: date
+          description: End date for observations
+        - name: frequency
+          in: query
+          schema:
+            type: string
+            enum: [daily, weekly, monthly, quarterly, yearly]
+          description: Output frequency
+        - name: asof
+          in: query
+          schema:
+            type: string
+            format: date
+          description: As-of date
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 10000
+          description: Maximum number of observations to return
+        - name: offset
+          in: query
+          schema:
+            type: integer
+            minimum: 0
+          description: Offset for pagination
+        - name: cursor
+          in: query
+          schema:
+            type: string
+          description: Opaque cursor for stable pagination
+        - name: format
+          in: query
+          schema:
+            type: string
+            enum: [json, csv]
+            default: json
+          description: Response format
+      responses:
+        '200':
+          description: Series observations
+          headers:
+            ETag:
+              description: Strong entity tag for cache validation
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ExternalObservationsResponse'
+            text/csv:
+              schema:
+                type: string
+                format: binary
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '422':
+          $ref: '#/components/responses/UnprocessableEntity'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+  /v1/metadata/external:
+    get:
+      summary: Get external data metadata
+      operationId: getExternalMetadata
+      security:
+        - oauth2: [aurum]
+      tags:
+        - Metadata
+        - External
+      parameters:
+        - name: provider
+          in: query
+          schema:
+            type: string
+          description: Filter by provider
+        - name: include_counts
+          in: query
+          schema:
+            type: boolean
+            default: false
+          description: Include series counts in response
+      responses:
+        '200':
+          description: External data metadata
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ExternalMetadataResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
   /health:
     get:
       summary: Health check
@@ -2045,6 +2264,128 @@ paths:
                   status:
                     type: string
                     example: ok
+
+    ExternalProvider:
+      type: object
+      required: [id, name, description]
+      properties:
+        id:
+          type: string
+          description: Provider identifier
+        name:
+          type: string
+          description: Provider name
+        description:
+          type: string
+          description: Provider description
+        base_url:
+          type: string
+          description: Provider base URL
+        last_updated:
+          type: string
+          format: date-time
+          description: Last update timestamp
+        series_count:
+          type: integer
+          description: Number of series from this provider
+
+    ExternalSeries:
+      type: object
+      required: [id, provider_id, name, frequency, description]
+      properties:
+        id:
+          type: string
+          description: Series identifier
+        provider_id:
+          type: string
+          description: Provider identifier
+        name:
+          type: string
+          description: Series name
+        frequency:
+          type: string
+          enum: [daily, weekly, monthly, quarterly, yearly]
+          description: Series frequency
+        description:
+          type: string
+          description: Series description
+        units:
+          type: string
+          description: Series units
+        last_updated:
+          type: string
+          format: date-time
+          description: Last update timestamp
+        observation_count:
+          type: integer
+          description: Number of observations
+
+    ExternalObservation:
+      type: object
+      required: [series_id, date, value]
+      properties:
+        series_id:
+          type: string
+          description: Series identifier
+        date:
+          type: string
+          format: date
+          description: Observation date
+        value:
+          type: number
+          description: Observation value
+        metadata:
+          type: object
+          description: Additional observation metadata
+
+    ExternalProvidersResponse:
+      type: object
+      required: [data, meta]
+      properties:
+        data:
+          type: array
+          items:
+            $ref: '#/components/schemas/ExternalProvider'
+        meta:
+          $ref: '#/components/schemas/Meta'
+
+    ExternalSeriesResponse:
+      type: object
+      required: [data, meta]
+      properties:
+        data:
+          type: array
+          items:
+            $ref: '#/components/schemas/ExternalSeries'
+        meta:
+          $ref: '#/components/schemas/Meta'
+
+    ExternalObservationsResponse:
+      type: object
+      required: [data, meta]
+      properties:
+        data:
+          type: array
+          items:
+            $ref: '#/components/schemas/ExternalObservation'
+        meta:
+          $ref: '#/components/schemas/Meta'
+
+    ExternalMetadataResponse:
+      type: object
+      required: [providers, total_series]
+      properties:
+        providers:
+          type: array
+          items:
+            $ref: '#/components/schemas/ExternalProvider'
+        total_series:
+          type: integer
+          description: Total number of external series
+        last_updated:
+          type: string
+          format: date-time
+          description: Last update timestamp
 
 components:
   securitySchemes:

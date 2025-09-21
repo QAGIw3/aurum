@@ -1,0 +1,23 @@
+{
+  "type": "record",
+  "name": "ExtTimeseriesObservation",
+  "namespace": "aurum.external",
+  "doc": "Canonical external timeseries observation used for interop across providers.",
+  "fields": [
+    {"name": "provider", "type": "string", "doc": "Upstream source system identifier (e.g., FRED, EIA)."},
+    {"name": "series_id", "type": "string", "doc": "Provider-scoped series identifier."},
+    {"name": "ts", "type": {"type": "long", "logicalType": "timestamp-micros"}, "doc": "Observation timestamp."},
+    {"name": "asof_date", "type": {"type": "int", "logicalType": "date"}, "doc": "Business date the observation is considered effective."},
+    {"name": "value", "type": ["null", "double"], "default": null, "doc": "Numeric value after normalization."},
+    {"name": "value_raw", "type": ["null", "string"], "default": null, "doc": "Original raw value before casting."},
+    {"name": "unit_code", "type": ["null", "string"], "default": null, "doc": "Reference to canonical unit table."},
+    {"name": "geo_id", "type": ["null", "string"], "default": null, "doc": "Reference to canonical geography."},
+    {"name": "dataset_code", "type": ["null", "string"], "default": null, "doc": "Dataset grouping within provider."},
+    {"name": "frequency_code", "type": ["null", "string"], "default": null, "doc": "Reporting frequency code."},
+    {"name": "status", "type": ["null", "string"], "default": null, "doc": "Provider status (e.g., PRELIMINARY, REVISED)."},
+    {"name": "quality_flag", "type": ["null", "string"], "default": null, "doc": "Optional quality annotation supplied by provider."},
+    {"name": "ingest_ts", "type": {"type": "long", "logicalType": "timestamp-micros"}, "doc": "Timestamp the record was ingested."},
+    {"name": "source_event_id", "type": ["null", "string"], "default": null, "doc": "Optional upstream message identifier."},
+    {"name": "metadata", "type": ["null", {"type": "map", "values": "string"}], "default": null, "doc": "Additional provider-specific metadata."}
+  ]
+}

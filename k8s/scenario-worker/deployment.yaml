@@ -21,7 +21,7 @@ spec:
       serviceAccountName: aurum-scenario-worker
       containers:
         - name: worker
-          image: ghcr.io/aurum/aurum-api:latest
+          image: ghcr.io/aurum/aurum-worker:latest
           imagePullPolicy: IfNotPresent
           ports:
             - containerPort: 9464

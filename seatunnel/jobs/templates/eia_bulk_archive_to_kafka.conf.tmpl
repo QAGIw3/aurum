@@ -1,0 +1,168 @@
+# SeaTunnel configuration template for EIA bulk archive ingestion
+# This template processes bulk archive files with checksum verification
+
+env {
+  # SeaTunnel execution environment
+  parallelism = {{ parallelism | default(4) }}
+  job.mode = "BATCH"
+  checkpoint.interval = 60000
+  checkpoint.timeout = 60000
+  checkpoint.enable = true
+
+  # Bulk archive processing settings
+  bulk_archive.source = "{{ source_name }}"
+  bulk_archive.input_path = "{{ input_path }}"
+  bulk_archive.output_topic = "{{ output_topic }}"
+  bulk_archive.batch_size = {{ batch_size | default(1000) }}
+  bulk_archive.enable_checksum_verification = {{ enable_checksum_verification | default(true) | lower }}
+  bulk_archive.enable_data_validation = {{ enable_data_validation | default(true) | lower }}
+
+  # Kafka settings
+  kafka.bootstrap.servers = "{{ kafka_bootstrap_servers }}"
+  kafka.producer.acks = "all"
+  kafka.producer.retries = 10
+  kafka.producer.max.in.flight.requests.per.connection = 1
+  kafka.producer.enable.idempotence = true
+  kafka.producer.compression.type = "snappy"
+
+  # Schema Registry
+  schema.registry.url = "{{ schema_registry_url }}"
+}
+
+source {
+  # Local file system source for bulk archive processing
+  LocalFile {
+    result_table_name = "bulk_archive_data"
+    path = "{{ input_path }}"
+    file_format = "csv"
+    csv {
+      delimiter = ","
+      skip_header = true
+      schema = {
+        fields {
+          series_id = "string"
+          period = "string"
+          value = "string"
+          units = "string"
+          area = "string"
+          sector = "string"
+          description = "string"
+          source = "string"
+          dataset = "string"
+          metadata = "string"
+        }
+      }
+    }
+  }
+}
+
+transform {
+  # Data validation and transformation
+  Filter {
+    source_table_name = "bulk_archive_data"
+    result_table_name = "validated_data"
+    filter {
+      condition = "{{ filter_condition | default('series_id IS NOT NULL AND value IS NOT NULL') }}"
+    }
+  }
+
+  # Field mapping and transformation
+  FieldMapper {
+    source_table_name = "validated_data"
+    result_table_name = "mapped_data"
+    field_mapper {
+      {% if field_mappings %}
+      {% for source_field, target_field in field_mappings.items() %}
+      {{ source_field }} = "{{ target_field }}"
+      {% endfor %}
+      {% else %}
+      # Default field mappings for EIA bulk data
+      series_id = "series_id"
+      period = "period"
+      value = "value"
+      units = "units"
+      area = "area"
+      sector = "sector"
+      description = "description"
+      source = "source"
+      dataset = "dataset"
+      metadata = "metadata"
+      {% endif %}
+    }
+  }
+
+  # Data type conversion
+  Sql {
+    source_table_name = "mapped_data"
+    result_table_name = "converted_data"
+    query = """
+      SELECT
+        series_id,
+        period,
+        CAST(value AS DOUBLE) as value,
+        units,
+        area,
+        sector,
+        description,
+        source,
+        dataset,
+        metadata,
+        CURRENT_TIMESTAMP as processed_at,
+        '{{ source_name }}' as data_source
+      FROM mapped_data
+      WHERE value IS NOT NULL AND TRIM(value) != ''
+    """
+  }
+}
+
+sink {
+  # Kafka sink for bulk archive data
+  Kafka {
+    source_table_name = "converted_data"
+    topic = "{{ output_topic }}"
+    bootstrap_servers = "{{ kafka_bootstrap_servers }}"
+    kafka_config {
+      key.serializer = "org.apache.kafka.common.serialization.StringSerializer"
+      value.serializer = "io.confluent.kafka.serializers.KafkaAvroSerializer"
+      schema.registry.url = "{{ schema_registry_url }}"
+      acks = "all"
+      retries = 10
+      max.in.flight.requests.per.connection = 1
+      enable.idempotence = true
+      compression.type = "snappy"
+      batch.size = 16384
+      linger.ms = 10
+      buffer.memory = 33554432
+    }
+
+    # Partitioning strategy for bulk data
+    partition_by = ["area", "sector"]
+
+    # Message key configuration
+    partition_key = "series_id"
+
+    # Data format configuration
+    format = "avro"
+    avro_schema = """
+    {
+      "type": "record",
+      "name": "EIA_Bulk_Archive_Record",
+      "namespace": "aurum.eia.bulk",
+      "fields": [
+        {"name": "series_id", "type": "string"},
+        {"name": "period", "type": "string"},
+        {"name": "value", "type": "double"},
+        {"name": "units", "type": "string"},
+        {"name": "area", "type": "string"},
+        {"name": "sector", "type": "string"},
+        {"name": "description", "type": "string"},
+        {"name": "source", "type": "string"},
+        {"name": "dataset", "type": "string"},
+        {"name": "metadata", "type": "string"},
+        {"name": "processed_at", "type": {"type": "long", "logicalType": "timestamp-millis"}},
+        {"name": "data_source", "type": "string"}
+      ]
+    }
+    """
+  }
+}

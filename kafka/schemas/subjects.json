@@ -3,6 +3,8 @@
   "aurum.drought.index.v1-value": "aurum.drought.index.v1.avsc",
   "aurum.drought.usdm_area.v1-value": "aurum.drought.usdm_area.v1.avsc",
   "aurum.drought.vector_event.v1-value": "aurum.drought.vector_event.v1.avsc",
+  "aurum.ext.series_catalog.upsert.v1-value": "ExtSeriesCatalogUpsertV1.avsc",
+  "aurum.ext.timeseries.obs.v1-value": "ExtTimeseriesObsV1.avsc",
   "aurum.ingest.error.v1": "ingest.error.v1.avsc",
   "aurum.iso.aeso.genmix.v1-value": "iso.genmix.v1.avsc",
   "aurum.iso.aeso.lmp.v1-value": "iso.lmp.v1.avsc",

@@ -241,3 +241,339 @@ BEGIN
     RETURN result;
 END;
 $$ LANGUAGE plpgsql;
+
+-- Slice ledger for tracking individual work slices that can be resumed
+CREATE TABLE IF NOT EXISTS ingest_slice (
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    source_name CITEXT NOT NULL REFERENCES ingest_source(name) ON DELETE CASCADE,
+    slice_key TEXT NOT NULL,  -- e.g., "2024-12-31_14:00" or "dataset_ELEC.PRICE"
+    slice_type TEXT NOT NULL,  -- time_window, dataset, failed_records, incremental
+    slice_data JSONB NOT NULL,  -- Additional data for the slice (time range, dataset names, etc.)
+    status TEXT NOT NULL DEFAULT 'pending',  -- pending, running, completed, failed, cancelled
+    priority INTEGER NOT NULL DEFAULT 100,  -- Lower numbers = higher priority
+    max_retries INTEGER NOT NULL DEFAULT 3,
+    retry_count INTEGER NOT NULL DEFAULT 0,
+    last_retry_at TIMESTAMPTZ,
+    next_retry_at TIMESTAMPTZ,
+    started_at TIMESTAMPTZ,
+    completed_at TIMESTAMPTZ,
+    failed_at TIMESTAMPTZ,
+    error_message TEXT,
+    progress_percent DECIMAL(5,2) DEFAULT 0.00,
+    records_processed INTEGER DEFAULT 0,
+    records_expected INTEGER,
+    processing_time_seconds DECIMAL(10,2),
+    worker_id TEXT,  -- ID of the worker processing this slice
+    metadata JSONB DEFAULT '{}'::JSONB,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    UNIQUE (source_name, slice_key, slice_type)
+);
+
+CREATE INDEX IF NOT EXISTS idx_ingest_slice_source_status ON ingest_slice(source_name, status);
+CREATE INDEX IF NOT EXISTS idx_ingest_slice_next_retry ON ingest_slice(next_retry_at) WHERE status = 'failed' AND retry_count < max_retries;
+CREATE INDEX IF NOT EXISTS idx_ingest_slice_priority_status ON ingest_slice(priority, status) WHERE status IN ('pending', 'failed');
+CREATE INDEX IF NOT EXISTS idx_ingest_slice_source_type_key ON ingest_slice(source_name, slice_type, slice_key);
+CREATE INDEX IF NOT EXISTS idx_ingest_slice_updated_at ON ingest_slice(updated_at DESC);
+
+-- Function to register or update a slice
+CREATE OR REPLACE FUNCTION public.upsert_ingest_slice(
+    p_source_name CITEXT,
+    p_slice_key TEXT,
+    p_slice_type TEXT,
+    p_slice_data JSONB,
+    p_status TEXT DEFAULT 'pending',
+    p_priority INTEGER DEFAULT 100,
+    p_max_retries INTEGER DEFAULT 3,
+    p_records_expected INTEGER DEFAULT NULL,
+    p_metadata JSONB DEFAULT '{}'::JSONB
+) RETURNS UUID AS $$
+DECLARE
+    slice_id UUID;
+    now_time TIMESTAMPTZ := NOW();
+BEGIN
+    -- Try to update existing slice
+    UPDATE ingest_slice
+    SET
+        slice_data = p_slice_data,
+        status = p_status,
+        priority = p_priority,
+        max_retries = p_max_retries,
+        records_expected = COALESCE(p_records_expected, records_expected),
+        metadata = p_metadata,
+        updated_at = now_time
+    WHERE source_name = p_source_name
+      AND slice_key = p_slice_key
+      AND slice_type = p_slice_type
+    RETURNING id INTO slice_id;
+
+    -- If no existing slice, insert new one
+    IF slice_id IS NULL THEN
+        INSERT INTO ingest_slice(
+            source_name, slice_key, slice_type, slice_data, status,
+            priority, max_retries, records_expected, metadata, updated_at
+        )
+        VALUES (
+            p_source_name, p_slice_key, p_slice_type, p_slice_data, p_status,
+            p_priority, p_max_retries, p_records_expected, p_metadata, now_time
+        )
+        RETURNING id INTO slice_id;
+    END IF;
+
+    RETURN slice_id;
+END;
+$$ LANGUAGE plpgsql;
+
+-- Function to start processing a slice
+CREATE OR REPLACE FUNCTION public.start_ingest_slice(
+    p_source_name CITEXT,
+    p_slice_key TEXT,
+    p_slice_type TEXT,
+    p_worker_id TEXT DEFAULT NULL
+) RETURNS BOOLEAN AS $$
+DECLARE
+    slice_id UUID;
+    now_time TIMESTAMPTZ := NOW();
+BEGIN
+    -- Update slice status to running
+    UPDATE ingest_slice
+    SET
+        status = 'running',
+        started_at = now_time,
+        worker_id = COALESCE(p_worker_id, worker_id),
+        updated_at = now_time
+    WHERE source_name = p_source_name
+      AND slice_key = p_slice_key
+      AND slice_type = p_slice_type
+      AND status IN ('pending', 'failed')
+    RETURNING id INTO slice_id;
+
+    RETURN slice_id IS NOT NULL;
+END;
+$$ LANGUAGE plpgsql;
+
+-- Function to complete a slice
+CREATE OR REPLACE FUNCTION public.complete_ingest_slice(
+    p_source_name CITEXT,
+    p_slice_key TEXT,
+    p_slice_type TEXT,
+    p_records_processed INTEGER DEFAULT 0,
+    p_processing_time_seconds DECIMAL DEFAULT NULL,
+    p_metadata JSONB DEFAULT '{}'::JSONB
+) RETURNS BOOLEAN AS $$
+DECLARE
+    slice_id UUID;
+    now_time TIMESTAMPTZ := NOW();
+BEGIN
+    UPDATE ingest_slice
+    SET
+        status = 'completed',
+        completed_at = now_time,
+        records_processed = COALESCE(p_records_processed, records_processed),
+        processing_time_seconds = COALESCE(p_processing_time_seconds, processing_time_seconds),
+        metadata = metadata || p_metadata,
+        updated_at = now_time
+    WHERE source_name = p_source_name
+      AND slice_key = p_slice_key
+      AND slice_type = p_slice_type
+      AND status = 'running'
+    RETURNING id INTO slice_id;
+
+    RETURN slice_id IS NOT NULL;
+END;
+$$ LANGUAGE plpgsql;
+
+-- Function to fail a slice
+CREATE OR REPLACE FUNCTION public.fail_ingest_slice(
+    p_source_name CITEXT,
+    p_slice_key TEXT,
+    p_slice_type TEXT,
+    p_error_message TEXT,
+    p_metadata JSONB DEFAULT '{}'::JSONB
+) RETURNS BOOLEAN AS $$
+DECLARE
+    slice_id UUID;
+    now_time TIMESTAMPTZ := NOW();
+    slice_record RECORD;
+BEGIN
+    -- Get current slice info
+    SELECT retry_count, max_retries, next_retry_at
+    INTO slice_record
+    FROM ingest_slice
+    WHERE source_name = p_source_name
+      AND slice_key = p_slice_key
+      AND slice_type = p_slice_type;
+
+    IF NOT FOUND THEN
+        RETURN FALSE;
+    END IF;
+
+    -- Calculate next retry time (exponential backoff: 1min, 2min, 4min, etc.)
+    DECLARE
+        next_retry_delay_minutes INTEGER := GREATEST(1, LEAST(60, POW(2, slice_record.retry_count))); -- Max 60 minutes
+        next_retry_time TIMESTAMPTZ := now_time + (next_retry_delay_minutes || ' minutes')::INTERVAL;
+    BEGIN
+        UPDATE ingest_slice
+        SET
+            status = CASE
+                WHEN slice_record.retry_count >= slice_record.max_retries THEN 'failed'
+                ELSE 'failed'
+            END,
+            failed_at = now_time,
+            error_message = p_error_message,
+            retry_count = slice_record.retry_count + 1,
+            next_retry_at = CASE
+                WHEN slice_record.retry_count < slice_record.max_retries THEN next_retry_time
+                ELSE NULL
+            END,
+            metadata = metadata || p_metadata,
+            updated_at = now_time
+        WHERE source_name = p_source_name
+          AND slice_key = p_slice_key
+          AND slice_type = p_slice_type
+        RETURNING id INTO slice_id;
+
+        RETURN slice_id IS NOT NULL;
+    END;
+END;
+$$ LANGUAGE plpgsql;
+
+-- Function to update slice progress
+CREATE OR REPLACE FUNCTION public.update_ingest_slice_progress(
+    p_source_name CITEXT,
+    p_slice_key TEXT,
+    p_slice_type TEXT,
+    p_progress_percent DECIMAL,
+    p_records_processed INTEGER DEFAULT 0,
+    p_metadata JSONB DEFAULT '{}'::JSONB
+) RETURNS BOOLEAN AS $$
+DECLARE
+    slice_id UUID;
+    now_time TIMESTAMPTZ := NOW();
+BEGIN
+    UPDATE ingest_slice
+    SET
+        progress_percent = p_progress_percent,
+        records_processed = COALESCE(p_records_processed, records_processed),
+        metadata = metadata || p_metadata,
+        updated_at = now_time
+    WHERE source_name = p_source_name
+      AND slice_key = p_slice_key
+      AND slice_type = p_slice_type
+      AND status = 'running'
+    RETURNING id INTO slice_id;
+
+    RETURN slice_id IS NOT NULL;
+END;
+$$ LANGUAGE plpgsql;
+
+-- Function to get slices ready for retry
+CREATE OR REPLACE FUNCTION public.get_slices_for_retry(
+    p_max_slices INTEGER DEFAULT 10,
+    p_source_name CITEXT DEFAULT NULL
+) RETURNS TABLE(
+    id UUID,
+    source_name CITEXT,
+    slice_key TEXT,
+    slice_type TEXT,
+    slice_data JSONB,
+    priority INTEGER,
+    retry_count INTEGER,
+    max_retries INTEGER,
+    next_retry_at TIMESTAMPTZ
+) AS $$
+BEGIN
+    RETURN QUERY
+    SELECT
+        s.id,
+        s.source_name,
+        s.slice_key,
+        s.slice_type,
+        s.slice_data,
+        s.priority,
+        s.retry_count,
+        s.max_retries,
+        s.next_retry_at
+    FROM ingest_slice s
+    WHERE s.status = 'failed'
+      AND s.retry_count < s.max_retries
+      AND (s.next_retry_at IS NULL OR s.next_retry_at <= NOW())
+      AND (p_source_name IS NULL OR s.source_name = p_source_name)
+    ORDER BY s.priority ASC, s.next_retry_at ASC
+    LIMIT p_max_slices;
+END;
+$$ LANGUAGE plpgsql;
+
+-- Function to get pending slices for processing
+CREATE OR REPLACE FUNCTION public.get_pending_slices(
+    p_max_slices INTEGER DEFAULT 10,
+    p_source_name CITEXT DEFAULT NULL,
+    p_slice_type TEXT DEFAULT NULL
+) RETURNS TABLE(
+    id UUID,
+    source_name CITEXT,
+    slice_key TEXT,
+    slice_type TEXT,
+    slice_data JSONB,
+    priority INTEGER
+) AS $$
+BEGIN
+    RETURN QUERY
+    SELECT
+        s.id,
+        s.source_name,
+        s.slice_key,
+        s.slice_type,
+        s.slice_data,
+        s.priority
+    FROM ingest_slice s
+    WHERE s.status = 'pending'
+      AND (p_source_name IS NULL OR s.source_name = p_source_name)
+      AND (p_slice_type IS NULL OR s.slice_type = p_slice_type)
+    ORDER BY s.priority ASC, s.created_at ASC
+    LIMIT p_max_slices;
+END;
+$$ LANGUAGE plpgsql;
+
+-- Function to get operation statistics
+CREATE OR REPLACE FUNCTION public.get_slice_statistics(
+    p_source_name CITEXT DEFAULT NULL,
+    p_hours_back INTEGER DEFAULT 24
+) RETURNS JSONB AS $$
+DECLARE
+    result JSONB;
+    cutoff_time TIMESTAMPTZ := NOW() - (p_hours_back || ' hours')::INTERVAL;
+BEGIN
+    WITH stats AS (
+        SELECT
+            COUNT(*) as total_slices,
+            COUNT(*) FILTER (WHERE status = 'completed') as completed_slices,
+            COUNT(*) FILTER (WHERE status = 'failed') as failed_slices,
+            COUNT(*) FILTER (WHERE status = 'running') as running_slices,
+            COUNT(*) FILTER (WHERE status = 'pending') as pending_slices,
+            AVG(processing_time_seconds) FILTER (WHERE processing_time_seconds IS NOT NULL) as avg_processing_time,
+            SUM(records_processed) FILTER (WHERE records_processed IS NOT NULL) as total_records_processed,
+            AVG(progress_percent) FILTER (WHERE status = 'running') as avg_progress_percent
+        FROM ingest_slice
+        WHERE (p_source_name IS NULL OR source_name = p_source_name)
+          AND created_at >= cutoff_time
+    )
+    SELECT jsonb_build_object(
+        'time_range_hours', p_hours_back,
+        'cutoff_time', cutoff_time,
+        'source_name', p_source_name,
+        'total_slices', total_slices,
+        'completed_slices', completed_slices,
+        'failed_slices', failed_slices,
+        'running_slices', running_slices,
+        'pending_slices', pending_slices,
+        'success_rate', CASE WHEN total_slices > 0 THEN completed_slices::DECIMAL / total_slices ELSE 0 END,
+        'average_processing_time_seconds', avg_processing_time,
+        'total_records_processed', total_records_processed,
+        'average_progress_percent', avg_progress_percent
+    ) INTO result
+    FROM stats;
+
+    RETURN result;
+END;
+$$ LANGUAGE plpgsql;

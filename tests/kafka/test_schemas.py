@@ -325,6 +325,85 @@ def test_scenario_schemas_backward_compatible() -> None:
         assert current == baseline
 
 
+def test_external_contract_schemas_backward_compatible() -> None:
+    for name in ("ExtTimeseriesObsV1.avsc", "ExtSeriesCatalogUpsertV1.avsc"):
+        current = _load_schema_dict(SCHEMA_ROOT / name)
+        baseline = _load_schema_dict(SNAPSHOT_ROOT / name)
+        assert current == baseline
+
+
+def test_external_timeseries_obs_roundtrip() -> None:
+    schema_path = SCHEMA_ROOT / "ExtTimeseriesObsV1.avsc"
+    schema_dict = fastavro_schema.load_schema(schema_path)
+    parsed = parse_schema(schema_dict)
+    now_dt = datetime.now(timezone.utc)
+    record = {
+        "provider": "FRED",
+        "series_id": "DGS10",
+        "ts": _micros_since_epoch(now_dt),
+        "asof_date": _days_since_epoch(now_dt.date()),
+        "value": 4.12,
+        "value_raw": "4.12",
+        "unit_code": "PCT",
+        "geo_id": "US",
+        "dataset_code": "H15",
+        "frequency_code": "DAILY",
+        "status": "FINAL",
+        "quality_flag": None,
+        "ingest_ts": _micros_since_epoch(now_dt),
+        "source_event_id": "fred-evt-1",
+        "metadata": {"release": "2024-05"},
+    }
+
+    buffer = BytesIO()
+    writer(buffer, parsed, [record])
+    buffer.seek(0)
+    decoded = next(reader(buffer))
+    assert decoded["provider"] == "FRED"
+    assert decoded["series_id"] == "DGS10"
+    assert decoded["value"] == pytest.approx(4.12)
+    assert decoded["metadata"]["release"] == "2024-05"
+
+
+def test_external_series_catalog_upsert_roundtrip() -> None:
+    schema_path = SCHEMA_ROOT / "ExtSeriesCatalogUpsertV1.avsc"
+    schema_dict = fastavro_schema.load_schema(schema_path)
+    parsed = parse_schema(schema_dict)
+    now_dt = datetime.now(timezone.utc)
+    record = {
+        "provider": "FRED",
+        "series_id": "DGS10",
+        "dataset_code": "H15",
+        "title": "10-Year Treasury Constant Maturity Rate",
+        "description": "Daily Yields on U.S. Treasury securities at constant maturity.",
+        "unit_code": "PCT",
+        "frequency_code": "DAILY",
+        "geo_id": "US",
+        "status": "ACTIVE",
+        "category": "Interest Rates",
+        "source_url": "https://fred.stlouisfed.org/series/DGS10",
+        "notes": None,
+        "start_ts": _micros_since_epoch(datetime(1962, 1, 2, tzinfo=timezone.utc)),
+        "end_ts": None,
+        "last_observation_ts": _micros_since_epoch(now_dt),
+        "asof_date": _days_since_epoch(now_dt.date()),
+        "created_at": _micros_since_epoch(datetime(1962, 1, 2, tzinfo=timezone.utc)),
+        "updated_at": _micros_since_epoch(now_dt),
+        "ingest_ts": _micros_since_epoch(now_dt),
+        "tags": ["treasury", "rates"],
+        "metadata": {"frequency": "business"},
+        "version": 1,
+    }
+
+    buffer = BytesIO()
+    writer(buffer, parsed, [record])
+    buffer.seek(0)
+    decoded = next(reader(buffer))
+    assert decoded["title"].startswith("10-Year Treasury")
+    assert decoded["tags"] == ["treasury", "rates"]
+    assert decoded["version"] == 1
+
+
 def test_pjm_reference_schemas_roundtrip() -> None:
     now = _micros_since_epoch(datetime.now(timezone.utc))
     # iso.load.v1

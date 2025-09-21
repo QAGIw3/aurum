@@ -24,6 +24,7 @@ from fastapi import APIRouter, HTTPException, Query, Request
 from fastapi.responses import StreamingResponse
 
 from ..telemetry.context import get_request_id
+from .scenario_models import ScenarioOutputListResponse
 from .models import (
     CreateScenarioRequest,
     ScenarioResponse,
@@ -35,7 +36,6 @@ from .models import (
     ScenarioRunListResponse,
     ScenarioOutputResponse,
     ScenarioOutputPoint,
-    ScenarioOutputListResponse,
     ScenarioOutputFilter,
     ScenarioMetricLatestResponse,
     ScenarioMetricLatest,

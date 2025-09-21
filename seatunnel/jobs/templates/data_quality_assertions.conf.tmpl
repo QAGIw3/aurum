@@ -1,0 +1,219 @@
+#
+# SeaTunnel template for data quality assertions and validation
+#
+# This template adds comprehensive data quality checks to any ingestion pipeline:
+# - Field presence validation
+# - Field type checking
+# - Value range validation
+# - Data quality scoring
+# - Error reporting and handling
+#
+
+env {
+  parallelism = 1
+  job.mode = "BATCH"
+  checkpoint.interval = 300000  # 5 minutes
+  checkpoint.timeout = 60000    # 1 minute
+  checkpoint.max-concurrent = 1
+}
+
+# Data quality configuration
+${DATA_QUALITY_CONFIG}
+
+source {
+  # This template expects data to be provided via the input table
+  # The actual source should be configured based on the data source
+  Http {
+    url = "${DATA_SOURCE_URL}"
+    method = "GET"
+    params {
+      ${DATA_SOURCE_PARAMS}
+    }
+
+    # Enhanced error handling
+    connection_timeout_ms = 30000
+    retry = 5
+    retry_backoff_multiplier_ms = 2000
+    retry_backoff_max_ms = 120000
+    format = "json"
+    rate_limit_sleep_ms = 100
+
+    # Schema for input validation
+    schema = ${INPUT_SCHEMA}
+
+    result_table_name = "raw_data"
+  }
+}
+
+transform {
+  # Step 1: Basic field presence validation
+  Sql {
+    sql = """
+      SELECT
+        *,
+        ${FIELD_PRESENCE_CHECKS}
+      FROM raw_data
+    """
+    result_table_name = "field_presence_checked"
+  }
+
+  # Step 2: Field type validation
+  Sql {
+    sql = """
+      SELECT
+        *,
+        ${FIELD_TYPE_CHECKS}
+      FROM field_presence_checked
+    """
+    result_table_name = "field_type_checked"
+  }
+
+  # Step 3: Value range and constraint validation
+  Sql {
+    sql = """
+      SELECT
+        *,
+        ${VALUE_CONSTRAINT_CHECKS}
+      FROM field_type_checked
+    """
+    result_table_name = "constraint_checked"
+  }
+
+  # Step 4: Data quality scoring
+  Sql {
+    sql = """
+      SELECT
+        *,
+        -- Calculate overall quality score
+        (
+          ${QUALITY_SCORE_CALCULATION}
+        ) as data_quality_score,
+        -- Quality classification
+        CASE
+          WHEN ${QUALITY_SCORE_CALCULATION} >= 0.95 THEN 'EXCELLENT'
+          WHEN ${QUALITY_SCORE_CALCULATION} >= 0.85 THEN 'GOOD'
+          WHEN ${QUALITY_SCORE_CALCULATION} >= 0.70 THEN 'FAIR'
+          WHEN ${QUALITY_SCORE_CALCULATION} >= 0.50 THEN 'POOR'
+          ELSE 'CRITICAL'
+        END as quality_grade
+      FROM constraint_checked
+    """
+    result_table_name = "quality_scored"
+  }
+
+  # Step 5: Error collection and reporting
+  Sql {
+    sql = """
+      SELECT
+        *,
+        -- Collect validation errors
+        ${ERROR_COLLECTION_SQL}
+      FROM quality_scored
+    """
+    result_table_name = "validation_complete"
+  }
+}
+
+sink {
+  # Main data output to Kafka
+  Kafka {
+    bootstrap.servers = "${AURUM_KAFKA_BOOTSTRAP_SERVERS}"
+    topic = "${OUTPUT_TOPIC}"
+
+    # Only output high-quality records
+    sql = """
+      SELECT * FROM validation_complete
+      WHERE data_quality_score >= ${MIN_QUALITY_THRESHOLD:-0.7}
+    """
+
+    producer {
+      acks = "all"
+      enable.idempotence = true
+      max.in.flight.requests.per.connection = 5
+      linger.ms = 500
+      batch.size = 32768
+      retries = 10
+      retry.backoff.ms = 100
+      retry.backoff.max.ms = 10000
+      delivery.timeout.ms = 120000
+      request.timeout.ms = 30000
+    }
+
+    avro {
+      use.schema.registry = true
+      schema.registry.url = "${AURUM_SCHEMA_REGISTRY_URL}"
+      value.schema.subject = "${OUTPUT_SCHEMA_SUBJECT}"
+      value.schema = """${OUTPUT_SCHEMA}"""
+
+      key.serializer = "${OUTPUT_KEY_SERIALIZER:-string}"
+      key.format = "${OUTPUT_KEY_FORMAT:-json}"
+    }
+
+    result_table_name = "validation_complete"
+  }
+
+  # Dead letter queue for failed records
+  Kafka {
+    bootstrap.servers = "${AURUM_KAFKA_BOOTSTRAP_SERVERS}"
+    topic = "${DLQ_TOPIC}"
+
+    # Output records that failed validation
+    sql = """
+      SELECT
+        *,
+        NOW() as failed_at,
+        'DATA_QUALITY_ASSERTION_FAILED' as failure_reason
+      FROM validation_complete
+      WHERE data_quality_score < ${MIN_QUALITY_THRESHOLD:-0.7}
+    """
+
+    producer {
+      acks = "all"
+      retries = 5
+      batch.size = 16384
+    }
+
+    avro {
+      use.schema.registry = true
+      schema.registry.url = "${AURUM_SCHEMA_REGISTRY_URL}"
+      value.schema.subject = "${DLQ_SCHEMA_SUBJECT}"
+      value.schema = """${DLQ_SCHEMA}"""
+    }
+
+    result_table_name = "validation_complete"
+  }
+
+  # Data quality metrics output
+  Kafka {
+    bootstrap.servers = "${AURUM_KAFKA_BOOTSTRAP_SERVERS}"
+    topic = "${METRICS_TOPIC:-aurum.data_quality.metrics.v1}"
+
+    sql = """
+      SELECT
+        '${DATA_SOURCE}' as source,
+        '${DATASET}' as dataset,
+        COUNT(*) as total_records,
+        SUM(CASE WHEN data_quality_score >= ${MIN_QUALITY_THRESHOLD:-0.7} THEN 1 ELSE 0 END) as passed_records,
+        SUM(CASE WHEN data_quality_score < ${MIN_QUALITY_THRESHOLD:-0.7} THEN 1 ELSE 0 END) as failed_records,
+        AVG(data_quality_score) as avg_quality_score,
+        MIN(data_quality_score) as min_quality_score,
+        MAX(data_quality_score) as max_quality_score,
+        COUNT(DISTINCT quality_grade) as quality_grade_count,
+        NOW() as processed_at
+      FROM validation_complete
+      GROUP BY '${DATA_SOURCE}', '${DATASET}'
+    """
+
+    producer {
+      acks = "all"
+      retries = 3
+      batch.size = 8192
+    }
+
+    json {
+      # Output as JSON for metrics processing
+    }
+
+    result_table_name = "validation_complete"
+  }
+}

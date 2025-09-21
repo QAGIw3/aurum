@@ -46,11 +46,11 @@ compose-bootstrap: ## Run one-shot bootstrap against local Compose stack
 # Docker operations
 docker-build: ## Build Docker images
 	docker build -f Dockerfile.api -t ghcr.io/aurum/api:latest .
-	docker build -f Dockerfile.worker -t ghcr.io/aurum/aurum-api:latest .
+	docker build -f Dockerfile.worker -t ghcr.io/aurum/aurum-worker:latest .
 
 docker-push: ## Push Docker images to registry
 	docker push ghcr.io/aurum/api:latest
-	docker push ghcr.io/aurum/aurum-api:latest
+	docker push ghcr.io/aurum/aurum-worker:latest
 
 # Kubernetes operations
 k8s-deploy: ## Deploy to Kubernetes
@@ -167,7 +167,7 @@ monitoring-health: ## Check monitoring health
 # CI/CD helpers
 ci-docker: ## Run Docker CI pipeline locally
 	docker build -f Dockerfile.api -t ghcr.io/aurum/api:test .
-	docker build -f Dockerfile.worker -t ghcr.io/aurum/aurum-api:test .
+	docker build -f Dockerfile.worker -t ghcr.io/aurum/aurum-worker:test .
 
 ci-test: ## Run full test suite locally
 	$(MAKE) lint

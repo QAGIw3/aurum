@@ -301,17 +301,20 @@ def main(argv: Optional[List[str]] = None) -> int:
             failed += 1
             print(f"❌ {test_name} ERROR: {e}")
 
-    print("
-🏁 Test Results:"    print(f"  Passed: {passed}")
+    print("""
+🏁 Test Results:""")
+    print(f"  Passed: {passed}")
     print(f"  Failed: {failed}")
     print(f"  Total: {passed + failed}")
 
     if failed > 0:
-        print("
-❌ Some tests failed"        return 1
+        print("""
+❌ Some tests failed""")
+        return 1
 
-    print("
-✅ All tests passed!"    return 0
+    print("""
+✅ All tests passed!""")
+    return 0
 
 
 if __name__ == "__main__":

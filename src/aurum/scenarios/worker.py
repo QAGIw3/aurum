@@ -1466,8 +1466,9 @@ def run_worker():  # pragma: no cover - integration entrypoint
                                 except Exception:
                                     pass
                             time.sleep(sleep_time)
+                            break
 
-                if cancelled:
+                    if cancelled:
                     LOGGER.info(
                         "Scenario run %s for scenario %s cancelled after %s attempt(s)",
                         run_id,

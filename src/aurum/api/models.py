@@ -7,6 +7,7 @@ from uuid import UUID
 
 from pydantic import BaseModel, Field, validator, root_validator, Extra
 from aurum.scenarios.models import ScenarioAssumption
+from enum import Enum
 
 
 class AurumBaseModel(BaseModel):
@@ -103,8 +104,7 @@ class CurveQueryParams(AurumBaseModel):
     since_cursor: Optional[str] = Field(None, max_length=1000, description="Since cursor")
     prev_cursor: Optional[str] = Field(None, max_length=1000, description="Previous cursor")
 
-    @model_validator(mode='before')
-    @classmethod
+    @root_validator(pre=True)
     def validate_pagination(cls, values):
         """Validate pagination parameters."""
         cursor = values.get("cursor")
@@ -170,8 +170,7 @@ class CurveDiffQueryParams(AurumBaseModel):
             raise ValueError("Date must be in YYYY-MM-DD format")
         return v
 
-    @model_validator(mode='before')
-    @classmethod
+    @root_validator(pre=True)
     def validate_date_comparison(cls, values):
         """Ensure asof_a and asof_b are different dates."""
         asof_a = values.get("asof_a")
@@ -191,8 +190,7 @@ class CurveDiffQueryParams(AurumBaseModel):
 
         return values
 
-    @model_validator(mode='before')
-    @classmethod
+    @root_validator(pre=True)
     def validate_dimension_filters(cls, values):
         """Ensure at least one dimension filter is provided."""
         dimension_count = sum([
@@ -205,8 +203,7 @@ class CurveDiffQueryParams(AurumBaseModel):
 
         return values
 
-    @model_validator(mode='before')
-    @classmethod
+    @root_validator(pre=True)
     def validate_dimension_combinations(cls, values):
         """Validate dimension combinations to prevent expensive queries."""
         limit = values.get("limit", 100)
@@ -285,8 +282,7 @@ class CurvePoint(AurumBaseModel):
     ask: Optional[float] = None
     price_type: Optional[str] = Field(None, max_length=50)
 
-    @model_validator(mode='before')
-    @classmethod
+    @root_validator(pre=True)
     def validate_prices(cls, values):
         """Ensure at least one price field is provided."""
         mid = values.get("mid")
@@ -350,8 +346,7 @@ class CurveDiffPoint(AurumBaseModel):
     diff_abs: Optional[float] = None
     diff_pct: Optional[float] = None
 
-    @model_validator(mode='before')
-    @classmethod
+    @root_validator(pre=True)
     def validate_dates(cls, values):
         """Ensure asof_a and asof_b are different dates."""
         asof_a = values.get("asof_a")
@@ -362,8 +357,7 @@ class CurveDiffPoint(AurumBaseModel):
 
         return values
 
-    @model_validator(mode='before')
-    @classmethod
+    @root_validator(pre=True)
     def validate_prices(cls, values):
         """Ensure at least one price comparison is available."""
         mid_a = values.get("mid_a")

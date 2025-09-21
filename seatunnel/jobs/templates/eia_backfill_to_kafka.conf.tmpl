@@ -1,0 +1,195 @@
+# SeaTunnel configuration template for EIA backfill operations
+# This template processes historical data with proper concurrency control
+
+env {
+  # SeaTunnel execution environment
+  parallelism = {{ parallelism | default(2) }}
+  job.mode = "BATCH"
+  backfill.enabled = {{ backfill_enabled | default(true) | lower }}
+  backfill.date = "{{ backfill_date | default('2024-12-31') }}"
+  backfill.batch_size = {{ backfill_batch_size | default(1000) }}
+  backfill.max_concurrent_requests = {{ backfill_max_concurrent | default(3) }}
+
+  # EIA API settings
+  eia.api.base_url = "https://api.eia.gov/v2"
+  eia.api.key = "${EIA_API_KEY}"
+  eia.api.timeout = 120
+  eia.api.retry_attempts = {{ eia_retry_attempts | default(3) }}
+  eia.api.retry_delay = {{ eia_retry_delay | default(2) }}
+
+  # Kafka settings
+  kafka.bootstrap.servers = "{{ kafka_bootstrap_servers }}"
+  kafka.topic = "{{ kafka_topic }}"
+  kafka.producer.acks = "all"
+  kafka.producer.retries = 10
+  kafka.producer.max.in.flight.requests.per.connection = 1
+  kafka.producer.enable.idempotence = true
+  kafka.producer.compression.type = "snappy"
+
+  # Schema Registry
+  schema.registry.url = "{{ schema_registry_url }}"
+}
+
+source {
+  # EIA API source with backfill date filtering
+  Http {
+    result_table_name = "eia_backfill_data"
+    url = "${eia.api.base_url}/electricity/rto/region-data/data/"
+    method = "GET"
+    headers {
+      Authorization = "Bearer ${eia.api.key}"
+      Content-Type = "application/json"
+      User-Agent = "Aurum-Backfill-Worker/1.0"
+    }
+    params {
+      frequency = "hourly"
+      start = "{{ backfill_date }}T00:00:00"
+      end = "{{ backfill_date }}T23:59:59"
+      limit = "{{ backfill_batch_size }}"
+    }
+
+    # Rate limiting and retry configuration
+    http_request_config {
+      connection_timeout = 30000
+      socket_timeout = 120000
+      retry {
+        max_retries = "{{ eia_retry_attempts }}"
+        retry_backoff_multiplier_ms = "{{ eia_retry_delay * 1000 }}"
+        retry_backoff_max_ms = 10000
+        rate_limit_sleep_ms = 200
+      }
+    }
+
+    # Response parsing
+    response_parser {
+      type = "json"
+      json_path = "$.response.data[*]"
+    }
+
+    # Schema definition
+    schema {
+      fields {
+        series_id = "string"
+        period = "string"
+        value = "string"
+        units = "string"
+        area = "string"
+        sector = "string"
+        description = "string"
+        source = "string"
+        dataset = "string"
+        metadata = "string"
+      }
+    }
+  }
+}
+
+transform {
+  # Data validation for backfill data
+  Filter {
+    source_table_name = "eia_backfill_data"
+    result_table_name = "validated_backfill_data"
+    filter {
+      condition = "series_id IS NOT NULL AND value IS NOT NULL AND period IS NOT NULL"
+    }
+  }
+
+  # Add backfill metadata
+  Sql {
+    source_table_name = "validated_backfill_data"
+    result_table_name = "backfill_data_with_metadata"
+    query = """
+      SELECT
+        *,
+        '{{ backfill_date }}' as backfill_date,
+        CURRENT_TIMESTAMP as processed_at,
+        'backfill' as data_source_type,
+        '{{ source_name | default('eia') }}' as source_name,
+        'historical' as data_quality_flag
+      FROM validated_backfill_data
+    """
+  }
+
+  # Data type conversion
+  Sql {
+    source_table_name = "backfill_data_with_metadata"
+    result_table_name = "converted_backfill_data"
+    query = """
+      SELECT
+        series_id,
+        period,
+        CAST(value AS DOUBLE) as value,
+        units,
+        area,
+        sector,
+        description,
+        source,
+        dataset,
+        metadata,
+        backfill_date,
+        processed_at,
+        data_source_type,
+        source_name,
+        data_quality_flag
+      FROM backfill_data_with_metadata
+      WHERE value IS NOT NULL AND TRIM(value) != ''
+    """
+  }
+}
+
+sink {
+  # Kafka sink for backfill data
+  Kafka {
+    source_table_name = "converted_backfill_data"
+    topic = "{{ kafka_topic }}"
+    bootstrap_servers = "{{ kafka_bootstrap_servers }}"
+    kafka_config {
+      key.serializer = "org.apache.kafka.common.serialization.StringSerializer"
+      value.serializer = "io.confluent.kafka.serializers.KafkaAvroSerializer"
+      schema.registry.url = "{{ schema_registry_url }}"
+      acks = "all"
+      retries = 10
+      max.in.flight.requests.per.connection = 1
+      enable.idempotence = true
+      compression.type = "snappy"
+      batch.size = 16384
+      linger.ms = 10
+      buffer.memory = 33554432
+      request.timeout.ms = 60000
+      delivery.timeout.ms = 120000
+    }
+
+    # Partitioning strategy for historical data
+    partition_by = ["backfill_date", "area"]
+
+    # Message key configuration
+    partition_key = "series_id"
+
+    # Data format configuration
+    format = "avro"
+    avro_schema = """
+    {
+      "type": "record",
+      "name": "EIA_Backfill_Record",
+      "namespace": "aurum.eia.backfill",
+      "fields": [
+        {"name": "series_id", "type": "string"},
+        {"name": "period", "type": "string"},
+        {"name": "value", "type": "double"},
+        {"name": "units", "type": "string"},
+        {"name": "area", "type": "string"},
+        {"name": "sector", "type": "string"},
+        {"name": "description", "type": "string"},
+        {"name": "source", "type": "string"},
+        {"name": "dataset", "type": "string"},
+        {"name": "metadata", "type": "string"},
+        {"name": "backfill_date", "type": "string"},
+        {"name": "processed_at", "type": {"type": "long", "logicalType": "timestamp-millis"}},
+        {"name": "data_source_type", "type": "string"},
+        {"name": "source_name", "type": "string"},
+        {"name": "data_quality_flag", "type": "string"}
+      ]
+    }
+    """
+  }
+}

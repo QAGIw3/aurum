@@ -6,7 +6,7 @@ from datetime import datetime
 from typing import Any, Dict, List, Optional, Tuple
 from enum import Enum
 
-from pydantic import BaseModel, Field, field_validator, model_validator
+from pydantic import BaseModel, Field, field_validator, root_validator
 
 from ..telemetry.context import get_correlation_id, get_tenant_id, log_structured
 from .storage import get_scenario_store
@@ -87,17 +87,18 @@ class ScenarioOutputConfiguration(BaseModel):
     disabled_features: List[str] = Field(default_factory=list, description="List of disabled feature names")
     custom_settings: Dict[str, Any] = Field(default_factory=dict, description="Custom feature settings")
 
-    @model_validator(mode="after")
-    def validate_feature_lists(self) -> "ScenarioOutputConfiguration":
+    @root_validator(pre=True, skip_on_failure=True)
+    @classmethod
+    def validate_feature_lists(cls, values) -> dict:
         """Validate feature lists don't overlap."""
-        enabled = set(self.enabled_features)
-        disabled = set(self.disabled_features)
+        enabled = set(values.get("enabled_features", []))
+        disabled = set(values.get("disabled_features", []))
 
         if enabled & disabled:
             overlapping = enabled & disabled
             raise ValueError(f"Features cannot be both enabled and disabled: {overlapping}")
 
-        return self
+        return values
 
 
 class ScenarioOutputFeatureManager:

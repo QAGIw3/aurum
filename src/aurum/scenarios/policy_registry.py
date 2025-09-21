@@ -10,7 +10,7 @@ from typing import Any, Dict, List, Optional, Tuple
 from uuid import UUID, uuid4
 
 import asyncpg
-from pydantic import BaseModel, Field, field_validator, model_validator
+from pydantic import BaseModel, Field, field_validator, root_validator
 
 from ..telemetry.context import get_correlation_id, get_tenant_id, get_user_id, log_structured
 from .models import DriverType
@@ -64,11 +64,12 @@ class PolicyDriverVersion(BaseModel):
             raise ValueError("Version must be in semantic version format (e.g., '1.0.0')")
         return v
 
-    @model_validator(mode="after")
-    def validate_parameter_schema(self) -> "PolicyDriverVersion":
+    @root_validator(pre=True, skip_on_failure=True)
+    @classmethod
+    def validate_parameter_schema(cls, values) -> dict:
         """Validate parameter schema consistency."""
-        schema = self.parameter_schema
-        validation_rules = self.validation_rules
+        schema = values.get("parameter_schema")
+        validation_rules = values.get("validation_rules")
 
         # Ensure schema and validation rules are consistent
         if schema and validation_rules:
@@ -78,7 +79,7 @@ class PolicyDriverVersion(BaseModel):
             if schema_params != validation_params:
                 raise ValueError("Parameter schema and validation rules must have matching parameters")
 
-        return self
+        return values
 
 
 class PolicyDriverTestCase(BaseModel):
@@ -130,27 +131,32 @@ class PolicyDriver(BaseModel):
             raise ValueError("Driver name must be a valid identifier")
         return v.strip()
 
-    @model_validator(mode="after")
-    def validate_driver_consistency(self) -> "PolicyDriver":
+    @root_validator(pre=True, skip_on_failure=True)
+    @classmethod
+    def validate_driver_consistency(cls, values) -> dict:
         """Validate driver configuration consistency."""
-        if self.driver_type != DriverType.POLICY:
+        if values.get("driver_type") != DriverType.POLICY:
             raise ValueError("Only policy drivers are supported in the registry")
 
         # Ensure parameter definitions match schema
-        schema_params = set(self.parameter_schema.keys())
-        defined_params = {p.name for p in self.parameters}
+        schema_params = set(values.get("parameter_schema", {}).keys())
+        defined_params = {p.name for p in values.get("parameters", [])}
 
         if schema_params != defined_params:
             raise ValueError("Parameter schema must match parameter definitions")
 
         # Ensure versions are valid
-        for version in self.versions:
-            if version.version == self.version:
+        versions = values.get("versions", [])
+        version = values.get("version")
+        parameter_schema = values.get("parameter_schema")
+
+        for v in versions:
+            if v.version == version:
                 # Current version should match main definition
-                if version.parameter_schema != self.parameter_schema:
+                if v.parameter_schema != parameter_schema:
                     raise ValueError("Current version schema must match main parameter schema")
 
-        return self
+        return values
 
 
 class PolicyDriverRegistry:

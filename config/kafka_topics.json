@@ -594,6 +594,86 @@
           ]
         }
       ]
+    },
+    {
+      "name": "aurum.ext.timeseries.obs.v1",
+      "partitions": 12,
+      "replication_factor": 3,
+      "config": {
+        "retention.ms": "5184000000"
+      },
+      "acls": [
+        {
+          "principal": "User:aurum-ingest",
+          "operations": [
+            "WRITE",
+            "DESCRIBE",
+            "DESCRIBE_CONFIGS"
+          ]
+        },
+        {
+          "principal": "User:aurum-api",
+          "operations": [
+            "READ",
+            "DESCRIBE"
+          ]
+        },
+        {
+          "principal": "User:aurum-worker",
+          "operations": [
+            "READ",
+            "DESCRIBE"
+          ]
+        },
+        {
+          "principal": "User:aurum-dbt",
+          "operations": [
+            "READ",
+            "DESCRIBE"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "aurum.ext.series_catalog.upsert.v1",
+      "partitions": 6,
+      "replication_factor": 3,
+      "config": {
+        "cleanup.policy": "compact",
+        "min.cleanable.dirty.ratio": "0.1",
+        "segment.ms": "86400000"
+      },
+      "acls": [
+        {
+          "principal": "User:aurum-ingest",
+          "operations": [
+            "WRITE",
+            "DESCRIBE",
+            "DESCRIBE_CONFIGS"
+          ]
+        },
+        {
+          "principal": "User:aurum-api",
+          "operations": [
+            "READ",
+            "DESCRIBE"
+          ]
+        },
+        {
+          "principal": "User:aurum-worker",
+          "operations": [
+            "READ",
+            "DESCRIBE"
+          ]
+        },
+        {
+          "principal": "User:aurum-dbt",
+          "operations": [
+            "READ",
+            "DESCRIBE"
+          ]
+        }
+      ]
     }
   ]
 }

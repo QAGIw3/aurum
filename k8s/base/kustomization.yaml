@@ -5,7 +5,7 @@ resources:
   - namespace.yaml
   - configmap-env.yaml
   - secret-env.yaml
-  - storage.yaml
+#  - storage.yaml
   - traefik-crds.yaml
   - traefik.yaml
   - ingressroutes.yaml
