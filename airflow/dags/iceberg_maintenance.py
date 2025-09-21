@@ -12,10 +12,14 @@ from aurum.iceberg import maintenance
 RETENTION_DAYS = int(os.getenv("AURUM_ICEBERG_RETENTION_DAYS", "14"))
 TARGET_FILE_MB = int(os.getenv("AURUM_ICEBERG_TARGET_FILE_MB", "128"))
 SCHEDULE = os.getenv("AURUM_ICEBERG_MAINTENANCE_SCHEDULE", "0 4 * * *")
-TABLES = [
+TABLES_ENV = os.getenv("AURUM_ICEBERG_TABLES")
+DEFAULT_TABLES = [
+    "iceberg.raw.curve_landing",
     "iceberg.market.curve_observation",
+    "iceberg.market.curve_observation_quarantine",
     "iceberg.market.scenario_output",
 ]
+TABLES = [table.strip() for table in TABLES_ENV.split(",")] if TABLES_ENV else DEFAULT_TABLES
 
 DEFAULT_ARGS = {
     "owner": "data-platform",

@@ -1,4 +1,4 @@
-.PHONY: install lint test format bootstrap trino-apply-iso-views timescale-apply-ddl
+.PHONY: install lint test format bootstrap trino-apply-iso-views timescale-apply-ddl kind-scenario-smoke
 
 KIND_CLUSTER_NAME ?= $(if $(AURUM_KIND_CLUSTER),$(AURUM_KIND_CLUSTER),aurum-dev)
 KIND_NAMESPACE ?= aurum-dev
@@ -20,7 +20,7 @@ format:
 bootstrap:
 	docker compose -f compose/docker-compose.dev.yml --profile bootstrap up --exit-code-from bootstrap
 
-.PHONY: kind-create kind-delete kind-apply kind-reset kind-bootstrap kind-apply-ui kind-delete-ui kind-up kind-down kind-load-api kind-load-worker kafka-register-schemas kafka-set-compat kafka-apply-topics kafka-apply-topics-dry-run
+.PHONY: kind-create kind-delete kind-apply kind-reset kind-bootstrap kind-apply-ui kind-delete-ui kind-up kind-down kind-load-api kind-load-worker kind-scenario-smoke kafka-register-schemas kafka-set-compat kafka-apply-topics kafka-apply-topics-dry-run kafka-apply-topics-kind kafka-apply-topics-kind-dry-run minio-bootstrap
 
 kind-create:
 	scripts/k8s/create_kind_cluster.sh
@@ -71,6 +71,9 @@ kind-load-worker:
 	kind load docker-image ${KIND_WORKER_IMAGE}:dev --name "${KIND_CLUSTER_NAME}"
 	kubectl -n ${KIND_NAMESPACE} set image deployment/aurum-scenario-worker worker=${KIND_WORKER_IMAGE}:dev
 
+kind-scenario-smoke:
+	python scripts/dev/kind_scenario_smoke.py
+
 kafka-register-schemas:
 	python scripts/kafka/register_schemas.py --schema-registry-url $${SCHEMA_REGISTRY_URL:-http://localhost:8081}
 
@@ -85,6 +88,15 @@ kafka-apply-topics:
 
 kafka-apply-topics-dry-run:
 	python scripts/kafka/manage_topics.py --bootstrap-servers $${KAFKA_BOOTSTRAP:-localhost:9092} --config $${KAFKA_TOPICS_CONFIG:-config/kafka_topics.json} --dry-run
+
+kafka-apply-topics-kind:
+	KAFKA_TOPICS_CONFIG=config/kafka_topics.kind.json $(MAKE) kafka-apply-topics
+
+kafka-apply-topics-kind-dry-run:
+	KAFKA_TOPICS_CONFIG=config/kafka_topics.kind.json $(MAKE) kafka-apply-topics-dry-run
+
+minio-bootstrap:
+	python scripts/storage/bootstrap_minio.py --endpoint $${AURUM_S3_ENDPOINT:-http://localhost:9000} --access-key $${AURUM_S3_ACCESS_KEY:-minio} --secret-key $${AURUM_S3_SECRET_KEY:-minio123}
 
 .PHONY: eia-validate-config airflow-eia-vars
 

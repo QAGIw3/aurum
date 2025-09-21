@@ -1,4 +1,38 @@
 CREATE SCHEMA IF NOT EXISTS iceberg.market;
+CREATE SCHEMA IF NOT EXISTS iceberg.raw;
+
+CREATE TABLE IF NOT EXISTS iceberg.raw.curve_landing (
+    asof_date DATE,
+    source_file VARCHAR,
+    sheet_name VARCHAR,
+    asset_class VARCHAR,
+    region VARCHAR,
+    iso VARCHAR,
+    location VARCHAR,
+    market VARCHAR,
+    product VARCHAR,
+    block VARCHAR,
+    spark_location VARCHAR,
+    price_type VARCHAR,
+    units_raw VARCHAR,
+    currency VARCHAR,
+    per_unit VARCHAR,
+    tenor_type VARCHAR,
+    contract_month DATE,
+    tenor_label VARCHAR,
+    value DOUBLE,
+    bid DOUBLE,
+    ask DOUBLE,
+    mid DOUBLE,
+    curve_key VARCHAR,
+    version_hash VARCHAR,
+    _ingest_ts TIMESTAMP(6),
+    quarantine_reason VARCHAR
+)
+WITH (
+    format = 'PARQUET',
+    partitioning = ARRAY['asof_date']
+);
 
 CREATE TABLE IF NOT EXISTS iceberg.market.curve_observation (
     asof_date DATE,
@@ -29,7 +63,42 @@ CREATE TABLE IF NOT EXISTS iceberg.market.curve_observation (
 )
 WITH (
     format = 'PARQUET',
-    partitioning = ARRAY['year(asof_date)', 'month(asof_date)']
+    partitioning = ARRAY['year(asof_date)', 'month(asof_date)'],
+    write_sort_order = ARRAY['asof_date', 'asset_class', 'iso', 'tenor_label']
+);
+
+CREATE TABLE IF NOT EXISTS iceberg.market.curve_observation_quarantine (
+    asof_date DATE,
+    source_file VARCHAR,
+    sheet_name VARCHAR,
+    asset_class VARCHAR,
+    region VARCHAR,
+    iso VARCHAR,
+    location VARCHAR,
+    market VARCHAR,
+    product VARCHAR,
+    block VARCHAR,
+    spark_location VARCHAR,
+    price_type VARCHAR,
+    units_raw VARCHAR,
+    currency VARCHAR,
+    per_unit VARCHAR,
+    tenor_type VARCHAR,
+    contract_month DATE,
+    tenor_label VARCHAR,
+    value DOUBLE,
+    bid DOUBLE,
+    ask DOUBLE,
+    mid DOUBLE,
+    curve_key VARCHAR,
+    version_hash VARCHAR,
+    _ingest_ts TIMESTAMP(6),
+    quarantine_reason VARCHAR
+)
+WITH (
+    format = 'PARQUET',
+    partitioning = ARRAY['year(asof_date)', 'month(asof_date)'],
+    write_sort_order = ARRAY['asof_date', 'asset_class', 'iso', 'tenor_label']
 );
 
 CREATE TABLE IF NOT EXISTS iceberg.market.scenario_output (

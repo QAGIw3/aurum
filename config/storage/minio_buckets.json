@@ -1,0 +1,68 @@
+{
+  "defaults": {
+    "versioning": true,
+    "encryption": "SSE-S3"
+  },
+  "buckets": [
+    {
+      "name": "aurum-raw",
+      "lifecycle": {
+        "rules": [
+          {
+            "id": "raw-archive",
+            "status": "Enabled",
+            "transitions": [
+              {"days": 90, "storage_class": "GLACIER"}
+            ],
+            "expiration": {"days": 400}
+          }
+        ]
+      }
+    },
+    {
+      "name": "aurum-quarantine",
+      "lifecycle": {
+        "rules": [
+          {
+            "id": "quarantine-expire",
+            "status": "Enabled",
+            "transitions": [
+              {"days": 90, "storage_class": "GLACIER"}
+            ],
+            "expiration": {"days": 400}
+          }
+        ]
+      }
+    },
+    {
+      "name": "aurum-curated",
+      "encryption": "SSE-KMS",
+      "kms_key_env": "AURUM_CURATED_KMS_KEY",
+      "lifecycle": {
+        "rules": [
+          {
+            "id": "curated-versions",
+            "status": "Enabled",
+            "noncurrent_version_expiration": {"noncurrent_days": 30}
+          }
+        ]
+      }
+    },
+    {
+      "name": "aurum-exports",
+      "lifecycle": {
+        "rules": [
+          {
+            "id": "exports-expire",
+            "status": "Enabled",
+            "expiration": {"days": 60}
+          }
+        ]
+      }
+    },
+    {
+      "name": "aurum-logs",
+      "versioning": false
+    }
+  ]
+}

@@ -128,8 +128,6 @@ def partition_quarantine(df: pd.DataFrame) -> Tuple[pd.DataFrame, pd.DataFrame]:
     quarantine_mask = reason_series.notna()
     quarantine_df = working.loc[quarantine_mask].copy()
     clean_df = working.loc[~quarantine_mask].copy()
-    if _QUARANTINE_REASON_COLUMN in clean_df.columns:
-        clean_df = clean_df.drop(columns=[_QUARANTINE_REASON_COLUMN])
 
     return clean_df, quarantine_df
 

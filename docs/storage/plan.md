@@ -1,6 +1,6 @@
 # Storage Plane Configuration Plan
 
-This note captures the work required to finish hardening the storage tier before we automate Iceberg compaction and retention.
+This note captures the work required to finish hardening the storage tier before we automate Iceberg compaction and retention. Execute `make minio-bootstrap` to apply the bucket plan locally (script wraps `scripts/storage/bootstrap_minio.py`).
 
 ## MinIO (S3-compatible)
 - Buckets: `aurum-raw` (landed vendor files), `aurum-quarantine`, `aurum-curated` (Iceberg warehouse), `aurum-exports`, `aurum-logs`.
@@ -12,7 +12,7 @@ This note captures the work required to finish hardening the storage tier before
 - Repository: `aurum` (already in `.env.example`).
 - Branch model: `main`, `eod_{YYYYMMDD}`, `hotfix_*`, `client_release_*`.
 - Hooks:
-  1. **Pre-commit**: execute Great Expectations landing suite (`ge/expectations/curve_landing.json`) and refuse commit on failure.
+  1. **Pre-commit**: execute Great Expectations landing suite (`ge/expectations/curve_landing.json`) and refuse commit on failure (see `lakefs/hooks/pre_commit_curve_landing.sh`).
   2. **Post-commit**: enqueue Iceberg metadata refresh for Trino and record lineage event.
 - lakeFS credentials will be provisioned via Vault role `aurum-lakefs` with read/write to `aurum` repo only.
 

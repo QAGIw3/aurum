@@ -32,7 +32,7 @@ The steps below remain available when you want finer-grained control or need to 
   This provisions a single control-plane node named `aurum-dev`, exposes the main service ports on localhost, and mounts `trino/catalog` into the node so Trino can see your catalog files. The directory now includes `iceberg.properties`, `postgres.properties`, `timescale.properties`, `kafka.properties`, and `clickhouse.properties`, giving Trino federated access to the lake, transactional stores, operational mart, and Kafka topics out of the box.
   Re-running the helper while the cluster is already present is a no-op; the script exits early instead of mutating the existing node. If you need to rebuild the cluster from scratch, either run `AURUM_KIND_FORCE_RECREATE=true make kind-create` or call `scripts/k8s/create_kind_cluster.sh --force` directly to delete and recreate it in one step.
 
-2. Deploy the core services (MinIO, Postgres, Timescale, Redis, Strimzi-managed Kafka (KRaft), Apicurio Registry, Nessie, lakeFS, Trino, ClickHouse, Airflow):
+2. Deploy the core services (MinIO, Postgres, Timescale, Redis, Strimzi-managed Kafka (KRaft), Confluent Schema Registry, Nessie, lakeFS, Trino, ClickHouse, Airflow):
 
    ```bash
    make kind-apply
@@ -65,13 +65,14 @@ The steps below remain available when you want finer-grained control or need to 
    | Postgres         | `postgresql://localhost:5432/aurum` |
    | Timescale        | `postgresql://localhost:5433/timeseries` |
 | Kafka            | `kafka.aurum.localtest.me:31092` (NodePort) |
-   | Schema Registry  | `http://localhost:8081` (Apicurio) |
+| Schema Registry  | `http://localhost:8081` (Confluent) |
    | lakeFS           | `http://localhost:8000`  |
    | Nessie           | `http://localhost:19121` |
-   | Trino            | `http://localhost:8080`  |
-   | Airflow Web UI   | `http://localhost:8088`  |
-   | ClickHouse HTTP  | `http://localhost:8123`  |
-   | ClickHouse gRPC  | `localhost:9009`         |
+| Trino            | `http://localhost:8080`  |
+| Airflow Web UI   | `http://localhost:8088`  |
+| ClickHouse HTTP  | `http://localhost:8123`  |
+| ClickHouse gRPC  | `localhost:9009`         |
+| Jaeger UI        | `http://localhost:16686` |
 
    Default credentials match `.env.example` (e.g., MinIO `minio/minio123`, Postgres `aurum/aurum`).
 
@@ -86,9 +87,10 @@ The steps below remain available when you want finer-grained control or need to 
    | `trino.aurum.localtest.me`        | `http://trino.aurum.localtest.me:8085` |
    | `clickhouse.aurum.localtest.me`   | `http://clickhouse.aurum.localtest.me:8085` |
    | `schema-registry.aurum.localtest.me` | `http://schema-registry.aurum.localtest.me:8085` |
-   | `vault.aurum.localtest.me`        | `http://vault.aurum.localtest.me:8085` |
-   | `traefik.aurum.localtest.me`      | `http://traefik.aurum.localtest.me:8085` |
-   | `api.aurum.localtest.me`          | `http://api.aurum.localtest.me:8085` |
+  | `vault.aurum.localtest.me`        | `http://vault.aurum.localtest.me:8085` |
+  | `traefik.aurum.localtest.me`      | `http://traefik.aurum.localtest.me:8085` |
+  | `api.aurum.localtest.me`          | `http://api.aurum.localtest.me:8085` |
+  | `jaeger.aurum.localtest.me`       | `http://jaeger.aurum.localtest.me:8085` |
 
    Point your browser at the URLs above (or add additional ingress routes under `k8s/base/ingressroutes.yaml`).
 
@@ -141,13 +143,14 @@ curl "http://api.aurum.localtest.me:8085/v1/curves?limit=1"
 
 #### Prometheus scraping (optional)
 
-If you run Prometheus Operator in your cluster, apply the ServiceMonitor to scrape API metrics:
+If you run Prometheus Operator in your cluster, the ServiceMonitor manifests live alongside the workloads (`k8s/api/servicemonitor.yaml` and `k8s/scenario-worker/servicemonitor.yaml`) and are included in the base kustomization. Apply them directly only if you are selectively installing components:
 
 ```bash
-kubectl apply -f k8s/monitoring/servicemonitor-api.yaml
+kubectl apply -f k8s/api/servicemonitor.yaml
+kubectl apply -f k8s/scenario-worker/servicemonitor.yaml
 ```
 
-This monitors the `api` Service on `/metrics`. Alternatively, the Service is annotated for scraping by basic Prometheus installations.
+Each monitor scrapes the corresponding service on `/metrics`. The services also carry Prometheus annotations for setups that rely on service discovery instead of ServiceMonitors.
 ```
 
 ## Notes & next steps
@@ -158,4 +161,6 @@ This monitors the `api` Service on `/metrics`. Alternatively, the Service is ann
 - Use `make kind-apply-ui` / `make kind-delete-ui` to toggle Superset and Kafka UI when you want dashboards in the kind stack.
 - The manifests are organized with Kustomize (`k8s/base`, `k8s/dev`) so you can add overlays for stage/prod style experimentation or inject secrets via alternative generators.
 - If you change the default credentials, update `k8s/base/secret-env.yaml` or create your own secret prior to `make kind-apply` (e.g., `kubectl create secret generic aurum-secrets --from-env-file=.env`).
+- Enable OIDC forward-auth by first populating the oauth2-proxy credentials (see `k8s/base/oauth2-proxy-secret.yaml` or create your own secret) and then applying the overlay: `kubectl apply -k k8s/dev-auth`.
+- Seed a small batch of EIA data into Timescale and validate the API by running `scripts/dev/kind_seed_eia.sh` once the cluster is healthy; the helper applies the DDL, registers schemas, runs the SeaTunnel job, and curls `/v1/ref/eia/series`.
 - Vault is deployed in dev mode inside the cluster. Grab the root token with `kubectl -n aurum-dev get secret vault-root-token -o jsonpath='{.data.token}' | base64 --decode`, or log in via Traefik at `http://vault.aurum.localtest.me:8085`. The `vault-bootstrap` job enables the Kubernetes auth method, seeds `secret/data/aurum/*`, and publishes an `aurum-ingest` role bound to the `aurum-ingest` service account for sidecar injection. Annotate a pod with `vault.hashicorp.com/agent-inject: "true"` and `vault.hashicorp.com/role: aurum-ingest` to test the injector once your desired secret paths are populated.

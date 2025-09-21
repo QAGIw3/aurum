@@ -176,6 +176,7 @@ Stream reference topics from Kafka into TimescaleDB with prebuilt DAGs and SeaTu
   - One‑time DDL (default DSN `postgresql://timescale:timescale@localhost:5433/timeseries`):
     - `make timescale-apply-eia` to create `eia_series_timeseries`
     - `make timescale-apply-cpi` (for CPI) and `make timescale-apply-fred` (for FRED) as needed
+  - One-shot helper for the kind stack: `scripts/dev/kind_seed_eia.sh`
 
 - FRED series → Timescale
   - DAG: `indigest_fred_series_timescale`
@@ -198,7 +199,7 @@ curl "http://localhost:8096/health"
 
 ### Kubernetes (kind) option
 
-Prefer to iterate against Kubernetes primitives? Follow the workflow in `docs/k8s-dev.md` to spin up the same core services inside a local kind cluster (`make kind-create && make kind-apply && make kind-bootstrap`). The Kubernetes stack now installs the Strimzi operator to run Kafka in KRaft mode alongside Apicurio Registry, Airflow, ClickHouse, Vector, and the rest of the platform—and you can layer on Superset/Kafka UI with `make kind-apply-ui`.
+Prefer to iterate against Kubernetes primitives? Follow the workflow in `docs/k8s-dev.md` to spin up the same core services inside a local kind cluster (`make kind-create && make kind-apply && make kind-bootstrap`). The Kubernetes stack now installs the Strimzi operator to run Kafka in KRaft mode alongside the Confluent Schema Registry, Airflow, ClickHouse, Vector, and the rest of the platform—and you can layer on Superset/Kafka UI with `make kind-apply-ui`.
 Re-running `make kind-create` while the cluster exists is safe—the helper exits early without touching the node. To rebuild from scratch in one go, run `AURUM_KIND_FORCE_RECREATE=true make kind-create` or call `scripts/k8s/create_kind_cluster.sh --force`.
 The mounted `trino/catalog` directory ships with catalogs for Iceberg, Postgres, Timescale, Kafka, and ClickHouse so federated queries work immediately once the stack is up.
 
@@ -207,7 +208,8 @@ Stateful services now persist their data under `.kind-data/` on the host (Postgr
 Nightly CronJobs dump Postgres and Timescale to `.kind-data/backups/` (retaining seven days) and mirror the MinIO `aurum` bucket for quick restores. Check `k8s/base/backups.yaml` if you need to change schedules or retention windows.
 
 Run `make kafka-bootstrap` (optionally export `SCHEMA_REGISTRY_URL`) after the Schema Registry is online to publish the shared Avro contracts and enforce `BACKWARD` compatibility in one step. Individual commands remain available via `make kafka-register-schemas` and `make kafka-set-compat` (override the level with `COMPATIBILITY_LEVEL`).
-Apply topic definitions and retention policies with `make kafka-apply-topics` (preview changes via `make kafka-apply-topics-dry-run`). The plan in `config/kafka_topics.json` seeds the canonical `aurum.curve.observation.v1` topic, its dead-letter companion `aurum.curve.observation.dlq`, and shared `aurum.ingest.error.v1` stream with sane defaults.
+Apply topic definitions and retention policies with `make kafka-apply-topics` (preview changes via `make kafka-apply-topics-dry-run`). When you are targeting the single-node kind cluster, use the helper `make kafka-apply-topics-kind` to point at `config/kafka_topics.kind.json`, which dials partitions and replication down to one. The standard plan in `config/kafka_topics.json` seeds the canonical `aurum.curve.observation.v1` topic, its dead-letter companion `aurum.curve.observation.dlq`, and shared `aurum.ingest.error.v1` stream with sane defaults.
+Bootstrap MinIO buckets, versioning, and lifecycle rules with `make minio-bootstrap` (uses the blueprint in `config/storage/minio_buckets.json`).
 Set `AURUM_DLQ_TOPIC` (or pass `--dlq-topic`) when running the ingestion helpers to capture failures in `aurum.curve.observation.dlq`; generic ingestion pipelines continue to fall back to `aurum.ingest.error.v1` for structured error payloads.
 
 **Operational follow-up**

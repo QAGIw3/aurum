@@ -161,6 +161,11 @@ flowchart LR
 
 ### Canonical tables (Iceberg)
 
+**`iceberg.raw.curve_landing`** -- enriched staging table prior to merging into canonical datasets
+
+* Matches the canonical schema plus `quarantine_reason`
+* Partitioned by `asof_date` for rapid lakeFS diffs and quarantine snapshots
+
 **`iceberg.market.curve_observation`** -- normalized long-form rows (monthly and strips)
 
 * `asof_date` (DATE), `source_file` (STRING), `sheet_name` (STRING)
@@ -170,6 +175,7 @@ flowchart LR
 * Values: `value`, `bid`, `ask`, `mid`
 * Lineage: `curve_key` (hash of identity), `version_hash` (file + sheet + asof), `_ingest_ts`
 
+**`iceberg.market.curve_observation_quarantine`** -- quarantined rows retained for remediation (mirrors canonical columns + `quarantine_reason`)  
 **`iceberg.market.scenario_output`** -- scenario curves with bands and attribution  
 **`iceberg.market.ppa_valuation`** -- cashflows and risk metrics  
 **`iceberg.market.qa_checks`** -- data quality results
@@ -257,10 +263,11 @@ Set lakeFS credentials when using branch commits: `AURUM_LAKEFS_ENDPOINT`, `AURU
 ### Bootstrapping
 
 1. Create Iceberg schemas with Trino: `trino -f trino/ddl/iceberg_market.sql`
-2. Apply Postgres, Timescale, and ClickHouse DDLs.
-3. Apply Kafka topics/ACLs with `make kafka-apply-topics` (or `make kafka-apply-topics-dry-run` to preview changes declared in `config/kafka_topics.json`).
-4. Register Avro schemas in Schema Registry with `make kafka-register-schemas` (set `SCHEMA_REGISTRY_URL` or use `--dry-run` on the underlying script if you need a preview).
-5. Start Airflow; set `AURUM_EOD_ASOF=YYYY-MM-DD` in environment.
+2. Bootstrap MinIO buckets and lifecycle policies: `make minio-bootstrap` (uses `config/storage/minio_buckets.json`).
+3. Apply Postgres, Timescale, and ClickHouse DDLs.
+4. Apply Kafka topics/ACLs with `make kafka-apply-topics` (or `make kafka-apply-topics-dry-run` to preview changes declared in `config/kafka_topics.json`). When using the kind overlay, prefer `make kafka-apply-topics-kind` to keep partitions/replication compatible with the single-node cluster.
+5. Register Avro schemas in Schema Registry with `make kafka-register-schemas` (set `SCHEMA_REGISTRY_URL` or use `--dry-run` on the underlying script if you need a preview).
+6. Start Airflow; set `AURUM_EOD_ASOF=YYYY-MM-DD` in environment.
 
 ### Developer workflow
 
@@ -351,6 +358,7 @@ Set lakeFS credentials when using branch commits: `AURUM_LAKEFS_ENDPOINT`, `AURU
 * **Landing suite:** validates enriched rows (currency/per_unit present, tenor + price enums) before persistence.
 * **Business suite:** `Mid` approximately equals `(Bid + Ask) / 2` within epsilon; ranges by asset_class.
 * **Tenor suite:** monthly continuity, no duplicates.
+* **lakeFS hook:** `lakefs/hooks/pre_commit_curve_landing.sh` runs the landing suite on staged Parquet/CSV payloads prior to commit.
 * Fail-close pipeline on red; emit `aurum.alert.v1`.
 
 ---

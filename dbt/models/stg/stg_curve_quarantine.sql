@@ -1,3 +1,5 @@
+{{ config(materialized='view') }}
+
 select
     asof_date,
     source_file,
@@ -17,11 +19,13 @@ select
     tenor_type,
     contract_month,
     tenor_label,
-    mid,
+    value,
     bid,
     ask,
+    mid,
     curve_key,
     version_hash,
-    _ingest_ts
+    _ingest_ts,
+    quarantine_reason
 from {{ ref('stg_curve_landing') }}
-where quarantine_reason is null
+where quarantine_reason is not null
