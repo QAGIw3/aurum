@@ -1,4 +1,18 @@
-"""Scenario management endpoints with async support."""
+"""Scenario management endpoints with async support.
+
+Endpoints in this module allow clients to create scenario definitions, trigger
+asynchronous runs, inspect run status, cancel runs, and retrieve outputs and
+latest metrics. See docs/scenarios.md for a high‑level guide and examples.
+
+Auth & Tenancy
+--------------
+All routes enforce tenant scoping and permissions via the request principal.
+
+Observability
+-------------
+Responses include request IDs. Structured logs record scenario lifecycle
+events and Trino query metrics for downstream analysis.
+"""
 
 from __future__ import annotations
 

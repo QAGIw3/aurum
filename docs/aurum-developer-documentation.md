@@ -18,18 +18,19 @@
 8. [Data Ingestion Pipelines](#data-ingestion-pipelines)
 9. [Transform & Modeling](#transform--modeling)
 10. [Serving & Access](#serving--access)
-11. [Governance & Lineage](#governance--lineage)
-12. [Security, Tenancy & Secrets](#security-tenancy--secrets)
-13. [Observability & Operations](#observability--operations)
-14. [Testing Strategy](#testing-strategy)
-15. [CI/CD](#cicd)
-16. [Extension Guides](#extension-guides)
-17. [Performance & Scalability](#performance--scalability)
-18. [Disaster Recovery](#disaster-recovery)
-19. [Runbooks](#runbooks)
-20. [Glossary](#glossary)
-21. [Appendix: DDL, Schemas & Samples](#appendix-ddl-schemas--samples)
-22. [Quick Start Cheat Sheet](#quick-start-cheat-sheet)
+11. [Scenarios](#scenarios)
+12. [Governance & Lineage](#governance--lineage)
+13. [Security, Tenancy & Secrets](#security-tenancy--secrets)
+14. [Observability & Operations](#observability--operations)
+15. [Testing Strategy](#testing-strategy)
+16. [CI/CD](#cicd)
+17. [Extension Guides](#extension-guides)
+18. [Performance & Scalability](#performance--scalability)
+19. [Disaster Recovery](#disaster-recovery)
+20. [Runbooks](#runbooks)
+21. [Glossary](#glossary)
+22. [Appendix: DDL, Schemas & Samples](#appendix-ddl-schemas--samples)
+23. [Quick Start Cheat Sheet](#quick-start-cheat-sheet)
 
 ---
 
@@ -406,6 +407,16 @@ Key endpoints:
   * `postgres` (app metadata), `timescale` (hypertables), `kafka` (Avro topics) -- see `trino/catalog/*.properties`
 * Performance harness: `scripts/trino/query_harness.py --plan config/trino_query_harness.json --catalog iceberg --schema mart` captures latency/cost summaries (p95 wall-clock, bytes scanned, peak memory).
 * Airflow DAG `refresh_curve_marts` runs `dbt run --select fct_curve_observation mart_curve_latest mart_curve_asof_diff` hourly to keep Iceberg materializations hot, followed by freshness tests.
+
+---
+
+## Scenarios
+
+See the dedicated Scenarios guide at `docs/scenarios.md` for:
+- API endpoints (`/v1/scenarios`, `/v1/scenarios/{id}/run`, outputs and metrics)
+- Async run workflow and worker integration
+- Storage surfaces (Postgres metadata, Iceberg `market.scenario_output`)
+- Feature flags and limits, error handling, and observability
 
 ### Files
 

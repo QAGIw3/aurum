@@ -101,6 +101,7 @@ database = [
 aurum-unknown-units = "aurum.parsers.unknown_units_cli:main"
 aurum-scenario = "aurum.cli.scenario:main"
 aurum-drought-worker = "aurum.drought.worker:main"
+aurum-sla-exporter = "aurum.sla.watermark_exporter:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]

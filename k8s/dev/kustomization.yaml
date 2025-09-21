@@ -7,6 +7,7 @@ resources:
 patchesStrategicMerge:
   - patches/api-vault.yaml
   - patches/scenario-worker-vault.yaml
+  - patches/deployment-tolerations.yaml
 
 generatorOptions:
   disableNameSuffixHash: true
@@ -15,5 +16,10 @@ secretGenerator:
   - name: aurum-secrets
     namespace: aurum-dev
     behavior: merge
-    envs:
-      - ../../.env
+    literals:
+      - POSTGRES_DB=aurum
+      - POSTGRES_USER=aurum
+      - POSTGRES_PASSWORD=aurum123
+      - REDIS_PASSWORD=aurum123
+      - MINIO_ROOT_USER=minioadmin
+      - MINIO_ROOT_PASSWORD=minioadmin

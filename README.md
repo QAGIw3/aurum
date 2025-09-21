@@ -5,6 +5,7 @@ Developer-oriented scaffolding for the Aurum market intelligence platform.
 Quick links:
 - Onboarding guide: `docs/onboarding.md`
 - Architecture & deep dive: `docs/aurum-developer-documentation.md`
+- Scenarios guide: `docs/scenarios.md`
 - Kubernetes developer flow: `docs/k8s-dev.md`
 - Runbooks (API, ingestion, worker): `docs/runbooks/`
 

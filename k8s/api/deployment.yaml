@@ -21,7 +21,7 @@ spec:
       serviceAccountName: aurum-api
       containers:
         - name: api
-          image: ghcr.io/aurum/aurum-api:latest
+          image: ghcr.io/aurum/api:latest
           imagePullPolicy: IfNotPresent
           ports:
             - containerPort: 8080

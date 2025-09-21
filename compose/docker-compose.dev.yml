@@ -977,6 +977,39 @@ PY"
     networks:
       - aurum
 
+  sla-exporter:
+    profiles: ["core"]
+    image: python:3.11-slim
+    env_file: *env_file
+    deploy:
+      resources:
+        limits:
+          cpus: "0.10"
+          memory: 128M
+        reservations:
+          memory: 64M
+    depends_on:
+      postgres:
+        condition: service_healthy
+    working_dir: /workspace
+    volumes:
+      - ..:/workspace
+    environment:
+      AURUM_SLA_EXPORTER_PORT: 9468
+      AURUM_SLA_EXPORTER_INTERVAL: 30
+      AURUM_APP_DB_DSN: postgresql://${POSTGRES_USER:-aurum}:${POSTGRES_PASSWORD:-aurum}@postgres:5432/aurum
+    command: >-
+      bash -lc "pip install --no-cache-dir -e .[database] && aurum-sla-exporter --port ${AURUM_SLA_EXPORTER_PORT} --interval ${AURUM_SLA_EXPORTER_INTERVAL}"
+    ports:
+      - "9468:9468"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9468/metrics"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    networks:
+      - aurum
+
   airflow-init:
     profiles: ["worker", "pipeline"]
     image: apache/airflow:2.8.1
