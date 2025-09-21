@@ -95,6 +95,8 @@ models:
     tests:
       - unique:
           column_name: "curve_key || '|' || tenor_label || '|' || cast(asof_date as varchar)"
+    meta:
+      notes: "Add data tests for measurement tolerance once Iceberg fixtures are available."
   - name: int_curve_monthly
     description: Intermediate model filtering to monthly tenors and latest copies per ingest.
     tests:

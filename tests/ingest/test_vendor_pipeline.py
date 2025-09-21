@@ -14,15 +14,15 @@ def test_pipeline_enrichment_and_quarantine_flow() -> None:
             "source_file": ["pw.xlsx", "pw.xlsx"],
             "sheet_name": ["Fixed Prices", "Fixed Prices"],
             "asset_class": ["power", "power"],
-            "region": ["US", "US"],
-            "iso": ["PJM", "PJM"],
-            "location": ["AECO", "AECO"],
+            "region": [None, "US"],
+            "iso": [None, "PJM"],
+            "location": ["UNKNOWN", "AECO"],
             "market": ["DA", "DA"],
             "product": ["power", "power"],
             "block": ["ON_PEAK", "ON_PEAK"],
             "spark_location": [None, None],
             "price_type": ["MID", "MID"],
-            "units_raw": ["USD/MWh", "USD/MWh"],
+            "units_raw": [None, "USD/MWh"],
             "currency": [None, "USD"],
             "per_unit": [None, "MWh"],
             "tenor_type": ["MONTHLY", "MONTHLY"],
@@ -44,11 +44,12 @@ def test_pipeline_enrichment_and_quarantine_flow() -> None:
     assert "quarantine_reason" in clean_df.columns
     assert clean_df["quarantine_reason"].isna().all()
     assert len(quarantine_df) == 1
-    assert quarantine_df.iloc[0]["quarantine_reason"] == "missing_currency"
+    reason = quarantine_df.iloc[0]["quarantine_reason"]
+    assert reason and "missing_currency" in reason
 
     records = list(build_dlq_records(quarantine_df))
     assert len(records) == 1
     payload = records[0]
     assert payload["source"] == "pw.xlsx"
-    assert payload["error_message"] == "missing_currency"
-    assert payload["context"]["currency"] == "None"
+    assert "missing_currency" in payload["error_message"]
+    assert payload["context"]["currency"] is None

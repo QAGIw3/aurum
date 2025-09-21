@@ -48,13 +48,13 @@ The steps below remain available when you want finer-grained control or need to 
 
    This launches a short-lived Kubernetes Job that runs `scripts/bootstrap/bootstrap_dev.py` (same logic as the docker-compose profile) to ensure the MinIO bucket, lakeFS repo, and configured Nessie namespaces exist.
 
-4. (Optional) Bring up UI helpers (Superset, Kafka UI):
+4. (Optional) Bring up UI helpers (Superset, Kafka UI, Grafana):
 
-   ```bash
-   make kind-apply-ui
-   ```
+  ```bash
+  make kind-apply-ui
+  ```
 
-   Superset is then available at `http://localhost:8089` and Kafka UI at `http://localhost:8090`. Tear them down with `make kind-delete-ui` when you no longer need the dashboards.
+  Superset is then available at `http://localhost:8089`, Kafka UI at `http://localhost:8090`, and Grafana at `http://grafana.aurum.localtest.me:8085`. Tear them down with `make kind-delete-ui` when you no longer need the dashboards.
 
 5. Point your tooling at the exposed ports:
 
@@ -157,6 +157,7 @@ Each monitor scrapes the corresponding service on `/metrics`. The services also 
 
 - Superset and other optional UI services still run via docker-compose; porting them to Kubernetes can be layered on later once we decide how we want to package those containers.
 - Vector runs as a DaemonSet that tails cluster logs via the `kubernetes_logs` source; update `vector/vector.toml` if you change sink destinations or pod allowlists.
+- Verify log shipping with `clickhouse-client --host localhost --port 8123 --query "SELECT count() FROM ops.logs"` or by opening the Grafana dashboard in the UI overlay.
 - Kafka runs under Strimzi in KRaft mode; use `aurum-kafka-kafka-bootstrap:9092` for in-cluster clients and `kafka.aurum.localtest.me:31092` for host access.
 - Use `make kind-apply-ui` / `make kind-delete-ui` to toggle Superset and Kafka UI when you want dashboards in the kind stack.
 - The manifests are organized with Kustomize (`k8s/base`, `k8s/dev`) so you can add overlays for stage/prod style experimentation or inject secrets via alternative generators.
@@ -164,5 +165,6 @@ Each monitor scrapes the corresponding service on `/metrics`. The services also 
 - If you change the default credentials, update `k8s/base/secret-env.yaml` or create your own secret prior to `make kind-apply` (e.g., `kubectl create secret generic aurum-secrets --from-env-file=.env`).
 - Enable OIDC forward-auth by first populating the oauth2-proxy credentials (see `k8s/base/oauth2-proxy-secret.yaml` or create your own secret) and then applying the overlay: `kubectl apply -k k8s/dev-auth`.
 - Seed a small batch of EIA data into Timescale and validate the API by running `scripts/dev/kind_seed_eia.sh` once the cluster is healthy; the helper applies the DDL, registers schemas, runs the SeaTunnel job, and curls `/v1/ref/eia/series`.
+- Prime the `ingest_source` catalog with `make seed-ingest-sources` (add `DSN=...` if the default connection string differs) and use `python aurum/src/aurum/scripts/ingest/backfill.py` when you need to replay historical slices before handing control to Airflow.
 - Validate the scenario worker pipeline end-to-end with `make kind-scenario-smoke`, which seeds a tenant, creates a scenario through the API, waits for the worker to publish outputs, and confirms `/v1/scenarios/{id}/outputs` responds.
 - Vault is deployed in dev mode inside the cluster. Grab the root token with `kubectl -n aurum-dev get secret vault-root-token -o jsonpath='{.data.token}' | base64 --decode`, or log in via Traefik at `http://vault.aurum.localtest.me:8085`. The `vault-bootstrap` job enables the Kubernetes auth method, seeds `secret/data/aurum/*`, and publishes an `aurum-ingest` role bound to the `aurum-ingest` service account for sidecar injection. Annotate a pod with `vault.hashicorp.com/agent-inject: "true"` and `vault.hashicorp.com/role: aurum-ingest` to test the injector once your desired secret paths are populated.

@@ -23,6 +23,7 @@ This note captures the work required to finish hardening the storage tier before
   - `iceberg.market.curve_observation` (canonical), partitioned by `year(asof_date)`, `month(asof_date)` (already in DDL).
   - `iceberg.market.curve_observation_quarantine` to persist quarantined rows for auditing (same schema + `quarantine_reason`).
 - Sort order: `asof_date`, `asset_class`, `iso`, `tenor_label` to improve predicate pruning.
+- Publishing handled via dbt incremental model `publish_curve_observation` (merge on `curve_key|tenor_label|asof_date`).
 - Metrics/Retention:
   - Snapshot expiration: keep 14 days on `raw` and `market` namespaces.
   - Compaction: weekly rewrite targeting 128 MB files using existing `maintenance.rewrite_data_files` helper.

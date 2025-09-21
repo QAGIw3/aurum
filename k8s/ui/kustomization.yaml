@@ -4,3 +4,5 @@ namespace: aurum-dev
 resources:
   - superset.yaml
   - kafka-ui.yaml
+  - grafana.yaml
+  - grafana-ingress.yaml

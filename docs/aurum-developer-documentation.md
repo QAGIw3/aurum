@@ -277,6 +277,9 @@ Set lakeFS credentials when using branch commits: `AURUM_LAKEFS_ENDPOINT`, `AURU
 * **Helper:** `python scripts/ingest_daily.py --as-of YYYY-MM-DD --write-iceberg --lakefs-commit files/EOD_*.xlsx` to run the full workflow in one command.
 * **Output:** set `AURUM_PARSED_OUTPUT_URI` (e.g., `s3://aurum/curated/curves`) to push parser outputs directly to MinIO/lakeFS; otherwise files land in `AURUM_PARSED_OUTPUT_DIR`.
 * **Quarantine & DLQ:** failing rows are written to `<output>/quarantine` (override with `AURUM_QUARANTINE_DIR` or `--quarantine-dir`) and mirrored as JSONL payloads following `aurum.ingest.error.v1` semantics unless `--no-dlq-json` is set.
+* **Synthetic data:** build realistic curve datasets for load/perf testing via `python scripts/parsers/generate_synthetic_curves.py --output artifacts/synthetic.parquet`.
+* **Backfill helper:** `python scripts/ingest/backfill_curves.py --start YYYY-MM-DD --end YYYY-MM-DD --vendor pw --runner-arg --write-iceberg` iterates runner executions across a date range.
+* **Monitoring:** Airflow DAG `monitor_curve_quarantine` invokes `scripts/ops/monitor_quarantine.py` daily to alert on quarantine spikes (tune thresholds with `AURUM_QUARANTINE_THRESHOLD`).
 * **Iceberg:** export `AURUM_WRITE_ICEBERG=1` (and Nessie env vars) or use `--write-iceberg` to append rows via pyiceberg.
 * **dbt:** iterate on models: `dbt run -m stg,int,mart`.
 * **APIs:** run local API service (FastAPI/Flask/Vert.x) against Trino and Redis.
@@ -341,6 +344,7 @@ Set lakeFS credentials when using branch commits: `AURUM_LAKEFS_ENDPOINT`, `AURU
 ### dbt on Trino
 
 * `stg_curve_observation`: canonicalize types, compute `mid` if missing.
+* `publish_curve_observation`: incremental merge that materializes the canonical Iceberg table from the landing dataset.
 * `int_curve_monthly`: filter monthly, deduplicate.
 * `int_curve_calendar`, `int_curve_quarter`: derive calendar-year and quarterly strips by averaging monthly curves (available for `/v1/curves/strips` once materialized).
 * `mart_curve_latest`: last good as-of per instrument and tenor.

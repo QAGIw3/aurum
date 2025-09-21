@@ -27,6 +27,7 @@ ICEBERG_ENV_FLAG = "AURUM_WRITE_ICEBERG"
 AURUM_QUARANTINE_DIR_ENV = "AURUM_QUARANTINE_DIR"
 AURUM_QUARANTINE_FORMAT_ENV = "AURUM_QUARANTINE_FORMAT"
 AURUM_WRITE_DLQ_JSON_ENV = "AURUM_WRITE_DLQ_JSON"
+QUARANTINE_COLUMN = "quarantine_reason"
 
 LOG = logging.getLogger(__name__)
 
@@ -270,6 +271,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     enriched_df = enrich_units_currency(raw_df)
     clean_df, quarantine_df = partition_quarantine(enriched_df)
     df = clean_df
+    publish_df = df.drop(columns=[QUARANTINE_COLUMN], errors="ignore")
 
     selected_asof = as_of or _infer_asof(df if not df.empty else enriched_df)
 
@@ -316,25 +318,25 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
                 suites.append((repo_root / "ge" / "expectations" / "curve_schema.json", "curve_schema"))
                 suites.append((repo_root / "ge" / "expectations" / "curve_landing.json", "curve_landing"))
             for suite_path, suite_name in suites:
-                enforce_expectation_suite(df, suite_path, suite_name=suite_name)
+                enforce_expectation_suite(publish_df, suite_path, suite_name=suite_name)
                 LOG.info("Validation succeeded against %s", suite_path)
         except Exception as exc:  # pragma: no cover - surface error condition
             raise RuntimeError(f"Validation failed: {exc}") from exc
     if args.dry_run:
-        distinct_curves = len(df["curve_key"].unique()) if (not df.empty and "curve_key" in df.columns) else 0
+        distinct_curves = len(publish_df["curve_key"].unique()) if (not publish_df.empty and "curve_key" in publish_df.columns) else 0
         quarantined = len(quarantine_df)
         print(
-            f"Parsed {len(df)} rows; distinct curves: {distinct_curves}; as_of={selected_asof}; quarantined={quarantined}"
+            f"Parsed {len(publish_df)} rows; distinct curves: {distinct_curves}; as_of={selected_asof}; quarantined={quarantined}"
         )
         return 0
 
-    path = write_output(df, args.output_dir, as_of=selected_asof, fmt=args.fmt)
+    path = write_output(publish_df, args.output_dir, as_of=selected_asof, fmt=args.fmt)
     LOG.info("Wrote %s rows to %s", len(df), path)
     if args.summary:
-        distinct_curves = len(df["curve_key"].unique()) if (not df.empty and "curve_key" in df.columns) else 0
+        distinct_curves = len(publish_df["curve_key"].unique()) if (not publish_df.empty and "curve_key" in publish_df.columns) else 0
         quarantined = len(quarantine_df)
         print(
-            f"Parsed {len(df)} rows; distinct curves: {distinct_curves}; as_of={selected_asof}; quarantined={quarantined}"
+            f"Parsed {len(publish_df)} rows; distinct curves: {distinct_curves}; as_of={selected_asof}; quarantined={quarantined}"
         )
 
     if args.write_iceberg or os.getenv(ICEBERG_ENV_FLAG):

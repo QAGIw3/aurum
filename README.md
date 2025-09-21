@@ -192,6 +192,23 @@ Stream reference topics from Kafka into TimescaleDB with prebuilt DAGs and SeaTu
 
 See `seatunnel/README.md` for job rendering and environment variables; Airflow DAGs shell out to `scripts/seatunnel/run_job.sh` and read Timescale credentials from Vault (`secret/data/aurum/timescale:{user,password}`).
 
+### Ingest backfills & watermarks
+
+- Populate `ingest_source` rows (and seed `ingest_watermark` with the current timestamp) directly from `config/eia_ingest_datasets.json` / `config/eia_bulk_datasets.json` using `make seed-ingest-sources`. Pass `DSN=postgresql://...` to override the default Postgres connection.
+- Run targeted backfills with `aurum/src/aurum/scripts/ingest/backfill.py`, for example:
+
+  ```bash
+  python aurum/src/aurum/scripts/ingest/backfill.py \
+    --source eia_ng_storage \
+    --start 2024-01-01 \
+    --end 2024-01-03 \
+    --command "KAFKA_BOOTSTRAP_SERVERS=kafka.aurum.localtest.me:31092 SCHEMA_REGISTRY_URL=http://schema-registry.aurum.localtest.me:8085 scripts/seatunnel/run_job.sh eia_series_to_kafka --render-only" \
+    --dry-run
+  ```
+
+  Remove `--dry-run` (and switch to `--command ... --shell` as needed) to execute the ingestion job per day, then re-run without `--command` to bump watermarks only.
+- Re-run `make airflow-eia-vars` after editing dataset config to ensure the scheduler has the correct variables, and inspect success using `clickhouse-client --query "SELECT count() FROM ops.logs"` or the Grafana dashboard.
+
 Alternative: run a prebuilt API image (separate service, port 8096):
 
 ```bash
@@ -201,7 +218,7 @@ curl "http://localhost:8096/health"
 
 ### Kubernetes (kind) option
 
-Prefer to iterate against Kubernetes primitives? Follow the workflow in `docs/k8s-dev.md` to spin up the same core services inside a local kind cluster (`make kind-create && make kind-apply && make kind-bootstrap`). The Kubernetes stack now installs the Strimzi operator to run Kafka in KRaft mode alongside the Confluent Schema Registry, Airflow, ClickHouse, Vector, and the rest of the platform—and you can layer on Superset/Kafka UI with `make kind-apply-ui`.
+Prefer to iterate against Kubernetes primitives? Follow the workflow in `docs/k8s-dev.md` to spin up the same core services inside a local kind cluster (`make kind-create && make kind-apply && make kind-bootstrap`). The Kubernetes stack now installs the Strimzi operator to run Kafka in KRaft mode alongside the Confluent Schema Registry, Airflow, ClickHouse, Vector, and the rest of the platform—and you can layer on Superset/Kafka UI/Grafana with `make kind-apply-ui`.
 Re-running `make kind-create` while the cluster exists is safe—the helper exits early without touching the node. To rebuild from scratch in one go, run `AURUM_KIND_FORCE_RECREATE=true make kind-create` or call `scripts/k8s/create_kind_cluster.sh --force`.
 The mounted `trino/catalog` directory ships with catalogs for Iceberg, Postgres, Timescale, Kafka, and ClickHouse so federated queries work immediately once the stack is up.
 
@@ -381,10 +398,12 @@ python -m aurum.parsers.runner --as-of 2025-09-12 --format csv files/EOD_PW_2025
 
 Outputs are written to `./artifacts` by default.
 The runner enriches currency/unit metadata via the shared mapper, automatically shunts rows that miss core quality checks (missing currency, invalid tenor, etc.) into a quarantine dataset, and writes a JSONL DLQ payload mirroring `aurum.ingest.error.v1`. Override destinations with `--quarantine-dir`, `--quarantine-format`, and `--dlq-json-dir` (or disable the DLQ file via `--no-dlq-json`).
+Operational details and remediation steps live in `docs/runbooks/vendor_ingestion.md`.
 
 ### S3 output
 
 Set `AURUM_PARSED_OUTPUT_URI` (e.g., `s3://aurum/curated/curves`) and standard MinIO credentials to have the runner or Airflow DAG upload canonical outputs directly to object storage instead of the local filesystem.
+Generate representative datasets for load tests via `python scripts/parsers/generate_synthetic_curves.py --output artifacts/synthetic.parquet` and replay historical drops with `python scripts/ingest/backfill_curves.py --start 2025-01-01 --end 2025-01-05 --vendor pw --vendor eugp` (pass extra `--runner-arg` flags such as `--write-iceberg` to control behavior).
 
 Set `AURUM_WRITE_ICEBERG=1` or pass `--write-iceberg` to publish parsed rows directly into the configured Iceberg table (requires `pip install "aurum[iceberg]"`).
 

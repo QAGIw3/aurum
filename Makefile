@@ -1,4 +1,4 @@
-.PHONY: install lint test format bootstrap trino-apply-iso-views timescale-apply-ddl kind-scenario-smoke
+.PHONY: install lint test format bootstrap trino-apply-iso-views timescale-apply-ddl kind-scenario-smoke seed-ingest-sources
 
 KIND_CLUSTER_NAME ?= $(if $(AURUM_KIND_CLUSTER),$(AURUM_KIND_CLUSTER),aurum-dev)
 KIND_NAMESPACE ?= aurum-dev
@@ -97,6 +97,9 @@ kafka-apply-topics-kind-dry-run:
 
 minio-bootstrap:
 	python scripts/storage/bootstrap_minio.py --endpoint $${AURUM_S3_ENDPOINT:-http://localhost:9000} --access-key $${AURUM_S3_ACCESS_KEY:-minio} --secret-key $${AURUM_S3_SECRET_KEY:-minio123}
+
+seed-ingest-sources:
+	python scripts/dev/seed_ingest_sources.py $(if $(DSN),--dsn $(DSN),) --with-watermarks
 
 .PHONY: eia-validate-config airflow-eia-vars
 
