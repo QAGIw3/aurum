@@ -7,7 +7,7 @@ import json
 import logging
 import time
 from calendar import monthrange
-from datetime import date
+from datetime import date, datetime
 from typing import Any, Dict, Iterable, List, Optional, Tuple
 
 from .config import CacheConfig, TrinoConfig
@@ -121,11 +121,19 @@ SCENARIO_OUTPUT_ORDER_COLUMNS = [
     "run_id",
 ]
 
+EIA_SERIES_ORDER_COLUMNS = [
+    "series_id",
+    "period_start",
+    "period",
+]
+
 
 def _order_expression(column: str, *, alias: str = "") -> str:
     qualified = f"{alias}{column}" if alias else column
     if column in {"contract_month", "asof_date"}:
         return f"coalesce(cast({qualified} as date), DATE '0001-01-01')"
+    if column in {"period_start", "period_end", "ingest_ts"}:
+        return f"coalesce(cast({qualified} as timestamp), TIMESTAMP '0001-01-01 00:00:00')"
     if column in {"tenor_label", "price_type"}:
         return f"coalesce({qualified}, '')"
     return qualified
@@ -136,6 +144,14 @@ def _literal_for_column(column: str, value: Any) -> str:
         if value:
             return f"DATE '{_safe_literal(str(value))}'"
         return "DATE '0001-01-01'"
+    if column in {"period_start", "period_end", "ingest_ts"}:
+        if isinstance(value, datetime):
+            iso = value.isoformat(sep=" ", timespec="microseconds")
+        elif value:
+            iso = str(value)
+        else:
+            iso = "0001-01-01 00:00:00"
+        return f"TIMESTAMP '{_safe_literal(iso)}'"
     safe_val = _safe_literal(str(value or ""))
     return f"'{safe_val}'"
 
@@ -260,6 +276,270 @@ def _build_sql(
 def _cache_key(params: Dict[str, Any]) -> str:
     payload = json.dumps(params, sort_keys=True, default=str)
     return hashlib.sha256(payload.encode("utf-8")).hexdigest()
+
+
+def _format_timestamp_literal(value: datetime) -> str:
+    return value.isoformat(sep=" ", timespec="microseconds")
+
+
+def _build_sql_eia_series(
+    *,
+    series_id: Optional[str],
+    frequency: Optional[str],
+    area: Optional[str],
+    sector: Optional[str],
+    dataset: Optional[str],
+    unit: Optional[str],
+    source: Optional[str],
+    start: Optional[datetime],
+    end: Optional[datetime],
+    limit: int,
+    offset: int,
+    cursor_after: Optional[Dict[str, Any]],
+    cursor_before: Optional[Dict[str, Any]],
+    descending: bool,
+) -> str:
+    base = "timescale.public.eia_series_timeseries"
+    conditions: list[str] = []
+    if series_id:
+        conditions.append(f"series_id = '{_safe_literal(series_id)}'")
+    if frequency:
+        conditions.append(f"upper(frequency) = '{_safe_literal(frequency.upper())}'")
+    if area:
+        conditions.append(f"area = '{_safe_literal(area)}'")
+    if sector:
+        conditions.append(f"sector = '{_safe_literal(sector)}'")
+    if dataset:
+        conditions.append(f"dataset = '{_safe_literal(dataset)}'")
+    if unit:
+        conditions.append(f"unit = '{_safe_literal(unit)}'")
+    if source:
+        conditions.append(f"source = '{_safe_literal(source)}'")
+    if start:
+        conditions.append(f"period_start >= TIMESTAMP '{_safe_literal(_format_timestamp_literal(start))}'")
+    if end:
+        conditions.append(f"period_start <= TIMESTAMP '{_safe_literal(_format_timestamp_literal(end))}'")
+
+    where = ""
+    if conditions:
+        where = " WHERE " + " AND ".join(conditions)
+
+    direction = "DESC" if descending else "ASC"
+    order_clause = " ORDER BY " + ", ".join(f"{col} {direction}" for col in EIA_SERIES_ORDER_COLUMNS)
+
+    comparison_cursor = cursor_after
+    comparison = ">"
+    if cursor_before:
+        comparison_cursor = cursor_before
+        comparison = "<"
+        offset = 0
+
+    keyset_clause = _build_keyset_clause(
+        comparison_cursor,
+        alias="",
+        order_columns=EIA_SERIES_ORDER_COLUMNS,
+        comparison=comparison,
+    )
+    where_final = where
+    if keyset_clause:
+        if where_final:
+            where_final += keyset_clause
+        else:
+            where_final = " WHERE 1=1" + keyset_clause
+
+    effective_offset = 0 if comparison_cursor else offset
+    select_cols = (
+        "series_id, period, period_start, period_end, frequency, value, raw_value, unit, "
+        "area, sector, seasonal_adjustment, description, source, dataset, metadata, ingest_ts"
+    )
+    return (
+        f"SELECT {select_cols} FROM {base}{where_final}{order_clause} "
+        f"LIMIT {limit} OFFSET {effective_offset}"
+    )
+
+
+def query_eia_series(
+    trino_cfg: TrinoConfig,
+    cache_cfg: CacheConfig,
+    *,
+    series_id: Optional[str],
+    frequency: Optional[str],
+    area: Optional[str],
+    sector: Optional[str],
+    dataset: Optional[str],
+    unit: Optional[str],
+    source: Optional[str],
+    start: Optional[datetime],
+    end: Optional[datetime],
+    limit: int,
+    offset: int = 0,
+    cursor_after: Optional[Dict[str, Any]] = None,
+    cursor_before: Optional[Dict[str, Any]] = None,
+    descending: bool = False,
+) -> Tuple[List[Dict[str, Any]], float]:
+    params = {
+        "series_id": series_id,
+        "frequency": frequency,
+        "area": area,
+        "sector": sector,
+        "dataset": dataset,
+        "unit": unit,
+        "source": source,
+        "start": start.isoformat() if start else None,
+        "end": end.isoformat() if end else None,
+        "limit": limit,
+        "offset": offset,
+        "cursor_after": cursor_after,
+        "cursor_before": cursor_before,
+        "descending": descending,
+    }
+    sql = _build_sql_eia_series(
+        series_id=series_id,
+        frequency=frequency,
+        area=area,
+        sector=sector,
+        dataset=dataset,
+        unit=unit,
+        source=source,
+        start=start,
+        end=end,
+        limit=limit,
+        offset=offset,
+        cursor_after=cursor_after,
+        cursor_before=cursor_before,
+        descending=descending,
+    )
+
+    client = _maybe_redis_client(cache_cfg)
+    cache_key = None
+    prefix = f"{cache_cfg.namespace}:" if cache_cfg.namespace else ""
+    if client is not None:
+        cache_key = f"{prefix}eia-series:{_cache_key({**params, 'sql': sql})}"
+        cached = client.get(cache_key)
+        if cached:  # pragma: no cover
+            data = json.loads(cached)
+            return data, 0.0
+
+    connect = _require_trino()
+    start_time = time.perf_counter()
+    rows: List[Dict[str, Any]] = []
+    with connect(host=trino_cfg.host, port=trino_cfg.port, user=trino_cfg.user, http_scheme=trino_cfg.http_scheme) as conn:  # type: ignore[arg-type]
+        cur = conn.cursor()
+        cur.execute(sql)
+        columns = [c[0] for c in cur.description]
+        for rec in cur.fetchall():
+            row = {col: val for col, val in zip(columns, rec)}
+            rows.append(row)
+    elapsed = (time.perf_counter() - start_time) * 1000.0
+
+    if client is not None and cache_key is not None:
+        try:  # pragma: no cover
+            client.setex(cache_key, cache_cfg.ttl_seconds, json.dumps(rows, default=str))
+        except Exception:
+            pass
+
+    return rows, elapsed
+
+
+def query_eia_series_dimensions(
+    trino_cfg: TrinoConfig,
+    cache_cfg: CacheConfig,
+    *,
+    series_id: Optional[str],
+    frequency: Optional[str],
+    area: Optional[str],
+    sector: Optional[str],
+    dataset: Optional[str],
+    unit: Optional[str],
+    source: Optional[str],
+) -> Tuple[Dict[str, List[str]], float]:
+    conditions: list[str] = []
+    if series_id:
+        conditions.append(f"series_id = '{_safe_literal(series_id)}'")
+    if frequency:
+        conditions.append(f"upper(frequency) = '{_safe_literal(frequency.upper())}'")
+    if area:
+        conditions.append(f"area = '{_safe_literal(area)}'")
+    if sector:
+        conditions.append(f"sector = '{_safe_literal(sector)}'")
+    if dataset:
+        conditions.append(f"dataset = '{_safe_literal(dataset)}'")
+    if unit:
+        conditions.append(f"unit = '{_safe_literal(unit)}'")
+    if source:
+        conditions.append(f"source = '{_safe_literal(source)}'")
+
+    where = ""
+    if conditions:
+        where = " WHERE " + " AND ".join(conditions)
+
+    sql = (
+        "SELECT "
+        "ARRAY_AGG(DISTINCT dataset) FILTER (WHERE dataset IS NOT NULL) AS dataset_values, "
+        "ARRAY_AGG(DISTINCT area) FILTER (WHERE area IS NOT NULL) AS area_values, "
+        "ARRAY_AGG(DISTINCT sector) FILTER (WHERE sector IS NOT NULL) AS sector_values, "
+        "ARRAY_AGG(DISTINCT unit) FILTER (WHERE unit IS NOT NULL) AS unit_values, "
+        "ARRAY_AGG(DISTINCT frequency) FILTER (WHERE frequency IS NOT NULL) AS frequency_values, "
+        "ARRAY_AGG(DISTINCT source) FILTER (WHERE source IS NOT NULL) AS source_values "
+        f"FROM timescale.public.eia_series_timeseries{where}"
+    )
+
+    client = _maybe_redis_client(cache_cfg)
+    cache_key = None
+    prefix = f"{cache_cfg.namespace}:" if cache_cfg.namespace else ""
+    params = {
+        "series_id": series_id,
+        "frequency": frequency,
+        "area": area,
+        "sector": sector,
+        "dataset": dataset,
+        "unit": unit,
+        "source": source,
+    }
+    if client is not None:
+        cache_key = f"{prefix}eia-series-dimensions:{_cache_key({**params, 'sql': sql})}"
+        cached = client.get(cache_key)
+        if cached:  # pragma: no cover
+            payload = json.loads(cached)
+            return payload, 0.0
+
+    connect = _require_trino()
+    start_time = time.perf_counter()
+    results: Dict[str, List[str]] = {
+        "dataset": [],
+        "area": [],
+        "sector": [],
+        "unit": [],
+        "frequency": [],
+        "source": [],
+    }
+    with connect(host=trino_cfg.host, port=trino_cfg.port, user=trino_cfg.user, http_scheme=trino_cfg.http_scheme) as conn:  # type: ignore[arg-type]
+        cur = conn.cursor()
+        cur.execute(sql)
+        row = cur.fetchone()
+        if row:
+            mapping = {
+                "dataset": row[0],
+                "area": row[1],
+                "sector": row[2],
+                "unit": row[3],
+                "frequency": row[4],
+                "source": row[5],
+            }
+            for key, values in mapping.items():
+                if not values:
+                    continue
+                items = [str(item) for item in values if item is not None]
+                results[key] = sorted(set(items))
+    elapsed = (time.perf_counter() - start_time) * 1000.0
+
+    if client is not None and cache_key is not None:
+        try:  # pragma: no cover
+            client.setex(cache_key, cache_cfg.ttl_seconds, json.dumps(results, default=str))
+        except Exception:
+            pass
+
+    return results, elapsed
 
 
 def query_curves(
@@ -499,6 +779,12 @@ def _scenario_cache_index_key(namespace: str, tenant_id: Optional[str], scenario
     tenant_key = tenant_id or "anon"
     prefix = f"{namespace}:" if namespace else ""
     return f"{prefix}scenario-outputs:index:{tenant_key}:{scenario_id}"
+
+
+def _scenario_metrics_cache_index_key(namespace: str, tenant_id: Optional[str], scenario_id: str) -> str:
+    tenant_key = tenant_id or "anon"
+    prefix = f"{namespace}:" if namespace else ""
+    return f"{prefix}scenario-metrics:index:{tenant_key}:{scenario_id}"
 
 
 def _build_sql_scenario_outputs(
@@ -851,6 +1137,7 @@ def query_ppa_valuation(
 
 def query_scenario_metrics_latest(
     trino_cfg: TrinoConfig,
+    cache_cfg: CacheConfig,
     *,
     scenario_id: str,
     tenant_id: Optional[str] = None,
@@ -870,6 +1157,22 @@ def query_scenario_metrics_latest(
         f"FROM {base}{where} ORDER BY metric, tenor_label"
     )
 
+    params = {
+        "scenario_id": scenario_id,
+        "tenant_id": tenant_id,
+        "metric": metric,
+        "sql": sql,
+    }
+
+    client = _maybe_redis_client(cache_cfg)
+    cache_key = None
+    if client is not None:
+        cache_key = f"scenario-metrics:{_cache_key(params)}"
+        cached = client.get(cache_key)
+        if cached:
+            data = json.loads(cached)
+            return data, 0.0
+
     connect = _require_trino()
     start = time.perf_counter()
     rows: List[Dict[str, Any]] = []
@@ -880,6 +1183,16 @@ def query_scenario_metrics_latest(
         for rec in cur.fetchall():
             rows.append({col: val for col, val in zip(columns, rec)})
     elapsed = (time.perf_counter() - start) * 1000.0
+
+    if client is not None and cache_key is not None:
+        try:  # pragma: no cover
+            client.setex(cache_key, cache_cfg.ttl_seconds, json.dumps(rows, default=str))
+            index_key = _scenario_metrics_cache_index_key(cache_cfg.namespace, tenant_id, scenario_id)
+            client.sadd(index_key, cache_key)
+            client.expire(index_key, cache_cfg.ttl_seconds)
+        except Exception:
+            pass
+
     return rows, elapsed
 
 
@@ -892,6 +1205,7 @@ def invalidate_scenario_outputs_cache(
     if client is None:
         return
     index_key = _scenario_cache_index_key(cache_cfg.namespace, tenant_id, scenario_id)
+    metrics_index_key = _scenario_metrics_cache_index_key(cache_cfg.namespace, tenant_id, scenario_id)
     try:  # pragma: no cover
         members = client.smembers(index_key)
         if members:
@@ -899,6 +1213,12 @@ def invalidate_scenario_outputs_cache(
             if keys:
                 client.delete(*keys)
         client.delete(index_key)
+        metric_members = client.smembers(metrics_index_key)
+        if metric_members:
+            metric_keys = [member.decode("utf-8") if isinstance(member, bytes) else member for member in metric_members]
+            if metric_keys:
+                client.delete(*metric_keys)
+        client.delete(metrics_index_key)
     except Exception:
         return
 
@@ -907,6 +1227,8 @@ __all__ = [
     "query_curves",
     "query_curves_diff",
     "query_scenario_outputs",
+    "query_eia_series",
+    "query_eia_series_dimensions",
     "query_ppa_valuation",
     "query_scenario_metrics_latest",
     "invalidate_scenario_outputs_cache",

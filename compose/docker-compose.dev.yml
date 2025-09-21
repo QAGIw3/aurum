@@ -242,19 +242,20 @@ services:
       AURUM_API_TRINO_PORT: 8080
       AURUM_API_TRINO_USER: aurum
       AURUM_API_TRINO_SCHEME: http
+      AURUM_APP_DB_DSN: postgresql://${POSTGRES_USER:-aurum}:${POSTGRES_PASSWORD:-aurum}@postgres:5432/aurum
       AURUM_API_REDIS_URL: redis://redis:6379/0
       AURUM_API_CACHE_TTL: 60
+      AURUM_API_INMEMORY_TTL: 60
       AURUM_API_SCENARIO_OUTPUTS_ENABLED: "1"
-      AURUM_API_AUTH_DISABLED: "1"
-      AURUM_API_ADMIN_GROUP: aurum-admins
+      AURUM_API_RATE_LIMIT_RPS: 10
+      AURUM_API_RATE_LIMIT_BURST: 20
+      AURUM_API_GZIP_MIN_BYTES: 500
+      AURUM_API_AUTH_DISABLED: "${AURUM_API_AUTH_DISABLED:-1}"
+      AURUM_API_ADMIN_GROUP: ${AURUM_API_ADMIN_GROUP:-aurum-admins}
+      AURUM_API_CORS_ORIGINS: "${AURUM_API_CORS_ORIGINS:-*}"
       AURUM_OTEL_SERVICE_NAME: aurum-api
       AURUM_OTEL_EXPORTER_ENDPOINT: '${AURUM_OTEL_EXPORTER_ENDPOINT:-}'
-      AURUM_OTEL_EXPORTER_INSECURE: "true"
-      AURUM_API_AUTH_DISABLED: "1"
-      AURUM_API_ADMIN_GROUP: aurum-admins
-      AURUM_OTEL_SERVICE_NAME: aurum-api
-      AURUM_OTEL_EXPORTER_ENDPOINT: '${AURUM_OTEL_EXPORTER_ENDPOINT:-}'
-      AURUM_OTEL_EXPORTER_INSECURE: "true"
+      AURUM_OTEL_EXPORTER_INSECURE: "${AURUM_OTEL_EXPORTER_INSECURE:-true}"
     ports:
       - "8095:8085"
     healthcheck:
@@ -265,7 +266,7 @@ services:
     networks:
       - aurum
   api-built:
-    profiles: ["api-built"]
+    profiles: ["api-built", "pipeline"]
     image: ${AURUM_API_IMAGE:-aurum-api:local}
     build:
       context: ..
@@ -281,14 +282,20 @@ services:
       AURUM_API_TRINO_PORT: 8080
       AURUM_API_TRINO_USER: aurum
       AURUM_API_TRINO_SCHEME: http
+      AURUM_APP_DB_DSN: postgresql://${POSTGRES_USER:-aurum}:${POSTGRES_PASSWORD:-aurum}@postgres:5432/aurum
       AURUM_API_REDIS_URL: redis://redis:6379/0
       AURUM_API_CACHE_TTL: 60
+      AURUM_API_INMEMORY_TTL: 60
       AURUM_API_SCENARIO_OUTPUTS_ENABLED: "1"
-      AURUM_API_AUTH_DISABLED: "1"
-      AURUM_API_ADMIN_GROUP: aurum-admins
+      AURUM_API_RATE_LIMIT_RPS: 10
+      AURUM_API_RATE_LIMIT_BURST: 20
+      AURUM_API_GZIP_MIN_BYTES: 500
+      AURUM_API_AUTH_DISABLED: "${AURUM_API_AUTH_DISABLED:-1}"
+      AURUM_API_ADMIN_GROUP: ${AURUM_API_ADMIN_GROUP:-aurum-admins}
+      AURUM_API_CORS_ORIGINS: "${AURUM_API_CORS_ORIGINS:-*}"
       AURUM_OTEL_SERVICE_NAME: aurum-api
       AURUM_OTEL_EXPORTER_ENDPOINT: '${AURUM_OTEL_EXPORTER_ENDPOINT:-}'
-      AURUM_OTEL_EXPORTER_INSECURE: "true"
+      AURUM_OTEL_EXPORTER_INSECURE: "${AURUM_OTEL_EXPORTER_INSECURE:-true}"
     ports:
       - "8096:8080"
     healthcheck:
@@ -342,7 +349,7 @@ services:
       - aurum
 
   scenario-worker:
-    profiles: ["worker"]
+    profiles: ["worker", "pipeline"]
     image: python:3.11-slim
     env_file: *env_file
     depends_on:
@@ -360,9 +367,14 @@ services:
       SCHEMA_REGISTRY_URL: http://schema-registry:8081
       AURUM_SCENARIO_REQUEST_TOPIC: aurum.scenario.request.v1
       AURUM_SCENARIO_OUTPUT_TOPIC: aurum.scenario.output.v1
+      AURUM_SCENARIO_WORKER_GROUP: aurum-scenario-worker
+      AURUM_SCENARIO_METRICS_PORT: 9464
+      AURUM_SCENARIO_METRICS_ADDR: 0.0.0.0
+      AURUM_SCENARIO_MAX_ATTEMPTS: 3
+      AURUM_SCENARIO_RETRY_BACKOFF_SEC: 0.5
       AURUM_OTEL_SERVICE_NAME: aurum-scenario-worker
       AURUM_OTEL_EXPORTER_ENDPOINT: '${AURUM_OTEL_EXPORTER_ENDPOINT:-}'
-      AURUM_OTEL_EXPORTER_INSECURE: "true"
+      AURUM_OTEL_EXPORTER_INSECURE: "${AURUM_OTEL_EXPORTER_INSECURE:-true}"
     healthcheck:
       test: ["CMD", "bash", "-lc", "echo ok"]
       interval: 30s
@@ -372,7 +384,7 @@ services:
       - aurum
 
   scenario-worker-built:
-    profiles: ["worker-built"]
+    profiles: ["worker-built", "pipeline"]
     image: ${AURUM_WORKER_IMAGE:-aurum-worker:local}
     build:
       context: ..
@@ -388,9 +400,14 @@ services:
       SCHEMA_REGISTRY_URL: http://schema-registry:8081
       AURUM_SCENARIO_REQUEST_TOPIC: aurum.scenario.request.v1
       AURUM_SCENARIO_OUTPUT_TOPIC: aurum.scenario.output.v1
+      AURUM_SCENARIO_WORKER_GROUP: aurum-scenario-worker
+      AURUM_SCENARIO_METRICS_PORT: 9464
+      AURUM_SCENARIO_METRICS_ADDR: 0.0.0.0
+      AURUM_SCENARIO_MAX_ATTEMPTS: 3
+      AURUM_SCENARIO_RETRY_BACKOFF_SEC: 0.5
       AURUM_OTEL_SERVICE_NAME: aurum-scenario-worker
       AURUM_OTEL_EXPORTER_ENDPOINT: '${AURUM_OTEL_EXPORTER_ENDPOINT:-}'
-      AURUM_OTEL_EXPORTER_INSECURE: "true"
+      AURUM_OTEL_EXPORTER_INSECURE: "${AURUM_OTEL_EXPORTER_INSECURE:-true}"
     healthcheck:
       test: ["CMD", "bash", "-lc", "echo ok"]
       interval: 30s

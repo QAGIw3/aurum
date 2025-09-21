@@ -11,6 +11,8 @@ import pytest
 REPO_ROOT = Path(__file__).resolve().parents[2]
 SCRIPT_PATH = REPO_ROOT / "scripts" / "seatunnel" / "run_job.sh"
 ISO_LMP_SCHEMA_PATH = REPO_ROOT / "kafka" / "schemas" / "iso.lmp.v1.avsc"
+ISO_LOAD_SCHEMA_PATH = REPO_ROOT / "kafka" / "schemas" / "iso.load.v1.avsc"
+ISO_GENMIX_SCHEMA_PATH = REPO_ROOT / "kafka" / "schemas" / "iso.genmix.v1.avsc"
 NOAA_GHCND_SCHEMA_PATH = REPO_ROOT / "kafka" / "schemas" / "noaa.weather.v1.avsc"
 EIA_SERIES_SCHEMA_PATH = REPO_ROOT / "kafka" / "schemas" / "eia.series.v1.avsc"
 FRED_SERIES_SCHEMA_PATH = REPO_ROOT / "kafka" / "schemas" / "fred.series.v1.avsc"
@@ -115,6 +117,115 @@ def extract_value_schema(config_path: Path) -> dict:
             },
             "FUEL_SERIES_ID",
         ),
+        (
+            "eia_bulk_to_kafka",
+            {
+                "EIA_BULK_URL": "https://example.com/bulk.zip",
+                "EIA_BULK_TOPIC": "aurum.ref.eia.bulk.test.v1",
+                "EIA_BULK_FREQUENCY": "MONTHLY",
+                "KAFKA_BOOTSTRAP_SERVERS": "localhost:9092",
+                "SCHEMA_REGISTRY_URL": "http://localhost:8081",
+            },
+            "EIA_BULK_URL",
+        ),
+        (
+            "miso_load_to_kafka",
+            {
+                "MISO_LOAD_ENDPOINT": "https://example.com/miso/load",
+                "MISO_LOAD_INTERVAL_START": "2024-01-01T00:00:00Z",
+                "MISO_LOAD_INTERVAL_END": "2024-01-01T01:00:00Z",
+                "MISO_LOAD_TOPIC": "aurum.iso.miso.load.v1",
+                "KAFKA_BOOTSTRAP_SERVERS": "localhost:9092",
+                "SCHEMA_REGISTRY_URL": "http://localhost:8081",
+            },
+            "MISO_LOAD_ENDPOINT",
+        ),
+        (
+            "spp_load_to_kafka",
+            {
+                "SPP_LOAD_ENDPOINT": "https://example.com/spp/load",
+                "SPP_LOAD_INTERVAL_START": "2024-01-01T00:00:00Z",
+                "SPP_LOAD_INTERVAL_END": "2024-01-01T01:00:00Z",
+                "SPP_LOAD_TOPIC": "aurum.iso.spp.load.v1",
+                "KAFKA_BOOTSTRAP_SERVERS": "localhost:9092",
+                "SCHEMA_REGISTRY_URL": "http://localhost:8081",
+            },
+            "SPP_LOAD_ENDPOINT",
+        ),
+        (
+            "caiso_load_to_kafka",
+            {
+                "CAISO_LOAD_ENDPOINT": "https://example.com/caiso/load",
+                "CAISO_LOAD_INTERVAL_START": "2024-01-01T00:00:00Z",
+                "CAISO_LOAD_INTERVAL_END": "2024-01-01T01:00:00Z",
+                "CAISO_LOAD_TOPIC": "aurum.iso.caiso.load.v1",
+                "KAFKA_BOOTSTRAP_SERVERS": "localhost:9092",
+                "SCHEMA_REGISTRY_URL": "http://localhost:8081",
+            },
+            "CAISO_LOAD_ENDPOINT",
+        ),
+        (
+            "aeso_load_to_kafka",
+            {
+                "AESO_LOAD_ENDPOINT": "https://example.com/aeso/load",
+                "AESO_LOAD_INTERVAL_START": "2024-01-01T00:00:00Z",
+                "AESO_LOAD_INTERVAL_END": "2024-01-01T00:10:00Z",
+                "AESO_LOAD_TOPIC": "aurum.iso.aeso.load.v1",
+                "AESO_LOAD_API_KEY": "sample",
+                "KAFKA_BOOTSTRAP_SERVERS": "localhost:9092",
+                "SCHEMA_REGISTRY_URL": "http://localhost:8081",
+            },
+            "AESO_LOAD_ENDPOINT",
+        ),
+        (
+            "miso_genmix_to_kafka",
+            {
+                "MISO_GENMIX_ENDPOINT": "https://example.com/miso/genmix",
+                "MISO_GENMIX_INTERVAL_START": "2024-01-01T00:00:00Z",
+                "MISO_GENMIX_INTERVAL_END": "2024-01-01T01:00:00Z",
+                "MISO_GENMIX_TOPIC": "aurum.iso.miso.genmix.v1",
+                "KAFKA_BOOTSTRAP_SERVERS": "localhost:9092",
+                "SCHEMA_REGISTRY_URL": "http://localhost:8081",
+            },
+            "MISO_GENMIX_ENDPOINT",
+        ),
+        (
+            "spp_genmix_to_kafka",
+            {
+                "SPP_GENMIX_ENDPOINT": "https://example.com/spp/genmix",
+                "SPP_GENMIX_INTERVAL_START": "2024-01-01T00:00:00Z",
+                "SPP_GENMIX_INTERVAL_END": "2024-01-01T01:00:00Z",
+                "SPP_GENMIX_TOPIC": "aurum.iso.spp.genmix.v1",
+                "KAFKA_BOOTSTRAP_SERVERS": "localhost:9092",
+                "SCHEMA_REGISTRY_URL": "http://localhost:8081",
+            },
+            "SPP_GENMIX_ENDPOINT",
+        ),
+        (
+            "caiso_genmix_to_kafka",
+            {
+                "CAISO_GENMIX_ENDPOINT": "https://example.com/caiso/genmix",
+                "CAISO_GENMIX_INTERVAL_START": "2024-01-01T00:00:00Z",
+                "CAISO_GENMIX_INTERVAL_END": "2024-01-01T01:00:00Z",
+                "CAISO_GENMIX_TOPIC": "aurum.iso.caiso.genmix.v1",
+                "KAFKA_BOOTSTRAP_SERVERS": "localhost:9092",
+                "SCHEMA_REGISTRY_URL": "http://localhost:8081",
+            },
+            "CAISO_GENMIX_ENDPOINT",
+        ),
+        (
+            "aeso_genmix_to_kafka",
+            {
+                "AESO_GENMIX_ENDPOINT": "https://example.com/aeso/genmix",
+                "AESO_GENMIX_INTERVAL_START": "2024-01-01T00:00:00Z",
+                "AESO_GENMIX_INTERVAL_END": "2024-01-01T00:10:00Z",
+                "AESO_GENMIX_TOPIC": "aurum.iso.aeso.genmix.v1",
+                "AESO_GENMIX_API_KEY": "sample",
+                "KAFKA_BOOTSTRAP_SERVERS": "localhost:9092",
+                "SCHEMA_REGISTRY_URL": "http://localhost:8081",
+            },
+            "AESO_GENMIX_ENDPOINT",
+        ),
     ],
 )
 def test_run_job_requires_env_vars(job_name: tuple[str, dict[str, str], str], tmp_path: Path) -> None:
@@ -172,6 +283,146 @@ def test_run_job_renders_config(tmp_path: Path) -> None:
 
     rendered_schema = extract_value_schema(rendered_path)
     expected_schema = json.loads(NOAA_GHCND_SCHEMA_PATH.read_text(encoding="utf-8"))
+    assert rendered_schema == expected_schema
+
+
+@pytest.mark.parametrize(
+    "job_name, env_vars",
+    [
+        (
+            "miso_load_to_kafka",
+            {
+                "MISO_LOAD_ENDPOINT": "https://example.com/miso/load",
+                "MISO_LOAD_INTERVAL_START": "2024-01-01T00:00:00Z",
+                "MISO_LOAD_INTERVAL_END": "2024-01-01T01:00:00Z",
+                "MISO_LOAD_TOPIC": "aurum.iso.miso.load.v1",
+                "KAFKA_BOOTSTRAP_SERVERS": "localhost:9092",
+                "SCHEMA_REGISTRY_URL": "http://localhost:8081",
+            },
+        ),
+        (
+            "spp_load_to_kafka",
+            {
+                "SPP_LOAD_ENDPOINT": "https://example.com/spp/load",
+                "SPP_LOAD_INTERVAL_START": "2024-01-01T00:00:00Z",
+                "SPP_LOAD_INTERVAL_END": "2024-01-01T01:00:00Z",
+                "SPP_LOAD_TOPIC": "aurum.iso.spp.load.v1",
+                "KAFKA_BOOTSTRAP_SERVERS": "localhost:9092",
+                "SCHEMA_REGISTRY_URL": "http://localhost:8081",
+            },
+        ),
+        (
+            "caiso_load_to_kafka",
+            {
+                "CAISO_LOAD_ENDPOINT": "https://example.com/caiso/load",
+                "CAISO_LOAD_INTERVAL_START": "2024-01-01T00:00:00Z",
+                "CAISO_LOAD_INTERVAL_END": "2024-01-01T01:00:00Z",
+                "CAISO_LOAD_TOPIC": "aurum.iso.caiso.load.v1",
+                "KAFKA_BOOTSTRAP_SERVERS": "localhost:9092",
+                "SCHEMA_REGISTRY_URL": "http://localhost:8081",
+            },
+        ),
+        (
+            "aeso_load_to_kafka",
+            {
+                "AESO_LOAD_ENDPOINT": "https://example.com/aeso/load",
+                "AESO_LOAD_INTERVAL_START": "2024-01-01T00:00:00Z",
+                "AESO_LOAD_INTERVAL_END": "2024-01-01T00:10:00Z",
+                "AESO_LOAD_TOPIC": "aurum.iso.aeso.load.v1",
+                "AESO_LOAD_API_KEY": "key",
+                "KAFKA_BOOTSTRAP_SERVERS": "localhost:9092",
+                "SCHEMA_REGISTRY_URL": "http://localhost:8081",
+            },
+        ),
+    ],
+)
+def test_iso_load_jobs_render_schema(job_name: str, env_vars: dict[str, str], tmp_path: Path) -> None:
+    env = os.environ.copy()
+    env.update(env_vars)
+    env["SEATUNNEL_OUTPUT_DIR"] = str(tmp_path)
+
+    subprocess.run(
+        ["bash", str(SCRIPT_PATH), job_name, "--render-only"],
+        cwd=REPO_ROOT,
+        env=env,
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+
+    rendered_path = tmp_path / f"{job_name}.conf"
+    rendered_schema = extract_value_schema(rendered_path)
+    expected_schema = json.loads(ISO_LOAD_SCHEMA_PATH.read_text(encoding="utf-8"))
+    assert rendered_schema == expected_schema
+
+
+@pytest.mark.parametrize(
+    "job_name, env_vars",
+    [
+        (
+            "miso_genmix_to_kafka",
+            {
+                "MISO_GENMIX_ENDPOINT": "https://example.com/miso/genmix",
+                "MISO_GENMIX_INTERVAL_START": "2024-01-01T00:00:00Z",
+                "MISO_GENMIX_INTERVAL_END": "2024-01-01T01:00:00Z",
+                "MISO_GENMIX_TOPIC": "aurum.iso.miso.genmix.v1",
+                "KAFKA_BOOTSTRAP_SERVERS": "localhost:9092",
+                "SCHEMA_REGISTRY_URL": "http://localhost:8081",
+            },
+        ),
+        (
+            "spp_genmix_to_kafka",
+            {
+                "SPP_GENMIX_ENDPOINT": "https://example.com/spp/genmix",
+                "SPP_GENMIX_INTERVAL_START": "2024-01-01T00:00:00Z",
+                "SPP_GENMIX_INTERVAL_END": "2024-01-01T01:00:00Z",
+                "SPP_GENMIX_TOPIC": "aurum.iso.spp.genmix.v1",
+                "KAFKA_BOOTSTRAP_SERVERS": "localhost:9092",
+                "SCHEMA_REGISTRY_URL": "http://localhost:8081",
+            },
+        ),
+        (
+            "caiso_genmix_to_kafka",
+            {
+                "CAISO_GENMIX_ENDPOINT": "https://example.com/caiso/genmix",
+                "CAISO_GENMIX_INTERVAL_START": "2024-01-01T00:00:00Z",
+                "CAISO_GENMIX_INTERVAL_END": "2024-01-01T01:00:00Z",
+                "CAISO_GENMIX_TOPIC": "aurum.iso.caiso.genmix.v1",
+                "KAFKA_BOOTSTRAP_SERVERS": "localhost:9092",
+                "SCHEMA_REGISTRY_URL": "http://localhost:8081",
+            },
+        ),
+        (
+            "aeso_genmix_to_kafka",
+            {
+                "AESO_GENMIX_ENDPOINT": "https://example.com/aeso/genmix",
+                "AESO_GENMIX_INTERVAL_START": "2024-01-01T00:00:00Z",
+                "AESO_GENMIX_INTERVAL_END": "2024-01-01T00:10:00Z",
+                "AESO_GENMIX_TOPIC": "aurum.iso.aeso.genmix.v1",
+                "AESO_GENMIX_API_KEY": "key",
+                "KAFKA_BOOTSTRAP_SERVERS": "localhost:9092",
+                "SCHEMA_REGISTRY_URL": "http://localhost:8081",
+            },
+        ),
+    ],
+)
+def test_iso_genmix_jobs_render_schema(job_name: str, env_vars: dict[str, str], tmp_path: Path) -> None:
+    env = os.environ.copy()
+    env.update(env_vars)
+    env["SEATUNNEL_OUTPUT_DIR"] = str(tmp_path)
+
+    subprocess.run(
+        ["bash", str(SCRIPT_PATH), job_name, "--render-only"],
+        cwd=REPO_ROOT,
+        env=env,
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+
+    rendered_path = tmp_path / f"{job_name}.conf"
+    rendered_schema = extract_value_schema(rendered_path)
+    expected_schema = json.loads(ISO_GENMIX_SCHEMA_PATH.read_text(encoding="utf-8"))
     assert rendered_schema == expected_schema
 
 
@@ -241,6 +492,8 @@ def test_eia_job_renders_config(tmp_path: Path) -> None:
     assert 'USD/MWh' in rendered
     assert "COALESCE(source, 'EIA')" in rendered
     assert 'WHERE (TRUE)' in rendered
+    assert "CASE UPPER('HOURLY')" in rendered
+    assert "UNIX_TIMESTAMP(SUBSTR(period, 1, 19), 'yyyy-MM-dd''T''HH:mm:ss')" in rendered
 
     rendered_schema = extract_value_schema(rendered_path)
     expected_schema = json.loads(EIA_SERIES_SCHEMA_PATH.read_text(encoding="utf-8"))
@@ -279,6 +532,36 @@ def test_eia_job_supports_series_expr(tmp_path: Path) -> None:
     assert "series                                      AS series_id" in rendered
     assert "WHERE (series LIKE 'NW2%')" in rendered
 
+
+def test_eia_bulk_job_renders_config(tmp_path: Path) -> None:
+    env = os.environ.copy()
+    env.update(
+        {
+            "EIA_BULK_URL": "https://example.com/bulk.zip",
+            "EIA_BULK_TOPIC": "aurum.ref.eia.bulk.test.v1",
+            "EIA_BULK_FREQUENCY": "MONTHLY",
+            "KAFKA_BOOTSTRAP_SERVERS": "localhost:9092",
+            "SCHEMA_REGISTRY_URL": "http://localhost:8081",
+            "SEATUNNEL_OUTPUT_DIR": str(tmp_path),
+        }
+    )
+
+    subprocess.run(
+        ["bash", str(SCRIPT_PATH), "eia_bulk_to_kafka", "--render-only"],
+        cwd=REPO_ROOT,
+        env=env,
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+
+    rendered_path = tmp_path / "eia_bulk_to_kafka.conf"
+    rendered = rendered_path.read_text(encoding="utf-8")
+
+    assert 'HttpFile' in rendered
+    assert 'aurum.ref.eia.bulk.test.v1' in rendered
+    assert "CASE UPPER('MONTHLY')" in rendered
+    assert 'schema.registry.url' in rendered
 
 def test_eia_job_renders_param_overrides(tmp_path: Path) -> None:
     env = os.environ.copy()

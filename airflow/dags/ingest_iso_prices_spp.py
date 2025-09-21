@@ -2,12 +2,13 @@
 from __future__ import annotations
 
 import os
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Any, Tuple
 
 from airflow import DAG
 from airflow.operators.bash import BashOperator
 from airflow.operators.empty import EmptyOperator
+from airflow.operators.python import PythonOperator
 
 
 DEFAULT_ARGS: dict[str, Any] = {
@@ -24,12 +25,58 @@ PYTHONPATH_ENTRY = os.environ.get("AURUM_PYTHONPATH_ENTRY", "/opt/airflow/src")
 STAGING_DIR = os.environ.get("AURUM_STAGING_DIR", "files/staging")
 
 
+def _register_sources() -> None:
+    try:
+        import sys
+
+        src_path = os.environ.get("AURUM_PYTHONPATH_ENTRY", "/opt/airflow/src")
+        if src_path and src_path not in sys.path:
+            sys.path.insert(0, src_path)
+        from aurum.db import register_ingest_source  # type: ignore
+
+        register_ingest_source(
+            "spp_da_lmp",
+            description="SPP day-ahead LMP ingestion",
+            schedule="20 * * * *",
+            target="kafka",
+        )
+        register_ingest_source(
+            "spp_rt_lmp",
+            description="SPP real-time LMP ingestion",
+            schedule="20 * * * *",
+            target="kafka",
+        )
+    except Exception as exc:  # pragma: no cover
+        print(f"Failed to register SPP ingest sources: {exc}")
+
+
+def _update_watermark(source_name: str, logical_date: datetime) -> None:
+    watermark = logical_date.astimezone(timezone.utc)
+    try:
+        import sys
+
+        src_path = os.environ.get("AURUM_PYTHONPATH_ENTRY", "/opt/airflow/src")
+        if src_path and src_path not in sys.path:
+            sys.path.insert(0, src_path)
+        from aurum.db import update_ingest_watermark  # type: ignore
+
+        update_ingest_watermark(source_name, "logical_date", watermark)
+    except Exception as exc:  # pragma: no cover
+        print(f"Failed to update watermark for {source_name}: {exc}")
+
+
 def _token_flag() -> str:
     # Airflow Variable-based token (Vault-provided env handled in bash below)
     return "{% if var.value.get('aurum_spp_token', '') %} --token {{ var.value.get('aurum_spp_token') }}{% endif %}"
 
 
-def build_pipeline(prefix: str, report_var: str, interval_minutes: int) -> Tuple[BashOperator, BashOperator, BashOperator]:
+def build_pipeline(
+    prefix: str,
+    report_var: str,
+    interval_minutes: int,
+    *,
+    source_name: str,
+) -> Tuple[BashOperator, BashOperator, BashOperator, PythonOperator]:
     staging_path = f"{STAGING_DIR}/spp/{prefix}/{{{{ ds }}}}.json"
     report_value = f"{{{{ var.value.get('{report_var}') }}}}"
 
@@ -74,12 +121,12 @@ def build_pipeline(prefix: str, report_var: str, interval_minutes: int) -> Tuple
             "cd /opt/airflow",
             f"export PATH=\"{BIN_PATH}\"",
             f"export PYTHONPATH=\"${{PYTHONPATH:-}}:{PYTHONPATH_ENTRY}\"",
-            "export ISO_LMP_SCHEMA_PATH=/opt/airflow/scripts/scripts/kafka/schemas/iso.lmp.v1.avsc",
+            "export ISO_LMP_SCHEMA_PATH=/opt/airflow/scripts/kafka/schemas/iso.lmp.v1.avsc",
             (
                 f"AURUM_EXECUTE_SEATUNNEL=0 SPP_INPUT_JSON={staging_path} "
                 f"KAFKA_BOOTSTRAP_SERVERS='{kafka_bootstrap}' "
                 f"SCHEMA_REGISTRY_URL='{schema_registry}' "
-                "scripts/scripts/seatunnel/run_job.sh spp_lmp_to_kafka --render-only"
+                "scripts/seatunnel/run_job.sh spp_lmp_to_kafka --render-only"
             ),
         ]
     )
@@ -95,7 +142,12 @@ def build_pipeline(prefix: str, report_var: str, interval_minutes: int) -> Tuple
     ])
     run_k8s_task = BashOperator(task_id=f"spp_{prefix}_execute_k8s", bash_command=run_k8s_command)
 
-    return stage_task, seatunnel_task, run_k8s_task
+    watermark_task = PythonOperator(
+        task_id=f"spp_{prefix}_watermark",
+        python_callable=lambda **ctx: _update_watermark(source_name, ctx["logical_date"]),
+    )
+
+    return stage_task, seatunnel_task, run_k8s_task, watermark_task
 
 
 with DAG(
@@ -110,11 +162,23 @@ with DAG(
 ) as dag:
     start = EmptyOperator(task_id="start")
 
-    da_stage, da_seatunnel, da_exec = build_pipeline("da", "aurum_spp_da_report", interval_minutes=60)
-    rt_stage, rt_seatunnel, rt_exec = build_pipeline("rt", "aurum_spp_rt_report", interval_minutes=5)
+    register_sources = PythonOperator(task_id="register_sources", python_callable=_register_sources)
+
+    da_stage, da_seatunnel, da_exec, da_watermark = build_pipeline(
+        "da",
+        "aurum_spp_da_report",
+        interval_minutes=60,
+        source_name="spp_da_lmp",
+    )
+    rt_stage, rt_seatunnel, rt_exec, rt_watermark = build_pipeline(
+        "rt",
+        "aurum_spp_rt_report",
+        interval_minutes=5,
+        source_name="spp_rt_lmp",
+    )
 
     end = EmptyOperator(task_id="end")
 
-    start >> [da_stage, rt_stage]
-    da_stage >> da_seatunnel >> da_exec >> end
-    rt_stage >> rt_seatunnel >> rt_exec >> end
+    start >> register_sources >> [da_stage, rt_stage]
+    da_stage >> da_seatunnel >> da_exec >> da_watermark >> end
+    rt_stage >> rt_seatunnel >> rt_exec >> rt_watermark >> end

@@ -3,3 +3,13 @@ kind: Kustomization
 namespace: aurum-dev
 resources:
   - ../base
+
+generatorOptions:
+  disableNameSuffixHash: true
+
+secretGenerator:
+  - name: aurum-secrets
+    namespace: aurum-dev
+    behavior: merge
+    envs:
+      - ../../.env

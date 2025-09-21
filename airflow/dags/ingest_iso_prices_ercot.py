@@ -66,7 +66,7 @@ with DAG(
             f"export PYTHONPATH=\"${{PYTHONPATH:-}}:{PYTHONPATH_ENTRY}\"",
             pull_cmd,
             (
-                "python scripts/scripts/ingest/ercot_mis_to_kafka.py "
+                "python scripts/ingest/ercot_mis_to_kafka.py "
                 "--url {{ var.value.get('aurum_ercot_mis_url') }} "
                 f"{token_flag} "
                 "${ERCOT_BEARER_TOKEN:+--bearer-token ${ERCOT_BEARER_TOKEN}} "
@@ -90,7 +90,7 @@ with DAG(
                 f"AURUM_EXECUTE_SEATUNNEL=0 ERCOT_INPUT_JSON={staging_path} "
                 f"KAFKA_BOOTSTRAP_SERVERS='{kafka_bootstrap}' "
                 f"SCHEMA_REGISTRY_URL='{schema_registry}' "
-                "scripts/scripts/seatunnel/run_job.sh ercot_lmp_to_kafka --render-only"
+                "scripts/seatunnel/run_job.sh ercot_lmp_to_kafka --render-only"
             ),
         ]
     )

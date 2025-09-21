@@ -391,14 +391,14 @@ def _policy_effect(payload: dict, settings: WorkerSettings) -> float:
     return len(policy_name) * settings.policy_weight
 
 
-def _load_growth_effect(payload: dict, asof: Optional[date], settings: WorkerSettings) -> float:
+def _load_growth_effect(payload: dict, request: ScenarioRequest, settings: WorkerSettings) -> float:
     growth = _safe_float(payload.get("annual_growth_pct"), 0.0)
     if growth == 0.0:
         return 0.0
     start_year = payload.get("start_year")
     end_year = payload.get("end_year")
-    if isinstance(asof, date):
-        current_year = asof.year
+    if isinstance(request.asof_date, date):
+        current_year = request.asof_date.year
     elif isinstance(start_year, int):
         current_year = start_year
     elif isinstance(end_year, int):
@@ -414,17 +414,28 @@ def _load_growth_effect(payload: dict, asof: Optional[date], settings: WorkerSet
         span = max(effective_end - effective_start + 1, 1)
         current_position = min(max(current_year, effective_start), effective_end)
         progress = (current_position - effective_start + 1) / span if span else 1.0
-    return settings.load_weight * growth * progress
+    effect = settings.load_weight * growth * progress
+
+    curve_key = payload.get("reference_curve_key")
+    if curve_key:
+        baseline_value = _load_base_mid(curve_key, request.asof_date)
+        if baseline_value is not None and settings.base_value:
+            scale = baseline_value / settings.base_value
+            effect *= scale
+    return effect
 
 
-def _fuel_curve_effect(payload: dict, base_value: float) -> float:
+def _fuel_curve_effect(payload: dict, request: ScenarioRequest, base_value: float) -> float:
     fuel = str(payload.get("fuel", "natural_gas")).lower()
     basis_points = _safe_float(payload.get("basis_points_adjustment"), 0.0)
     reference = str(payload.get("reference_series", ""))
+    curve_key = payload.get("reference_curve_key") or reference
+    baseline = _load_base_mid(curve_key, request.asof_date) if curve_key else None
+    effective_base = baseline if baseline is not None else base_value
     fuel_weight = FUEL_CURVE_WEIGHTS.get(fuel, 0.0)
-    basis_component = base_value * (basis_points / 10_000.0)
+    basis_component = effective_base * (basis_points / 10_000.0)
     reference_component = _reference_factor(reference)
-    return (fuel_weight * base_value) + basis_component + reference_component
+    return (fuel_weight * effective_base) + basis_component + reference_component
 
 
 def _fleet_change_effect(payload: dict, asof: Optional[date]) -> float:
@@ -454,9 +465,9 @@ def _driver_effect(
     if driver_type == DriverType.POLICY:
         return _policy_effect(payload, settings)
     if driver_type == DriverType.LOAD_GROWTH:
-        return _load_growth_effect(payload, request.asof_date, settings)
+        return _load_growth_effect(payload, request, settings)
     if driver_type == DriverType.FUEL_CURVE:
-        return _fuel_curve_effect(payload, base_value)
+        return _fuel_curve_effect(payload, request, base_value)
     if driver_type == DriverType.FLEET_CHANGE:
         return _fleet_change_effect(payload, request.asof_date)
     return 0.0

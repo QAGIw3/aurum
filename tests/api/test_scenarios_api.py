@@ -318,7 +318,7 @@ def test_scenario_metrics_latest(monkeypatch, client):
     monkeypatch.setattr(
         service,
         "query_scenario_metrics_latest",
-        lambda *args, **kwargs: (rows, 8.0),
+        lambda trino_cfg, cache_cfg, **kwargs: (rows, 8.0),
     )
 
     resp = client.get("/v1/scenarios/scn-1/metrics/latest")

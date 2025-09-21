@@ -114,6 +114,7 @@ data:
       miso
       isone
       spp
+      aeso
       eia
       noaa
       fred

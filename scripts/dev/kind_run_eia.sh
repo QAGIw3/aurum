@@ -11,8 +11,8 @@ Usage: scripts/dev/kind_run_eia.sh [--ns NAMESPACE] [--schema-registry-url URL] 
 Steps performed:
   1) Port-forward Schema Registry (unless --schema-registry-url provided)
   2) Register Kafka Avro schemas and set BACKWARD compatibility
-  3) Generate Airflow variable commands from config/eia_ingest_datasets.json and apply them in the scheduler pod
-  4) Trigger the EIA public feeds + Timescale sink DAGs
+  3) Generate Airflow variable commands from config/eia_ingest_datasets.json (and bulk datasets) and apply them in the scheduler pod
+  4) Trigger the EIA public feeds, bulk ingestion, and Timescale sink DAGs
 
 Options:
   --ns NAMESPACE              Kubernetes namespace (default: aurum-dev)
@@ -100,11 +100,12 @@ fi
 echo "[kind] Triggering DAGs" >&2
 if [[ "${DRY_RUN}" == true ]]; then
   echo "[dry-run] airflow dags trigger ingest_public_feeds" >&2
+  echo "[dry-run] airflow dags trigger ingest_eia_bulk" >&2
   echo "[dry-run] airflow dags trigger ingest_eia_series_timescale" >&2
 else
   kubectl -n "${NS}" exec "${SCHEDULER}" -- airflow dags trigger ingest_public_feeds || true
+  kubectl -n "${NS}" exec "${SCHEDULER}" -- airflow dags trigger ingest_eia_bulk || true
   kubectl -n "${NS}" exec "${SCHEDULER}" -- airflow dags trigger ingest_eia_series_timescale || true
 fi
 
 echo "[kind] Done." >&2
-

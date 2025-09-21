@@ -174,6 +174,7 @@ Stream reference topics from Kafka into TimescaleDB with prebuilt DAGs and SeaTu
   - SeaTunnel template: `seatunnel/jobs/eia_series_kafka_to_timescale.conf.tmpl`
   - Variables: `aurum_kafka_bootstrap`, `aurum_schema_registry`, `aurum_timescale_jdbc`, optional `aurum_eia_topic_pattern`, `aurum_eia_series_table`
   - One‑time DDL (default DSN `postgresql://timescale:timescale@localhost:5433/timeseries`):
+    - `make timescale-apply-eia` to create `eia_series_timeseries`
     - `make timescale-apply-cpi` (for CPI) and `make timescale-apply-fred` (for FRED) as needed
 
 - FRED series → Timescale
@@ -208,8 +209,42 @@ Nightly CronJobs dump Postgres and Timescale to `.kind-data/backups/` (retaining
 Run `make kafka-bootstrap` (optionally export `SCHEMA_REGISTRY_URL`) after the Schema Registry is online to publish the shared Avro contracts and enforce `BACKWARD` compatibility in one step. Individual commands remain available via `make kafka-register-schemas` and `make kafka-set-compat` (override the level with `COMPATIBILITY_LEVEL`).
 Set `AURUM_DLQ_TOPIC` (or pass `--dlq-topic`) when running the ingestion helpers to capture failures in `aurum.ingest.error.v1` alongside the ingest attempt metadata.
 
+**Operational follow-up**
+- Register the updated Avro subjects after deploying (`iso.lmp.v1`, `iso.load.v1`, and `iso.genmix.v1` now cover AESO/MISO/SPP/CAISO). Run `make kafka-register-schemas` followed by
+  `make kafka-set-compat` (or the equivalent `scripts/kafka/register_schemas.py` invocation) so Schema Registry picks up the new enum entry and topics.
+- Backfill recent history per ISO by exporting the required environment variables and executing the new SeaTunnel templates, for example:
+  ```bash
+  # Load
+  MISO_LOAD_ENDPOINT=https://example.com/miso/load \
+  MISO_LOAD_INTERVAL_START=2024-01-01T00:00:00Z \
+  MISO_LOAD_INTERVAL_END=2024-01-02T00:00:00Z \
+  MISO_LOAD_TOPIC=aurum.iso.miso.load.v1 \
+  KAFKA_BOOTSTRAP_SERVERS=broker:29092 \
+  SCHEMA_REGISTRY_URL=http://schema-registry:8081 \
+  scripts/seatunnel/run_job.sh miso_load_to_kafka
+
+  # Generation mix
+  SPP_GENMIX_ENDPOINT=https://example.com/spp/genmix \
+  SPP_GENMIX_INTERVAL_START=2024-01-01T00:00:00Z \
+  SPP_GENMIX_INTERVAL_END=2024-01-01T12:00:00Z \
+  SPP_GENMIX_TOPIC=aurum.iso.spp.genmix.v1 \
+  KAFKA_BOOTSTRAP_SERVERS=broker:29092 \
+  SCHEMA_REGISTRY_URL=http://schema-registry:8081 \
+  scripts/seatunnel/run_job.sh spp_genmix_to_kafka
+  ```
+- After backfills land, confirm the analytic surfaces include the new ISO codes:
+  ```sql
+  -- Timescale
+  SELECT DISTINCT iso_code FROM public.iso_lmp_unified ORDER BY iso_code;
+
+  -- Trino
+  SELECT DISTINCT iso_code FROM iceberg.market.iso_lmp_unified ORDER BY iso_code;
+  ```
+
 Prototype SeaTunnel jobs live under `seatunnel/`; render and execute them with `scripts/seatunnel/run_job.sh` once the necessary environment variables are set (see `seatunnel/README.md`). NOAA, EIA, FRED, NYISO, PJM, and Timescale landing jobs are supported out of the box, and Python helpers cover CAISO PRC_LMP and ERCOT MIS ingestion.
-EIA API coverage is catalog-driven: run `python scripts/eia/build_catalog.py` (requires `EIA_API_KEY`) to refresh `config/eia_catalog.json`, then Airflow reads the catalog plus `config/eia_ingest_datasets.json` to materialize per-dataset tasks without hand-maintained env blocks. Add or tweak dataset definitions in that JSON to control schedules, topics, filter/parameter overrides, and field expressions (see `docs/ingestion/eia_dataset_config.md` for the schema). Once updated, generate Airflow variable commands with `python scripts/eia/set_airflow_variables.py` (pass `--apply` to call `airflow variables set` directly).
+EIA API coverage is catalog-driven: run `python scripts/eia/build_catalog.py` (requires `EIA_API_KEY`) to refresh `config/eia_catalog.json`, then Airflow reads the catalog plus `config/eia_ingest_datasets.json` to materialize per-dataset tasks without hand-maintained env blocks. Add or tweak dataset definitions in that JSON to control schedules, topics, filter/parameter overrides, and field expressions (see `docs/ingestion/eia_dataset_config.md` for the schema). Once updated, generate Airflow variable commands with `python scripts/eia/set_airflow_variables.py` (pass `--apply` to call `airflow variables set` directly). Bulk archives live under `config/eia_bulk_datasets.json` and are orchestrated by the `ingest_eia_bulk` DAG using the new `eia_bulk_to_kafka` SeaTunnel template.
+
+Need to replay historical windows? `python scripts/eia/backfill_series.py --job api --source eia_rto_region_daily --start 2024-01-01 --end 2024-01-07` shells out to `scripts/seatunnel/run_job.sh eia_series_to_kafka` for each day, then bumps the ingest watermark automatically. Pass `--job bulk` for one-off runs against the bulk archive definitions. If you only need to advance the watermark, the generic helper still works: `python src/aurum/scripts/ingest/backfill.py --source eia_rto_region_daily --start 2024-01-01 --end 2024-01-07`.
 Use Vault for runtime secrets: store tokens under `secret/data/aurum/<source>` (seed with `python scripts/secrets/push_vault_env.py --mapping NOAA_GHCND_TOKEN=secret/data/aurum/noaa:token ...`) and populate the environment with `python scripts/secrets/pull_vault_env.py --mapping secret/data/aurum/noaa:token=NOAA_GHCND_TOKEN ...` before launching ingestion helpers. When developing against kind, the in-cluster Vault instance already exposes those paths (`vault login $(kubectl -n aurum-dev get secret vault-root-token -o jsonpath='{.data.token}' | base64 --decode)`); for standalone docker-compose workflows you can still run `scripts/vault/run_dev.sh` to launch an ad-hoc dev-mode Vault on `http://localhost:8200` (default root token `aurum-dev-token`).
 
 - Scripted ISO helpers:
@@ -218,6 +253,12 @@ Use Vault for runtime secrets: store tokens under `secret/data/aurum/<source>` (
   - `scripts/ingest/miso_marketreports_to_kafka.py` processes day-ahead or real-time Market Reports CSVs.
   - `scripts/ingest/isone_ws_to_kafka.py` calls ISO-NE web services with start/end windows and publishes LMP data.
   - `scripts/ingest/spp_file_api_to_kafka.py` lists and downloads SPP Marketplace files, normalizes them, and sends to Kafka.
+  - Airflow Variables for the AESO SMP DAG: `aurum_aeso_endpoint` (default `https://api.aeso.ca/report/v1/price/systemMarginalPrice`) and `aurum_aeso_topic`
+    (default `aurum.iso.aeso.lmp.v1`). Provide an `AESO_API_KEY` via Vault or environment variables when required by the AESO API.
+  - New SeaTunnel jobs handle ISO load and generation mix ingestion: `miso_load_to_kafka`, `spp_load_to_kafka`, `caiso_load_to_kafka`, `aeso_load_to_kafka`, and
+    their `*_genmix_to_kafka` counterparts. The companion Airflow DAGs (`ingest_iso_metrics_miso`, `ingest_iso_metrics_spp`, `ingest_iso_metrics_caiso`,
+    `ingest_iso_metrics_aeso`) expect variables such as `aurum_<iso>_load_endpoint`, `aurum_<iso>_load_topic`, `aurum_<iso>_genmix_endpoint`, and
+    `aurum_<iso>_genmix_topic`. For AESO supply `aurum_aeso_api_key` to populate the required `X-API-Key` header.
   ```bash
   SCHEMA_REGISTRY_URL=http://localhost:8081 \
   KAFKA_BOOTSTRAP_SERVERS=localhost:9092 \

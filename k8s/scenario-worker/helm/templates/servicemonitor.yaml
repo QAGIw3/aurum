@@ -3,19 +3,25 @@ apiVersion: monitoring.coreos.com/v1
 kind: ServiceMonitor
 metadata:
   name: {{ include "aurum-scenario-worker.fullname" . }}
+{{- if .Values.serviceMonitor.namespace }}
+  namespace: {{ .Values.serviceMonitor.namespace }}
+{{- end }}
   labels:
     {{- include "aurum-scenario-worker.labels" . | nindent 4 }}
     {{- if .Values.serviceMonitor.labels }}
     {{- toYaml .Values.serviceMonitor.labels | nindent 4 }}
     {{- end }}
 spec:
+  namespaceSelector:
+    matchNames:
+      - {{ default .Release.Namespace .Values.serviceMonitor.namespace }}
   selector:
     matchLabels:
       app.kubernetes.io/name: {{ include "aurum-scenario-worker.name" . }}
       app.kubernetes.io/instance: {{ .Release.Name }}
   endpoints:
     - port: metrics
-      path: /metrics
+      path: {{ .Values.serviceMonitor.path | default "/metrics" }}
       interval: {{ .Values.serviceMonitor.interval }}
       scrapeTimeout: {{ .Values.serviceMonitor.scrapeTimeout }}
 {{- end }}

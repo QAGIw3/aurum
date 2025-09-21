@@ -3,15 +3,44 @@ from __future__ import annotations
 
 import importlib
 import json
+import math
 import os
 import time
 import logging
-from typing import Optional
+from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
+from typing import Any, Optional
 
 import pandas as pd
 
 
 LOGGER = logging.getLogger(__name__)
+
+_PPA_DECIMAL_QUANTIZER = Decimal("0.000001")
+
+
+def _to_quantized_decimal(value: Any) -> Optional[Decimal]:
+    """Return a 6-decimal-place Decimal or None for missing inputs."""
+
+    if value is None:
+        return None
+    if isinstance(value, Decimal):
+        if value.is_nan():  # type: ignore[no-untyped-call]
+            return None
+        try:
+            return value.quantize(_PPA_DECIMAL_QUANTIZER, rounding=ROUND_HALF_UP)
+        except InvalidOperation:
+            return None
+    if isinstance(value, float):
+        if math.isnan(value):
+            return None
+    try:
+        as_decimal = Decimal(str(value))
+    except (InvalidOperation, ValueError, TypeError):
+        return None
+    try:
+        return as_decimal.quantize(_PPA_DECIMAL_QUANTIZER, rounding=ROUND_HALF_UP)
+    except InvalidOperation:
+        return None
 
 
 def _require_pyiceberg():
@@ -143,6 +172,7 @@ def _build_ppa_schema():
     StringType = types_module.StringType
     DateType = types_module.DateType
     DoubleType = types_module.DoubleType
+    DecimalType = types_module.DecimalType
     TimestampType = types_module.TimestampType
 
     return Schema(
@@ -152,11 +182,11 @@ def _build_ppa_schema():
         NestedField(4, "curve_key", StringType()),
         NestedField(5, "period_start", DateType()),
         NestedField(6, "period_end", DateType()),
-        NestedField(7, "cashflow", DoubleType()),
-        NestedField(8, "npv", DoubleType()),
+        NestedField(7, "cashflow", DecimalType(18, 6)),
+        NestedField(8, "npv", DecimalType(18, 6)),
         NestedField(9, "irr", DoubleType()),
         NestedField(10, "metric", StringType(), required=True),
-        NestedField(11, "value", DoubleType()),
+        NestedField(11, "value", DecimalType(18, 6)),
         NestedField(12, "version_hash", StringType()),
         NestedField(13, "_ingest_ts", TimestampType()),
     )
@@ -373,6 +403,14 @@ def write_ppa_valuation(
         if column not in frame.columns:
             frame[column] = None
     frame = frame[expected_columns]
+
+    decimal_columns = ("cashflow", "npv", "value")
+    for column in decimal_columns:
+        frame[column] = frame[column].apply(_to_quantized_decimal)
+
+    frame["irr"] = frame["irr"].apply(
+        lambda value: float(value) if value is not None and not pd.isna(value) else None
+    )
 
     for date_col in ("asof_date", "period_start", "period_end"):
         frame[date_col] = pd.to_datetime(frame[date_col], errors="coerce").dt.date

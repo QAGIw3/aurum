@@ -1,0 +1,62 @@
+# AESO generation mix → Kafka (Avro)
+
+env {
+  job.mode = "BATCH"
+  parallelism = 1
+}
+
+source {
+  Http {
+    url = "${AESO_GENMIX_ENDPOINT}"
+    method = "GET"
+    headers {
+      X-API-Key = "${AESO_GENMIX_API_KEY}"
+    }
+    params {
+      startTime = "${AESO_GENMIX_INTERVAL_START}"
+      endTime = "${AESO_GENMIX_INTERVAL_END}"
+      ${AESO_GENMIX_EXTRA_PARAM_KEY} = "${AESO_GENMIX_EXTRA_PARAM_VALUE}"
+    }
+    connection_timeout_ms = 20000
+    retry = 12
+    format = "json"
+    schema = { fields { ${AESO_GENMIX_ASOF_FIELD} = string ${AESO_GENMIX_FUEL_FIELD} = string ${AESO_GENMIX_MW_FIELD} = string } }
+    jsonpath = "${AESO_GENMIX_JSONPATH}"
+    result_table_name = "aeso_genmix_raw"
+  }
+}
+
+transform {
+  Sql {
+    source_table_name = "aeso_genmix_raw"
+    result_table_name = "aeso_genmix_normalized"
+    query = """
+      SELECT
+        'AESO' AS iso_code,
+        CAST(UNIX_TIMESTAMP(${AESO_GENMIX_ASOF_EXTRACT}, '${AESO_GENMIX_TIME_FORMAT}') * 1000000 AS BIGINT) AS asof_time,
+        TRIM(UPPER(CAST(${AESO_GENMIX_FUEL_EXPR} AS STRING))) AS fuel_type,
+        CAST(${AESO_GENMIX_MW_EXPR} AS DOUBLE) AS mw,
+        '${AESO_GENMIX_UNIT}' AS unit,
+        CAST(UNIX_TIMESTAMP() * 1000000 AS BIGINT) AS ingest_ts,
+        NULL AS metadata
+      FROM aeso_genmix_raw
+    """
+  }
+}
+
+sink {
+  Kafka {
+    plugin_input = "aeso_genmix_normalized"
+    bootstrap.servers = "${KAFKA_BOOTSTRAP_SERVERS}"
+    topic = "${AESO_GENMIX_TOPIC}"
+    semantic = "AT_LEAST_ONCE"
+    format = "avro"
+    avro {
+      use.schema.registry = true
+      schema.registry.url = "${SCHEMA_REGISTRY_URL}"
+      value.schema.subject = "${AESO_GENMIX_SUBJECT}"
+      value.schema = """${ISO_GENMIX_SCHEMA}"""
+    }
+  }
+}
+

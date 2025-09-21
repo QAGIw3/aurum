@@ -1,0 +1,62 @@
+# CAISO generation mix → Kafka (Avro)
+
+env {
+  job.mode = "BATCH"
+  parallelism = 1
+}
+
+source {
+  Http {
+    url = "${CAISO_GENMIX_ENDPOINT}"
+    method = "GET"
+    headers {
+      Authorization = "${CAISO_GENMIX_AUTH_HEADER}"
+    }
+    params {
+      start = "${CAISO_GENMIX_INTERVAL_START}"
+      end = "${CAISO_GENMIX_INTERVAL_END}"
+      ${CAISO_GENMIX_EXTRA_PARAM_KEY} = "${CAISO_GENMIX_EXTRA_PARAM_VALUE}"
+    }
+    connection_timeout_ms = 20000
+    retry = 12
+    format = "json"
+    schema = { fields { ${CAISO_GENMIX_ASOF_FIELD} = string ${CAISO_GENMIX_FUEL_FIELD} = string ${CAISO_GENMIX_MW_FIELD} = string } }
+    jsonpath = "${CAISO_GENMIX_JSONPATH}"
+    result_table_name = "caiso_genmix_raw"
+  }
+}
+
+transform {
+  Sql {
+    source_table_name = "caiso_genmix_raw"
+    result_table_name = "caiso_genmix_normalized"
+    query = """
+      SELECT
+        'CAISO' AS iso_code,
+        CAST(UNIX_TIMESTAMP(${CAISO_GENMIX_ASOF_EXTRACT}, '${CAISO_GENMIX_TIME_FORMAT}') * 1000000 AS BIGINT) AS asof_time,
+        TRIM(UPPER(CAST(${CAISO_GENMIX_FUEL_EXPR} AS STRING))) AS fuel_type,
+        CAST(${CAISO_GENMIX_MW_EXPR} AS DOUBLE) AS mw,
+        '${CAISO_GENMIX_UNIT}' AS unit,
+        CAST(UNIX_TIMESTAMP() * 1000000 AS BIGINT) AS ingest_ts,
+        NULL AS metadata
+      FROM caiso_genmix_raw
+    """
+  }
+}
+
+sink {
+  Kafka {
+    plugin_input = "caiso_genmix_normalized"
+    bootstrap.servers = "${KAFKA_BOOTSTRAP_SERVERS}"
+    topic = "${CAISO_GENMIX_TOPIC}"
+    semantic = "AT_LEAST_ONCE"
+    format = "avro"
+    avro {
+      use.schema.registry = true
+      schema.registry.url = "${SCHEMA_REGISTRY_URL}"
+      value.schema.subject = "${CAISO_GENMIX_SUBJECT}"
+      value.schema = """${ISO_GENMIX_SCHEMA}"""
+    }
+  }
+}
+

@@ -281,3 +281,26 @@ def test_update_run_state_cancelled_sets_completed(monkeypatch: pytest.MonkeyPat
     run = store.update_run_state("run-1", state="CANCELLED", tenant_id="tenant-1")
     assert run is not None and run.state == "CANCELLED"
     assert any("completed_at" in query[0] for query in cursor.queries if "UPDATE model_run" in query[0])
+
+
+def test_create_store_prefers_postgres(monkeypatch: pytest.MonkeyPatch) -> None:
+    import importlib
+
+    monkeypatch.setenv("AURUM_APP_DB_DSN", "postgresql://user:pass@host/db")
+
+    module = importlib.import_module("aurum.api.scenario_service")
+
+    captured: dict[str, str] = {}
+
+    class FakeStore:
+        def __init__(self, dsn: str) -> None:
+            captured["dsn"] = dsn
+
+    monkeypatch.setattr(module, "PostgresScenarioStore", FakeStore)
+
+    store = module._create_store()
+
+    assert isinstance(store, FakeStore)
+    assert captured.get("dsn") == "postgresql://user:pass@host/db"
+
+    monkeypatch.delenv("AURUM_APP_DB_DSN", raising=False)

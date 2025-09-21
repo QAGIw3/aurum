@@ -2,6 +2,10 @@ apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: {{ include "aurum-api.fullname" . }}
+{{- with .Values.deploymentAnnotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+{{- end }}
   labels:
     {{- include "aurum-api.labels" . | nindent 4 }}
 spec:
@@ -14,8 +18,11 @@ spec:
     metadata:
       labels:
         {{- include "aurum-api.labels" . | nindent 8 }}
-      annotations:
+{{- with .Values.podLabels }}
+        {{- toYaml . | nindent 8 }}
+{{- end }}
 {{- with .Values.podAnnotations }}
+      annotations:
         {{- toYaml . | nindent 8 }}
 {{- end }}
     spec:
@@ -47,3 +54,15 @@ spec:
             failureThreshold: 3
           resources:
 {{- toYaml .Values.resources | nindent 12 }}
+{{- with .Values.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+{{- end }}
+{{- with .Values.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+{{- end }}
+{{- with .Values.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+{{- end }}

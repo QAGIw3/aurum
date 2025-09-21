@@ -1,0 +1,63 @@
+# MISO load observations → Kafka (Avro)
+
+env {
+  job.mode = "BATCH"
+  parallelism = 1
+}
+
+source {
+  Http {
+    url = "${MISO_LOAD_ENDPOINT}"
+    method = "GET"
+    headers {
+      Authorization = "${MISO_LOAD_AUTH_HEADER}"
+    }
+    params {
+      start = "${MISO_LOAD_INTERVAL_START}"
+      end = "${MISO_LOAD_INTERVAL_END}"
+      ${MISO_LOAD_EXTRA_PARAM_KEY} = "${MISO_LOAD_EXTRA_PARAM_VALUE}"
+    }
+    connection_timeout_ms = 20000
+    retry = 12
+    format = "json"
+    schema = { fields { ${MISO_LOAD_START_FIELD} = string ${MISO_LOAD_END_FIELD} = string ${MISO_LOAD_AREA_FIELD} = string ${MISO_LOAD_MW_FIELD} = string } }
+    jsonpath = "${MISO_LOAD_JSONPATH}"
+    result_table_name = "miso_load_raw"
+  }
+}
+
+transform {
+  Sql {
+    source_table_name = "miso_load_raw"
+    result_table_name = "miso_load_normalized"
+    query = """
+      SELECT
+        'MISO' AS iso_code,
+        CAST(${MISO_LOAD_AREA_EXPR} AS STRING) AS area,
+        CAST(UNIX_TIMESTAMP(${MISO_LOAD_START_EXTRACT}, '${MISO_LOAD_TIME_FORMAT}') * 1000000 AS BIGINT) AS interval_start,
+        CAST(UNIX_TIMESTAMP(${MISO_LOAD_END_EXTRACT}, '${MISO_LOAD_TIME_FORMAT}') * 1000000 AS BIGINT) AS interval_end,
+        CAST(TIMESTAMPDIFF(MINUTE, ${MISO_LOAD_START_EXTRACT}, ${MISO_LOAD_END_EXTRACT}) AS INT) AS interval_minutes,
+        CAST(${MISO_LOAD_MW_EXPR} AS DOUBLE) AS mw,
+        CAST(UNIX_TIMESTAMP() * 1000000 AS BIGINT) AS ingest_ts,
+        NULL AS metadata
+      FROM miso_load_raw
+    """
+  }
+}
+
+sink {
+  Kafka {
+    plugin_input = "miso_load_normalized"
+    bootstrap.servers = "${KAFKA_BOOTSTRAP_SERVERS}"
+    topic = "${MISO_LOAD_TOPIC}"
+    semantic = "AT_LEAST_ONCE"
+    format = "avro"
+    avro {
+      use.schema.registry = true
+      schema.registry.url = "${SCHEMA_REGISTRY_URL}"
+      value.schema.subject = "${MISO_LOAD_SUBJECT}"
+      value.schema = """${ISO_LOAD_SCHEMA}"""
+    }
+  }
+}
+

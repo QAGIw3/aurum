@@ -1,0 +1,63 @@
+# SPP load observations → Kafka (Avro)
+
+env {
+  job.mode = "BATCH"
+  parallelism = 1
+}
+
+source {
+  Http {
+    url = "${SPP_LOAD_ENDPOINT}"
+    method = "GET"
+    headers {
+      Authorization = "${SPP_LOAD_AUTH_HEADER}"
+    }
+    params {
+      start = "${SPP_LOAD_INTERVAL_START}"
+      end = "${SPP_LOAD_INTERVAL_END}"
+      ${SPP_LOAD_EXTRA_PARAM_KEY} = "${SPP_LOAD_EXTRA_PARAM_VALUE}"
+    }
+    connection_timeout_ms = 20000
+    retry = 12
+    format = "json"
+    schema = { fields { ${SPP_LOAD_START_FIELD} = string ${SPP_LOAD_END_FIELD} = string ${SPP_LOAD_AREA_FIELD} = string ${SPP_LOAD_MW_FIELD} = string } }
+    jsonpath = "${SPP_LOAD_JSONPATH}"
+    result_table_name = "spp_load_raw"
+  }
+}
+
+transform {
+  Sql {
+    source_table_name = "spp_load_raw"
+    result_table_name = "spp_load_normalized"
+    query = """
+      SELECT
+        'SPP' AS iso_code,
+        CAST(${SPP_LOAD_AREA_EXPR} AS STRING) AS area,
+        CAST(UNIX_TIMESTAMP(${SPP_LOAD_START_EXTRACT}, '${SPP_LOAD_TIME_FORMAT}') * 1000000 AS BIGINT) AS interval_start,
+        CAST(UNIX_TIMESTAMP(${SPP_LOAD_END_EXTRACT}, '${SPP_LOAD_TIME_FORMAT}') * 1000000 AS BIGINT) AS interval_end,
+        CAST(TIMESTAMPDIFF(MINUTE, ${SPP_LOAD_START_EXTRACT}, ${SPP_LOAD_END_EXTRACT}) AS INT) AS interval_minutes,
+        CAST(${SPP_LOAD_MW_EXPR} AS DOUBLE) AS mw,
+        CAST(UNIX_TIMESTAMP() * 1000000 AS BIGINT) AS ingest_ts,
+        NULL AS metadata
+      FROM spp_load_raw
+    """
+  }
+}
+
+sink {
+  Kafka {
+    plugin_input = "spp_load_normalized"
+    bootstrap.servers = "${KAFKA_BOOTSTRAP_SERVERS}"
+    topic = "${SPP_LOAD_TOPIC}"
+    semantic = "AT_LEAST_ONCE"
+    format = "avro"
+    avro {
+      use.schema.registry = true
+      schema.registry.url = "${SCHEMA_REGISTRY_URL}"
+      value.schema.subject = "${SPP_LOAD_SUBJECT}"
+      value.schema = """${ISO_LOAD_SCHEMA}"""
+    }
+  }
+}
+

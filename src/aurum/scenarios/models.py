@@ -26,6 +26,7 @@ class LoadGrowthPayload(BaseModel):
     annual_growth_pct: float = Field(description="Percentage growth (e.g., 2.5 for 2.5%)")
     start_year: Optional[int] = Field(default=None, ge=1900, le=2100)
     end_year: Optional[int] = Field(default=None, ge=1900, le=2100)
+    reference_curve_key: Optional[str] = None
 
 
 class FuelCurvePayload(BaseModel):

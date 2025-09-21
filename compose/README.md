@@ -29,6 +29,12 @@ docker compose -f compose/docker-compose.dev.yml --profile bootstrap up --exit-c
 # include optional UI services
 docker compose -f compose/docker-compose.dev.yml --profile ui up -d
 
+# bootstrap Kafka schemas (idempotent)
+make kafka-bootstrap
+
+# sanity-check the API
+curl http://localhost:8095/health
+
 # stop stack
 docker compose -f compose/docker-compose.dev.yml down
 ```

@@ -73,7 +73,7 @@ def build_seatunnel_task(job_name: str, *, env_assignments: list[str], task_id_o
     pull_cmd = (
         f"eval \"$(VAULT_ADDR={VAULT_ADDR} VAULT_TOKEN={VAULT_TOKEN} "
         f"PYTHONPATH={PYTHONPATH_ENTRY}:${{PYTHONPATH:-}} "
-        f"{VENV_PYTHON} scripts/scripts/secrets/pull_vault_env.py {mapping_flags} --format shell)\" || true"
+        f"{VENV_PYTHON} scripts/secrets/pull_vault_env.py {mapping_flags} --format shell)\" || true"
     )
 
     env_line = " ".join(env_assignments)
@@ -83,10 +83,10 @@ def build_seatunnel_task(job_name: str, *, env_assignments: list[str], task_id_o
         bash_command=(
             "set -euo pipefail\n"
             "cd /opt/airflow\n"
-            f"{pull_cmd}\n"
-            f"export PATH=\"{BIN_PATH}\"\n"
-            f"export PYTHONPATH=\"${{PYTHONPATH:-}}:{PYTHONPATH_ENTRY}\"\n"
-            f"AURUM_EXECUTE_SEATUNNEL=0 {env_line} scripts/scripts/seatunnel/run_job.sh {job_name} --render-only"
+        f"{pull_cmd}\n"
+        f"export PATH=\"{BIN_PATH}\"\n"
+        f"export PYTHONPATH=\"${{PYTHONPATH:-}}:{PYTHONPATH_ENTRY}\"\n"
+        f"AURUM_EXECUTE_SEATUNNEL=0 {env_line} scripts/seatunnel/run_job.sh {job_name} --render-only"
         ),
     )
     exec_k8s = BashOperator(

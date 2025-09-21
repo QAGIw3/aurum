@@ -9,9 +9,19 @@ The Kubernetes option mirrors the docker-compose services but runs them inside a
 - `kubectl` (applies the manifests)
 - `kustomize` (bundled with `kubectl >= 1.21` as `kubectl kustomize`)
 
+Copy `.env.example` to `.env` (and update credentials as required) before applying manifests; the dev overlay now consumes that file via Kustomize to seed the `aurum-secrets` Secret so Compose and kind have matching environment values.
+
 Install kind via Homebrew (`brew install kind`) or the official release page. Ensure `kubectl` points to your local environment.
 
 ## Bootstrap
+
+To spin up the entire stack (cluster + manifests + bootstrap jobs + Kafka schema registration) in one command, run:
+
+```bash
+make kind-up
+```
+
+The steps below remain available when you want finer-grained control or need to rerun an individual phase during troubleshooting.
 
 1. Create the cluster with the curated port mappings and host mounts:
 
@@ -86,6 +96,12 @@ Install kind via Homebrew (`brew install kind`) or the official release page. En
 
 ## Teardown & refresh
 
+- Remove everything (resources + cluster) with an interactive guard:
+
+  ```bash
+  make kind-down
+  ```
+
 - Remove Kubernetes resources but leave the cluster running:
 
   ```bash
@@ -102,22 +118,26 @@ Persistent volumes back the stateful services—`scripts/k8s/create_kind_cluster
 
 After the resources deploy, `make kind-apply` waits for the Airflow initialisation job and ClickHouse statefulset to finish coming online. Run `make kind-bootstrap` whenever you need to recreate the MinIO bucket, lakeFS repo, or Nessie namespaces (the helper recreates the job each invocation). If you need to rerun the Airflow bootstrap manually, delete the job first: `kubectl -n aurum-dev delete job airflow-init`.
 
-### API service on kind
+### API & worker rapid iteration on kind
 
-Build and load a local image, then point the Deployment to it:
+Use the helper targets to rebuild, load into kind, and roll pods without editing YAML:
 
 ```bash
-# Build API image from repo root
-docker build -f Dockerfile.api -t aurum-api:dev .
+# Rebuild the API image, load it into kind, and patch the Deployment to use :dev
+make kind-load-api
 
-# Load into kind
-kind load docker-image aurum-api:dev --name ${AURUM_KIND_CLUSTER:-aurum-dev}
+# Rebuild and patch the scenario worker the same way
+make kind-load-worker
 
-# Update Deployment to use the local image
-kubectl -n aurum-dev set image deployment/api api=aurum-api:dev
+# Optional: verify rollout before exercising the endpoint
+kubectl -n aurum-dev rollout status deployment/aurum-api
+```
 
-# Test
+Once the rollout finishes, test the API via Traefik:
+
+```bash
 curl "http://api.aurum.localtest.me:8085/v1/curves?limit=1"
+```
 
 #### Prometheus scraping (optional)
 

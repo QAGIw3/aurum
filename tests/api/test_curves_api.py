@@ -1,12 +1,13 @@
 import sys
 import types
+from datetime import datetime
 from typing import Any
 
 import pytest
 
 
 def _ensure_opentelemetry(monkeypatch):
-    stub_span = types.SimpleNamespace(set_attribute=lambda *args, **kwargs: None)
+    stub_span = types.SimpleNamespace(set_attribute=lambda *args, **kwargs: None, is_recording=lambda: False)
 
     trace_module = types.ModuleType("opentelemetry.trace")
     trace_module.get_current_span = lambda: stub_span
@@ -138,7 +139,7 @@ def _ensure_opentelemetry(monkeypatch):
 
 def test_list_curves_basic(monkeypatch):
     pytest.importorskip("fastapi", reason="fastapi not installed")
-    pytest.importorskip("opentelemetry", reason="opentelemetry not installed")
+    _ensure_opentelemetry(monkeypatch)
     from fastapi.testclient import TestClient
     from aurum.api import app as api_app
     from aurum.api import service
@@ -166,6 +167,8 @@ def test_list_curves_basic(monkeypatch):
     client = TestClient(api_app.app)
     resp = client.get("/v1/curves", params={"limit": 1})
     assert resp.status_code == 200
+    assert resp.headers.get("etag")
+    assert resp.headers.get("cache-control")
     payload = resp.json()
     assert "meta" in payload and "data" in payload
     assert payload["data"] and payload["data"][0]["curve_key"] == "abc"
@@ -174,7 +177,7 @@ def test_list_curves_basic(monkeypatch):
 
 def test_list_curves_diff(monkeypatch):
     pytest.importorskip("fastapi", reason="fastapi not installed")
-    pytest.importorskip("opentelemetry", reason="opentelemetry not installed")
+    _ensure_opentelemetry(monkeypatch)
     from fastapi.testclient import TestClient
     from aurum.api import app as api_app
     from aurum.api import service
@@ -201,6 +204,7 @@ def test_list_curves_diff(monkeypatch):
     client = TestClient(api_app.app)
     resp = client.get("/v1/curves/diff", params={"asof_a": "2025-09-11", "asof_b": "2025-09-12", "limit": 1})
     assert resp.status_code == 200
+    assert resp.headers.get("etag")
     payload = resp.json()
     assert payload["data"][0]["diff_abs"] == 1.0
 
@@ -372,7 +376,7 @@ def test_cursor_pagination(monkeypatch):
     assert len(p1["data"]) == 1
     assert p1["meta"].get("next_cursor")
     assert p1["meta"].get("prev_cursor") is None
-    assert captured_cursors[0] == (None, None, None)
+    assert captured_cursors[0] == (None, None, False)
 
     # Second page using cursor
     cursor = p1["meta"]["next_cursor"]
@@ -638,6 +642,7 @@ def test_ready_endpoint_unavailable(monkeypatch):
 
 def test_strips_endpoint(monkeypatch):
     pytest.importorskip("fastapi", reason="fastapi not installed")
+    _ensure_opentelemetry(monkeypatch)
     from fastapi.testclient import TestClient
     from aurum.api import app as api_app
     from aurum.api import service
@@ -662,6 +667,8 @@ def test_strips_endpoint(monkeypatch):
     client = TestClient(api_app.app)
     resp = client.get("/v1/curves/strips", params={"type": "CALENDAR", "limit": 1})
     assert resp.status_code == 200
+    assert resp.headers.get("etag")
+    assert resp.headers.get("etag")
     payload = resp.json()
     assert payload["data"][0]["tenor_type"] == "CALENDAR"
 
@@ -750,6 +757,69 @@ def test_ppa_valuate(monkeypatch):
     assert persisted["scenario_id"] == "scn-123"
 
 
+def test_persist_ppa_valuation_records_formats_decimal(monkeypatch):
+    pd = pytest.importorskip("pandas", reason="pandas not installed")
+    _ensure_opentelemetry(monkeypatch)
+    from decimal import Decimal
+    from datetime import date
+    from aurum.api import app as api_app
+
+    captured_frames = []
+
+    def fake_write(frame):
+        captured_frames.append(frame.copy(deep=True))
+
+    monkeypatch.setenv("AURUM_API_PPA_WRITE_ENABLED", "1")
+    monkeypatch.setattr("aurum.parsers.iceberg_writer.write_ppa_valuation", fake_write)
+
+    metrics = [
+        {
+            "metric": "cashflow",
+            "value": 100.1234567,
+            "period_start": date(2025, 1, 1),
+            "period_end": date(2025, 1, 31),
+            "curve_key": "curve-a",
+        },
+        {
+            "metric": "NPV",
+            "value": 1234.56789,
+            "period_start": date(2025, 1, 1),
+            "period_end": date(2025, 12, 31),
+            "curve_key": None,
+        },
+        {
+            "metric": "IRR",
+            "value": 0.1255554,
+            "period_start": date(2025, 1, 1),
+            "period_end": date(2025, 12, 31),
+        },
+    ]
+
+    api_app._persist_ppa_valuation_records(
+        ppa_contract_id="ppa-1",
+        scenario_id="scn-1",
+        tenant_id=None,
+        asof_date=date(2025, 1, 1),
+        metrics=metrics,
+    )
+
+    assert captured_frames, "write_ppa_valuation should receive a dataframe"
+    records = captured_frames[0].to_dict(orient="records")
+
+    cashflow_row = next(row for row in records if row["metric"] == "cashflow")
+    assert cashflow_row["cashflow"] == Decimal("100.123457")
+    assert cashflow_row["value"] == Decimal("100.123457")
+    assert cashflow_row["npv"] is None
+    assert pd.isna(cashflow_row["irr"])
+
+    npv_row = next(row for row in records if row["metric"] == "NPV")
+    assert npv_row["npv"] == Decimal("1234.567890")
+    assert npv_row["value"] == Decimal("1234.567890")
+
+    irr_row = next(row for row in records if row["metric"].lower() == "irr")
+    assert irr_row["value"] == Decimal("0.125555")
+    assert irr_row["irr"] == pytest.approx(0.1255554)
+
 def test_ppa_valuate_requires_scenario(monkeypatch):
     pytest.importorskip("fastapi", reason="fastapi not installed")
     _ensure_opentelemetry(monkeypatch)
@@ -777,3 +847,72 @@ def test_metadata_units_etag():
 
     cached = client.get("/v1/metadata/units", headers={"If-None-Match": etag})
     assert cached.status_code == 304
+
+
+def test_list_eia_series(monkeypatch):
+    pytest.importorskip("fastapi", reason="fastapi not installed")
+    _ensure_opentelemetry(monkeypatch)
+    from fastapi.testclient import TestClient
+    from aurum.api import app as api_app
+    from aurum.api import service
+
+    def fake_query_series(*_args, **_kwargs):
+        rows = [
+            {
+                "series_id": "EBA.PJME-ALL.NG.H",
+                "period": "2024-01-01T01:00:00",
+                "period_start": datetime(2024, 1, 1, 1, 0, 0),
+                "period_end": datetime(2024, 1, 1, 2, 0, 0),
+                "frequency": "HOURLY",
+                "value": 123.4,
+                "raw_value": "123.4",
+                "unit": "MW",
+                "area": "PJM",
+                "sector": "ALL",
+                "description": "Sample",
+                "source": "EIA",
+                "dataset": "EBA",
+                "metadata": {"quality": "FINAL"},
+                "ingest_ts": datetime(2024, 1, 2, 0, 0, 0),
+            }
+        ]
+        return rows, 4.2
+
+    monkeypatch.setattr(service, "query_eia_series", fake_query_series)
+
+    client = TestClient(api_app.app)
+    resp = client.get("/v1/ref/eia/series", params={"limit": 1})
+    assert resp.status_code == 200
+    payload = resp.json()
+    assert payload["data"]
+    record = payload["data"][0]
+    assert record["series_id"] == "EBA.PJME-ALL.NG.H"
+    assert record["metadata"] == {"quality": "FINAL"}
+
+
+def test_list_eia_series_dimensions(monkeypatch):
+    pytest.importorskip("fastapi", reason="fastapi not installed")
+    _ensure_opentelemetry(monkeypatch)
+    from fastapi.testclient import TestClient
+    from aurum.api import app as api_app
+    from aurum.api import service
+
+    def fake_query_dimensions(*_args, **_kwargs):
+        values = {
+            "dataset": ["EBA"],
+            "area": ["PJM"],
+            "sector": ["ALL"],
+            "unit": ["MW"],
+            "frequency": ["HOURLY"],
+            "source": ["EIA"],
+        }
+        return values, 2.5
+
+    monkeypatch.setattr(service, "query_eia_series_dimensions", fake_query_dimensions)
+
+    client = TestClient(api_app.app)
+    resp = client.get("/v1/ref/eia/series/dimensions")
+    assert resp.status_code == 200
+    payload = resp.json()
+    assert payload["data"]["dataset"] == ["EBA"]
+    assert payload["data"]["unit"] == ["MW"]

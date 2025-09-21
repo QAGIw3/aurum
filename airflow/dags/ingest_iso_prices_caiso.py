@@ -2,12 +2,13 @@
 from __future__ import annotations
 
 import os
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Any
 
 from airflow import DAG
 from airflow.operators.bash import BashOperator
 from airflow.operators.empty import EmptyOperator
+from airflow.operators.python import PythonOperator
 
 
 DEFAULT_ARGS: dict[str, Any] = {
@@ -24,6 +25,40 @@ PYTHONPATH_ENTRY = os.environ.get("AURUM_PYTHONPATH_ENTRY", "/opt/airflow/src")
 STAGING_DIR = os.environ.get("AURUM_STAGING_DIR", "files/staging")
 
 
+def _register_sources() -> None:
+    try:
+        import sys
+
+        src_path = os.environ.get("AURUM_PYTHONPATH_ENTRY", "/opt/airflow/src")
+        if src_path and src_path not in sys.path:
+            sys.path.insert(0, src_path)
+        from aurum.db import register_ingest_source  # type: ignore
+
+        register_ingest_source(
+            "caiso_prc_lmp",
+            description="CAISO PRC_LMP ingestion",
+            schedule="30 * * * *",
+            target="kafka",
+        )
+    except Exception as exc:  # pragma: no cover
+        print(f"Failed to register ingest source caiso_prc_lmp: {exc}")
+
+
+def _update_watermark(source_name: str, logical_date: datetime) -> None:
+    watermark = logical_date.astimezone(timezone.utc)
+    try:
+        import sys
+
+        src_path = os.environ.get("AURUM_PYTHONPATH_ENTRY", "/opt/airflow/src")
+        if src_path and src_path not in sys.path:
+            sys.path.insert(0, src_path)
+        from aurum.db import update_ingest_watermark  # type: ignore
+
+        update_ingest_watermark(source_name, "logical_date", watermark)
+    except Exception as exc:  # pragma: no cover
+        print(f"Failed to update watermark for {source_name}: {exc}")
+
+
 with DAG(
     dag_id="ingest_iso_prices_caiso",
     description="Download CAISO PRC_LMP data, stage to JSON, and publish to Kafka via SeaTunnel",
@@ -35,6 +70,8 @@ with DAG(
     tags=["aurum", "caiso", "lmp"],
 ) as dag:
     start = EmptyOperator(task_id="start")
+
+    register_sources = PythonOperator(task_id="register_sources", python_callable=_register_sources)
 
     staging_path = f"{STAGING_DIR}/caiso/{{{{ ds }}}}.json"
 
@@ -70,7 +107,7 @@ with DAG(
                 f"AURUM_EXECUTE_SEATUNNEL=0 CAISO_INPUT_JSON={staging_path} "
                 f"KAFKA_BOOTSTRAP_SERVERS='{kafka_bootstrap}' "
                 f"SCHEMA_REGISTRY_URL='{schema_registry}' "
-                "scripts/scripts/seatunnel/run_job.sh caiso_lmp_to_kafka --render-only"
+                "scripts/seatunnel/run_job.sh caiso_lmp_to_kafka --render-only"
             ),
         ]
     )
@@ -88,4 +125,9 @@ with DAG(
 
     end = EmptyOperator(task_id="end")
 
-    start >> stage_caiso >> seatunnel_task >> exec_k8s >> end
+    caiso_watermark = PythonOperator(
+        task_id="caiso_watermark",
+        python_callable=lambda **ctx: _update_watermark("caiso_prc_lmp", ctx["logical_date"]),
+    )
+
+    start >> register_sources >> stage_caiso >> seatunnel_task >> exec_k8s >> caiso_watermark >> end

@@ -8,7 +8,9 @@ import subprocess
 import sys
 from pathlib import Path
 
-CONFIG_PATH = Path(__file__).resolve().parents[2] / 'config' / 'eia_ingest_datasets.json'
+BASE_DIR = Path(__file__).resolve().parents[2]
+CONFIG_PATH = BASE_DIR / 'config' / 'eia_ingest_datasets.json'
+BULK_CONFIG_PATH = BASE_DIR / 'config' / 'eia_bulk_datasets.json'
 
 
 def load_config(path: Path) -> list[dict]:
@@ -33,6 +35,20 @@ def build_variable_map(datasets: list[dict]) -> dict[str, str]:
     return variables
 
 
+def build_bulk_variable_map(datasets: list[dict]) -> dict[str, str]:
+    variables: dict[str, str] = {}
+    for dataset in datasets:
+        topic_var = dataset.get('topic_var')
+        default_topic = dataset.get('default_topic')
+        if topic_var and default_topic:
+            variables[topic_var] = default_topic
+        units_var = dataset.get('units_var')
+        default_units = dataset.get('default_units')
+        if units_var and default_units:
+            variables[units_var] = default_units
+    return variables
+
+
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--apply', action='store_true', help='Call `airflow variables set` for each variable')
@@ -48,6 +64,9 @@ def main(argv: list[str] | None = None) -> int:
         return 1
     datasets = load_config(config_path)
     variables = build_variable_map(datasets)
+    if BULK_CONFIG_PATH.exists():
+        bulk_datasets = load_config(BULK_CONFIG_PATH)
+        variables.update(build_bulk_variable_map(bulk_datasets))
     if not variables:
         print("No variables detected in config", file=sys.stderr)
         return 0

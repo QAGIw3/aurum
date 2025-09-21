@@ -1,0 +1,131 @@
+# EIA bulk CSV archives → Kafka (Avro)
+#
+# Required environment variables:
+#   EIA_BULK_URL             - HTTPS URL to the EIA bulk ZIP/CSV archive
+#   EIA_BULK_TOPIC           - Kafka topic to emit Avro records
+#   KAFKA_BOOTSTRAP_SERVERS  - Kafka brokers (host:port)
+#   SCHEMA_REGISTRY_URL      - Confluent Schema Registry endpoint
+#   EIA_BULK_FREQUENCY       - Frequency label (ANNUAL, QUARTERLY, MONTHLY, WEEKLY, DAILY, HOURLY)
+#
+# Optional environment variables:
+#   EIA_BULK_SERIES_ID_EXPR  - SQL expression for the series identifier (default series_id)
+#   EIA_BULK_PERIOD_EXPR     - SQL expression yielding the period token (default period)
+#   EIA_BULK_VALUE_EXPR      - SQL expression for the numeric value (default value)
+#   EIA_BULK_RAW_VALUE_EXPR  - SQL expression for the raw string value (default value)
+#   EIA_BULK_UNITS_EXPR      - SQL expression for the units column (default units)
+#   EIA_BULK_AREA_EXPR       - SQL expression for area metadata (default area)
+#   EIA_BULK_SECTOR_EXPR     - SQL expression for sector metadata (default sector)
+#   EIA_BULK_DESCRIPTION_EXPR- SQL expression for description metadata (default description)
+#   EIA_BULK_SOURCE_EXPR     - SQL expression for source attribution (default source)
+#   EIA_BULK_DATASET_EXPR    - SQL expression for dataset identifier (default dataset)
+#   EIA_BULK_METADATA_EXPR   - SQL expression returning a JSON string/map (default NULL)
+#   EIA_BULK_FILTER_EXPR     - Additional SQL predicate appended to WHERE clause (default TRUE)
+#   EIA_BULK_SUBJECT         - Schema Registry subject (default <topic>-value)
+#   EIA_BULK_SCHEMA          - Avro schema JSON to register (defaults to eia.series.v1)
+#   EIA_BULK_DECODE          - Compression codec for the download (default zip)
+#   EIA_BULK_CSV_DELIMITER   - CSV field delimiter (default ,)
+#   EIA_BULK_SKIP_HEADER     - Header rows to skip (default 1)
+#   EIA_BULK_SCHEMA_FIELDS   - SeaTunnel schema fields block (override default columns)
+
+env {
+  job.mode = "BATCH"
+  parallelism = 1
+}
+
+source {
+  HttpFile {
+    urls = ["${EIA_BULK_URL}"]
+    decode = "${EIA_BULK_DECODE}"
+    format = "csv"
+    csv {
+      field_delimiter = "${EIA_BULK_CSV_DELIMITER}"
+      skip_header_row_number = ${EIA_BULK_SKIP_HEADER}
+    }
+    schema = {
+      fields {
+${EIA_BULK_SCHEMA_FIELDS}
+      }
+    }
+    result_table_name = "eia_bulk_raw"
+  }
+}
+
+transform {
+  Sql {
+    source_table_name = "eia_bulk_raw"
+    result_table_name = "eia_bulk_normalized"
+    query = """
+      SELECT
+        ${EIA_BULK_SERIES_ID_EXPR}                                 AS series_id,
+        ${EIA_BULK_PERIOD_EXPR}                                    AS period,
+        CASE UPPER('${EIA_BULK_FREQUENCY}')
+          WHEN 'ANNUAL' THEN CAST(UNIX_TIMESTAMP(CONCAT(${EIA_BULK_PERIOD_EXPR}, '-01-01'), 'yyyy-MM-dd') * 1000000 AS BIGINT)
+          WHEN 'QUARTERLY' THEN CAST(UNIX_TIMESTAMP(concat(substr(${EIA_BULK_PERIOD_EXPR}, 1, 4), '-', CASE RIGHT(${EIA_BULK_PERIOD_EXPR}, 2)
+              WHEN 'Q1' THEN '01'
+              WHEN 'Q2' THEN '04'
+              WHEN 'Q3' THEN '07'
+              WHEN 'Q4' THEN '10'
+              ELSE '01'
+            END, '-01'), 'yyyy-MM-dd') * 1000000 AS BIGINT)
+          WHEN 'MONTHLY' THEN CAST(UNIX_TIMESTAMP(CONCAT(${EIA_BULK_PERIOD_EXPR}, '-01'), 'yyyy-MM-dd') * 1000000 AS BIGINT)
+          WHEN 'WEEKLY' THEN CAST(UNIX_TIMESTAMP(to_timestamp(${EIA_BULK_PERIOD_EXPR}, 'yyyy-MM-dd')) * 1000000 AS BIGINT)
+          WHEN 'DAILY' THEN CAST(UNIX_TIMESTAMP(to_timestamp(${EIA_BULK_PERIOD_EXPR}, 'yyyy-MM-dd')) * 1000000 AS BIGINT)
+          WHEN 'HOURLY' THEN CAST(UNIX_TIMESTAMP(SUBSTR(${EIA_BULK_PERIOD_EXPR}, 1, 19), 'yyyy-MM-dd''T''HH:mm:ss') * 1000000 AS BIGINT)
+          ELSE CAST(NULL AS BIGINT)
+        END                                                        AS period_start,
+        CASE UPPER('${EIA_BULK_FREQUENCY}')
+          WHEN 'ANNUAL' THEN CAST(UNIX_TIMESTAMP(add_months(to_timestamp(CONCAT(${EIA_BULK_PERIOD_EXPR}, '-01-01'), 'yyyy-MM-dd'), 12)) * 1000000 AS BIGINT)
+          WHEN 'QUARTERLY' THEN CAST(UNIX_TIMESTAMP(add_months(to_timestamp(concat(substr(${EIA_BULK_PERIOD_EXPR}, 1, 4), '-', CASE RIGHT(${EIA_BULK_PERIOD_EXPR}, 2)
+              WHEN 'Q1' THEN '01'
+              WHEN 'Q2' THEN '04'
+              WHEN 'Q3' THEN '07'
+              WHEN 'Q4' THEN '10'
+              ELSE '01'
+            END, '-01'), 'yyyy-MM-dd'), 3)) * 1000000 AS BIGINT)
+          WHEN 'MONTHLY' THEN CAST(UNIX_TIMESTAMP(add_months(to_timestamp(CONCAT(${EIA_BULK_PERIOD_EXPR}, '-01'), 'yyyy-MM-dd'), 1)) * 1000000 AS BIGINT)
+          WHEN 'WEEKLY' THEN CAST(UNIX_TIMESTAMP(to_timestamp(${EIA_BULK_PERIOD_EXPR}, 'yyyy-MM-dd') + INTERVAL 7 DAYS) * 1000000 AS BIGINT)
+          WHEN 'DAILY' THEN CAST(UNIX_TIMESTAMP(to_timestamp(${EIA_BULK_PERIOD_EXPR}, 'yyyy-MM-dd') + INTERVAL 1 DAY) * 1000000 AS BIGINT)
+          WHEN 'HOURLY' THEN CAST((UNIX_TIMESTAMP(SUBSTR(${EIA_BULK_PERIOD_EXPR}, 1, 19), 'yyyy-MM-dd''T''HH:mm:ss') + 3600) * 1000000 AS BIGINT)
+          ELSE CAST(NULL AS BIGINT)
+        END                                                        AS period_end,
+        '${EIA_BULK_FREQUENCY}'                                    AS frequency,
+        CASE
+          WHEN ${EIA_BULK_VALUE_EXPR} IS NULL OR ${EIA_BULK_VALUE_EXPR} = '' THEN NULL
+          ELSE CAST(${EIA_BULK_VALUE_EXPR} AS DOUBLE)
+        END                                                        AS value,
+        CAST(${EIA_BULK_RAW_VALUE_EXPR} AS STRING)                 AS raw_value,
+        ${EIA_BULK_UNITS_EXPR}                                     AS unit,
+        ${EIA_BULK_AREA_EXPR}                                      AS area,
+        ${EIA_BULK_SECTOR_EXPR}                                    AS sector,
+        NULL                                                       AS seasonal_adjustment,
+        ${EIA_BULK_DESCRIPTION_EXPR}                               AS description,
+        ${EIA_BULK_SOURCE_EXPR}                                    AS source,
+        ${EIA_BULK_DATASET_EXPR}                                   AS dataset,
+        ${EIA_BULK_METADATA_EXPR}                                  AS metadata,
+        CAST(UNIX_TIMESTAMP() * 1000000 AS BIGINT)                 AS ingest_ts
+      FROM eia_bulk_raw
+      WHERE (${EIA_BULK_FILTER_EXPR})
+    """
+  }
+}
+
+sink {
+  Kafka {
+    plugin_input = "eia_bulk_normalized"
+    bootstrap.servers = "${KAFKA_BOOTSTRAP_SERVERS}"
+    topic = "${EIA_BULK_TOPIC}"
+    semantic = "AT_LEAST_ONCE"
+    format = "avro"
+    avro {
+      use.schema.registry = true
+      schema.registry.url = "${SCHEMA_REGISTRY_URL}"
+      value.schema.subject = "${EIA_BULK_SUBJECT}"
+      value.schema = """${EIA_BULK_SCHEMA}"""
+    }
+    producer {
+      linger.ms = 500
+      batch.size = 32768
+      retries = 5
+    }
+  }
+}

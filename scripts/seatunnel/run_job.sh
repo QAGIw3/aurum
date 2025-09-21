@@ -31,7 +31,7 @@ ensure_iso_lmp_schema() {
     if [[ -n "${ISO_LMP_SCHEMA_PATH:-}" && -f "${ISO_LMP_SCHEMA_PATH}" ]]; then
       ISO_LMP_SCHEMA="$(render_schema "${ISO_LMP_SCHEMA_PATH}")"
     else
-      ISO_LMP_SCHEMA='{"type":"record","name":"IsoLmpRecord","namespace":"aurum.iso","doc":"Normalized locational marginal price observation from an ISO day-ahead or real-time feed.","fields":[{"name":"iso_code","type":{"type":"enum","name":"IsoCode","doc":"Market operator the observation belongs to.","symbols":["PJM","CAISO","ERCOT","NYISO","MISO","ISONE","SPP"]}},{"name":"market","type":{"type":"enum","name":"IsoMarket","doc":"Normalized market/run identifier reported by the ISO.","symbols":["DAY_AHEAD","REAL_TIME","FIFTEEN_MINUTE","FIVE_MINUTE","HOUR_AHEAD","SETTLEMENT","UNKNOWN"]}},{"name":"delivery_date","doc":"Trading or operating date for the interval (ISO local calendar).","type":{"type":"int","logicalType":"date"}},{"name":"interval_start","doc":"UTC timestamp when the interval starts.","type":{"type":"long","logicalType":"timestamp-micros"}},{"name":"interval_end","doc":"Optional UTC timestamp when the interval ends (exclusive).","type":["null",{"type":"long","logicalType":"timestamp-micros"}],"default":null},{"name":"interval_minutes","doc":"Duration of the interval in minutes (if supplied by the ISO).","type":["null","int"],"default":null},{"name":"location_id","doc":"Primary identifier (node, zone, hub) from the ISO feed.","type":"string"},{"name":"location_name","doc":"Human-readable description of the location.","type":["null","string"],"default":null},{"name":"location_type","doc":"Classification of the location identifier.","type":{"type":"enum","name":"IsoLocationType","symbols":["NODE","ZONE","HUB","SYSTEM","AGGREGATE","INTERFACE","RESOURCE","OTHER"]},"default":"OTHER"},{"name":"zone","doc":"Optional ISO zone identifier derived from the location registry.","type":["null","string"],"default":null},{"name":"hub","doc":"Optional hub grouping associated with the location.","type":["null","string"],"default":null},{"name":"timezone","doc":"Preferred timezone for interpreting interval timestamps (IANA name).","type":["null","string"],"default":null},{"name":"price_total","doc":"Locational marginal price reported by the ISO.","type":"double"},{"name":"price_energy","doc":"Energy component of the price.","type":["null","double"],"default":null},{"name":"price_congestion","doc":"Congestion component of the price.","type":["null","double"],"default":null},{"name":"price_loss","doc":"Loss component of the price.","type":["null","double"],"default":null},{"name":"currency","doc":"ISO reported currency (ISO-4217 code).","type":"string","default":"USD"},{"name":"uom","doc":"Unit of measure for the price.","type":"string","default":"MWh"},{"name":"settlement_point","doc":"Optional ISO-specific settlement point grouping.","type":["null","string"],"default":null},{"name":"source_run_id","doc":"Identifier for the source extraction run (file, report id, etc.).","type":["null","string"],"default":null},{"name":"ingest_ts","doc":"Timestamp when the record entered the pipeline (UTC).","type":{"type":"long","logicalType":"timestamp-micros"}},{"name":"record_hash","doc":"Deterministic hash of the source fields for idempotency.","type":"string"},{"name":"metadata","doc":"Optional key/value metadata captured from the source feed.","type":["null",{"type":"map","values":"string"}],"default":null}]}'
+      ISO_LMP_SCHEMA='{"type":"record","name":"IsoLmpRecord","namespace":"aurum.iso","doc":"Normalized locational marginal price observation from an ISO day-ahead or real-time feed.","fields":[{"name":"iso_code","type":{"type":"enum","name":"IsoCode","doc":"Market operator the observation belongs to.","symbols":["PJM","CAISO","ERCOT","NYISO","MISO","ISONE","SPP","AESO"]}},{"name":"market","type":{"type":"enum","name":"IsoMarket","doc":"Normalized market/run identifier reported by the ISO.","symbols":["DAY_AHEAD","REAL_TIME","FIFTEEN_MINUTE","FIVE_MINUTE","HOUR_AHEAD","SETTLEMENT","UNKNOWN"]}},{"name":"delivery_date","doc":"Trading or operating date for the interval (ISO local calendar).","type":{"type":"int","logicalType":"date"}},{"name":"interval_start","doc":"UTC timestamp when the interval starts.","type":{"type":"long","logicalType":"timestamp-micros"}},{"name":"interval_end","doc":"Optional UTC timestamp when the interval ends (exclusive).","type":["null",{"type":"long","logicalType":"timestamp-micros"}],"default":null},{"name":"interval_minutes","doc":"Duration of the interval in minutes (if supplied by the ISO).","type":["null","int"],"default":null},{"name":"location_id","doc":"Primary identifier (node, zone, hub) from the ISO feed.","type":"string"},{"name":"location_name","doc":"Human-readable description of the location.","type":["null","string"],"default":null},{"name":"location_type","doc":"Classification of the location identifier.","type":{"type":"enum","name":"IsoLocationType","symbols":["NODE","ZONE","HUB","SYSTEM","AGGREGATE","INTERFACE","RESOURCE","OTHER"]},"default":"OTHER"},{"name":"zone","doc":"Optional ISO zone identifier derived from the location registry.","type":["null","string"],"default":null},{"name":"hub","doc":"Optional hub grouping associated with the location.","type":["null","string"],"default":null},{"name":"timezone","doc":"Preferred timezone for interpreting interval timestamps (IANA name).","type":["null","string"],"default":null},{"name":"price_total","doc":"Locational marginal price reported by the ISO.","type":"double"},{"name":"price_energy","doc":"Energy component of the price.","type":["null","double"],"default":null},{"name":"price_congestion","doc":"Congestion component of the price.","type":["null","double"],"default":null},{"name":"price_loss","doc":"Loss component of the price.","type":["null","double"],"default":null},{"name":"currency","doc":"ISO reported currency (ISO-4217 code).","type":"string","default":"USD"},{"name":"uom","doc":"Unit of measure for the price.","type":"string","default":"MWh"},{"name":"settlement_point","doc":"Optional ISO-specific settlement point grouping.","type":["null","string"],"default":null},{"name":"source_run_id","doc":"Identifier for the source extraction run (file, report id, etc.).","type":["null","string"],"default":null},{"name":"ingest_ts","doc":"Timestamp when the record entered the pipeline (UTC).","type":{"type":"long","logicalType":"timestamp-micros"}},{"name":"record_hash","doc":"Deterministic hash of the source fields for idempotency.","type":"string"},{"name":"metadata","doc":"Optional key/value metadata captured from the source feed.","type":["null",{"type":"map","values":"string"}],"default":null}]}'
     fi
   fi
   export ISO_LMP_SCHEMA
@@ -243,6 +243,87 @@ PY
     fi
     export EIA_SERIES_SCHEMA
     ;;
+  eia_bulk_to_kafka)
+    REQUIRED_VARS=(
+      EIA_BULK_URL
+      EIA_BULK_TOPIC
+      EIA_BULK_FREQUENCY
+      KAFKA_BOOTSTRAP_SERVERS
+      SCHEMA_REGISTRY_URL
+    )
+    export EIA_BULK_SERIES_ID_EXPR="${EIA_BULK_SERIES_ID_EXPR:-series_id}"
+    export EIA_BULK_PERIOD_EXPR="${EIA_BULK_PERIOD_EXPR:-period}"
+    export EIA_BULK_VALUE_EXPR="${EIA_BULK_VALUE_EXPR:-value}"
+    export EIA_BULK_RAW_VALUE_EXPR="${EIA_BULK_RAW_VALUE_EXPR:-value}"
+    export EIA_BULK_UNITS_EXPR="${EIA_BULK_UNITS_EXPR:-units}"
+    export EIA_BULK_AREA_EXPR="${EIA_BULK_AREA_EXPR:-area}"
+    export EIA_BULK_SECTOR_EXPR="${EIA_BULK_SECTOR_EXPR:-sector}"
+    export EIA_BULK_DESCRIPTION_EXPR="${EIA_BULK_DESCRIPTION_EXPR:-description}"
+    export EIA_BULK_SOURCE_EXPR="${EIA_BULK_SOURCE_EXPR:-source}"
+    export EIA_BULK_DATASET_EXPR="${EIA_BULK_DATASET_EXPR:-dataset}"
+    export EIA_BULK_METADATA_EXPR="${EIA_BULK_METADATA_EXPR:-NULL}"
+    export EIA_BULK_FILTER_EXPR="${EIA_BULK_FILTER_EXPR:-TRUE}"
+    export EIA_BULK_SUBJECT="${EIA_BULK_SUBJECT:-${EIA_BULK_TOPIC}-value}"
+    export EIA_BULK_DECODE="${EIA_BULK_DECODE:-zip}"
+    export EIA_BULK_CSV_DELIMITER="${EIA_BULK_CSV_DELIMITER:-,}"
+    export EIA_BULK_SKIP_HEADER="${EIA_BULK_SKIP_HEADER:-1}"
+    if [[ -n "${EIA_BULK_SCHEMA_FIELDS_JSON:-}" ]]; then
+      if ! EIA_BULK_SCHEMA_FIELDS="$(python3 - <<'PY'
+import json
+import os
+import sys
+
+raw = os.environ.get("EIA_BULK_SCHEMA_FIELDS_JSON", "[]")
+try:
+    payload = json.loads(raw)
+except json.JSONDecodeError as exc:
+    print(f"Invalid JSON for EIA_BULK_SCHEMA_FIELDS_JSON: {exc}", file=sys.stderr)
+    sys.exit(1)
+
+lines: list[str] = []
+if isinstance(payload, list):
+    for item in payload:
+        if isinstance(item, dict):
+            name = item.get("name")
+            field_type = item.get("type", "string")
+            if name:
+                lines.append(f"        {name} = {field_type}")
+        elif isinstance(item, str):
+            parts = [part.strip() for part in item.split(":", 1)]
+            if parts and parts[0]:
+                field_type = parts[1] if len(parts) == 2 and parts[1] else "string"
+                lines.append(f"        {parts[0]} = {field_type}")
+if not lines:
+    lines.append("        series_id = string")
+    lines.append("        period = string")
+    lines.append("        value = string")
+    lines.append("        units = string")
+    lines.append("        area = string")
+    lines.append("        sector = string")
+    lines.append("        description = string")
+    lines.append("        source = string")
+    lines.append("        dataset = string")
+    lines.append("        metadata = string")
+
+print("\n".join(lines))
+PY
+)"; then
+        echo "Failed to parse EIA_BULK_SCHEMA_FIELDS_JSON" >&2
+        exit 1
+      fi
+    fi
+    if [[ -z "${EIA_BULK_SCHEMA_FIELDS:-}" ]]; then
+      EIA_BULK_SCHEMA_FIELDS=$'        series_id = string\n        period = string\n        value = string\n        units = string\n        area = string\n        sector = string\n        description = string\n        source = string\n        dataset = string\n        metadata = string'
+    fi
+    export EIA_BULK_SCHEMA_FIELDS
+    if [[ -z "${EIA_BULK_SCHEMA:-}" ]]; then
+      if [[ -z "${EIA_SERIES_SCHEMA:-}" ]]; then
+        EIA_SERIES_SCHEMA="$(render_schema "${EIA_SERIES_SCHEMA_PATH}")"
+      fi
+      EIA_BULK_SCHEMA="${EIA_SERIES_SCHEMA}"
+    fi
+    export EIA_BULK_SCHEMA
+    ;;
   eia_fuel_curve_to_kafka)
     REQUIRED_VARS=(
       EIA_API_KEY
@@ -356,6 +437,122 @@ PY
     fi
     export ISO_LOAD_SCHEMA
     ;;
+  miso_load_to_kafka)
+    REQUIRED_VARS=(
+      MISO_LOAD_ENDPOINT
+      MISO_LOAD_INTERVAL_START
+      MISO_LOAD_INTERVAL_END
+      MISO_LOAD_TOPIC
+      KAFKA_BOOTSTRAP_SERVERS
+      SCHEMA_REGISTRY_URL
+    )
+    export MISO_LOAD_AUTH_HEADER="${MISO_LOAD_AUTH_HEADER:-}"
+    export MISO_LOAD_JSONPATH="${MISO_LOAD_JSONPATH:-$$.data[*]}"
+    export MISO_LOAD_START_FIELD="${MISO_LOAD_START_FIELD:-startTime}"
+    export MISO_LOAD_END_FIELD="${MISO_LOAD_END_FIELD:-endTime}"
+    export MISO_LOAD_AREA_FIELD="${MISO_LOAD_AREA_FIELD:-area}"
+    export MISO_LOAD_MW_FIELD="${MISO_LOAD_MW_FIELD:-loadMw}"
+    export MISO_LOAD_START_EXTRACT="${MISO_LOAD_START_EXTRACT:-\`$MISO_LOAD_START_FIELD\`}"
+    export MISO_LOAD_END_EXTRACT="${MISO_LOAD_END_EXTRACT:-\`$MISO_LOAD_END_FIELD\`}"
+    export MISO_LOAD_AREA_EXPR="${MISO_LOAD_AREA_EXPR:-\`$MISO_LOAD_AREA_FIELD\`}"
+    export MISO_LOAD_MW_EXPR="${MISO_LOAD_MW_EXPR:-\`$MISO_LOAD_MW_FIELD\`}"
+    export MISO_LOAD_TIME_FORMAT="${MISO_LOAD_TIME_FORMAT:-yyyy-MM-dd''T''HH:mm:ss}"
+    export MISO_LOAD_EXTRA_PARAM_KEY="${MISO_LOAD_EXTRA_PARAM_KEY:-limit}"
+    export MISO_LOAD_EXTRA_PARAM_VALUE="${MISO_LOAD_EXTRA_PARAM_VALUE:-1000}"
+    export MISO_LOAD_SUBJECT="${MISO_LOAD_SUBJECT:-${MISO_LOAD_TOPIC}-value}"
+    export ISO_LOAD_SCHEMA_PATH="${ISO_LOAD_SCHEMA_PATH:-${REPO_ROOT}/kafka/schemas/iso.load.v1.avsc}"
+    if [[ -z "${ISO_LOAD_SCHEMA:-}" ]]; then
+      ISO_LOAD_SCHEMA="$(render_schema "${ISO_LOAD_SCHEMA_PATH}")"
+    fi
+    export ISO_LOAD_SCHEMA
+    ;;
+  spp_load_to_kafka)
+    REQUIRED_VARS=(
+      SPP_LOAD_ENDPOINT
+      SPP_LOAD_INTERVAL_START
+      SPP_LOAD_INTERVAL_END
+      SPP_LOAD_TOPIC
+      KAFKA_BOOTSTRAP_SERVERS
+      SCHEMA_REGISTRY_URL
+    )
+    export SPP_LOAD_AUTH_HEADER="${SPP_LOAD_AUTH_HEADER:-}"
+    export SPP_LOAD_JSONPATH="${SPP_LOAD_JSONPATH:-$$.data[*]}"
+    export SPP_LOAD_START_FIELD="${SPP_LOAD_START_FIELD:-startTime}"
+    export SPP_LOAD_END_FIELD="${SPP_LOAD_END_FIELD:-endTime}"
+    export SPP_LOAD_AREA_FIELD="${SPP_LOAD_AREA_FIELD:-area}"
+    export SPP_LOAD_MW_FIELD="${SPP_LOAD_MW_FIELD:-loadMw}"
+    export SPP_LOAD_START_EXTRACT="${SPP_LOAD_START_EXTRACT:-\`$SPP_LOAD_START_FIELD\`}"
+    export SPP_LOAD_END_EXTRACT="${SPP_LOAD_END_EXTRACT:-\`$SPP_LOAD_END_FIELD\`}"
+    export SPP_LOAD_AREA_EXPR="${SPP_LOAD_AREA_EXPR:-\`$SPP_LOAD_AREA_FIELD\`}"
+    export SPP_LOAD_MW_EXPR="${SPP_LOAD_MW_EXPR:-\`$SPP_LOAD_MW_FIELD\`}"
+    export SPP_LOAD_TIME_FORMAT="${SPP_LOAD_TIME_FORMAT:-yyyy-MM-dd''T''HH:mm:ss}"
+    export SPP_LOAD_EXTRA_PARAM_KEY="${SPP_LOAD_EXTRA_PARAM_KEY:-limit}"
+    export SPP_LOAD_EXTRA_PARAM_VALUE="${SPP_LOAD_EXTRA_PARAM_VALUE:-1000}"
+    export SPP_LOAD_SUBJECT="${SPP_LOAD_SUBJECT:-${SPP_LOAD_TOPIC}-value}"
+    export ISO_LOAD_SCHEMA_PATH="${ISO_LOAD_SCHEMA_PATH:-${REPO_ROOT}/kafka/schemas/iso.load.v1.avsc}"
+    if [[ -z "${ISO_LOAD_SCHEMA:-}" ]]; then
+      ISO_LOAD_SCHEMA="$(render_schema "${ISO_LOAD_SCHEMA_PATH}")"
+    fi
+    export ISO_LOAD_SCHEMA
+    ;;
+  caiso_load_to_kafka)
+    REQUIRED_VARS=(
+      CAISO_LOAD_ENDPOINT
+      CAISO_LOAD_INTERVAL_START
+      CAISO_LOAD_INTERVAL_END
+      CAISO_LOAD_TOPIC
+      KAFKA_BOOTSTRAP_SERVERS
+      SCHEMA_REGISTRY_URL
+    )
+    export CAISO_LOAD_AUTH_HEADER="${CAISO_LOAD_AUTH_HEADER:-}"
+    export CAISO_LOAD_JSONPATH="${CAISO_LOAD_JSONPATH:-$$.data[*]}"
+    export CAISO_LOAD_START_FIELD="${CAISO_LOAD_START_FIELD:-startTime}"
+    export CAISO_LOAD_END_FIELD="${CAISO_LOAD_END_FIELD:-endTime}"
+    export CAISO_LOAD_AREA_FIELD="${CAISO_LOAD_AREA_FIELD:-area}"
+    export CAISO_LOAD_MW_FIELD="${CAISO_LOAD_MW_FIELD:-loadMw}"
+    export CAISO_LOAD_START_EXTRACT="${CAISO_LOAD_START_EXTRACT:-\`$CAISO_LOAD_START_FIELD\`}"
+    export CAISO_LOAD_END_EXTRACT="${CAISO_LOAD_END_EXTRACT:-\`$CAISO_LOAD_END_FIELD\`}"
+    export CAISO_LOAD_AREA_EXPR="${CAISO_LOAD_AREA_EXPR:-\`$CAISO_LOAD_AREA_FIELD\`}"
+    export CAISO_LOAD_MW_EXPR="${CAISO_LOAD_MW_EXPR:-\`$CAISO_LOAD_MW_FIELD\`}"
+    export CAISO_LOAD_TIME_FORMAT="${CAISO_LOAD_TIME_FORMAT:-yyyy-MM-dd''T''HH:mm:ss}"
+    export CAISO_LOAD_EXTRA_PARAM_KEY="${CAISO_LOAD_EXTRA_PARAM_KEY:-limit}"
+    export CAISO_LOAD_EXTRA_PARAM_VALUE="${CAISO_LOAD_EXTRA_PARAM_VALUE:-1000}"
+    export CAISO_LOAD_SUBJECT="${CAISO_LOAD_SUBJECT:-${CAISO_LOAD_TOPIC}-value}"
+    export ISO_LOAD_SCHEMA_PATH="${ISO_LOAD_SCHEMA_PATH:-${REPO_ROOT}/kafka/schemas/iso.load.v1.avsc}"
+    if [[ -z "${ISO_LOAD_SCHEMA:-}" ]]; then
+      ISO_LOAD_SCHEMA="$(render_schema "${ISO_LOAD_SCHEMA_PATH}")"
+    fi
+    export ISO_LOAD_SCHEMA
+    ;;
+  aeso_load_to_kafka)
+    REQUIRED_VARS=(
+      AESO_LOAD_ENDPOINT
+      AESO_LOAD_INTERVAL_START
+      AESO_LOAD_INTERVAL_END
+      AESO_LOAD_TOPIC
+      KAFKA_BOOTSTRAP_SERVERS
+      SCHEMA_REGISTRY_URL
+    )
+    export AESO_LOAD_API_KEY="${AESO_LOAD_API_KEY:-}"
+    export AESO_LOAD_JSONPATH="${AESO_LOAD_JSONPATH:-$$.data[*]}"
+    export AESO_LOAD_START_FIELD="${AESO_LOAD_START_FIELD:-begin}"
+    export AESO_LOAD_END_FIELD="${AESO_LOAD_END_FIELD:-end}"
+    export AESO_LOAD_AREA_FIELD="${AESO_LOAD_AREA_FIELD:-region}"
+    export AESO_LOAD_MW_FIELD="${AESO_LOAD_MW_FIELD:-loadMw}"
+    export AESO_LOAD_START_EXTRACT="${AESO_LOAD_START_EXTRACT:-\`$AESO_LOAD_START_FIELD\`}"
+    export AESO_LOAD_END_EXTRACT="${AESO_LOAD_END_EXTRACT:-\`$AESO_LOAD_END_FIELD\`}"
+    export AESO_LOAD_AREA_EXPR="${AESO_LOAD_AREA_EXPR:-\`$AESO_LOAD_AREA_FIELD\`}"
+    export AESO_LOAD_MW_EXPR="${AESO_LOAD_MW_EXPR:-\`$AESO_LOAD_MW_FIELD\`}"
+    export AESO_LOAD_TIME_FORMAT="${AESO_LOAD_TIME_FORMAT:-yyyy-MM-dd''T''HH:mm:ss}"
+    export AESO_LOAD_EXTRA_PARAM_KEY="${AESO_LOAD_EXTRA_PARAM_KEY:-limit}"
+    export AESO_LOAD_EXTRA_PARAM_VALUE="${AESO_LOAD_EXTRA_PARAM_VALUE:-1000}"
+    export AESO_LOAD_SUBJECT="${AESO_LOAD_SUBJECT:-${AESO_LOAD_TOPIC}-value}"
+    export ISO_LOAD_SCHEMA_PATH="${ISO_LOAD_SCHEMA_PATH:-${REPO_ROOT}/kafka/schemas/iso.load.v1.avsc}"
+    if [[ -z "${ISO_LOAD_SCHEMA:-}" ]]; then
+      ISO_LOAD_SCHEMA="$(render_schema "${ISO_LOAD_SCHEMA_PATH}")"
+    fi
+    export ISO_LOAD_SCHEMA
+    ;;
   pjm_genmix_to_kafka)
     REQUIRED_VARS=(
       PJM_GENMIX_ENDPOINT
@@ -368,6 +565,118 @@ PY
     )
     export PJM_API_KEY="${PJM_API_KEY:-}"
     export PJM_GENMIX_SUBJECT="${PJM_GENMIX_SUBJECT:-${PJM_GENMIX_TOPIC}-value}"
+    export ISO_GENMIX_SCHEMA_PATH="${ISO_GENMIX_SCHEMA_PATH:-${REPO_ROOT}/kafka/schemas/iso.genmix.v1.avsc}"
+    if [[ -z "${ISO_GENMIX_SCHEMA:-}" ]]; then
+      ISO_GENMIX_SCHEMA="$(render_schema "${ISO_GENMIX_SCHEMA_PATH}")"
+    fi
+    export ISO_GENMIX_SCHEMA
+    ;;
+  miso_genmix_to_kafka)
+    REQUIRED_VARS=(
+      MISO_GENMIX_ENDPOINT
+      MISO_GENMIX_INTERVAL_START
+      MISO_GENMIX_INTERVAL_END
+      MISO_GENMIX_TOPIC
+      KAFKA_BOOTSTRAP_SERVERS
+      SCHEMA_REGISTRY_URL
+    )
+    export MISO_GENMIX_AUTH_HEADER="${MISO_GENMIX_AUTH_HEADER:-}"
+    export MISO_GENMIX_JSONPATH="${MISO_GENMIX_JSONPATH:-$$.data[*]}"
+    export MISO_GENMIX_ASOF_FIELD="${MISO_GENMIX_ASOF_FIELD:-asOf}"
+    export MISO_GENMIX_FUEL_FIELD="${MISO_GENMIX_FUEL_FIELD:-fuel}"
+    export MISO_GENMIX_MW_FIELD="${MISO_GENMIX_MW_FIELD:-mw}"
+    export MISO_GENMIX_ASOF_EXTRACT="${MISO_GENMIX_ASOF_EXTRACT:-\`$MISO_GENMIX_ASOF_FIELD\`}"
+    export MISO_GENMIX_FUEL_EXPR="${MISO_GENMIX_FUEL_EXPR:-\`$MISO_GENMIX_FUEL_FIELD\`}"
+    export MISO_GENMIX_MW_EXPR="${MISO_GENMIX_MW_EXPR:-\`$MISO_GENMIX_MW_FIELD\`}"
+    export MISO_GENMIX_TIME_FORMAT="${MISO_GENMIX_TIME_FORMAT:-yyyy-MM-dd''T''HH:mm:ss}"
+    export MISO_GENMIX_EXTRA_PARAM_KEY="${MISO_GENMIX_EXTRA_PARAM_KEY:-limit}"
+    export MISO_GENMIX_EXTRA_PARAM_VALUE="${MISO_GENMIX_EXTRA_PARAM_VALUE:-1000}"
+    export MISO_GENMIX_UNIT="${MISO_GENMIX_UNIT:-MW}"
+    export MISO_GENMIX_SUBJECT="${MISO_GENMIX_SUBJECT:-${MISO_GENMIX_TOPIC}-value}"
+    export ISO_GENMIX_SCHEMA_PATH="${ISO_GENMIX_SCHEMA_PATH:-${REPO_ROOT}/kafka/schemas/iso.genmix.v1.avsc}"
+    if [[ -z "${ISO_GENMIX_SCHEMA:-}" ]]; then
+      ISO_GENMIX_SCHEMA="$(render_schema "${ISO_GENMIX_SCHEMA_PATH}")"
+    fi
+    export ISO_GENMIX_SCHEMA
+    ;;
+  spp_genmix_to_kafka)
+    REQUIRED_VARS=(
+      SPP_GENMIX_ENDPOINT
+      SPP_GENMIX_INTERVAL_START
+      SPP_GENMIX_INTERVAL_END
+      SPP_GENMIX_TOPIC
+      KAFKA_BOOTSTRAP_SERVERS
+      SCHEMA_REGISTRY_URL
+    )
+    export SPP_GENMIX_AUTH_HEADER="${SPP_GENMIX_AUTH_HEADER:-}"
+    export SPP_GENMIX_JSONPATH="${SPP_GENMIX_JSONPATH:-$$.data[*]}"
+    export SPP_GENMIX_ASOF_FIELD="${SPP_GENMIX_ASOF_FIELD:-asOf}"
+    export SPP_GENMIX_FUEL_FIELD="${SPP_GENMIX_FUEL_FIELD:-fuel}"
+    export SPP_GENMIX_MW_FIELD="${SPP_GENMIX_MW_FIELD:-mw}"
+    export SPP_GENMIX_ASOF_EXTRACT="${SPP_GENMIX_ASOF_EXTRACT:-\`$SPP_GENMIX_ASOF_FIELD\`}"
+    export SPP_GENMIX_FUEL_EXPR="${SPP_GENMIX_FUEL_EXPR:-\`$SPP_GENMIX_FUEL_FIELD\`}"
+    export SPP_GENMIX_MW_EXPR="${SPP_GENMIX_MW_EXPR:-\`$SPP_GENMIX_MW_FIELD\`}"
+    export SPP_GENMIX_TIME_FORMAT="${SPP_GENMIX_TIME_FORMAT:-yyyy-MM-dd''T''HH:mm:ss}"
+    export SPP_GENMIX_EXTRA_PARAM_KEY="${SPP_GENMIX_EXTRA_PARAM_KEY:-limit}"
+    export SPP_GENMIX_EXTRA_PARAM_VALUE="${SPP_GENMIX_EXTRA_PARAM_VALUE:-1000}"
+    export SPP_GENMIX_UNIT="${SPP_GENMIX_UNIT:-MW}"
+    export SPP_GENMIX_SUBJECT="${SPP_GENMIX_SUBJECT:-${SPP_GENMIX_TOPIC}-value}"
+    export ISO_GENMIX_SCHEMA_PATH="${ISO_GENMIX_SCHEMA_PATH:-${REPO_ROOT}/kafka/schemas/iso.genmix.v1.avsc}"
+    if [[ -z "${ISO_GENMIX_SCHEMA:-}" ]]; then
+      ISO_GENMIX_SCHEMA="$(render_schema "${ISO_GENMIX_SCHEMA_PATH}")"
+    fi
+    export ISO_GENMIX_SCHEMA
+    ;;
+  caiso_genmix_to_kafka)
+    REQUIRED_VARS=(
+      CAISO_GENMIX_ENDPOINT
+      CAISO_GENMIX_INTERVAL_START
+      CAISO_GENMIX_INTERVAL_END
+      CAISO_GENMIX_TOPIC
+      KAFKA_BOOTSTRAP_SERVERS
+      SCHEMA_REGISTRY_URL
+    )
+    export CAISO_GENMIX_AUTH_HEADER="${CAISO_GENMIX_AUTH_HEADER:-}"
+    export CAISO_GENMIX_JSONPATH="${CAISO_GENMIX_JSONPATH:-$$.data[*]}"
+    export CAISO_GENMIX_ASOF_FIELD="${CAISO_GENMIX_ASOF_FIELD:-asOf}"
+    export CAISO_GENMIX_FUEL_FIELD="${CAISO_GENMIX_FUEL_FIELD:-fuel}"
+    export CAISO_GENMIX_MW_FIELD="${CAISO_GENMIX_MW_FIELD:-mw}"
+    export CAISO_GENMIX_ASOF_EXTRACT="${CAISO_GENMIX_ASOF_EXTRACT:-\`$CAISO_GENMIX_ASOF_FIELD\`}"
+    export CAISO_GENMIX_FUEL_EXPR="${CAISO_GENMIX_FUEL_EXPR:-\`$CAISO_GENMIX_FUEL_FIELD\`}"
+    export CAISO_GENMIX_MW_EXPR="${CAISO_GENMIX_MW_EXPR:-\`$CAISO_GENMIX_MW_FIELD\`}"
+    export CAISO_GENMIX_TIME_FORMAT="${CAISO_GENMIX_TIME_FORMAT:-yyyy-MM-dd''T''HH:mm:ss}"
+    export CAISO_GENMIX_EXTRA_PARAM_KEY="${CAISO_GENMIX_EXTRA_PARAM_KEY:-limit}"
+    export CAISO_GENMIX_EXTRA_PARAM_VALUE="${CAISO_GENMIX_EXTRA_PARAM_VALUE:-1000}"
+    export CAISO_GENMIX_UNIT="${CAISO_GENMIX_UNIT:-MW}"
+    export CAISO_GENMIX_SUBJECT="${CAISO_GENMIX_SUBJECT:-${CAISO_GENMIX_TOPIC}-value}"
+    export ISO_GENMIX_SCHEMA_PATH="${ISO_GENMIX_SCHEMA_PATH:-${REPO_ROOT}/kafka/schemas/iso.genmix.v1.avsc}"
+    if [[ -z "${ISO_GENMIX_SCHEMA:-}" ]]; then
+      ISO_GENMIX_SCHEMA="$(render_schema "${ISO_GENMIX_SCHEMA_PATH}")"
+    fi
+    export ISO_GENMIX_SCHEMA
+    ;;
+  aeso_genmix_to_kafka)
+    REQUIRED_VARS=(
+      AESO_GENMIX_ENDPOINT
+      AESO_GENMIX_INTERVAL_START
+      AESO_GENMIX_INTERVAL_END
+      AESO_GENMIX_TOPIC
+      KAFKA_BOOTSTRAP_SERVERS
+      SCHEMA_REGISTRY_URL
+    )
+    export AESO_GENMIX_API_KEY="${AESO_GENMIX_API_KEY:-}"
+    export AESO_GENMIX_JSONPATH="${AESO_GENMIX_JSONPATH:-$$.data[*]}"
+    export AESO_GENMIX_ASOF_FIELD="${AESO_GENMIX_ASOF_FIELD:-begin}"
+    export AESO_GENMIX_FUEL_FIELD="${AESO_GENMIX_FUEL_FIELD:-fuelType}"
+    export AESO_GENMIX_MW_FIELD="${AESO_GENMIX_MW_FIELD:-mw}"
+    export AESO_GENMIX_ASOF_EXTRACT="${AESO_GENMIX_ASOF_EXTRACT:-\`$AESO_GENMIX_ASOF_FIELD\`}"
+    export AESO_GENMIX_FUEL_EXPR="${AESO_GENMIX_FUEL_EXPR:-\`$AESO_GENMIX_FUEL_FIELD\`}"
+    export AESO_GENMIX_MW_EXPR="${AESO_GENMIX_MW_EXPR:-\`$AESO_GENMIX_MW_FIELD\`}"
+    export AESO_GENMIX_TIME_FORMAT="${AESO_GENMIX_TIME_FORMAT:-yyyy-MM-dd''T''HH:mm:ss}"
+    export AESO_GENMIX_EXTRA_PARAM_KEY="${AESO_GENMIX_EXTRA_PARAM_KEY:-limit}"
+    export AESO_GENMIX_EXTRA_PARAM_VALUE="${AESO_GENMIX_EXTRA_PARAM_VALUE:-1000}"
+    export AESO_GENMIX_UNIT="${AESO_GENMIX_UNIT:-MW}"
+    export AESO_GENMIX_SUBJECT="${AESO_GENMIX_SUBJECT:-${AESO_GENMIX_TOPIC}-value}"
     export ISO_GENMIX_SCHEMA_PATH="${ISO_GENMIX_SCHEMA_PATH:-${REPO_ROOT}/kafka/schemas/iso.genmix.v1.avsc}"
     if [[ -z "${ISO_GENMIX_SCHEMA:-}" ]]; then
       ISO_GENMIX_SCHEMA="$(render_schema "${ISO_GENMIX_SCHEMA_PATH}")"

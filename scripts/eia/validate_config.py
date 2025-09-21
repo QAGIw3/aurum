@@ -21,6 +21,7 @@ from typing import Any
 REPO_ROOT = Path(__file__).resolve().parents[2]
 CATALOG_PATH = REPO_ROOT / "config" / "eia_catalog.json"
 CONFIG_PATH = REPO_ROOT / "config" / "eia_ingest_datasets.json"
+BULK_CONFIG_PATH = REPO_ROOT / "config" / "eia_bulk_datasets.json"
 
 
 @dataclass
@@ -39,6 +40,41 @@ def load_json(path: Path) -> Any:
     except json.JSONDecodeError as exc:
         print(f"Invalid JSON in {path}: {exc}", file=sys.stderr)
         raise SystemExit(2)
+
+
+def _validate_bulk_config(issues: list[Issue]) -> None:
+    if not BULK_CONFIG_PATH.exists():
+        return
+
+    bulk_cfg = load_json(BULK_CONFIG_PATH)
+    datasets_cfg = bulk_cfg.get("datasets", [])
+    if not isinstance(datasets_cfg, list):
+        issues.append(Issue("ERROR", "bulk", f"Invalid datasets array in {BULK_CONFIG_PATH}"))
+        return
+
+    valid_freq = {"ANNUAL", "QUARTERLY", "MONTHLY", "WEEKLY", "DAILY", "HOURLY"}
+
+    for entry in datasets_cfg:
+        if not isinstance(entry, dict):
+            issues.append(Issue("ERROR", "bulk", f"Invalid entry type: {type(entry).__name__}"))
+            continue
+        source = entry.get("source_name", "<unknown>")
+        url = entry.get("url")
+        if not url:
+            issues.append(Issue("ERROR", source, "Missing required 'url'"))
+        frequency = (entry.get("frequency") or "").upper()
+        if frequency and frequency not in valid_freq:
+            issues.append(Issue("ERROR", source, f"Unsupported frequency '{frequency}'"))
+        schema_fields = entry.get("schema_fields")
+        if schema_fields and isinstance(schema_fields, list):
+            names = {
+                item.get("name") if isinstance(item, dict) else str(item).split(":", 1)[0]
+                for item in schema_fields
+            }
+            required = {"series_id", "period", "value"}
+            if not required.issubset(names):
+                missing = required - names
+                issues.append(Issue("WARN", source, f"Schema fields missing required columns: {sorted(missing)}"))
 
 
 def main() -> int:
@@ -89,6 +125,8 @@ def main() -> int:
                 issues.append(Issue("WARN", source, "dataset has single 'value' column; add param_overrides [{\"data[0]\": \"value\"}]"))
 
     errors = [i for i in issues if i.level == "ERROR"]
+    _validate_bulk_config(issues)
+
     for i in issues:
         print(f"{i.level}: {i.source_name}: {i.message}")
 
@@ -97,4 +135,3 @@ def main() -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
-

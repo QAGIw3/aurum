@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import csv
 import json
 import os
 from typing import Any
@@ -31,6 +32,10 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--discount-rate", type=float, help="Annual discount rate")
     parser.add_argument("--upfront-cost", type=float, help="Upfront cost to include in NPV/IRR")
     parser.add_argument("--json", action="store_true", help="Print raw JSON response")
+    parser.add_argument(
+        "--output-csv",
+        help="Optional path to write valuation rows to CSV (includes contract and scenario identifiers)",
+    )
 
     args = parser.parse_args(argv)
     session = _build_session(args.token)
@@ -63,10 +68,35 @@ def main(argv: list[str] | None = None) -> int:
         raise SystemExit(f"Request failed: {response.status_code} {response.text}")
     data = response.json()
 
+    rows = data.get("data", []) or []
+
+    if args.output_csv:
+        fieldnames = [
+            "ppa_contract_id",
+            "scenario_id",
+            "metric",
+            "value",
+            "period_start",
+            "period_end",
+            "currency",
+            "unit",
+            "curve_key",
+            "tenor_type",
+            "run_id",
+        ]
+        with open(args.output_csv, "w", newline="") as handle:
+            writer = csv.DictWriter(handle, fieldnames=fieldnames)
+            writer.writeheader()
+            for row in rows:
+                payload = row.copy()
+                payload.setdefault("ppa_contract_id", args.ppa_contract_id)
+                payload.setdefault("scenario_id", args.scenario_id)
+                writer.writerow({key: payload.get(key) for key in fieldnames})
+        print(f"Wrote {len(rows)} valuation rows to {args.output_csv}")
+
     if args.json:
         print(json.dumps(data, indent=2, sort_keys=True))
     else:
-        rows = data.get("data", []) or []
         if not rows:
             print("No valuation rows returned.")
         for row in rows:
@@ -78,6 +108,7 @@ def main(argv: list[str] | None = None) -> int:
         meta = data.get("meta") or {}
         if meta:
             print("Meta:", json.dumps(meta, indent=2, sort_keys=True))
+        print("(Persisted to iceberg.market.ppa_valuation when API persistence is enabled.)")
     return 0
 
 

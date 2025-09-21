@@ -1,5 +1,10 @@
 .PHONY: install lint test format bootstrap trino-apply-iso-views timescale-apply-ddl
 
+KIND_CLUSTER_NAME ?= $(if $(AURUM_KIND_CLUSTER),$(AURUM_KIND_CLUSTER),aurum-dev)
+KIND_NAMESPACE ?= aurum-dev
+KIND_API_IMAGE ?= ghcr.io/aurum/aurum-api
+KIND_WORKER_IMAGE ?= ghcr.io/aurum/aurum-worker
+
 install:
 	python -m venv .venv && . .venv/bin/activate && pip install --upgrade pip && pip install -r requirements-dev.txt
 
@@ -15,7 +20,7 @@ format:
 bootstrap:
 	docker compose -f compose/docker-compose.dev.yml --profile bootstrap up --exit-code-from bootstrap
 
-.PHONY: kind-create kind-delete kind-apply kind-reset kind-bootstrap kind-apply-ui kind-delete-ui kafka-register-schemas kafka-set-compat
+.PHONY: kind-create kind-delete kind-apply kind-reset kind-bootstrap kind-apply-ui kind-delete-ui kind-up kind-down kind-load-api kind-load-worker kafka-register-schemas kafka-set-compat
 
 kind-create:
 	scripts/k8s/create_kind_cluster.sh
@@ -37,6 +42,34 @@ kind-apply-ui:
 
 kind-delete-ui:
 	scripts/k8s/delete_ui.sh
+
+kind-up:
+	$(MAKE) kind-create
+	$(MAKE) kind-apply
+	$(MAKE) kind-bootstrap
+	SCHEMA_REGISTRY_URL=$${SCHEMA_REGISTRY_URL:-http://schema-registry.aurum.localtest.me:8085} $(MAKE) kafka-bootstrap
+
+kind-down:
+	@if [ "$${KIND_DOWN_FORCE:-}" != "1" ] && [ "$${KIND_DOWN_FORCE:-}" != "true" ] && [ "$${KIND_DOWN_FORCE:-}" != "yes" ]; then \
+		printf "This will delete the '%s' kind cluster and remove all aurum-dev resources. Continue? [y/N] " "${KIND_CLUSTER_NAME}"; \
+		read answer; \
+		case "$$answer" in \
+			y|Y|yes|YES) ;; \
+			*) echo "Aborted."; exit 1 ;; \
+		esac; \
+	fi
+	$(MAKE) kind-reset
+	AURUM_KIND_CLUSTER=${KIND_CLUSTER_NAME} $(MAKE) kind-delete
+
+kind-load-api:
+	docker build -f Dockerfile.api -t ${KIND_API_IMAGE}:dev .
+	kind load docker-image ${KIND_API_IMAGE}:dev --name "${KIND_CLUSTER_NAME}"
+	kubectl -n ${KIND_NAMESPACE} set image deployment/aurum-api api=${KIND_API_IMAGE}:dev
+
+kind-load-worker:
+	docker build -f Dockerfile.worker -t ${KIND_WORKER_IMAGE}:dev .
+	kind load docker-image ${KIND_WORKER_IMAGE}:dev --name "${KIND_CLUSTER_NAME}"
+	kubectl -n ${KIND_NAMESPACE} set image deployment/aurum-scenario-worker worker=${KIND_WORKER_IMAGE}:dev
 
 kafka-register-schemas:
 	python scripts/kafka/register_schemas.py --schema-registry-url $${SCHEMA_REGISTRY_URL:-http://localhost:8081}
@@ -90,6 +123,10 @@ timescale-apply-fred:
 timescale-apply-cpi:
 	. .venv/bin/activate && \
 	python scripts/sql/apply_file.py --dsn $${TIMESCALE_DSN:-postgresql://timescale:timescale@localhost:5433/timeseries} timescale/ddl_cpi.sql
+
+timescale-apply-eia:
+	. .venv/bin/activate && \
+	python scripts/sql/apply_file.py --dsn $${TIMESCALE_DSN:-postgresql://timescale:timescale@localhost:5433/timeseries} timescale/ddl_eia.sql
 
 .PHONY: api-up api-down api-built-up
 

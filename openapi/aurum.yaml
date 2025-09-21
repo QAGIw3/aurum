@@ -59,6 +59,11 @@ paths:
       responses:
         '200':
           description: Curve data retrieved.
+          headers:
+            ETag:
+              description: Strong entity tag for cache validation.
+              schema:
+                type: string
           content:
             application/json:
               schema:
@@ -378,6 +383,11 @@ paths:
       responses:
         '200':
           description: Scenario outputs.
+          headers:
+            ETag:
+              description: Strong entity tag for cache validation.
+              schema:
+                type: string
           content:
             application/json:
               schema:
@@ -405,6 +415,11 @@ paths:
       responses:
         '200':
           description: Latest metric snapshots per scenario metric.
+          headers:
+            ETag:
+              description: Strong entity tag for cache validation.
+              schema:
+                type: string
           content:
             application/json:
               schema:
@@ -478,6 +493,11 @@ paths:
       responses:
         '200':
           description: Curve diff results.
+          headers:
+            ETag:
+              description: Strong entity tag for cache validation.
+              schema:
+                type: string
           content:
             application/json:
               schema:
@@ -580,10 +600,174 @@ paths:
       responses:
         '200':
           description: Strip curves retrieved.
+          headers:
+            ETag:
+              description: Strong entity tag for cache validation.
+              schema:
+                type: string
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/CurveResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
+  /v1/ref/eia/series:
+    get:
+      tags: [Metadata, EIA]
+      summary: List EIA series observations
+      operationId: listEiaSeries
+      security:
+        - oauth2: [aurum]
+      parameters:
+        - name: series_id
+          in: query
+          required: false
+          schema:
+            type: string
+        - name: frequency
+          in: query
+          required: false
+          schema:
+            type: string
+        - name: area
+          in: query
+          required: false
+          schema:
+            type: string
+        - name: sector
+          in: query
+          required: false
+          schema:
+            type: string
+        - name: dataset
+          in: query
+          required: false
+          schema:
+            type: string
+        - name: unit
+          in: query
+          required: false
+          schema:
+            type: string
+        - name: source
+          in: query
+          required: false
+          schema:
+            type: string
+        - name: start
+          in: query
+          required: false
+          schema:
+            type: string
+            format: date-time
+          description: Include observations with period_start >= this timestamp (ISO 8601)
+        - name: end
+          in: query
+          required: false
+          schema:
+            type: string
+            format: date-time
+          description: Include observations with period_start <= this timestamp (ISO 8601)
+        - name: limit
+          in: query
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 2000
+        - name: offset
+          in: query
+          required: false
+          schema:
+            type: integer
+            minimum: 0
+        - name: cursor
+          in: query
+          required: false
+          schema:
+            type: string
+          description: Forward pagination cursor returned from meta.next_cursor
+        - name: since_cursor
+          in: query
+          required: false
+          schema:
+            type: string
+          description: Alias for cursor
+        - name: prev_cursor
+          in: query
+          required: false
+          schema:
+            type: string
+          description: Cursor returned from meta.prev_cursor to page backwards
+      responses:
+        '200':
+          description: EIA series observations returned
+          headers:
+            ETag:
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/EiaSeriesResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
+  /v1/ref/eia/series/dimensions:
+    get:
+      tags: [Metadata, EIA]
+      summary: List EIA series dimensions
+      operationId: listEiaSeriesDimensions
+      security:
+        - oauth2: [aurum]
+      parameters:
+        - name: series_id
+          in: query
+          required: false
+          schema:
+            type: string
+        - name: frequency
+          in: query
+          required: false
+          schema:
+            type: string
+        - name: area
+          in: query
+          required: false
+          schema:
+            type: string
+        - name: sector
+          in: query
+          required: false
+          schema:
+            type: string
+        - name: dataset
+          in: query
+          required: false
+          schema:
+            type: string
+        - name: unit
+          in: query
+          required: false
+          schema:
+            type: string
+        - name: source
+          in: query
+          required: false
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Distinct dimension values returned
+          headers:
+            ETag:
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/EiaSeriesDimensionsResponse'
         '401':
           $ref: '#/components/responses/Unauthorized'
 
@@ -1077,6 +1261,103 @@ components:
           type: string
         tenor_type:
           type: string
+    EiaSeriesPoint:
+      type: object
+      required: [series_id, period, period_start]
+      properties:
+        series_id:
+          type: string
+        period:
+          type: string
+        period_start:
+          type: string
+          format: date-time
+        period_end:
+          type: string
+          format: date-time
+          nullable: true
+        frequency:
+          type: string
+          nullable: true
+        value:
+          type: number
+          nullable: true
+        raw_value:
+          type: string
+          nullable: true
+        unit:
+          type: string
+          nullable: true
+        area:
+          type: string
+          nullable: true
+        sector:
+          type: string
+          nullable: true
+        seasonal_adjustment:
+          type: string
+          nullable: true
+        description:
+          type: string
+          nullable: true
+        source:
+          type: string
+          nullable: true
+        dataset:
+          type: string
+          nullable: true
+        metadata:
+          type: object
+          additionalProperties:
+            type: string
+          nullable: true
+        ingest_ts:
+          type: string
+          format: date-time
+          nullable: true
+    EiaSeriesResponse:
+      type: object
+      properties:
+        meta:
+          $ref: '#/components/schemas/Meta'
+        data:
+          type: array
+          items:
+            $ref: '#/components/schemas/EiaSeriesPoint'
+    EiaSeriesDimensionsData:
+      type: object
+      properties:
+        dataset:
+          type: array
+          items:
+            type: string
+        area:
+          type: array
+          items:
+            type: string
+        sector:
+          type: array
+          items:
+            type: string
+        unit:
+          type: array
+          items:
+            type: string
+        frequency:
+          type: array
+          items:
+            type: string
+        source:
+          type: array
+          items:
+            type: string
+    EiaSeriesDimensionsResponse:
+      type: object
+      properties:
+        meta:
+          $ref: '#/components/schemas/Meta'
+        data:
+          $ref: '#/components/schemas/EiaSeriesDimensionsData'
     ErrorResponse:
       type: object
       properties:

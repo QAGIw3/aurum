@@ -74,7 +74,7 @@ def build_seatunnel_task(job_name: str, env_assignments: list[str], mappings: li
     pull_cmd = (
         f"eval \"$(VAULT_ADDR={VAULT_ADDR} VAULT_TOKEN={VAULT_TOKEN} "
         f"PYTHONPATH={PYTHONPATH_ENTRY}:${{PYTHONPATH:-}} "
-        f"{VENV_PYTHON} scripts/scripts/secrets/pull_vault_env.py {mapping_flags} --format shell)\" || true\n"
+        f"{VENV_PYTHON} scripts/secrets/pull_vault_env.py {mapping_flags} --format shell)\" || true\n"
     )
 
     env_line = " ".join(env_assignments)
@@ -87,7 +87,7 @@ def build_seatunnel_task(job_name: str, env_assignments: list[str], mappings: li
             f"{pull_cmd}"
             f"export PATH=\"{BIN_PATH}\"\n"
             f"export PYTHONPATH=\"${{PYTHONPATH:-}}:{PYTHONPATH_ENTRY}\"\n"
-            f"AURUM_EXECUTE_SEATUNNEL=0 {env_line} scripts/scripts/seatunnel/run_job.sh {job_name} --render-only"
+            f"AURUM_EXECUTE_SEATUNNEL=0 {env_line} scripts/seatunnel/run_job.sh {job_name} --render-only"
         ),
     )
     exec_k8s = BashOperator(
@@ -147,7 +147,7 @@ with DAG(
             f"export PATH=\"{BIN_PATH}\"",
             f"export PYTHONPATH=\"${{PYTHONPATH:-}}:{PYTHONPATH_ENTRY}\"",
             (
-                "python scripts/scripts/ingest/spp_file_api_to_kafka.py "
+                "python scripts/ingest/spp_file_api_to_kafka.py "
                 "--base-url {{ var.value.get('aurum_spp_base_url') }} "
                 "--report {{ var.value.get('aurum_spp_rt_report') }} "
                 "--date {{ ds }} "
@@ -164,7 +164,7 @@ with DAG(
             "KAFKA_BOOTSTRAP_SERVERS='{{ var.value.get('aurum_kafka_bootstrap', 'kafka:9092') }}'",
             "SPP_TOPIC='{{ var.value.get('aurum_spp_topic', 'aurum.iso.spp.lmp.v1') }}'",
             "SCHEMA_REGISTRY_URL='{{ var.value.get('aurum_schema_registry', 'http://localhost:8081') }}'",
-            "ISO_LMP_SCHEMA_PATH=/opt/airflow/scripts/scripts/kafka/schemas/iso.lmp.v1.avsc",
+            "ISO_LMP_SCHEMA_PATH=/opt/airflow/scripts/kafka/schemas/iso.lmp.v1.avsc",
         ],
         mappings=[],
     )

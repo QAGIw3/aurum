@@ -1,0 +1,63 @@
+# AESO load observations → Kafka (Avro)
+
+env {
+  job.mode = "BATCH"
+  parallelism = 1
+}
+
+source {
+  Http {
+    url = "${AESO_LOAD_ENDPOINT}"
+    method = "GET"
+    headers {
+      X-API-Key = "${AESO_LOAD_API_KEY}"
+    }
+    params {
+      startTime = "${AESO_LOAD_INTERVAL_START}"
+      endTime = "${AESO_LOAD_INTERVAL_END}"
+      ${AESO_LOAD_EXTRA_PARAM_KEY} = "${AESO_LOAD_EXTRA_PARAM_VALUE}"
+    }
+    connection_timeout_ms = 20000
+    retry = 12
+    format = "json"
+    schema = { fields { ${AESO_LOAD_START_FIELD} = string ${AESO_LOAD_END_FIELD} = string ${AESO_LOAD_AREA_FIELD} = string ${AESO_LOAD_MW_FIELD} = string } }
+    jsonpath = "${AESO_LOAD_JSONPATH}"
+    result_table_name = "aeso_load_raw"
+  }
+}
+
+transform {
+  Sql {
+    source_table_name = "aeso_load_raw"
+    result_table_name = "aeso_load_normalized"
+    query = """
+      SELECT
+        'AESO' AS iso_code,
+        CAST(${AESO_LOAD_AREA_EXPR} AS STRING) AS area,
+        CAST(UNIX_TIMESTAMP(${AESO_LOAD_START_EXTRACT}, '${AESO_LOAD_TIME_FORMAT}') * 1000000 AS BIGINT) AS interval_start,
+        CAST(UNIX_TIMESTAMP(${AESO_LOAD_END_EXTRACT}, '${AESO_LOAD_TIME_FORMAT}') * 1000000 AS BIGINT) AS interval_end,
+        CAST(TIMESTAMPDIFF(MINUTE, ${AESO_LOAD_START_EXTRACT}, ${AESO_LOAD_END_EXTRACT}) AS INT) AS interval_minutes,
+        CAST(${AESO_LOAD_MW_EXPR} AS DOUBLE) AS mw,
+        CAST(UNIX_TIMESTAMP() * 1000000 AS BIGINT) AS ingest_ts,
+        NULL AS metadata
+      FROM aeso_load_raw
+    """
+  }
+}
+
+sink {
+  Kafka {
+    plugin_input = "aeso_load_normalized"
+    bootstrap.servers = "${KAFKA_BOOTSTRAP_SERVERS}"
+    topic = "${AESO_LOAD_TOPIC}"
+    semantic = "AT_LEAST_ONCE"
+    format = "avro"
+    avro {
+      use.schema.registry = true
+      schema.registry.url = "${SCHEMA_REGISTRY_URL}"
+      value.schema.subject = "${AESO_LOAD_SUBJECT}"
+      value.schema = """${ISO_LOAD_SCHEMA}"""
+    }
+  }
+}
+

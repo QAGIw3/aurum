@@ -8,6 +8,8 @@
   "aurum_eia_topic": "aurum.ref.eia.series.v1",
   "aurum_eia_topic_pattern": "aurum\\.ref\\.eia\\..*\\.v1",
   "aurum_eia_series_table": "eia_series_timeseries",
+  "aurum_eia_bulk_eba_topic": "aurum.ref.eia.bulk.eba.v1",
+  "aurum_eia_bulk_coal_topic": "aurum.ref.eia.bulk.coal.v1",
 
   "aurum_fred_topic": "aurum.ref.fred.series.v1",
   "aurum_fred_topic_pattern": "aurum\\.ref\\.fred\\..*\\.v1",
@@ -21,4 +23,3 @@
 
   "aurum_noaa_timescale_table": "noaa_weather_timeseries"
 }
-

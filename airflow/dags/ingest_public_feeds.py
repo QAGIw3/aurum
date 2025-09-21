@@ -251,7 +251,7 @@ def build_seatunnel_task(
         pull_cmd = (
             f"eval \"$(VAULT_ADDR={VAULT_ADDR} VAULT_TOKEN={VAULT_TOKEN} "
             f"PYTHONPATH={PYTHONPATH_ENTRY}:${{PYTHONPATH:-}} "
-            f"{VENV_PYTHON} scripts/scripts/secrets/pull_vault_env.py {mapping_flags} --format shell)\" || true\n"
+        f"{VENV_PYTHON} scripts/secrets/pull_vault_env.py {mapping_flags} --format shell)\" || true\n"
         )
 
     # Ensure KAFKA bootstrap is always present for render-only validation
@@ -269,7 +269,7 @@ def build_seatunnel_task(
             f"export PATH=\"{BIN_PATH}\"\n"
             f"export PYTHONPATH=\"${{PYTHONPATH:-}}:{PYTHONPATH_ENTRY}\"\n"
             # Render-only in Airflow pods without Docker
-            f"AURUM_EXECUTE_SEATUNNEL=0 {env_line} scripts/scripts/seatunnel/run_job.sh {job_name} --render-only"
+            f"AURUM_EXECUTE_SEATUNNEL=0 {env_line} scripts/seatunnel/run_job.sh {job_name} --render-only"
         ),
     }
     if pool:

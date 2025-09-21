@@ -1,8 +1,147 @@
 from __future__ import annotations
 
+import sys
+import types
 from datetime import date, datetime, timezone
 
 import pytest
+
+
+def _ensure_opentelemetry():
+    if "opentelemetry" in sys.modules:
+        return
+
+    span = types.SimpleNamespace(set_attribute=lambda *args, **kwargs: None, is_recording=lambda: False)
+
+    trace_module = types.ModuleType("opentelemetry.trace")
+    trace_module.get_current_span = lambda: span
+    trace_module.get_tracer_provider = lambda: None
+    trace_module.get_tracer = lambda *_args, **_kwargs: None
+    trace_module.set_tracer_provider = lambda *_args, **_kwargs: None
+
+    propagate_module = types.ModuleType("opentelemetry.propagate")
+    propagate_module.inject = lambda *_args, **_kwargs: None
+
+    resources_module = types.ModuleType("opentelemetry.sdk.resources")
+
+    class _Resource:
+        @staticmethod
+        def create(attrs):
+            return attrs
+
+    resources_module.Resource = _Resource
+
+    sdk_trace_module = types.ModuleType("opentelemetry.sdk.trace")
+
+    class _TracerProvider:
+        def __init__(self, resource=None, sampler=None):
+            self.resource = resource
+            self.sampler = sampler
+
+        def add_span_processor(self, _processor):
+            return None
+
+    sdk_trace_module.TracerProvider = _TracerProvider
+
+    trace_export_module = types.ModuleType("opentelemetry.sdk.trace.export")
+
+    class _BatchSpanProcessor:
+        def __init__(self, _exporter):
+            pass
+
+    trace_export_module.BatchSpanProcessor = _BatchSpanProcessor
+
+    sampling_module = types.ModuleType("opentelemetry.sdk.trace.sampling")
+
+    class _TraceIdRatioBased:
+        def __init__(self, _ratio):
+            self.ratio = _ratio
+
+    sampling_module.TraceIdRatioBased = _TraceIdRatioBased
+
+    otlp_trace_module = types.ModuleType("opentelemetry.exporter.otlp.proto.grpc.trace_exporter")
+
+    class _OTLPSpanExporter:
+        def __init__(self, **_kwargs):
+            pass
+
+    otlp_trace_module.OTLPSpanExporter = _OTLPSpanExporter
+
+    logs_module = types.ModuleType("opentelemetry._logs")
+    logs_module.set_logger_provider = lambda *_args, **_kwargs: None
+
+    sdk_logs_module = types.ModuleType("opentelemetry.sdk._logs")
+
+    class _LoggerProvider:
+        def __init__(self, **_kwargs):
+            pass
+
+        def add_log_record_processor(self, _processor):
+            return None
+
+    sdk_logs_module.LoggerProvider = _LoggerProvider
+
+    sdk_logs_export_module = types.ModuleType("opentelemetry.sdk._logs.export")
+
+    class _BatchLogRecordProcessor:
+        def __init__(self, _exporter):
+            pass
+
+    sdk_logs_export_module.BatchLogRecordProcessor = _BatchLogRecordProcessor
+
+    otlp_logs_module = types.ModuleType("opentelemetry.exporter.otlp.proto.grpc._log_exporter")
+
+    class _OTLPLogExporter:
+        def __init__(self, **_kwargs):
+            pass
+
+    otlp_logs_module.OTLPLogExporter = _OTLPLogExporter
+
+    logging_instr_module = types.ModuleType("opentelemetry.instrumentation.logging")
+
+    class _LoggingInstrumentor:
+        def instrument(self, **_kwargs):
+            return None
+
+    logging_instr_module.LoggingInstrumentor = _LoggingInstrumentor
+
+    requests_instr_module = types.ModuleType("opentelemetry.instrumentation.requests")
+
+    class _RequestsInstrumentor:
+        def instrument(self, **_kwargs):
+            return None
+
+    requests_instr_module.RequestsInstrumentor = _RequestsInstrumentor
+
+    fastapi_instr_module = types.ModuleType("opentelemetry.instrumentation.fastapi")
+    fastapi_instr_module.FastAPIInstrumentor = None
+
+    psycopg_instr_module = types.ModuleType("opentelemetry.instrumentation.psycopg")
+    psycopg_instr_module.PsycopgInstrumentation = None
+
+    base_module = types.ModuleType("opentelemetry")
+    base_module.trace = trace_module
+    base_module.propagate = propagate_module
+
+    sys.modules["opentelemetry"] = base_module
+    sys.modules["opentelemetry.trace"] = trace_module
+    sys.modules["opentelemetry.propagate"] = propagate_module
+    sys.modules["opentelemetry.sdk.resources"] = resources_module
+    sys.modules["opentelemetry.sdk.trace"] = sdk_trace_module
+    sys.modules["opentelemetry.sdk.trace.export"] = trace_export_module
+    sys.modules["opentelemetry.sdk.trace.sampling"] = sampling_module
+    sys.modules["opentelemetry.exporter.otlp.proto.grpc.trace_exporter"] = otlp_trace_module
+    sys.modules["opentelemetry._logs"] = logs_module
+    sys.modules["opentelemetry.sdk._logs"] = sdk_logs_module
+    sys.modules["opentelemetry.sdk._logs.export"] = sdk_logs_export_module
+    sys.modules["opentelemetry.exporter.otlp.proto.grpc._log_exporter"] = otlp_logs_module
+    sys.modules["opentelemetry.instrumentation.logging"] = logging_instr_module
+    sys.modules["opentelemetry.instrumentation.requests"] = requests_instr_module
+    sys.modules["opentelemetry.instrumentation.fastapi"] = fastapi_instr_module
+    sys.modules["opentelemetry.instrumentation.psycopg"] = psycopg_instr_module
+
+
+_ensure_opentelemetry()
 
 pytest.importorskip("pydantic", reason="pydantic not installed")
 
@@ -188,3 +327,62 @@ def test_build_outputs_extended_driver_effects(monkeypatch):
     assert attribution["load_growth"] == pytest.approx(0.1333, rel=1e-4)
     assert attribution["fuel_curve"] == pytest.approx(0.6430, rel=1e-4)
     assert attribution["fleet_change"] == pytest.approx(-1.35, rel=1e-6)
+
+
+def test_driver_effects_use_reference_curves(monkeypatch):
+    scenario = ScenarioRecord(
+        id="scn-ref",
+        tenant_id="tenant-ref",
+        name="Ref Scenario",
+        description=None,
+        assumptions=[
+            ScenarioAssumption(
+                driver_type=DriverType.LOAD_GROWTH,
+                payload={
+                    "annual_growth_pct": 5.0,
+                    "start_year": 2024,
+                    "reference_curve_key": "curve-load",
+                },
+            ),
+            ScenarioAssumption(
+                driver_type=DriverType.FUEL_CURVE,
+                payload={
+                    "fuel": "natural_gas",
+                    "reference_series": "curve-fuel",
+                    "basis_points_adjustment": 0,
+                },
+            ),
+        ],
+        status="CREATED",
+        created_at=datetime(2024, 1, 1, tzinfo=timezone.utc),
+    )
+
+    request = worker.ScenarioRequest(
+        scenario_id="scn-ref",
+        tenant_id="tenant-ref",
+        assumptions=[],
+        asof_date=date(2025, 1, 1),
+        curve_def_ids=["curve-scenario"],
+    )
+
+    def fake_load_base_mid(curve_key, *_args, **_kwargs):
+        if curve_key == "curve-scenario":
+            return 60.0
+        if curve_key == "curve-load":
+            return 80.0
+        if curve_key == "curve-fuel":
+            return 100.0
+        return 50.0
+
+    monkeypatch.setattr(worker, "_load_base_mid", fake_load_base_mid)
+    monkeypatch.setattr(worker, "_reference_factor", lambda *_args, **_kwargs: 0.1)
+
+    settings = worker.WorkerSettings(
+        base_value=60.0,
+        load_weight=0.05,
+        tenor_multipliers={"MONTHLY": 1.0},
+    )
+
+    outputs = worker._build_outputs(scenario, request, settings=settings)
+    value = outputs[0]["value"]
+    assert value == pytest.approx(60.8333, rel=1e-4)

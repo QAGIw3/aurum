@@ -187,7 +187,7 @@ def _cmd_outputs(args: argparse.Namespace, session: requests.Session) -> None:
         tenant=args.tenant,
         params=params,
     )
-    if args.json:
+    if args.format == "json":
         print(json.dumps(payload, indent=2, sort_keys=True))
         return
     rows = payload.get("data", []) or []
@@ -256,6 +256,68 @@ def _cmd_cancel(args: argparse.Namespace, session: requests.Session) -> None:
     _print_meta(payload.get("meta"))
 
 
+def _cmd_runs_state(args: argparse.Namespace, session: requests.Session) -> None:
+    payload = _request(
+        session,
+        base_url=args.base_url,
+        method="POST",
+        path=f"/v1/scenarios/runs/{args.run_id}/state",
+        tenant=args.tenant,
+        params={"state": args.state},
+    )
+    if args.json:
+        print(json.dumps(payload, indent=2, sort_keys=True))
+        return
+    data = payload.get("data")
+    if data:
+        _print_table([data], [("run_id", "RUN"), ("state", "STATE")])
+    _print_meta(payload.get("meta"))
+
+
+def _cmd_ppa_valuate(args: argparse.Namespace, session: requests.Session) -> None:
+    body: dict[str, Any] = {
+        "ppa_contract_id": args.ppa_contract_id,
+        "scenario_id": args.scenario_id,
+    }
+    if args.asof:
+        body["asof_date"] = args.asof
+    options: dict[str, Any] = {}
+    if args.ppa_price is not None:
+        options["ppa_price"] = args.ppa_price
+    if args.volume is not None:
+        options["volume_mwh"] = args.volume
+    if args.discount_rate is not None:
+        options["discount_rate"] = args.discount_rate
+    if args.upfront_cost is not None:
+        options["upfront_cost"] = args.upfront_cost
+    if options:
+        body["options"] = options
+
+    payload = _request(
+        session,
+        base_url=args.base_url,
+        method="POST",
+        path="/v1/ppa/valuate",
+        tenant=args.tenant,
+        json_body=body,
+    )
+    if args.format == "json":
+        print(json.dumps(payload, indent=2, sort_keys=True))
+        return
+    rows = payload.get("data", []) or []
+    _print_table(
+        rows,
+        [
+            ("metric", "METRIC"),
+            ("value", "VALUE"),
+            ("period_start", "START"),
+            ("period_end", "END"),
+            ("currency", "CCY"),
+        ],
+    )
+    _print_meta(payload.get("meta"))
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Scenario lifecycle helper for the Aurum API")
     parser.add_argument(
@@ -297,15 +359,29 @@ def build_parser() -> argparse.ArgumentParser:
     run_parser.add_argument("--seed", type=int, help="Optional random seed")
     run_parser.set_defaults(handler=_cmd_run)
 
-    runs_parser = subparsers.add_parser("runs", help="List runs for a scenario")
-    runs_parser.add_argument("scenario_id", help="Scenario identifier")
-    runs_parser.add_argument("--state", help="Optional run state filter")
-    runs_parser.add_argument("--limit", type=int, default=20, help="Maximum runs to return")
-    runs_parser.add_argument("--cursor", help="Forward pagination cursor")
-    runs_parser.add_argument("--since-cursor", dest="since_cursor", help="Alias for --cursor")
-    runs_parser.add_argument("--prev-cursor", dest="prev_cursor", help="Cursor to fetch the previous page")
-    runs_parser.add_argument("--json", action="store_true", help="Print raw JSON instead of a table")
-    runs_parser.set_defaults(handler=_cmd_runs)
+    runs_parser = subparsers.add_parser("runs", help="Scenario run operations")
+    runs_subparsers = runs_parser.add_subparsers(dest="runs_command", required=True)
+
+    runs_list_parser = runs_subparsers.add_parser("list", help="List runs for a scenario")
+    runs_list_parser.add_argument("scenario_id", help="Scenario identifier")
+    runs_list_parser.add_argument("--state", help="Optional run state filter")
+    runs_list_parser.add_argument("--limit", type=int, default=20, help="Maximum runs to return")
+    runs_list_parser.add_argument("--cursor", help="Forward pagination cursor")
+    runs_list_parser.add_argument("--since-cursor", dest="since_cursor", help="Alias for --cursor")
+    runs_list_parser.add_argument("--prev-cursor", dest="prev_cursor", help="Cursor to fetch the previous page")
+    runs_list_parser.add_argument("--json", action="store_true", help="Print raw JSON instead of a table")
+    runs_list_parser.set_defaults(handler=_cmd_runs)
+
+    runs_state_parser = runs_subparsers.add_parser("state", help="Update the state of a scenario run")
+    runs_state_parser.add_argument("run_id", help="Run identifier to update")
+    runs_state_parser.add_argument(
+        "--state",
+        required=True,
+        choices=["QUEUED", "RUNNING", "SUCCEEDED", "FAILED", "CANCELLED"],
+        help="New run state",
+    )
+    runs_state_parser.add_argument("--json", action="store_true", help="Print raw JSON instead of a table")
+    runs_state_parser.set_defaults(handler=_cmd_runs_state)
 
     cancel_parser = subparsers.add_parser("cancel", help="Cancel a scenario run")
     cancel_parser.add_argument("run_id", help="Run identifier to cancel")
@@ -321,8 +397,22 @@ def build_parser() -> argparse.ArgumentParser:
     outputs_parser.add_argument("--cursor", help="Forward pagination cursor")
     outputs_parser.add_argument("--since-cursor", dest="since_cursor", help="Alias for --cursor")
     outputs_parser.add_argument("--prev-cursor", dest="prev_cursor", help="Cursor to fetch the previous page")
-    outputs_parser.add_argument("--json", action="store_true", help="Print raw JSON instead of a table")
+    outputs_parser.add_argument("--format", choices=["table", "json"], default="table", help="Output format")
     outputs_parser.set_defaults(handler=_cmd_outputs)
+
+    ppa_parser = subparsers.add_parser("ppa", help="PPA valuation helpers")
+    ppa_subparsers = ppa_parser.add_subparsers(dest="ppa_command", required=True)
+
+    ppa_valuate_parser = ppa_subparsers.add_parser("valuate", help="Calculate PPA valuation metrics")
+    ppa_valuate_parser.add_argument("ppa_contract_id", help="PPA contract identifier")
+    ppa_valuate_parser.add_argument("scenario_id", help="Scenario identifier")
+    ppa_valuate_parser.add_argument("--asof", help="Optional valuation as-of date (YYYY-MM-DD)")
+    ppa_valuate_parser.add_argument("--ppa-price", type=float, help="Override PPA price (per unit)")
+    ppa_valuate_parser.add_argument("--volume", type=float, help="Energy volume per bucket (MWh)")
+    ppa_valuate_parser.add_argument("--discount-rate", type=float, help="Annual discount rate")
+    ppa_valuate_parser.add_argument("--upfront-cost", type=float, help="Upfront cost for the valuation")
+    ppa_valuate_parser.add_argument("--format", choices=["table", "json"], default="table", help="Output format")
+    ppa_valuate_parser.set_defaults(handler=_cmd_ppa_valuate)
 
     return parser
 

@@ -1,0 +1,62 @@
+# MISO generation mix → Kafka (Avro)
+
+env {
+  job.mode = "BATCH"
+  parallelism = 1
+}
+
+source {
+  Http {
+    url = "${MISO_GENMIX_ENDPOINT}"
+    method = "GET"
+    headers {
+      Authorization = "${MISO_GENMIX_AUTH_HEADER}"
+    }
+    params {
+      start = "${MISO_GENMIX_INTERVAL_START}"
+      end = "${MISO_GENMIX_INTERVAL_END}"
+      ${MISO_GENMIX_EXTRA_PARAM_KEY} = "${MISO_GENMIX_EXTRA_PARAM_VALUE}"
+    }
+    connection_timeout_ms = 20000
+    retry = 12
+    format = "json"
+    schema = { fields { ${MISO_GENMIX_ASOF_FIELD} = string ${MISO_GENMIX_FUEL_FIELD} = string ${MISO_GENMIX_MW_FIELD} = string } }
+    jsonpath = "${MISO_GENMIX_JSONPATH}"
+    result_table_name = "miso_genmix_raw"
+  }
+}
+
+transform {
+  Sql {
+    source_table_name = "miso_genmix_raw"
+    result_table_name = "miso_genmix_normalized"
+    query = """
+      SELECT
+        'MISO' AS iso_code,
+        CAST(UNIX_TIMESTAMP(${MISO_GENMIX_ASOF_EXTRACT}, '${MISO_GENMIX_TIME_FORMAT}') * 1000000 AS BIGINT) AS asof_time,
+        TRIM(UPPER(CAST(${MISO_GENMIX_FUEL_EXPR} AS STRING))) AS fuel_type,
+        CAST(${MISO_GENMIX_MW_EXPR} AS DOUBLE) AS mw,
+        '${MISO_GENMIX_UNIT}' AS unit,
+        CAST(UNIX_TIMESTAMP() * 1000000 AS BIGINT) AS ingest_ts,
+        NULL AS metadata
+      FROM miso_genmix_raw
+    """
+  }
+}
+
+sink {
+  Kafka {
+    plugin_input = "miso_genmix_normalized"
+    bootstrap.servers = "${KAFKA_BOOTSTRAP_SERVERS}"
+    topic = "${MISO_GENMIX_TOPIC}"
+    semantic = "AT_LEAST_ONCE"
+    format = "avro"
+    avro {
+      use.schema.registry = true
+      schema.registry.url = "${SCHEMA_REGISTRY_URL}"
+      value.schema.subject = "${MISO_GENMIX_SUBJECT}"
+      value.schema = """${ISO_GENMIX_SCHEMA}"""
+    }
+  }
+}
+

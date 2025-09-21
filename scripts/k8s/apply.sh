@@ -10,6 +10,14 @@ fi
 
 "${ROOT_DIR}/scripts/k8s/install_strimzi.sh"
 
+STRIMZI_CRDS=("kafkas.kafka.strimzi.io")
+for crd in "${STRIMZI_CRDS[@]}"; do
+  if ! kubectl get crd "${crd}" >/dev/null 2>&1; then
+    echo "Strimzi CRD ${crd} is not available; aborting apply before submitting Kafka resources" >&2
+    exit 1
+  fi
+done
+
 # Remove legacy Kafka resources (pre-Strimzi) if they exist
 kubectl -n aurum-dev delete deployment kafka --ignore-not-found >/dev/null
 kubectl -n aurum-dev delete statefulset kafka --ignore-not-found >/dev/null

@@ -5,11 +5,14 @@ from __future__ import annotations
 import base64
 import hashlib
 import json
+import math
 import os
 import uuid
 from datetime import date, datetime
 import logging
 import time
+from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
+from dataclasses import replace
 from typing import Any, Dict, List, Optional, Set
 
 from fastapi import Depends, FastAPI, HTTPException, Response, Request
@@ -60,6 +63,10 @@ from .models import (
     EiaDatasetBriefOut,
     EiaDatasetResponse,
     EiaDatasetDetailOut,
+    EiaSeriesPoint,
+    EiaSeriesResponse,
+    EiaSeriesDimensionsData,
+    EiaSeriesDimensionsResponse,
 )
 from .ratelimit import RateLimitConfig, RateLimitMiddleware
 from .auth import AuthMiddleware, OIDCConfig
@@ -75,6 +82,32 @@ from aurum.telemetry.context import get_request_id, set_request_id, reset_reques
 app = FastAPI(title="Aurum API", version="0.1.0")
 
 configure_telemetry("aurum-api", fastapi_app=app, enable_psycopg=True)
+
+_PPA_DECIMAL_QUANTIZER = Decimal("0.000001")
+
+
+def _quantize_ppa_decimal(value: Any) -> Optional[Decimal]:
+    """Normalize numeric inputs to a Decimal with 6 digits of scale."""
+
+    if value is None:
+        return None
+    if isinstance(value, Decimal):
+        if value.is_nan():
+            return None
+        try:
+            return value.quantize(_PPA_DECIMAL_QUANTIZER, rounding=ROUND_HALF_UP)
+        except InvalidOperation:
+            return None
+    if isinstance(value, float) and math.isnan(value):
+        return None
+    try:
+        as_decimal = Decimal(str(value))
+    except (InvalidOperation, ValueError, TypeError):
+        return None
+    try:
+        return as_decimal.quantize(_PPA_DECIMAL_QUANTIZER, rounding=ROUND_HALF_UP)
+    except InvalidOperation:
+        return None
 
 
 def _current_request_id() -> str:
@@ -342,6 +375,14 @@ SCENARIO_METRIC_CACHE_TTL = int(os.getenv("AURUM_API_SCENARIO_METRICS_TTL", "60"
 
 CURVE_MAX_LIMIT = int(os.getenv("AURUM_API_CURVE_MAX_LIMIT", "500") or 500)
 SCENARIO_OUTPUT_MAX_LIMIT = int(os.getenv("AURUM_API_SCENARIO_OUTPUT_MAX_LIMIT", "500") or 500)
+CURVE_CACHE_TTL = int(os.getenv("AURUM_API_CURVE_TTL", "120") or 120)
+CURVE_DIFF_CACHE_TTL = int(os.getenv("AURUM_API_CURVE_DIFF_TTL", "120") or 120)
+CURVE_STRIP_CACHE_TTL = int(os.getenv("AURUM_API_CURVE_STRIP_TTL", "120") or 120)
+
+EIA_SERIES_CURSOR_FIELDS = ["series_id", "period_start", "period"]
+EIA_SERIES_MAX_LIMIT = int(os.getenv("AURUM_API_EIA_SERIES_MAX_LIMIT", "1000") or 1000)
+EIA_SERIES_CACHE_TTL = int(os.getenv("AURUM_API_EIA_SERIES_TTL", "120") or 120)
+EIA_SERIES_DIMENSIONS_CACHE_TTL = int(os.getenv("AURUM_API_EIA_SERIES_DIMENSIONS_TTL", "300") or 300)
 
 def _encode_cursor(payload: dict) -> str:
     raw = json.dumps(payload, separators=(",", ":")).encode("utf-8")
@@ -383,6 +424,8 @@ def _extract_cursor_payload(row: Dict[str, Any], fields: list[str]) -> Dict[str,
     for field in fields:
         value = row.get(field)
         if isinstance(value, date):
+            payload[field] = value.isoformat()
+        elif isinstance(value, datetime):
             payload[field] = value.isoformat()
         elif value is not None:
             payload[field] = value
@@ -434,10 +477,21 @@ def _persist_ppa_valuation_records(
 
     for metric in metrics:
         metric_name = str(metric.get("metric"))
-        value = metric.get("value")
+        raw_value = metric.get("value")
+        decimal_value = _quantize_ppa_decimal(raw_value)
         period_start = metric.get("period_start") or asof_date
         period_end = metric.get("period_end") or period_start
         curve_key = metric.get("curve_key") or curve_hint
+        if curve_key:
+            curve_hint = curve_key
+
+        if isinstance(decimal_value, Decimal):
+            value_for_hash = format(decimal_value, "f")
+        elif raw_value is None:
+            value_for_hash = ""
+        else:
+            value_for_hash = str(raw_value)
+
         record = {
             "asof_date": asof_date,
             "ppa_contract_id": ppa_contract_id,
@@ -449,19 +503,25 @@ def _persist_ppa_valuation_records(
             "npv": None,
             "irr": None,
             "metric": metric_name,
-            "value": value,
+            "value": decimal_value,
             "version_hash": hashlib.sha256(
-                f"{ppa_contract_id}|{scenario_id}|{metric_name}|{period_start}|{period_end}|{value}".encode("utf-8")
+                f"{ppa_contract_id}|{scenario_id}|{metric_name}|{period_start}|{period_end}|{value_for_hash}".encode("utf-8")
             ).hexdigest()[:16],
             "_ingest_ts": now,
         }
 
-        if metric_name.lower() == "cashflow":
-            record["cashflow"] = value
-        elif metric_name.lower() == "npv":
-            record["npv"] = value
-        elif metric_name.lower() == "irr":
-            record["irr"] = value
+        metric_lower = metric_name.lower()
+        if metric_lower == "cashflow":
+            record["cashflow"] = decimal_value
+        elif metric_lower == "npv":
+            record["npv"] = decimal_value
+        elif metric_lower == "irr":
+            irr_value: Optional[float]
+            try:
+                irr_value = float(raw_value) if raw_value is not None else None
+            except (TypeError, ValueError):
+                irr_value = float(decimal_value) if isinstance(decimal_value, Decimal) else None
+            record["irr"] = irr_value
 
         records.append(record)
 
@@ -496,6 +556,7 @@ def _check_trino_ready(cfg: TrinoConfig) -> bool:
 
 @app.get("/v1/curves", response_model=CurveResponse)
 def list_curves(
+    request: Request,
     asof: Optional[date] = Query(None, description="As-of date filter (YYYY-MM-DD)"),
     curve_key: Optional[str] = Query(None),
     asset_class: Optional[str] = Query(None),
@@ -516,10 +577,13 @@ def list_curves(
         None,
         description="Cursor pointing to the previous page; obtained from meta.prev_cursor",
     ),
+    *,
+    response: Response,
 ) -> CurveResponse:
     request_id = _current_request_id()
     trino_cfg = TrinoConfig.from_env()
-    cache_cfg = CacheConfig.from_env()
+    base_cache_cfg = CacheConfig.from_env()
+    cache_cfg = replace(base_cache_cfg, ttl_seconds=CURVE_CACHE_TTL)
 
     effective_limit = min(limit, CURVE_MAX_LIMIT)
     effective_offset = offset
@@ -595,17 +659,27 @@ def list_curves(
                 prev_payload = _extract_cursor_payload(rows[0], CURVE_CURSOR_FIELDS)
                 prev_cursor_value = _encode_cursor({"before": prev_payload})
 
-    meta = Meta(
-        request_id=request_id,
-        query_time_ms=int(elapsed_ms),
-        next_cursor=next_cursor,
-        prev_cursor=prev_cursor_value,
+    model = CurveResponse(
+        meta=Meta(
+            request_id=request_id,
+            query_time_ms=int(elapsed_ms),
+            next_cursor=next_cursor,
+            prev_cursor=prev_cursor_value,
+        ),
+        data=[CurvePoint(**row) for row in rows],
     )
-    return CurveResponse(meta=meta, data=[CurvePoint(**row) for row in rows])
+
+    return _respond_with_etag(
+        model,
+        request,
+        response,
+        extra_headers={"Cache-Control": f"public, max-age={CURVE_CACHE_TTL}"},
+    )
 
 
 @app.get("/v1/curves/diff", response_model=CurveDiffResponse)
 def list_curves_diff(
+    request: Request,
     asof_a: date = Query(..., description="First as-of date"),
     asof_b: date = Query(..., description="Second as-of date"),
     curve_key: Optional[str] = Query(None),
@@ -623,11 +697,15 @@ def list_curves_diff(
         None,
         description="Alias for 'cursor' to resume iteration from a previously returned next_cursor",
     ),
+    *,
+    response: Response,
 ) -> CurveDiffResponse:
     request_id = _current_request_id()
     trino_cfg = TrinoConfig.from_env()
-    cache_cfg = CacheConfig.from_env()
+    base_cache_cfg = CacheConfig.from_env()
+    cache_cfg = replace(base_cache_cfg, ttl_seconds=CURVE_DIFF_CACHE_TTL)
 
+    effective_limit = min(limit, CURVE_MAX_LIMIT)
     cursor_after: Optional[dict] = None
     effective_cursor = cursor or since_cursor
     if effective_cursor:
@@ -648,7 +726,7 @@ def list_curves_diff(
             product=product,
             block=block,
             tenor_type=tenor_type,
-            limit=limit + 1,
+            limit=effective_limit + 1,
             offset=offset,
             cursor_after=cursor_after,
         )
@@ -656,14 +734,21 @@ def list_curves_diff(
         raise HTTPException(status_code=503, detail=str(exc)) from exc
 
     next_cursor: str | None = None
-    if len(rows) > limit:
-        rows = rows[:limit]
+    if len(rows) > effective_limit:
+        rows = rows[:effective_limit]
         next_payload = _extract_cursor_payload(rows[-1], CURVE_DIFF_CURSOR_FIELDS)
         next_cursor = _encode_cursor(next_payload)
 
-    return CurveDiffResponse(
+    model = CurveDiffResponse(
         meta=Meta(request_id=request_id, query_time_ms=int(elapsed_ms), next_cursor=next_cursor),
         data=[CurveDiffPoint(**row) for row in rows],
+    )
+
+    return _respond_with_etag(
+        model,
+        request,
+        response,
+        extra_headers={"Cache-Control": f"public, max-age={CURVE_DIFF_CACHE_TTL}"},
     )
 
 
@@ -1071,8 +1156,252 @@ def get_eia_dataset(
     return _respond_with_etag(model, request, response, extra_headers={"Cache-Control": f"public, max-age={_INMEM_TTL}"})
 
 
+# --- EIA Series data ---
+
+
+@app.get(
+    "/v1/ref/eia/series",
+    response_model=EiaSeriesResponse,
+    tags=["Metadata", "EIA"],
+    summary="List EIA series observations",
+    description="Return EIA observations from the canonical Timescale table with optional filters and cursor-based pagination.",
+)
+def list_eia_series(
+    request: Request,
+    series_id: Optional[str] = Query(None, description="Filter by exact series identifier"),
+    frequency: Optional[str] = Query(None, description="Frequency label (ANNUAL, MONTHLY, etc.)"),
+    area: Optional[str] = Query(None, description="Area/region filter"),
+    sector: Optional[str] = Query(None, description="Sector/category filter"),
+    dataset: Optional[str] = Query(None, description="EIA dataset identifier"),
+    unit: Optional[str] = Query(None, description="Unit filter"),
+    source: Optional[str] = Query(None, description="Source attribution filter"),
+    start: Optional[datetime] = Query(None, description="Filter observations with period_start >= this timestamp (ISO 8601)"),
+    end: Optional[datetime] = Query(None, description="Filter observations with period_start <= this timestamp (ISO 8601)"),
+    limit: int = Query(200, ge=1, le=2000),
+    offset: int = Query(0, ge=0, description="Offset for pagination (use 'cursor' when possible)"),
+    cursor: Optional[str] = Query(None, description="Opaque cursor for forward pagination"),
+    since_cursor: Optional[str] = Query(None, description="Alias for 'cursor' to resume from a previous next_cursor value"),
+    prev_cursor: Optional[str] = Query(None, description="Cursor obtained from meta.prev_cursor to navigate backwards"),
+    *,
+    response: Response,
+) -> EiaSeriesResponse:
+    request_id = _current_request_id()
+    trino_cfg = TrinoConfig.from_env()
+    base_cache_cfg = CacheConfig.from_env()
+    cache_cfg = replace(base_cache_cfg, ttl_seconds=EIA_SERIES_CACHE_TTL)
+
+    effective_limit = min(limit, EIA_SERIES_MAX_LIMIT)
+    effective_offset = offset
+    cursor_after: Optional[dict] = None
+    cursor_before: Optional[dict] = None
+    descending = False
+
+    prev_token = prev_cursor
+    forward_token = cursor or since_cursor
+    if prev_token:
+        payload = _decode_cursor(prev_token)
+        before_payload = payload.get("before") if isinstance(payload, dict) else None
+        if before_payload:
+            cursor_before = before_payload
+            descending = True
+            effective_offset = 0
+        elif isinstance(payload, dict) and set(payload.keys()) <= {"offset"}:
+            try:
+                effective_offset = max(int(payload.get("offset", 0)), 0)
+            except (TypeError, ValueError) as exc:
+                raise HTTPException(status_code=400, detail="Invalid cursor") from exc
+        else:
+            cursor_before = payload if isinstance(payload, dict) else None
+            descending = True
+            effective_offset = 0
+    elif forward_token:
+        payload = _decode_cursor(forward_token)
+        effective_offset, cursor_after = _normalise_cursor_input(payload)
+
+    try:
+        rows, elapsed_ms = service.query_eia_series(
+            trino_cfg,
+            cache_cfg,
+            series_id=series_id,
+            frequency=frequency.upper() if frequency else None,
+            area=area,
+            sector=sector,
+            dataset=dataset,
+            unit=unit,
+            source=source,
+            start=start,
+            end=end,
+            limit=effective_limit + 1,
+            offset=effective_offset,
+            cursor_after=cursor_after,
+            cursor_before=cursor_before,
+            descending=descending,
+        )
+    except RuntimeError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+
+    more = len(rows) > effective_limit
+    if descending:
+        rows = rows[:effective_limit]
+        rows.reverse()
+    else:
+        if more:
+            rows = rows[:effective_limit]
+
+    def _coerce_dt(value: Any) -> Optional[datetime]:
+        if isinstance(value, datetime):
+            return value
+        if isinstance(value, str):
+            try:
+                return datetime.fromisoformat(value)
+            except ValueError:
+                return None
+        return None
+
+    def _coerce_meta(value: Any) -> Optional[dict[str, str]]:
+        if value is None:
+            return None
+        if isinstance(value, dict):
+            return {str(k): str(v) for k, v in value.items()}
+        if isinstance(value, str):
+            try:
+                parsed = json.loads(value)
+            except json.JSONDecodeError:
+                return None
+            if isinstance(parsed, dict):
+                return {str(k): str(v) for k, v in parsed.items()}
+        return None
+
+    items: List[EiaSeriesPoint] = []
+    for row in rows:
+        series_value = row.get("series_id")
+        if series_value is None:
+            continue
+        period_start = _coerce_dt(row.get("period_start"))
+        period_end = _coerce_dt(row.get("period_end"))
+        ingest_ts = _coerce_dt(row.get("ingest_ts"))
+        if period_start is None:
+            continue
+        value = row.get("value")
+        if isinstance(value, Decimal):
+            value = float(value)
+        elif value is not None:
+            try:
+                value = float(value)
+            except (TypeError, ValueError):
+                value = None
+        raw_value = row.get("raw_value")
+        if isinstance(raw_value, Decimal):
+            raw_value = format(raw_value, "f")
+        elif raw_value is not None:
+            raw_value = str(raw_value)
+
+        item = EiaSeriesPoint(
+            series_id=str(series_value),
+            period=str(row.get("period")),
+            period_start=period_start,
+            period_end=period_end,
+            frequency=row.get("frequency"),
+            value=value,
+            raw_value=raw_value,
+            unit=row.get("unit"),
+            area=row.get("area"),
+            sector=row.get("sector"),
+            seasonal_adjustment=row.get("seasonal_adjustment"),
+            description=row.get("description"),
+            source=row.get("source"),
+            dataset=row.get("dataset"),
+            metadata=_coerce_meta(row.get("metadata")),
+            ingest_ts=ingest_ts,
+        )
+        items.append(item)
+
+    next_cursor = None
+    if more and rows:
+        next_payload = _extract_cursor_payload(rows[-1], EIA_SERIES_CURSOR_FIELDS)
+        next_cursor = _encode_cursor(next_payload)
+
+    prev_cursor_value = None
+    if rows:
+        if descending:
+            if cursor_before and more:
+                prev_payload = _extract_cursor_payload(rows[0], EIA_SERIES_CURSOR_FIELDS)
+                prev_cursor_value = _encode_cursor({"before": prev_payload})
+        else:
+            if prev_token or forward_token or effective_offset > 0:
+                prev_payload = _extract_cursor_payload(rows[0], EIA_SERIES_CURSOR_FIELDS)
+                prev_cursor_value = _encode_cursor({"before": prev_payload})
+
+    if not rows and forward_token and prev_token is None and effective_offset > 0:
+        prev_cursor_value = _encode_cursor({"offset": max(effective_offset - effective_limit, 0)})
+
+    meta = Meta(
+        request_id=request_id,
+        query_time_ms=int(round(elapsed_ms, 2)),
+        next_cursor=next_cursor,
+        prev_cursor=prev_cursor_value,
+    )
+    model = EiaSeriesResponse(meta=meta, data=items)
+    headers = {"Cache-Control": f"public, max-age={EIA_SERIES_CACHE_TTL}"}
+    return _respond_with_etag(model, request, response, extra_headers=headers)
+
+
+@app.get(
+    "/v1/ref/eia/series/dimensions",
+    response_model=EiaSeriesDimensionsResponse,
+    tags=["Metadata", "EIA"],
+    summary="List EIA series dimensions",
+    description="Return distinct dimension values (dataset, area, sector, unit, frequency, source) for EIA series observations.",
+)
+def list_eia_series_dimensions(
+    request: Request,
+    series_id: Optional[str] = Query(None, description="Optional exact series identifier filter"),
+    frequency: Optional[str] = Query(None, description="Optional frequency filter"),
+    area: Optional[str] = Query(None, description="Area filter"),
+    sector: Optional[str] = Query(None, description="Sector filter"),
+    dataset: Optional[str] = Query(None, description="Dataset filter"),
+    unit: Optional[str] = Query(None, description="Unit filter"),
+    source: Optional[str] = Query(None, description="Source filter"),
+    *,
+    response: Response,
+) -> EiaSeriesDimensionsResponse:
+    request_id = _current_request_id()
+    trino_cfg = TrinoConfig.from_env()
+    base_cache_cfg = CacheConfig.from_env()
+    cache_cfg = replace(base_cache_cfg, ttl_seconds=EIA_SERIES_DIMENSIONS_CACHE_TTL)
+
+    try:
+        values, elapsed_ms = service.query_eia_series_dimensions(
+            trino_cfg,
+            cache_cfg,
+            series_id=series_id,
+            frequency=frequency.upper() if frequency else None,
+            area=area,
+            sector=sector,
+            dataset=dataset,
+            unit=unit,
+            source=source,
+        )
+    except RuntimeError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+
+    data = EiaSeriesDimensionsData(
+        dataset=values.get("dataset"),
+        area=values.get("area"),
+        sector=values.get("sector"),
+        unit=values.get("unit"),
+        frequency=values.get("frequency"),
+        source=values.get("source"),
+    )
+    meta = Meta(request_id=request_id, query_time_ms=int(round(elapsed_ms, 2)))
+    model = EiaSeriesDimensionsResponse(meta=meta, data=data)
+    headers = {"Cache-Control": f"public, max-age={EIA_SERIES_DIMENSIONS_CACHE_TTL}"}
+    return _respond_with_etag(model, request, response, extra_headers=headers)
+
+
 @app.get("/v1/curves/strips", response_model=CurveResponse)
 def list_strips(
+    request: Request,
     asof: Optional[date] = Query(None),
     type: str = Query(..., pattern="^(CALENDAR|SEASON|QUARTER)$", description="Strip type"),
     curve_key: Optional[str] = Query(None),
@@ -1089,15 +1418,20 @@ def list_strips(
         None,
         description="Alias for 'cursor' to resume iteration from a previously returned next_cursor",
     ),
+    *,
+    response: Response,
 ) -> CurveResponse:
     request_id = _current_request_id()
     trino_cfg = TrinoConfig.from_env()
-    cache_cfg = CacheConfig.from_env()
+    base_cache_cfg = CacheConfig.from_env()
+    cache_cfg = replace(base_cache_cfg, ttl_seconds=CURVE_STRIP_CACHE_TTL)
 
+    effective_limit = min(limit, CURVE_MAX_LIMIT)
+    effective_offset = offset
     effective_cursor = cursor or since_cursor
     if effective_cursor:
         payload = _decode_cursor(effective_cursor)
-        offset = int(payload.get("offset", 0))
+        effective_offset = int(payload.get("offset", 0))
 
     try:
         rows, elapsed_ms = service.query_curves(
@@ -1112,20 +1446,27 @@ def list_strips(
             product=product,
             block=block,
             tenor_type=type,
-            limit=limit + 1,
-            offset=offset,
+            limit=effective_limit + 1,
+            offset=effective_offset,
         )
     except RuntimeError as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
 
     next_cursor: str | None = None
-    if len(rows) > limit:
-        rows = rows[:limit]
-        next_cursor = _encode_cursor({"offset": offset + limit})
+    if len(rows) > effective_limit:
+        rows = rows[:effective_limit]
+        next_cursor = _encode_cursor({"offset": effective_offset + effective_limit})
 
-    return CurveResponse(
+    model = CurveResponse(
         meta=Meta(request_id=request_id, query_time_ms=int(elapsed_ms), next_cursor=next_cursor),
         data=[CurvePoint(**row) for row in rows],
+    )
+
+    return _respond_with_etag(
+        model,
+        request,
+        response,
+        extra_headers={"Cache-Control": f"public, max-age={CURVE_STRIP_CACHE_TTL}"},
     )
 
 
@@ -1452,7 +1793,7 @@ def list_scenario_outputs(
     tenant_id = _resolve_tenant(request, tenant_id_param)
     trino_cfg = TrinoConfig.from_env()
     base_cache = CacheConfig.from_env()
-    cache_cfg = CacheConfig(redis_url=base_cache.redis_url, ttl_seconds=SCENARIO_OUTPUT_CACHE_TTL)
+    cache_cfg = replace(base_cache, ttl_seconds=SCENARIO_OUTPUT_CACHE_TTL)
 
     effective_limit = min(limit, SCENARIO_OUTPUT_MAX_LIMIT)
     effective_offset = 0
@@ -1558,10 +1899,13 @@ def list_scenario_metrics_latest(
     request_id = _current_request_id()
     tenant_id = _resolve_tenant(request, tenant_id_param)
     trino_cfg = TrinoConfig.from_env()
+    base_cache = CacheConfig.from_env()
+    cache_cfg = replace(base_cache, ttl_seconds=SCENARIO_METRIC_CACHE_TTL)
 
     try:
         rows, elapsed_ms = service.query_scenario_metrics_latest(
             trino_cfg,
+            cache_cfg,
             scenario_id=scenario_id,
             tenant_id=tenant_id,
             metric=metric,

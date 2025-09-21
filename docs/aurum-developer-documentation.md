@@ -570,36 +570,70 @@ def parse(path: str, asof: date) -> pd.DataFrame:
 
 ## Quick Start Cheat Sheet
 
+### 0. Common prep (5 minutes)
+
+- Install Docker, kind, kubectl, and Python 3.11.
+- Copy `.env.example` to `.env`, generate an Airflow Fernet key, and fill in any vendor/API credentials you have. The same file now feeds both Compose and the kind overlay (via Kustomize’s secret generator), so keep it authoritative.
+- Optional but helpful: `python -m pip install --upgrade pip && pip install -r requirements-dev.txt` to get CLI helpers locally.
+
+### Path A – Docker Compose stack (~10 minutes)
+
+1. `docker compose -f compose/docker-compose.dev.yml up -d`
+2. Wait until `docker compose ps` shows all core services `healthy`.
+3. Seed buckets/repos/catalogs once: `docker compose -f compose/docker-compose.dev.yml --profile bootstrap up --exit-code-from bootstrap`
+4. Register Kafka schemas: `make kafka-bootstrap` (Compose exposes Schema Registry at `http://localhost:8081` by default).
+5. (Optional) bring up the UI helpers: `docker compose -f compose/docker-compose.dev.yml --profile ui up -d`
+6. Verify the API: `curl http://localhost:8095/health`
+
+> Compose tip: if a container refuses to start because a port is busy, run `docker compose down` and re-run step 1—every service is mapped under the `compose/docker-compose.dev.yml` namespace so cleanup is safe.
+
+### Path B – kind (single-node Kubernetes) (~15 minutes)
+
+1. `make kind-up` (chains cluster creation, `kubectl apply`, bootstrap jobs, Strimzi waits, and Kafka schema registration)
+2. When iterating on code, rebuild and load images straight into the cluster: `make kind-load-api` and/or `make kind-load-worker`
+3. Seed schemas again if you blow away the cluster: `make kafka-bootstrap SCHEMA_REGISTRY_URL=http://schema-registry.aurum.localtest.me:8085`
+4. First API call through Traefik: `curl http://api.aurum.localtest.me:8085/health`
+5. Tear the stack down interactively when you are finished: `make kind-down`
+
+> kind tips:
+> - If `scripts/k8s/install_strimzi.sh` times out waiting for CRDs, rerun `make kind-apply`; the tightened retry loop prints which CRD is missing.
+> - If the API Deployment never becomes ready, check `kubectl -n aurum-dev logs deployment/aurum-api`—most issues are bad DSNs or redis hostnames pulled from an outdated `.env`.
+
+### Vault seeding (both paths)
+
+1. Start the dev vault (Compose: `scripts/vault/run_dev.sh`; kind: `kubectl -n aurum-dev port-forward svc/vault 8200:8200`).
+2. Export `VAULT_ADDR=http://127.0.0.1:8200` and `VAULT_TOKEN=aurum-dev-token` (or the dev token printed on start-up).
+3. Push secrets from your `.env`: `python scripts/secrets/push_vault_env.py --mapping EIA_API_KEY=secret/data/aurum/eia:api_key --mapping FRED_API_KEY=secret/data/aurum/fred:api_key`
+
+### Kafka bootstrap (both paths)
+
+Run `make kafka-bootstrap` any time you recreate Kafka or Schema Registry. Override `SCHEMA_REGISTRY_URL` as shown above for kind; Compose defaults to `http://localhost:8081`.
+
+### First full API smoke test
+
 ```bash
-# 1) Create Iceberg schemas and tables
-trino -f trino/ddl/iceberg_market.sql
+# Compose
+curl http://localhost:8095/v1/scenarios?limit=1
 
-# 2) Apply DB DDLs
-psql $POSTGRES_URL -f postgres/ddl/app.sql
-psql $TIMESCALE_URL -f timescale/ddl_timeseries.sql
-clickhouse-client --multiquery < clickhouse/ddl_ops.sql
-
-# 3) Register Avro schemas (or via CI step)
-curl -X POST $SCHEMA_REGISTRY_URL/subjects/aurum.curve.observation.v1/versions \
-     -H "Content-Type: application/vnd.schemaregistry.v1+json" \
-     -d @kafka/schemas/curve.observation.v1.avsc
-
-# 4) Start Airflow and run ingest DAG with vendor EOD files in MinIO
-# Env: AURUM_EOD_ASOF=YYYY-MM-DD
-
-# 5) dbt transformations
-cd dbt && dbt run
-
-# 6) Adjust ingest metadata (if needed)
-python scripts/sql/update_watermark.py register vendor_pw --description "PW curves" --target iceberg.market.curve_observation
-python scripts/sql/update_watermark.py watermark vendor_pw --key asof_date --timestamp 2025-09-12T00:00:00Z
-
-# 7) Query with Trino
-trino> select * from iceberg.market.mart_curve_latest limit 10;
-
-# 8) Call API (example)
-curl "https://api.aurum.local/v1/curves?asset_class=power&iso=PJM&market=West&block=ON_PEAK&asof=2025-09-17&tenor_type=MONTHLY"
+# kind via Traefik (works for Compose if you proxy through Traefik as well)
+curl http://api.aurum.localtest.me:8085/v1/scenarios?limit=1
 ```
+
+### Common failure modes
+
+- **Kafka bootstrap fails with HTTP 409** → schemas already registered; safe to ignore.
+- **`make kind-up` stops on Strimzi CRDs** → rerun `make kind-apply`; the script now blocks until CRDs report `Established`.
+- **API returns 503 for scenario outputs** → ensure Redis is reachable and that `AURUM_APP_DB_DSN` points at Postgres (set in `.env`, synced to K8s via Kustomize).
+- **Vault scripts fail with `connection refused`** → confirm the port-forward (kind) or dev server (Compose) is running and `VAULT_ADDR` matches.
+
+### Ports & hostnames at a glance
+
+| Service       | Compose default            | kind via Traefik                |
+| ------------- | -------------------------- | -------------------------------- |
+| API           | `http://localhost:8095`    | `http://api.aurum.localtest.me:8085` |
+| Schema Reg    | `http://localhost:8081`    | `http://schema-registry.aurum.localtest.me:8085` |
+| MinIO Console | `http://localhost:9001`    | `http://minio-console.aurum.localtest.me:8085` |
+| Trino         | `http://localhost:8080`    | `http://trino.aurum.localtest.me:8085` |
 
 ---
 

@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import date
+from datetime import date, datetime
 from typing import List, Optional
 
 from pydantic import BaseModel, Field
@@ -175,6 +175,44 @@ class EiaDatasetResponse(BaseModel):
     meta: Meta
     data: EiaDatasetDetailOut
 
+
+class EiaSeriesPoint(BaseModel):
+    series_id: str
+    period: str
+    period_start: datetime
+    period_end: datetime | None = None
+    frequency: str | None = None
+    value: float | None = None
+    raw_value: str | None = None
+    unit: str | None = None
+    area: str | None = None
+    sector: str | None = None
+    seasonal_adjustment: str | None = None
+    description: str | None = None
+    source: str | None = None
+    dataset: str | None = None
+    metadata: dict[str, str] | None = None
+    ingest_ts: datetime | None = None
+
+
+class EiaSeriesResponse(BaseModel):
+    meta: Meta
+    data: list[EiaSeriesPoint]
+
+
+class EiaSeriesDimensionsData(BaseModel):
+    dataset: list[str] | None = None
+    area: list[str] | None = None
+    sector: list[str] | None = None
+    unit: list[str] | None = None
+    frequency: list[str] | None = None
+    source: list[str] | None = None
+
+
+class EiaSeriesDimensionsResponse(BaseModel):
+    meta: Meta
+    data: EiaSeriesDimensionsData
+
 __all__ = [
     "Meta",
     "CurvePoint",
@@ -200,6 +238,10 @@ __all__ = [
     "EiaDatasetsResponse",
     "EiaDatasetDetailOut",
     "EiaDatasetResponse",
+    "EiaSeriesPoint",
+    "EiaSeriesResponse",
+    "EiaSeriesDimensionsData",
+    "EiaSeriesDimensionsResponse",
 ]
 
 # Scenario models
