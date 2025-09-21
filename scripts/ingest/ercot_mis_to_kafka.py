@@ -11,6 +11,7 @@ import os
 import struct
 import time
 import zipfile
+from dataclasses import asdict, dataclass
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Iterable
@@ -26,6 +27,25 @@ except ImportError:  # pragma: no cover - handled by _require_fastavro
 
 SCHEMA_PATH = Path(__file__).resolve().parents[2] / "kafka" / "schemas" / "iso.lmp.v1.avsc"
 DLQ_SCHEMA_PATH = Path(__file__).resolve().parents[2] / "kafka" / "schemas" / "ingest.error.v1.avsc"
+
+
+@dataclass(frozen=True)
+class ErcotIngestConfig:
+    """Typed configuration for ERCOT ingestion."""
+
+    url: str
+    topic: str = "aurum.iso.ercot.lmp.v1"
+    schema_registry: str = os.environ.get("SCHEMA_REGISTRY_URL", "http://localhost:8081")
+    bootstrap_servers: str = os.environ.get("KAFKA_BOOTSTRAP_SERVERS", "localhost:9092")
+    subject: str | None = None
+    bearer_token: str | None = None
+    dlq_topic: str | None = os.environ.get("AURUM_DLQ_TOPIC")
+    dlq_subject: str = "aurum.ingest.error.v1"
+    max_retries: int = 5
+    backoff_seconds: float = 2.0
+    http_timeout: float = 60.0
+    output_json: str | None = None
+    no_kafka: bool = False
 
 
 def _require_fastavro() -> None:
@@ -225,10 +245,9 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
-def main() -> int:
-    args = parse_args()
+def execute(args: argparse.Namespace) -> int:
     headers = {}
-    if args.bearer_token:
+    if getattr(args, "bearer_token", None):
         headers["Authorization"] = f"Bearer {args.bearer_token}"
 
     subject = args.subject or f"{args.topic}-value"
@@ -284,6 +303,18 @@ def main() -> int:
     count = produce_records(producer, args.topic, parsed_schema, schema_id, records)
     print(f"Published {count} ERCOT LMP records to {args.topic}")
     return 0
+
+
+def main() -> int:
+    args = parse_args()
+    return execute(args)
+
+
+def run_ingest(config: ErcotIngestConfig) -> int:
+    """Execute the ERCOT ingestion flow with the supplied configuration."""
+
+    namespace = argparse.Namespace(**asdict(config))
+    return execute(namespace)
 
 
 if __name__ == "__main__":  # pragma: no cover

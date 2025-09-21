@@ -14,19 +14,19 @@ from pathlib import Path as FilePath
 from datetime import date, datetime
 import logging
 import time
+import threading
+import time as _time
 import httpx
 from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
 from dataclasses import replace
 from typing import Any, Dict, Iterable, List, Mapping, Optional, Sequence, Set
 
-from fastapi import Depends, FastAPI, HTTPException, Response, Request
+from fastapi import APIRouter, Depends, HTTPException, Response, Request
 try:
     from opentelemetry import trace
 except ImportError:  # pragma: no cover - optional dependency
     trace = None  # type: ignore[assignment]
 from ._fastapi_compat import Query, Path
-from fastapi.middleware.cors import CORSMiddleware
-from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.responses import StreamingResponse
 
 from .config import CacheConfig, TrinoConfig
@@ -98,22 +98,58 @@ from .models import (
     DroughtDimensionsResponse,
     DroughtInfoResponse,
 )
-from .ratelimit import RateLimitConfig, RateLimitMiddleware
 from .auth import AuthMiddleware, OIDCConfig
 from .scenario_service import STORE as ScenarioStore
 from aurum.reference import iso_locations as ref_iso
+from aurum.core import AurumSettings
+from .state import get_settings
 from aurum.reference import units as ref_units
 from aurum.reference import calendars as ref_cal
 from aurum.reference import eia_catalog as ref_eia
-from aurum.telemetry import configure_telemetry
 from aurum.drought.catalog import load_catalog, DroughtCatalog
 from aurum.telemetry.context import get_request_id, set_request_id, reset_request_id
 
 
-app = FastAPI(title="Aurum API", version="0.1.0")
+router = APIRouter()
 
-configure_telemetry("aurum-api", fastapi_app=app, enable_psycopg=True)
+def _settings() -> AurumSettings:
+    return get_settings()
 
+def _trino_config() -> TrinoConfig:
+    return TrinoConfig.from_settings(_settings())
+
+def _cache_config(*, ttl_override: int | None = None) -> CacheConfig:
+    return CacheConfig.from_settings(_settings(), ttl_override=ttl_override)
+
+def configure_routes(settings: AurumSettings) -> None:
+    global ADMIN_GROUPS, _TILE_CACHE_CFG, _TILE_CACHE, _INMEM_TTL, _CACHE
+    global METADATA_CACHE_TTL, SCENARIO_OUTPUT_CACHE_TTL, SCENARIO_METRIC_CACHE_TTL
+    global CURVE_MAX_LIMIT, SCENARIO_OUTPUT_MAX_LIMIT, SCENARIO_METRIC_MAX_LIMIT, EIA_SERIES_MAX_LIMIT
+    global CURVE_CACHE_TTL, CURVE_DIFF_CACHE_TTL, CURVE_STRIP_CACHE_TTL
+    global EIA_SERIES_CACHE_TTL, EIA_SERIES_DIMENSIONS_CACHE_TTL
+    global _METRICS_ENABLED, _METRICS_PATH
+    ADMIN_GROUPS = _load_admin_groups(settings)
+    _TILE_CACHE_CFG = CacheConfig.from_settings(settings)
+    _TILE_CACHE = None
+    _INMEM_TTL = settings.api.cache.in_memory_ttl
+    _CACHE = _SimpleCache(default_ttl=_INMEM_TTL)
+    METADATA_CACHE_TTL = settings.api.cache.metadata_ttl
+    SCENARIO_OUTPUT_CACHE_TTL = settings.api.cache.scenario_output_ttl
+    SCENARIO_METRIC_CACHE_TTL = settings.api.cache.scenario_metric_ttl
+    CURVE_CACHE_TTL = settings.api.cache.curve_ttl
+    CURVE_DIFF_CACHE_TTL = settings.api.cache.curve_diff_ttl
+    CURVE_STRIP_CACHE_TTL = settings.api.cache.curve_strip_ttl
+    EIA_SERIES_CACHE_TTL = settings.api.cache.eia_series_ttl
+    EIA_SERIES_DIMENSIONS_CACHE_TTL = settings.api.cache.eia_series_dimensions_ttl
+    CURVE_MAX_LIMIT = settings.pagination.curves_max_limit
+    SCENARIO_OUTPUT_MAX_LIMIT = settings.pagination.scenario_output_max_limit
+    SCENARIO_METRIC_MAX_LIMIT = settings.pagination.scenario_metric_max_limit
+    EIA_SERIES_MAX_LIMIT = settings.pagination.eia_series_max_limit
+    _METRICS_ENABLED = settings.api.metrics.enabled
+    _METRICS_PATH = settings.api.metrics.path if settings.api.metrics.path.startswith("/") else f"/{settings.api.metrics.path}"
+
+    if not _METRICS_PATH.startswith("/"):
+        _METRICS_PATH = f"/{_METRICS_PATH}"
 _PPA_DECIMAL_QUANTIZER = Decimal("0.000001")
 
 
@@ -148,15 +184,14 @@ def _current_request_id() -> str:
     return str(uuid.uuid4())
 
 
-def _load_admin_groups() -> Set[str]:
-    raw = os.getenv("AURUM_API_ADMIN_GROUP", "aurum-admins")
-    groups = {item.strip().lower() for item in raw.split(",") if item.strip()}
-    if os.getenv("AURUM_API_AUTH_DISABLED", "0").lower() in {"1", "true", "yes"}:
+def _load_admin_groups(settings: AurumSettings) -> Set[str]:
+    groups = {item.strip().lower() for item in settings.auth.admin_groups}
+    if settings.auth.disabled:
         return set()
     return groups
 
 
-ADMIN_GROUPS: Set[str] = _load_admin_groups()
+ADMIN_GROUPS: Set[str] = set()
 
 
 def _get_principal(request: Request) -> Dict[str, Any] | None:
@@ -197,7 +232,7 @@ def _parse_region_param(region: str) -> tuple[str, str]:
 
 _CATALOG_PATH = FilePath(__file__).resolve().parents[2] / "config" / "droughtgov_catalog.json"
 _DROUGHT_CATALOG: DroughtCatalog | None = None
-_TILE_CACHE_CFG = CacheConfig.from_env()
+_TILE_CACHE_CFG: CacheConfig | None = None
 _TILE_CACHE = None
 
 
@@ -212,40 +247,22 @@ def _tile_cache():
     global _TILE_CACHE
     if _TILE_CACHE is not None:
         return _TILE_CACHE
+    cfg = _TILE_CACHE_CFG or _cache_config()
     try:
-        client = service._maybe_redis_client(_TILE_CACHE_CFG)
+        client = service._maybe_redis_client(cfg)
     except Exception:
         client = None
     _TILE_CACHE = client
     return _TILE_CACHE
 
-# CORS (configurable via env AURUM_API_CORS_ORIGINS, comma-separated)
-import threading
-import time as _time
-origins_raw = os.getenv("AURUM_API_CORS_ORIGINS", "")
-origins = [o.strip() for o in origins_raw.split(",") if o.strip()] or ["*"]
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=origins,
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
 
-# GZip compression (configurable minimum size via env AURUM_API_GZIP_MIN_BYTES)
-try:
-    min_bytes = int(os.getenv("AURUM_API_GZIP_MIN_BYTES", "500") or 500)
-except ValueError:
-    min_bytes = 500
-app.add_middleware(GZipMiddleware, minimum_size=min_bytes)
 
 # Structured access logging
 ACCESS_LOGGER = logging.getLogger("aurum.api.access")
 LOGGER = logging.getLogger(__name__)
 
 
-@app.middleware("http")
-async def _access_log_middleware(request, call_next):  # type: ignore[no-redef]
+async def access_log_middleware(request, call_next):  # type: ignore[no-redef]
     request_id = request.headers.get("x-request-id") or str(uuid.uuid4())
     token = set_request_id(request_id)
     request.state.request_id = request_id
@@ -300,12 +317,6 @@ async def _access_log_middleware(request, call_next):  # type: ignore[no-redef]
     reset_request_id(token)
     return response
 
-# Attach simple rate limiting middleware (Redis-backed when configured)
-app.add_middleware(
-    RateLimitMiddleware,
-    cache_cfg=CacheConfig.from_env(),
-    rl_cfg=RateLimitConfig.from_env(),
-)
 
 # --- Simple in-memory cache for hot, mostly-static endpoints ---
 
@@ -352,7 +363,7 @@ class _SimpleCache:
             self._store.clear()
 
 
-_INMEM_TTL = int(os.getenv("AURUM_API_INMEMORY_TTL", "60") or 60)
+_INMEM_TTL = 60
 _CACHE = _SimpleCache(default_ttl=_INMEM_TTL)
 
 
@@ -374,7 +385,7 @@ def _compute_etag(payload: Dict[str, Any]) -> str:
 
 
 def _metadata_cache_get_or_set(key_suffix: str, supplier):
-    cache_cfg = replace(CacheConfig.from_env(), ttl_seconds=METADATA_CACHE_TTL)
+    cache_cfg = replace(_cache_config(), ttl_seconds=METADATA_CACHE_TTL)
     client = service._maybe_redis_client(cache_cfg)
     redis_key = None
     if client is not None:
@@ -491,13 +502,8 @@ def _csv_response(
     return response
 
 # Prometheus metrics
-_METRICS_ENABLED = os.getenv("AURUM_API_METRICS_ENABLED", "1").strip().lower() in {
-    "1",
-    "true",
-    "yes",
-    "on",
-}
-_METRICS_PATH = os.getenv("AURUM_API_METRICS_PATH", "/metrics").strip() or "/metrics"
+_METRICS_ENABLED = True
+_METRICS_PATH = "/metrics"
 if not _METRICS_PATH.startswith("/"):
     _METRICS_PATH = f"/{_METRICS_PATH}"
 
@@ -535,7 +541,6 @@ if _METRICS_ENABLED:
         ["endpoint", "status"],
     )
 
-    @app.middleware("http")
     async def _metrics_middleware(request, call_next):  # type: ignore[no-redef]
         request_path = request.url.path
         if request_path == _METRICS_PATH:
@@ -555,7 +560,7 @@ if _METRICS_ENABLED:
             REQUEST_LATENCY.labels(method=method, path=path_template).observe(duration)
             REQUEST_COUNTER.labels(method=method, path=path_template, status=status_code).inc()
 
-    @app.get(_METRICS_PATH)
+    @router.get(_METRICS_PATH)
     def metrics():
         data = generate_latest()
         return Response(content=data, media_type=CONTENT_TYPE_LATEST)
@@ -584,20 +589,19 @@ def _observe_tile_fetch(endpoint: str, status: str, duration: float) -> None:
         LOGGER.debug("Failed to record tile fetch latency", exc_info=True)
 
 
-@app.get("/health")
+@router.get("/health")
 def health() -> dict:
     return {"status": "ok"}
 
 
-@app.get("/ready")
+@router.get("/ready")
 def ready() -> dict:
-    trino_cfg = TrinoConfig.from_env()
+    trino_cfg = _trino_config()
     if _check_trino_ready(trino_cfg):
         return {"status": "ready"}
     raise HTTPException(status_code=503, detail="Upstream dependencies unavailable")
 
 # Register auth middleware after health/metrics route definitions
-app.add_middleware(AuthMiddleware, config=OIDCConfig.from_env())
 
 
 CURVE_CURSOR_FIELDS = ["curve_key", "tenor_label", "contract_month", "asof_date", "price_type"]
@@ -613,21 +617,21 @@ SCENARIO_OUTPUT_CURSOR_FIELDS = [
 SCENARIO_METRIC_CURSOR_FIELDS = ["metric", "tenor_label", "curve_key"]
 
 
-METADATA_CACHE_TTL = int(os.getenv("AURUM_API_METADATA_REDIS_TTL", "300") or 300)
-SCENARIO_OUTPUT_CACHE_TTL = int(os.getenv("AURUM_API_SCENARIO_OUTPUT_TTL", "60") or 60)
-SCENARIO_METRIC_CACHE_TTL = int(os.getenv("AURUM_API_SCENARIO_METRICS_TTL", "60") or 60)
+METADATA_CACHE_TTL = 300
+SCENARIO_OUTPUT_CACHE_TTL = 60
+SCENARIO_METRIC_CACHE_TTL = 60
 
-CURVE_MAX_LIMIT = int(os.getenv("AURUM_API_CURVE_MAX_LIMIT", "500") or 500)
-SCENARIO_OUTPUT_MAX_LIMIT = int(os.getenv("AURUM_API_SCENARIO_OUTPUT_MAX_LIMIT", "500") or 500)
-SCENARIO_METRIC_MAX_LIMIT = int(os.getenv("AURUM_API_SCENARIO_METRIC_MAX_LIMIT", "500") or 500)
-CURVE_CACHE_TTL = int(os.getenv("AURUM_API_CURVE_TTL", "120") or 120)
-CURVE_DIFF_CACHE_TTL = int(os.getenv("AURUM_API_CURVE_DIFF_TTL", "120") or 120)
-CURVE_STRIP_CACHE_TTL = int(os.getenv("AURUM_API_CURVE_STRIP_TTL", "120") or 120)
+CURVE_MAX_LIMIT = 500
+SCENARIO_OUTPUT_MAX_LIMIT = 500
+SCENARIO_METRIC_MAX_LIMIT = 500
+CURVE_CACHE_TTL = 120
+CURVE_DIFF_CACHE_TTL = 120
+CURVE_STRIP_CACHE_TTL = 120
 
 EIA_SERIES_CURSOR_FIELDS = ["series_id", "period_start", "period"]
-EIA_SERIES_MAX_LIMIT = int(os.getenv("AURUM_API_EIA_SERIES_MAX_LIMIT", "1000") or 1000)
-EIA_SERIES_CACHE_TTL = int(os.getenv("AURUM_API_EIA_SERIES_TTL", "120") or 120)
-EIA_SERIES_DIMENSIONS_CACHE_TTL = int(os.getenv("AURUM_API_EIA_SERIES_DIMENSIONS_TTL", "300") or 300)
+EIA_SERIES_MAX_LIMIT = 1000
+EIA_SERIES_CACHE_TTL = 120
+EIA_SERIES_DIMENSIONS_CACHE_TTL = 300
 
 def _encode_cursor(payload: dict) -> str:
     raw = json.dumps(payload, separators=(",", ":")).encode("utf-8")
@@ -689,8 +693,7 @@ def _normalise_cursor_input(payload: dict) -> tuple[Optional[int], Optional[dict
 
 
 def _scenario_outputs_enabled() -> bool:
-    flag = os.getenv("AURUM_API_SCENARIO_OUTPUTS_ENABLED", "0").lower()
-    return flag in {"1", "true", "yes", "on"}
+    return _settings().api.scenario_outputs_enabled
 
 
 def _persist_ppa_valuation_records(
@@ -701,7 +704,7 @@ def _persist_ppa_valuation_records(
     asof_date: date,
     metrics: List[Dict[str, Any]],
 ) -> None:
-    if os.getenv("AURUM_API_PPA_WRITE_ENABLED", "1").lower() not in {"1", "true", "yes", "on"}:
+    if not _settings().api.ppa_write_enabled:
         return
     if not metrics:
         return
@@ -800,7 +803,7 @@ def _check_trino_ready(cfg: TrinoConfig) -> bool:
         return False
 
 
-@app.get("/v1/curves", response_model=CurveResponse)
+@router.get("/v1/curves", response_model=CurveResponse)
 def list_curves(
     request: Request,
     asof: Optional[date] = Query(None, description="As-of date filter (YYYY-MM-DD)"),
@@ -832,8 +835,8 @@ def list_curves(
     response: Response,
 ) -> CurveResponse:
     request_id = _current_request_id()
-    trino_cfg = TrinoConfig.from_env()
-    base_cache_cfg = CacheConfig.from_env()
+    trino_cfg = _trino_config()
+    base_cache_cfg = _cache_config()
     cache_cfg = replace(base_cache_cfg, ttl_seconds=CURVE_CACHE_TTL)
 
     effective_limit = min(limit, CURVE_MAX_LIMIT)
@@ -951,7 +954,7 @@ def list_curves(
     )
 
 
-@app.get("/v1/curves/diff", response_model=CurveDiffResponse)
+@router.get("/v1/curves/diff", response_model=CurveDiffResponse)
 def list_curves_diff(
     request: Request,
     asof_a: date = Query(..., description="First as-of date"),
@@ -975,8 +978,8 @@ def list_curves_diff(
     response: Response,
 ) -> CurveDiffResponse:
     request_id = _current_request_id()
-    trino_cfg = TrinoConfig.from_env()
-    base_cache_cfg = CacheConfig.from_env()
+    trino_cfg = _trino_config()
+    base_cache_cfg = _cache_config()
     cache_cfg = replace(base_cache_cfg, ttl_seconds=CURVE_DIFF_CACHE_TTL)
 
     effective_limit = min(limit, CURVE_MAX_LIMIT)
@@ -1026,7 +1029,7 @@ def list_curves_diff(
     )
 
 
-@app.get("/v1/metadata/dimensions", response_model=DimensionsResponse, tags=["Metadata"])
+@router.get("/v1/metadata/dimensions", response_model=DimensionsResponse, tags=["Metadata"])
 def list_dimensions(
     asof: Optional[date] = Query(None),
     asset_class: Optional[str] = Query(None),
@@ -1044,8 +1047,8 @@ def list_dimensions(
     response: Response,
 ) -> DimensionsResponse:
     request_id = _current_request_id()
-    trino_cfg = TrinoConfig.from_env()
-    base_cache = CacheConfig.from_env()
+    trino_cfg = _trino_config()
+    base_cache = _cache_config()
     cache_cfg = CacheConfig(redis_url=base_cache.redis_url, ttl_seconds=METADATA_CACHE_TTL)
 
     try:
@@ -1104,7 +1107,7 @@ def list_dimensions(
     return _respond_with_etag(model, request, response)
 
 
-@app.get(
+@router.get(
     "/v1/metadata/locations",
     response_model=IsoLocationsResponse,
     tags=["Metadata"],
@@ -1155,7 +1158,7 @@ def list_locations(
     )
 
 
-@app.get(
+@router.get(
     "/v1/metadata/locations/{iso}/{location_id}",
     response_model=IsoLocationResponse,
     tags=["Metadata"],
@@ -1204,7 +1207,7 @@ def get_location(
 # --- Units metadata ---
 
 
-@app.get(
+@router.get(
     "/v1/metadata/units",
     response_model=UnitsCanonicalResponse,
     tags=["Metadata"],
@@ -1244,7 +1247,7 @@ def list_units(
     )
 
 
-@app.get(
+@router.get(
     "/v1/metadata/units/mapping",
     response_model=UnitsMappingResponse,
     tags=["Metadata", "Units"],
@@ -1288,7 +1291,7 @@ def list_unit_mappings(
 # --- Calendars metadata ---
 
 
-@app.get(
+@router.get(
     "/v1/metadata/calendars",
     response_model=CalendarsResponse,
     tags=["Metadata"],
@@ -1317,7 +1320,7 @@ def list_calendars(request: Request, response: Response) -> CalendarsResponse:
     )
 
 
-@app.get(
+@router.get(
     "/v1/metadata/calendars/{name}/blocks",
     response_model=CalendarBlocksResponse,
     tags=["Metadata"],
@@ -1351,7 +1354,7 @@ def list_calendar_blocks(
     )
 
 
-@app.get(
+@router.get(
     "/v1/metadata/calendars/{name}/hours",
     response_model=CalendarHoursResponse,
     tags=["Metadata"],
@@ -1383,7 +1386,7 @@ def calendar_hours(
     )
 
 
-@app.get(
+@router.get(
     "/v1/metadata/calendars/{name}/expand",
     response_model=CalendarHoursResponse,
     tags=["Metadata"],
@@ -1421,7 +1424,7 @@ def calendar_expand(
 # --- EIA Catalog metadata ---
 
 
-@app.get(
+@router.get(
     "/v1/iso/lmp/last-24h",
     response_model=IsoLmpResponse,
     tags=["ISO"],
@@ -1448,7 +1451,7 @@ def iso_lmp_last_24h(
         market=market,
         location_id=location_id,
         limit=limit,
-        cache_cfg=CacheConfig.from_env(),
+        cache_cfg=_cache_config(),
     )
 
     if format.lower() == "csv":
@@ -1497,7 +1500,7 @@ def iso_lmp_last_24h(
     return _respond_with_etag(model, request, response)
 
 
-@app.get(
+@router.get(
     "/v1/iso/lmp/hourly",
     response_model=IsoLmpAggregateResponse,
     tags=["ISO"],
@@ -1524,7 +1527,7 @@ def iso_lmp_hourly(
         market=market,
         location_id=location_id,
         limit=limit,
-        cache_cfg=CacheConfig.from_env(),
+        cache_cfg=_cache_config(),
     )
 
     if format.lower() == "csv":
@@ -1564,7 +1567,7 @@ def iso_lmp_hourly(
     return _respond_with_etag(model, request, response)
 
 
-@app.get(
+@router.get(
     "/v1/iso/lmp/daily",
     response_model=IsoLmpAggregateResponse,
     tags=["ISO"],
@@ -1591,7 +1594,7 @@ def iso_lmp_daily(
         market=market,
         location_id=location_id,
         limit=limit,
-        cache_cfg=CacheConfig.from_env(),
+        cache_cfg=_cache_config(),
     )
 
     if format.lower() == "csv":
@@ -1631,7 +1634,7 @@ def iso_lmp_daily(
     return _respond_with_etag(model, request, response)
 
 
-@app.get(
+@router.get(
     "/v1/iso/lmp/negative",
     response_model=IsoLmpResponse,
     tags=["ISO"],
@@ -1656,7 +1659,7 @@ def iso_lmp_negative(
         iso_code=iso_code,
         market=market,
         limit=limit,
-        cache_cfg=CacheConfig.from_env(),
+        cache_cfg=_cache_config(),
     )
 
     if format.lower() == "csv":
@@ -1706,7 +1709,7 @@ def iso_lmp_negative(
 
 
 
-@app.get(
+@router.get(
     "/v1/metadata/eia/datasets",
     response_model=EiaDatasetsResponse,
     tags=["Metadata", "EIA"],
@@ -1747,7 +1750,7 @@ def list_eia_datasets(
     return _respond_with_etag(model, request, response, extra_headers={"Cache-Control": f"public, max-age={_INMEM_TTL}"})
 
 
-@app.get(
+@router.get(
     "/v1/metadata/eia/datasets/{dataset_path:path}",
     response_model=EiaDatasetResponse,
     tags=["Metadata", "EIA"],
@@ -1787,7 +1790,7 @@ def get_eia_dataset(
 # --- EIA Series data ---
 
 
-@app.get(
+@router.get(
     "/v1/ref/eia/series",
     response_model=EiaSeriesResponse,
     tags=["Metadata", "EIA"],
@@ -1821,8 +1824,8 @@ def list_eia_series(
     response: Response,
 ) -> EiaSeriesResponse:
     request_id = _current_request_id()
-    trino_cfg = TrinoConfig.from_env()
-    base_cache_cfg = CacheConfig.from_env()
+    trino_cfg = _trino_config()
+    base_cache_cfg = _cache_config()
     cache_cfg = replace(base_cache_cfg, ttl_seconds=EIA_SERIES_CACHE_TTL)
 
     effective_limit = min(limit, EIA_SERIES_MAX_LIMIT)
@@ -2037,7 +2040,7 @@ def list_eia_series(
     return _respond_with_etag(model, request, response, extra_headers=headers)
 
 
-@app.get(
+@router.get(
     "/v1/ref/eia/series/dimensions",
     response_model=EiaSeriesDimensionsResponse,
     tags=["Metadata", "EIA"],
@@ -2059,8 +2062,8 @@ def list_eia_series_dimensions(
     response: Response,
 ) -> EiaSeriesDimensionsResponse:
     request_id = _current_request_id()
-    trino_cfg = TrinoConfig.from_env()
-    base_cache_cfg = CacheConfig.from_env()
+    trino_cfg = _trino_config()
+    base_cache_cfg = _cache_config()
     cache_cfg = replace(base_cache_cfg, ttl_seconds=EIA_SERIES_DIMENSIONS_CACHE_TTL)
 
     try:
@@ -2094,7 +2097,7 @@ def list_eia_series_dimensions(
     return _respond_with_etag(model, request, response, extra_headers=headers)
 
 
-@app.get("/v1/curves/strips", response_model=CurveResponse)
+@router.get("/v1/curves/strips", response_model=CurveResponse)
 def list_strips(
     request: Request,
     asof: Optional[date] = Query(None),
@@ -2117,8 +2120,8 @@ def list_strips(
     response: Response,
 ) -> CurveResponse:
     request_id = _current_request_id()
-    trino_cfg = TrinoConfig.from_env()
-    base_cache_cfg = CacheConfig.from_env()
+    trino_cfg = _trino_config()
+    base_cache_cfg = _cache_config()
     cache_cfg = replace(base_cache_cfg, ttl_seconds=CURVE_STRIP_CACHE_TTL)
 
     effective_limit = min(limit, CURVE_MAX_LIMIT)
@@ -2211,7 +2214,7 @@ def _ppa_contract_to_model(record) -> PpaContractOut:
     )
 
 
-@app.get("/v1/scenarios", response_model=ScenarioListResponse)
+@router.get("/v1/scenarios", response_model=ScenarioListResponse)
 def list_scenarios(
     request: Request,
     response: Response,
@@ -2248,7 +2251,7 @@ def list_scenarios(
     return _respond_with_etag(model, request, response)
 
 
-@app.post("/v1/scenarios", response_model=ScenarioResponse, status_code=201)
+@router.post("/v1/scenarios", response_model=ScenarioResponse, status_code=201)
 def create_scenario(payload: CreateScenarioRequest, request: Request) -> ScenarioResponse:
     request_id = _current_request_id()
     tenant_id = _resolve_tenant(request, payload.tenant_id)
@@ -2264,7 +2267,7 @@ def create_scenario(payload: CreateScenarioRequest, request: Request) -> Scenari
     )
 
 
-@app.get("/v1/scenarios/{scenario_id}", response_model=ScenarioResponse)
+@router.get("/v1/scenarios/{scenario_id}", response_model=ScenarioResponse)
 def get_scenario(scenario_id: str, request: Request, response: Response) -> ScenarioResponse:
     request_id = _current_request_id()
     tenant_id = _resolve_tenant_optional(request, None)
@@ -2278,7 +2281,7 @@ def get_scenario(scenario_id: str, request: Request, response: Response) -> Scen
     return _respond_with_etag(model, request, response)
 
 
-@app.delete("/v1/scenarios/{scenario_id}", status_code=204)
+@router.delete("/v1/scenarios/{scenario_id}", status_code=204)
 def delete_scenario(scenario_id: str, request: Request) -> Response:
     tenant_id = _resolve_tenant(request, None)
     deleted = ScenarioStore.delete_scenario(scenario_id, tenant_id=tenant_id)
@@ -2287,7 +2290,7 @@ def delete_scenario(scenario_id: str, request: Request) -> Response:
     return Response(status_code=204)
 
 
-@app.get("/v1/scenarios/{scenario_id}/runs", response_model=ScenarioRunListResponse)
+@router.get("/v1/scenarios/{scenario_id}/runs", response_model=ScenarioRunListResponse)
 def list_scenario_runs(
     scenario_id: str,
     request: Request,
@@ -2326,7 +2329,7 @@ def list_scenario_runs(
     return _respond_with_etag(model, request, response)
 
 
-@app.post("/v1/scenarios/{scenario_id}/run", response_model=ScenarioRunResponse, status_code=202)
+@router.post("/v1/scenarios/{scenario_id}/run", response_model=ScenarioRunResponse, status_code=202)
 def run_scenario(
     scenario_id: str,
     request: Request,
@@ -2350,7 +2353,7 @@ def run_scenario(
     )
 
 
-@app.get("/v1/scenarios/{scenario_id}/runs/{run_id}", response_model=ScenarioRunResponse)
+@router.get("/v1/scenarios/{scenario_id}/runs/{run_id}", response_model=ScenarioRunResponse)
 def get_scenario_run(scenario_id: str, run_id: str, request: Request, response: Response) -> ScenarioRunResponse:
     request_id = _current_request_id()
     tenant_id = _resolve_tenant_optional(request, None)
@@ -2364,7 +2367,7 @@ def get_scenario_run(scenario_id: str, run_id: str, request: Request, response: 
     return _respond_with_etag(model, request, response)
 
 
-@app.post("/v1/scenarios/runs/{run_id}/state", response_model=ScenarioRunResponse)
+@router.post("/v1/scenarios/runs/{run_id}/state", response_model=ScenarioRunResponse)
 def update_scenario_run_state(
     run_id: str,
     request: Request,
@@ -2381,7 +2384,7 @@ def update_scenario_run_state(
     )
 
 
-@app.post("/v1/scenarios/runs/{run_id}/cancel", response_model=ScenarioRunResponse)
+@router.post("/v1/scenarios/runs/{run_id}/cancel", response_model=ScenarioRunResponse)
 def cancel_scenario_run(run_id: str, request: Request) -> ScenarioRunResponse:
     request_id = _current_request_id()
     tenant_id = _resolve_tenant_optional(request, None)
@@ -2394,7 +2397,7 @@ def cancel_scenario_run(run_id: str, request: Request) -> ScenarioRunResponse:
     )
 
 
-@app.post(
+@router.post(
     "/v1/admin/cache/scenario/{scenario_id}/invalidate",
     status_code=204,
     tags=["Admin"],
@@ -2411,11 +2414,11 @@ def invalidate_scenario_cache(  # type: ignore[no-redef]
 ) -> Response:
     _require_admin(principal)
     effective_tenant = tenant_id or (principal or {}).get("tenant")
-    service.invalidate_scenario_outputs_cache(CacheConfig.from_env(), effective_tenant, scenario_id)
+    service.invalidate_scenario_outputs_cache(_cache_config(), effective_tenant, scenario_id)
     return Response(status_code=204)
 
 
-@app.post(
+@router.post(
     "/v1/admin/cache/eia/series/invalidate",
     response_model=CachePurgeResponse,
     tags=["Admin"],
@@ -2428,7 +2431,7 @@ def invalidate_eia_series_cache_admin(
 ) -> CachePurgeResponse:
     _require_admin(principal)
     request_id = _current_request_id()
-    cache_cfg = CacheConfig.from_env()
+    cache_cfg = _cache_config()
     results = service.invalidate_eia_series_cache(cache_cfg)
     data = [
         CachePurgeDetail(
@@ -2446,7 +2449,7 @@ def invalidate_eia_series_cache_admin(
     return _respond_with_etag(model, request, response)
 
 
-@app.post(
+@router.post(
     "/v1/admin/cache/metadata/{scope}/invalidate",
     response_model=CachePurgeResponse,
     tags=["Admin"],
@@ -2468,7 +2471,7 @@ def invalidate_metadata_cache_admin(
     if scope_normalized != "locations" and iso is not None:
         raise HTTPException(status_code=400, detail="iso_not_applicable")
 
-    base_cache_cfg = CacheConfig.from_env()
+    base_cache_cfg = _cache_config()
     meta_cache_cfg = replace(base_cache_cfg, ttl_seconds=METADATA_CACHE_TTL)
 
     prefixes: list[str]
@@ -2508,7 +2511,7 @@ def invalidate_metadata_cache_admin(
     return _respond_with_etag(model, request, response)
 
 
-@app.get("/v1/ppa/contracts", response_model=PpaContractListResponse)
+@router.get("/v1/ppa/contracts", response_model=PpaContractListResponse)
 def list_ppa_contracts(
     request: Request,
     response: Response,
@@ -2561,7 +2564,7 @@ def list_ppa_contracts(
     return _respond_with_etag(model, request, response)
 
 
-@app.post("/v1/ppa/contracts", response_model=PpaContractResponse, status_code=201)
+@router.post("/v1/ppa/contracts", response_model=PpaContractResponse, status_code=201)
 def create_ppa_contract(
     payload: PpaContractCreate,
     request: Request,
@@ -2581,7 +2584,7 @@ def create_ppa_contract(
     )
 
 
-@app.get("/v1/ppa/contracts/{contract_id}", response_model=PpaContractResponse)
+@router.get("/v1/ppa/contracts/{contract_id}", response_model=PpaContractResponse)
 def get_ppa_contract(contract_id: str, request: Request, response: Response) -> PpaContractResponse:
     request_id = _current_request_id()
     tenant_id = _resolve_tenant_optional(request, None)
@@ -2595,7 +2598,7 @@ def get_ppa_contract(contract_id: str, request: Request, response: Response) -> 
     return _respond_with_etag(model, request, response)
 
 
-@app.patch("/v1/ppa/contracts/{contract_id}", response_model=PpaContractResponse)
+@router.patch("/v1/ppa/contracts/{contract_id}", response_model=PpaContractResponse)
 def update_ppa_contract(
     contract_id: str,
     payload: PpaContractUpdate,
@@ -2619,7 +2622,7 @@ def update_ppa_contract(
     )
 
 
-@app.delete("/v1/ppa/contracts/{contract_id}", status_code=204)
+@router.delete("/v1/ppa/contracts/{contract_id}", status_code=204)
 def delete_ppa_contract(
     contract_id: str,
     request: Request,
@@ -2633,7 +2636,7 @@ def delete_ppa_contract(
     return Response(status_code=204)
 
 
-@app.get("/v1/ppa/contracts/{contract_id}/valuations", response_model=PpaValuationListResponse)
+@router.get("/v1/ppa/contracts/{contract_id}/valuations", response_model=PpaValuationListResponse)
 def list_ppa_contract_valuations(
     contract_id: str,
     request: Request,
@@ -2662,7 +2665,7 @@ def list_ppa_contract_valuations(
             raise HTTPException(status_code=400, detail="Invalid cursor") from exc
 
     effective_limit = limit
-    trino_cfg = TrinoConfig.from_env()
+    trino_cfg = _trino_config()
     try:
         rows, elapsed_ms = service.query_ppa_contract_valuations(
             trino_cfg,
@@ -2718,7 +2721,7 @@ def list_ppa_contract_valuations(
     return _respond_with_etag(model, request, response)
 
 
-@app.post("/v1/ppa/valuate", response_model=PpaValuationResponse)
+@router.post("/v1/ppa/valuate", response_model=PpaValuationResponse)
 def valuate_ppa(payload: PpaValuationRequest, request: Request) -> PpaValuationResponse:
     request_id = _current_request_id()
     if not payload.scenario_id:
@@ -2727,7 +2730,7 @@ def valuate_ppa(payload: PpaValuationRequest, request: Request) -> PpaValuationR
     contract = ScenarioStore.get_ppa_contract(payload.ppa_contract_id, tenant_id=tenant_id)
     if contract is None:
         raise HTTPException(status_code=404, detail="PPA contract not found")
-    trino_cfg = TrinoConfig.from_env()
+    trino_cfg = _trino_config()
 
     try:
         rows, elapsed_ms = service.query_ppa_valuation(
@@ -2776,7 +2779,7 @@ def valuate_ppa(payload: PpaValuationRequest, request: Request) -> PpaValuationR
     )
 
 
-@app.get("/v1/scenarios/{scenario_id}/outputs", response_model=ScenarioOutputResponse)
+@router.get("/v1/scenarios/{scenario_id}/outputs", response_model=ScenarioOutputResponse)
 def list_scenario_outputs(
     scenario_id: str,
     request: Request,
@@ -2810,8 +2813,8 @@ def list_scenario_outputs(
 
     request_id = _current_request_id()
     tenant_id = _resolve_tenant(request, tenant_id_param)
-    trino_cfg = TrinoConfig.from_env()
-    base_cache = CacheConfig.from_env()
+    trino_cfg = _trino_config()
+    base_cache = _cache_config()
     cache_cfg = replace(base_cache, ttl_seconds=SCENARIO_OUTPUT_CACHE_TTL)
 
     effective_limit = min(limit, SCENARIO_OUTPUT_MAX_LIMIT)
@@ -2928,7 +2931,7 @@ def list_scenario_outputs(
     )
 
 
-@app.get("/v1/scenarios/{scenario_id}/metrics/latest", response_model=ScenarioMetricLatestResponse)
+@router.get("/v1/scenarios/{scenario_id}/metrics/latest", response_model=ScenarioMetricLatestResponse)
 def list_scenario_metrics_latest(
     scenario_id: str,
     request: Request,
@@ -2955,8 +2958,8 @@ def list_scenario_metrics_latest(
 
     request_id = _current_request_id()
     tenant_id = _resolve_tenant(request, tenant_id_param)
-    trino_cfg = TrinoConfig.from_env()
-    base_cache = CacheConfig.from_env()
+    trino_cfg = _trino_config()
+    base_cache = _cache_config()
     cache_cfg = replace(base_cache, ttl_seconds=SCENARIO_METRIC_CACHE_TTL)
 
     effective_limit = min(limit, SCENARIO_METRIC_MAX_LIMIT)
@@ -3043,7 +3046,7 @@ def list_scenario_metrics_latest(
     )
 
 
-@app.get("/v1/drought/dimensions", response_model=DroughtDimensionsResponse)
+@router.get("/v1/drought/dimensions", response_model=DroughtDimensionsResponse)
 def get_drought_dimensions() -> DroughtDimensionsResponse:
     catalog = _drought_catalog()
     datasets = sorted({item.dataset for item in catalog.raster_indices})
@@ -3062,7 +3065,7 @@ def get_drought_dimensions() -> DroughtDimensionsResponse:
     return DroughtDimensionsResponse(meta=meta, data=data)
 
 
-@app.get("/v1/drought/indices", response_model=DroughtIndexResponse)
+@router.get("/v1/drought/indices", response_model=DroughtIndexResponse)
 def get_drought_indices(
     request: Request,
     dataset: str | None = Query(None, description="Source dataset (nclimgrid, acis, cpc, prism, eddi)."),
@@ -3079,7 +3082,7 @@ def get_drought_indices(
     parsed_region_id = region_id
     if region:
         parsed_region_type, parsed_region_id = _parse_region_param(region)
-    trino_cfg = TrinoConfig.from_env()
+    trino_cfg = _trino_config()
     rows, elapsed = service.query_drought_indices(
         trino_cfg,
         region_type=parsed_region_type,
@@ -3122,7 +3125,7 @@ def get_drought_indices(
     return DroughtIndexResponse(meta=meta, data=payload)
 
 
-@app.get("/v1/drought/usdm", response_model=DroughtUsdmResponse)
+@router.get("/v1/drought/usdm", response_model=DroughtUsdmResponse)
 def get_drought_usdm(
     region: str | None = Query(None, description="Region specifier REGION_TYPE:REGION_ID."),
     region_type: str | None = Query(None),
@@ -3135,7 +3138,7 @@ def get_drought_usdm(
     parsed_region_id = region_id
     if region:
         parsed_region_type, parsed_region_id = _parse_region_param(region)
-    trino_cfg = TrinoConfig.from_env()
+    trino_cfg = _trino_config()
     rows, elapsed = service.query_drought_usdm(
         trino_cfg,
         region_type=parsed_region_type,
@@ -3173,7 +3176,7 @@ def get_drought_usdm(
     return DroughtUsdmResponse(meta=meta, data=payload)
 
 
-@app.get("/v1/drought/layers", response_model=DroughtVectorResponse)
+@router.get("/v1/drought/layers", response_model=DroughtVectorResponse)
 def get_drought_layers(
     layer: str | None = Query(None, description="Layer key (qpf, ahps_flood, aqi, wildfire)."),
     region: str | None = Query(None, description="Region specifier REGION_TYPE:REGION_ID."),
@@ -3187,7 +3190,7 @@ def get_drought_layers(
     parsed_region_id = region_id
     if region:
         parsed_region_type, parsed_region_id = _parse_region_param(region)
-    trino_cfg = TrinoConfig.from_env()
+    trino_cfg = _trino_config()
     rows, elapsed = service.query_drought_vector_events(
         trino_cfg,
         layer=layer.lower() if layer else None,
@@ -3228,7 +3231,7 @@ def get_drought_layers(
     return DroughtVectorResponse(meta=meta, data=payload)
 
 
-@app.get(
+@router.get(
     "/v1/drought/tiles/{dataset}/{index}/{timescale}/{z}/{x}/{y}.png",
     response_class=Response,
 )
@@ -3292,7 +3295,7 @@ def proxy_drought_tile(
     return Response(content=content, media_type=media_type)
 
 
-@app.get("/v1/drought/info/{dataset}/{index}/{timescale}", response_model=DroughtInfoResponse)
+@router.get("/v1/drought/info/{dataset}/{index}/{timescale}", response_model=DroughtInfoResponse)
 def get_drought_tile_metadata(
     dataset: str,
     index: str,

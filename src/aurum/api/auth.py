@@ -13,6 +13,7 @@ from dataclasses import dataclass
 from threading import Lock
 from typing import Any, Dict, Optional
 
+from aurum.core import AurumSettings
 import httpx
 from fastapi import HTTPException
 from jose import jwt
@@ -40,6 +41,15 @@ class OIDCConfig:
         if not issuer or not jwks_url:
             disabled = True
         leeway = int(os.getenv("AURUM_API_JWT_LEEWAY", "60") or 60)
+        return cls(issuer=issuer, audience=audience, jwks_url=jwks_url, disabled=disabled, leeway=leeway)
+
+    @classmethod
+    def from_settings(cls, settings: AurumSettings) -> "OIDCConfig":
+        issuer = settings.auth.oidc_issuer
+        audience = settings.auth.oidc_audience
+        jwks_url = settings.auth.oidc_jwks_url
+        disabled = settings.auth.disabled or not issuer or not jwks_url
+        leeway = settings.auth.jwt_leeway_seconds
         return cls(issuer=issuer, audience=audience, jwks_url=jwks_url, disabled=disabled, leeway=leeway)
 
 

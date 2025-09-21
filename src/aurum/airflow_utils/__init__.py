@@ -6,6 +6,7 @@ from dataclasses import dataclass
 from typing import Iterable, Sequence
 
 from .alerting import build_failure_callback, emit_alert
+from .dag_factory import DagConfig, DagSchedule, build_default_args, dag_factory
 from . import metrics
 
 
@@ -172,7 +173,11 @@ def build_preflight_callable(
 
 
 __all__ = [
+    "DagConfig",
+    "DagSchedule",
+    "build_default_args",
     "build_preflight_callable",
+    "dag_factory",
     "PreflightConfig",
     "emit_alert",
     "build_failure_callback",

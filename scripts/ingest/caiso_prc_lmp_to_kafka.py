@@ -11,6 +11,7 @@ import os
 import struct
 import time
 import zipfile
+from dataclasses import asdict, dataclass
 from datetime import datetime
 from pathlib import Path
 from typing import Iterable, Iterator
@@ -28,6 +29,31 @@ from xml.etree import ElementTree as ET
 SCHEMA_PATH = Path(__file__).resolve().parents[2] / "kafka" / "schemas" / "iso.lmp.v1.avsc"
 DLQ_SCHEMA_PATH = Path(__file__).resolve().parents[2] / "kafka" / "schemas" / "ingest.error.v1.avsc"
 DEFAULT_QUERYNAME = "PRC_LMP"
+
+
+@dataclass(frozen=True)
+class CaisoIngestConfig:
+    """Typed configuration for CAISO ingestion."""
+
+    start: str
+    end: str
+    market: str = "RTPD"
+    topic: str = "aurum.iso.caiso.lmp.v1"
+    schema_registry: str = os.environ.get("SCHEMA_REGISTRY_URL", "http://localhost:8081")
+    bootstrap_servers: str = os.environ.get("KAFKA_BOOTSTRAP_SERVERS", "localhost:9092")
+    oasis_url: str = "https://oasis.caiso.com/oasisapi/SingleZip"
+    node: str | None = None
+    resultformat: str = "6"
+    version: str = "1"
+    dlq_topic: str | None = os.environ.get("AURUM_DLQ_TOPIC")
+    dlq_subject: str = "aurum.ingest.error.v1"
+    max_retries: int = 5
+    backoff_seconds: float = 2.0
+    http_timeout: float = 60.0
+    debug: bool = False
+    output_json: str | None = None
+    no_kafka: bool = False
+
 
 
 def _require_fastavro() -> None:
@@ -338,9 +364,7 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
-def main() -> int:
-    args = parse_args()
-
+def execute(args: argparse.Namespace) -> int:
     params = {
         "queryname": DEFAULT_QUERYNAME,
         "resultformat": args.resultformat,
@@ -349,7 +373,7 @@ def main() -> int:
         "enddatetime": args.end,
         "market_run_id": args.market,
     }
-    if args.node:
+    if getattr(args, "node", None):
         params["node"] = args.node
 
     subject = f"{args.topic}-value" if not args.topic.endswith("-value") else args.topic
@@ -359,8 +383,8 @@ def main() -> int:
     schema_id: int | None = None
     dlq_schema = None
     dlq_schema_id: int | None = None
-    dlq_topic = args.dlq_topic
-    dlq_subject = args.dlq_subject or "aurum.ingest.error.v1"
+    dlq_topic = getattr(args, "dlq_topic", None)
+    dlq_subject = getattr(args, "dlq_subject", None) or "aurum.ingest.error.v1"
 
     if not args.no_kafka:
         parsed_schema, _ = load_schema(SCHEMA_PATH)
@@ -435,6 +459,18 @@ def main() -> int:
     produce_records(producer, args.topic, parsed_schema, schema_id, records)
     print(f"Published {len(records)} CAISO LMP records to {args.topic}")
     return 0
+
+
+def main() -> int:
+    args = parse_args()
+    return execute(args)
+
+
+def run_ingest(config: CaisoIngestConfig) -> int:
+    """Execute the ingestion flow using the provided configuration."""
+
+    namespace = argparse.Namespace(**asdict(config))
+    return execute(namespace)
 
 
 if __name__ == "__main__":  # pragma: no cover

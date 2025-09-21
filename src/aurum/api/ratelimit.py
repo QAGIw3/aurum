@@ -8,6 +8,8 @@ from collections import deque
 from dataclasses import dataclass, field
 from typing import Deque, Dict, Optional, Tuple, Any
 
+from aurum.core import AurumSettings
+
 from starlette.requests import Request
 from starlette.responses import JSONResponse, Response
 from starlette.types import ASGIApp, Receive, Scope, Send
@@ -43,6 +45,7 @@ class RateLimitConfig:
     rps: int = 10
     burst: int = 20
     overrides: Dict[str, Tuple[int, int]] = field(default_factory=dict)
+    identifier_header: str | None = None
 
     @classmethod
     def from_env(cls) -> "RateLimitConfig":
@@ -67,7 +70,19 @@ class RateLimitConfig:
                     overrides[path_prefix] = (override_rps, override_burst)
                 except ValueError:
                     continue
-        return cls(rps=rps, burst=burst, overrides=overrides)
+        identifier_header = os.getenv("AURUM_API_RATE_LIMIT_HEADER")
+        return cls(rps=rps, burst=burst, overrides=overrides, identifier_header=identifier_header)
+
+    @classmethod
+    def from_settings(cls, settings: AurumSettings) -> "RateLimitConfig":
+        rl = settings.api.rate_limit
+        overrides = dict(rl.overrides)
+        return cls(
+            rps=rl.requests_per_second,
+            burst=rl.burst,
+            overrides=overrides,
+            identifier_header=rl.identifier_header,
+        )
 
     def limits_for_path(self, path: str) -> Tuple[int, int]:
         match_prefix = ""
@@ -177,7 +192,10 @@ class RateLimitMiddleware:
     def _rate_key(self, request: Request, path: str) -> str:
         principal = getattr(request.state, "principal", {}) or {}
         tenant = principal.get("tenant")
-        identifier = tenant or self._client_ip(request)
+        header_identifier = None
+        if self.rl_cfg.identifier_header:
+            header_identifier = request.headers.get(self.rl_cfg.identifier_header)
+        identifier = tenant or header_identifier or self._client_ip(request)
         return f"{path}:{identifier}"
 
     async def _reject(self, scope: Scope, receive: Receive, send: Send, *, remaining: int, reset: int) -> None:
