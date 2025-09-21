@@ -23,6 +23,11 @@ EIA_SERIES_BASE_TABLE = os.getenv(
     "mart.mart_eia_series_latest",
 )
 
+try:  # pragma: no cover - optional dependency
+    from prometheus_client import Counter as _PromCounter
+except Exception:  # pragma: no cover - metrics optional
+    _PromCounter = None  # type: ignore[assignment]
+
 
 def _timescale_dsn() -> str:
     return os.getenv(
