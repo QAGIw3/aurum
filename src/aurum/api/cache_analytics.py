@@ -9,8 +9,10 @@ from fastapi import APIRouter, HTTPException, Query, Request
 
 from ..telemetry.context import get_request_id
 from .advanced_cache import get_advanced_cache_manager, get_cache_warming_service
-from .models import (
+from .cache_models import (
     CacheAnalyticsResponse,
+)
+from .models import (
     CacheStatsResponse,
     CacheWarmingStatusResponse,
     NamespaceAnalytics,

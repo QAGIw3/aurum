@@ -4,27 +4,44 @@ metadata:
   name: aurum-scenario-worker
 spec:
   template:
-    metadata:
-      annotations:
-        vault.hashicorp.com/agent-inject: "true"
-        vault.hashicorp.com/agent-run-as-init: "true"
-        vault.hashicorp.com/role: aurum-scenario-worker
-        vault.hashicorp.com/agent-inject-secret-worker-env: secret/data/aurum/dev/scenario-worker
-        vault.hashicorp.com/agent-inject-template-worker-env: |-
-          {{- with secret "secret/data/aurum/dev/scenario-worker" -}}
-          {{- range $k, $v := .Data.data }}
-          {{ $k }}={{ $v }}
-          {{- end }}
-          {{- end }}
     spec:
       containers:
         - name: worker
+          env:
+            - name: AURUM_API_AUTH_DISABLED
+              value: "1"
+            - name: AURUM_API_RATE_LIMIT_ENABLED
+              value: "0"
+            - name: AURUM_TELEMETRY_SERVICE_NAME
+              value: "aurum-scenario-worker-dev"
+            - name: POSTGRES_HOST
+              value: "postgres"
+            - name: POSTGRES_PORT
+              value: "5432"
+            - name: POSTGRES_DB
+              value: "aurum"
+            - name: POSTGRES_USER
+              value: "aurum"
+            - name: POSTGRES_PASSWORD
+              value: "aurum123"
+            - name: TRINO_HOST
+              value: "trino"
+            - name: TRINO_PORT
+              value: "8080"
+            - name: TRINO_USER
+              value: "aurum"
+            - name: REDIS_HOST
+              value: "redis"
+            - name: REDIS_PORT
+              value: "6379"
+            - name: REDIS_PASSWORD
+              value: "aurum123"
+            - name: KAFKA_BOOTSTRAP_SERVERS
+              value: "kafka:9092"
+            - name: KAFKA_SCHEMA_REGISTRY_URL
+              value: "http://schema-registry:8081"
           command:
-            - /bin/sh
+            - python
           args:
-            - -c
-            - |
-              set -a
-              . /vault/secrets/worker-env
-              set +a
-              exec python -m aurum.scenarios.worker
+            - -m
+            - aurum.scenarios.worker

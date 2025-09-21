@@ -1,0 +1,197 @@
+#
+# SeaTunnel template for ingesting canary dataset results into Kafka
+#
+# This template is used to ingest canary monitoring results from various
+# data sources to detect upstream API breaks and data quality issues.
+#
+
+env {
+  parallelism = 1
+  job.mode = "STREAM"
+  checkpoint.interval = 300000  # 5 minutes
+  checkpoint.timeout = 60000    # 1 minute
+  checkpoint.max-concurrent = 1
+}
+
+source {
+  Http {
+    url = "${CANARY_API_ENDPOINT}"
+    method = "GET"
+    params {
+      api_key = "${CANARY_API_KEY:-demo_key}"
+      dataset = "${CANARY_DATASET}"
+      start_date = "${CANARY_START_DATE}"
+      end_date = "${CANARY_END_DATE}"
+      limit = "${CANARY_LIMIT:-1}"
+      ${CANARY_API_PARAMS}
+    }
+
+    # Health check configuration
+    connection_timeout_ms = ${CANARY_TIMEOUT_MS:-30000}
+    retry = ${CANARY_MAX_RETRIES:-3}
+    retry_backoff_multiplier_ms = 2000
+    retry_backoff_max_ms = 60000
+    format = "${CANARY_RESPONSE_FORMAT:-json}"
+    rate_limit_sleep_ms = 100
+
+    # Schema for canary API response validation
+    schema = {
+      fields {
+        status = string
+        message = string
+        timestamp = string
+        data = {
+          type = "array"
+          elementType = {
+            fields {
+              id = string
+              value = string
+              timestamp = string
+              ${CANARY_SCHEMA_FIELDS}
+            }
+          }
+        }
+        metadata = {
+          fields {
+            source = string
+            dataset = string
+            api_version = string
+            response_time_ms = double
+          }
+        }
+      }
+    }
+
+    # Result table name
+    result_table_name = "canary_source"
+  }
+}
+
+transform {
+  # Add canary metadata
+  Sql {
+    sql = """
+      SELECT
+        *,
+        '${CANARY_NAME}' as canary_name,
+        '${CANARY_SOURCE}' as source,
+        '${CANARY_DATASET}' as dataset,
+        NOW() as ingested_at,
+        '${CANARY_RUN_ID}' as run_id
+      FROM canary_source
+    """
+    result_table_name = "canary_with_metadata"
+  }
+
+  # Validate canary data
+  Sql {
+    sql = """
+      SELECT
+        *,
+        CASE
+          WHEN status = 'success' AND data IS NOT NULL THEN 'healthy'
+          WHEN status = 'error' OR data IS NULL THEN 'unhealthy'
+          ELSE 'degraded'
+        END as health_status,
+        CASE
+          WHEN status = 'success' AND data IS NOT NULL THEN 1.0
+          WHEN status = 'error' THEN 0.0
+          ELSE 0.5
+        END as quality_score
+      FROM canary_with_metadata
+    """
+    result_table_name = "canary_validated"
+  }
+
+  # Flatten nested data if needed
+  Sql {
+    sql = """
+      SELECT
+        canary_name,
+        source,
+        dataset,
+        health_status,
+        quality_score,
+        status,
+        message,
+        timestamp,
+        ingested_at,
+        run_id,
+        metadata,
+        CASE
+          WHEN data IS NOT NULL THEN
+            TRANSFORM(data, x -> CONCAT(
+              COALESCE(x.id, ''),
+              '|',
+              COALESCE(x.value, ''),
+              '|',
+              COALESCE(x.timestamp, '')
+            ))
+          ELSE ARRAY[]
+        END as flattened_data
+      FROM canary_validated
+    """
+    result_table_name = "canary_flattened"
+  }
+}
+
+sink {
+  Kafka {
+    bootstrap.servers = "${AURUM_KAFKA_BOOTSTRAP_SERVERS}"
+    topic = "${CANARY_TOPIC}"
+
+    # Producer configuration for reliability
+    producer {
+      acks = "all"
+      enable.idempotence = true
+      max.in.flight.requests.per.connection = 5
+      linger.ms = 500
+      batch.size = 32768
+      retries = 10
+      retry.backoff.ms = 100
+      retry.backoff.max.ms = 10000
+      delivery.timeout.ms = 120000
+      request.timeout.ms = 30000
+    }
+
+    # Avro schema for canary results
+    avro {
+      use.schema.registry = true
+      schema.registry.url = "${AURUM_SCHEMA_REGISTRY_URL}"
+      value.schema.subject = "${CANARY_SCHEMA_SUBJECT}"
+      value.schema = """${CANARY_SCHEMA}"""
+
+      # Key configuration for partitioning
+      key.serializer = "${CANARY_KEY_SERIALIZER:-string}"
+      key.format = "${CANARY_KEY_FORMAT:-json}"
+    }
+
+    # Error handling
+    semantic = "AT_LEAST_ONCE"
+    result_table_name = "canary_flattened"
+  }
+}
+
+# Dead letter queue for failed canary results
+sink {
+  Kafka {
+    bootstrap.servers = "${AURUM_KAFKA_BOOTSTRAP_SERVERS}"
+    topic = "${CANARY_DLQ_TOPIC}"
+
+    producer {
+      acks = "all"
+      retries = 5
+      batch.size = 16384
+    }
+
+    avro {
+      use.schema.registry = true
+      schema.registry.url = "${AURUM_SCHEMA_REGISTRY_URL}"
+      value.schema.subject = "${CANARY_DLQ_SCHEMA_SUBJECT}"
+      value.schema = """${CANARY_DLQ_SCHEMA}"""
+    }
+
+    # Only send failed records to DLQ
+    result_table_name = "canary_flattened"
+  }
+}

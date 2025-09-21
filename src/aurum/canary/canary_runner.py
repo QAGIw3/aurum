@@ -12,6 +12,27 @@ from .canary_manager import CanaryManager, CanaryDataset, CanaryStatus
 from .api_health_checker import APIHealthChecker, APIHealthResult, APIHealthStatus
 from ..logging import StructuredLogger, LogLevel, create_logger
 
+# Optional Prometheus metrics (best-effort)
+try:  # pragma: no cover
+    from prometheus_client import Counter as _PromCounter, Histogram as _PromHistogram
+except Exception:  # pragma: no cover
+    _PromCounter = None  # type: ignore
+    _PromHistogram = None  # type: ignore
+
+CANARY_RUNS_TOTAL = (
+    _PromCounter("aurum_canary_runs_total", "Total canary runs", ["canary", "status"]) if _PromCounter else None
+)
+CANARY_DURATION_SECONDS = (
+    _PromHistogram(
+        "aurum_canary_duration_seconds",
+        "Canary execution duration (seconds)",
+        labelnames=["canary"],
+        buckets=(0.05, 0.1, 0.25, 0.5, 1, 2, 5, 10, 30, 60),
+    )
+    if _PromHistogram
+    else None
+)
+
 
 @dataclass
 class CanaryResult:
@@ -166,6 +187,15 @@ class CanaryRunner:
                 warnings
             )
 
+            # Emit metrics (best-effort)
+            try:
+                if CANARY_DURATION_SECONDS:
+                    CANARY_DURATION_SECONDS.labels(canary=canary_name).observe(execution_time)
+                if CANARY_RUNS_TOTAL:
+                    CANARY_RUNS_TOTAL.labels(canary=canary_name, status=status.value).inc()
+            except Exception:
+                pass
+
             self.logger.log(
                 LogLevel.INFO,
                 f"Completed canary execution: {canary_name} ({status.value})",
@@ -181,6 +211,15 @@ class CanaryRunner:
 
         except Exception as e:
             execution_time = time.time() - start_time
+
+            # Emit failure metrics
+            try:
+                if CANARY_DURATION_SECONDS:
+                    CANARY_DURATION_SECONDS.labels(canary=canary_name).observe(execution_time)
+                if CANARY_RUNS_TOTAL:
+                    CANARY_RUNS_TOTAL.labels(canary=canary_name, status=CanaryStatus.ERROR.value).inc()
+            except Exception:
+                pass
 
             self.logger.log(
                 LogLevel.ERROR,

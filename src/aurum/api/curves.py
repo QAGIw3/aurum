@@ -18,6 +18,7 @@ from .service import (
     fetch_curve_strips_data,
     invalidate_curve_cache,
 )
+from .guardrails import enforce_basic_query_guardrails
 
 router = APIRouter()
 
@@ -61,6 +62,15 @@ async def get_curves(
     pagination = OffsetLimit(limit=limit, offset=offset)
 
     try:
+        # Guardrails: require at least one filter unless explicitly overridden
+        enforce_basic_query_guardrails({
+            "asof": asof,
+            "iso": iso,
+            "market": market,
+            "location": location,
+            "product": product,
+            "block": block,
+        })
         # Start tracing for this API request
         from ..observability.tracing import trace_api_request
         async with trace_api_request("/v1/curves", "GET") as span:
@@ -169,6 +179,13 @@ async def get_curve_diff(
     pagination = OffsetLimit(limit=limit, offset=offset)
 
     try:
+        enforce_basic_query_guardrails({
+            "iso": iso,
+            "market": market,
+            "location": location,
+            "product": product,
+            "block": block,
+        })
         points, meta = await fetch_curve_diff_data(
             asof_a=asof_a,
             asof_b=asof_b,

@@ -1,0 +1,52 @@
+{
+  "type": "record",
+  "name": "EiaSeriesRecord",
+  "namespace": "aurum.eia",
+  "doc": "EIA time series data record",
+  "fields": [
+    {
+      "name": "series_id",
+      "type": "string",
+      "doc": "Unique identifier for the time series"
+    },
+    {
+      "name": "period",
+      "type": "string",
+      "doc": "Time period for the data point"
+    },
+    {
+      "name": "value",
+      "type": ["null", "double"],
+      "default": null,
+      "doc": "Data value (null if missing)"
+    },
+    {
+      "name": "units",
+      "type": ["null", "string"],
+      "default": null,
+      "doc": "Units of measurement"
+    },
+    {
+      "name": "area",
+      "type": ["null", "string"],
+      "default": null,
+      "doc": "Geographic area"
+    },
+    {
+      "name": "sector",
+      "type": ["null", "string"],
+      "default": null,
+      "doc": "Economic sector"
+    },
+    {
+      "name": "source",
+      "type": "string",
+      "doc": "Data source (e.g., 'EIA')"
+    },
+    {
+      "name": "ingested_at",
+      "type": "string",
+      "doc": "Timestamp when data was ingested"
+    }
+  ]
+}

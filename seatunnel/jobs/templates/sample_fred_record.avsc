@@ -1,0 +1,58 @@
+{
+  "type": "record",
+  "name": "FredSeriesRecord",
+  "namespace": "aurum.fred",
+  "doc": "FRED economic data series record",
+  "fields": [
+    {
+      "name": "series_id",
+      "type": "string",
+      "doc": "FRED series identifier"
+    },
+    {
+      "name": "date",
+      "type": "string",
+      "doc": "Observation date"
+    },
+    {
+      "name": "value",
+      "type": ["null", "double"],
+      "default": null,
+      "doc": "Series value"
+    },
+    {
+      "name": "units",
+      "type": ["null", "string"],
+      "default": null,
+      "doc": "Units of measurement"
+    },
+    {
+      "name": "seasonal_adjustment",
+      "type": ["null", "string"],
+      "default": null,
+      "doc": "Seasonal adjustment method"
+    },
+    {
+      "name": "frequency",
+      "type": ["null", "string"],
+      "default": null,
+      "doc": "Data frequency"
+    },
+    {
+      "name": "title",
+      "type": ["null", "string"],
+      "default": null,
+      "doc": "Series title"
+    },
+    {
+      "name": "source",
+      "type": "string",
+      "doc": "Data source (e.g., 'FRED')"
+    },
+    {
+      "name": "ingested_at",
+      "type": "string",
+      "doc": "Timestamp when data was ingested"
+    }
+  ]
+}

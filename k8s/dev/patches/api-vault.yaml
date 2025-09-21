@@ -4,27 +4,45 @@ metadata:
   name: aurum-api
 spec:
   template:
-    metadata:
-      annotations:
-        vault.hashicorp.com/agent-inject: "true"
-        vault.hashicorp.com/agent-run-as-init: "true"
-        vault.hashicorp.com/role: aurum-api
-        vault.hashicorp.com/agent-inject-secret-api-env: secret/data/aurum/dev/api
-        vault.hashicorp.com/agent-inject-template-api-env: |-
-          {{- with secret "secret/data/aurum/dev/api" -}}
-          {{- range $k, $v := .Data.data }}
-          {{ $k }}={{ $v }}
-          {{- end }}
-          {{- end }}
     spec:
       containers:
         - name: api
+          env:
+            - name: AURUM_API_AUTH_DISABLED
+              value: "1"
+            - name: AURUM_API_RATE_LIMIT_ENABLED
+              value: "0"
+            - name: AURUM_TELEMETRY_SERVICE_NAME
+              value: "aurum-api-dev"
+            - name: AURUM_API_GZIP_MIN_BYTES
+              value: "1000"
+            - name: POSTGRES_HOST
+              value: "postgres"
+            - name: POSTGRES_PORT
+              value: "5432"
+            - name: POSTGRES_DB
+              value: "aurum"
+            - name: POSTGRES_USER
+              value: "aurum"
+            - name: POSTGRES_PASSWORD
+              value: "aurum123"
+            - name: TRINO_HOST
+              value: "trino"
+            - name: TRINO_PORT
+              value: "8080"
+            - name: TRINO_USER
+              value: "aurum"
+            - name: REDIS_HOST
+              value: "redis"
+            - name: REDIS_PORT
+              value: "6379"
+            - name: REDIS_PASSWORD
+              value: "aurum123"
           command:
-            - /bin/sh
+            - uvicorn
           args:
-            - -c
-            - |
-              set -a
-              . /vault/secrets/api-env
-              set +a
-              exec uvicorn aurum.api.app:app --host 0.0.0.0 --port 8080
+            - aurum.api.app:app
+            - --host
+            - "0.0.0.0"
+            - --port
+            - "8080"

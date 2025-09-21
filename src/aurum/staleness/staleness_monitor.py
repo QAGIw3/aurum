@@ -194,7 +194,7 @@ class StalenessMonitor:
         self.logger.log(
             LogLevel.INFO,
             f"Staleness check for {dataset}: {staleness_info.staleness_level.value} "
-            f"({staleness_info.hours_since_update".2f"}h old)",
+            f"({staleness_info.hours_since_update:.2f}h old)",
             "staleness_check",
             dataset=dataset,
             staleness_level=staleness_info.staleness_level.value,

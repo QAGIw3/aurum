@@ -1,0 +1,64 @@
+{
+  "type": "record",
+  "name": "NoaaWeatherRecord",
+  "namespace": "aurum.noaa",
+  "doc": "NOAA weather station data record",
+  "fields": [
+    {
+      "name": "station_id",
+      "type": "string",
+      "doc": "Weather station identifier"
+    },
+    {
+      "name": "date",
+      "type": "string",
+      "doc": "Observation date"
+    },
+    {
+      "name": "temperature_max",
+      "type": ["null", "double"],
+      "default": null,
+      "doc": "Maximum temperature (Celsius)"
+    },
+    {
+      "name": "temperature_min",
+      "type": ["null", "double"],
+      "default": null,
+      "doc": "Minimum temperature (Celsius)"
+    },
+    {
+      "name": "precipitation",
+      "type": ["null", "double"],
+      "default": null,
+      "doc": "Precipitation amount (mm)"
+    },
+    {
+      "name": "snowfall",
+      "type": ["null", "double"],
+      "default": null,
+      "doc": "Snowfall amount (mm)"
+    },
+    {
+      "name": "wind_speed",
+      "type": ["null", "double"],
+      "default": null,
+      "doc": "Average wind speed (m/s)"
+    },
+    {
+      "name": "data_quality",
+      "type": ["null", "string"],
+      "default": null,
+      "doc": "Data quality flag"
+    },
+    {
+      "name": "source",
+      "type": "string",
+      "doc": "Data source (e.g., 'NOAA')"
+    },
+    {
+      "name": "ingested_at",
+      "type": "string",
+      "doc": "Timestamp when data was ingested"
+    }
+  ]
+}

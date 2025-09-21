@@ -203,3 +203,11 @@ docs-serve: ## Serve documentation locally
 docs-build: ## Build documentation
 	@echo "Building documentation..."
 	# Add documentation build commands here
+
+# Canary & Chaos
+canary-api: ## Run basic API canary against local Compose or cluster
+	python scripts/canary/run_api_canary.py --base $${AURUM_API_BASE:-http://localhost:8095}
+
+chaos-worker: ## Simulate worker cancellation/retry scenarios (placeholder)
+	@echo "Injecting test scenarios to exercise cancellation/retry..."
+	@echo "(Implement producer that sends fast-cancel + failing payloads and checks metrics)"
