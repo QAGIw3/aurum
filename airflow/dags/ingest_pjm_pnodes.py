@@ -10,7 +10,7 @@ from airflow.operators.bash import BashOperator
 from airflow.operators.empty import EmptyOperator
 from airflow.operators.python import PythonOperator
 
-from aurum.airflow_utils import build_failure_callback, build_preflight_callable
+from aurum.airflow_utils import build_failure_callback, build_preflight_callable, metrics
 
 
 DEFAULT_ARGS: dict[str, Any] = {
@@ -61,6 +61,7 @@ def _update_watermark(source_name: str, logical_date: datetime) -> None:
         from aurum.db import update_ingest_watermark  # type: ignore
 
         update_ingest_watermark(source_name, "logical_date", logical_date)
+        metrics.record_watermark_success(source_name, logical_date)
     except Exception as exc:  # pragma: no cover
         print(f"Failed to update watermark for {source_name}: {exc}")
 

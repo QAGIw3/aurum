@@ -10,7 +10,7 @@ from airflow.operators.bash import BashOperator
 from airflow.operators.empty import EmptyOperator
 from airflow.operators.python import PythonOperator
 
-from aurum.airflow_utils import build_failure_callback, build_preflight_callable
+from aurum.airflow_utils import build_failure_callback, build_preflight_callable, metrics
 
 
 
@@ -62,6 +62,7 @@ def _update_watermark(source_name: str, logical_date: datetime) -> None:
         from aurum.db import update_ingest_watermark  # type: ignore
 
         update_ingest_watermark(source_name, "logical_date", watermark)
+        metrics.record_watermark_success(source_name, watermark)
     except Exception as exc:  # pragma: no cover
         print(f"Failed to update watermark for {source_name}: {exc}")
 
@@ -92,6 +93,7 @@ def build_seatunnel_task() -> BashOperator:
             "cd /opt/airflow\n"
             f"{pull_cmd}"
             "if [ \"${AURUM_DEBUG:-0}\" != \"0\" ]; then scripts/seatunnel/run_job.sh --describe aeso_lmp_to_kafka; fi\n"
+            "if [ \"${AURUM_DEBUG:-0}\" != \"0\" ]; then env | grep -E 'DLQ_TOPIC|DLQ_SUBJECT' || true; fi\n"
             f"export PATH=\"{BIN_PATH}\"\n"
             f"export PYTHONPATH=\"${{PYTHONPATH:-}}:{PYTHONPATH_ENTRY}\"\n"
             "export ISO_LMP_SCHEMA_PATH=/opt/airflow/scripts/kafka/schemas/iso.lmp.v1.avsc\n"

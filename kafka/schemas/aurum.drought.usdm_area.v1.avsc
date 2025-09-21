@@ -1,0 +1,28 @@
+{
+  "type": "record",
+  "name": "UsdmArea",
+  "namespace": "aurum.drought",
+  "doc": "Weekly U.S. Drought Monitor area fractions by severity and geography.",
+  "fields": [
+    {"name": "tenant_id", "type": "string", "doc": "Logical tenant identifier."},
+    {"name": "schema_version", "type": "string", "doc": "Semantic version of the payload contract."},
+    {"name": "ingest_ts", "type": {"type": "long", "logicalType": "timestamp-micros"}, "doc": "Ingestion completion timestamp."},
+    {"name": "ingest_job_id", "type": "string", "doc": "Unique identifier for the Airflow/SeaTunnel job execution."},
+    {"name": "region_type", "type": "string", "doc": "Geography classification (ISO_NODE, ISO_ZONE, STATE, COUNTY, HUC2, HUC8)."},
+    {"name": "region_id", "type": "string", "doc": "Identifier within the region type."},
+    {"name": "valid_date", "type": {"type": "int", "logicalType": "date"}, "doc": "Week ending date for the USDM map."},
+    {"name": "as_of", "type": {"type": "long", "logicalType": "timestamp-micros"}, "doc": "Publish timestamp of the weekly release."},
+    {"name": "d0_frac", "type": ["null", "double"], "default": null, "doc": "Fraction of area in D0 (abnormally dry)."},
+    {"name": "d1_frac", "type": ["null", "double"], "default": null, "doc": "Fraction of area in D1 (moderate drought)."},
+    {"name": "d2_frac", "type": ["null", "double"], "default": null, "doc": "Fraction of area in D2 (severe drought)."},
+    {"name": "d3_frac", "type": ["null", "double"], "default": null, "doc": "Fraction of area in D3 (extreme drought)."},
+    {"name": "d4_frac", "type": ["null", "double"], "default": null, "doc": "Fraction of area in D4 (exceptional drought)."},
+    {"name": "source_url", "type": "string", "doc": "URL of the JSON/GeoJSON file used for aggregation."},
+    {
+      "name": "metadata",
+      "type": ["null", {"type": "map", "values": "string"}],
+      "default": null,
+      "doc": "Additional provenance metadata (map_id, checksum, etc.)."
+    }
+  ]
+}

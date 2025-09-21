@@ -1,9 +1,22 @@
 FROM python:3.11-slim
 
 ENV PYTHONUNBUFFERED=1 \
-    PYTHONPATH=/app/src
+    PYTHONPATH=/app/src \
+    GDAL_DATA=/usr/share/gdal \
+    PROJ_LIB=/usr/share/proj
 
 WORKDIR /app
+
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends \
+        gdal-bin \
+        libgdal-dev \
+        proj-bin \
+        libproj-dev \
+        libspatialindex-dev \
+        build-essential \
+        curl \
+    && rm -rf /var/lib/apt/lists/*
 
 COPY pyproject.toml README.md /app/
 COPY src /app/src

@@ -1,0 +1,68 @@
+# Generic Drought.gov vector feed → Kafka metadata envelope
+#
+# Required environment variables:
+#   DROUGHT_VECTOR_URL       - Fully qualified HTTP/HTTPS endpoint returning GeoJSON/JSON
+#   DROUGHT_VECTOR_LAYER     - Logical layer key (e.g. QPF, AHPS, AQI)
+#   KAFKA_BOOTSTRAP_SERVERS  - Kafka brokers
+#   DROUGHT_VECTOR_TOPIC     - Kafka topic for metadata envelopes (e.g. aurum.drought.vector_event.raw)
+#
+# Optional environment variables:
+#   DROUGHT_VECTOR_TIMEOUT   - HTTP timeout in milliseconds (default 30000)
+#   DROUGHT_VECTOR_HEADERS   - Additional headers as rendered HOCON map
+
+env {
+  job.mode = "BATCH"
+  parallelism = 1
+}
+
+source {
+  Http {
+    url = "${DROUGHT_VECTOR_URL}"
+    method = "GET"
+    connection_timeout_ms = 30000
+    retry = 3
+    format = "json"
+    jsonpath = "$$.features[*]"
+    schema = {
+      fields {
+        type = string
+        geometry = map
+        properties = map
+      }
+    }
+    result_table_name = "vector_source"
+  }
+}
+
+transform {
+  Sql {
+    source_table_name = "vector_source"
+    result_table_name = "vector_envelope"
+    query = """
+      SELECT
+        '${DROUGHT_VECTOR_LAYER}'            AS layer,
+        CAST(properties AS MAP<STRING, STRING>) AS properties,
+        CAST(geometry AS MAP<STRING, STRING>)   AS geometry,
+        CAST(type AS STRING)                  AS feature_type,
+        CAST('${DROUGHT_VECTOR_URL}' AS STRING) AS source_url,
+        CAST(UNIX_TIMESTAMP() * 1000000 AS BIGINT) AS fetched_ts
+      FROM vector_source
+    """
+  }
+}
+
+sink {
+  Kafka {
+    plugin_input = "vector_envelope"
+    bootstrap.servers = "${KAFKA_BOOTSTRAP_SERVERS}"
+    topic = "${DROUGHT_VECTOR_TOPIC}"
+    semantic = "AT_LEAST_ONCE"
+    format = "json"
+    producer {
+      acks = "all"
+      linger.ms = 200
+      enable.idempotence = true
+    }
+  }
+}
+

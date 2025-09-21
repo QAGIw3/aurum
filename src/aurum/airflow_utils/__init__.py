@@ -6,6 +6,7 @@ from dataclasses import dataclass
 from typing import Iterable, Sequence
 
 from .alerting import build_failure_callback, emit_alert
+from . import metrics
 
 
 @dataclass(frozen=True)
@@ -175,4 +176,5 @@ __all__ = [
     "PreflightConfig",
     "emit_alert",
     "build_failure_callback",
+    "metrics",
 ]

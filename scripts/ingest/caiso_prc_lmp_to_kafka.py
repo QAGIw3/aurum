@@ -15,6 +15,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Iterable, Iterator
 
+from aurum.airflow_utils import metrics
 from aurum.compat import requests
 
 try:  # pragma: no cover - optional dependency
@@ -275,6 +276,7 @@ def publish_error(
     if producer is None or not topic or schema is None or schema_id is None:
         return
     _require_fastavro()
+    metrics.increment("ingest.dlq_events", tags={"source": source})
     record = {
         "source": source,
         "error_message": error_message,

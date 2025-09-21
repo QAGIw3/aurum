@@ -4,6 +4,7 @@ from __future__ import annotations
 from typing import Iterable, Sequence
 
 from .alerting import build_failure_callback, emit_alert
+from . import metrics
 
 
 def build_preflight_callable(
@@ -36,4 +37,4 @@ def build_preflight_callable(
     return _preflight_stub
 
 
-__all__ = ["build_preflight_callable", "emit_alert", "build_failure_callback"]
+__all__ = ["build_preflight_callable", "emit_alert", "build_failure_callback", "metrics"]

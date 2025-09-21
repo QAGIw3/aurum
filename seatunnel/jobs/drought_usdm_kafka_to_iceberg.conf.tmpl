@@ -1,0 +1,71 @@
+# USDM drought area topic → Iceberg (environment.usdm_area)
+#
+# Required environment variables:
+#   KAFKA_BOOTSTRAP_SERVERS  - Kafka brokers
+#   SCHEMA_REGISTRY_URL      - Schema Registry endpoint
+#   ICEBERG_CATALOG_NAME     - Iceberg catalog name (e.g. nessie)
+#   ICEBERG_CATALOG_TYPE     - Catalog type (nessie, hive, rest)
+#   ICEBERG_URI              - Catalog endpoint / Hive metastore URI
+#   ICEBERG_WAREHOUSE        - Warehouse path
+#
+
+env {
+  job.mode = "STREAMING"
+  checkpoint.interval = 60000
+}
+
+source {
+  Kafka {
+    bootstrap.servers = "${KAFKA_BOOTSTRAP_SERVERS}"
+    topic = "aurum.drought.usdm_area.v1"
+    format = "avro"
+    start_mode = "latest"
+    avro {
+      schema.registry.url = "${SCHEMA_REGISTRY_URL}"
+    }
+    result_table_name = "usdm_raw"
+  }
+}
+
+transform {
+  Sql {
+    source_table_name = "usdm_raw"
+    result_table_name = "usdm_enriched"
+    query = """
+      SELECT
+        tenant_id,
+        schema_version,
+        TO_TIMESTAMP(ingest_ts / 1000000.0) AS ingest_ts,
+        ingest_job_id,
+        region_type,
+        region_id,
+        (DATE '1970-01-01' + valid_date * INTERVAL '1' DAY) AS valid_date,
+        CASE WHEN as_of IS NOT NULL THEN TO_TIMESTAMP(as_of / 1000000.0) ELSE NULL END AS as_of,
+        d0_frac,
+        d1_frac,
+        d2_frac,
+        d3_frac,
+        d4_frac,
+        source_url,
+        CAST(metadata AS STRING) AS metadata
+      FROM usdm_raw
+    """
+  }
+}
+
+sink {
+  Iceberg {
+    plugin_input = "usdm_enriched"
+    catalog_name = "${ICEBERG_CATALOG_NAME}"
+    catalog_type = "${ICEBERG_CATALOG_TYPE}"
+    uri = "${ICEBERG_URI}"
+    warehouse = "${ICEBERG_WAREHOUSE}"
+    database = "environment"
+    table = "usdm_area"
+    write.distribution-mode = "hash"
+    format = "parquet"
+    primary_keys = ["region_type", "region_id", "valid_date"]
+    upsert = true
+  }
+}
+

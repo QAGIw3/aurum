@@ -10,7 +10,7 @@ from airflow.operators.bash import BashOperator
 from airflow.operators.empty import EmptyOperator
 from airflow.operators.python import PythonOperator
 
-from aurum.airflow_utils import build_failure_callback, build_preflight_callable
+from aurum.airflow_utils import build_failure_callback, build_preflight_callable, metrics
 
 
 
@@ -132,6 +132,7 @@ with DAG(
             from aurum.db import update_ingest_watermark  # type: ignore
 
             update_ingest_watermark("iso_lmp_timescale", "logical_date", watermark)
+            metrics.record_watermark_success("iso_lmp_timescale", watermark)
         except Exception as exc:  # pragma: no cover
             print(f"Failed to update iso_lmp_timescale watermark: {exc}")
 

@@ -76,8 +76,14 @@ worker = [
   "opentelemetry-api==1.26.0",
   "opentelemetry-sdk==1.26.0",
   "opentelemetry-exporter-otlp-proto-grpc==1.26.0",
-  "opentelemetry-instrumentation-logging==0.47b0"
+  "opentelemetry-instrumentation-logging==0.47b0",
+  "rasterio>=1.3",
+  "geopandas>=0.14",
+  "xarray>=2024.1",
+  "shapely>=2.0",
+  "pyproj>=3.6"
 ]
+
 
 [project.urls]
 "Documentation" = "https://github.com/aurum/dev-docs"
@@ -86,6 +92,7 @@ worker = [
 [project.scripts]
 aurum-unknown-units = "aurum.parsers.unknown_units_cli:main"
 aurum-scenario = "aurum.cli.scenario:main"
+aurum-drought-worker = "aurum.drought.worker:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]

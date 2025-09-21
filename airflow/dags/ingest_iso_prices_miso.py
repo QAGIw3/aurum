@@ -65,6 +65,7 @@ def build_miso_task(
             "if [ \"${AURUM_DEBUG:-0}\" != \"0\" ]; then set -x; fi",
             "cd /opt/airflow",
             "if [ \"${AURUM_DEBUG:-0}\" != \"0\" ]; then scripts/seatunnel/run_job.sh --describe miso_lmp_to_kafka; fi",
+            "if [ \"${AURUM_DEBUG:-0}\" != \"0\" ]; then env | grep -E 'DLQ_TOPIC|DLQ_SUBJECT' || true; fi",
             f"export PATH=\"{BIN_PATH}\"",
             f"export PYTHONPATH=\"${{PYTHONPATH:-}}:{PYTHONPATH_ENTRY}\"",
             env_exports,

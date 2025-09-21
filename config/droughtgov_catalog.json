@@ -1,0 +1,310 @@
+{
+  "generated_at": "2025-02-14T00:00:00Z",
+  "notes": "Catalog for drought.gov raster and vector feeds used by Aurum ingestion pipelines.",
+  "raster_indices": [
+    {
+      "dataset": "nclimgrid",
+      "provider": "NOAA nClimGrid",
+      "description": "Daily SPI/SPEI/EDDI rasters derived from nClimGrid precip and temperature anomalies.",
+      "indices": ["SPI", "SPEI", "EDDI"],
+      "timescales": ["1M", "2M", "3M", "6M", "9M", "12M"],
+      "formats": ["GeoTIFF"],
+      "discovery": {
+        "table_url": "https://droughtmonitor.unl.edu/Datasets/Download/ClimateEngine/NCG/metadata.json",
+        "index": "timescale",
+        "valid_date_field": "endDate"
+      },
+      "assets": {
+        "geotiff_template": "https://climateengine.storage.googleapis.com/nclimgrid/{index}/{timescale}/{valid_date}/nclimgrid_{index}_{timescale}_{valid_date}.tif",
+        "info_template": "https://climateengine.storage.googleapis.com/nclimgrid/{index}/{timescale}/{valid_date}/info.json",
+        "xyz_template": "https://climateengine.storage.googleapis.com/nclimgrid/{index}/{timescale}/{valid_date}/{z}/{x}/{y}.png",
+        "legend_template": "https://climateengine.storage.googleapis.com/nclimgrid/{index}/{timescale}/{valid_date}/legend.png",
+        "zoom_levels": [1, 2, 3, 4, 5]
+      },
+      "latency_days": {
+        "min": 3,
+        "max": 6
+      },
+      "source_url": "https://www.drought.gov/data-maps-tools/drought-indices",
+      "license": "Public domain",
+      "update_frequency": "daily",
+      "notes": "Use info.json to derive valid_date and tile timestamps."
+    },
+    {
+      "dataset": "acis",
+      "provider": "ACIS",
+      "description": "Daily SPI/SPEI rasters derived from ACIS point networks.",
+      "indices": ["SPI", "SPEI"],
+      "timescales": ["1M", "3M", "6M", "9M", "12M", "24M"],
+      "formats": ["GeoTIFF"],
+      "discovery": {
+        "table_url": "https://climateengine.storage.googleapis.com/acis/index_catalog.json",
+        "index": "timescale",
+        "valid_date_field": "validDate"
+      },
+      "assets": {
+        "geotiff_template": "https://climateengine.storage.googleapis.com/acis/{index}/{timescale}/{valid_date}/acis_{index}_{timescale}_{valid_date}.tif",
+        "info_template": "https://climateengine.storage.googleapis.com/acis/{index}/{timescale}/{valid_date}/info.json",
+        "xyz_template": "https://climateengine.storage.googleapis.com/acis/{index}/{timescale}/{valid_date}/{z}/{x}/{y}.png",
+        "legend_template": "https://climateengine.storage.googleapis.com/acis/{index}/{timescale}/{valid_date}/legend.png",
+        "zoom_levels": [1, 2, 3, 4, 5]
+      },
+      "latency_days": {
+        "min": 2,
+        "max": 4
+      },
+      "source_url": "https://www.drought.gov/data-maps-tools/drought-indices",
+      "license": "Public domain",
+      "update_frequency": "daily"
+    },
+    {
+      "dataset": "cpc",
+      "provider": "NOAA CPC",
+      "description": "Global CPC-generated SPI rasters.",
+      "indices": ["SPI", "SPEI"],
+      "timescales": ["1M", "3M", "6M", "9M", "12M"],
+      "formats": ["GeoTIFF"],
+      "discovery": {
+        "table_url": "https://climateengine.storage.googleapis.com/cpc/index_catalog.json",
+        "index": "timescale",
+        "valid_date_field": "validDate"
+      },
+      "assets": {
+        "geotiff_template": "https://climateengine.storage.googleapis.com/cpc/{index}/{timescale}/{valid_date}/cpc_{index}_{timescale}_{valid_date}.tif",
+        "info_template": "https://climateengine.storage.googleapis.com/cpc/{index}/{timescale}/{valid_date}/info.json",
+        "xyz_template": "https://climateengine.storage.googleapis.com/cpc/{index}/{timescale}/{valid_date}/{z}/{x}/{y}.png",
+        "legend_template": "https://climateengine.storage.googleapis.com/cpc/{index}/{timescale}/{valid_date}/legend.png",
+        "zoom_levels": [1, 2, 3, 4, 5]
+      },
+      "latency_days": {
+        "min": 2,
+        "max": 5
+      },
+      "source_url": "https://www.drought.gov/data-maps-tools/drought-indices",
+      "license": "Public domain",
+      "update_frequency": "daily"
+    },
+    {
+      "dataset": "prism",
+      "provider": "PRISM",
+      "description": "PRISM derived SPI and SPEI rasters with conterminous U.S. coverage.",
+      "indices": ["SPI", "SPEI"],
+      "timescales": ["1M", "3M", "6M", "9M", "12M", "24M"],
+      "formats": ["GeoTIFF"],
+      "discovery": {
+        "table_url": "https://climateengine.storage.googleapis.com/prism/index_catalog.json",
+        "index": "timescale",
+        "valid_date_field": "validDate"
+      },
+      "assets": {
+        "geotiff_template": "https://climateengine.storage.googleapis.com/prism/{index}/{timescale}/{valid_date}/prism_{index}_{timescale}_{valid_date}.tif",
+        "info_template": "https://climateengine.storage.googleapis.com/prism/{index}/{timescale}/{valid_date}/info.json",
+        "xyz_template": "https://climateengine.storage.googleapis.com/prism/{index}/{timescale}/{valid_date}/{z}/{x}/{y}.png",
+        "legend_template": "https://climateengine.storage.googleapis.com/prism/{index}/{timescale}/{valid_date}/legend.png",
+        "zoom_levels": [1, 2, 3, 4, 5]
+      },
+      "latency_days": {
+        "min": 7,
+        "max": 10
+      },
+      "source_url": "https://prism.oregonstate.edu/explorer",
+      "license": "PRISM limited use",
+      "update_frequency": "daily"
+    },
+    {
+      "dataset": "eddi",
+      "provider": "NOAA Physical Sciences Laboratory",
+      "description": "Evaporative Demand Drought Index rasters at multiple accumulation windows.",
+      "indices": ["EDDI"],
+      "timescales": ["2W", "1M", "3M", "6M", "12M"],
+      "formats": ["GeoTIFF"],
+      "discovery": {
+        "table_url": "https://psl.noaa.gov/eddi/catalog.json",
+        "index": "timescale",
+        "valid_date_field": "endDate"
+      },
+      "assets": {
+        "geotiff_template": "https://psl.noaa.gov/eddi/data/{timescale}/{valid_date}/eddi_{timescale}_{valid_date}.tif",
+        "info_template": "https://psl.noaa.gov/eddi/data/{timescale}/{valid_date}/info.json",
+        "xyz_template": "https://psl.noaa.gov/eddi/data/{timescale}/{valid_date}/{z}/{x}/{y}.png",
+        "legend_template": "https://psl.noaa.gov/eddi/data/{timescale}/{valid_date}/legend.png",
+        "zoom_levels": [1, 2, 3, 4, 5]
+      },
+      "latency_days": {
+        "min": 1,
+        "max": 3
+      },
+      "source_url": "https://www.drought.gov/data-maps-tools/eddi",
+      "license": "Public domain",
+      "update_frequency": "daily"
+    }
+  ],
+  "vector_layers": [
+    {
+      "layer": "usdm",
+      "provider": "U.S. Drought Monitor",
+      "description": "Weekly USDM polygons and statistics by severity classification.",
+      "update_frequency": "weekly",
+      "formats": ["JSON", "GeoJSON", "TopoJSON"],
+      "discovery": {
+        "catalog_url": "https://droughtmonitor.unl.edu/Data/DataDownload/JSON.aspx",
+        "valid_date_field": "MapDate"
+      },
+      "assets": {
+        "json_template": "https://usdmdldl.unl.edu/usdm/json/usdm_{valid_date}.json",
+        "geojson_template": "https://usdmdldl.unl.edu/usdm/shapefiles/usdm_{valid_date}.geojson",
+        "topojson_template": "https://usdmdldl.unl.edu/usdm/shapefiles/usdm_{valid_date}.json"
+      },
+      "latency_days": {
+        "min": 0,
+        "max": 1
+      },
+      "severities": ["D0", "D1", "D2", "D3", "D4"],
+      "notes": "Published every Thursday with MapDate stamped."
+    },
+    {
+      "layer": "ahps_flood",
+      "provider": "NOAA AHPS",
+      "description": "River forecast points and flood status from AHPS GeoJSON endpoint.",
+      "update_frequency": "hourly",
+      "formats": ["GeoJSON"],
+      "discovery": {
+        "catalog_url": "https://water.weather.gov/ahps2/hydrograph_tojson.php",
+        "valid_date_field": "observed"
+      },
+      "assets": {
+        "geojson_template": "https://water.weather.gov/ahps2/hydrograph_tojson.php?gage=&size=all&start_date={start_date}&end_date={end_date}",
+        "notes": "Parameterize start/end dates per Airflow execution."
+      },
+      "latency_days": {
+        "min": 0,
+        "max": 0
+      }
+    },
+    {
+      "layer": "qpf",
+      "provider": "NOAA WPC",
+      "description": "Quantitative precipitation forecast layers.",
+      "update_frequency": "daily",
+      "formats": ["GeoJSON", "JSON"],
+      "discovery": {
+        "catalog_url": "https://storage.googleapis.com/drought_data/qpf/catalog.json",
+        "valid_date_field": "validTime"
+      },
+      "assets": {
+        "geojson_template": "https://storage.googleapis.com/drought_data/qpf/{valid_date}/qpf_{duration}.geojson"
+      },
+      "latency_days": {
+        "min": 0,
+        "max": 1
+      },
+      "durations": ["24h", "48h", "72h", "120h", "168h"],
+      "notes": "Duration-specific GeoJSON with accumulations in mm/in."
+    },
+    {
+      "layer": "aqi",
+      "provider": "EPA AirNow",
+      "description": "Daily AQI by reporting region.",
+      "update_frequency": "daily",
+      "formats": ["GeoJSON"],
+      "discovery": {
+        "catalog_url": "https://www.airnowapi.org/aq/observation/geojson/all/",
+        "valid_date_field": "DateObserved"
+      },
+      "assets": {
+        "geojson_template": "https://www.airnowapi.org/aq/observation/geojson/all/?format=application/json&API_KEY=DEMO_KEY&parameters=PM25,PM10,OZONE"
+      },
+      "latency_days": {
+        "min": 0,
+        "max": 0
+      },
+      "notes": "Replace DEMO_KEY with optional Vault secret for higher-rate requests."
+    },
+    {
+      "layer": "wildfire",
+      "provider": "GeoMAC",
+      "description": "Wildfire perimeter and incident points.",
+      "update_frequency": "daily",
+      "formats": ["GeoJSON"],
+      "discovery": {
+        "catalog_url": "https://firms.modaps.eosdis.nasa.gov/active_fire/c6.1/country/usa/usa.json",
+        "valid_date_field": "acq_date"
+      },
+      "assets": {
+        "geojson_template": "https://firms.modaps.eosdis.nasa.gov/active_fire/c6.1/country/usa/usa.json"
+      },
+      "latency_days": {
+        "min": 0,
+        "max": 1
+      }
+    }
+  ],
+  "foundational_buckets": [
+    {
+      "name": "nclimgrid_raw",
+      "description": "NOAA nClimGrid precip and temperature archives.",
+      "gcs_path": "gs://chc-nclimgrid",
+      "notes": "Capture source rasters for reproducibility.",
+      "latency_days": {
+        "min": 2,
+        "max": 6
+      }
+    },
+    {
+      "name": "cpc_global",
+      "description": "CPC global precip and temperature fields in NetCDF.",
+      "gcs_path": "gs://noaa-cpc-drought-data",
+      "latency_days": {
+        "min": 1,
+        "max": 5
+      }
+    },
+    {
+      "name": "prism_daily",
+      "description": "PRISM daily precip/temp grids.",
+      "gcs_path": "https://prism.oregonstate.edu/files/",
+      "latency_days": {
+        "min": 5,
+        "max": 10
+      }
+    }
+  ],
+  "region_sets": [
+    {
+      "region_type": "ISO_NODE",
+      "description": "Aurum ISO node geographies",
+      "geometry_source": "iceberg.ref.geographies.iso_node",
+      "crs": "EPSG:4326"
+    },
+    {
+      "region_type": "ISO_ZONE",
+      "description": "Aurum ISO zone geographies",
+      "geometry_source": "iceberg.ref.geographies.iso_zone",
+      "crs": "EPSG:4326"
+    },
+    {
+      "region_type": "STATE",
+      "description": "US States",
+      "geometry_source": "iceberg.ref.geographies.state",
+      "crs": "EPSG:4269"
+    },
+    {
+      "region_type": "COUNTY",
+      "description": "US Counties",
+      "geometry_source": "iceberg.ref.geographies.county",
+      "crs": "EPSG:4269"
+    },
+    {
+      "region_type": "HUC2",
+      "description": "USGS hydrologic unit code (2-digit)",
+      "geometry_source": "iceberg.ref.geographies.huc2",
+      "crs": "EPSG:4269"
+    },
+    {
+      "region_type": "HUC8",
+      "description": "USGS hydrologic unit code (8-digit)",
+      "geometry_source": "iceberg.ref.geographies.huc8",
+      "crs": "EPSG:4269"
+    }
+  ]
+}

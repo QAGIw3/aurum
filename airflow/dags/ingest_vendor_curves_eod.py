@@ -169,7 +169,7 @@ def parse_vendor_workbook(vendor: str, **context: Any) -> None:
                 prefix="quarantine_curves",
             )
 
-    dlq_records = list(build_dlq_records(quarantine_df)) if not quarantine_df.empty else []
+        dlq_records = list(build_dlq_records(quarantine_df)) if not quarantine_df.empty else []
         if dlq_records and not output_uri_env:
             dlq_dir = Path(output_root_env) / "dlq" / execution_date.strftime("%Y%m%d") / vendor
             dlq_dir.mkdir(parents=True, exist_ok=True)
@@ -205,6 +205,21 @@ def parse_vendor_workbook(vendor: str, **context: Any) -> None:
     if ti:
         ti.xcom_push(key="rows", value=len(canonical_df))
         ti.xcom_push(key="rows_quarantine", value=len(quarantine_df))
+    try:
+        import sys
+        src_path = os.environ.get("AURUM_PYTHONPATH_ENTRY", "/opt/airflow/src")
+        if src_path and src_path not in sys.path:
+            sys.path.insert(0, src_path)
+        from aurum.airflow_utils import metrics  # type: ignore
+
+        metrics.gauge("ingest.vendor_rows", float(len(canonical_df)), tags={"vendor": vendor})
+        metrics.gauge(
+            "ingest.vendor_quarantine_rows",
+            float(len(quarantine_df)),
+            tags={"vendor": vendor},
+        )
+    except Exception as exc:  # pragma: no cover
+        print(f"Metrics emission failed for vendor {vendor}: {exc}")
 
 
 def run_great_expectations(**context: Any) -> None:

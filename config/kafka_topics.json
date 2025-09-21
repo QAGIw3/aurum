@@ -21,10 +21,35 @@
         "retention.ms": "604800000"
       },
       "acls": [
-        {"principal": "User:aurum-ingest", "operations": ["WRITE", "DESCRIBE", "DESCRIBE_CONFIGS"]},
-        {"principal": "User:aurum-api", "operations": ["READ", "DESCRIBE"]},
-        {"principal": "User:aurum-worker", "operations": ["READ", "DESCRIBE"]},
-        {"principal": "User:aurum-dbt", "operations": ["READ", "DESCRIBE"]}
+        {
+          "principal": "User:aurum-ingest",
+          "operations": [
+            "WRITE",
+            "DESCRIBE",
+            "DESCRIBE_CONFIGS"
+          ]
+        },
+        {
+          "principal": "User:aurum-api",
+          "operations": [
+            "READ",
+            "DESCRIBE"
+          ]
+        },
+        {
+          "principal": "User:aurum-worker",
+          "operations": [
+            "READ",
+            "DESCRIBE"
+          ]
+        },
+        {
+          "principal": "User:aurum-dbt",
+          "operations": [
+            "READ",
+            "DESCRIBE"
+          ]
+        }
       ]
     },
     {
@@ -35,8 +60,21 @@
         "retention.ms": "2592000000"
       },
       "acls": [
-        {"principal": "User:aurum-ingest", "operations": ["WRITE", "DESCRIBE", "DESCRIBE_CONFIGS"]},
-        {"principal": "User:aurum-ops", "operations": ["READ", "DESCRIBE"]}
+        {
+          "principal": "User:aurum-ingest",
+          "operations": [
+            "WRITE",
+            "DESCRIBE",
+            "DESCRIBE_CONFIGS"
+          ]
+        },
+        {
+          "principal": "User:aurum-ops",
+          "operations": [
+            "READ",
+            "DESCRIBE"
+          ]
+        }
       ]
     },
     {
@@ -47,8 +85,21 @@
         "retention.ms": "1209600000"
       },
       "acls": [
-        {"principal": "User:aurum-ingest", "operations": ["WRITE", "DESCRIBE", "DESCRIBE_CONFIGS"]},
-        {"principal": "User:aurum-ops", "operations": ["READ", "DESCRIBE"]}
+        {
+          "principal": "User:aurum-ingest",
+          "operations": [
+            "WRITE",
+            "DESCRIBE",
+            "DESCRIBE_CONFIGS"
+          ]
+        },
+        {
+          "principal": "User:aurum-ops",
+          "operations": [
+            "READ",
+            "DESCRIBE"
+          ]
+        }
       ]
     },
     {
@@ -59,8 +110,138 @@
         "retention.ms": "2592000000"
       },
       "acls": [
-        {"principal": "User:aurum-ingest", "operations": ["WRITE", "DESCRIBE", "DESCRIBE_CONFIGS"]},
-        {"principal": "User:aurum-ops", "operations": ["READ", "DESCRIBE"]}
+        {
+          "principal": "User:aurum-ingest",
+          "operations": [
+            "WRITE",
+            "DESCRIBE",
+            "DESCRIBE_CONFIGS"
+          ]
+        },
+        {
+          "principal": "User:aurum-ops",
+          "operations": [
+            "READ",
+            "DESCRIBE"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "aurum.drought.index.v1",
+      "partitions": 12,
+      "replication_factor": 3,
+      "config": {
+        "retention.ms": "15552000000"
+      },
+      "acls": [
+        {
+          "principal": "User:aurum-ingest",
+          "operations": [
+            "WRITE",
+            "DESCRIBE",
+            "DESCRIBE_CONFIGS"
+          ]
+        },
+        {
+          "principal": "User:aurum-worker",
+          "operations": [
+            "READ",
+            "DESCRIBE"
+          ]
+        },
+        {
+          "principal": "User:aurum-api",
+          "operations": [
+            "READ",
+            "DESCRIBE"
+          ]
+        },
+        {
+          "principal": "User:aurum-dbt",
+          "operations": [
+            "READ",
+            "DESCRIBE"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "aurum.drought.usdm_area.v1",
+      "partitions": 3,
+      "replication_factor": 3,
+      "config": {
+        "retention.ms": "31104000000"
+      },
+      "acls": [
+        {
+          "principal": "User:aurum-ingest",
+          "operations": [
+            "WRITE",
+            "DESCRIBE",
+            "DESCRIBE_CONFIGS"
+          ]
+        },
+        {
+          "principal": "User:aurum-worker",
+          "operations": [
+            "READ",
+            "DESCRIBE"
+          ]
+        },
+        {
+          "principal": "User:aurum-api",
+          "operations": [
+            "READ",
+            "DESCRIBE"
+          ]
+        },
+        {
+          "principal": "User:aurum-dbt",
+          "operations": [
+            "READ",
+            "DESCRIBE"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "aurum.drought.vector_event.v1",
+      "partitions": 12,
+      "replication_factor": 3,
+      "config": {
+        "retention.ms": "7776000000"
+      },
+      "acls": [
+        {
+          "principal": "User:aurum-ingest",
+          "operations": [
+            "WRITE",
+            "DESCRIBE",
+            "DESCRIBE_CONFIGS"
+          ]
+        },
+        {
+          "principal": "User:aurum-worker",
+          "operations": [
+            "READ",
+            "DESCRIBE"
+          ]
+        },
+        {
+          "principal": "User:aurum-api",
+          "operations": [
+            "READ",
+            "DESCRIBE"
+          ]
+        },
+        {
+          "principal": "User:aurum-dbt",
+          "operations": [
+            "READ",
+            "DESCRIBE"
+          ]
+        }
       ]
     }
   ]
