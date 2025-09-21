@@ -315,16 +315,93 @@ def test_scenario_metrics_latest(monkeypatch, client):
         }
     ]
 
-    monkeypatch.setattr(
-        service,
-        "query_scenario_metrics_latest",
-        lambda trino_cfg, cache_cfg, **kwargs: (rows, 8.0),
-    )
+    captured: dict = {}
+
+    def fake_query(trino_cfg, cache_cfg, **kwargs):
+        captured.update(kwargs)
+        return rows, 8.0
+
+    monkeypatch.setattr(service, "query_scenario_metrics_latest", fake_query)
 
     resp = client.get("/v1/scenarios/scn-1/metrics/latest")
     assert resp.status_code == 200
     body = resp.json()
     assert body["data"][0]["metric"] == "mid"
+    assert captured["limit"] == 201
+    assert captured["offset"] == 0
+    assert captured["cursor_after"] is None
+    assert captured["cursor_before"] is None
+    assert body["meta"]["next_cursor"] is None
+    assert body["meta"]["prev_cursor"] is None
+
+
+def test_scenario_metrics_latest_pagination(monkeypatch, client):
+    from aurum.api import service
+
+    monkeypatch.setenv("AURUM_API_SCENARIO_OUTPUTS_ENABLED", "1")
+
+    page_rows = [
+        {
+            "tenant_id": "tenant-1",
+            "scenario_id": "scn-1",
+            "curve_key": "curve-a",
+            "metric": "mid",
+            "tenor_label": "2025-01",
+            "latest_value": 40.0,
+            "latest_band_lower": 39.0,
+            "latest_band_upper": 41.0,
+            "latest_asof_date": "2025-01-01",
+        },
+        {
+            "tenant_id": "tenant-1",
+            "scenario_id": "scn-1",
+            "curve_key": "curve-b",
+            "metric": "mid",
+            "tenor_label": "2025-02",
+            "latest_value": 42.0,
+            "latest_band_lower": 41.0,
+            "latest_band_upper": 43.0,
+            "latest_asof_date": "2025-02-01",
+        },
+    ]
+
+    state = {}
+
+    def fake_query(trino_cfg, cache_cfg, **kwargs):
+        state.setdefault("calls", []).append(kwargs)
+        if kwargs.get("cursor_before"):
+            return page_rows.copy(), 5.0
+        if kwargs.get("cursor_after"):
+            return [page_rows[1]], 5.0
+        return page_rows.copy(), 5.0
+
+    monkeypatch.setattr(service, "query_scenario_metrics_latest", fake_query)
+
+    first = client.get("/v1/scenarios/scn-1/metrics/latest", params={"limit": 1})
+    assert first.status_code == 200
+    body = first.json()
+    assert len(body["data"]) == 1
+    assert body["data"][0]["curve_key"] == "curve-a"
+    next_cursor = body["meta"]["next_cursor"]
+    assert next_cursor
+
+    second = client.get(
+        "/v1/scenarios/scn-1/metrics/latest", params={"limit": 1, "cursor": next_cursor}
+    )
+    assert second.status_code == 200
+    body2 = second.json()
+    assert len(body2["data"]) == 1
+    assert body2["data"][0]["curve_key"] == "curve-b"
+    prev_cursor = body2["meta"].get("prev_cursor")
+    assert prev_cursor
+
+    third = client.get(
+        "/v1/scenarios/scn-1/metrics/latest", params={"limit": 1, "prev_cursor": prev_cursor}
+    )
+    assert third.status_code == 200
+    body3 = third.json()
+    assert len(body3["data"]) == 1
+    assert body3["data"][0]["curve_key"] == "curve-a"
 
 
 def test_scenario_outputs_requires_tenant(monkeypatch):

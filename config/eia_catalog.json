@@ -1,5 +1,5 @@
 {
-  "generated_at": "2025-09-19T22:49:01.643300+00:00",
+  "generated_at": "2025-09-21T03:13:49.967221+00:00",
   "dataset_count": 230,
   "base_url": "https://api.eia.gov/v2",
   "datasets": [
@@ -43,7 +43,11 @@
       "start_period": "2011",
       "end_period": "2040",
       "default_frequency": "annual",
-      "default_date_format": "YYYY"
+      "default_date_format": "YYYY",
+      "browser_total": null,
+      "browser_frequency": null,
+      "browser_date_format": null,
+      "warnings": []
     },
     {
       "path": "aeo/2014-er",
@@ -85,7 +89,11 @@
       "start_period": "2011",
       "end_period": "2040",
       "default_frequency": "annual",
-      "default_date_format": "YYYY"
+      "default_date_format": "YYYY",
+      "browser_total": null,
+      "browser_frequency": null,
+      "browser_date_format": null,
+      "warnings": []
     },
     {
       "path": "aeo/2015",
@@ -127,7 +135,11 @@
       "start_period": "2012",
       "end_period": "2040",
       "default_frequency": "annual",
-      "default_date_format": "YYYY"
+      "default_date_format": "YYYY",
+      "browser_total": null,
+      "browser_frequency": null,
+      "browser_date_format": null,
+      "warnings": []
     },
     {
       "path": "aeo/2016",
@@ -169,7 +181,11 @@
       "start_period": "2013",
       "end_period": "2040",
       "default_frequency": "annual",
-      "default_date_format": "YYYY"
+      "default_date_format": "YYYY",
+      "browser_total": null,
+      "browser_frequency": null,
+      "browser_date_format": null,
+      "warnings": []
     },
     {
       "path": "aeo/2017",
@@ -211,7 +227,11 @@
       "start_period": "2015",
       "end_period": "2050",
       "default_frequency": "annual",
-      "default_date_format": "YYYY"
+      "default_date_format": "YYYY",
+      "browser_total": null,
+      "browser_frequency": null,
+      "browser_date_format": null,
+      "warnings": []
     },
     {
       "path": "aeo/2018",
@@ -253,7 +273,11 @@
       "start_period": "2016",
       "end_period": "2050",
       "default_frequency": "annual",
-      "default_date_format": "YYYY"
+      "default_date_format": "YYYY",
+      "browser_total": null,
+      "browser_frequency": null,
+      "browser_date_format": null,
+      "warnings": []
     },
     {
       "path": "aeo/2019",
@@ -295,7 +319,11 @@
       "start_period": "2017",
       "end_period": "2050",
       "default_frequency": "annual",
-      "default_date_format": "YYYY"
+      "default_date_format": "YYYY",
+      "browser_total": null,
+      "browser_frequency": null,
+      "browser_date_format": null,
+      "warnings": []
     },
     {
       "path": "aeo/2020",
@@ -337,7 +365,11 @@
       "start_period": "2018",
       "end_period": "2050",
       "default_frequency": "annual",
-      "default_date_format": "YYYY"
+      "default_date_format": "YYYY",
+      "browser_total": null,
+      "browser_frequency": null,
+      "browser_date_format": null,
+      "warnings": []
     },
     {
       "path": "aeo/2021",
@@ -379,7 +411,11 @@
       "start_period": "2019",
       "end_period": "2050",
       "default_frequency": "annual",
-      "default_date_format": "YYYY"
+      "default_date_format": "YYYY",
+      "browser_total": null,
+      "browser_frequency": null,
+      "browser_date_format": null,
+      "warnings": []
     },
     {
       "path": "aeo/2022",
@@ -421,7 +457,11 @@
       "start_period": "2020",
       "end_period": "2050",
       "default_frequency": "annual",
-      "default_date_format": "YYYY"
+      "default_date_format": "YYYY",
+      "browser_total": null,
+      "browser_frequency": null,
+      "browser_date_format": null,
+      "warnings": []
     },
     {
       "path": "aeo/2023",
@@ -463,7 +503,11 @@
       "start_period": "2021",
       "end_period": "2050",
       "default_frequency": "annual",
-      "default_date_format": "YYYY"
+      "default_date_format": "YYYY",
+      "browser_total": null,
+      "browser_frequency": null,
+      "browser_date_format": null,
+      "warnings": []
     },
     {
       "path": "aeo/2025",
@@ -505,7 +549,11 @@
       "start_period": "2023",
       "end_period": "2050",
       "default_frequency": "annual",
-      "default_date_format": "YYYY"
+      "default_date_format": "YYYY",
+      "browser_total": null,
+      "browser_frequency": null,
+      "browser_date_format": null,
+      "warnings": []
     },
     {
       "path": "co2-emissions/co2-emissions-aggregates",
@@ -539,7 +587,11 @@
       "start_period": "1970",
       "end_period": "2022",
       "default_frequency": "annual",
-      "default_date_format": "YYYY"
+      "default_date_format": "YYYY",
+      "browser_total": null,
+      "browser_frequency": null,
+      "browser_date_format": null,
+      "warnings": []
     },
     {
       "path": "co2-emissions/co2-emissions-and-carbon-coefficients",
@@ -578,7 +630,11 @@
       "start_period": "1980",
       "end_period": "2018",
       "default_frequency": "annual",
-      "default_date_format": "YYYY"
+      "default_date_format": "YYYY",
+      "browser_total": null,
+      "browser_frequency": null,
+      "browser_date_format": null,
+      "warnings": []
     },
     {
       "path": "coal/aggregate-production",
@@ -616,7 +672,11 @@
       "start_period": "2001",
       "end_period": "2023",
       "default_frequency": "annual",
-      "default_date_format": "YYYY"
+      "default_date_format": "YYYY",
+      "browser_total": null,
+      "browser_frequency": null,
+      "browser_date_format": null,
+      "warnings": []
     },
     {
       "path": "coal/consumption-and-quality",
@@ -658,7 +718,11 @@
       "start_period": "2000",
       "end_period": "2024",
       "default_frequency": "annual",
-      "default_date_format": "YYYY"
+      "default_date_format": "YYYY",
+      "browser_total": null,
+      "browser_frequency": null,
+      "browser_date_format": null,
+      "warnings": []
     },
     {
       "path": "coal/exports-imports-quantity-price",
@@ -703,7 +767,11 @@
       "start_period": "2000",
       "end_period": "2024",
       "default_frequency": "annual",
-      "default_date_format": "YYYY"
+      "default_date_format": "YYYY",
+      "browser_total": null,
+      "browser_frequency": null,
+      "browser_date_format": null,
+      "warnings": []
     },
     {
       "path": "coal/market-sales-price",
@@ -734,7 +802,11 @@
       "start_period": "2001",
       "end_period": "2023",
       "default_frequency": "annual",
-      "default_date_format": "YYYY"
+      "default_date_format": "YYYY",
+      "browser_total": null,
+      "browser_frequency": null,
+      "browser_date_format": null,
+      "warnings": []
     },
     {
       "path": "coal/mine-production",
@@ -803,7 +875,11 @@
       "start_period": "2001",
       "end_period": "2023",
       "default_frequency": "annual",
-      "default_date_format": "YYYY"
+      "default_date_format": "YYYY",
+      "browser_total": null,
+      "browser_frequency": null,
+      "browser_date_format": null,
+      "warnings": []
     },
     {
       "path": "coal/price-by-rank",
@@ -833,7 +909,11 @@
       "start_period": "2001",
       "end_period": "2023",
       "default_frequency": "annual",
-      "default_date_format": "YYYY"
+      "default_date_format": "YYYY",
+      "browser_total": null,
+      "browser_frequency": null,
+      "browser_date_format": null,
+      "warnings": []
     },
     {
       "path": "coal/reserves-capacity",
@@ -865,7 +945,11 @@
       "start_period": "2001",
       "end_period": "2023",
       "default_frequency": "annual",
-      "default_date_format": "YYYY"
+      "default_date_format": "YYYY",
+      "browser_total": null,
+      "browser_frequency": null,
+      "browser_date_format": null,
+      "warnings": []
     },
     {
       "path": "coal/shipments/by-mine-by-plant",
@@ -921,7 +1005,11 @@
       "start_period": "2008",
       "end_period": "2024",
       "default_frequency": "annual",
-      "default_date_format": "YYYY"
+      "default_date_format": "YYYY",
+      "browser_total": null,
+      "browser_frequency": null,
+      "browser_date_format": null,
+      "warnings": []
     },
     {
       "path": "coal/shipments/mine-aggregates",
@@ -965,7 +1053,11 @@
       "start_period": "2008",
       "end_period": "2024",
       "default_frequency": "annual",
-      "default_date_format": "YYYY"
+      "default_date_format": "YYYY",
+      "browser_total": null,
+      "browser_frequency": null,
+      "browser_date_format": null,
+      "warnings": []
     },
     {
       "path": "coal/shipments/mine-state-aggregates",
@@ -1005,7 +1097,11 @@
       "start_period": "2008",
       "end_period": "2024",
       "default_frequency": "annual",
-      "default_date_format": "YYYY"
+      "default_date_format": "YYYY",
+      "browser_total": null,
+      "browser_frequency": null,
+      "browser_date_format": null,
+      "warnings": []
     },
     {
       "path": "coal/shipments/plant-aggregates",
@@ -1049,7 +1145,11 @@
       "start_period": "2008",
       "end_period": "2024",
       "default_frequency": "annual",
-      "default_date_format": "YYYY"
+      "default_date_format": "YYYY",
+      "browser_total": null,
+      "browser_frequency": null,
+      "browser_date_format": null,
+      "warnings": []
     },
     {
       "path": "coal/shipments/plant-state-aggregates",
@@ -1089,7 +1189,11 @@
       "start_period": "2008",
       "end_period": "2024",
       "default_frequency": "annual",
-      "default_date_format": "YYYY"
+      "default_date_format": "YYYY",
+      "browser_total": null,
+      "browser_frequency": null,
+      "browser_date_format": null,
+      "warnings": []
     },
     {
       "path": "coal/shipments/receipts",
@@ -1165,7 +1269,11 @@
       "start_period": "2008",
       "end_period": "2024",
       "default_frequency": "annual",
-      "default_date_format": "YYYY"
+      "default_date_format": "YYYY",
+      "browser_total": null,
+      "browser_frequency": null,
+      "browser_date_format": null,
+      "warnings": []
     },
     {
       "path": "crude-oil-imports",
@@ -1213,7 +1321,11 @@
       "start_period": "2009-01",
       "end_period": "2025-06",
       "default_frequency": "monthly",
-      "default_date_format": "YYYY-MM"
+      "default_date_format": "YYYY-MM",
+      "browser_total": null,
+      "browser_frequency": null,
+      "browser_date_format": null,
+      "warnings": []
     },
     {
       "path": "densified-biomass/capacity-by-region",
@@ -1241,7 +1353,11 @@
       "start_period": "2016-01",
       "end_period": "2025-04",
       "default_frequency": "monthly",
-      "default_date_format": "YYYY-MM"
+      "default_date_format": "YYYY-MM",
+      "browser_total": null,
+      "browser_frequency": null,
+      "browser_date_format": null,
+      "warnings": []
     },
     {
       "path": "densified-biomass/characteristics-by-region",
@@ -1273,7 +1389,11 @@
       "start_period": "2016-01",
       "end_period": "2025-04",
       "default_frequency": "monthly",
-      "default_date_format": "YYYY-MM"
+      "default_date_format": "YYYY-MM",
+      "browser_total": null,
+      "browser_frequency": null,
+      "browser_date_format": null,
+      "warnings": []
     },
     {
       "path": "densified-biomass/export-sales-and-price",
@@ -1295,7 +1415,11 @@
       "start_period": "2016-01",
       "end_period": "2025-04",
       "default_frequency": "monthly",
-      "default_date_format": "YYYY-MM"
+      "default_date_format": "YYYY-MM",
+      "browser_total": null,
+      "browser_frequency": null,
+      "browser_date_format": null,
+      "warnings": []
     },
     {
       "path": "densified-biomass/feedstocks-and-cost",
@@ -1322,7 +1446,11 @@
       "start_period": "2016-01",
       "end_period": "2025-04",
       "default_frequency": "monthly",
-      "default_date_format": "YYYY-MM"
+      "default_date_format": "YYYY-MM",
+      "browser_total": null,
+      "browser_frequency": null,
+      "browser_date_format": null,
+      "warnings": []
     },
     {
       "path": "densified-biomass/inventories-by-region",
@@ -1352,7 +1480,11 @@
       "start_period": "2016-01",
       "end_period": "2025-04",
       "default_frequency": "monthly",
-      "default_date_format": "YYYY-MM"
+      "default_date_format": "YYYY-MM",
+      "browser_total": null,
+      "browser_frequency": null,
+      "browser_date_format": null,
+      "warnings": []
     },
     {
       "path": "densified-biomass/production-by-region",
@@ -1382,7 +1514,11 @@
       "start_period": "2016-01",
       "end_period": "2025-04",
       "default_frequency": "monthly",
-      "default_date_format": "YYYY-MM"
+      "default_date_format": "YYYY-MM",
+      "browser_total": null,
+      "browser_frequency": null,
+      "browser_date_format": null,
+      "warnings": []
     },
     {
       "path": "densified-biomass/sales-and-price-by-region",
@@ -1409,7 +1545,11 @@
       "start_period": "2016-01",
       "end_period": "2025-04",
       "default_frequency": "monthly",
-      "default_date_format": "YYYY-MM"
+      "default_date_format": "YYYY-MM",
+      "browser_total": null,
+      "browser_frequency": null,
+      "browser_date_format": null,
+      "warnings": []
     },
     {
       "path": "densified-biomass/wood-pellet-plants",
@@ -1447,7 +1587,11 @@
       "start_period": "2016",
       "end_period": "2025",
       "default_frequency": "annual",
-      "default_date_format": "YYYY"
+      "default_date_format": "YYYY",
+      "browser_total": null,
+      "browser_frequency": null,
+      "browser_date_format": null,
+      "warnings": []
     },
     {
       "path": "electricity/electric-power-operational-data",
@@ -1507,7 +1651,11 @@
       "start_period": "2001-01",
       "end_period": "2025-06",
       "default_frequency": "monthly",
-      "default_date_format": "YYYY-MM"
+      "default_date_format": "YYYY-MM",
+      "browser_total": null,
+      "browser_frequency": null,
+      "browser_date_format": null,
+      "warnings": []
     },
     {
       "path": "electricity/facility-fuel",
@@ -1563,7 +1711,11 @@
       "start_period": "2001-01",
       "end_period": "2025-06",
       "default_frequency": "monthly",
-      "default_date_format": "YYYY-MM"
+      "default_date_format": "YYYY-MM",
+      "browser_total": null,
+      "browser_frequency": null,
+      "browser_date_format": null,
+      "warnings": []
     },
     {
       "path": "electricity/operating-generator-capacity",
@@ -1640,7 +1792,11 @@
       "start_period": "2008-01",
       "end_period": "2025-06",
       "default_frequency": "monthly",
-      "default_date_format": "YYYY-MM"
+      "default_date_format": "YYYY-MM",
+      "browser_total": null,
+      "browser_frequency": null,
+      "browser_date_format": null,
+      "warnings": []
     },
     {
       "path": "electricity/retail-sales",
@@ -1685,7 +1841,11 @@
       "start_period": "2001-01",
       "end_period": "2025-06",
       "default_frequency": "monthly",
-      "default_date_format": "YYYY-MM"
+      "default_date_format": "YYYY-MM",
+      "browser_total": null,
+      "browser_frequency": null,
+      "browser_date_format": null,
+      "warnings": []
     },
     {
       "path": "electricity/rto/daily-fuel-type-data",
@@ -1717,9 +1877,13 @@
         "value"
       ],
       "start_period": "2019-01-01",
-      "end_period": "2025-09-18",
+      "end_period": "2025-09-19",
       "default_frequency": "daily",
-      "default_date_format": "YYYY-MM-DD"
+      "default_date_format": "YYYY-MM-DD",
+      "browser_total": null,
+      "browser_frequency": null,
+      "browser_date_format": null,
+      "warnings": []
     },
     {
       "path": "electricity/rto/daily-interchange-data",
@@ -1751,9 +1915,13 @@
         "value"
       ],
       "start_period": "2019-01-01",
-      "end_period": "2025-09-17",
+      "end_period": "2025-09-18",
       "default_frequency": "daily",
-      "default_date_format": "YYYY-MM-DD"
+      "default_date_format": "YYYY-MM-DD",
+      "browser_total": null,
+      "browser_frequency": null,
+      "browser_date_format": null,
+      "warnings": []
     },
     {
       "path": "electricity/rto/daily-region-data",
@@ -1785,9 +1953,13 @@
         "value"
       ],
       "start_period": "2019-01-01",
-      "end_period": "2025-09-19",
+      "end_period": "2025-09-20",
       "default_frequency": "daily",
-      "default_date_format": "YYYY-MM-DD"
+      "default_date_format": "YYYY-MM-DD",
+      "browser_total": null,
+      "browser_frequency": null,
+      "browser_date_format": null,
+      "warnings": []
     },
     {
       "path": "electricity/rto/daily-region-sub-ba-data",
@@ -1819,9 +1991,13 @@
         "value"
       ],
       "start_period": "2019-01-01",
-      "end_period": "2025-09-18",
+      "end_period": "2025-09-19",
       "default_frequency": "daily",
-      "default_date_format": "YYYY-MM-DD"
+      "default_date_format": "YYYY-MM-DD",
+      "browser_total": null,
+      "browser_frequency": null,
+      "browser_date_format": null,
+      "warnings": []
     },
     {
       "path": "electricity/rto/fuel-type-data",
@@ -1857,9 +2033,13 @@
         "value"
       ],
       "start_period": "2019-01-01T00",
-      "end_period": "2025-09-19T06",
+      "end_period": "2025-09-20T06",
       "default_frequency": "hourly",
-      "default_date_format": "YYYY-MM-DD\"T\"HH24"
+      "default_date_format": "YYYY-MM-DD\"T\"HH24",
+      "browser_total": null,
+      "browser_frequency": null,
+      "browser_date_format": null,
+      "warnings": []
     },
     {
       "path": "electricity/rto/interchange-data",
@@ -1895,9 +2075,13 @@
         "value"
       ],
       "start_period": "2019-01-01T00",
-      "end_period": "2025-09-18T07",
+      "end_period": "2025-09-19T07",
       "default_frequency": "hourly",
-      "default_date_format": "YYYY-MM-DD\"T\"HH24"
+      "default_date_format": "YYYY-MM-DD\"T\"HH24",
+      "browser_total": null,
+      "browser_frequency": null,
+      "browser_date_format": null,
+      "warnings": []
     },
     {
       "path": "electricity/rto/region-data",
@@ -1933,9 +2117,13 @@
         "value"
       ],
       "start_period": "2019-01-01T00",
-      "end_period": "2025-09-20T07",
+      "end_period": "2025-09-21T07",
       "default_frequency": "hourly",
-      "default_date_format": "YYYY-MM-DD\"T\"HH24"
+      "default_date_format": "YYYY-MM-DD\"T\"HH24",
+      "browser_total": null,
+      "browser_frequency": null,
+      "browser_date_format": null,
+      "warnings": []
     },
     {
       "path": "electricity/rto/region-sub-ba-data",
@@ -1971,9 +2159,13 @@
         "value"
       ],
       "start_period": "2019-01-01T00",
-      "end_period": "2025-09-19T07",
+      "end_period": "2025-09-20T07",
       "default_frequency": "hourly",
-      "default_date_format": "YYYY-MM-DD\"T\"HH24"
+      "default_date_format": "YYYY-MM-DD\"T\"HH24",
+      "browser_total": null,
+      "browser_frequency": null,
+      "browser_date_format": null,
+      "warnings": []
     },
     {
       "path": "electricity/state-electricity-profiles/capability",
@@ -2007,7 +2199,11 @@
       "start_period": "1990",
       "end_period": "2023",
       "default_frequency": "annual",
-      "default_date_format": "YYYY"
+      "default_date_format": "YYYY",
+      "browser_total": null,
+      "browser_frequency": null,
+      "browser_date_format": null,
+      "warnings": []
     },
     {
       "path": "electricity/state-electricity-profiles/emissions-by-state-by-fuel",
@@ -2042,7 +2238,11 @@
       "start_period": "1990",
       "end_period": "2023",
       "default_frequency": "annual",
-      "default_date_format": "YYYY"
+      "default_date_format": "YYYY",
+      "browser_total": null,
+      "browser_frequency": null,
+      "browser_date_format": null,
+      "warnings": []
     },
     {
       "path": "electricity/state-electricity-profiles/energy-efficiency",
@@ -2079,7 +2279,11 @@
       "start_period": "2013",
       "end_period": "2023",
       "default_frequency": "annual",
-      "default_date_format": "YYYY"
+      "default_date_format": "YYYY",
+      "browser_total": null,
+      "browser_frequency": null,
+      "browser_date_format": null,
+      "warnings": []
     },
     {
       "path": "electricity/state-electricity-profiles/meters",
@@ -2113,7 +2317,11 @@
       "start_period": "2013",
       "end_period": "2023",
       "default_frequency": "annual",
-      "default_date_format": "YYYY"
+      "default_date_format": "YYYY",
+      "browser_total": null,
+      "browser_frequency": null,
+      "browser_date_format": null,
+      "warnings": []
     },
     {
       "path": "electricity/state-electricity-profiles/net-metering",
@@ -2148,7 +2356,11 @@
       "start_period": "2013",
       "end_period": "2023",
       "default_frequency": "annual",
-      "default_date_format": "YYYY"
+      "default_date_format": "YYYY",
+      "browser_total": null,
+      "browser_frequency": null,
+      "browser_date_format": null,
+      "warnings": []
     },
     {
       "path": "electricity/state-electricity-profiles/source-disposition",
@@ -2194,7 +2406,11 @@
       "start_period": "1990",
       "end_period": "2023",
       "default_frequency": "annual",
-      "default_date_format": "YYYY"
+      "default_date_format": "YYYY",
+      "browser_total": null,
+      "browser_frequency": null,
+      "browser_date_format": null,
+      "warnings": []
     },
     {
       "path": "electricity/state-electricity-profiles/summary",
@@ -2254,7 +2470,11 @@
       "start_period": "2008",
       "end_period": "2023",
       "default_frequency": "annual",
-      "default_date_format": "YYYY"
+      "default_date_format": "YYYY",
+      "browser_total": null,
+      "browser_frequency": null,
+      "browser_date_format": null,
+      "warnings": []
     },
     {
       "path": "ieo/2017",
@@ -2296,7 +2516,11 @@
       "start_period": "2010",
       "end_period": "2050",
       "default_frequency": "annual",
-      "default_date_format": "YYYY"
+      "default_date_format": "YYYY",
+      "browser_total": null,
+      "browser_frequency": null,
+      "browser_date_format": null,
+      "warnings": []
     },
     {
       "path": "ieo/2019",
@@ -2338,7 +2562,11 @@
       "start_period": "2010",
       "end_period": "2050",
       "default_frequency": "annual",
-      "default_date_format": "YYYY"
+      "default_date_format": "YYYY",
+      "browser_total": null,
+      "browser_frequency": null,
+      "browser_date_format": null,
+      "warnings": []
     },
     {
       "path": "ieo/2021",
@@ -2380,7 +2608,11 @@
       "start_period": "2010",
       "end_period": "2050",
       "default_frequency": "annual",
-      "default_date_format": "YYYY"
+      "default_date_format": "YYYY",
+      "browser_total": null,
+      "browser_frequency": null,
+      "browser_date_format": null,
+      "warnings": []
     },
     {
       "path": "ieo/2023",
@@ -2422,7 +2654,11 @@
       "start_period": "2020",
       "end_period": "2050",
       "default_frequency": "annual",
-      "default_date_format": "YYYY"
+      "default_date_format": "YYYY",
+      "browser_total": null,
+      "browser_frequency": null,
+      "browser_date_format": null,
+      "warnings": []
     },
     {
       "path": "international",
@@ -2480,7 +2716,11 @@
       "start_period": "1949-01",
       "end_period": "2025-06",
       "default_frequency": "monthly",
-      "default_date_format": "YYYY-MM"
+      "default_date_format": "YYYY-MM",
+      "browser_total": null,
+      "browser_frequency": null,
+      "browser_date_format": null,
+      "warnings": []
     },
     {
       "path": "natural-gas/cons/acct",
@@ -2518,7 +2758,11 @@
       "start_period": "1982",
       "end_period": "2023",
       "default_frequency": "annual",
-      "default_date_format": "YYYY"
+      "default_date_format": "YYYY",
+      "browser_total": null,
+      "browser_frequency": null,
+      "browser_date_format": null,
+      "warnings": []
     },
     {
       "path": "natural-gas/cons/heat",
@@ -2562,7 +2806,11 @@
       "start_period": "2012-01",
       "end_period": "2025-06",
       "default_frequency": "monthly",
-      "default_date_format": "YYYY-MM"
+      "default_date_format": "YYYY-MM",
+      "browser_total": null,
+      "browser_frequency": null,
+      "browser_date_format": null,
+      "warnings": []
     },
     {
       "path": "natural-gas/cons/num",
@@ -2600,7 +2848,11 @@
       "start_period": "1967",
       "end_period": "2023",
       "default_frequency": "annual",
-      "default_date_format": "YYYY"
+      "default_date_format": "YYYY",
+      "browser_total": null,
+      "browser_frequency": null,
+      "browser_date_format": null,
+      "warnings": []
     },
     {
       "path": "natural-gas/cons/pns",
@@ -2638,7 +2890,11 @@
       "start_period": "1993",
       "end_period": "2023",
       "default_frequency": "annual",
-      "default_date_format": "YYYY"
+      "default_date_format": "YYYY",
+      "browser_total": null,
+      "browser_frequency": null,
+      "browser_date_format": null,
+      "warnings": []
     },
     {
       "path": "natural-gas/cons/sum",
@@ -2682,7 +2938,11 @@
       "start_period": "1973-01",
       "end_period": "2025-06",
       "default_frequency": "monthly",
-      "default_date_format": "YYYY-MM"
+      "default_date_format": "YYYY-MM",
+      "browser_total": null,
+      "browser_frequency": null,
+      "browser_date_format": null,
+      "warnings": []
     },
     {
       "path": "natural-gas/enr/adng",
@@ -2720,7 +2980,11 @@
       "start_period": "1979",
       "end_period": "2021",
       "default_frequency": "annual",
-      "default_date_format": "YYYY"
+      "default_date_format": "YYYY",
+      "browser_total": null,
+      "browser_frequency": null,
+      "browser_date_format": null,
+      "warnings": []
     },
     {
       "path": "natural-gas/enr/coalbed",
@@ -2758,7 +3022,11 @@
       "start_period": "1989",
       "end_period": "2019",
       "default_frequency": "annual",
-      "default_date_format": "YYYY"
+      "default_date_format": "YYYY",
+      "browser_total": null,
+      "browser_frequency": null,
+      "browser_date_format": null,
+      "warnings": []
     },
     {
       "path": "natural-gas/enr/cplc",
@@ -2796,7 +3064,11 @@
       "start_period": "2009",
       "end_period": "2021",
       "default_frequency": "annual",
-      "default_date_format": "YYYY"
+      "default_date_format": "YYYY",
+      "browser_total": null,
+      "browser_frequency": null,
+      "browser_date_format": null,
+      "warnings": []
     },
     {
       "path": "natural-gas/enr/deep",
@@ -2834,7 +3106,11 @@
       "start_period": "1992",
       "end_period": "2007",
       "default_frequency": "annual",
-      "default_date_format": "YYYY"
+      "default_date_format": "YYYY",
+      "browser_total": null,
+      "browser_frequency": null,
+      "browser_date_format": null,
+      "warnings": []
     },
     {
       "path": "natural-gas/enr/drill",
@@ -2878,7 +3154,11 @@
       "start_period": "1973-01",
       "end_period": "2025-07",
       "default_frequency": "monthly",
-      "default_date_format": "YYYY-MM"
+      "default_date_format": "YYYY-MM",
+      "browser_total": null,
+      "browser_frequency": null,
+      "browser_date_format": null,
+      "warnings": []
     },
     {
       "path": "natural-gas/enr/dry",
@@ -2916,7 +3196,11 @@
       "start_period": "1925",
       "end_period": "2021",
       "default_frequency": "annual",
-      "default_date_format": "YYYY"
+      "default_date_format": "YYYY",
+      "browser_total": null,
+      "browser_frequency": null,
+      "browser_date_format": null,
+      "warnings": []
     },
     {
       "path": "natural-gas/enr/lc",
@@ -2954,7 +3238,11 @@
       "start_period": "1979",
       "end_period": "2021",
       "default_frequency": "annual",
-      "default_date_format": "YYYY"
+      "default_date_format": "YYYY",
+      "browser_total": null,
+      "browser_frequency": null,
+      "browser_date_format": null,
+      "warnings": []
     },
     {
       "path": "natural-gas/enr/nang",
@@ -2992,7 +3280,11 @@
       "start_period": "1979",
       "end_period": "2021",
       "default_frequency": "annual",
-      "default_date_format": "YYYY"
+      "default_date_format": "YYYY",
+      "browser_total": null,
+      "browser_frequency": null,
+      "browser_date_format": null,
+      "warnings": []
     },
     {
       "path": "natural-gas/enr/ngl",
@@ -3030,7 +3322,11 @@
       "start_period": "1979",
       "end_period": "2008",
       "default_frequency": "annual",
-      "default_date_format": "YYYY"
+      "default_date_format": "YYYY",
+      "browser_total": null,
+      "browser_frequency": null,
+      "browser_date_format": null,
+      "warnings": []
     },
     {
       "path": "natural-gas/enr/ngpl",
@@ -3068,7 +3364,11 @@
       "start_period": "1979",
       "end_period": "2021",
       "default_frequency": "annual",
-      "default_date_format": "YYYY"
+      "default_date_format": "YYYY",
+      "browser_total": null,
+      "browser_frequency": null,
+      "browser_date_format": null,
+      "warnings": []
     },
     {
       "path": "natural-gas/enr/nprod",
@@ -3106,7 +3406,11 @@
       "start_period": "1996",
       "end_period": "2021",
       "default_frequency": "annual",
-      "default_date_format": "YYYY"
+      "default_date_format": "YYYY",
+      "browser_total": null,
+      "browser_frequency": null,
+      "browser_date_format": null,
+      "warnings": []
     },
     {
       "path": "natural-gas/enr/seis",
@@ -3144,7 +3448,11 @@
       "start_period": "2000-01",
       "end_period": "2011-07",
       "default_frequency": "monthly",
-      "default_date_format": "YYYY-MM"
+      "default_date_format": "YYYY-MM",
+      "browser_total": null,
+      "browser_frequency": null,
+      "browser_date_format": null,
+      "warnings": []
     },
     {
       "path": "natural-gas/enr/shalegas",
@@ -3182,7 +3490,11 @@
       "start_period": "2007",
       "end_period": "2021",
       "default_frequency": "annual",
-      "default_date_format": "YYYY"
+      "default_date_format": "YYYY",
+      "browser_total": null,
+      "browser_frequency": null,
+      "browser_date_format": null,
+      "warnings": []
     },
     {
       "path": "natural-gas/enr/sum",
@@ -3220,7 +3532,11 @@
       "start_period": "1925",
       "end_period": "2021",
       "default_frequency": "annual",
-      "default_date_format": "YYYY"
+      "default_date_format": "YYYY",
+      "browser_total": null,
+      "browser_frequency": null,
+      "browser_date_format": null,
+      "warnings": []
     },
     {
       "path": "natural-gas/enr/wals",
@@ -3258,7 +3574,11 @@
       "start_period": "1979",
       "end_period": "2021",
       "default_frequency": "annual",
-      "default_date_format": "YYYY"
+      "default_date_format": "YYYY",
+      "browser_total": null,
+      "browser_frequency": null,
+      "browser_date_format": null,
+      "warnings": []
     },
     {
       "path": "natural-gas/enr/wellcost",
@@ -3296,7 +3616,11 @@
       "start_period": "1960",
       "end_period": "2007",
       "default_frequency": "annual",
-      "default_date_format": "YYYY"
+      "default_date_format": "YYYY",
+      "browser_total": null,
+      "browser_frequency": null,
+      "browser_date_format": null,
+      "warnings": []
     },
     {
       "path": "natural-gas/enr/welldep",
@@ -3334,7 +3658,11 @@
       "start_period": "1949",
       "end_period": "2008",
       "default_frequency": "annual",
-      "default_date_format": "YYYY"
+      "default_date_format": "YYYY",
+      "browser_total": null,
+      "browser_frequency": null,
+      "browser_date_format": null,
+      "warnings": []
     },
     {
       "path": "natural-gas/enr/wellend",
@@ -3378,7 +3706,11 @@
       "start_period": "1973-01",
       "end_period": "2012-12",
       "default_frequency": "monthly",
-      "default_date_format": "YYYY-MM"
+      "default_date_format": "YYYY-MM",
+      "browser_total": null,
+      "browser_frequency": null,
+      "browser_date_format": null,
+      "warnings": []
     },
     {
       "path": "natural-gas/enr/wellfoot",
@@ -3416,7 +3748,11 @@
       "start_period": "1949",
       "end_period": "2008",
       "default_frequency": "annual",
-      "default_date_format": "YYYY"
+      "default_date_format": "YYYY",
+      "browser_total": null,
+      "browser_frequency": null,
+      "browser_date_format": null,
+      "warnings": []
     },
     {
       "path": "natural-gas/move/expc",
@@ -3460,7 +3796,11 @@
       "start_period": "1973-01",
       "end_period": "2025-06",
       "default_frequency": "monthly",
-      "default_date_format": "YYYY-MM"
+      "default_date_format": "YYYY-MM",
+      "browser_total": null,
+      "browser_frequency": null,
+      "browser_date_format": null,
+      "warnings": []
     },
     {
       "path": "natural-gas/move/impc",
@@ -3504,7 +3844,11 @@
       "start_period": "1973-01",
       "end_period": "2025-06",
       "default_frequency": "monthly",
-      "default_date_format": "YYYY-MM"
+      "default_date_format": "YYYY-MM",
+      "browser_total": null,
+      "browser_frequency": null,
+      "browser_date_format": null,
+      "warnings": []
     },
     {
       "path": "natural-gas/move/ist",
@@ -3542,7 +3886,11 @@
       "start_period": "1930",
       "end_period": "2023",
       "default_frequency": "annual",
-      "default_date_format": "YYYY"
+      "default_date_format": "YYYY",
+      "browser_total": null,
+      "browser_frequency": null,
+      "browser_date_format": null,
+      "warnings": []
     },
     {
       "path": "natural-gas/move/poe1",
@@ -3586,7 +3934,11 @@
       "start_period": "1973-01",
       "end_period": "2025-06",
       "default_frequency": "monthly",
-      "default_date_format": "YYYY-MM"
+      "default_date_format": "YYYY-MM",
+      "browser_total": null,
+      "browser_frequency": null,
+      "browser_date_format": null,
+      "warnings": []
     },
     {
       "path": "natural-gas/move/poe2",
@@ -3630,7 +3982,11 @@
       "start_period": "1973-01",
       "end_period": "2025-06",
       "default_frequency": "monthly",
-      "default_date_format": "YYYY-MM"
+      "default_date_format": "YYYY-MM",
+      "browser_total": null,
+      "browser_frequency": null,
+      "browser_date_format": null,
+      "warnings": []
     },
     {
       "path": "natural-gas/move/state",
@@ -3674,7 +4030,11 @@
       "start_period": "1973-01",
       "end_period": "2025-06",
       "default_frequency": "monthly",
-      "default_date_format": "YYYY-MM"
+      "default_date_format": "YYYY-MM",
+      "browser_total": null,
+      "browser_frequency": null,
+      "browser_date_format": null,
+      "warnings": []
     },
     {
       "path": "natural-gas/pri/fut",
@@ -3730,7 +4090,11 @@
       "start_period": "1993-12-24",
       "end_period": "2025-09-12",
       "default_frequency": "weekly",
-      "default_date_format": "YYYY-MM-DD"
+      "default_date_format": "YYYY-MM-DD",
+      "browser_total": null,
+      "browser_frequency": null,
+      "browser_date_format": null,
+      "warnings": []
     },
     {
       "path": "natural-gas/pri/rescom",
@@ -3774,7 +4138,11 @@
       "start_period": "1989-01",
       "end_period": "2025-06",
       "default_frequency": "monthly",
-      "default_date_format": "YYYY-MM"
+      "default_date_format": "YYYY-MM",
+      "browser_total": null,
+      "browser_frequency": null,
+      "browser_date_format": null,
+      "warnings": []
     },
     {
       "path": "natural-gas/pri/sum",
@@ -3818,7 +4186,11 @@
       "start_period": "1973-01",
       "end_period": "2025-06",
       "default_frequency": "monthly",
-      "default_date_format": "YYYY-MM"
+      "default_date_format": "YYYY-MM",
+      "browser_total": null,
+      "browser_frequency": null,
+      "browser_date_format": null,
+      "warnings": []
     },
     {
       "path": "natural-gas/prod/coalbed",
@@ -3856,7 +4228,11 @@
       "start_period": "1989",
       "end_period": "2019",
       "default_frequency": "annual",
-      "default_date_format": "YYYY"
+      "default_date_format": "YYYY",
+      "browser_total": null,
+      "browser_frequency": null,
+      "browser_date_format": null,
+      "warnings": []
     },
     {
       "path": "natural-gas/prod/deep",
@@ -3894,7 +4270,11 @@
       "start_period": "1992",
       "end_period": "2007",
       "default_frequency": "annual",
-      "default_date_format": "YYYY"
+      "default_date_format": "YYYY",
+      "browser_total": null,
+      "browser_frequency": null,
+      "browser_date_format": null,
+      "warnings": []
     },
     {
       "path": "natural-gas/prod/lc",
@@ -3932,7 +4312,11 @@
       "start_period": "1979",
       "end_period": "2021",
       "default_frequency": "annual",
-      "default_date_format": "YYYY"
+      "default_date_format": "YYYY",
+      "browser_total": null,
+      "browser_frequency": null,
+      "browser_date_format": null,
+      "warnings": []
     },
     {
       "path": "natural-gas/prod/ngpl",
@@ -3970,7 +4354,11 @@
       "start_period": "1979",
       "end_period": "2021",
       "default_frequency": "annual",
-      "default_date_format": "YYYY"
+      "default_date_format": "YYYY",
+      "browser_total": null,
+      "browser_frequency": null,
+      "browser_date_format": null,
+      "warnings": []
     },
     {
       "path": "natural-gas/prod/off",
@@ -4014,7 +4402,11 @@
       "start_period": "1997-01",
       "end_period": "2025-06",
       "default_frequency": "monthly",
-      "default_date_format": "YYYY-MM"
+      "default_date_format": "YYYY-MM",
+      "browser_total": null,
+      "browser_frequency": null,
+      "browser_date_format": null,
+      "warnings": []
     },
     {
       "path": "natural-gas/prod/oilwells",
@@ -4052,7 +4444,11 @@
       "start_period": "2011",
       "end_period": "2020",
       "default_frequency": "annual",
-      "default_date_format": "YYYY"
+      "default_date_format": "YYYY",
+      "browser_total": null,
+      "browser_frequency": null,
+      "browser_date_format": null,
+      "warnings": []
     },
     {
       "path": "natural-gas/prod/pp",
@@ -4096,7 +4492,11 @@
       "start_period": "1973-01",
       "end_period": "2025-06",
       "default_frequency": "monthly",
-      "default_date_format": "YYYY-MM"
+      "default_date_format": "YYYY-MM",
+      "browser_total": null,
+      "browser_frequency": null,
+      "browser_date_format": null,
+      "warnings": []
     },
     {
       "path": "natural-gas/prod/shalegas",
@@ -4134,7 +4534,11 @@
       "start_period": "2007",
       "end_period": "2021",
       "default_frequency": "annual",
-      "default_date_format": "YYYY"
+      "default_date_format": "YYYY",
+      "browser_total": null,
+      "browser_frequency": null,
+      "browser_date_format": null,
+      "warnings": []
     },
     {
       "path": "natural-gas/prod/ss",
@@ -4172,7 +4576,11 @@
       "start_period": "1967",
       "end_period": "2023",
       "default_frequency": "annual",
-      "default_date_format": "YYYY"
+      "default_date_format": "YYYY",
+      "browser_total": null,
+      "browser_frequency": null,
+      "browser_date_format": null,
+      "warnings": []
     },
     {
       "path": "natural-gas/prod/sum",
@@ -4216,7 +4624,11 @@
       "start_period": "1973-01",
       "end_period": "2025-06",
       "default_frequency": "monthly",
-      "default_date_format": "YYYY-MM"
+      "default_date_format": "YYYY-MM",
+      "browser_total": null,
+      "browser_frequency": null,
+      "browser_date_format": null,
+      "warnings": []
     },
     {
       "path": "natural-gas/prod/wells",
@@ -4254,7 +4666,11 @@
       "start_period": "1989",
       "end_period": "2020",
       "default_frequency": "annual",
-      "default_date_format": "YYYY"
+      "default_date_format": "YYYY",
+      "browser_total": null,
+      "browser_frequency": null,
+      "browser_date_format": null,
+      "warnings": []
     },
     {
       "path": "natural-gas/prod/whv",
@@ -4298,7 +4714,11 @@
       "start_period": "1973-01",
       "end_period": "2025-06",
       "default_frequency": "monthly",
-      "default_date_format": "YYYY-MM"
+      "default_date_format": "YYYY-MM",
+      "browser_total": null,
+      "browser_frequency": null,
+      "browser_date_format": null,
+      "warnings": []
     },
     {
       "path": "natural-gas/stor/cap",
@@ -4342,7 +4762,11 @@
       "start_period": "1994-01",
       "end_period": "2025-06",
       "default_frequency": "monthly",
-      "default_date_format": "YYYY-MM"
+      "default_date_format": "YYYY-MM",
+      "browser_total": null,
+      "browser_frequency": null,
+      "browser_date_format": null,
+      "warnings": []
     },
     {
       "path": "natural-gas/stor/lng",
@@ -4380,7 +4804,11 @@
       "start_period": "1969",
       "end_period": "2023",
       "default_frequency": "annual",
-      "default_date_format": "YYYY"
+      "default_date_format": "YYYY",
+      "browser_total": null,
+      "browser_frequency": null,
+      "browser_date_format": null,
+      "warnings": []
     },
     {
       "path": "natural-gas/stor/sum",
@@ -4424,7 +4852,11 @@
       "start_period": "1973-01",
       "end_period": "2025-06",
       "default_frequency": "monthly",
-      "default_date_format": "YYYY-MM"
+      "default_date_format": "YYYY-MM",
+      "browser_total": null,
+      "browser_frequency": null,
+      "browser_date_format": null,
+      "warnings": []
     },
     {
       "path": "natural-gas/stor/type",
@@ -4468,7 +4900,11 @@
       "start_period": "1973-01",
       "end_period": "2025-06",
       "default_frequency": "monthly",
-      "default_date_format": "YYYY-MM"
+      "default_date_format": "YYYY-MM",
+      "browser_total": null,
+      "browser_frequency": null,
+      "browser_date_format": null,
+      "warnings": []
     },
     {
       "path": "natural-gas/stor/wkly",
@@ -4506,7 +4942,11 @@
       "start_period": "2010-01-01",
       "end_period": "2025-09-12",
       "default_frequency": "weekly",
-      "default_date_format": "YYYY-MM-DD"
+      "default_date_format": "YYYY-MM-DD",
+      "browser_total": null,
+      "browser_frequency": null,
+      "browser_date_format": null,
+      "warnings": []
     },
     {
       "path": "natural-gas/sum/lsum",
@@ -4550,7 +4990,11 @@
       "start_period": "1973-01",
       "end_period": "2025-06",
       "default_frequency": "monthly",
-      "default_date_format": "YYYY-MM"
+      "default_date_format": "YYYY-MM",
+      "browser_total": null,
+      "browser_frequency": null,
+      "browser_date_format": null,
+      "warnings": []
     },
     {
       "path": "natural-gas/sum/snd",
@@ -4594,7 +5038,11 @@
       "start_period": "1973-01",
       "end_period": "2025-06",
       "default_frequency": "monthly",
-      "default_date_format": "YYYY-MM"
+      "default_date_format": "YYYY-MM",
+      "browser_total": null,
+      "browser_frequency": null,
+      "browser_date_format": null,
+      "warnings": []
     },
     {
       "path": "natural-gas/sum/sndm",
@@ -4632,7 +5080,11 @@
       "start_period": "1973-01",
       "end_period": "2025-06",
       "default_frequency": "monthly",
-      "default_date_format": "YYYY-MM"
+      "default_date_format": "YYYY-MM",
+      "browser_total": null,
+      "browser_frequency": null,
+      "browser_date_format": null,
+      "warnings": []
     },
     {
       "path": "nuclear-outages/facility-nuclear-outages",
@@ -4660,7 +5112,11 @@
       "start_period": "2007-01-01",
       "end_period": "2025-09-19",
       "default_frequency": "daily",
-      "default_date_format": "YYYY-MM-DD"
+      "default_date_format": "YYYY-MM-DD",
+      "browser_total": null,
+      "browser_frequency": null,
+      "browser_date_format": null,
+      "warnings": []
     },
     {
       "path": "nuclear-outages/generator-nuclear-outages",
@@ -4692,7 +5148,11 @@
       "start_period": "2007-01-01",
       "end_period": "2025-09-19",
       "default_frequency": "daily",
-      "default_date_format": "YYYY-MM-DD"
+      "default_date_format": "YYYY-MM-DD",
+      "browser_total": null,
+      "browser_frequency": null,
+      "browser_date_format": null,
+      "warnings": []
     },
     {
       "path": "nuclear-outages/us-nuclear-outages",
@@ -4715,7 +5175,11 @@
       "start_period": "2007-01-01",
       "end_period": "2025-09-19",
       "default_frequency": "daily",
-      "default_date_format": "YYYY-MM-DD"
+      "default_date_format": "YYYY-MM-DD",
+      "browser_total": null,
+      "browser_frequency": null,
+      "browser_date_format": null,
+      "warnings": []
     },
     {
       "path": "petroleum/cons/821dst",
@@ -4753,7 +5217,11 @@
       "start_period": "1984",
       "end_period": "2020",
       "default_frequency": "annual",
-      "default_date_format": "YYYY"
+      "default_date_format": "YYYY",
+      "browser_total": null,
+      "browser_frequency": null,
+      "browser_date_format": null,
+      "warnings": []
     },
     {
       "path": "petroleum/cons/821dsta",
@@ -4791,7 +5259,11 @@
       "start_period": "1984",
       "end_period": "2020",
       "default_frequency": "annual",
-      "default_date_format": "YYYY"
+      "default_date_format": "YYYY",
+      "browser_total": null,
+      "browser_frequency": null,
+      "browser_date_format": null,
+      "warnings": []
     },
     {
       "path": "petroleum/cons/821ker",
@@ -4829,7 +5301,11 @@
       "start_period": "1984",
       "end_period": "2020",
       "default_frequency": "annual",
-      "default_date_format": "YYYY"
+      "default_date_format": "YYYY",
+      "browser_total": null,
+      "browser_frequency": null,
+      "browser_date_format": null,
+      "warnings": []
     },
     {
       "path": "petroleum/cons/821kera",
@@ -4867,7 +5343,11 @@
       "start_period": "1984",
       "end_period": "2020",
       "default_frequency": "annual",
-      "default_date_format": "YYYY"
+      "default_date_format": "YYYY",
+      "browser_total": null,
+      "browser_frequency": null,
+      "browser_date_format": null,
+      "warnings": []
     },
     {
       "path": "petroleum/cons/821rsd",
@@ -4905,7 +5385,11 @@
       "start_period": "1984",
       "end_period": "2020",
       "default_frequency": "annual",
-      "default_date_format": "YYYY"
+      "default_date_format": "YYYY",
+      "browser_total": null,
+      "browser_frequency": null,
+      "browser_date_format": null,
+      "warnings": []
     },
     {
       "path": "petroleum/cons/821rsda",
@@ -4943,7 +5427,11 @@
       "start_period": "1984",
       "end_period": "2020",
       "default_frequency": "annual",
-      "default_date_format": "YYYY"
+      "default_date_format": "YYYY",
+      "browser_total": null,
+      "browser_frequency": null,
+      "browser_date_format": null,
+      "warnings": []
     },
     {
       "path": "petroleum/cons/821use",
@@ -4981,7 +5469,11 @@
       "start_period": "1984",
       "end_period": "2020",
       "default_frequency": "annual",
-      "default_date_format": "YYYY"
+      "default_date_format": "YYYY",
+      "browser_total": null,
+      "browser_frequency": null,
+      "browser_date_format": null,
+      "warnings": []
     },
     {
       "path": "petroleum/cons/821usea",
@@ -5019,7 +5511,11 @@
       "start_period": "1984",
       "end_period": "2020",
       "default_frequency": "annual",
-      "default_date_format": "YYYY"
+      "default_date_format": "YYYY",
+      "browser_total": null,
+      "browser_frequency": null,
+      "browser_date_format": null,
+      "warnings": []
     },
     {
       "path": "petroleum/cons/prim",
@@ -5063,7 +5559,11 @@
       "start_period": "1983-01",
       "end_period": "2022-03",
       "default_frequency": "monthly",
-      "default_date_format": "YYYY-MM"
+      "default_date_format": "YYYY-MM",
+      "browser_total": null,
+      "browser_frequency": null,
+      "browser_date_format": null,
+      "warnings": []
     },
     {
       "path": "petroleum/cons/psup",
@@ -5107,7 +5607,11 @@
       "start_period": "1936-01",
       "end_period": "2025-06",
       "default_frequency": "monthly",
-      "default_date_format": "YYYY-MM"
+      "default_date_format": "YYYY-MM",
+      "browser_total": null,
+      "browser_frequency": null,
+      "browser_date_format": null,
+      "warnings": []
     },
     {
       "path": "petroleum/cons/refmg",
@@ -5151,7 +5655,11 @@
       "start_period": "1983-01",
       "end_period": "2022-03",
       "default_frequency": "monthly",
-      "default_date_format": "YYYY-MM"
+      "default_date_format": "YYYY-MM",
+      "browser_total": null,
+      "browser_frequency": null,
+      "browser_date_format": null,
+      "warnings": []
     },
     {
       "path": "petroleum/cons/refoth",
@@ -5195,7 +5703,11 @@
       "start_period": "1983-01",
       "end_period": "2022-03",
       "default_frequency": "monthly",
-      "default_date_format": "YYYY-MM"
+      "default_date_format": "YYYY-MM",
+      "browser_total": null,
+      "browser_frequency": null,
+      "browser_date_format": null,
+      "warnings": []
     },
     {
       "path": "petroleum/cons/refres",
@@ -5239,7 +5751,11 @@
       "start_period": "1983-01",
       "end_period": "2022-03",
       "default_frequency": "monthly",
-      "default_date_format": "YYYY-MM"
+      "default_date_format": "YYYY-MM",
+      "browser_total": null,
+      "browser_frequency": null,
+      "browser_date_format": null,
+      "warnings": []
     },
     {
       "path": "petroleum/cons/wpsup",
@@ -5283,7 +5799,11 @@
       "start_period": "1991-02-08",
       "end_period": "2025-09-12",
       "default_frequency": "weekly",
-      "default_date_format": "YYYY-MM-DD"
+      "default_date_format": "YYYY-MM-DD",
+      "browser_total": null,
+      "browser_frequency": null,
+      "browser_date_format": null,
+      "warnings": []
     },
     {
       "path": "petroleum/crd/api",
@@ -5321,7 +5841,11 @@
       "start_period": "2015-01",
       "end_period": "2024-02",
       "default_frequency": "monthly",
-      "default_date_format": "YYYY-MM"
+      "default_date_format": "YYYY-MM",
+      "browser_total": null,
+      "browser_frequency": null,
+      "browser_date_format": null,
+      "warnings": []
     },
     {
       "path": "petroleum/crd/cplc",
@@ -5359,7 +5883,11 @@
       "start_period": "2009",
       "end_period": "2021",
       "default_frequency": "annual",
-      "default_date_format": "YYYY"
+      "default_date_format": "YYYY",
+      "browser_total": null,
+      "browser_frequency": null,
+      "browser_date_format": null,
+      "warnings": []
     },
     {
       "path": "petroleum/crd/crpdn",
@@ -5403,7 +5931,11 @@
       "start_period": "1960-01",
       "end_period": "2025-06",
       "default_frequency": "monthly",
-      "default_date_format": "YYYY-MM"
+      "default_date_format": "YYYY-MM",
+      "browser_total": null,
+      "browser_frequency": null,
+      "browser_date_format": null,
+      "warnings": []
     },
     {
       "path": "petroleum/crd/drill",
@@ -5447,7 +5979,11 @@
       "start_period": "1973-01",
       "end_period": "2025-07",
       "default_frequency": "monthly",
-      "default_date_format": "YYYY-MM"
+      "default_date_format": "YYYY-MM",
+      "browser_total": null,
+      "browser_frequency": null,
+      "browser_date_format": null,
+      "warnings": []
     },
     {
       "path": "petroleum/crd/gom",
@@ -5485,7 +6021,11 @@
       "start_period": "1992",
       "end_period": "2007",
       "default_frequency": "annual",
-      "default_date_format": "YYYY"
+      "default_date_format": "YYYY",
+      "browser_total": null,
+      "browser_frequency": null,
+      "browser_date_format": null,
+      "warnings": []
     },
     {
       "path": "petroleum/crd/nprod",
@@ -5523,7 +6063,11 @@
       "start_period": "1996",
       "end_period": "2021",
       "default_frequency": "annual",
-      "default_date_format": "YYYY"
+      "default_date_format": "YYYY",
+      "browser_total": null,
+      "browser_frequency": null,
+      "browser_date_format": null,
+      "warnings": []
     },
     {
       "path": "petroleum/crd/pres",
@@ -5561,7 +6105,11 @@
       "start_period": "1899",
       "end_period": "2021",
       "default_frequency": "annual",
-      "default_date_format": "YYYY"
+      "default_date_format": "YYYY",
+      "browser_total": null,
+      "browser_frequency": null,
+      "browser_date_format": null,
+      "warnings": []
     },
     {
       "path": "petroleum/crd/seis",
@@ -5599,7 +6147,11 @@
       "start_period": "2000-01",
       "end_period": "2011-07",
       "default_frequency": "monthly",
-      "default_date_format": "YYYY-MM"
+      "default_date_format": "YYYY-MM",
+      "browser_total": null,
+      "browser_frequency": null,
+      "browser_date_format": null,
+      "warnings": []
     },
     {
       "path": "petroleum/crd/wellcost",
@@ -5637,7 +6189,11 @@
       "start_period": "1960",
       "end_period": "2007",
       "default_frequency": "annual",
-      "default_date_format": "YYYY"
+      "default_date_format": "YYYY",
+      "browser_total": null,
+      "browser_frequency": null,
+      "browser_date_format": null,
+      "warnings": []
     },
     {
       "path": "petroleum/crd/welldep",
@@ -5675,7 +6231,11 @@
       "start_period": "1949",
       "end_period": "2008",
       "default_frequency": "annual",
-      "default_date_format": "YYYY"
+      "default_date_format": "YYYY",
+      "browser_total": null,
+      "browser_frequency": null,
+      "browser_date_format": null,
+      "warnings": []
     },
     {
       "path": "petroleum/crd/wellend",
@@ -5719,7 +6279,11 @@
       "start_period": "1973-01",
       "end_period": "2012-12",
       "default_frequency": "monthly",
-      "default_date_format": "YYYY-MM"
+      "default_date_format": "YYYY-MM",
+      "browser_total": null,
+      "browser_frequency": null,
+      "browser_date_format": null,
+      "warnings": []
     },
     {
       "path": "petroleum/crd/wellfoot",
@@ -5757,7 +6321,11 @@
       "start_period": "1949",
       "end_period": "2008",
       "default_frequency": "annual",
-      "default_date_format": "YYYY"
+      "default_date_format": "YYYY",
+      "browser_total": null,
+      "browser_frequency": null,
+      "browser_date_format": null,
+      "warnings": []
     },
     {
       "path": "petroleum/move/exp",
@@ -5801,7 +6369,11 @@
       "start_period": "1920-01",
       "end_period": "2025-06",
       "default_frequency": "monthly",
-      "default_date_format": "YYYY-MM"
+      "default_date_format": "YYYY-MM",
+      "browser_total": null,
+      "browser_frequency": null,
+      "browser_date_format": null,
+      "warnings": []
     },
     {
       "path": "petroleum/move/expc",
@@ -5857,7 +6429,11 @@
       "start_period": "2023-05-26",
       "end_period": "2025-09-12",
       "default_frequency": "weekly",
-      "default_date_format": "YYYY-MM-DD"
+      "default_date_format": "YYYY-MM-DD",
+      "browser_total": null,
+      "browser_frequency": null,
+      "browser_date_format": null,
+      "warnings": []
     },
     {
       "path": "petroleum/move/expcp",
@@ -5901,7 +6477,11 @@
       "start_period": "1981-01",
       "end_period": "2025-06",
       "default_frequency": "monthly",
-      "default_date_format": "YYYY-MM"
+      "default_date_format": "YYYY-MM",
+      "browser_total": null,
+      "browser_frequency": null,
+      "browser_date_format": null,
+      "warnings": []
     },
     {
       "path": "petroleum/move/imc1",
@@ -5945,7 +6525,11 @@
       "start_period": "1973-10",
       "end_period": "2025-06",
       "default_frequency": "monthly",
-      "default_date_format": "YYYY-MM"
+      "default_date_format": "YYYY-MM",
+      "browser_total": null,
+      "browser_frequency": null,
+      "browser_date_format": null,
+      "warnings": []
     },
     {
       "path": "petroleum/move/imc2",
@@ -5989,7 +6573,11 @@
       "start_period": "1983-01",
       "end_period": "2025-06",
       "default_frequency": "monthly",
-      "default_date_format": "YYYY-MM"
+      "default_date_format": "YYYY-MM",
+      "browser_total": null,
+      "browser_frequency": null,
+      "browser_date_format": null,
+      "warnings": []
     },
     {
       "path": "petroleum/move/imc3",
@@ -6033,7 +6621,11 @@
       "start_period": "1983-01",
       "end_period": "2025-06",
       "default_frequency": "monthly",
-      "default_date_format": "YYYY-MM"
+      "default_date_format": "YYYY-MM",
+      "browser_total": null,
+      "browser_frequency": null,
+      "browser_date_format": null,
+      "warnings": []
     },
     {
       "path": "petroleum/move/imp",
@@ -6077,7 +6669,11 @@
       "start_period": "1920-01",
       "end_period": "2025-06",
       "default_frequency": "monthly",
-      "default_date_format": "YYYY-MM"
+      "default_date_format": "YYYY-MM",
+      "browser_total": null,
+      "browser_frequency": null,
+      "browser_date_format": null,
+      "warnings": []
     },
     {
       "path": "petroleum/move/imp2",
@@ -6121,7 +6717,11 @@
       "start_period": "1981-01",
       "end_period": "2025-06",
       "default_frequency": "monthly",
-      "default_date_format": "YYYY-MM"
+      "default_date_format": "YYYY-MM",
+      "browser_total": null,
+      "browser_frequency": null,
+      "browser_date_format": null,
+      "warnings": []
     },
     {
       "path": "petroleum/move/impcp",
@@ -6165,7 +6765,11 @@
       "start_period": "1920-01",
       "end_period": "2025-06",
       "default_frequency": "monthly",
-      "default_date_format": "YYYY-MM"
+      "default_date_format": "YYYY-MM",
+      "browser_total": null,
+      "browser_frequency": null,
+      "browser_date_format": null,
+      "warnings": []
     },
     {
       "path": "petroleum/move/impcus",
@@ -6209,7 +6813,11 @@
       "start_period": "1920-01",
       "end_period": "2025-06",
       "default_frequency": "monthly",
-      "default_date_format": "YYYY-MM"
+      "default_date_format": "YYYY-MM",
+      "browser_total": null,
+      "browser_frequency": null,
+      "browser_date_format": null,
+      "warnings": []
     },
     {
       "path": "petroleum/move/ipct",
@@ -6253,7 +6861,11 @@
       "start_period": "1983-01",
       "end_period": "2025-06",
       "default_frequency": "monthly",
-      "default_date_format": "YYYY-MM"
+      "default_date_format": "YYYY-MM",
+      "browser_total": null,
+      "browser_frequency": null,
+      "browser_date_format": null,
+      "warnings": []
     },
     {
       "path": "petroleum/move/land1",
@@ -6297,7 +6909,11 @@
       "start_period": "1973-01",
       "end_period": "2025-06",
       "default_frequency": "monthly",
-      "default_date_format": "YYYY-MM"
+      "default_date_format": "YYYY-MM",
+      "browser_total": null,
+      "browser_frequency": null,
+      "browser_date_format": null,
+      "warnings": []
     },
     {
       "path": "petroleum/move/land2",
@@ -6341,7 +6957,11 @@
       "start_period": "1983-01",
       "end_period": "2025-06",
       "default_frequency": "monthly",
-      "default_date_format": "YYYY-MM"
+      "default_date_format": "YYYY-MM",
+      "browser_total": null,
+      "browser_frequency": null,
+      "browser_date_format": null,
+      "warnings": []
     },
     {
       "path": "petroleum/move/land3",
@@ -6385,7 +7005,11 @@
       "start_period": "1983-01",
       "end_period": "2025-06",
       "default_frequency": "monthly",
-      "default_date_format": "YYYY-MM"
+      "default_date_format": "YYYY-MM",
+      "browser_total": null,
+      "browser_frequency": null,
+      "browser_date_format": null,
+      "warnings": []
     },
     {
       "path": "petroleum/move/neti",
@@ -6429,7 +7053,11 @@
       "start_period": "1920-01",
       "end_period": "2025-06",
       "default_frequency": "monthly",
-      "default_date_format": "YYYY-MM"
+      "default_date_format": "YYYY-MM",
+      "browser_total": null,
+      "browser_frequency": null,
+      "browser_date_format": null,
+      "warnings": []
     },
     {
       "path": "petroleum/move/netr",
@@ -6473,7 +7101,11 @@
       "start_period": "1981-01",
       "end_period": "2025-06",
       "default_frequency": "monthly",
-      "default_date_format": "YYYY-MM"
+      "default_date_format": "YYYY-MM",
+      "browser_total": null,
+      "browser_frequency": null,
+      "browser_date_format": null,
+      "warnings": []
     },
     {
       "path": "petroleum/move/pipe",
@@ -6517,7 +7149,11 @@
       "start_period": "1986-01",
       "end_period": "2025-06",
       "default_frequency": "monthly",
-      "default_date_format": "YYYY-MM"
+      "default_date_format": "YYYY-MM",
+      "browser_total": null,
+      "browser_frequency": null,
+      "browser_date_format": null,
+      "warnings": []
     },
     {
       "path": "petroleum/move/ptb",
@@ -6561,7 +7197,11 @@
       "start_period": "1986-01",
       "end_period": "2025-06",
       "default_frequency": "monthly",
-      "default_date_format": "YYYY-MM"
+      "default_date_format": "YYYY-MM",
+      "browser_total": null,
+      "browser_frequency": null,
+      "browser_date_format": null,
+      "warnings": []
     },
     {
       "path": "petroleum/move/rail",
@@ -6605,7 +7245,11 @@
       "start_period": "2010-01",
       "end_period": "2025-06",
       "default_frequency": "monthly",
-      "default_date_format": "YYYY-MM"
+      "default_date_format": "YYYY-MM",
+      "browser_total": null,
+      "browser_frequency": null,
+      "browser_date_format": null,
+      "warnings": []
     },
     {
       "path": "petroleum/move/railNA",
@@ -6649,7 +7293,11 @@
       "start_period": "2010-01",
       "end_period": "2025-06",
       "default_frequency": "monthly",
-      "default_date_format": "YYYY-MM"
+      "default_date_format": "YYYY-MM",
+      "browser_total": null,
+      "browser_frequency": null,
+      "browser_date_format": null,
+      "warnings": []
     },
     {
       "path": "petroleum/move/res",
@@ -6693,7 +7341,11 @@
       "start_period": "1981-01",
       "end_period": "2025-06",
       "default_frequency": "monthly",
-      "default_date_format": "YYYY-MM"
+      "default_date_format": "YYYY-MM",
+      "browser_total": null,
+      "browser_frequency": null,
+      "browser_date_format": null,
+      "warnings": []
     },
     {
       "path": "petroleum/move/tb",
@@ -6737,7 +7389,11 @@
       "start_period": "1986-01",
       "end_period": "2025-06",
       "default_frequency": "monthly",
-      "default_date_format": "YYYY-MM"
+      "default_date_format": "YYYY-MM",
+      "browser_total": null,
+      "browser_frequency": null,
+      "browser_date_format": null,
+      "warnings": []
     },
     {
       "path": "petroleum/move/wimpc",
@@ -6781,7 +7437,11 @@
       "start_period": "2010-06-04",
       "end_period": "2025-09-12",
       "default_frequency": "weekly",
-      "default_date_format": "YYYY-MM-DD"
+      "default_date_format": "YYYY-MM-DD",
+      "browser_total": null,
+      "browser_frequency": null,
+      "browser_date_format": null,
+      "warnings": []
     },
     {
       "path": "petroleum/move/wkly",
@@ -6825,7 +7485,11 @@
       "start_period": "1982-08-20",
       "end_period": "2025-09-12",
       "default_frequency": "weekly",
-      "default_date_format": "YYYY-MM-DD"
+      "default_date_format": "YYYY-MM-DD",
+      "browser_total": null,
+      "browser_frequency": null,
+      "browser_date_format": null,
+      "warnings": []
     },
     {
       "path": "petroleum/pnp/bioplfuel",
@@ -6863,7 +7527,11 @@
       "start_period": "2021",
       "end_period": "2023",
       "default_frequency": "annual",
-      "default_date_format": "YYYY"
+      "default_date_format": "YYYY",
+      "browser_total": null,
+      "browser_frequency": null,
+      "browser_date_format": null,
+      "warnings": []
     },
     {
       "path": "petroleum/pnp/cap1",
@@ -6901,7 +7569,11 @@
       "start_period": "1982",
       "end_period": "2025",
       "default_frequency": "annual",
-      "default_date_format": "YYYY"
+      "default_date_format": "YYYY",
+      "browser_total": null,
+      "browser_frequency": null,
+      "browser_date_format": null,
+      "warnings": []
     },
     {
       "path": "petroleum/pnp/capbio",
@@ -6945,7 +7617,11 @@
       "start_period": "2011-01",
       "end_period": "2025-06",
       "default_frequency": "monthly",
-      "default_date_format": "YYYY-MM"
+      "default_date_format": "YYYY-MM",
+      "browser_total": null,
+      "browser_frequency": null,
+      "browser_date_format": null,
+      "warnings": []
     },
     {
       "path": "petroleum/pnp/capchg",
@@ -6983,7 +7659,11 @@
       "start_period": "1982",
       "end_period": "2025",
       "default_frequency": "annual",
-      "default_date_format": "YYYY"
+      "default_date_format": "YYYY",
+      "browser_total": null,
+      "browser_frequency": null,
+      "browser_date_format": null,
+      "warnings": []
     },
     {
       "path": "petroleum/pnp/capfuel",
@@ -7021,7 +7701,11 @@
       "start_period": "1985",
       "end_period": "2024",
       "default_frequency": "annual",
-      "default_date_format": "YYYY"
+      "default_date_format": "YYYY",
+      "browser_total": null,
+      "browser_frequency": null,
+      "browser_date_format": null,
+      "warnings": []
     },
     {
       "path": "petroleum/pnp/capprod",
@@ -7059,7 +7743,11 @@
       "start_period": "1982",
       "end_period": "2025",
       "default_frequency": "annual",
-      "default_date_format": "YYYY"
+      "default_date_format": "YYYY",
+      "browser_total": null,
+      "browser_frequency": null,
+      "browser_date_format": null,
+      "warnings": []
     },
     {
       "path": "petroleum/pnp/caprec",
@@ -7097,7 +7785,11 @@
       "start_period": "1981",
       "end_period": "2024",
       "default_frequency": "annual",
-      "default_date_format": "YYYY"
+      "default_date_format": "YYYY",
+      "browser_total": null,
+      "browser_frequency": null,
+      "browser_date_format": null,
+      "warnings": []
     },
     {
       "path": "petroleum/pnp/capshell",
@@ -7135,7 +7827,11 @@
       "start_period": "1982",
       "end_period": "2025",
       "default_frequency": "annual",
-      "default_date_format": "YYYY"
+      "default_date_format": "YYYY",
+      "browser_total": null,
+      "browser_frequency": null,
+      "browser_date_format": null,
+      "warnings": []
     },
     {
       "path": "petroleum/pnp/capwork",
@@ -7173,7 +7869,11 @@
       "start_period": "1982",
       "end_period": "2025",
       "default_frequency": "annual",
-      "default_date_format": "YYYY"
+      "default_date_format": "YYYY",
+      "browser_total": null,
+      "browser_frequency": null,
+      "browser_date_format": null,
+      "warnings": []
     },
     {
       "path": "petroleum/pnp/crq",
@@ -7217,7 +7917,11 @@
       "start_period": "1985-01",
       "end_period": "2025-06",
       "default_frequency": "monthly",
-      "default_date_format": "YYYY-MM"
+      "default_date_format": "YYYY-MM",
+      "browser_total": null,
+      "browser_frequency": null,
+      "browser_date_format": null,
+      "warnings": []
     },
     {
       "path": "petroleum/pnp/dwns",
@@ -7261,7 +7965,11 @@
       "start_period": "1987-01",
       "end_period": "2025-06",
       "default_frequency": "monthly",
-      "default_date_format": "YYYY-MM"
+      "default_date_format": "YYYY-MM",
+      "browser_total": null,
+      "browser_frequency": null,
+      "browser_date_format": null,
+      "warnings": []
     },
     {
       "path": "petroleum/pnp/feedng",
@@ -7299,7 +8007,11 @@
       "start_period": "2008",
       "end_period": "2024",
       "default_frequency": "annual",
-      "default_date_format": "YYYY"
+      "default_date_format": "YYYY",
+      "browser_total": null,
+      "browser_frequency": null,
+      "browser_date_format": null,
+      "warnings": []
     },
     {
       "path": "petroleum/pnp/gp",
@@ -7343,7 +8055,11 @@
       "start_period": "1973-01",
       "end_period": "2025-06",
       "default_frequency": "monthly",
-      "default_date_format": "YYYY-MM"
+      "default_date_format": "YYYY-MM",
+      "browser_total": null,
+      "browser_frequency": null,
+      "browser_date_format": null,
+      "warnings": []
     },
     {
       "path": "petroleum/pnp/inpt",
@@ -7387,7 +8103,11 @@
       "start_period": "1961-01",
       "end_period": "2025-06",
       "default_frequency": "monthly",
-      "default_date_format": "YYYY-MM"
+      "default_date_format": "YYYY-MM",
+      "browser_total": null,
+      "browser_frequency": null,
+      "browser_date_format": null,
+      "warnings": []
     },
     {
       "path": "petroleum/pnp/inpt2",
@@ -7431,7 +8151,11 @@
       "start_period": "1986-01",
       "end_period": "2025-06",
       "default_frequency": "monthly",
-      "default_date_format": "YYYY-MM"
+      "default_date_format": "YYYY-MM",
+      "browser_total": null,
+      "browser_frequency": null,
+      "browser_date_format": null,
+      "warnings": []
     },
     {
       "path": "petroleum/pnp/inpt3",
@@ -7475,7 +8199,11 @@
       "start_period": "2005-01",
       "end_period": "2025-06",
       "default_frequency": "monthly",
-      "default_date_format": "YYYY-MM"
+      "default_date_format": "YYYY-MM",
+      "browser_total": null,
+      "browser_frequency": null,
+      "browser_date_format": null,
+      "warnings": []
     },
     {
       "path": "petroleum/pnp/oxy",
@@ -7519,7 +8247,11 @@
       "start_period": "1981-01",
       "end_period": "2025-06",
       "default_frequency": "monthly",
-      "default_date_format": "YYYY-MM"
+      "default_date_format": "YYYY-MM",
+      "browser_total": null,
+      "browser_frequency": null,
+      "browser_date_format": null,
+      "warnings": []
     },
     {
       "path": "petroleum/pnp/pct",
@@ -7563,7 +8295,11 @@
       "start_period": "1993-01",
       "end_period": "2025-06",
       "default_frequency": "monthly",
-      "default_date_format": "YYYY-MM"
+      "default_date_format": "YYYY-MM",
+      "browser_total": null,
+      "browser_frequency": null,
+      "browser_date_format": null,
+      "warnings": []
     },
     {
       "path": "petroleum/pnp/refp",
@@ -7607,7 +8343,11 @@
       "start_period": "1936-01",
       "end_period": "2025-06",
       "default_frequency": "monthly",
-      "default_date_format": "YYYY-MM"
+      "default_date_format": "YYYY-MM",
+      "browser_total": null,
+      "browser_frequency": null,
+      "browser_date_format": null,
+      "warnings": []
     },
     {
       "path": "petroleum/pnp/refp2",
@@ -7651,7 +8391,11 @@
       "start_period": "1993-01",
       "end_period": "2025-06",
       "default_frequency": "monthly",
-      "default_date_format": "YYYY-MM"
+      "default_date_format": "YYYY-MM",
+      "browser_total": null,
+      "browser_frequency": null,
+      "browser_date_format": null,
+      "warnings": []
     },
     {
       "path": "petroleum/pnp/refp3",
@@ -7695,7 +8439,11 @@
       "start_period": "2005-01",
       "end_period": "2025-06",
       "default_frequency": "monthly",
-      "default_date_format": "YYYY-MM"
+      "default_date_format": "YYYY-MM",
+      "browser_total": null,
+      "browser_frequency": null,
+      "browser_date_format": null,
+      "warnings": []
     },
     {
       "path": "petroleum/pnp/unc",
@@ -7739,7 +8487,11 @@
       "start_period": "1985-01",
       "end_period": "2025-06",
       "default_frequency": "monthly",
-      "default_date_format": "YYYY-MM"
+      "default_date_format": "YYYY-MM",
+      "browser_total": null,
+      "browser_frequency": null,
+      "browser_date_format": null,
+      "warnings": []
     },
     {
       "path": "petroleum/pnp/wiup",
@@ -7783,7 +8535,11 @@
       "start_period": "1990-01-05",
       "end_period": "2025-09-12",
       "default_frequency": "weekly",
-      "default_date_format": "YYYY-MM-DD"
+      "default_date_format": "YYYY-MM-DD",
+      "browser_total": null,
+      "browser_frequency": null,
+      "browser_date_format": null,
+      "warnings": []
     },
     {
       "path": "petroleum/pnp/wprodb",
@@ -7827,7 +8583,11 @@
       "start_period": "2010-06-04",
       "end_period": "2025-09-12",
       "default_frequency": "weekly",
-      "default_date_format": "YYYY-MM-DD"
+      "default_date_format": "YYYY-MM-DD",
+      "browser_total": null,
+      "browser_frequency": null,
+      "browser_date_format": null,
+      "warnings": []
     },
     {
       "path": "petroleum/pnp/wprode",
@@ -7871,7 +8631,11 @@
       "start_period": "2010-06-04",
       "end_period": "2025-09-12",
       "default_frequency": "weekly",
-      "default_date_format": "YYYY-MM-DD"
+      "default_date_format": "YYYY-MM-DD",
+      "browser_total": null,
+      "browser_frequency": null,
+      "browser_date_format": null,
+      "warnings": []
     },
     {
       "path": "petroleum/pnp/wprodr",
@@ -7915,7 +8679,11 @@
       "start_period": "2010-06-04",
       "end_period": "2025-09-12",
       "default_frequency": "weekly",
-      "default_date_format": "YYYY-MM-DD"
+      "default_date_format": "YYYY-MM-DD",
+      "browser_total": null,
+      "browser_frequency": null,
+      "browser_date_format": null,
+      "warnings": []
     },
     {
       "path": "petroleum/pnp/wprodrb",
@@ -7959,7 +8727,11 @@
       "start_period": "1982-08-20",
       "end_period": "2025-09-12",
       "default_frequency": "weekly",
-      "default_date_format": "YYYY-MM-DD"
+      "default_date_format": "YYYY-MM-DD",
+      "browser_total": null,
+      "browser_frequency": null,
+      "browser_date_format": null,
+      "warnings": []
     },
     {
       "path": "petroleum/pri/allmg",
@@ -8003,7 +8775,11 @@
       "start_period": "1983-01",
       "end_period": "2022-03",
       "default_frequency": "monthly",
-      "default_date_format": "YYYY-MM"
+      "default_date_format": "YYYY-MM",
+      "browser_total": null,
+      "browser_frequency": null,
+      "browser_date_format": null,
+      "warnings": []
     },
     {
       "path": "petroleum/pri/dfp1",
@@ -8047,7 +8823,11 @@
       "start_period": "1974-01",
       "end_period": "2025-06",
       "default_frequency": "monthly",
-      "default_date_format": "YYYY-MM"
+      "default_date_format": "YYYY-MM",
+      "browser_total": null,
+      "browser_frequency": null,
+      "browser_date_format": null,
+      "warnings": []
     },
     {
       "path": "petroleum/pri/dfp2",
@@ -8091,7 +8871,11 @@
       "start_period": "1993-10",
       "end_period": "2025-06",
       "default_frequency": "monthly",
-      "default_date_format": "YYYY-MM"
+      "default_date_format": "YYYY-MM",
+      "browser_total": null,
+      "browser_frequency": null,
+      "browser_date_format": null,
+      "warnings": []
     },
     {
       "path": "petroleum/pri/dfp3",
@@ -8135,7 +8919,11 @@
       "start_period": "1993-10",
       "end_period": "2025-06",
       "default_frequency": "monthly",
-      "default_date_format": "YYYY-MM"
+      "default_date_format": "YYYY-MM",
+      "browser_total": null,
+      "browser_frequency": null,
+      "browser_date_format": null,
+      "warnings": []
     },
     {
       "path": "petroleum/pri/dist",
@@ -8179,7 +8967,11 @@
       "start_period": "1983-01",
       "end_period": "2022-03",
       "default_frequency": "monthly",
-      "default_date_format": "YYYY-MM"
+      "default_date_format": "YYYY-MM",
+      "browser_total": null,
+      "browser_frequency": null,
+      "browser_date_format": null,
+      "warnings": []
     },
     {
       "path": "petroleum/pri/fut",
@@ -8187,16 +8979,16 @@
       "description": "EIA petroleum gas survey data",
       "frequencies": [
         {
-          "id": "weekly",
-          "description": "One data point for each week.",
-          "query": "W",
-          "format": "YYYY-MM-DD"
-        },
-        {
           "id": "monthly",
           "description": "One data point for each month.",
           "query": "M",
           "format": "YYYY-MM"
+        },
+        {
+          "id": "weekly",
+          "description": "One data point for each week.",
+          "query": "W",
+          "format": "YYYY-MM-DD"
         },
         {
           "id": "annual",
@@ -8235,7 +9027,11 @@
       "start_period": "1980-01-04",
       "end_period": "2024-04-05",
       "default_frequency": "weekly",
-      "default_date_format": "YYYY-MM-DD"
+      "default_date_format": "YYYY-MM-DD",
+      "browser_total": null,
+      "browser_frequency": null,
+      "browser_date_format": null,
+      "warnings": []
     },
     {
       "path": "petroleum/pri/gnd",
@@ -8243,16 +9039,16 @@
       "description": "EIA petroleum gas survey data",
       "frequencies": [
         {
-          "id": "weekly",
-          "description": "One data point for each week.",
-          "query": "W",
-          "format": "YYYY-MM-DD"
-        },
-        {
           "id": "monthly",
           "description": "One data point for each month.",
           "query": "M",
           "format": "YYYY-MM"
+        },
+        {
+          "id": "weekly",
+          "description": "One data point for each week.",
+          "query": "W",
+          "format": "YYYY-MM-DD"
         },
         {
           "id": "annual",
@@ -8285,7 +9081,11 @@
       "start_period": "1990-08-20",
       "end_period": "2025-09-15",
       "default_frequency": "weekly",
-      "default_date_format": "YYYY-MM-DD"
+      "default_date_format": "YYYY-MM-DD",
+      "browser_total": null,
+      "browser_frequency": null,
+      "browser_date_format": null,
+      "warnings": []
     },
     {
       "path": "petroleum/pri/imc1",
@@ -8329,7 +9129,11 @@
       "start_period": "1973-10",
       "end_period": "2025-06",
       "default_frequency": "monthly",
-      "default_date_format": "YYYY-MM"
+      "default_date_format": "YYYY-MM",
+      "browser_total": null,
+      "browser_frequency": null,
+      "browser_date_format": null,
+      "warnings": []
     },
     {
       "path": "petroleum/pri/imc2",
@@ -8373,7 +9177,11 @@
       "start_period": "1983-01",
       "end_period": "2025-06",
       "default_frequency": "monthly",
-      "default_date_format": "YYYY-MM"
+      "default_date_format": "YYYY-MM",
+      "browser_total": null,
+      "browser_frequency": null,
+      "browser_date_format": null,
+      "warnings": []
     },
     {
       "path": "petroleum/pri/imc3",
@@ -8417,7 +9225,11 @@
       "start_period": "1983-01",
       "end_period": "2025-06",
       "default_frequency": "monthly",
-      "default_date_format": "YYYY-MM"
+      "default_date_format": "YYYY-MM",
+      "browser_total": null,
+      "browser_frequency": null,
+      "browser_date_format": null,
+      "warnings": []
     },
     {
       "path": "petroleum/pri/ipct",
@@ -8461,7 +9273,11 @@
       "start_period": "1983-01",
       "end_period": "2025-06",
       "default_frequency": "monthly",
-      "default_date_format": "YYYY-MM"
+      "default_date_format": "YYYY-MM",
+      "browser_total": null,
+      "browser_frequency": null,
+      "browser_date_format": null,
+      "warnings": []
     },
     {
       "path": "petroleum/pri/land1",
@@ -8505,7 +9321,11 @@
       "start_period": "1973-01",
       "end_period": "2025-06",
       "default_frequency": "monthly",
-      "default_date_format": "YYYY-MM"
+      "default_date_format": "YYYY-MM",
+      "browser_total": null,
+      "browser_frequency": null,
+      "browser_date_format": null,
+      "warnings": []
     },
     {
       "path": "petroleum/pri/land2",
@@ -8549,7 +9369,11 @@
       "start_period": "1983-01",
       "end_period": "2025-06",
       "default_frequency": "monthly",
-      "default_date_format": "YYYY-MM"
+      "default_date_format": "YYYY-MM",
+      "browser_total": null,
+      "browser_frequency": null,
+      "browser_date_format": null,
+      "warnings": []
     },
     {
       "path": "petroleum/pri/land3",
@@ -8593,7 +9417,11 @@
       "start_period": "1983-01",
       "end_period": "2025-06",
       "default_frequency": "monthly",
-      "default_date_format": "YYYY-MM"
+      "default_date_format": "YYYY-MM",
+      "browser_total": null,
+      "browser_frequency": null,
+      "browser_date_format": null,
+      "warnings": []
     },
     {
       "path": "petroleum/pri/prop",
@@ -8637,7 +9465,11 @@
       "start_period": "1993-10",
       "end_period": "2022-03",
       "default_frequency": "monthly",
-      "default_date_format": "YYYY-MM"
+      "default_date_format": "YYYY-MM",
+      "browser_total": null,
+      "browser_frequency": null,
+      "browser_date_format": null,
+      "warnings": []
     },
     {
       "path": "petroleum/pri/rac2",
@@ -8681,7 +9513,11 @@
       "start_period": "1974-01",
       "end_period": "2025-07",
       "default_frequency": "monthly",
-      "default_date_format": "YYYY-MM"
+      "default_date_format": "YYYY-MM",
+      "browser_total": null,
+      "browser_frequency": null,
+      "browser_date_format": null,
+      "warnings": []
     },
     {
       "path": "petroleum/pri/refmg",
@@ -8725,7 +9561,11 @@
       "start_period": "1983-01",
       "end_period": "2022-03",
       "default_frequency": "monthly",
-      "default_date_format": "YYYY-MM"
+      "default_date_format": "YYYY-MM",
+      "browser_total": null,
+      "browser_frequency": null,
+      "browser_date_format": null,
+      "warnings": []
     },
     {
       "path": "petroleum/pri/refmg2",
@@ -8769,7 +9609,11 @@
       "start_period": "1994-01",
       "end_period": "2022-03",
       "default_frequency": "monthly",
-      "default_date_format": "YYYY-MM"
+      "default_date_format": "YYYY-MM",
+      "browser_total": null,
+      "browser_frequency": null,
+      "browser_date_format": null,
+      "warnings": []
     },
     {
       "path": "petroleum/pri/refoth",
@@ -8813,7 +9657,11 @@
       "start_period": "1975-07",
       "end_period": "2022-03",
       "default_frequency": "monthly",
-      "default_date_format": "YYYY-MM"
+      "default_date_format": "YYYY-MM",
+      "browser_total": null,
+      "browser_frequency": null,
+      "browser_date_format": null,
+      "warnings": []
     },
     {
       "path": "petroleum/pri/resid",
@@ -8857,7 +9705,11 @@
       "start_period": "1983-01",
       "end_period": "2022-03",
       "default_frequency": "monthly",
-      "default_date_format": "YYYY-MM"
+      "default_date_format": "YYYY-MM",
+      "browser_total": null,
+      "browser_frequency": null,
+      "browser_date_format": null,
+      "warnings": []
     },
     {
       "path": "petroleum/pri/spt",
@@ -8913,7 +9765,11 @@
       "start_period": "1986-01-03",
       "end_period": "2025-09-12",
       "default_frequency": "weekly",
-      "default_date_format": "YYYY-MM-DD"
+      "default_date_format": "YYYY-MM-DD",
+      "browser_total": null,
+      "browser_frequency": null,
+      "browser_date_format": null,
+      "warnings": []
     },
     {
       "path": "petroleum/pri/wfr",
@@ -8957,7 +9813,11 @@
       "start_period": "1990-10-01",
       "end_period": "2025-05-12",
       "default_frequency": "weekly",
-      "default_date_format": "YYYY-MM-DD"
+      "default_date_format": "YYYY-MM-DD",
+      "browser_total": null,
+      "browser_frequency": null,
+      "browser_date_format": null,
+      "warnings": []
     },
     {
       "path": "petroleum/stoc/cu",
@@ -9001,7 +9861,11 @@
       "start_period": "1981-01",
       "end_period": "2025-06",
       "default_frequency": "monthly",
-      "default_date_format": "YYYY-MM"
+      "default_date_format": "YYYY-MM",
+      "browser_total": null,
+      "browser_frequency": null,
+      "browser_date_format": null,
+      "warnings": []
     },
     {
       "path": "petroleum/stoc/gp",
@@ -9045,7 +9909,11 @@
       "start_period": "1993-01",
       "end_period": "2025-06",
       "default_frequency": "monthly",
-      "default_date_format": "YYYY-MM"
+      "default_date_format": "YYYY-MM",
+      "browser_total": null,
+      "browser_frequency": null,
+      "browser_date_format": null,
+      "warnings": []
     },
     {
       "path": "petroleum/stoc/ref",
@@ -9089,7 +9957,11 @@
       "start_period": "1981-01",
       "end_period": "2025-06",
       "default_frequency": "monthly",
-      "default_date_format": "YYYY-MM"
+      "default_date_format": "YYYY-MM",
+      "browser_total": null,
+      "browser_frequency": null,
+      "browser_date_format": null,
+      "warnings": []
     },
     {
       "path": "petroleum/stoc/st",
@@ -9133,7 +10005,11 @@
       "start_period": "1993-01",
       "end_period": "2025-06",
       "default_frequency": "monthly",
-      "default_date_format": "YYYY-MM"
+      "default_date_format": "YYYY-MM",
+      "browser_total": null,
+      "browser_frequency": null,
+      "browser_date_format": null,
+      "warnings": []
     },
     {
       "path": "petroleum/stoc/ts",
@@ -9177,7 +10053,11 @@
       "start_period": "1936-01",
       "end_period": "2025-06",
       "default_frequency": "monthly",
-      "default_date_format": "YYYY-MM"
+      "default_date_format": "YYYY-MM",
+      "browser_total": null,
+      "browser_frequency": null,
+      "browser_date_format": null,
+      "warnings": []
     },
     {
       "path": "petroleum/stoc/typ",
@@ -9221,7 +10101,11 @@
       "start_period": "1920-01",
       "end_period": "2025-06",
       "default_frequency": "monthly",
-      "default_date_format": "YYYY-MM"
+      "default_date_format": "YYYY-MM",
+      "browser_total": null,
+      "browser_frequency": null,
+      "browser_date_format": null,
+      "warnings": []
     },
     {
       "path": "petroleum/stoc/wstk",
@@ -9259,7 +10143,11 @@
       "start_period": "1982-08-20",
       "end_period": "2025-09-12",
       "default_frequency": "weekly",
-      "default_date_format": "YYYY-MM-DD"
+      "default_date_format": "YYYY-MM-DD",
+      "browser_total": null,
+      "browser_frequency": null,
+      "browser_date_format": null,
+      "warnings": []
     },
     {
       "path": "petroleum/sum/b100",
@@ -9303,7 +10191,11 @@
       "start_period": "2009-01",
       "end_period": "2020-12",
       "default_frequency": "monthly",
-      "default_date_format": "YYYY-MM"
+      "default_date_format": "YYYY-MM",
+      "browser_total": null,
+      "browser_frequency": null,
+      "browser_date_format": null,
+      "warnings": []
     },
     {
       "path": "petroleum/sum/crdsnd",
@@ -9347,7 +10239,11 @@
       "start_period": "1920-01",
       "end_period": "2025-06",
       "default_frequency": "monthly",
-      "default_date_format": "YYYY-MM"
+      "default_date_format": "YYYY-MM",
+      "browser_total": null,
+      "browser_frequency": null,
+      "browser_date_format": null,
+      "warnings": []
     },
     {
       "path": "petroleum/sum/mkt",
@@ -9391,7 +10287,11 @@
       "start_period": "1975-07",
       "end_period": "2025-06",
       "default_frequency": "monthly",
-      "default_date_format": "YYYY-MM"
+      "default_date_format": "YYYY-MM",
+      "browser_total": null,
+      "browser_frequency": null,
+      "browser_date_format": null,
+      "warnings": []
     },
     {
       "path": "petroleum/sum/snd",
@@ -9435,7 +10335,11 @@
       "start_period": "1920-01",
       "end_period": "2025-06",
       "default_frequency": "monthly",
-      "default_date_format": "YYYY-MM"
+      "default_date_format": "YYYY-MM",
+      "browser_total": null,
+      "browser_frequency": null,
+      "browser_date_format": null,
+      "warnings": []
     },
     {
       "path": "petroleum/sum/sndw",
@@ -9479,7 +10383,11 @@
       "start_period": "1982-08-20",
       "end_period": "2025-09-12",
       "default_frequency": "weekly",
-      "default_date_format": "YYYY-MM-DD"
+      "default_date_format": "YYYY-MM-DD",
+      "browser_total": null,
+      "browser_frequency": null,
+      "browser_date_format": null,
+      "warnings": []
     },
     {
       "path": "seds",
@@ -9509,7 +10417,11 @@
       "start_period": "1960",
       "end_period": "2023",
       "default_frequency": "annual",
-      "default_date_format": "YYYY"
+      "default_date_format": "YYYY",
+      "browser_total": null,
+      "browser_frequency": null,
+      "browser_date_format": null,
+      "warnings": []
     },
     {
       "path": "steo",
@@ -9547,7 +10459,11 @@
       "start_period": "1974-01",
       "end_period": "2026-12",
       "default_frequency": "monthly",
-      "default_date_format": "YYYY-MM"
+      "default_date_format": "YYYY-MM",
+      "browser_total": null,
+      "browser_frequency": null,
+      "browser_date_format": null,
+      "warnings": []
     },
     {
       "path": "total-energy",
@@ -9579,7 +10495,11 @@
       "start_period": "1949-01",
       "end_period": "2121-12",
       "default_frequency": "monthly",
-      "default_date_format": "YYYY-MM"
+      "default_date_format": "YYYY-MM",
+      "browser_total": null,
+      "browser_frequency": null,
+      "browser_date_format": null,
+      "warnings": []
     }
   ]
 }

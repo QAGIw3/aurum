@@ -121,6 +121,12 @@ SCENARIO_OUTPUT_ORDER_COLUMNS = [
     "run_id",
 ]
 
+SCENARIO_METRIC_ORDER_COLUMNS = [
+    "metric",
+    "tenor_label",
+    "curve_key",
+]
+
 EIA_SERIES_ORDER_COLUMNS = [
     "series_id",
     "period_start",
@@ -1142,6 +1148,48 @@ def query_ppa_valuation(
     return metrics_out, elapsed
 
 
+def _build_sql_scenario_metrics_latest(
+    *,
+    tenant_id: Optional[str],
+    scenario_id: str,
+    metric: Optional[str],
+    limit: int,
+    offset: int,
+    cursor_after: Optional[Dict[str, Any]],
+    cursor_before: Optional[Dict[str, Any]] = None,
+    descending: bool = False,
+) -> str:
+    base = "iceberg.market.scenario_output_latest_by_metric"
+    filters: Dict[str, Optional[str]] = {"scenario_id": scenario_id, "metric": metric}
+    if tenant_id:
+        filters["tenant_id"] = tenant_id
+    where = _build_where(filters)
+    if not where:
+        where = " WHERE 1 = 1"
+    comparison_cursor = cursor_after
+    comparison = ">"
+    if cursor_before:
+        comparison_cursor = cursor_before
+        comparison = "<"
+        offset = 0
+    where += _build_keyset_clause(
+        comparison_cursor,
+        alias="",
+        order_columns=SCENARIO_METRIC_ORDER_COLUMNS,
+        comparison=comparison,
+    )
+    direction = "DESC" if descending else "ASC"
+    order_clause = " ORDER BY " + ", ".join(
+        f"{col} {direction}" for col in SCENARIO_METRIC_ORDER_COLUMNS
+    )
+    effective_offset = 0 if comparison_cursor else offset
+    return (
+        "SELECT tenant_id, scenario_id, curve_key, metric, tenor_label, latest_value, latest_band_lower, latest_band_upper, "
+        "cast(latest_asof_date as date) as latest_asof_date "
+        f"FROM {base}{where}{order_clause} LIMIT {limit} OFFSET {effective_offset}"
+    )
+
+
 def query_scenario_metrics_latest(
     trino_cfg: TrinoConfig,
     cache_cfg: CacheConfig,
@@ -1149,32 +1197,40 @@ def query_scenario_metrics_latest(
     scenario_id: str,
     tenant_id: Optional[str] = None,
     metric: Optional[str] = None,
+    limit: int,
+    offset: int = 0,
+    cursor_after: Optional[Dict[str, Any]] = None,
+    cursor_before: Optional[Dict[str, Any]] = None,
+    descending: bool = False,
 ) -> Tuple[List[Dict[str, Any]], float]:
-    base = "iceberg.market.scenario_output_latest_by_metric"
-    filters: Dict[str, Optional[str]] = {"scenario_id": scenario_id}
-    if tenant_id:
-        filters["tenant_id"] = tenant_id
-    if metric:
-        filters["metric"] = metric
-    where = _build_where(filters)
-    sql = (
-        "SELECT tenant_id, scenario_id, curve_key, metric, tenor_label, "
-        "latest_value, latest_band_lower, latest_band_upper, "
-        "cast(latest_asof_date as date) as latest_asof_date "
-        f"FROM {base}{where} ORDER BY metric, tenor_label"
-    )
-
     params = {
         "scenario_id": scenario_id,
         "tenant_id": tenant_id,
         "metric": metric,
-        "sql": sql,
+        "limit": limit,
+        "offset": offset,
+        "cursor_after": cursor_after,
+        "cursor_before": cursor_before,
+        "descending": descending,
     }
+
+    sql = _build_sql_scenario_metrics_latest(
+        tenant_id=tenant_id,
+        scenario_id=scenario_id,
+        metric=metric,
+        limit=limit,
+        offset=offset,
+        cursor_after=cursor_after,
+        cursor_before=cursor_before,
+        descending=descending,
+    )
+    params["sql"] = sql
 
     client = _maybe_redis_client(cache_cfg)
     cache_key = None
+    prefix = f"{cache_cfg.namespace}:" if cache_cfg.namespace else ""
     if client is not None:
-        cache_key = f"scenario-metrics:{_cache_key(params)}"
+        cache_key = f"{prefix}scenario-metrics:{_cache_key(params)}"
         cached = client.get(cache_key)
         if cached:
             data = json.loads(cached)

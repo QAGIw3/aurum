@@ -145,7 +145,7 @@ _ensure_opentelemetry()
 
 pytest.importorskip("pydantic", reason="pydantic not installed")
 
-from aurum.api.scenario_service import ScenarioRecord
+from aurum.api.scenario_service import InMemoryScenarioStore, ScenarioRecord
 from aurum.scenarios.models import DriverType, ScenarioAssumption
 from aurum.scenarios import worker
 
@@ -386,3 +386,46 @@ def test_driver_effects_use_reference_curves(monkeypatch):
     outputs = worker._build_outputs(scenario, request, settings=settings)
     value = outputs[0]["value"]
     assert value == pytest.approx(60.8333, rel=1e-4)
+
+
+def test_run_cancellation_respected(monkeypatch):
+    store = InMemoryScenarioStore()
+    monkeypatch.setattr(worker, "ScenarioStore", store)
+
+    scenario = store.create_scenario(
+        tenant_id="tenant-1",
+        name="Cancelable",
+        description=None,
+        assumptions=[],
+    )
+    run = store.create_run(
+        scenario_id=scenario.id,
+        tenant_id="tenant-1",
+        code_version="v1",
+        seed=None,
+    )
+
+    assert not worker._run_is_cancelled(
+        scenario_id=scenario.id,
+        run_id=run.run_id,
+        tenant_id="tenant-1",
+    )
+
+    store.update_run_state(run.run_id, state="CANCELLED", tenant_id="tenant-1")
+
+    assert worker._run_is_cancelled(
+        scenario_id=scenario.id,
+        run_id=run.run_id,
+        tenant_id="tenant-1",
+    )
+
+    worker._maybe_update_run_state(
+        run.run_id,
+        "tenant-1",
+        "SUCCEEDED",
+        scenario_id=scenario.id,
+    )
+
+    refreshed = store.get_run_for_scenario(scenario.id, run.run_id, tenant_id="tenant-1")
+    assert refreshed is not None
+    assert refreshed.state == "CANCELLED"

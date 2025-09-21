@@ -295,6 +295,38 @@ def _compute_etag(payload: Dict[str, Any]) -> str:
 
 
 
+def _metadata_cache_get_or_set(key_suffix: str, supplier):
+    cache_cfg = replace(CacheConfig.from_env(), ttl_seconds=METADATA_CACHE_TTL)
+    client = service._maybe_redis_client(cache_cfg)
+    redis_key = None
+    if client is not None:
+        namespace = cache_cfg.namespace or "aurum"
+        redis_key = f"{namespace}:metadata:{key_suffix}"
+        cached = client.get(redis_key)
+        if cached:
+            try:
+                return json.loads(cached)
+            except json.JSONDecodeError:
+                pass
+
+    cached_local = _CACHE.get(key_suffix)
+    if cached_local is not None:
+        return cached_local
+
+    try:
+        value = supplier()
+    except LookupError:
+        raise
+
+    _CACHE.set(key_suffix, value, ttl=METADATA_CACHE_TTL)
+    if client is not None and redis_key is not None:
+        try:  # pragma: no cover - best effort Redis population
+            client.setex(redis_key, METADATA_CACHE_TTL, json.dumps(value, default=str))
+        except Exception:
+            pass
+    return value
+
+
 def _respond_with_etag(
     model,
     request: Request,
@@ -371,6 +403,7 @@ SCENARIO_OUTPUT_CURSOR_FIELDS = [
     "metric",
     "run_id",
 ]
+SCENARIO_METRIC_CURSOR_FIELDS = ["metric", "tenor_label", "curve_key"]
 
 
 METADATA_CACHE_TTL = int(os.getenv("AURUM_API_METADATA_REDIS_TTL", "300") or 300)
@@ -379,6 +412,7 @@ SCENARIO_METRIC_CACHE_TTL = int(os.getenv("AURUM_API_SCENARIO_METRICS_TTL", "60"
 
 CURVE_MAX_LIMIT = int(os.getenv("AURUM_API_CURVE_MAX_LIMIT", "500") or 500)
 SCENARIO_OUTPUT_MAX_LIMIT = int(os.getenv("AURUM_API_SCENARIO_OUTPUT_MAX_LIMIT", "500") or 500)
+SCENARIO_METRIC_MAX_LIMIT = int(os.getenv("AURUM_API_SCENARIO_METRIC_MAX_LIMIT", "500") or 500)
 CURVE_CACHE_TTL = int(os.getenv("AURUM_API_CURVE_TTL", "120") or 120)
 CURVE_DIFF_CACHE_TTL = int(os.getenv("AURUM_API_CURVE_DIFF_TTL", "120") or 120)
 CURVE_STRIP_CACHE_TTL = int(os.getenv("AURUM_API_CURVE_STRIP_TTL", "120") or 120)
@@ -865,7 +899,8 @@ def list_locations(
             )
         return data
 
-    base = _CACHE.get_or_set(f"iso:locations:{(iso or '').upper()}", _base_locations)
+    cache_key = f"iso:locations:{(iso or '').upper()}"
+    base = _metadata_cache_get_or_set(cache_key, _base_locations)
     items: list[IsoLocationOut] = []
     if prefix:
         needle = prefix.lower()
@@ -876,7 +911,12 @@ def list_locations(
     else:
         items = [IsoLocationOut(**rec) for rec in base]
     model = IsoLocationsResponse(meta=Meta(request_id=request_id, query_time_ms=0), data=items)
-    return _respond_with_etag(model, request, response, extra_headers={"Cache-Control": f"public, max-age={_INMEM_TTL}"})
+    return _respond_with_etag(
+        model,
+        request,
+        response,
+        extra_headers={"Cache-Control": f"public, max-age={METADATA_CACHE_TTL}"},
+    )
 
 
 @app.get(
@@ -910,12 +950,19 @@ def get_location(
         }
 
     try:
-        rec = _CACHE.get_or_set(f"iso:loc:{iso.upper()}:{location_id.upper()}", _load_loc)
+        rec = _metadata_cache_get_or_set(
+            f"iso:loc:{iso.upper()}:{location_id.upper()}", _load_loc
+        )
     except LookupError:
         raise HTTPException(status_code=404, detail="Location not found")
     item = IsoLocationOut(**rec)
     model = IsoLocationResponse(meta=Meta(request_id=request_id, query_time_ms=0), data=item)
-    return _respond_with_etag(model, request, response, extra_headers={"Cache-Control": f"public, max-age={_INMEM_TTL}"})
+    return _respond_with_etag(
+        model,
+        request,
+        response,
+        extra_headers={"Cache-Control": f"public, max-age={METADATA_CACHE_TTL}"},
+    )
 
 
 # --- Units metadata ---
@@ -942,7 +989,7 @@ def list_units(
         unit_list = sorted({rec.per_unit for rec in mapping.values() if rec.per_unit})
         return {"currencies": curr, "units": unit_list}
 
-    base = _CACHE.get_or_set("units:canonical", _base)
+    base = _metadata_cache_get_or_set("units:canonical", _base)
     currencies = base["currencies"]
     units = base["units"]
     if prefix:
@@ -953,7 +1000,12 @@ def list_units(
         meta=Meta(request_id=request_id, query_time_ms=0),
         data=UnitsCanonical(currencies=currencies, units=units),
     )
-    return _respond_with_etag(model, request, response, extra_headers={"Cache-Control": f"public, max-age={_INMEM_TTL}"})
+    return _respond_with_etag(
+        model,
+        request,
+        response,
+        extra_headers={"Cache-Control": f"public, max-age={METADATA_CACHE_TTL}"},
+    )
 
 
 @app.get(
@@ -979,7 +1031,7 @@ def list_unit_mappings(
         tuples.sort(key=lambda t: t[0])
         return tuples
 
-    base = _CACHE.get_or_set("units:mapping", _base_list)
+    base = _metadata_cache_get_or_set("units:mapping", _base_list)
     items: list[UnitMappingOut] = []
     if prefix:
         pfx = prefix.lower()
@@ -989,7 +1041,12 @@ def list_unit_mappings(
     else:
         items = [UnitMappingOut(units_raw=raw, currency=cur, per_unit=per) for raw, cur, per in base]
     model = UnitsMappingResponse(meta=Meta(request_id=request_id, query_time_ms=0), data=items)
-    return _respond_with_etag(model, request, response, extra_headers={"Cache-Control": f"public, max-age={_INMEM_TTL}"})
+    return _respond_with_etag(
+        model,
+        request,
+        response,
+        extra_headers={"Cache-Control": f"public, max-age={METADATA_CACHE_TTL}"},
+    )
 
 
 # --- Calendars metadata ---
@@ -1004,11 +1061,24 @@ def list_unit_mappings(
 )
 def list_calendars(request: Request, response: Response) -> CalendarsResponse:
     request_id = _current_request_id()
-    calendars = ref_cal.get_calendars()
-    items = [CalendarOut(name=name, timezone=cfg.timezone) for name, cfg in calendars.items()]
-    items.sort(key=lambda x: x.name)
+    def _load_calendars() -> list[dict[str, str]]:
+        calendars = ref_cal.get_calendars()
+        records = [
+            {"name": name, "timezone": cfg.timezone}
+            for name, cfg in calendars.items()
+        ]
+        records.sort(key=lambda item: item["name"])
+        return records
+
+    base = _metadata_cache_get_or_set("calendars:all", _load_calendars)
+    items = [CalendarOut(**record) for record in base]
     model = CalendarsResponse(meta=Meta(request_id=request_id, query_time_ms=0), data=items)
-    return _respond_with_etag(model, request, response, extra_headers={"Cache-Control": f"public, max-age={_INMEM_TTL}"})
+    return _respond_with_etag(
+        model,
+        request,
+        response,
+        extra_headers={"Cache-Control": f"public, max-age={METADATA_CACHE_TTL}"},
+    )
 
 
 @app.get(
@@ -1025,13 +1095,24 @@ def list_calendar_blocks(
     response: Response,
 ) -> CalendarBlocksResponse:
     request_id = _current_request_id()
-    calendars = ref_cal.get_calendars()
-    cfg = calendars.get(name.lower())
-    if cfg is None:
+    def _load_blocks() -> list[str]:
+        calendars = ref_cal.get_calendars()
+        cfg = calendars.get(name.lower())
+        if cfg is None:
+            raise LookupError("calendar not found")
+        return sorted(cfg.blocks.keys())
+
+    try:
+        blocks = _metadata_cache_get_or_set(f"calendars:{name.lower()}:blocks", _load_blocks)
+    except LookupError:
         raise HTTPException(status_code=404, detail="Calendar not found")
-    blocks = sorted(cfg.blocks.keys())
     model = CalendarBlocksResponse(meta=Meta(request_id=request_id, query_time_ms=0), data=blocks)
-    return _respond_with_etag(model, request, response, extra_headers={"Cache-Control": f"public, max-age={_INMEM_TTL}"})
+    return _respond_with_etag(
+        model,
+        request,
+        response,
+        extra_headers={"Cache-Control": f"public, max-age={METADATA_CACHE_TTL}"},
+    )
 
 
 @app.get(
@@ -1050,10 +1131,20 @@ def calendar_hours(
     response: Response,
 ) -> CalendarHoursResponse:
     request_id = _current_request_id()
-    datetimes = ref_cal.hours_for_block(name, block, date)
-    iso_list = [dt.isoformat() for dt in datetimes]
+    cache_key = f"calendars:{name.lower()}:{block.upper()}:{date.isoformat()}"
+
+    def _load_hours() -> list[str]:
+        datetimes = ref_cal.hours_for_block(name, block, date)
+        return [dt.isoformat() for dt in datetimes]
+
+    iso_list = _metadata_cache_get_or_set(cache_key, _load_hours)
     model = CalendarHoursResponse(meta=Meta(request_id=request_id, query_time_ms=0), data=iso_list)
-    return _respond_with_etag(model, request, response, extra_headers={"Cache-Control": f"public, max-age={_INMEM_TTL}"})
+    return _respond_with_etag(
+        model,
+        request,
+        response,
+        extra_headers={"Cache-Control": f"public, max-age={METADATA_CACHE_TTL}"},
+    )
 
 
 @app.get(
@@ -1073,10 +1164,22 @@ def calendar_expand(
     response: Response,
 ) -> CalendarHoursResponse:
     request_id = _current_request_id()
-    datetimes = ref_cal.expand_block_range(name, block, start, end)
-    iso_list = [dt.isoformat() for dt in datetimes]
+    cache_key = (
+        f"calendars:{name.lower()}:{block.upper()}:{start.isoformat()}:{end.isoformat()}"
+    )
+
+    def _load_range() -> list[str]:
+        datetimes = ref_cal.expand_block_range(name, block, start, end)
+        return [dt.isoformat() for dt in datetimes]
+
+    iso_list = _metadata_cache_get_or_set(cache_key, _load_range)
     model = CalendarHoursResponse(meta=Meta(request_id=request_id, query_time_ms=0), data=iso_list)
-    return _respond_with_etag(model, request, response, extra_headers={"Cache-Control": f"public, max-age={_INMEM_TTL}"})
+    return _respond_with_etag(
+        model,
+        request,
+        response,
+        extra_headers={"Cache-Control": f"public, max-age={METADATA_CACHE_TTL}"},
+    )
 
 
 # --- EIA Catalog metadata ---
@@ -1916,6 +2019,16 @@ def list_scenario_metrics_latest(
         description="Tenant identifier override; defaults to the authenticated tenant",
     ),
     metric: Optional[str] = Query(None, description="Filter by metric name (e.g., mid)"),
+    limit: int = Query(200, ge=1, le=1000),
+    cursor: Optional[str] = Query(None, description="Opaque cursor for stable pagination"),
+    since_cursor: Optional[str] = Query(
+        None,
+        description="Alias for 'cursor' to resume iteration from a previously returned next_cursor",
+    ),
+    prev_cursor: Optional[str] = Query(
+        None,
+        description="Cursor pointing to the previous page; obtained from meta.prev_cursor",
+    ),
 ) -> ScenarioMetricLatestResponse:
     if not _scenario_outputs_enabled():
         raise HTTPException(status_code=503, detail="Scenario outputs not enabled")
@@ -1926,6 +2039,32 @@ def list_scenario_metrics_latest(
     base_cache = CacheConfig.from_env()
     cache_cfg = replace(base_cache, ttl_seconds=SCENARIO_METRIC_CACHE_TTL)
 
+    effective_limit = min(limit, SCENARIO_METRIC_MAX_LIMIT)
+    effective_offset = 0
+    cursor_after: Optional[dict] = None
+    cursor_before: Optional[dict] = None
+    descending = False
+
+    prev_token = prev_cursor
+    forward_token = cursor or since_cursor
+    if prev_token:
+        payload = _decode_cursor(prev_token)
+        before_payload = payload.get("before") if isinstance(payload, dict) else None
+        if before_payload:
+            cursor_before = before_payload
+            descending = True
+        elif isinstance(payload, dict) and set(payload.keys()) <= {"offset"}:
+            try:
+                effective_offset = max(int(payload.get("offset", 0)), 0)
+            except (TypeError, ValueError) as exc:
+                raise HTTPException(status_code=400, detail="Invalid cursor") from exc
+        else:
+            cursor_before = payload if isinstance(payload, dict) else None
+            descending = True
+    elif forward_token:
+        decoded = _decode_cursor(forward_token)
+        effective_offset, cursor_after = _normalise_cursor_input(decoded)
+
     try:
         rows, elapsed_ms = service.query_scenario_metrics_latest(
             trino_cfg,
@@ -1933,12 +2072,47 @@ def list_scenario_metrics_latest(
             scenario_id=scenario_id,
             tenant_id=tenant_id,
             metric=metric,
+            limit=effective_limit + 1,
+            offset=effective_offset,
+            cursor_after=cursor_after,
+            cursor_before=cursor_before,
+            descending=descending,
         )
     except RuntimeError as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
 
+    more = len(rows) > effective_limit
+    if descending:
+        rows = rows[:effective_limit]
+        rows.reverse()
+    else:
+        if more:
+            rows = rows[:effective_limit]
+
+    next_cursor_value = None
+    if more and rows:
+        next_payload = _extract_cursor_payload(rows[-1], SCENARIO_METRIC_CURSOR_FIELDS)
+        next_cursor_value = _encode_cursor(next_payload)
+
+    prev_cursor_value = None
+    if rows:
+        if descending:
+            if cursor_before and more:
+                prev_payload = _extract_cursor_payload(rows[0], SCENARIO_METRIC_CURSOR_FIELDS)
+                prev_cursor_value = _encode_cursor({"before": prev_payload})
+        else:
+            if prev_token or forward_token or effective_offset > 0:
+                prev_payload = _extract_cursor_payload(rows[0], SCENARIO_METRIC_CURSOR_FIELDS)
+                prev_cursor_value = _encode_cursor({"before": prev_payload})
+
+    meta = Meta(
+        request_id=request_id,
+        query_time_ms=int(elapsed_ms),
+        next_cursor=next_cursor_value,
+        prev_cursor=prev_cursor_value,
+    )
     model = ScenarioMetricLatestResponse(
-        meta=Meta(request_id=request_id, query_time_ms=int(elapsed_ms)),
+        meta=meta,
         data=[ScenarioMetricLatest(**row) for row in rows],
     )
     return _respond_with_etag(

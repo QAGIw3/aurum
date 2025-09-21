@@ -49,7 +49,8 @@ def test_units_metadata_endpoints():
     data = resp.json()["data"]
     assert "currencies" in data and isinstance(data["currencies"], list)
     assert "units" in data and isinstance(data["units"], list)
-    assert resp.headers.get("cache-control") == "public, max-age=60"
+    expected_ttl = api_app.METADATA_CACHE_TTL
+    assert resp.headers.get("cache-control") == f"public, max-age={expected_ttl}"
     # Mapping endpoint
     resp = client.get("/v1/metadata/units/mapping", params={"prefix": "USD"})
     assert resp.status_code == 200

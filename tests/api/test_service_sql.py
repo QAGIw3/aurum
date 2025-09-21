@@ -305,6 +305,8 @@ def test_query_scenario_metrics_latest_uses_cache(monkeypatch):
         cache_cfg,
         scenario_id="scn-1",
         tenant_id="tenant-1",
+        metric=None,
+        limit=10,
     )
     assert rows and elapsed > 0
     assert fake_redis.store
@@ -315,6 +317,8 @@ def test_query_scenario_metrics_latest_uses_cache(monkeypatch):
         cache_cfg,
         scenario_id="scn-1",
         tenant_id="tenant-1",
+        metric=None,
+        limit=10,
     )
     expected_cached = []
     for record in rows:

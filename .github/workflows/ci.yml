@@ -29,6 +29,30 @@ jobs:
       - name: Pytest
         run: make test
 
+  scenario-smoke:
+    name: Scenario Smoke
+    needs: lint-test
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build API image for smoke test
+        run: |
+          docker build \
+            --file Dockerfile.api \
+            --tag aurum-api:local \
+            .
+
+      - name: Run scenario smoke test
+        env:
+          COMPOSE_PROFILES: worker
+        run: |
+          bash scripts/ci/scenario_smoke.sh
+
   build-and-publish:
     name: Build & Publish Images
     needs: lint-test

@@ -644,10 +644,62 @@ def _to_avro_payload(record: dict[str, object]) -> dict[str, object]:
     }
 
 
-def _maybe_update_run_state(run_id: Optional[str], tenant_id: Optional[str], state: str) -> None:
+def _fetch_run_record(
+    *,
+    scenario_id: Optional[str],
+    run_id: Optional[str],
+    tenant_id: Optional[str],
+):
+    if not (run_id and scenario_id and tenant_id):
+        return None
+    try:  # pragma: no cover - best effort lookup
+        return ScenarioStore.get_run_for_scenario(  # type: ignore[arg-type]
+            scenario_id,
+            run_id,
+            tenant_id=tenant_id,
+        )
+    except Exception:
+        LOGGER.debug(
+            "Scenario store lookup failed for run %s", run_id, exc_info=True
+        )
+        return None
+
+
+def _run_is_cancelled(
+    *,
+    scenario_id: Optional[str],
+    run_id: Optional[str],
+    tenant_id: Optional[str],
+) -> bool:
+    record = _fetch_run_record(
+        scenario_id=scenario_id,
+        run_id=run_id,
+        tenant_id=tenant_id,
+    )
+    return bool(record and getattr(record, "state", "") == "CANCELLED")
+
+
+def _maybe_update_run_state(
+    run_id: Optional[str],
+    tenant_id: Optional[str],
+    state: str,
+    *,
+    scenario_id: Optional[str] = None,
+) -> None:
     if not run_id or not tenant_id:
         return
     try:  # pragma: no cover - integration path
+        if state != "CANCELLED" and _run_is_cancelled(
+            scenario_id=scenario_id,
+            run_id=run_id,
+            tenant_id=tenant_id,
+        ):
+            LOGGER.debug(
+                "Skipping state transition for cancelled run %s -> %s",
+                run_id,
+                state,
+            )
+            return
         ScenarioStore.update_run_state(run_id, state=state, tenant_id=tenant_id)
     except Exception as exc:
         LOGGER.debug("Failed to update run %s to %s: %s", run_id, state, exc)
@@ -717,11 +769,30 @@ def run_worker():  # pragma: no cover - integration entrypoint
                 if REQUESTS_TOTAL:
                     REQUESTS_TOTAL.inc()
 
-                _maybe_update_run_state(run_id, scenario_req.tenant_id, "RUNNING")
+                if _run_is_cancelled(
+                    scenario_id=scenario_req.scenario_id,
+                    run_id=run_id,
+                    tenant_id=scenario_req.tenant_id,
+                ):
+                    LOGGER.info(
+                        "Skipping cancelled scenario run %s for scenario %s",
+                        run_id,
+                        scenario_req.scenario_id,
+                    )
+                    cons.commit(msg)
+                    continue
+
+                _maybe_update_run_state(
+                    run_id,
+                    scenario_req.tenant_id,
+                    "RUNNING",
+                    scenario_id=scenario_req.scenario_id,
+                )
 
                 process_start = time.perf_counter()
                 attempts = 0
                 success = False
+                cancelled = False
                 last_exc: Optional[Exception] = None
 
                 with TRACER.start_as_current_span("scenario.process", context=parent_context) as span:
@@ -738,6 +809,18 @@ def run_worker():  # pragma: no cover - integration entrypoint
                         time.sleep(delay)
 
                     while attempts < max_attempts and not success:
+                        if _run_is_cancelled(
+                            scenario_id=scenario_req.scenario_id,
+                            run_id=run_id,
+                            tenant_id=scenario_req.tenant_id,
+                        ):
+                            LOGGER.info(
+                                "Run %s for scenario %s cancelled before processing",
+                                run_id,
+                                scenario_req.scenario_id,
+                            )
+                            cancelled = True
+                            break
                         attempts += 1
                         try:
                             scenario = ScenarioStore.get_scenario(
@@ -755,6 +838,18 @@ def run_worker():  # pragma: no cover - integration entrypoint
                                 run_id=run_id,
                                 settings=settings,
                             )
+                            if _run_is_cancelled(
+                                scenario_id=scenario_req.scenario_id,
+                                run_id=run_id,
+                                tenant_id=scenario_req.tenant_id,
+                            ):
+                                LOGGER.info(
+                                    "Run %s for scenario %s cancelled before writing outputs",
+                                    run_id,
+                                    scenario_req.scenario_id,
+                                )
+                                cancelled = True
+                                break
                             _append_to_iceberg(outputs)
 
                             headers_out = _build_produce_headers(run_id, request_id)
@@ -768,7 +863,12 @@ def run_worker():  # pragma: no cover - integration entrypoint
                                 )
                             prod.flush(2)
 
-                            _maybe_update_run_state(run_id, scenario_req.tenant_id, "SUCCEEDED")
+                            _maybe_update_run_state(
+                                run_id,
+                                scenario_req.tenant_id,
+                                "SUCCEEDED",
+                                scenario_id=scenario_req.scenario_id,
+                            )
                             if REQUEST_SUCCESS:
                                 REQUEST_SUCCESS.inc()
                             success = True
@@ -784,7 +884,12 @@ def run_worker():  # pragma: no cover - integration entrypoint
                             if span.is_recording():
                                 span.record_exception(exc)
                             if attempts >= max_attempts:
-                                _maybe_update_run_state(run_id, scenario_req.tenant_id, "FAILED")
+                                _maybe_update_run_state(
+                                    run_id,
+                                    scenario_req.tenant_id,
+                                    "FAILED",
+                                    scenario_id=scenario_req.scenario_id,
+                                )
                                 _maybe_emit_dlq(
                                     scenario_id=scenario_req.scenario_id,
                                     tenant_id=scenario_req.tenant_id,
@@ -798,7 +903,14 @@ def run_worker():  # pragma: no cover - integration entrypoint
                             sleep_time = backoff_seconds * (2 ** (attempts - 1))
                             time.sleep(sleep_time)
 
-                if not success and last_exc is not None:
+                if cancelled:
+                    LOGGER.info(
+                        "Scenario run %s for scenario %s cancelled after %s attempt(s)",
+                        run_id,
+                        scenario_req.scenario_id,
+                        attempts,
+                    )
+                if not success and not cancelled and last_exc is not None:
                     LOGGER.error(
                         "Scenario worker exhausted retries for scenario %s: %s",
                         scenario_req.scenario_id,
