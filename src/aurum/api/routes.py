@@ -8,7 +8,6 @@ import hashlib
 import io
 import json
 import math
-import os
 import uuid
 from pathlib import Path as FilePath
 from datetime import date, datetime
@@ -560,6 +559,8 @@ if _METRICS_ENABLED:
             REQUEST_LATENCY.labels(method=method, path=path_template).observe(duration)
             REQUEST_COUNTER.labels(method=method, path=path_template, status=status_code).inc()
 
+    METRICS_MIDDLEWARE = _metrics_middleware
+
     @router.get(_METRICS_PATH)
     def metrics():
         data = generate_latest()
@@ -569,6 +570,7 @@ else:
     REQUEST_LATENCY = None
     TILE_CACHE_COUNTER = None
     TILE_FETCH_LATENCY = None
+    METRICS_MIDDLEWARE = None
 
 
 def _record_tile_cache_metric(endpoint: str, result: str) -> None:
@@ -2168,7 +2170,7 @@ def list_strips(
     )
 
 
-__all__ = ["app"]
+__all__ = ["router", "configure_routes", "access_log_middleware", "METRICS_MIDDLEWARE"]
 
 
 # --- Scenario endpoints (stubbed service behavior for now) ---

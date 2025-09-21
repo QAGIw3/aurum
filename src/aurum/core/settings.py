@@ -68,10 +68,44 @@ class RedisSettings(AurumBaseModel):
 
 
 class RateLimitSettings(AurumBaseModel):
-    enabled: bool = Field(default=True)
+    enabled: bool = Field(default=True, validation_alias=AliasChoices("API_RATE_LIMIT_ENABLED"))
     requests_per_second: int = Field(default=10, ge=0, validation_alias=AliasChoices("API_RATE_LIMIT_RPS"))
     burst: int = Field(default=20, ge=0, validation_alias=AliasChoices("API_RATE_LIMIT_BURST"))
     identifier_header: str | None = Field(default=None, validation_alias=AliasChoices("API_RATE_LIMIT_HEADER"))
+    overrides: dict[str, tuple[int, int]] = Field(default_factory=dict, validation_alias=AliasChoices("API_RATE_LIMIT_OVERRIDES"))
+
+    @field_validator("overrides", mode="before")
+    @classmethod
+    def _parse_overrides(cls, value: Any) -> dict[str, tuple[int, int]]:
+        if value in (None, "", {}):
+            return {}
+        if isinstance(value, str):
+            overrides: dict[str, tuple[int, int]] = {}
+            for item in value.split(","):
+                item = item.strip()
+                if not item:
+                    continue
+                if "=" not in item:
+                    continue
+                path_part, limits_part = item.split("=", 1)
+                limit_tokens = limits_part.split(":")
+                if len(limit_tokens) != 2:
+                    continue
+                try:
+                    overrides[path_part.strip()] = (int(limit_tokens[0]), int(limit_tokens[1]))
+                except ValueError:
+                    continue
+            return overrides
+        if isinstance(value, Mapping):
+            parsed: dict[str, tuple[int, int]] = {}
+            for key, limits in value.items():
+                if isinstance(limits, (tuple, list)) and len(limits) == 2:
+                    try:
+                        parsed[str(key)] = (int(limits[0]), int(limits[1]))
+                    except (TypeError, ValueError):
+                        continue
+            return parsed
+        raise TypeError("Invalid rate limit overrides definition")
 
 
 class AuthSettings(AurumBaseModel):
@@ -105,12 +139,18 @@ class ApiCacheSettings(AurumBaseModel):
     metadata_ttl: int = Field(default=300, ge=0, validation_alias=AliasChoices("API_METADATA_REDIS_TTL"))
     scenario_output_ttl: int = Field(default=60, ge=0, validation_alias=AliasChoices("API_SCENARIO_OUTPUT_TTL"))
     scenario_metric_ttl: int = Field(default=60, ge=0, validation_alias=AliasChoices("API_SCENARIO_METRICS_TTL"))
+    curve_ttl: int = Field(default=120, ge=0, validation_alias=AliasChoices("API_CURVE_TTL"))
+    curve_diff_ttl: int = Field(default=120, ge=0, validation_alias=AliasChoices("API_CURVE_DIFF_TTL"))
+    curve_strip_ttl: int = Field(default=120, ge=0, validation_alias=AliasChoices("API_CURVE_STRIP_TTL"))
+    eia_series_ttl: int = Field(default=120, ge=0, validation_alias=AliasChoices("API_EIA_SERIES_TTL"))
+    eia_series_dimensions_ttl: int = Field(default=300, ge=0, validation_alias=AliasChoices("API_EIA_SERIES_DIMENSIONS_TTL"))
 
 
 class PaginationLimits(AurumBaseModel):
     curves_max_limit: int = Field(default=500, ge=1, validation_alias=AliasChoices("API_CURVE_MAX_LIMIT"))
     scenario_output_max_limit: int = Field(default=500, ge=1, validation_alias=AliasChoices("API_SCENARIO_OUTPUT_MAX_LIMIT"))
     scenario_metric_max_limit: int = Field(default=500, ge=1, validation_alias=AliasChoices("API_SCENARIO_METRIC_MAX_LIMIT"))
+    eia_series_max_limit: int = Field(default=1000, ge=1, validation_alias=AliasChoices("API_EIA_SERIES_MAX_LIMIT"))
 
 
 class MetricsSettings(AurumBaseModel):
@@ -126,6 +166,7 @@ class ApiSettings(AurumBaseModel):
     gzip_min_bytes: int = Field(default=500, ge=0, validation_alias=AliasChoices("API_GZIP_MIN_BYTES"))
     request_timeout_seconds: float = Field(default=30.0, gt=0.0, validation_alias=AliasChoices("API_REQUEST_TIMEOUT"))
     scenario_outputs_enabled: bool = Field(default=True, validation_alias=AliasChoices("API_SCENARIO_OUTPUTS_ENABLED"))
+    ppa_write_enabled: bool = Field(default=True, validation_alias=AliasChoices("API_PPA_WRITE_ENABLED"))
     rate_limit: RateLimitSettings = Field(default_factory=RateLimitSettings)
     cache: ApiCacheSettings = Field(default_factory=ApiCacheSettings)
     metrics: MetricsSettings = Field(default_factory=MetricsSettings)
@@ -149,6 +190,10 @@ class DatabaseSettings(AurumBaseModel):
         validation_alias=AliasChoices("TIMESCALE_DSN"),
     )
     postgres_dsn: str | None = Field(default=None, validation_alias=AliasChoices("POSTGRES_DSN"))
+    eia_series_base_table: str = Field(
+        default="mart.mart_eia_series_latest",
+        validation_alias=AliasChoices("API_EIA_SERIES_TABLE"),
+    )
 
 
 class MessagingSettings(AurumBaseModel):

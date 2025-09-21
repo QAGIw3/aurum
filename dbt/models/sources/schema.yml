@@ -1,0 +1,150 @@
+version: 2
+
+sources:
+  - name: iceberg_raw
+    description: Iceberg raw landing tables populated by ingestion jobs.
+    schema: raw
+    freshness:
+      warn_after: {count: 6, period: hour}
+      error_after: {count: 12, period: hour}
+    tables:
+      - name: curve_landing
+        description: Landing table written directly by ingestion jobs (includes quarantine reason).
+        loaded_at_field: _ingest_ts
+        columns:
+          - name: curve_key
+            tests:
+              - not_null
+          - name: quarantine_reason
+            description: Reason assigned when a row fails validation.
+  - name: iceberg_market
+    description: Iceberg curated market tables.
+    schema: market
+    freshness:
+      warn_after: {count: 12, period: hour}
+      error_after: {count: 24, period: hour}
+    tables:
+      - name: curve_observation
+        description: Canonical Iceberg table containing normalized vendor curve rows.
+        loaded_at_field: _ingest_ts
+        columns:
+          - name: curve_key
+            tests:
+              - not_null
+          - name: _ingest_ts
+            tests:
+              - not_null
+      - name: scenario_output
+        description: Scenario engine outputs appended by the worker and exposed via Iceberg.
+        loaded_at_field: _ingest_ts
+        columns:
+          - name: scenario_id
+            tests:
+              - not_null
+          - name: tenant_id
+            tests:
+              - not_null
+          - name: run_id
+            tests:
+              - not_null
+  - name: timescale_eia
+    description: Timescale reference for streaming observations persisted from SeaTunnel jobs.
+    database: timeseries
+    schema: public
+    freshness:
+      warn_after: {count: 6, period: hour}
+      error_after: {count: 12, period: hour}
+    tables:
+      - name: eia_series_timeseries
+        description: Canonical Timescale hypertable populated by the SeaTunnel Kafka→Timescale job.
+        loaded_at_field: ingest_ts
+        columns:
+          - name: series_id
+            tests:
+              - not_null
+          - name: period_start
+            tests:
+              - not_null
+      - name: curve_observation_quarantine
+        description: Repository of quarantined rows awaiting remediation.
+        loaded_at_field: _ingest_ts
+        columns:
+          - name: quarantine_reason
+            tests:
+              - not_null
+      - name: scenario_output
+        description: High-frequency scenario outputs mirrored into Timescale for analytics.
+        loaded_at_field: _ingest_ts
+        columns:
+          - name: scenario_id
+            tests:
+              - not_null
+          - name: tenant_id
+            tests:
+              - not_null
+          - name: run_id
+            tests:
+              - not_null
+      - name: ops_metrics
+        description: Operational metrics stream emitted by workers and platform services.
+        loaded_at_field: ts
+        columns:
+          - name: metric
+            tests:
+              - not_null
+          - name: ts
+            tests:
+              - not_null
+  - name: iceberg_environment
+    description: Iceberg environment schema feeding drought analytics.
+    schema: environment
+    tables:
+      - name: drought_index
+        description: Zonal drought index measurements written from Airflow ingestion.
+        columns:
+          - name: series_id
+            tests:
+              - not_null
+          - name: region_type
+            tests:
+              - not_null
+          - name: region_id
+            tests:
+              - not_null
+          - name: valid_date
+            tests:
+              - not_null
+      - name: usdm_area
+        description: USDM area fractions by severity and geography.
+        columns:
+          - name: region_type
+            tests:
+              - not_null
+          - name: region_id
+            tests:
+              - not_null
+          - name: valid_date
+            tests:
+              - not_null
+      - name: vector_events
+        description: Canonicalized vector overlay events (QPF, AHPS, AQI, wildfire, etc.).
+        columns:
+          - name: layer
+            tests:
+              - not_null
+          - name: event_id
+            tests:
+              - not_null
+  - name: iceberg_ref
+    description: Reference geometries aligned to environment datasets.
+    schema: ref
+    tables:
+      - name: geographies
+        description: Reference geometries keyed by region_type and region_id.
+        columns:
+          - name: region_type
+            tests:
+              - not_null
+          - name: region_id
+            tests:
+              - not_null

@@ -1,0 +1,88 @@
+version: 2
+
+models:
+  - name: stg_curve_landing
+    description: Staging model that normalizes landing rows and retains quarantine context.
+    columns:
+      - name: currency
+        tests:
+          - not_null
+      - name: per_unit
+        tests:
+          - not_null
+  - name: stg_curve_quarantine
+    description: Filtered view of landing rows that were quarantined with reasons attached.
+    columns:
+      - name: quarantine_reason
+        tests:
+          - not_null
+  - name: stg_curve_observation
+    description: Staging model that harmonizes curve observations for downstream consumption.
+    columns:
+      - name: curve_key
+        tests:
+          - not_null
+      - name: tenor_label
+        tests:
+          - not_null
+      - name: currency
+        description: Normalized currency code for the curve price.
+      - name: per_unit
+        description: Normalized unit denominator for the curve price.
+  - name: stg_eia_series
+    description: Staging model exposing raw EIA series observations from Timescale.
+    columns:
+      - name: series_id
+        tests:
+          - not_null
+      - name: period
+        tests:
+          - not_null
+      - name: frequency
+        tests:
+          - not_null
+      - name: ingest_ts
+        tests:
+          - not_null
+  - name: stg_drought_index
+    description: Staging view exposing raw drought index records with JSON metadata.
+    columns:
+      - name: series_id
+        tests:
+          - not_null
+      - name: region_type
+        tests:
+          - not_null
+      - name: region_id
+        tests:
+          - not_null
+      - name: index_id
+        tests:
+          - not_null
+      - name: valid_date
+        tests:
+          - not_null
+  - name: stg_usdm_area
+    description: Staging view for USDM area fractions at the latest ingest.
+    columns:
+      - name: region_type
+        tests:
+          - not_null
+      - name: region_id
+        tests:
+          - not_null
+      - name: valid_date
+        tests:
+          - not_null
+  - name: stg_vector_event
+    description: Staging view for vector overlays with geometry serialized as WKT.
+    columns:
+      - name: layer
+        tests:
+          - not_null
+      - name: event_id
+        tests:
+          - not_null
+      - name: ingest_ts
+        tests:
+          - not_null

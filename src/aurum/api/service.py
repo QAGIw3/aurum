@@ -5,7 +5,6 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
-import os
 import threading
 import time
 from calendar import monthrange
@@ -14,14 +13,12 @@ from typing import Any, Dict, Iterable, List, Mapping, Optional, Sequence, Tuple
 
 import psycopg
 
+from aurum.core import AurumSettings
+
 from .config import CacheConfig, TrinoConfig
+from .state import configure as configure_state, get_settings
 
 LOGGER = logging.getLogger(__name__)
-
-EIA_SERIES_BASE_TABLE = os.getenv(
-    "AURUM_API_EIA_SERIES_TABLE",
-    "mart.mart_eia_series_latest",
-)
 
 try:  # pragma: no cover - optional dependency
     from prometheus_client import Counter as _PromCounter
@@ -29,29 +26,17 @@ except Exception:  # pragma: no cover - metrics optional
     _PromCounter = None  # type: ignore[assignment]
 
 
-def _read_int_env(name: str) -> int | None:
-    raw = os.getenv(name)
-    if raw is None:
-        return None
-    raw = raw.strip()
-    if not raw:
-        return None
+def _settings() -> AurumSettings:
     try:
-        return int(raw)
-    except ValueError:
-        LOGGER.warning("Invalid integer for %s: %s", name, raw)
-        return None
-
-
-_ISO_LMP_CACHE_TTL_OVERRIDE = _read_int_env("AURUM_API_ISO_LMP_CACHE_TTL")
-_ISO_LMP_INMEM_TTL_OVERRIDE = _read_int_env("AURUM_API_ISO_LMP_INMEM_TTL")
+        return get_settings()
+    except RuntimeError:
+        settings = AurumSettings.from_env()
+        configure_state(settings)
+        return settings
 
 
 def _timescale_dsn() -> str:
-    return os.getenv(
-        "AURUM_TIMESCALE_DSN",
-        "postgresql://timescale:timescale@timescale:5432/timeseries",
-    )
+    return _settings().database.timescale_dsn
 
 
 def _require_trino():
@@ -71,8 +56,8 @@ def _maybe_redis_client(cache_cfg: CacheConfig):
         LOGGER.debug("Redis package not available; caching disabled")
         return None
 
-    socket_timeout = float(os.getenv("AURUM_API_REDIS_SOCKET_TIMEOUT", "1.5") or 1.5)
-    connect_timeout = float(os.getenv("AURUM_API_REDIS_CONNECT_TIMEOUT", "1.5") or 1.5)
+    socket_timeout = float(cache_cfg.socket_timeout)
+    connect_timeout = float(cache_cfg.connect_timeout)
     client_kwargs = {
         "username": cache_cfg.username,
         "password": cache_cfg.password,
@@ -134,6 +119,10 @@ def _maybe_redis_client(cache_cfg: CacheConfig):
         LOGGER.warning("Redis client initialization failed: %s", exc)
         LOGGER.debug("Redis client initialization failure details", exc_info=True)
         return None
+
+
+def _eia_series_base_table() -> str:
+    return _settings().database.eia_series_base_table
 
 
 def _fetch_timescale_rows(sql: str, params: Mapping[str, object]) -> Tuple[List[Dict[str, Any]], float]:
@@ -389,7 +378,7 @@ def _build_sql_eia_series(
     cursor_before: Optional[Dict[str, Any]],
     descending: bool,
 ) -> str:
-    base = EIA_SERIES_BASE_TABLE
+    base = _eia_series_base_table()
     conditions: list[str] = []
     if series_id:
         conditions.append(f"series_id = '{_safe_literal(series_id)}'")
@@ -594,7 +583,7 @@ def query_eia_series_dimensions(
         "ARRAY_AGG(DISTINCT currency_normalized) FILTER (WHERE currency_normalized IS NOT NULL) AS canonical_currency_values, "
         "ARRAY_AGG(DISTINCT frequency) FILTER (WHERE frequency IS NOT NULL) AS frequency_values, "
         "ARRAY_AGG(DISTINCT source) FILTER (WHERE source IS NOT NULL) AS source_values "
-        f"FROM {EIA_SERIES_BASE_TABLE}{where}"
+        f"FROM {_eia_series_base_table()}{where}"
     )
 
     client = _maybe_redis_client(cache_cfg)
@@ -1631,15 +1620,15 @@ _ISO_LMP_MEMORY_CACHE = _IsoLmpInMemoryCache()
 
 
 def _iso_lmp_effective_ttl(cache_cfg: CacheConfig) -> int:
-    if _ISO_LMP_CACHE_TTL_OVERRIDE is not None:
-        return max(0, _ISO_LMP_CACHE_TTL_OVERRIDE)
+    ttl = _settings().api.cache.iso_lmp_cache_ttl
+    if ttl is not None:
+        return max(0, ttl)
     return max(0, cache_cfg.ttl_seconds)
 
 
-def _iso_lmp_memory_ttl(base_ttl: int) -> int:
-    if _ISO_LMP_INMEM_TTL_OVERRIDE is not None:
-        return max(0, _ISO_LMP_INMEM_TTL_OVERRIDE)
-    return max(0, base_ttl)
+def _iso_lmp_memory_ttl() -> int:
+    ttl = _settings().api.cache.iso_lmp_inmemory_ttl
+    return max(0, ttl)
 
 
 def _iso_lmp_cache_key(operation: str, params: Dict[str, Any], sql: str, namespace: str) -> str:
@@ -1662,9 +1651,9 @@ def _cached_iso_lmp_query(
     *,
     cache_cfg: CacheConfig | None = None,
 ) -> Tuple[List[Dict[str, Any]], float]:
-    cfg = cache_cfg or CacheConfig.from_env()
+    cfg = cache_cfg or CacheConfig.from_settings(_settings())
     ttl = _iso_lmp_effective_ttl(cfg)
-    memory_ttl = _iso_lmp_memory_ttl(ttl)
+    memory_ttl = _iso_lmp_memory_ttl()
     namespace = cfg.namespace or ""
     cache_key = _iso_lmp_cache_key(operation, params, sql, namespace)
 
@@ -1861,7 +1850,7 @@ def query_drought_indices(
     limit: int = 500,
 ) -> Tuple[List[Dict[str, Any]], float]:
     connect = _require_trino()
-    catalog = os.getenv("AURUM_TRINO_CATALOG", "iceberg")
+    catalog = trino_cfg.catalog
     base_conditions: List[str] = []
     if region_type:
         base_conditions.append(f"region_type = '{_safe_literal(region_type)}'")
@@ -1943,7 +1932,7 @@ def query_drought_usdm(
     limit: int = 500,
 ) -> Tuple[List[Dict[str, Any]], float]:
     connect = _require_trino()
-    catalog = os.getenv("AURUM_TRINO_CATALOG", "iceberg")
+    catalog = trino_cfg.catalog
     conditions: List[str] = []
     if region_type:
         conditions.append(f"region_type = '{_safe_literal(region_type)}'")
@@ -2018,7 +2007,7 @@ def query_drought_vector_events(
     limit: int = 500,
 ) -> Tuple[List[Dict[str, Any]], float]:
     connect = _require_trino()
-    catalog = os.getenv("AURUM_TRINO_CATALOG", "iceberg")
+    catalog = trino_cfg.catalog
     conditions: List[str] = []
     if layer:
         conditions.append(f"layer = '{_safe_literal(layer)}'")

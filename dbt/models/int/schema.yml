@@ -1,0 +1,60 @@
+version: 2
+
+models:
+  - name: int_curve_monthly
+    description: Intermediate model filtering to monthly tenors and latest copies per ingest.
+    tests:
+      - unique:
+          column_name: "curve_key || '|' || tenor_label || '|' || cast(asof_date as varchar)"
+    columns:
+      - name: asof_date
+        tests:
+          - not_null
+      - name: currency
+        description: Currency propagated from the staging model.
+      - name: per_unit
+        description: Unit denominator propagated from the staging model.
+  - name: int_curve_calendar
+    description: Calendar strips derived by averaging monthly curves.
+    tests:
+      - unique:
+          column_name: "curve_key || '|' || tenor_label || '|' || cast(asof_date as varchar)"
+    columns:
+      - name: asof_date
+        tests:
+          - not_null
+      - name: tenor_type
+        tests:
+          - accepted_values:
+              values: ['CALENDAR']
+      - name: mid
+        tests:
+          - not_null
+  - name: int_curve_quarter
+    description: Quarterly strips derived by averaging monthly curves.
+    tests:
+      - unique:
+          column_name: "curve_key || '|' || tenor_label || '|' || cast(asof_date as varchar)"
+    columns:
+      - name: asof_date
+        tests:
+          - not_null
+      - name: tenor_type
+        tests:
+          - accepted_values:
+              values: ['QUARTER']
+      - name: mid
+        tests:
+          - not_null
+  - name: int_eia_series_enriched
+    description: Intermediate model normalizing currency and unit metadata for EIA series.
+    columns:
+      - name: series_id
+        tests:
+          - not_null
+      - name: value_converted
+        description: Numeric value after applying any canonical conversion rules.
+      - name: currency_normalized
+        description: Currency resolved from canonical metadata or unit mappings.
+      - name: unit_normalized
+        description: Unit denominator resolved from canonical metadata or unit mappings.

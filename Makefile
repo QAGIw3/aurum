@@ -117,13 +117,16 @@ eia-validate-config:
 airflow-eia-vars:
 	python scripts/eia/set_airflow_variables.py --apply
 
-.PHONY: airflow-apply-vars airflow-print-vars
+.PHONY: airflow-apply-vars airflow-print-vars airflow-check-vars
 
 airflow-apply-vars:
 	python scripts/airflow/set_variables.py --file config/airflow_variables.json --apply
 
 airflow-print-vars:
 	python scripts/airflow/set_variables.py --file config/airflow_variables.json
+
+airflow-check-vars:
+	python scripts/airflow/validate_variables.py --file config/airflow_variables.json
 
 .PHONY: airflow-list-vars airflow-list-aurum-vars
 

@@ -315,6 +315,7 @@ Apply a standard set of Airflow Variables (Kafka bootstrap, Schema Registry URL,
 
 - Mapping file: `config/airflow_variables.json`
 - Preview commands: `make airflow-print-vars`
+- Validate mapping: `make airflow-check-vars`
 - Apply to Airflow: `make airflow-apply-vars`
 
 These variables are consumed by the public feeds DAGs and the Kafka→Timescale sink DAGs to avoid hardcoding endpoints and names.

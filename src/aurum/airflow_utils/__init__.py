@@ -6,8 +6,21 @@ from dataclasses import dataclass
 from typing import Iterable, Sequence
 
 from .alerting import build_failure_callback, emit_alert
-from .dag_factory import DagConfig, DagSchedule, build_default_args, dag_factory
 from . import metrics
+from .variables import load_variable_mapping, validate_variable_mapping
+
+try:  # pragma: no cover - optional dependency on Airflow
+    from .dag_factory import DagConfig, DagSchedule, build_default_args, dag_factory
+
+    _DAG_FACTORY_EXPORTS = [
+        "DagConfig",
+        "DagSchedule",
+        "build_default_args",
+        "dag_factory",
+    ]
+except ModuleNotFoundError:  # Airflow may be unavailable in validation environments
+    DagConfig = DagSchedule = build_default_args = dag_factory = None  # type: ignore[assignment]
+    _DAG_FACTORY_EXPORTS = []
 
 
 @dataclass(frozen=True)
@@ -173,13 +186,13 @@ def build_preflight_callable(
 
 
 __all__ = [
-    "DagConfig",
-    "DagSchedule",
-    "build_default_args",
     "build_preflight_callable",
-    "dag_factory",
+    "load_variable_mapping",
     "PreflightConfig",
     "emit_alert",
     "build_failure_callback",
+    "validate_variable_mapping",
     "metrics",
 ]
+
+__all__.extend(_DAG_FACTORY_EXPORTS)

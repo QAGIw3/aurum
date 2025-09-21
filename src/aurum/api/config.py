@@ -37,7 +37,7 @@ class TrinoConfig:
 class CacheConfig:
     redis_url: str | None = None
     ttl_seconds: int = 60
-    mode: RedisMode = RedisMode.STANDALONE
+    mode: str = RedisMode.STANDALONE.value
     sentinel_endpoints: Tuple[Tuple[str, int], ...] = field(default_factory=tuple)
     sentinel_master: str | None = None
     cluster_nodes: Tuple[str, ...] = field(default_factory=tuple)
@@ -61,7 +61,7 @@ class CacheConfig:
         return cls(
             redis_url=redis.url,
             ttl_seconds=ttl,
-            mode=redis.mode,
+            mode=redis.mode.value if isinstance(redis.mode, RedisMode) else str(redis.mode),
             sentinel_endpoints=tuple(sentinel_pairs),
             sentinel_master=redis.sentinel_master,
             cluster_nodes=cluster_nodes,
