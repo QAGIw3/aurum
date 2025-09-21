@@ -56,6 +56,20 @@ The steps below remain available when you want finer-grained control or need to 
 
   Superset is then available at `http://localhost:8089`, Kafka UI at `http://localhost:8090`, and Grafana at `http://grafana.aurum.localtest.me:8085`. Tear them down with `make kind-delete-ui` when you no longer need the dashboards.
 
+  Vector runs as a DaemonSet and ships pod logs into ClickHouse (`ops.logs`). Verify flow with:
+
+  ```bash
+  kubectl -n aurum-dev logs -l app=vector --tail=20
+  clickhouse-client --query "SELECT timestamp, service, level, left(message, 200) FROM ops.logs ORDER BY timestamp DESC LIMIT 20"
+  ```
+
+  Grafana auto-loads dashboards in the **Aurum** folder:
+
+  - *Aurum Observability* – quick log/event slices.
+  - *API Latency & Errors* – p95 response times, error rates, and request volume (from ClickHouse logs).
+  - *Ingestion SLA & Watermarks* – Postgres-backed watermarks with lag tables and trends.
+  - *Scenario Worker Metrics* – Prometheus timeseries for throughput, duration, retry/timeout rates, and queue depth.
+
 5. Point your tooling at the exposed ports:
 
    | Service          | Host URL                 |

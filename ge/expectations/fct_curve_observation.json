@@ -42,6 +42,10 @@
       }
     },
     {
+      "expectation_type": "expect_column_values_to_not_be_null",
+      "kwargs": {"column": "lineage_tags"}
+    },
+    {
       "expectation_type": "expect_compound_columns_to_be_unique",
       "kwargs": {"column_list": ["curve_key", "tenor_label", "asof_date"]}
     }

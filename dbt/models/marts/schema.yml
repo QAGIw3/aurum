@@ -125,6 +125,10 @@ models:
       - name: currency
         tests:
           - not_null
+      - name: lineage_tags
+        description: Pipe-delimited lineage tag string (source|topic|table|fact).
+        tests:
+          - not_null
   - name: mart_curve_asof_diff
     description: Precomputed as-of deltas for curve observations to power diff APIs.
     tests:
@@ -142,6 +146,18 @@ models:
           - not_null
       - name: delta_mid
         description: Difference between current and comparison mid values.
+  - name: mart_curve_dead_letter_summary
+    description: Daily dead-letter summary for dashboards and alerting.
+    columns:
+      - name: source
+        tests:
+          - not_null
+      - name: severity
+        tests:
+          - not_null
+      - name: ingest_day
+        tests:
+          - not_null
   - name: publish_curve_observation
     description: Incremental publish step that materializes the canonical curve table from landing data.
     tests:

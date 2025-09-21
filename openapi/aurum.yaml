@@ -1005,6 +1005,49 @@ paths:
                 $ref: '#/components/schemas/ScenarioMetricLatestResponse'
         '401':
           $ref: '#/components/responses/Unauthorized'
+  /v1/scenarios/{id}/runs:bulk:
+    post:
+      summary: Create multiple scenario runs in bulk with deduplication
+      operationId: createBulkScenarioRuns
+      security:
+        - oauth2: [aurum]
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+          description: Scenario ID
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/BulkScenarioRunRequest'
+      responses:
+        '202':
+          description: Bulk scenario runs created successfully
+          headers:
+            X-Request-Id:
+              description: Request identifier for tracing
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BulkScenarioRunResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
   /v1/ppa/contracts:
     get:
       summary: List PPA contracts.
@@ -2816,6 +2859,109 @@ components:
           type: array
           items:
             $ref: '#/components/schemas/ScenarioMetricLatest'
+    BulkScenarioRunRequest:
+      type: object
+      required: [scenario_id, runs]
+      properties:
+        scenario_id:
+          type: string
+          description: Parent scenario ID
+        runs:
+          type: array
+          minItems: 1
+          maxItems: 100
+          items:
+            $ref: '#/components/schemas/BulkScenarioRunItem'
+        idempotency_key:
+          type: string
+          maxLength: 255
+          nullable: true
+          description: Idempotency key for deduplication
+    BulkScenarioRunItem:
+      type: object
+      properties:
+        idempotency_key:
+          type: string
+          maxLength: 255
+          nullable: true
+          description: Unique key for this run
+        priority:
+          $ref: '#/components/schemas/ScenarioRunPriority'
+        timeout_minutes:
+          type: integer
+          minimum: 1
+          maximum: 1440
+          default: 60
+        max_memory_mb:
+          type: integer
+          minimum: 256
+          maximum: 16384
+          default: 1024
+        environment:
+          type: object
+          additionalProperties:
+            type: string
+          default: {}
+        parameters:
+          type: object
+          default: {}
+    BulkScenarioRunResponse:
+      type: object
+      properties:
+        meta:
+          $ref: '#/components/schemas/Meta'
+        data:
+          type: array
+          items:
+            $ref: '#/components/schemas/BulkScenarioRunResult'
+        duplicates:
+          type: array
+          items:
+            $ref: '#/components/schemas/BulkScenarioRunDuplicate'
+          default: []
+    BulkScenarioRunResult:
+      type: object
+      required: [index, run_id, status]
+      properties:
+        index:
+          type: integer
+          description: Index of the run in the request
+        idempotency_key:
+          type: string
+          nullable: true
+        run_id:
+          type: string
+        status:
+          type: string
+        error:
+          type: string
+          nullable: true
+    BulkScenarioRunDuplicate:
+      type: object
+      required: [index, existing_run_id, existing_status, created_at]
+      properties:
+        index:
+          type: integer
+          description: Index of the duplicate run in the request
+        idempotency_key:
+          type: string
+          nullable: true
+        existing_run_id:
+          type: string
+        existing_status:
+          type: string
+        created_at:
+          type: string
+          format: date-time
+    ScenarioRunBulkResponse:
+      type: object
+      properties:
+        meta:
+          $ref: '#/components/schemas/Meta'
+        data:
+          type: array
+          items:
+            $ref: '#/components/schemas/ScenarioRunData'
     PpaValuationRequest:
       type: object
       required: [ppa_contract_id]

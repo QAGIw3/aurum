@@ -1,0 +1,77 @@
+{
+  "generated_at": "2025-01-21T04:00:00.000000+00:00",
+  "dataset_count": 15,
+  "base_url": "https://api.stlouisfed.org/fred",
+  "series": [
+    {
+      "id": "CPIAUCSL",
+      "title": "Consumer Price Index for All Urban Consumers: All Items in U.S. City Average",
+      "units": "Index 1982-1984=100",
+      "frequency": "Monthly",
+      "seasonal_adjustment": "Seasonally Adjusted",
+      "last_updated": "2024-01-11",
+      "popularity": 89,
+      "notes": "The Consumer Price Index for All Urban Consumers: All Items (CPIAUCSL) is a measure of the average change over time in the prices paid by urban consumers for a market basket of consumer goods and services.",
+      "category": "Prices",
+      "start_date": "1947-01-01",
+      "end_date": "2023-12-01",
+      "api_path": "series/observations"
+    },
+    {
+      "id": "CPALTT01USM661S",
+      "title": "Consumer Price Index: Total All Items for the United States",
+      "units": "Index 2015=100",
+      "frequency": "Monthly",
+      "seasonal_adjustment": "Not Seasonally Adjusted",
+      "last_updated": "2024-01-11",
+      "popularity": 78,
+      "notes": "OECD Descriptor: Consumer Price Index: Total All Items for the United States",
+      "category": "Prices",
+      "start_date": "1955-01-01",
+      "end_date": "2023-11-01",
+      "api_path": "series/observations"
+    },
+    {
+      "id": "CPITRNSL",
+      "title": "Consumer Price Index for All Urban Consumers: Transportation in U.S. City Average",
+      "units": "Index 1982-1984=100",
+      "frequency": "Monthly",
+      "seasonal_adjustment": "Seasonally Adjusted",
+      "last_updated": "2024-01-11",
+      "popularity": 65,
+      "notes": "The transportation component of the Consumer Price Index.",
+      "category": "Prices",
+      "start_date": "1947-01-01",
+      "end_date": "2023-12-01",
+      "api_path": "series/observations"
+    },
+    {
+      "id": "CPIENGSL",
+      "title": "Consumer Price Index for All Urban Consumers: Energy in U.S. City Average",
+      "units": "Index 1982-1984=100",
+      "frequency": "Monthly",
+      "seasonal_adjustment": "Seasonally Adjusted",
+      "last_updated": "2024-01-11",
+      "popularity": 62,
+      "notes": "The energy component of the Consumer Price Index.",
+      "category": "Prices",
+      "start_date": "1947-01-01",
+      "end_date": "2023-12-01",
+      "api_path": "series/observations"
+    },
+    {
+      "id": "CPIFABSL",
+      "title": "Consumer Price Index for All Urban Consumers: Food and Beverages in U.S. City Average",
+      "units": "Index 1982-1984=100",
+      "frequency": "Monthly",
+      "seasonal_adjustment": "Seasonally Adjusted",
+      "last_updated": "2024-01-11",
+      "popularity": 58,
+      "notes": "The food and beverages component of the Consumer Price Index.",
+      "category": "Prices",
+      "start_date": "1947-01-01",
+      "end_date": "2023-12-01",
+      "api_path": "series/observations"
+    }
+  ]
+}

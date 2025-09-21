@@ -34,6 +34,16 @@ sources:
           - name: _ingest_ts
             tests:
               - not_null
+      - name: curve_dead_letter
+        description: Dead letter capture table for schema drift and ingestion failures.
+        loaded_at_field: ingest_ts
+        columns:
+          - name: source
+            tests:
+              - not_null
+          - name: ingest_ts
+            tests:
+              - not_null
       - name: curve_observation_quarantine
         description: Repository of quarantined rows awaiting remediation.
         loaded_at_field: _ingest_ts

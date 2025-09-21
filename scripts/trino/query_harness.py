@@ -5,12 +5,19 @@ from __future__ import annotations
 import argparse
 import json
 import math
+import os
 import statistics
 import sys
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Iterable, Iterator
 
 from aurum.compat import requests
+
+try:  # Optional dependency when emitting metrics
+    import psycopg
+except ImportError:  # pragma: no cover - optional feature
+    psycopg = None  # type: ignore[assignment]
 
 
 def _parse_inline_query(spec: str) -> tuple[str, str]:
@@ -66,6 +73,22 @@ def _follow_query(server: str, session: requests.Session, headers: dict[str, str
     return stats
 
 
+def _extract_cache_hit_rate(stats: dict) -> float:
+    for key in ("columnarCacheHitRate", "cacheHitRate", "resultCacheHitRate"):
+        if key in stats:
+            try:
+                return float(stats[key])
+            except (TypeError, ValueError):  # pragma: no cover - defensive
+                continue
+    scan_bytes = float(stats.get("scanInputBytes", 0.0))
+    processed_bytes = float(stats.get("processedBytes", 0.0))
+    if scan_bytes <= 0:
+        return float("nan")
+    cached_bytes = max(scan_bytes - processed_bytes, 0.0)
+    ratio = cached_bytes / scan_bytes if scan_bytes else 0.0
+    return max(0.0, min(1.0, ratio))
+
+
 def percentile(values: list[float], pct: float) -> float:
     if not values:
         return float("nan")
@@ -110,25 +133,75 @@ def run_harness(
         latencies: list[float] = []
         cpu_times: list[float] = []
         bytes_processed: list[float] = []
+        scan_input_bytes: list[float] = []
         rows_processed: list[float] = []
         peak_memory: list[float] = []
+        cache_hit_rates: list[float] = []
 
         for _ in range(iterations):
             stats = _follow_query(server, session, headers, sql)
             latencies.append(float(stats.get("wallTimeMillis", 0.0)))
             cpu_times.append(float(stats.get("cpuTimeMillis", 0.0)))
             bytes_processed.append(float(stats.get("processedBytes", 0.0)))
+            scan_input_bytes.append(float(stats.get("scanInputBytes", 0.0)))
             rows_processed.append(float(stats.get("processedRows", 0.0)))
             peak_memory.append(float(stats.get("peakMemoryBytes", 0.0)))
+            cache_hit_rates.append(_extract_cache_hit_rate(stats))
 
         results[name] = {
             "latency_ms": summarize(latencies),
             "cpu_ms": summarize(cpu_times),
             "bytes_processed": summarize(bytes_processed),
+            "scan_input_bytes": summarize(scan_input_bytes),
             "rows_processed": summarize(rows_processed),
             "peak_memory_bytes": summarize(peak_memory),
+            "cache_hit_rate": summarize(cache_hit_rates),
         }
     return results
+
+
+def _resolve_timescale_dsn(provided: str | None) -> str:
+    if provided:
+        return provided
+    for key in ("AURUM_TIMESCALE_DSN", "TIMESCALE_DSN", "TIMESERIES_DSN"):
+        value = os.getenv(key)
+        if value:
+            return value
+    host = os.getenv("TIMESCALE_HOST", "timescale")
+    port = os.getenv("TIMESCALE_PORT", "5432")
+    user = os.getenv("TIMESCALE_USER", "aurum")
+    password = os.getenv("TIMESCALE_PASSWORD", "aurum")
+    database = os.getenv("TIMESCALE_DB", "timeseries")
+    return f"postgresql://{user}:{password}@{host}:{port}/{database}"
+
+
+def emit_ops_metrics(summary: dict[str, dict[str, dict[str, float]]], dsn: str) -> None:
+    if psycopg is None:
+        raise RuntimeError("psycopg is not installed; install psycopg[binary] to emit metrics")
+
+    timestamp = datetime.now(timezone.utc)
+    rows: list[tuple[str, str, datetime, float]] = []
+    for query_name, metrics in summary.items():
+        labels = {"query": query_name, "stat": "p95"}
+        for metric_key, metric_name in (
+            ("latency_ms", "trino.query.latency_ms"),
+            ("bytes_processed", "trino.query.bytes_processed"),
+            ("scan_input_bytes", "trino.query.scan_input_bytes"),
+            ("cache_hit_rate", "trino.query.cache_hit_rate"),
+        ):
+            value = metrics.get(metric_key, {}).get("p95")
+            if value is None or math.isnan(value):
+                continue
+            rows.append((metric_name, json.dumps(labels), timestamp, float(value)))
+    if not rows:
+        return
+
+    with psycopg.connect(dsn) as conn, conn.cursor() as cur:
+        cur.executemany(
+            "INSERT INTO public.ops_metrics (metric, labels, ts, value) VALUES (%s, %s::jsonb, %s, %s)",
+            rows,
+        )
+        conn.commit()
 
 
 def parse_args(argv: Iterable[str] | None = None) -> argparse.Namespace:
@@ -146,6 +219,15 @@ def parse_args(argv: Iterable[str] | None = None) -> argparse.Namespace:
         help="Inline query definition NAME=SQL (can be provided multiple times)",
     )
     parser.add_argument("--output", type=Path, help="Optional path to write JSON summary")
+    parser.add_argument(
+        "--emit-metrics",
+        action="store_true",
+        help="Write p95 latency/byte/cache metrics to Timescale ops_metrics",
+    )
+    parser.add_argument(
+        "--timescale-dsn",
+        help="Timescale/Postgres DSN for ops metrics (defaults to env if unset)",
+    )
     return parser.parse_args(list(argv) if argv is not None else None)
 
 
@@ -187,6 +269,15 @@ def main(argv: Iterable[str] | None = None) -> int:
         print(f"Wrote harness metrics to {args.output}")
     else:
         print(output)
+
+    if args.emit_metrics:
+        dsn = _resolve_timescale_dsn(args.timescale_dsn)
+        try:
+            emit_ops_metrics(summary, dsn)
+            print("Emitted cost metrics to ops_metrics")
+        except Exception as exc:  # pragma: no cover - best effort
+            print(f"Failed to emit metrics: {exc}", file=sys.stderr)
+            return 1
     return 0
 
 

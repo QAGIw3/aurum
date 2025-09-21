@@ -189,6 +189,7 @@ flowchart LR
 * Provide surrogate keys for facts, descriptive attributes (timezone, block definitions), and as-of calendar rollups
 
 **`iceberg.market.curve_observation_quarantine`** -- quarantined rows retained for remediation (mirrors canonical columns + `quarantine_reason`)  
+**`iceberg.market.curve_dead_letter`** -- DLQ capture for schema drift, serialization failures, and other ingest issues (partitioned by ingest_ts with raw payload + metadata)  
 **`iceberg.market.scenario_output`** -- scenario curves with bands and attribution  
 **`iceberg.market.ppa_valuation`** -- cashflows and risk metrics  
 **`iceberg.market.qa_checks`** -- data quality results
@@ -404,6 +405,7 @@ Key endpoints:
   * `iceberg` (Nessie REST catalog; config in `trino/catalog/iceberg.properties`)
   * `postgres` (app metadata), `timescale` (hypertables), `kafka` (Avro topics) -- see `trino/catalog/*.properties`
 * Performance harness: `scripts/trino/query_harness.py --plan config/trino_query_harness.json --catalog iceberg --schema mart` captures latency/cost summaries (p95 wall-clock, bytes scanned, peak memory).
+* Airflow DAG `refresh_curve_marts` runs `dbt run --select fct_curve_observation mart_curve_latest mart_curve_asof_diff` hourly to keep Iceberg materializations hot, followed by freshness tests.
 
 ### Files
 
@@ -440,9 +442,13 @@ Key endpoints:
 ## Observability & Operations
 
 * **Vector** ships logs to **ClickHouse** (`ops.logs`); operational events to `ops.events`.
+* Grafana (optional overlay) loads dashboards: log triage (*Aurum Observability*), API latency/error coverage, ingestion SLA & watermarks, and scenario worker throughput/retry metrics (Prometheus-backed).
 * Superset operations dashboards: ingest latency, Great Expectations pass rate, API error rate, slow queries, Kafka lag.
 * Alerts (Slack/Email/Pager) via notifier on `aurum.alert.v1` and operational thresholds.
 * Late-arriving guardrail: `make reconcile-kafka-lake` compares Kafka offsets vs. Iceberg/Timescale row counts using `config/kafka_lake_reconciliation.json`.
+* Dead-letter monitoring: query `mart.mart_curve_dead_letter_summary` or expose via Superset to track schema drift volume and last-seen timestamps.
+* Cost-to-serve metrics: `make trino-harness-metrics` surfaces p95 latency/bytes/cache-hit values into `ops_metrics` (labels include query name) for dashboards.
+* API requests log per-query structured events (`trino_query_metrics`) capturing fingerprint, wall time, bytes scanned, cache hit rate, and row counts for downstream analysis.
 * Observability API (`/v1/observability/...`) is admin-only. Grant operators membership in the groups defined by `AURUM_API_ADMIN_GROUP` so they can inspect metrics, traces, and cleanup endpoints.
 
 ---
@@ -471,7 +477,7 @@ Key endpoints:
   4. `dbt compile` and run `stg` with ephemeral DuckDB (or Trino in CI)
   5. Great Expectations dry-run against a fixture
   6. Helm chart lint and Kustomize diff
-  7. Deploy to `stage` --> run smoke E2E --> promote to `prod`
+  7. Deploy to `stage` --> run post-deploy smoke (API health + metadata/curve/scenario sample queries) --> promote to `prod`
 * **Releases:** Semantic versioning for services; data releases tagged in lakeFS (`release/asof`) and Nessie snapshot IDs stored in `model_run`.
 
 ---
@@ -522,6 +528,7 @@ def parse(path: str, asof: date) -> pd.DataFrame:
 * **Iceberg partitioning:** canonical facts use `days(asof_date)` + `iso_code` + `product_code`; raw tables retain `identity()` on high-cardinality identifiers where it aids predicate pruning.
 * **Small files:** compact with Iceberg snapshot procedures.
 * **Trino:** tune broadcast join thresholds; worker autoscale; pin frequently queried marts in ClickHouse.
+* **Maintenance:** `make iceberg-maintenance` issues `OPTIMIZE` + `expire_snapshots` for curve facts/markets (see `trino/ddl/iceberg_maintenance.sql`).
 * **API:** cache hot slices in Redis; pagination; GZIP; vectorized DB drivers.
 * **Kafka:** partition topics by `curve_key` or `asof_date` to scale consumers.
 * **Spark:** coalesce or writestream settings; adaptive query execution; use Parquet predicate pushdown.
@@ -673,3 +680,6 @@ curl http://api.aurum.localtest.me:8085/v1/scenarios?limit=1
 ---
 
 **That is the complete developer documentation for Aurum v0.1.**
+**Dead-letter marts**
+
+* `mart.mart_curve_dead_letter_summary` rolls up DLQ counts by source/severity/day for dashboards (joins to ops metrics).

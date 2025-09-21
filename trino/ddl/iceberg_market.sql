@@ -126,6 +126,28 @@ WITH (
     partitioning = ARRAY['days(asof_date)', 'iso_code', 'product_code']
 );
 
+CREATE TABLE IF NOT EXISTS iceberg.market.curve_dead_letter (
+    source VARCHAR,
+    error_message VARCHAR,
+    context MAP(VARCHAR, VARCHAR),
+    severity VARCHAR,
+    recommended_action VARCHAR,
+    ingest_ts TIMESTAMP(6),
+    raw_payload VARCHAR
+)
+WITH (
+    format = 'PARQUET',
+    format_version = '2',
+    write_compression = 'ZSTD',
+    write_target_file_size_bytes = 268435456,
+    optimize_rewrite_data_file_threshold = 12,
+    optimize_rewrite_delete_file_threshold = 100,
+    vacuum_min_snapshots_to_keep = 4,
+    vacuum_max_snapshot_age_retention = '14d',
+    partitioning = ARRAY['days(ingest_ts)'],
+    write_sort_order = ARRAY['days(ingest_ts)', 'source']
+);
+
 CREATE TABLE IF NOT EXISTS iceberg.market.curve_observation_quarantine (
     asof_date DATE,
     source_file VARCHAR,
@@ -426,6 +448,17 @@ SELECT
 FROM iceberg.market.curve_observation$snapshots
 UNION ALL
 SELECT
+    'curve_dead_letter' AS table_name,
+    snapshot_id,
+    committed_at,
+    operation,
+    TRY_CAST(summary['total-data-files'] AS BIGINT) AS total_data_files,
+    TRY_CAST(summary['added-data-files'] AS BIGINT) AS added_data_files,
+    TRY_CAST(summary['deleted-data-files'] AS BIGINT) AS deleted_data_files,
+    TRY_CAST(summary['total-records'] AS BIGINT) AS total_records
+FROM iceberg.market.curve_dead_letter$snapshots
+UNION ALL
+SELECT
     'curve_observation_quarantine' AS table_name,
     snapshot_id,
     committed_at,
@@ -476,6 +509,9 @@ WITH files AS (
     UNION ALL
     SELECT 'curve_observation' AS table_name, file_size_in_bytes
     FROM iceberg.market.curve_observation$files
+    UNION ALL
+    SELECT 'curve_dead_letter' AS table_name, file_size_in_bytes
+    FROM iceberg.market.curve_dead_letter$files
     UNION ALL
     SELECT 'curve_observation_quarantine' AS table_name, file_size_in_bytes
     FROM iceberg.market.curve_observation_quarantine$files

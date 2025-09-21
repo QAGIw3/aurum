@@ -207,6 +207,73 @@ class ScenarioMetricLatestResponse(AurumBaseModel):
     data: ScenarioMetricLatest = Field(..., description="Latest metrics")
 
 
+class BulkScenarioRunRequest(AurumBaseModel):
+    """Request model for bulk scenario run submission."""
+
+    scenario_id: str = Field(..., description="Parent scenario ID")
+    runs: List["BulkScenarioRunItem"] = Field(..., min_items=1, max_items=100, description="List of runs to create")
+    idempotency_key: Optional[str] = Field(None, max_length=255, description="Idempotency key for deduplication")
+
+
+class BulkScenarioRunItem(AurumBaseModel):
+    """Individual run item in bulk request."""
+
+    idempotency_key: Optional[str] = Field(None, max_length=255, description="Unique key for this run")
+    priority: ScenarioRunPriority = Field(default=ScenarioRunPriority.NORMAL, description="Run priority")
+    timeout_minutes: int = Field(default=60, description="Timeout in minutes", ge=1, le=1440)
+    max_memory_mb: int = Field(default=1024, description="Max memory in MB", ge=256, le=16384)
+    environment: Dict[str, str] = Field(default_factory=dict, description="Environment variables")
+    parameters: Dict[str, Any] = Field(default_factory=dict, description="Runtime parameters")
+
+    @validator("idempotency_key")
+    def validate_idempotency_key(cls, v):
+        """Validate idempotency key format."""
+        if v is not None:
+            if not v or not v.strip():
+                raise ValueError("idempotency_key cannot be empty if provided")
+            if len(v) > 255:
+                raise ValueError("idempotency_key cannot exceed 255 characters")
+            # Allow alphanumeric, underscore, hyphen, dot, and colon
+            if not all(c.isalnum() or c in "_-.:/" for c in v):
+                raise ValueError("idempotency_key can only contain alphanumeric characters, underscore, hyphen, dot, and colon")
+        return v.strip() if v else v
+
+
+class BulkScenarioRunResponse(AurumBaseModel):
+    """Response model for bulk scenario run submission."""
+
+    meta: Dict[str, Any] = Field(..., description="Response metadata")
+    data: List["BulkScenarioRunResult"] = Field(..., description="Results for each run")
+    duplicates: List["BulkScenarioRunDuplicate"] = Field(default_factory=list, description="Duplicate runs detected")
+
+
+class BulkScenarioRunResult(AurumBaseModel):
+    """Result for an individual run in bulk submission."""
+
+    index: int = Field(..., description="Index of the run in the request")
+    idempotency_key: Optional[str] = Field(None, description="Idempotency key used")
+    run_id: str = Field(..., description="Created run ID")
+    status: str = Field(..., description="Status of the run creation")
+    error: Optional[str] = Field(None, description="Error message if creation failed")
+
+
+class BulkScenarioRunDuplicate(AurumBaseModel):
+    """Information about duplicate runs detected."""
+
+    index: int = Field(..., description="Index of the duplicate run in the request")
+    idempotency_key: Optional[str] = Field(None, description="Idempotency key of the duplicate")
+    existing_run_id: str = Field(..., description="ID of existing run")
+    existing_status: str = Field(..., description="Status of existing run")
+    created_at: datetime = Field(..., description="When the existing run was created")
+
+
+class ScenarioRunBulkResponse(AurumBaseModel):
+    """Response model for bulk scenario run operations."""
+
+    meta: Dict[str, Any] = Field(..., description="Response metadata")
+    data: List[ScenarioRunData] = Field(..., description="Created or existing runs")
+
+
 # Legacy models for backward compatibility
 ScenarioRequest = CreateScenarioRequest
 Scenario = ScenarioData

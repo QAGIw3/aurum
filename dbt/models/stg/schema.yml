@@ -122,6 +122,27 @@ models:
               field: block
               to_field: block_code
 
+  - name: stg_curve_dead_letter
+    description: Dead letter staging view capturing failed curve records and schema drift context.
+    tests:
+      - unique_combination:
+          combination_of_columns:
+            - source
+            - ingest_ts
+            - error_message
+    columns:
+      - name: source
+        tests:
+          - not_null
+      - name: severity
+        tests:
+          - not_null
+          - accepted_values:
+              values: ['INFO', 'WARN', 'ERROR', 'CRITICAL']
+      - name: ingest_ts
+        tests:
+          - not_null
+
   - name: stg_eia_series
     description: Staging model exposing raw EIA series observations from Timescale.
     tests:

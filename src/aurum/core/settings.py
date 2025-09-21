@@ -158,6 +158,39 @@ class AuthSettings(AurumBaseModel):
         raise TypeError("Invalid admin group definition")
 
 
+class ConcurrencyControlSettings(AurumBaseModel):
+    """Settings for API concurrency controls and timeouts."""
+    max_concurrent_trino_connections: int = Field(default=10, ge=1, validation_alias=AliasChoices("API_TRINO_MAX_CONNECTIONS"))
+    trino_connection_timeout_seconds: float = Field(default=5.0, gt=0.0, validation_alias=AliasChoices("API_TRINO_CONNECT_TIMEOUT"))
+    trino_query_timeout_seconds: float = Field(default=30.0, gt=0.0, validation_alias=AliasChoices("API_TRINO_QUERY_TIMEOUT"))
+    trino_max_retries: int = Field(default=3, ge=0, validation_alias=AliasChoices("API_TRINO_MAX_RETRIES"))
+    trino_retry_delay_seconds: float = Field(default=1.0, gt=0.0, validation_alias=AliasChoices("API_TRINO_RETRY_DELAY"))
+    trino_max_retry_delay_seconds: float = Field(default=10.0, gt=0.0, validation_alias=AliasChoices("API_TRINO_MAX_RETRY_DELAY"))
+    trino_circuit_breaker_failure_threshold: int = Field(default=5, ge=1, validation_alias=AliasChoices("API_TRINO_CIRCUIT_BREAKER_THRESHOLD"))
+    trino_circuit_breaker_timeout_seconds: float = Field(default=60.0, gt=0.0, validation_alias=AliasChoices("API_TRINO_CIRCUIT_BREAKER_TIMEOUT"))
+    trino_connection_pool_min_size: int = Field(default=2, ge=0, validation_alias=AliasChoices("API_TRINO_POOL_MIN_SIZE"))
+    trino_connection_pool_max_size: int = Field(default=10, ge=1, validation_alias=AliasChoices("API_TRINO_POOL_MAX_SIZE"))
+    trino_connection_pool_max_idle: int = Field(default=5, ge=0, validation_alias=AliasChoices("API_TRINO_POOL_MAX_IDLE"))
+    trino_connection_pool_idle_timeout_seconds: float = Field(default=300.0, gt=0.0, validation_alias=AliasChoices("API_TRINO_POOL_IDLE_TIMEOUT"))
+    trino_connection_pool_wait_timeout_seconds: float = Field(default=10.0, gt=0.0, validation_alias=AliasChoices("API_TRINO_POOL_WAIT_TIMEOUT"))
+
+    @field_validator("trino_connection_pool_max_size")
+    @classmethod
+    def validate_pool_max_size(cls, v):
+        """Ensure pool max size is reasonable."""
+        if v > 100:  # Reasonable upper bound
+            raise ValueError("Trino connection pool max size cannot exceed 100")
+        return v
+
+    @field_validator("trino_max_retries")
+    @classmethod
+    def validate_retry_attempts(cls, v):
+        """Ensure retry attempts are reasonable."""
+        if v > 10:  # Reasonable upper bound
+            raise ValueError("Trino max retries cannot exceed 10")
+        return v
+
+
 class ApiCacheSettings(AurumBaseModel):
     in_memory_ttl: int = Field(default=60, ge=0, validation_alias=AliasChoices("API_INMEMORY_TTL"))
     iso_lmp_cache_ttl: int = Field(default=60, ge=0, validation_alias=AliasChoices("API_ISO_LMP_CACHE_TTL"))
@@ -195,6 +228,7 @@ class ApiSettings(AurumBaseModel):
     ppa_write_enabled: bool = Field(default=True, validation_alias=AliasChoices("API_PPA_WRITE_ENABLED"))
     rate_limit: RateLimitSettings = Field(default_factory=RateLimitSettings)
     cache: ApiCacheSettings = Field(default_factory=ApiCacheSettings)
+    concurrency: ConcurrencyControlSettings = Field(default_factory=ConcurrencyControlSettings)
     metrics: MetricsSettings = Field(default_factory=MetricsSettings)
 
     @field_validator("cors_allow_origins", mode="before")
@@ -488,5 +522,6 @@ __all__ = [
     "DatabaseSettings",
     "MessagingSettings",
     "TelemetrySettings",
+    "ConcurrencyControlSettings",
     "RedisMode",
 ]

@@ -25,6 +25,11 @@ from .models import (
     ScenarioOutputFilter,
     ScenarioMetricLatestResponse,
     ScenarioMetricLatest,
+    BulkScenarioRunRequest,
+    BulkScenarioRunResponse,
+    BulkScenarioRunResult,
+    BulkScenarioRunDuplicate,
+    ScenarioRunBulkResponse,
 )
 from .exceptions import ValidationException, NotFoundException, ForbiddenException
 from .container import get_service
@@ -672,4 +677,115 @@ async def get_scenario_metrics_latest(
         raise HTTPException(
             status_code=500,
             detail=f"Failed to get scenario metrics: {str(exc)}"
+        ) from exc
+
+
+@router.post("/v1/scenarios/{scenario_id}/runs:bulk", response_model=BulkScenarioRunResponse, status_code=202)
+async def create_bulk_scenario_runs(
+    request: Request,
+    scenario_id: str,
+    bulk_request: BulkScenarioRunRequest,
+) -> BulkScenarioRunResponse:
+    """Create multiple scenario runs in bulk with deduplication via idempotency keys."""
+    from .auth import require_permission, Permission
+
+    # Get principal from request state
+    principal = getattr(request.state, "principal", None)
+
+    # Require scenarios write permission
+    require_permission(principal, Permission.SCENARIOS_WRITE)
+
+    start_time = time.perf_counter()
+
+    try:
+        # Validate UUID format
+        try:
+            UUID(scenario_id)
+        except ValueError:
+            raise ValidationException(
+                field="scenario_id",
+                message="Invalid scenario ID format",
+                request_id=get_request_id()
+            )
+
+        # Validate bulk request
+        if not bulk_request.runs:
+            raise ValidationException(
+                field="runs",
+                message="At least one run must be specified",
+                request_id=get_request_id()
+            )
+
+        if len(bulk_request.runs) > 100:
+            raise ValidationException(
+                field="runs",
+                message="Cannot create more than 100 runs in a single bulk request",
+                request_id=get_request_id()
+            )
+
+        # Validate idempotency keys are unique within the request
+        idempotency_keys = []
+        for i, run in enumerate(bulk_request.runs):
+            if run.idempotency_key:
+                if run.idempotency_key in idempotency_keys:
+                    raise ValidationException(
+                        field=f"runs[{i}].idempotency_key",
+                        message=f"Duplicate idempotency key '{run.idempotency_key}' in request",
+                        request_id=get_request_id()
+                    )
+                idempotency_keys.append(run.idempotency_key)
+
+        service = get_service(AsyncScenarioService)
+        results, duplicates = await service.create_bulk_scenario_runs(
+            scenario_id=scenario_id,
+            runs=[run.dict() for run in bulk_request.runs],
+            bulk_idempotency_key=bulk_request.idempotency_key,
+        )
+
+        query_time_ms = (time.perf_counter() - start_time) * 1000
+
+        # Convert results to response format
+        response_data = []
+        for result in results:
+            response_item = BulkScenarioRunResult(
+                index=result["index"],
+                idempotency_key=result.get("idempotency_key"),
+                run_id=result["run_id"],
+                status=result["status"],
+                error=result.get("error"),
+            )
+            response_data.append(response_item)
+
+        # Convert duplicates to response format
+        response_duplicates = []
+        for duplicate in duplicates:
+            duplicate_item = BulkScenarioRunDuplicate(
+                index=duplicate["index"],
+                idempotency_key=duplicate.get("idempotency_key"),
+                existing_run_id=duplicate["existing_run_id"],
+                existing_status=duplicate["existing_status"],
+                created_at=duplicate["created_at"],
+            )
+            response_duplicates.append(duplicate_item)
+
+        return BulkScenarioRunResponse(
+            meta={
+                "request_id": get_request_id(),
+                "query_time_ms": round(query_time_ms, 2),
+                "total_runs": len(bulk_request.runs),
+                "successful_runs": len([r for r in response_data if r.status == "created"]),
+                "duplicate_runs": len(response_duplicates),
+                "failed_runs": len([r for r in response_data if r.status == "failed"]),
+            },
+            data=response_data,
+            duplicates=response_duplicates,
+        )
+
+    except ValidationException:
+        raise
+    except Exception as exc:
+        query_time_ms = (time.perf_counter() - start_time) * 1000
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to create bulk scenario runs: {str(exc)}"
         ) from exc

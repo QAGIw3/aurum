@@ -1,10 +1,10 @@
-# CPI (FRED) series observations → Kafka (Avro)
+# CPI multi-series observations → Kafka (Avro)
 #
 # Required environment variables:
-#   CPI_SERIES_ID          - CPI series identifier (e.g. CPIAUCSL)
+#   CPI_SERIES_IDS         - Comma-separated CPI series identifiers (e.g. CPIAUCSL,CPALTT01USM661S)
 #   CPI_FREQUENCY          - Frequency enum value (MONTHLY, QUARTERLY, etc.)
 #   CPI_SEASONAL_ADJ       - Seasonal adjustment (SA/NSA)
-#   CPI_TOPIC              - Kafka topic (default aurum.ref.cpi.series.v1)
+#   CPI_TOPIC              - Kafka topic (e.g. aurum.ref.cpi.multi.v1)
 #   AURUM_KAFKA_BOOTSTRAP_SERVERS - Kafka brokers
 #   AURUM_SCHEMA_REGISTRY_URL    - Schema Registry endpoint
 #   FRED_API_KEY           - FRED API key (injected via Vault)
@@ -21,18 +21,32 @@
 #   CPI_SCHEMA             - Avro schema JSON populated by run_job.sh
 #   CPI_WINDOW_END         - ISO8601 timestamp anchoring the look-back window (auto-set by Airflow)
 #   CPI_WINDOW_HOURS/DAYS/MONTHS/YEARS - Window span used when deriving start/end dates
+#   CPI_SERIES_BATCH_SIZE  - Number of series to process in parallel (default: 5)
 
 env {
   job.mode = "BATCH"
-  parallelism = 1
+  parallelism = ${CPI_SERIES_BATCH_SIZE:-5}
 }
 
 source {
+  # Split series IDs for parallel processing
+  FakeSource {
+    result_table_name = "cpi_series_list"
+    row.num = ${CPI_SERIES_BATCH_SIZE:-5}
+    schema = {
+      fields {
+        series_id = string
+      }
+    }
+    data = ${CPI_SERIES_IDS:-CPIAUCSL,CPALTT01USM661S}
+  }
+
+  # Multi-series HTTP source with parallel processing
   Http {
     url = "https://api.stlouisfed.org/fred/series/observations"
     method = "GET"
     params {
-      series_id = "${CPI_SERIES_ID}"
+      series_id = "{{ series_id }}"
       api_key = "${FRED_API_KEY}"
       file_type = "json"
       observation_start = "${CPI_START_DATE}"
@@ -45,7 +59,12 @@ source {
     format = "json"
     rate_limit_sleep_ms = 200
     schema = {
-      fields { date = string value = string units = string series_id = string }
+      fields {
+        date = string
+        value = string
+        units = string
+        series_id = string
+      }
     }
     jsonpath = "$$.observations[*]"
     result_table_name = "cpi_raw"
@@ -58,7 +77,7 @@ transform {
     result_table_name = "cpi_normalized"
     query = """
       SELECT
-        '${CPI_SERIES_ID}'                                        AS series_id,
+        series_id,
         '${CPI_AREA}'                                             AS area,
         '${CPI_FREQUENCY}'                                        AS frequency,
         '${CPI_SEASONAL_ADJ}'                                     AS seasonal_adjustment,
@@ -98,7 +117,11 @@ sink {
       max.in.flight.requests.per.connection = 5
       linger.ms = 500
       batch.size = 32768
-      retries = 5
+      retries = 10
+      retry.backoff.ms = 100
+      retry.backoff.max.ms = 10000
+      delivery.timeout.ms = 120000
+      request.timeout.ms = 30000
     }
   }
 }

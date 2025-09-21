@@ -1,4 +1,4 @@
-.PHONY: help build test deploy lint clean docker-build docker-push k8s-deploy db-migrate security-scan trino-harness reconcile-kafka-lake iceberg-maintenance \
+.PHONY: help build test deploy lint clean docker-build docker-push k8s-deploy db-migrate security-scan trino-harness trino-harness-metrics reconcile-kafka-lake iceberg-maintenance \
 	kind-create kind-apply kind-bootstrap kind-up kind-down kind-apply-ui kind-delete-ui \
 	kafka-bootstrap kafka-register-schemas kafka-set-compat kafka-apply-topics kafka-apply-topics-kind kafka-apply-topics-dry-run \
 	compose-bootstrap
@@ -140,9 +140,21 @@ trino-harness: ## Run Trino query harness with default plan
 		--schema $(TRINO_SCHEMA) \
 		--plan config/trino_query_harness.json
 
+trino-harness-metrics: ## Run harness and emit metrics to ops_metrics
+	python scripts/trino/query_harness.py \
+		--server $(TRINO_SERVER) \
+		--user $(TRINO_USER) \
+		--catalog $(TRINO_CATALOG) \
+		--schema $(TRINO_SCHEMA) \
+		--plan config/trino_query_harness.json \
+		--emit-metrics
+
 # Quality
 reconcile-kafka-lake: ## Compare Kafka offsets vs. Iceberg/Timescale counts
 	python scripts/quality/reconcile_kafka_lake.py --bootstrap $(KAFKA_BOOTSTRAP) --trino-server $(TRINO_SERVER) --trino-user $(TRINO_USER)
+
+iceberg-maintenance: ## Run Iceberg optimize + expire snapshots for curve tables
+	python scripts/trino/run_sql.py --server $(TRINO_SERVER) --user $(TRINO_USER) --catalog iceberg trino/ddl/iceberg_maintenance.sql
 
 # Monitoring
 monitoring-health: ## Check monitoring health

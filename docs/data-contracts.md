@@ -28,6 +28,16 @@ This guide captures the structured interfaces that external consumers rely on. E
 - Latest normalized EIA value per `series_id`.
 - Guarantee: `value`, `unit_normalized`, `currency_normalized` are non-null.
 
+### `iceberg.market.curve_dead_letter`
+- DLQ capture table populated by ingestion workers when schema drift or serialization errors occur.
+- Columns align with `aurum.ingest.error.v1` (`source`, `error_message`, `context`, `severity`, `recommended_action`, `ingest_ts`) plus `raw_payload` (stringified original record).
+- Partition spec: `days(ingest_ts)`
+- Use cases: monitoring dashboards (`mart_curve_dead_letter_summary`), root-cause analysis, alerting integrations.
+
+### `mart.mart_curve_dead_letter_summary`
+- Aggregated DLQ counts grouped by `source`, `severity`, and `ingest_day` with sample error messages.
+- Serves Superset dashboards and alerting thresholds; pairs with `ops_metrics` for unified observability.
+
 ### Seeded dimensions
 - `dim_iso`, `dim_market`, `dim_block`, `dim_product`, `dim_asof` provide surrogate keys + descriptive attributes.
 - Seeds live under `dbt/seeds/ref/**` with not-null/unique tests.

@@ -53,6 +53,10 @@ COMPOSE_PROFILES=core,ui docker compose -f compose/docker-compose.dev.yml up -d
 # bootstrap Kafka schemas (idempotent)
 make kafka-bootstrap
 
+# tail structured logs (Vector ships all container logs into ClickHouse `ops.logs`)
+docker compose -f compose/docker-compose.dev.yml logs vector
+clickhouse-client --query "SELECT timestamp, service, level, message FROM ops.logs ORDER BY timestamp DESC LIMIT 20"
+
 # sanity-check the API
 curl http://localhost:8095/health
 

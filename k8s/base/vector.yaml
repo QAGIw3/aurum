@@ -75,13 +75,12 @@ data:
 
         temp = {}
         for_each(parsed) -> |key, value| {
-          if value == null {
-            continue
-          }
-          if is_object(value) || is_array(value) {
-            temp[key] = encode_json(value)
-          } else {
-            temp[key] = to_string!(value)
+          if value != null {
+            if is_object(value) || is_array(value) {
+              temp[key] = encode_json(value)
+            } else {
+              temp[key] = to_string!(value)
+            }
           }
         }
         fields = temp
@@ -128,7 +127,7 @@ data:
       del(.pod)
       del(.namespace)
       del(.container)
-      del(.timestamp)
+      del(.kubernetes)
       """
     
     [sinks.clickhouse]

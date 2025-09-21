@@ -117,44 +117,73 @@ class DataProcessingException(AurumAPIException):
 
 
 def handle_api_exception(request: Request, exc: Exception) -> HTTPException:
-    """Convert exceptions to standardized HTTP responses."""
+    """Convert exceptions to standardized HTTP responses with consistent error envelopes."""
     from ..telemetry.context import get_request_id
 
     request_id = get_request_id()
 
     # Handle our custom exceptions
     if isinstance(exc, AurumAPIException):
-        # Add request context to the response
-        detail = exc.detail
-        if exc.context:
-            detail = {
-                "error": detail,
-                "context": exc.context,
-                "request_id": request_id,
-            }
-        return HTTPException(status_code=exc.status_code, detail=detail)
+        # Use new error envelope format
+        error_envelope = ErrorEnvelope(
+            error=exc.__class__.__name__,
+            message=exc.detail,
+            code=getattr(exc, "code", None),
+            field=getattr(exc, "field", None),
+            context=exc.context,
+            request_id=request_id,
+        )
+        return HTTPException(status_code=exc.status_code, detail=error_envelope.dict())
 
     # Handle FastAPI's HTTPException
     if isinstance(exc, HTTPException):
-        return exc
-
-    # Handle validation errors from Pydantic
-    if isinstance(exc, ValueError) and "validation" in str(exc).lower():
-        return ValidationException(
-            detail=str(exc),
+        # Convert to our error envelope format
+        error_envelope = ErrorEnvelope(
+            error="HTTPException",
+            message=exc.detail,
             request_id=request_id,
         )
+        return HTTPException(status_code=exc.status_code, detail=error_envelope.dict())
+
+    # Handle Pydantic ValidationError
+    if hasattr(exc, "model") and hasattr(exc, "errors"):
+        # Convert Pydantic validation errors to our format
+        field_errors = []
+        for error in exc.errors():
+            field_errors.append(ValidationErrorDetail(
+                field=".".join(str(loc) for loc in error.get("loc", [])),
+                message=error.get("msg", "Validation error"),
+                value=error.get("input"),
+                code=error.get("type"),
+            ))
+
+        validation_response = ValidationErrorResponse(
+            message="Request validation failed",
+            field_errors=field_errors,
+            request_id=request_id,
+        )
+        return HTTPException(status_code=400, detail=validation_response.dict())
+
+    # Handle other ValueError exceptions
+    if isinstance(exc, ValueError):
+        error_envelope = ErrorEnvelope(
+            error="ValueError",
+            message=str(exc),
+            request_id=request_id,
+        )
+        return HTTPException(status_code=400, detail=error_envelope.dict())
 
     # Handle all other exceptions as internal server errors
-    return HTTPException(
-        status_code=500,
-        detail={
-            "error": "Internal server error",
-            "message": "An unexpected error occurred",
-            "request_id": request_id,
+    error_envelope = ErrorEnvelope(
+        error="InternalServerError",
+        message="An unexpected error occurred",
+        context={
             "type": exc.__class__.__name__,
+            "module": exc.__class__.__module__,
         },
+        request_id=request_id,
     )
+    return HTTPException(status_code=500, detail=error_envelope.dict())
 
 
 # Common exception factories

@@ -29,6 +29,12 @@ Developer-oriented scaffolding for the Aurum market intelligence platform. Start
 5. Enable optional UIs with `COMPOSE_PROFILES=core,ui docker compose -f compose/docker-compose.dev.yml up -d`.
 6. When finished, stop the stack with `docker compose -f compose/docker-compose.dev.yml down` (add `--volumes` to reset state).
 
+Vector continuously streams container logs into ClickHouse (`ops.logs`). Inspect the latest entries with:
+
+```bash
+clickhouse-client --query "SELECT timestamp, service, level, left(message, 200) AS message FROM ops.logs ORDER BY timestamp DESC LIMIT 20"
+```
+
 Scenario outputs are now enabled on the API by default. To populate `/v1/scenarios/{id}/outputs`, start the scenario worker alongside core services:
 
 ```

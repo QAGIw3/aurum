@@ -1184,69 +1184,131 @@ def run_worker():  # pragma: no cover - integration entrypoint
             raw_headers = msg.headers()  # type: ignore[attr-defined]
             carrier = _decode_headers(raw_headers)
             parent_context = propagate.extract(_HEADER_GETTER, carrier)
+
+            # Extract correlation IDs from message headers
             run_values = carrier.get("run_id", [])
             run_id: Optional[str] = run_values[0] if run_values else None
             request_values = carrier.get("x-request-id", [])
             request_id = request_values[0] if request_values else None
-            token = set_request_id(request_id) if request_id else None
+            correlation_values = carrier.get("x-correlation-id", [])
+            correlation_id = correlation_values[0] if correlation_values else request_id
+            tenant_values = carrier.get("x-aurum-tenant", [])
+            tenant_id = tenant_values[0] if tenant_values else scenario_req.tenant_id
+            user_values = carrier.get("x-user-id", [])
+            user_id = user_values[0] if user_values else None
+
             try:
                 scenario_req = ScenarioRequest.from_message(payload)
-                if not scenario_req.scenario_id or not scenario_req.tenant_id:
-                    LOGGER.warning("Scenario request missing identifiers: %s", payload)
-                    cons.commit(msg)
-                    continue
+            except Exception as exc:
+                # Log error but continue processing
+                log_structured(
+                    "error",
+                    "scenario_message_parse_failed",
+                    error_type=exc.__class__.__name__,
+                    error_message=str(exc),
+                    service_name=os.getenv("AURUM_OTEL_SERVICE_NAME", "aurum-scenario-worker"),
+                )
+                cons.commit(msg)
+                continue
 
-                if REQUESTS_TOTAL:
-                    REQUESTS_TOTAL.inc()
+            # Set up correlation context for the worker processing
+            from aurum.telemetry.context import correlation_context, log_structured
+            import os
+            with correlation_context(
+                correlation_id=correlation_id,
+                tenant_id=tenant_id,
+                user_id=user_id,
+                session_id=request_id
+            ) as context:
+                token = set_request_id(context["request_id"]) if context["request_id"] else None
 
-                # Track scenario type
-                scenario_type = getattr(scenario_req, 'driver_type', 'unknown') if hasattr(scenario_req, 'driver_type') else 'unknown'
-                if SCENARIO_TYPE_COUNTER:
-                    try:
-                        SCENARIO_TYPE_COUNTER.labels(scenario_type=scenario_type, tenant_id=scenario_req.tenant_id).inc()
-                    except Exception:
-                        SCENARIO_TYPE_COUNTER.inc()
-
-                if _run_is_cancelled(
+                # Log message processing start
+                log_structured(
+                    "info",
+                    "scenario_message_received",
+                    message_key=f"{scenario_req.scenario_id}:{scenario_req.tenant_id}",
                     scenario_id=scenario_req.scenario_id,
-                    run_id=run_id,
                     tenant_id=scenario_req.tenant_id,
-                ):
-                    LOGGER.info(
-                        "Skipping cancelled scenario run %s for scenario %s",
-                        run_id,
-                        scenario_req.scenario_id,
-                    )
-                    if CANCELLED_RUNS:
-                        CANCELLED_RUNS.inc()
-                    cons.commit(msg)
-                    continue
-
-                _maybe_update_run_state(
-                    run_id,
-                    scenario_req.tenant_id,
-                    "RUNNING",
-                    scenario_id=scenario_req.scenario_id,
+                    run_id=run_id,
+                    driver_type=getattr(scenario_req, 'driver_type', 'unknown'),
+                    service_name=os.getenv("AURUM_OTEL_SERVICE_NAME", "aurum-scenario-worker"),
                 )
 
-                process_start = time.perf_counter()
-                attempts = 0
-                success = False
-                cancelled = False
-                last_exc: Optional[Exception] = None
+                try:
+                    if not scenario_req.scenario_id or not scenario_req.tenant_id:
+                        log_structured(
+                            "warning",
+                            "scenario_request_invalid",
+                            error="missing_identifiers",
+                            payload_size=len(str(payload)),
+                            service_name=os.getenv("AURUM_OTEL_SERVICE_NAME", "aurum-scenario-worker"),
+                        )
+                        cons.commit(msg)
+                        continue
 
-                with TRACER.start_as_current_span("scenario.process", context=parent_context) as span:
-                    if span.is_recording():  # pragma: no branch
-                        span.set_attribute("messaging.system", "kafka")
-                        span.set_attribute("messaging.destination", request_topic)
-                        span.set_attribute("messaging.destination_kind", "topic")
-                        span.set_attribute("aurum.scenario_id", scenario_req.scenario_id)
-                        span.set_attribute("aurum.tenant_id", scenario_req.tenant_id)
-                        if run_id:
-                            span.set_attribute("aurum.run_id", run_id)
-                    delay = float(os.getenv("AURUM_SCENARIO_SIM_DELAY_SEC", "0.1"))
-                    if delay:
-                        time.sleep(delay)
+                    if REQUESTS_TOTAL:
+                        REQUESTS_TOTAL.inc()
+
+                    # Track scenario type
+                    scenario_type = getattr(scenario_req, 'driver_type', 'unknown') if hasattr(scenario_req, 'driver_type') else 'unknown'
+                    if SCENARIO_TYPE_COUNTER:
+                        try:
+                            SCENARIO_TYPE_COUNTER.labels(scenario_type=scenario_type, tenant_id=scenario_req.tenant_id).inc()
+                        except Exception:
+                            SCENARIO_TYPE_COUNTER.inc()
+
+                    if _run_is_cancelled(
+                        scenario_id=scenario_req.scenario_id,
+                        run_id=run_id,
+                        tenant_id=scenario_req.tenant_id,
+                    ):
+                        log_structured(
+                            "info",
+                            "scenario_run_cancelled",
+                            scenario_id=scenario_req.scenario_id,
+                            run_id=run_id,
+                            tenant_id=scenario_req.tenant_id,
+                            service_name=os.getenv("AURUM_OTEL_SERVICE_NAME", "aurum-scenario-worker"),
+                        )
+                        if CANCELLED_RUNS:
+                            CANCELLED_RUNS.inc()
+                        cons.commit(msg)
+                        continue
+
+                    _maybe_update_run_state(
+                        run_id,
+                        scenario_req.tenant_id,
+                        "RUNNING",
+                        scenario_id=scenario_req.scenario_id,
+                    )
+
+                    log_structured(
+                        "info",
+                        "scenario_processing_started",
+                        scenario_id=scenario_req.scenario_id,
+                        run_id=run_id,
+                        tenant_id=scenario_req.tenant_id,
+                        service_name=os.getenv("AURUM_OTEL_SERVICE_NAME", "aurum-scenario-worker"),
+                    )
+
+                    process_start = time.perf_counter()
+                    attempts = 0
+                    success = False
+                    cancelled = False
+                    last_exc: Optional[Exception] = None
+
+                    with TRACER.start_as_current_span("scenario.process", context=parent_context) as span:
+                        if span.is_recording():  # pragma: no branch
+                            span.set_attribute("messaging.system", "kafka")
+                            span.set_attribute("messaging.destination", request_topic)
+                            span.set_attribute("messaging.destination_kind", "topic")
+                            span.set_attribute("aurum.scenario_id", scenario_req.scenario_id)
+                            span.set_attribute("aurum.tenant_id", scenario_req.tenant_id)
+                            if run_id:
+                                span.set_attribute("aurum.run_id", run_id)
+                        delay = float(os.getenv("AURUM_SCENARIO_SIM_DELAY_SEC", "0.1"))
+                        if delay:
+                            time.sleep(delay)
 
                     while attempts < max_attempts and not success:
                         if SHUTDOWN_EVENT.is_set():
@@ -1451,11 +1513,26 @@ def run_worker():  # pragma: no cover - integration entrypoint
                     if RETRY_SUCCESS:
                         RETRY_SUCCESS.inc()
 
-            # Record timeout metrics
-            if last_exc and "timeout" in str(last_exc).lower():
-                if TIMEOUT_RUNS:
-                    TIMEOUT_RUNS.inc()
-            cons.commit(msg)
+                    # Record timeout metrics
+                    if last_exc and "timeout" in str(last_exc).lower():
+                        if TIMEOUT_RUNS:
+                            TIMEOUT_RUNS.inc()
+
+                    # Log processing completion
+                    final_status = "cancelled" if cancelled else ("succeeded" if success else "failed")
+                    log_structured(
+                        "info",
+                        "scenario_processing_completed",
+                        scenario_id=scenario_req.scenario_id,
+                        run_id=run_id,
+                        tenant_id=scenario_req.tenant_id,
+                        status=final_status,
+                        attempts=attempts + 1,
+                        processing_time_seconds=processing_time,
+                        service_name=os.getenv("AURUM_OTEL_SERVICE_NAME", "aurum-scenario-worker"),
+                    )
+
+                    cons.commit(msg)
     finally:
         LOGGER.info("Scenario worker shutting down")
         READINESS_EVENT.clear()

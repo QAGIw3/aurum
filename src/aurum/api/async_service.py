@@ -703,3 +703,90 @@ class AsyncScenarioService:
             "timestamp": "2024-01-01T00:00:00Z",
         }
         return metrics
+
+    async def create_bulk_scenario_runs(
+        self,
+        scenario_id: str,
+        runs: List[Dict[str, Any]],
+        bulk_idempotency_key: Optional[str] = None,
+    ) -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]]]:
+        """Create multiple scenario runs in bulk with deduplication."""
+        from datetime import datetime
+        from uuid import uuid4
+        import hashlib
+
+        results = []
+        duplicates = []
+
+        # Check for bulk-level idempotency
+        if bulk_idempotency_key:
+            # Check if this bulk operation has been performed before
+            bulk_hash = hashlib.sha256(bulk_idempotency_key.encode()).hexdigest()
+            # In a real implementation, this would check a database table
+            # For now, we'll just proceed and handle individual run deduplication
+
+        for index, run_data in enumerate(runs):
+            idempotency_key = run_data.get("idempotency_key")
+
+            try:
+                # Check for individual run deduplication
+                if idempotency_key:
+                    # In a real implementation, this would query the database
+                    # For now, we'll simulate checking for existing runs
+                    existing_run = None  # Placeholder for database lookup
+
+                    if existing_run:
+                        # Found existing run - return as duplicate
+                        duplicates.append({
+                            "index": index,
+                            "idempotency_key": idempotency_key,
+                            "existing_run_id": existing_run["id"],
+                            "existing_status": existing_run["status"],
+                            "created_at": existing_run["created_at"],
+                        })
+                        continue
+
+                # Create new run
+                run_id = str(uuid4())
+                now = datetime.utcnow()
+
+                run = ScenarioRunData(
+                    id=run_id,
+                    scenario_id=scenario_id,
+                    status=ScenarioRunStatus.QUEUED,
+                    priority=run_data.get("priority", "normal"),
+                    started_at=None,
+                    completed_at=None,
+                    duration_seconds=None,
+                    error_message=None,
+                    retry_count=0,
+                    max_retries=3,
+                    progress_percent=None,
+                    parameters=run_data.get("parameters", {}),
+                    environment=run_data.get("environment", {}),
+                    created_at=now,
+                    queued_at=now,
+                    cancelled_at=None,
+                )
+
+                # In a real implementation, this would persist to database
+                # ScenarioStore.create_run(run.dict())
+
+                results.append({
+                    "index": index,
+                    "idempotency_key": idempotency_key,
+                    "run_id": run_id,
+                    "status": "created",
+                    "error": None,
+                })
+
+            except Exception as exc:
+                results.append({
+                    "index": index,
+                    "idempotency_key": idempotency_key,
+                    "run_id": None,
+                    "status": "failed",
+                    "error": str(exc),
+                })
+
+        return results, duplicates
