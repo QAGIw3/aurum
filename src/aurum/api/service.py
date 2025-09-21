@@ -2215,9 +2215,43 @@ async def fetch_curve_data(
     cursor: Optional[Any] = None,
     prev_cursor: Optional[str] = None,
 ) -> Tuple[List[Any], Any]:
-    """Fetch curve data - placeholder for async implementation."""
-    # This would be implemented with the AsyncCurveService
-    raise NotImplementedError("Use AsyncCurveService for curve data")
+    """Fetch curve data using AsyncCurveService."""
+    from .async_service import AsyncCurveService
+    from .container import get_service
+
+    service = get_service(AsyncCurveService)
+    points, meta = await service.fetch_curve_data(
+        asof=asof,
+        iso=iso,
+        market=market,
+        location=location,
+        product=product,
+        block=block,
+        limit=limit,
+        offset=offset,
+    )
+
+    # Transform CurvePoint objects to dicts for compatibility
+    data = [
+        {
+            "curve_key": point.curve_key,
+            "tenor_label": point.tenor_label,
+            "asof_date": point.asof_date,
+            "mid": point.mid,
+            "bid": point.bid,
+            "ask": point.ask,
+            "currency": point.currency,
+            "per_unit": point.per_unit,
+            "iso": point.iso,
+            "market": point.market,
+            "location": point.location,
+            "product": point.product,
+            "block": point.block,
+        }
+        for point in points
+    ]
+
+    return data, meta
 
 
 async def fetch_curve_diff_data(
@@ -2230,9 +2264,51 @@ async def fetch_curve_diff_data(
     block: Optional[str] = None,
     pagination: Optional[Any] = None,
 ) -> Tuple[List[Any], Any]:
-    """Fetch curve diff data - placeholder for async implementation."""
-    # This would be implemented with the AsyncCurveService
-    raise NotImplementedError("Use AsyncCurveService for curve diff data")
+    """Fetch curve diff data using AsyncCurveService."""
+    from .async_service import AsyncCurveService
+    from .container import get_service
+
+    service = get_service(AsyncCurveService)
+    points, meta = await service.fetch_curve_diff(
+        asof_a=asof_a,
+        asof_b=asof_b,
+        iso=iso,
+        market=market,
+        location=location,
+        product=product,
+        block=block,
+        limit=100,  # Default limit
+        offset=0,   # Default offset
+    )
+
+    # Transform CurveDiffPoint objects to dicts for compatibility
+    data = [
+        {
+            "curve_key": point.curve_key,
+            "tenor_label": point.tenor_label,
+            "asof_date_a": point.asof_date_a,
+            "asof_date_b": point.asof_date_b,
+            "mid_a": point.mid_a,
+            "mid_b": point.mid_b,
+            "mid_diff": point.mid_diff,
+            "bid_a": point.bid_a,
+            "bid_b": point.bid_b,
+            "bid_diff": point.bid_diff,
+            "ask_a": point.ask_a,
+            "ask_b": point.ask_b,
+            "ask_diff": point.ask_diff,
+            "currency": point.currency,
+            "per_unit": point.per_unit,
+            "iso": point.iso,
+            "market": point.market,
+            "location": point.location,
+            "product": point.product,
+            "block": point.block,
+        }
+        for point in points
+    ]
+
+    return data, meta
 
 
 async def fetch_curve_strips_data(
@@ -2244,18 +2320,60 @@ async def fetch_curve_strips_data(
     block: Optional[str] = None,
     pagination: Optional[Any] = None,
 ) -> Tuple[List[Any], Any]:
-    """Fetch curve strips data - placeholder for async implementation."""
-    # This would be implemented with the AsyncCurveService
-    raise NotImplementedError("Use AsyncCurveService for curve strips data")
+    """Fetch curve strips data using AsyncCurveService."""
+    from .async_service import AsyncCurveService
+    from .container import get_service
+
+    service = get_service(AsyncCurveService)
+    points, meta = await service.fetch_curve_strips(
+        strip_type=strip_type,
+        iso=iso,
+        market=market,
+        location=location,
+        product=product,
+        block=block,
+        limit=100,  # Default limit
+        offset=0,   # Default offset
+    )
+
+    # Transform CurvePoint objects to dicts for compatibility
+    data = [
+        {
+            "curve_key": point.curve_key,
+            "tenor_label": point.tenor_label,
+            "asof_date": point.asof_date,
+            "mid": point.mid,
+            "bid": point.bid,
+            "ask": point.ask,
+            "currency": point.currency,
+            "per_unit": point.per_unit,
+            "iso": point.iso,
+            "market": point.market,
+            "location": point.location,
+            "product": point.product,
+            "block": point.block,
+        }
+        for point in points
+    ]
+
+    return data, meta
 
 
 async def fetch_metadata_dimensions(
     asof: Optional[str] = None,
     include_counts: bool = False,
 ) -> Tuple[Dict, Optional[Dict]]:
-    """Fetch metadata dimensions - placeholder for async implementation."""
-    # This would be implemented with the AsyncMetadataService
-    raise NotImplementedError("Use AsyncMetadataService for metadata dimensions")
+    """Fetch metadata dimensions using AsyncMetadataService."""
+    from .async_service import AsyncMetadataService
+    from .container import get_service
+
+    service = get_service(AsyncMetadataService)
+    dimensions, counts = await service.get_dimensions(asof=asof)
+
+    if include_counts:
+        return dimensions, counts
+    else:
+        return dimensions, None
 
 
 async def fetch_iso_locations(
@@ -2263,33 +2381,203 @@ async def fetch_iso_locations(
     location_ids: Optional[List[str]] = None,
     prefix: Optional[str] = None,
 ) -> List[Dict]:
-    """Fetch ISO locations - placeholder for async implementation."""
-    # This would be implemented with the AsyncMetadataService
-    raise NotImplementedError("Use AsyncMetadataService for ISO locations")
+    """Fetch ISO locations from dbt dimensions."""
+    from .async_service import AsyncTrinoClient
+    from .container import get_service
+    from .config import TrinoConfig
+
+    # Get Trino config and create client
+    trino_client = get_service(AsyncTrinoClient)
+
+    # Build query
+    query = """
+        SELECT
+            iso_code,
+            market_code,
+            location_code,
+            location_name,
+            timezone,
+            region,
+            created_at
+        FROM iceberg.market.dim_location
+        WHERE 1=1
+    """
+
+    params = {}
+    if iso:
+        query += " AND iso_code = %(iso)s"
+        params['iso'] = iso
+
+    if location_ids:
+        placeholders = ','.join(['%s'] * len(location_ids))
+        query += f" AND location_code IN ({placeholders})"
+        params['location_ids'] = location_ids
+
+    if prefix:
+        query += " AND location_code LIKE %(prefix)s"
+        params['prefix'] = f"{prefix}%"
+
+    query += " ORDER BY iso_code, market_code, location_code"
+
+    rows = await trino_client.execute_query(query, params)
+
+    return [
+        {
+            "iso": row.get("iso_code"),
+            "market": row.get("market_code"),
+            "location_code": row.get("location_code"),
+            "location_name": row.get("location_name"),
+            "timezone": row.get("timezone"),
+            "region": row.get("region"),
+            "created_at": row.get("created_at"),
+        }
+        for row in rows
+    ]
 
 
 async def fetch_units_canonical() -> List[Dict]:
-    """Fetch canonical units - placeholder for async implementation."""
-    # This would be implemented with the AsyncMetadataService
-    raise NotImplementedError("Use AsyncMetadataService for canonical units")
+    """Fetch canonical units from dbt dimensions."""
+    from .async_service import AsyncTrinoClient
+    from .container import get_service
+
+    trino_client = get_service(AsyncTrinoClient)
+
+    query = """
+        SELECT
+            unit_code,
+            unit_name,
+            unit_category,
+            conversion_factor,
+            base_unit,
+            created_at
+        FROM iceberg.market.dim_unit
+        ORDER BY unit_category, unit_code
+    """
+
+    rows = await trino_client.execute_query(query)
+
+    return [
+        {
+            "unit_code": row.get("unit_code"),
+            "unit_name": row.get("unit_name"),
+            "unit_category": row.get("unit_category"),
+            "conversion_factor": row.get("conversion_factor"),
+            "base_unit": row.get("base_unit"),
+            "created_at": row.get("created_at"),
+        }
+        for row in rows
+    ]
 
 
 async def fetch_units_mapping(prefix: Optional[str] = None) -> List[Dict]:
-    """Fetch units mapping - placeholder for async implementation."""
-    # This would be implemented with the AsyncMetadataService
-    raise NotImplementedError("Use AsyncMetadataService for units mapping")
+    """Fetch units mapping from dbt dimensions."""
+    from .async_service import AsyncTrinoClient
+    from .container import get_service
+
+    trino_client = get_service(AsyncTrinoClient)
+
+    query = """
+        SELECT
+            raw_unit,
+            canonical_unit,
+            conversion_factor,
+            confidence,
+            created_at
+        FROM iceberg.market.unit_mapping
+    """
+
+    params = {}
+    if prefix:
+        query += " WHERE raw_unit LIKE %(prefix)s"
+        params['prefix'] = f"{prefix}%"
+
+    query += " ORDER BY raw_unit"
+
+    rows = await trino_client.execute_query(query, params)
+
+    return [
+        {
+            "raw_unit": row.get("raw_unit"),
+            "canonical_unit": row.get("canonical_unit"),
+            "conversion_factor": row.get("conversion_factor"),
+            "confidence": row.get("confidence"),
+            "created_at": row.get("created_at"),
+        }
+        for row in rows
+    ]
 
 
 async def fetch_calendars() -> List[Dict]:
-    """Fetch calendars - placeholder for async implementation."""
-    # This would be implemented with the AsyncMetadataService
-    raise NotImplementedError("Use AsyncMetadataService for calendars")
+    """Fetch calendars from dbt dimensions."""
+    from .async_service import AsyncTrinoClient
+    from .container import get_service
+
+    trino_client = get_service(AsyncTrinoClient)
+
+    query = """
+        SELECT
+            calendar_name,
+            calendar_type,
+            description,
+            timezone,
+            business_days,
+            holidays,
+            created_at
+        FROM iceberg.market.dim_calendar
+        ORDER BY calendar_name
+    """
+
+    rows = await trino_client.execute_query(query)
+
+    return [
+        {
+            "calendar_name": row.get("calendar_name"),
+            "calendar_type": row.get("calendar_type"),
+            "description": row.get("description"),
+            "timezone": row.get("timezone"),
+            "business_days": row.get("business_days"),
+            "holidays": row.get("holidays"),
+            "created_at": row.get("created_at"),
+        }
+        for row in rows
+    ]
 
 
 async def fetch_calendar_blocks(name: str) -> List[Dict]:
-    """Fetch calendar blocks - placeholder for async implementation."""
-    # This would be implemented with the AsyncMetadataService
-    raise NotImplementedError("Use AsyncMetadataService for calendar blocks")
+    """Fetch calendar blocks from dbt dimensions."""
+    from .async_service import AsyncTrinoClient
+    from .container import get_service
+
+    trino_client = get_service(AsyncTrinoClient)
+
+    query = """
+        SELECT
+            calendar_name,
+            block_name,
+            block_type,
+            start_hour,
+            end_hour,
+            days_of_week,
+            created_at
+        FROM iceberg.market.dim_calendar_block
+        WHERE calendar_name = %(calendar_name)s
+        ORDER BY block_name
+    """
+
+    rows = await trino_client.execute_query(query, {"calendar_name": name})
+
+    return [
+        {
+            "calendar_name": row.get("calendar_name"),
+            "block_name": row.get("block_name"),
+            "block_type": row.get("block_type"),
+            "start_hour": row.get("start_hour"),
+            "end_hour": row.get("end_hour"),
+            "days_of_week": row.get("days_of_week"),
+            "created_at": row.get("created_at"),
+        }
+        for row in rows
+    ]
 
 
 async def fetch_calendar_hours(
@@ -2298,9 +2586,52 @@ async def fetch_calendar_hours(
     date: Optional[str] = None,
     end: Optional[str] = None,
 ) -> List[Dict]:
-    """Fetch calendar hours - placeholder for async implementation."""
-    # This would be implemented with the AsyncMetadataService
-    raise NotImplementedError("Use AsyncMetadataService for calendar hours")
+    """Fetch calendar hours from dbt dimensions."""
+    from .async_service import AsyncTrinoClient
+    from .container import get_service
+
+    trino_client = get_service(AsyncTrinoClient)
+
+    query = """
+        SELECT
+            calendar_name,
+            block_name,
+            hour_date,
+            hour_start,
+            hour_end,
+            is_business_hour,
+            created_at
+        FROM iceberg.market.dim_calendar_hour
+        WHERE calendar_name = %(calendar_name)s
+          AND block_name = %(block_name)s
+    """
+
+    params = {"calendar_name": name, "block_name": block}
+
+    if date:
+        query += " AND hour_date >= DATE(%(start_date)s)"
+        params["start_date"] = date
+
+    if end:
+        query += " AND hour_date <= DATE(%(end_date)s)"
+        params["end_date"] = end
+
+    query += " ORDER BY hour_date, hour_start"
+
+    rows = await trino_client.execute_query(query, params)
+
+    return [
+        {
+            "calendar_name": row.get("calendar_name"),
+            "block_name": row.get("block_name"),
+            "hour_date": row.get("hour_date"),
+            "hour_start": row.get("hour_start"),
+            "hour_end": row.get("hour_end"),
+            "is_business_hour": row.get("is_business_hour"),
+            "created_at": row.get("created_at"),
+        }
+        for row in rows
+    ]
 
 
 async def invalidate_curve_cache(
@@ -2308,6 +2639,39 @@ async def invalidate_curve_cache(
     market: Optional[str] = None,
     location: Optional[str] = None,
 ) -> None:
-    """Invalidate curve cache - placeholder for async implementation."""
-    # This would be implemented with the CacheManager
-    raise NotImplementedError("Use CacheManager for cache invalidation")
+    """Invalidate curve cache using CacheManager."""
+    from .cache import CacheManager
+    from .container import get_service
+
+    cache_manager = get_service(CacheManager)
+
+    # Build cache key pattern based on parameters
+    key_pattern = "curves:"
+
+    if iso:
+        key_pattern += f"{hash(iso)}:"
+    else:
+        key_pattern += "*:"  # Wildcard for any ISO
+
+    if market:
+        key_pattern += f"{hash(market)}:"
+    else:
+        key_pattern += "*:"  # Wildcard for any market
+
+    if location:
+        key_pattern += f"{hash(location)}"
+    else:
+        key_pattern += "*"  # Wildcard for any location
+
+    # Delete matching cache keys
+    deleted_count = await cache_manager.delete_pattern(key_pattern)
+
+    LOGGER.info(
+        "Invalidated curve cache",
+        extra={
+            "iso": iso,
+            "market": market,
+            "location": location,
+            "deleted_keys": deleted_count,
+        }
+    )
