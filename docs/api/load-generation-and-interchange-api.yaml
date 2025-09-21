@@ -1,0 +1,1891 @@
+openapi: 3.0.1
+info:
+  title: 'Load, Generation, and Interchange API'
+  description: 'Provides load, generation, and interchange data. Load: Includes demand, load, and load forecast. Generation: Includes generation cleared and offered as well as related data. Interchange: Includes Energy transfers that cross Balancing Authority (BA) Area boundaries. Note: Data available within the interchange endpoints are subject to change up to 105 days after the market day due to reconciliation.'
+  version: '1.0'
+servers:
+  - url: https://apim.misoenergy.org/lgi
+paths:
+  '/v1/day-ahead/{date}/demand':
+    get:
+      tags:
+        - Day-ahead
+        - Demand
+      summary: Retrieve day-ahead Combined Demand
+      description: 'Retrieve day-ahead Combined Demand, in hourly or daily intervals.'
+      operationId: get-v1-day-ahead-date-demand
+      parameters:
+        - name: date
+          in: path
+          description: 'Format - date (as full-date in RFC3339). Market date in the form: yyyy-mm-dd'
+          required: true
+          schema:
+            type: string
+            format: date
+            example: '2023-01-01'
+        - name: interval
+          in: query
+          description: 'Filter to a specific time interval (ex. "13:05", "13"), in Eastern Standard Time (UTC−05:00).'
+          schema:
+            type: string
+        - name: pageNumber
+          in: query
+          description: Format - int32.
+          schema:
+            type: integer
+            format: int32
+            default: 1
+        - name: region
+          in: query
+          schema:
+            $ref: '#/components/schemas/Region'
+        - name: timeResolution
+          in: query
+          description: Time resolution of data
+          schema:
+            $ref: '#/components/schemas/Time-Res-Hourly-Daily'
+      responses:
+        '200':
+          description: Successful operation
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/DayAheadDemand'
+                  page:
+                    $ref: '#/components/schemas/PageInfo'
+              example:
+                data:
+                  - timeInterval:
+                      resolution: daily
+                      start: '2023-06-28T00:00:00.0000000+00:00'
+                      end: '2023-06-29T00:00:00.0000000+00:00'
+                      value: '2023-06-29'
+                    region: NORTH
+                    fixed: 0
+                    priceSens: 0
+                    virtual: 0
+                page:
+                  pageNumber: 0
+                  pageSize: 0
+                  totalElements: 0
+                  totalPages: 0
+                  lastPage: true
+        '400':
+          description: Invalid date format
+          content:
+            application/json: { }
+        '401':
+          description: Invalid or missing Bearer Token in the Authorization header
+          content:
+            application/json: { }
+        '404':
+          description: Date not found
+          content:
+            application/json: { }
+  '/v1/day-ahead/{date}/generation/cleared/physical':
+    get:
+      tags:
+        - Day-ahead
+        - Generation
+      summary: 'Retrieve day-ahead Cleared Generation, Physical'
+      description: 'Retrieve day-ahead physical cleared supply generated, in hourly intervals.'
+      operationId: get-v1-day-ahead-date-generation-cleared-physical
+      parameters:
+        - name: date
+          in: path
+          description: 'Format - date (as full-date in RFC3339). Market date in the form: yyyy-mm-dd'
+          required: true
+          schema:
+            type: string
+            format: date
+            example: '2023-01-01'
+        - name: interval
+          in: query
+          description: 'Filter to a specific time interval (ex. "13:05", "13"), in Eastern Standard Time (UTC−05:00).'
+          schema:
+            type: string
+        - name: pageNumber
+          in: query
+          description: Format - int32.
+          schema:
+            type: integer
+            format: int32
+            default: 1
+        - name: region
+          in: query
+          schema:
+            $ref: '#/components/schemas/Region'
+      responses:
+        '200':
+          description: Successful operation
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/ClearedGeneration'
+                  page:
+                    $ref: '#/components/schemas/PageInfo'
+              example:
+                data:
+                  - timeInterval:
+                      resolution: daily
+                      start: '2023-06-28T00:00:00.0000000+00:00'
+                      end: '2023-06-29T00:00:00.0000000+00:00'
+                      value: '2023-06-29'
+                    region: NORTH
+                    supply: 0
+                page:
+                  pageNumber: 0
+                  pageSize: 0
+                  totalElements: 0
+                  totalPages: 0
+                  lastPage: true
+        '400':
+          description: Invalid date format
+          content:
+            application/json: { }
+        '401':
+          description: Invalid or missing Bearer Token in the Authorization header
+          content:
+            application/json: { }
+        '404':
+          description: Date not found
+          content:
+            application/json: { }
+  '/v1/day-ahead/{date}/generation/cleared/virtual':
+    get:
+      tags:
+        - Day-ahead
+        - Generation
+      summary: 'Retrieve day-ahead Cleared Generation, Virtual'
+      description: 'Retrieve day-ahead virtual cleared supply generated, in hourly intervals.'
+      operationId: get-v1-day-ahead-date-generation-cleared-virtual
+      parameters:
+        - name: date
+          in: path
+          description: 'Format - date (as full-date in RFC3339). Market date in the form: yyyy-mm-dd'
+          required: true
+          schema:
+            type: string
+            format: date
+            example: '2023-01-01'
+        - name: interval
+          in: query
+          description: 'Filter to a specific time interval (ex. "13:05", "13"), in Eastern Standard Time (UTC−05:00).'
+          schema:
+            type: string
+        - name: pageNumber
+          in: query
+          description: Format - int32.
+          schema:
+            type: integer
+            format: int32
+            default: 1
+        - name: region
+          in: query
+          schema:
+            $ref: '#/components/schemas/Region'
+      responses:
+        '200':
+          description: Successful operation
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/ClearedGeneration'
+                  page:
+                    $ref: '#/components/schemas/PageInfo'
+              example:
+                data:
+                  - timeInterval:
+                      resolution: daily
+                      start: '2023-06-28T00:00:00.0000000+00:00'
+                      end: '2023-06-29T00:00:00.0000000+00:00'
+                      value: '2023-06-29'
+                    region: NORTH
+                    supply: 0
+                page:
+                  pageNumber: 0
+                  pageSize: 0
+                  totalElements: 0
+                  totalPages: 0
+                  lastPage: true
+        '400':
+          description: Invalid date format
+          content:
+            application/json: { }
+        '401':
+          description: Invalid or missing Bearer Token in the Authorization header
+          content:
+            application/json: { }
+        '404':
+          description: Date not found
+          content:
+            application/json: { }
+  '/v1/day-ahead/{date}/generation/fuel-type':
+    get:
+      tags:
+        - Day-ahead
+        - Generation
+      summary: Retrieve day-ahead Generation Fuel Type
+      description: 'Retrieve day-ahead generated fuel type, in hourly intervals.'
+      operationId: get-v1-day-ahead-date-generation-fuel-type
+      parameters:
+        - name: date
+          in: path
+          description: 'Format - date (as full-date in RFC3339). Market date in the form: yyyy-mm-dd'
+          required: true
+          schema:
+            type: string
+            format: date
+            example: '2023-01-01'
+        - name: interval
+          in: query
+          description: 'Filter to a specific time interval (ex. "13:05", "13"), in Eastern Standard Time (UTC−05:00).'
+          schema:
+            type: string
+        - name: pageNumber
+          in: query
+          description: Format - int32.
+          schema:
+            type: integer
+            format: int32
+            default: 1
+        - name: region
+          in: query
+          schema:
+            $ref: '#/components/schemas/Region'
+      responses:
+        '200':
+          description: Successful operation
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/GenerationFuelType'
+                  page:
+                    $ref: '#/components/schemas/PageInfo'
+              example:
+                data:
+                  - timeInterval:
+                      resolution: daily
+                      start: '2023-06-28T00:00:00.0000000+00:00'
+                      end: '2023-06-29T00:00:00.0000000+00:00'
+                      value: '2023-06-29'
+                    region: NORTH
+                    fuelTypes:
+                      coal: 0
+                      gas: 0
+                      nuclear: 0
+                      water: 0
+                      wind: 0
+                      solar: 0
+                      other: 0
+                      storage: 0
+                    totalMw: 0
+                    interval: string
+                page:
+                  pageNumber: 0
+                  pageSize: 0
+                  totalElements: 0
+                  totalPages: 0
+                  lastPage: true
+        '400':
+          description: Invalid date format
+          content:
+            application/json: { }
+        '401':
+          description: Invalid or missing Bearer Token in the Authorization header
+          content:
+            application/json: { }
+        '404':
+          description: Date not found
+          content:
+            application/json: { }
+  '/v1/day-ahead/{date}/generation/offered/ecomax':
+    get:
+      tags:
+        - Day-ahead
+        - Generation
+      summary: Retrieve day-ahead Offered Generation ECOMAX
+      description: 'Retrieve day-ahead offered generation ECOMAX, in hourly intervals.'
+      operationId: get-v1-day-ahead-date-generation-offered-ecomax
+      parameters:
+        - name: date
+          in: path
+          description: 'Format - date (as full-date in RFC3339). Market date in the form: yyyy-mm-dd'
+          required: true
+          schema:
+            type: string
+            format: date
+            example: '2023-01-01'
+        - name: interval
+          in: query
+          description: 'Filter to a specific time interval (ex. "13:05", "13"), in Eastern Standard Time (UTC−05:00).'
+          schema:
+            type: string
+        - name: pageNumber
+          in: query
+          description: Format - int32.
+          schema:
+            type: integer
+            format: int32
+            default: 1
+        - name: region
+          in: query
+          schema:
+            $ref: '#/components/schemas/Region'
+      responses:
+        '200':
+          description: Successful operation
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/OfferedGeneration'
+                  page:
+                    $ref: '#/components/schemas/PageInfo'
+              example:
+                data:
+                  - timeInterval:
+                      resolution: daily
+                      start: '2023-06-28T00:00:00.0000000+00:00'
+                      end: '2023-06-29T00:00:00.0000000+00:00'
+                      value: '2023-06-29'
+                    region: NORTH
+                    mustRun: 0
+                    economic: 0
+                    emergency: 0
+                page:
+                  pageNumber: 0
+                  pageSize: 0
+                  totalElements: 0
+                  totalPages: 0
+                  lastPage: true
+        '400':
+          description: Invalid date format
+          content:
+            application/json: { }
+        '401':
+          description: Invalid or missing Bearer Token in the Authorization header
+          content:
+            application/json: { }
+        '404':
+          description: Date not found
+          content:
+            application/json: { }
+  '/v1/day-ahead/{date}/generation/offered/ecomin':
+    get:
+      tags:
+        - Day-ahead
+        - Generation
+      summary: Retrieve day-ahead Offered Generation ECOMIN
+      description: 'Retrieve day-ahead offered generation ECOMIN, in hourly intervals.'
+      operationId: get-v1-day-ahead-date-generation-offered-ecomin
+      parameters:
+        - name: date
+          in: path
+          description: 'Format - date (as full-date in RFC3339). Market date in the form: yyyy-mm-dd'
+          required: true
+          schema:
+            type: string
+            format: date
+            example: '2023-01-01'
+        - name: interval
+          in: query
+          description: 'Filter to a specific time interval (ex. "13:05", "13"), in Eastern Standard Time (UTC−05:00).'
+          schema:
+            type: string
+        - name: pageNumber
+          in: query
+          description: Format - int32.
+          schema:
+            type: integer
+            format: int32
+            default: 1
+        - name: region
+          in: query
+          schema:
+            $ref: '#/components/schemas/Region'
+      responses:
+        '200':
+          description: Successful operation
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/OfferedGeneration'
+                  page:
+                    $ref: '#/components/schemas/PageInfo'
+              example:
+                data:
+                  - timeInterval:
+                      resolution: daily
+                      start: '2023-06-28T00:00:00.0000000+00:00'
+                      end: '2023-06-29T00:00:00.0000000+00:00'
+                      value: '2023-06-29'
+                    region: NORTH
+                    mustRun: 0
+                    economic: 0
+                    emergency: 0
+                page:
+                  pageNumber: 0
+                  pageSize: 0
+                  totalElements: 0
+                  totalPages: 0
+                  lastPage: true
+        '400':
+          description: Invalid date format
+          content:
+            application/json: { }
+        '401':
+          description: Invalid or missing Bearer Token in the Authorization header
+          content:
+            application/json: { }
+        '404':
+          description: Date not found
+          content:
+            application/json: { }
+  '/v1/day-ahead/{date}/interchange/net-scheduled':
+    get:
+      tags:
+        - Day-ahead
+        - Interchange
+      summary: Day Ahead Net Scheduled Interchange
+      description: 'Retrieve DA Net Scheduled Interchange - Supply data from the given date, given in hourly intervals.'
+      operationId: get-v1-day-ahead-date-interchange-net-scheduled
+      parameters:
+        - name: date
+          in: path
+          description: 'Format - date (as full-date in RFC3339). Market date in the form: yyyy-mm-dd'
+          required: true
+          schema:
+            type: string
+            format: date
+            example: '2023-01-01'
+        - name: interval
+          in: query
+          description: 'Filter to a specific time interval (ex. "13:05", "13"), in Eastern Standard Time (UTC−05:00).'
+          schema:
+            type: string
+        - name: pageNumber
+          in: query
+          description: Format - int32.
+          schema:
+            type: integer
+            format: int32
+            default: 1
+        - name: region
+          in: query
+          schema:
+            $ref: '#/components/schemas/Region'
+      responses:
+        '200':
+          description: Successful operation
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/DayAheadNetScheduledInterchange'
+                  page:
+                    $ref: '#/components/schemas/PageInfo'
+              example:
+                data:
+                  - timeInterval:
+                      resolution: daily
+                      start: '2023-06-28T00:00:00.0000000+00:00'
+                      end: '2023-06-29T00:00:00.0000000+00:00'
+                      value: '2023-06-29'
+                    region: NORTH
+                    nsi: 0
+                page:
+                  pageNumber: 0
+                  pageSize: 0
+                  totalElements: 0
+                  totalPages: 0
+                  lastPage: true
+        '400':
+          description: Invalid date format
+          content:
+            application/json: { }
+        '401':
+          description: Invalid or missing Bearer Token in the Authorization header
+          content:
+            application/json: { }
+        '404':
+          description: Date not found
+          content:
+            application/json: { }
+  '/v1/day-ahead/{date}/load':
+    get:
+      tags:
+        - Day-ahead
+        - Load
+      summary: Retrieve Energy Market Day-ahead Load data
+      description: "Retrieve Energy Market Day-ahead Load data in hourly or daily intervals.\n"
+      operationId: get-v1-day-ahead-date-load
+      parameters:
+        - name: date
+          in: path
+          description: 'Format - date (as full-date in RFC3339). Market date in the form: yyyy-mm-dd'
+          required: true
+          schema:
+            type: string
+            format: date
+            example: '2023-01-01'
+        - name: interval
+          in: query
+          description: 'Filter to a specific time interval (ex. "13:05", "13"), in Eastern Standard Time (UTC−05:00).'
+          schema:
+            type: string
+        - name: localResoourceZone
+          in: query
+          schema:
+            type: string
+        - name: pageNumber
+          in: query
+          description: Format - int32.
+          schema:
+            type: integer
+            format: int32
+            default: 1
+        - name: region
+          in: query
+          schema:
+            $ref: '#/components/schemas/Region'
+        - name: timeResolution
+          in: query
+          description: Time resolution of data
+          schema:
+            $ref: '#/components/schemas/Time-Res-Hourly-Daily'
+      responses:
+        '200':
+          description: Successful operation
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/Load'
+                  page:
+                    $ref: '#/components/schemas/PageInfo'
+              example:
+                data:
+                  - timeInterval:
+                      resolution: daily
+                      start: '2023-06-28T00:00:00.0000000+00:00'
+                      end: '2023-06-29T00:00:00.0000000+00:00'
+                      value: '2023-06-29'
+                    region: North
+                    localResourceZone: LRZ_2
+                    load: 1349.23
+                page:
+                  pageNumber: 0
+                  pageSize: 0
+                  totalElements: 0
+                  totalPages: 0
+                  lastPage: true
+        '400':
+          description: Invalid date format
+          content:
+            application/json: { }
+        '401':
+          description: Invalid or missing Bearer Token in the Authorization header
+          content:
+            application/json: { }
+        '404':
+          description: Date not found
+          content:
+            application/json: { }
+  '/v1/forecast/{date}/load':
+    get:
+      tags:
+        - Load
+        - Forecast
+      summary: Retrieve load forecast data for given market date
+      description: 'Retrieve load forecast data from the given date, given in daily or hourly intervals.'
+      operationId: get-v1-forecast-date-load
+      parameters:
+        - name: date
+          in: path
+          description: 'Format - date (as full-date in RFC3339). Market date in the form: yyyy-mm-dd'
+          required: true
+          schema:
+            type: string
+            format: date
+            example: '2023-01-01'
+        - name: interval
+          in: query
+          description: 'Filter to a specific time interval (ex. "13:05", "13"), in Eastern Standard Time (UTC−05:00).'
+          schema:
+            type: string
+        - name: localResourceZone
+          in: query
+          schema:
+            type: string
+        - name: pageNumber
+          in: query
+          description: Format - int32.
+          schema:
+            type: integer
+            format: int32
+            default: 1
+        - name: region
+          in: query
+          schema:
+            $ref: '#/components/schemas/Region'
+        - name: timeResolution
+          in: query
+          description: Time resolution of data
+          schema:
+            $ref: '#/components/schemas/Time-Res-Hourly-Daily'
+      responses:
+        '200':
+          description: Successful operation
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/LoadForecast'
+                  page:
+                    $ref: '#/components/schemas/PageInfo'
+              example:
+                data:
+                  - timeInterval:
+                      resolution: daily
+                      start: '2023-06-28T00:00:00.0000000+00:00'
+                      end: '2023-06-29T00:00:00.0000000+00:00'
+                      value: '2023-06-29'
+                    region: NORTH
+                    localResourceZone: LRZ_2
+                    loadForecast: 1349.23
+                page:
+                  pageNumber: 0
+                  pageSize: 0
+                  totalElements: 0
+                  totalPages: 0
+                  lastPage: true
+        '400':
+          description: Invalid date format
+          content:
+            application/json: { }
+        '401':
+          description: Invalid or missing Bearer Token in the Authorization header
+          content:
+            application/json: { }
+        '404':
+          description: Date not found
+          content:
+            application/json: { }
+  '/v1/historical/{date}/interchange/net-scheduled':
+    get:
+      tags:
+        - Interchange
+        - Historical
+      summary: Historical Net Scheduled Interchange
+      description: 'Retrieve  Historical Net Scheduled Interchange data from the given date, given in hourly intervals.'
+      operationId: get-v1-historical-date-interchange-net-scheduled
+      parameters:
+        - name: date
+          in: path
+          description: 'Format - date (as full-date in RFC3339). Market date in the form: yyyy-mm-dd'
+          required: true
+          schema:
+            type: string
+            format: date
+            example: '2023-01-01'
+        - name: adjacentBa
+          in: query
+          description: 'Filter to a specific adjacent Balancing Authority (ex. PJM, TVA, SWPP).'
+          schema:
+            type: string
+        - name: interval
+          in: query
+          description: 'Filter to a specific time interval (ex. "13:05", "13"), in Eastern Standard Time (UTC−05:00).'
+          schema:
+            type: string
+        - name: pageNumber
+          in: query
+          description: Format - int32.
+          schema:
+            type: integer
+            format: int32
+            default: 1
+      responses:
+        '200':
+          description: Successful operation
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/HistoricalNetScheduledInterchange'
+                  page:
+                    $ref: '#/components/schemas/PageInfo'
+              example:
+                data:
+                  - timeInterval:
+                      resolution: daily
+                      start: '2023-06-28T00:00:00.0000000+00:00'
+                      end: '2023-06-29T00:00:00.0000000+00:00'
+                      value: '2023-06-29'
+                    adjacentBa: string
+                    nsi: 0
+                page:
+                  pageNumber: 0
+                  pageSize: 0
+                  totalElements: 0
+                  totalPages: 0
+                  lastPage: true
+        '400':
+          description: Invalid date format
+          content:
+            application/json: { }
+        '401':
+          description: Invalid or missing Bearer Token in the Authorization header
+          content:
+            application/json: { }
+        '404':
+          description: Date not found
+          content:
+            application/json: { }
+  '/v1/real-time/{date}/demand/forecast':
+    get:
+      tags:
+        - Real-time
+        - Demand
+      summary: Retrieve real-time FORECASTMW Demand
+      description: 'Retrieve real-time FORECASTMW Demand, in hourly or daily intervals.'
+      operationId: get-v1-real-time-date-demand-forecast
+      parameters:
+        - name: date
+          in: path
+          description: 'Format - date (as full-date in RFC3339). Market date in the form: yyyy-mm-dd'
+          required: true
+          schema:
+            type: string
+            format: date
+            example: '2023-01-01'
+        - name: interval
+          in: query
+          description: 'Filter to a specific time interval (ex. "13:05", "13"), in Eastern Standard Time (UTC−05:00).'
+          schema:
+            type: string
+        - name: pageNumber
+          in: query
+          description: Format - int32.
+          schema:
+            type: integer
+            format: int32
+            default: 1
+        - name: timeResolution
+          in: query
+          description: Time resolution of data
+          schema:
+            $ref: '#/components/schemas/Time-Res-Hourly-Daily'
+      responses:
+        '200':
+          description: Successful operation
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/Demand'
+                  page:
+                    $ref: '#/components/schemas/PageInfo'
+              example:
+                data:
+                  - interval: string
+                    region: NORTH
+                    demand: 0
+                page:
+                  pageNumber: 0
+                  pageSize: 0
+                  totalElements: 0
+                  totalPages: 0
+                  lastPage: true
+        '400':
+          description: Invalid date format
+          content:
+            application/json: { }
+        '401':
+          description: Invalid or missing Bearer Token in the Authorization header
+          content:
+            application/json: { }
+        '404':
+          description: Date not found
+          content:
+            application/json: { }
+  '/v1/real-time/{date}/demand/load-state-estimator':
+    get:
+      tags:
+        - Real-time
+        - Demand
+      summary: Retrieve Real-time LoadSE Demand
+      description: 'Retrieve real-time LoadSE Demand, in hourly or daily intervals.'
+      operationId: get-v1-real-time-date-demand-load-state-estimator
+      parameters:
+        - name: date
+          in: path
+          description: 'Format - date (as full-date in RFC3339). Market date in the form: yyyy-mm-dd'
+          required: true
+          schema:
+            type: string
+            format: date
+            example: '2023-01-01'
+        - name: interval
+          in: query
+          description: 'Filter to a specific time interval (ex. "13:05", "13"), in Eastern Standard Time (UTC−05:00).'
+          schema:
+            type: string
+        - name: pageNumber
+          in: query
+          description: Format - int32.
+          schema:
+            type: integer
+            format: int32
+            default: 1
+        - name: timeResolution
+          in: query
+          description: Time resolution of data
+          schema:
+            $ref: '#/components/schemas/Time-Res-Hourly-Daily'
+        - name: zone
+          in: query
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Successful operation
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/DemandEst'
+                  page:
+                    $ref: '#/components/schemas/PageInfo'
+              example:
+                data:
+                  - timeInterval:
+                      resolution: daily
+                      start: '2023-06-28T00:00:00.0000000+00:00'
+                      end: '2023-06-29T00:00:00.0000000+00:00'
+                      value: '2023-06-29'
+                    zone: string
+                    demand: 0
+                page:
+                  pageNumber: 0
+                  pageSize: 0
+                  totalElements: 0
+                  totalPages: 0
+                  lastPage: true
+        '400':
+          description: Invalid date format
+          content:
+            application/json: { }
+        '401':
+          description: Invalid or missing Bearer Token in the Authorization header
+          content:
+            application/json: { }
+        '404':
+          description: Date not found
+          content:
+            application/json: { }
+  '/v1/real-time/{date}/generation/cleared/supply':
+    get:
+      tags:
+        - Real-time
+        - Generation
+      summary: Real Time Generation Cleared
+      description: 'Retrieve RT Generation Energy Cleared (MWh) - Supply data from the given date, given in hourly or 5 minute intervals.'
+      operationId: get-v1-real-time-date-generation-cleared-supply
+      parameters:
+        - name: date
+          in: path
+          description: 'Format - date (as full-date in RFC3339). Market date in the form: yyyy-mm-dd'
+          required: true
+          schema:
+            type: string
+            format: date
+            example: '2023-01-01'
+        - name: pageNumber
+          in: query
+          description: Format - int32.
+          schema:
+            type: integer
+            format: int32
+            default: 1
+        - name: timeResolution
+          in: query
+          description: Time resolution of data
+          schema:
+            $ref: '#/components/schemas/Time-Res-5Min-Hourly'
+      responses:
+        '200':
+          description: Successful operation
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/GenerationCleared'
+                  page:
+                    $ref: '#/components/schemas/PageInfo'
+              example:
+                data:
+                  - generation: 0
+                    timeInterval:
+                      resolution: daily
+                      start: '2023-06-28T00:00:00.0000000+00:00'
+                      end: '2023-06-29T00:00:00.0000000+00:00'
+                      value: '2023-06-29'
+                page:
+                  pageNumber: 0
+                  pageSize: 0
+                  totalElements: 0
+                  totalPages: 0
+                  lastPage: true
+        '400':
+          description: Invalid date format
+          content:
+            application/json: { }
+        '401':
+          description: Invalid or missing Bearer Token in the Authorization header
+          content:
+            application/json: { }
+        '404':
+          description: Date not found
+          content:
+            application/json: { }
+  '/v1/real-time/{date}/generation/committed/ecomax':
+    get:
+      tags:
+        - Real-time
+        - Generation
+      summary: Retrieve committed ECOMAX generation
+      description: Retrieve committed ECOMAX generation in hourly intervals
+      operationId: get-v1-real-time-date-generation-committed-ecomax
+      parameters:
+        - name: date
+          in: path
+          description: 'Format - date (as full-date in RFC3339). Market date in the form: yyyy-mm-dd'
+          required: true
+          schema:
+            type: string
+            format: date
+            example: '2023-01-01'
+        - name: interval
+          in: query
+          description: 'Filter to a specific time interval (ex. "13:05", "13"), in Eastern Standard Time (UTC−05:00).'
+          schema:
+            type: string
+        - name: pageNumber
+          in: query
+          description: Format - int32.
+          schema:
+            type: integer
+            format: int32
+            default: 1
+      responses:
+        '200':
+          description: Successful operation
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/CommittedGeneration'
+                  page:
+                    $ref: '#/components/schemas/PageInfo'
+              example:
+                data:
+                  - timeInterval:
+                      resolution: daily
+                      start: '2023-06-28T00:00:00.0000000+00:00'
+                      end: '2023-06-29T00:00:00.0000000+00:00'
+                      value: '2023-06-29'
+                    committedForwardEcoMax: 0
+                    committedRealTimeEcoMax: 0
+                    committedEcoMaxDelta: 0
+                page:
+                  pageNumber: 0
+                  pageSize: 0
+                  totalElements: 0
+                  totalPages: 0
+                  lastPage: true
+        '400':
+          description: Invalid date format
+          content:
+            application/json: { }
+        '401':
+          description: Invalid or missing Bearer Token in the Authorization header
+          content:
+            application/json: { }
+        '404':
+          description: Date not found
+          content:
+            application/json: { }
+  '/v1/real-time/{date}/generation/fuel-on-the-margin':
+    get:
+      tags:
+        - Real-time
+        - Generation
+      summary: Retrieve real time generation fuel on the margin
+      description: Retrieve real time generation fuel on the margin in 5 minute intervals
+      operationId: get-v1-real-time-date-generation-fuel-on-the-margin
+      parameters:
+        - name: date
+          in: path
+          description: 'Format - date (as full-date in RFC3339). Market date in the form: yyyy-mm-dd'
+          required: true
+          schema:
+            type: string
+            format: date
+            example: '2023-01-01'
+        - name: fuelType
+          in: query
+          description: 'Filter to specific fuel type (ex. Coal, Gas, Wind, Solar, Hydro, Nuclear, Storage).'
+          schema:
+            type: string
+        - name: interval
+          in: query
+          description: 'Filter to a specific time interval (ex. "13:05", "13"), in Eastern Standard Time (UTC−05:00).'
+          schema:
+            type: string
+        - name: pageNumber
+          in: query
+          description: Format - int32.
+          schema:
+            type: integer
+            format: int32
+            default: 1
+        - name: region
+          in: query
+          schema:
+            $ref: '#/components/schemas/Region'
+      responses:
+        '200':
+          description: Successful operation
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/RealTimeGenerationFuelMargin'
+                  page:
+                    $ref: '#/components/schemas/PageInfo'
+              example:
+                data:
+                  - timeInterval:
+                      resolution: daily
+                      start: '2023-06-28T00:00:00.0000000+00:00'
+                      end: '2023-06-29T00:00:00.0000000+00:00'
+                      value: '2023-06-29'
+                    peak: true
+                    region: NORTH
+                    fuelType: string
+                    unitCount: 0
+                page:
+                  pageNumber: 0
+                  pageSize: 0
+                  totalElements: 0
+                  totalPages: 0
+                  lastPage: true
+        '400':
+          description: Invalid date format
+          content:
+            application/json: { }
+        '401':
+          description: Invalid or missing Bearer Token in the Authorization header
+          content:
+            application/json: { }
+        '404':
+          description: Date not found
+          content:
+            application/json: { }
+  '/v1/real-time/{date}/generation/fuel-type':
+    get:
+      tags:
+        - Real-time
+        - Generation
+      summary: Retrieve real-time Generation Fuel Type
+      description: 'Retrieve real-time generated fuel type, in hourly intervals.'
+      operationId: get-v1-real-time-date-generation-fuel-type
+      parameters:
+        - name: date
+          in: path
+          description: 'Format - date (as full-date in RFC3339). Market date in the form: yyyy-mm-dd'
+          required: true
+          schema:
+            type: string
+            format: date
+            example: '2023-01-01'
+        - name: interval
+          in: query
+          description: 'Filter to a specific time interval (ex. "13:05", "13"), in Eastern Standard Time (UTC−05:00).'
+          schema:
+            type: string
+        - name: pageNumber
+          in: query
+          description: Format - int32.
+          schema:
+            type: integer
+            format: int32
+            default: 1
+        - name: region
+          in: query
+          schema:
+            $ref: '#/components/schemas/Region'
+      responses:
+        '200':
+          description: Successful operation
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/GenerationFuelType'
+                  page:
+                    $ref: '#/components/schemas/PageInfo'
+              example:
+                data:
+                  - timeInterval:
+                      resolution: daily
+                      start: '2023-06-28T00:00:00.0000000+00:00'
+                      end: '2023-06-29T00:00:00.0000000+00:00'
+                      value: '2023-06-29'
+                    region: NORTH
+                    fuelTypes:
+                      coal: 0
+                      gas: 0
+                      nuclear: 0
+                      water: 0
+                      wind: 0
+                      solar: 0
+                      other: 0
+                      storage: 0
+                    totalMw: 0
+                    interval: string
+                page:
+                  pageNumber: 0
+                  pageSize: 0
+                  totalElements: 0
+                  totalPages: 0
+                  lastPage: true
+        '400':
+          description: Invalid date format
+          content:
+            application/json: { }
+        '401':
+          description: Invalid or missing Bearer Token in the Authorization header
+          content:
+            application/json: { }
+        '404':
+          description: Date not found
+          content:
+            application/json: { }
+  '/v1/real-time/{date}/generation/offered/ecomax':
+    get:
+      tags:
+        - Real-time
+        - Generation
+      summary: Retrieve offered ECOMAX generation
+      description: Retrieve offered ECOMAX generation in hourly intervals
+      operationId: get-v1-real-time-date-generation-offered-ecomax
+      parameters:
+        - name: date
+          in: path
+          description: 'Format - date (as full-date in RFC3339). Market date in the form: yyyy-mm-dd'
+          required: true
+          schema:
+            type: string
+            format: date
+            example: '2023-01-01'
+        - name: interval
+          in: query
+          description: 'Filter to a specific time interval (ex. "13:05", "13"), in Eastern Standard Time (UTC−05:00).'
+          schema:
+            type: string
+        - name: pageNumber
+          in: query
+          description: Format - int32.
+          schema:
+            type: integer
+            format: int32
+            default: 1
+      responses:
+        '200':
+          description: Successful operation
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/OfferGeneration'
+                  page:
+                    $ref: '#/components/schemas/PageInfo'
+              example:
+                data:
+                  - timeInterval:
+                      resolution: daily
+                      start: '2023-06-28T00:00:00.0000000+00:00'
+                      end: '2023-06-29T00:00:00.0000000+00:00'
+                      value: '2023-06-29'
+                    offerForwardEcoMax: 0
+                    offerRealTimeEcoMax: 0
+                    offerEcoMaxDelta: 0
+                page:
+                  pageNumber: 0
+                  pageSize: 0
+                  totalElements: 0
+                  totalPages: 0
+                  lastPage: true
+        '400':
+          description: Invalid date format
+          content:
+            application/json: { }
+        '401':
+          description: Invalid or missing Bearer Token in the Authorization header
+          content:
+            application/json: { }
+        '404':
+          description: Date not found
+          content:
+            application/json: { }
+  '/v1/real-time/{date}/interchange/net-actual':
+    get:
+      tags:
+        - Real-time
+        - Interchange
+      summary: Real Time Net Actual Interchange
+      description: 'Retrieve RT Net Actual Interchange - Supply data from the given date, given in hourly intervals.'
+      operationId: get-v1-real-time-date-interchange-net-actual
+      parameters:
+        - name: date
+          in: path
+          description: 'Format - date (as full-date in RFC3339). Market date in the form: yyyy-mm-dd'
+          required: true
+          schema:
+            type: string
+            format: date
+            example: '2023-01-01'
+        - name: adjacentBa
+          in: query
+          description: 'Filter to a specific adjacent Balancing Authority (ex. PJM, TVA, SWPP).'
+          schema:
+            type: string
+        - name: interval
+          in: query
+          description: 'Filter to a specific time interval (ex. "13:05", "13"), in Eastern Standard Time (UTC−05:00).'
+          schema:
+            type: string
+        - name: pageNumber
+          in: query
+          description: Format - int32.
+          schema:
+            type: integer
+            format: int32
+            default: 1
+      responses:
+        '200':
+          description: Successful operation
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/NetActualInterchange'
+                  page:
+                    $ref: '#/components/schemas/PageInfo'
+              example:
+                data:
+                  - timeInterval:
+                      resolution: daily
+                      start: '2023-06-28T00:00:00.0000000+00:00'
+                      end: '2023-06-29T00:00:00.0000000+00:00'
+                      value: '2023-06-29'
+                    adjacentBa: string
+                    nai: 0
+                page:
+                  pageNumber: 0
+                  pageSize: 0
+                  totalElements: 0
+                  totalPages: 0
+                  lastPage: true
+        '400':
+          description: Invalid date format
+          content:
+            application/json: { }
+        '401':
+          description: Invalid or missing Bearer Token in the Authorization header
+          content:
+            application/json: { }
+        '404':
+          description: Date not found
+          content:
+            application/json: { }
+  '/v1/real-time/{date}/interchange/net-scheduled':
+    get:
+      tags:
+        - Real-time
+        - Interchange
+      summary: Real Time Net Scheduled Interchange
+      description: 'Retrieve RT Net Scheduled Interchange - Supply data from the given date, given in hourly intervals.'
+      operationId: get-v1-real-time-date-interchange-net-scheduled
+      parameters:
+        - name: date
+          in: path
+          description: 'Format - date (as full-date in RFC3339). Market date in the form: yyyy-mm-dd'
+          required: true
+          schema:
+            type: string
+            format: date
+            example: '2023-01-01'
+        - name: interval
+          in: query
+          description: 'Filter to a specific time interval (ex. "13:05", "13"), in Eastern Standard Time (UTC−05:00).'
+          schema:
+            type: string
+        - name: pageNumber
+          in: query
+          description: Format - int32.
+          schema:
+            type: integer
+            format: int32
+            default: 1
+      responses:
+        '200':
+          description: Successful operation
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/RealTimeNetScheduledInterchange'
+                  page:
+                    $ref: '#/components/schemas/PageInfo'
+              example:
+                data:
+                  - timeInterval:
+                      resolution: daily
+                      start: '2023-06-28T00:00:00.0000000+00:00'
+                      end: '2023-06-29T00:00:00.0000000+00:00'
+                      value: '2023-06-29'
+                    nsiForward: 0
+                    nsiRealTime: 0
+                    nsiDelta: 0
+                page:
+                  pageNumber: 0
+                  pageSize: 0
+                  totalElements: 0
+                  totalPages: 0
+                  lastPage: true
+        '400':
+          description: Invalid date format
+          content:
+            application/json: { }
+        '401':
+          description: Invalid or missing Bearer Token in the Authorization header
+          content:
+            application/json: { }
+        '404':
+          description: Date not found
+          content:
+            application/json: { }
+components:
+  schemas:
+    ClearedGeneration:
+      type: object
+      properties:
+        timeInterval:
+          $ref: '#/components/schemas/TimeInterval'
+        region:
+          $ref: '#/components/schemas/Region'
+        supply:
+          type: number
+    CommittedGeneration:
+      type: object
+      properties:
+        timeInterval:
+          $ref: '#/components/schemas/TimeInterval'
+        committedForwardEcoMax:
+          type: number
+        committedRealTimeEcoMax:
+          type: number
+        committedEcoMaxDelta:
+          type: number
+    DayAheadDemand:
+      type: object
+      properties:
+        timeInterval:
+          $ref: '#/components/schemas/TimeInterval'
+        region:
+          $ref: '#/components/schemas/Region'
+        fixed:
+          type: number
+        priceSens:
+          type: number
+        virtual:
+          type: number
+    DayAheadNetScheduledInterchange:
+      type: object
+      properties:
+        timeInterval:
+          $ref: '#/components/schemas/TimeInterval'
+        region:
+          $ref: '#/components/schemas/Region'
+        nsi:
+          type: number
+    Demand:
+      type: object
+      properties:
+        interval:
+          type: string
+        region:
+          $ref: '#/components/schemas/Region'
+        demand:
+          type: number
+    DemandEst:
+      type: object
+      properties:
+        timeInterval:
+          $ref: '#/components/schemas/TimeInterval'
+        zone:
+          type: string
+        demand:
+          type: number
+    DemandForecastMw:
+      type: object
+      properties:
+        interval:
+          $ref: '#/components/schemas/TimeInterval'
+        demand:
+          type: number
+    FuelType:
+      type: object
+      properties:
+        coal:
+          type: number
+        gas:
+          type: number
+        nuclear:
+          type: number
+        water:
+          type: number
+        wind:
+          type: number
+        solar:
+          type: number
+        other:
+          type: number
+        storage:
+          type: number
+    GenerationCleared:
+      type: object
+      properties:
+        generation:
+          type: number
+        timeInterval:
+          $ref: '#/components/schemas/TimeInterval'
+    GenerationFuelType:
+      type: object
+      properties:
+        timeInterval:
+          $ref: '#/components/schemas/TimeInterval'
+        region:
+          $ref: '#/components/schemas/Region'
+        fuelTypes:
+          $ref: '#/components/schemas/FuelType'
+        totalMw:
+          type: number
+        interval:
+          type: string
+    HistoricalNetScheduledInterchange:
+      type: object
+      properties:
+        timeInterval:
+          $ref: '#/components/schemas/TimeInterval'
+        adjacentBa:
+          type: string
+        nsi:
+          type: number
+    Load:
+      type: object
+      properties:
+        timeInterval:
+          $ref: '#/components/schemas/TimeInterval'
+        region:
+          type: string
+          example: North
+        localResourceZone:
+          type: string
+          example: LRZ_2
+        load:
+          type: number
+          example: 1349.23
+    LoadForecast:
+      type: object
+      properties:
+        timeInterval:
+          $ref: '#/components/schemas/TimeInterval'
+        region:
+          type: string
+          allOf:
+            - $ref: '#/components/schemas/Region'
+          example: NORTH
+        localResourceZone:
+          type: string
+          example: LRZ_2
+        loadForecast:
+          type: number
+          example: 1349.23
+    LocalDate:
+      type: string
+      format: date
+      example: '2022-03-10'
+    NetActualInterchange:
+      type: object
+      properties:
+        timeInterval:
+          $ref: '#/components/schemas/TimeInterval'
+        adjacentBa:
+          type: string
+        nai:
+          type: number
+    OfferGeneration:
+      type: object
+      properties:
+        timeInterval:
+          $ref: '#/components/schemas/TimeInterval'
+        offerForwardEcoMax:
+          type: number
+        offerRealTimeEcoMax:
+          type: number
+        offerEcoMaxDelta:
+          type: number
+    OfferedGeneration:
+      type: object
+      properties:
+        timeInterval:
+          $ref: '#/components/schemas/TimeInterval'
+        region:
+          $ref: '#/components/schemas/Region'
+        mustRun:
+          type: number
+        economic:
+          type: number
+        emergency:
+          type: number
+    PageClearedGeneration:
+      type: object
+      properties:
+        data:
+          type: array
+          items:
+            $ref: '#/components/schemas/ClearedGeneration'
+        page:
+          $ref: '#/components/schemas/PageInfo'
+    PageCommittedGeneration:
+      type: object
+      properties:
+        data:
+          type: array
+          items:
+            $ref: '#/components/schemas/CommittedGeneration'
+        page:
+          $ref: '#/components/schemas/PageInfo'
+    PageDayAheadDemand:
+      type: object
+      properties:
+        data:
+          type: array
+          items:
+            $ref: '#/components/schemas/DayAheadDemand'
+        page:
+          $ref: '#/components/schemas/PageInfo'
+    PageDayAheadNetScheduledInterchange:
+      type: object
+      properties:
+        data:
+          type: array
+          items:
+            $ref: '#/components/schemas/DayAheadNetScheduledInterchange'
+        page:
+          $ref: '#/components/schemas/PageInfo'
+    PageDemandEst:
+      type: object
+      properties:
+        data:
+          type: array
+          items:
+            $ref: '#/components/schemas/DemandEst'
+        page:
+          $ref: '#/components/schemas/PageInfo'
+    PageDemandForecastMw:
+      type: object
+      properties:
+        data:
+          type: array
+          items:
+            $ref: '#/components/schemas/DemandForecastMw'
+        page:
+          $ref: '#/components/schemas/PageInfo'
+    PageGenerationCleared:
+      type: object
+      properties:
+        data:
+          type: array
+          items:
+            $ref: '#/components/schemas/GenerationCleared'
+        page:
+          $ref: '#/components/schemas/PageInfo'
+    PageGenerationFuelType:
+      type: object
+      properties:
+        data:
+          type: array
+          items:
+            $ref: '#/components/schemas/GenerationFuelType'
+        page:
+          $ref: '#/components/schemas/PageInfo'
+    PageHistoricalNetScheduledInterchange:
+      type: object
+      properties:
+        data:
+          type: array
+          items:
+            $ref: '#/components/schemas/HistoricalNetScheduledInterchange'
+        page:
+          $ref: '#/components/schemas/PageInfo'
+    PageInfo:
+      type: object
+      properties:
+        pageNumber:
+          type: integer
+          format: int32
+        pageSize:
+          type: integer
+          format: int32
+        totalElements:
+          type: integer
+          format: int64
+        totalPages:
+          type: integer
+          format: int64
+        lastPage:
+          type: boolean
+    PageLoad:
+      type: object
+      properties:
+        data:
+          type: array
+          items:
+            $ref: '#/components/schemas/Load'
+        page:
+          $ref: '#/components/schemas/PageInfo'
+    PageLoadForecast:
+      type: object
+      properties:
+        data:
+          type: array
+          items:
+            $ref: '#/components/schemas/LoadForecast'
+        page:
+          $ref: '#/components/schemas/PageInfo'
+    PageNetActualInterchange:
+      type: object
+      properties:
+        data:
+          type: array
+          items:
+            $ref: '#/components/schemas/NetActualInterchange'
+        page:
+          $ref: '#/components/schemas/PageInfo'
+    PageOfferGeneration:
+      type: object
+      properties:
+        data:
+          type: array
+          items:
+            $ref: '#/components/schemas/OfferGeneration'
+        page:
+          $ref: '#/components/schemas/PageInfo'
+    PageOfferedGeneration:
+      type: object
+      properties:
+        data:
+          type: array
+          items:
+            $ref: '#/components/schemas/OfferedGeneration'
+        page:
+          $ref: '#/components/schemas/PageInfo'
+    PageRealTimeGenerationFuelMargin:
+      type: object
+      properties:
+        data:
+          type: array
+          items:
+            $ref: '#/components/schemas/RealTimeGenerationFuelMargin'
+        page:
+          $ref: '#/components/schemas/PageInfo'
+    PageRealTimeNetScheduledInterchange:
+      type: object
+      properties:
+        data:
+          type: array
+          items:
+            $ref: '#/components/schemas/RealTimeNetScheduledInterchange'
+        page:
+          $ref: '#/components/schemas/PageInfo'
+    RealTimeGenerationFuelMargin:
+      type: object
+      properties:
+        timeInterval:
+          $ref: '#/components/schemas/TimeInterval'
+        peak:
+          type: boolean
+        region:
+          $ref: '#/components/schemas/Region'
+        fuelType:
+          type: string
+        unitCount:
+          type: integer
+          format: int32
+    RealTimeNetScheduledInterchange:
+      type: object
+      properties:
+        timeInterval:
+          $ref: '#/components/schemas/TimeInterval'
+        nsiForward:
+          type: number
+        nsiRealTime:
+          type: number
+        nsiDelta:
+          type: number
+    Region:
+      enum:
+        - NORTH
+        - CENTRAL
+        - SOUTH
+        - EAST
+        - WEST
+        - NO_REGION
+      type: string
+    Time-Res-5Min-Hourly:
+      enum:
+        - 5min
+        - hourly
+      type: string
+      default: hourly
+      example: hourly
+    Time-Res-Hourly-Daily:
+      enum:
+        - hourly
+        - daily
+      type: string
+      default: hourly
+      example: hourly
+    TimeInterval:
+      type: object
+      properties:
+        resolution:
+          enum:
+            - 5min
+            - hourly
+            - daily
+          type: string
+          example: daily
+        start:
+          pattern: '([0-9]{4})-([0-9]{2})-([0-9]{2}) ([0-9]{2}):([0-9]{2}):([0-9]{2}).([0-9]{3})'
+          type: string
+          description: In Eastern Standard Time (UTC−05:00).
+          example: '2023-06-28 00:00:00.000'
+        end:
+          pattern: '([0-9]{4})-([0-9]{2})-([0-9]{2}) ([0-9]{2}):([0-9]{2}):([0-9]{2}).([0-9]{3})'
+          type: string
+          description: In Eastern Standard Time (UTC−05:00).
+          example: '2023-06-29 00:00:00.000'
+        value:
+          type: string
+          description: 'Short hand value for time interval. Can be timestamp for 5min resolution (ex: 2023-06-28 00:00:00.000), hour ending value for hourly resolution, 1-24 (ex: 21), or date string for daily (ex: 2023-06-28). In Eastern Standard Time (UTC−05:00).'
+          example: '2023-06-29'
+  securitySchemes:
+    apiKeyHeader:
+      type: apiKey
+      name: Ocp-Apim-Subscription-Key
+      in: header
+    apiKeyQuery:
+      type: apiKey
+      name: subscription-key
+      in: query
+security:
+  - apiKeyHeader: [ ]
+  - apiKeyQuery: [ ]

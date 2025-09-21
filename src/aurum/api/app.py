@@ -357,31 +357,64 @@ def _respond_with_etag(
     return model
 
 # Prometheus metrics
-try:  # pragma: no cover
-    from prometheus_client import CONTENT_TYPE_LATEST, Counter, Histogram, generate_latest
+_METRICS_ENABLED = os.getenv("AURUM_API_METRICS_ENABLED", "1").strip().lower() in {
+    "1",
+    "true",
+    "yes",
+    "on",
+}
+_METRICS_PATH = os.getenv("AURUM_API_METRICS_PATH", "/metrics").strip() or "/metrics"
+if not _METRICS_PATH.startswith("/"):
+    _METRICS_PATH = f"/{_METRICS_PATH}"
 
+if _METRICS_ENABLED:
+    try:  # pragma: no cover - exercised in integration
+        from prometheus_client import CONTENT_TYPE_LATEST, Counter, Histogram, generate_latest
+    except ImportError:  # pragma: no cover - best effort logging
+        LOGGER.warning(
+            "AURUM_API_METRICS_ENABLED is set but prometheus_client is not installed; disabling metrics"
+        )
+        _METRICS_ENABLED = False
+    except Exception:  # pragma: no cover - initialization failure should not break startup
+        LOGGER.exception("Failed to initialize Prometheus metrics; disabling")
+        _METRICS_ENABLED = False
+
+if _METRICS_ENABLED:
     REQUEST_COUNTER = Counter(
-        "aurum_api_requests_total", "Total API requests", ["method", "path", "status"]
+        "aurum_api_requests_total",
+        "Total API requests",
+        ["method", "path", "status"],
     )
     REQUEST_LATENCY = Histogram(
-        "aurum_api_request_duration_seconds", "API request duration in seconds", ["method", "path"]
+        "aurum_api_request_duration_seconds",
+        "API request duration in seconds",
+        ["method", "path"],
     )
 
     @app.middleware("http")
     async def _metrics_middleware(request, call_next):  # type: ignore[no-redef]
-        method = request.method
-        path = request.url.path
-        with REQUEST_LATENCY.labels(method=method, path=path).time():
-            response = await call_next(request)
-        REQUEST_COUNTER.labels(method=method, path=path, status=str(response.status_code)).inc()
-        return response
+        request_path = request.url.path
+        if request_path == _METRICS_PATH:
+            return await call_next(request)
 
-    @app.get("/metrics")
+        method = request.method
+        route = request.scope.get("route") if hasattr(request, "scope") else None
+        path_template = getattr(route, "path", request_path)
+        start_time = time.perf_counter()
+        status_code = "500"
+        try:
+            response = await call_next(request)
+            status_code = str(response.status_code)
+            return response
+        finally:
+            duration = time.perf_counter() - start_time
+            REQUEST_LATENCY.labels(method=method, path=path_template).observe(duration)
+            REQUEST_COUNTER.labels(method=method, path=path_template, status=status_code).inc()
+
+    @app.get(_METRICS_PATH)
     def metrics():
         data = generate_latest()
         return Response(content=data, media_type=CONTENT_TYPE_LATEST)
-except Exception:  # pragma: no cover
-    pass
 
 
 @app.get("/health")

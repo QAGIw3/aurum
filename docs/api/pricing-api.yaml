@@ -1,0 +1,906 @@
+openapi: 3.0.1
+info:
+  title: Pricing API
+  description: 'The target data for the Ancillary Services are the Market Clearing Price (MCP) related to the 5 products in this market: Regulation, Spin, Supplemental, Short-term-reserves (STR), and Ramp (up and down). Ancillary Market prices are published at the Reserve Zone level and there are 8 zones in the current Ancillary Services Market.'
+  version: '1.0'
+servers:
+  - url: https://apim.misoenergy.org/pricing
+paths:
+  '/v1/day-ahead/{date}/asm-exante':
+    get:
+      tags:
+        - Ancillary Services Market
+        - Day-ahead
+      summary: Retrieve Ancillary Services Market Day-ahead ExAnte Market clearing prices (MCP)
+      description: 'Retrieve Ancillary Services Market Day-ahead ExAnte Market clearing prices, Prices are given in hourly intervals per Reserve Zone.'
+      operationId: get-v1-day-ahead-date-asm-exante
+      parameters:
+        - name: date
+          in: path
+          description: 'Format - date (as full-date in RFC3339). Market date in the form: yyyy-mm-dd'
+          required: true
+          schema:
+            type: string
+            format: date
+            example: '2023-01-01'
+        - name: interval
+          in: query
+          description: 'Filter to a specific time interval (ex. "13:05", "13"), in Eastern Standard Time (UTC−05:00).'
+          schema:
+            type: string
+        - name: pageNumber
+          in: query
+          description: Format - int32.
+          schema:
+            type: integer
+            format: int32
+            default: 1
+        - name: product
+          in: query
+          description: 'Filter to a specific product (ex. "Regulation", "Spin", etc).'
+          schema:
+            $ref: '#/components/schemas/ProductEnum'
+        - name: zone
+          in: query
+          description: Filter to a specific Reserve Zone (ex. "Zone 1").
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Successful operation
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/MarketClearingPrice'
+                  page:
+                    $ref: '#/components/schemas/PageInfo'
+              example:
+                data:
+                  - interval: '6'
+                    timeInterval:
+                      resolution: hourly
+                      start: '2023-06-29 05:00:00.000'
+                      end: '2023-06-29 06:00:00.000'
+                      value: 'HE06'
+                    product: Regulation
+                    zone: Zone 1
+                    mcp: 7.12
+                page:
+                  pageNumber: 1
+                  pageSize: 1
+                  totalElements: 1
+                  totalPages: 1
+                  lastPage: true
+        '400':
+          description: Invalid date format
+          content:
+            application/json: { }
+        '401':
+          description: Invalid or missing Bearer Token in the Authorization header
+          content:
+            application/json: { }
+        '404':
+          description: Date not found
+          content:
+            application/json: { }
+  '/v1/day-ahead/{date}/asm-expost':
+    get:
+      tags:
+        - Ancillary Services Market
+        - Day-ahead
+      summary: Retrieve Ancillary Services Market Day-ahead ExPost Market clearing prices (MCP)
+      description: 'Retrieve Ancillary Services Market Day-ahead ExPost Market clearing prices, Prices are given in hourly intervals per Reserve Zone.'
+      operationId: get-v1-day-ahead-date-asm-expost
+      parameters:
+        - name: date
+          in: path
+          description: 'Format - date (as full-date in RFC3339). Market date in the form: yyyy-mm-dd'
+          required: true
+          schema:
+            type: string
+            format: date
+            example: '2023-01-01'
+        - name: interval
+          in: query
+          description: 'Filter to a specific time interval (ex. "13:05", "13"), in Eastern Standard Time (UTC−05:00).'
+          schema:
+            type: string
+        - name: pageNumber
+          in: query
+          description: Format - int32.
+          schema:
+            type: integer
+            format: int32
+            default: 1
+        - name: product
+          in: query
+          description: 'Filter to a specific product (ex. "Regulation", "Spin", etc).'
+          schema:
+            $ref: '#/components/schemas/ProductEnum'
+        - name: zone
+          in: query
+          description: Filter to a specific Reserve Zone (ex. "Zone 1").
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Successful operation
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/MarketClearingPrice'
+                  page:
+                    $ref: '#/components/schemas/PageInfo'
+              example:
+                data:
+                  - interval: '7'
+                    timeInterval:
+                      resolution: hourly
+                      start: '2023-06-29 06:00:00.000'
+                      end: '2023-06-29 07:00:00.000'
+                      value: 'HE07'
+                    product: Spin
+                    zone: Zone 3
+                    mcp: 8.34
+                page:
+                  pageNumber: 1
+                  pageSize: 1
+                  totalElements: 1
+                  totalPages: 1
+                  lastPage: true
+        '400':
+          description: Invalid date format
+          content:
+            application/json: { }
+        '401':
+          description: Invalid or missing Bearer Token in the Authorization header
+          content:
+            application/json: { }
+        '404':
+          description: Date not found
+          content:
+            application/json: { }
+  '/v1/real-time/{date}/asm-exante':
+    get:
+      tags:
+        - Ancillary Services Market
+        - Real-time
+      summary: Retrieve Ancillary Services Market Real-time ExAnte Market clearing prices (MCP)
+      description: 'Retrieve Ancillary Services Market Real-time ExAnte Market clearing prices, Prices are given in five minute intervals per Reserve Zone.'
+      operationId: get-v1-real-time-date-asm-exante
+      parameters:
+        - name: date
+          in: path
+          description: 'Format - date (as full-date in RFC3339). Market date in the form: yyyy-mm-dd'
+          required: true
+          schema:
+            type: string
+            format: date
+            example: '2023-01-01'
+        - name: interval
+          in: query
+          description: 'Filter to a specific time interval (ex. "13:05", "13"), in Eastern Standard Time (UTC−05:00).'
+          schema:
+            type: string
+        - name: pageNumber
+          in: query
+          description: Format - int32.
+          schema:
+            type: integer
+            format: int32
+            default: 1
+        - name: product
+          in: query
+          description: 'Filter to a specific product (ex. "Regulation", "Spin", etc).'
+          schema:
+            $ref: '#/components/schemas/ProductEnum'
+        - name: zone
+          in: query
+          description: Filter to a specific Reserve Zone (ex. "Zone 1").
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Successful operation
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/MarketClearingPrice'
+                  page:
+                    $ref: '#/components/schemas/PageInfo'
+              example:
+                data:
+                  - interval: '05:15'
+                    timeInterval:
+                      resolution: 5min
+                      start: '2023-06-29 05:15:00.000'
+                      end: '2023-06-29 05:20:00.000'
+                      value: '2023-06-29 05:15:00.000'
+                    product: Regulation
+                    zone: Zone 1
+                    mcp: 6.02
+                page:
+                  pageNumber: 1
+                  pageSize: 1
+                  totalElements: 1
+                  totalPages: 1
+                  lastPage: true
+        '400':
+          description: Invalid date format
+          content:
+            application/json: { }
+        '401':
+          description: Invalid or missing Bearer Token in the Authorization header
+          content:
+            application/json: { }
+        '404':
+          description: Date not found
+          content:
+            application/json: { }
+  '/v1/real-time/{date}/asm-expost':
+    get:
+      tags:
+        - Ancillary Services Market
+        - Real-time
+      summary: Retrieve Ancillary Services Market Real-time ExPost Market clearing prices (MCP)
+      description: 'Retrieve Ancillary Services Market  Real-time ExPost Market clearing prices, Prices can be retrieved in five minute intervals per Reserve Zone, or aggregated per hour interval per Reserve Zone.'
+      operationId: get-v1-real-time-date-asm-expost
+      parameters:
+        - name: date
+          in: path
+          description: 'Format - date (as full-date in RFC3339). Market date in the form: yyyy-mm-dd'
+          required: true
+          schema:
+            type: string
+            format: date
+            example: '2023-01-01'
+        - name: interval
+          in: query
+          description: 'Filter to a specific time interval (ex. "13:05", "13"), in Eastern Standard Time (UTC−05:00).'
+          schema:
+            type: string
+        - name: pageNumber
+          in: query
+          description: Format - int32.
+          schema:
+            type: integer
+            format: int32
+            default: 1
+        - name: preliminaryFinal
+          in: query
+          description: 'When set, only return data if it''s flagged as the given state.'
+          schema:
+            $ref: '#/components/schemas/PreliminaryFinalEnum'
+        - name: product
+          in: query
+          description: 'Filter to a specific product (ex. "Regulation", "Spin", etc).'
+          schema:
+            $ref: '#/components/schemas/ProductEnum'
+        - name: timeResolution
+          in: query
+          description: Time resolution of data
+          schema:
+            $ref: '#/components/schemas/Time-Res-5Min-Hourly'
+        - name: zone
+          in: query
+          description: Filter to a specific Reserve Zone (ex. "Zone 1").
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Successful operation
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/RealTimeExPostMarketClearingPrice'
+                  page:
+                    $ref: '#/components/schemas/PageInfo'
+              example:
+                data:
+                  - preliminaryFinal: Final
+                    product: Spin
+                    zone: Zone 2
+                    mcp: 6.88
+                    timeInterval:
+                      resolution: 5min
+                      start: '2023-06-29 05:20:00.000'
+                      end: '2023-06-29 05:25:00.000'
+                      value: '2023-06-29 05:20:00.000'
+                page:
+                  pageNumber: 1
+                  pageSize: 1
+                  totalElements: 1
+                  totalPages: 1
+                  lastPage: true
+        '400':
+          description: Invalid date format
+          content:
+            application/json: { }
+        '401':
+          description: Invalid or missing Bearer Token in the Authorization header
+          content:
+            application/json: { }
+        '404':
+          description: Date not found
+          content:
+            application/json: { }
+  '/v1/day-ahead/{date}/lmp-exante':
+    get:
+      tags:
+        - Energy Market
+        - Day-ahead
+      summary: Retrieve Energy Market Day-ahead ExAnte Locational Marginal Price (LMP)
+      description: 'Retrieve Energy Market Day-ahead ExAnte Locational Marginal Price (LMP) and its 3 components (MCC, MEC, MLC). Prices are given in hourly intervals per Commercial Pricing Node (CPNode).'
+      operationId: get-v1-day-ahead-date-lmp-exante
+      parameters:
+        - name: date
+          in: path
+          description: 'Format - date (as full-date in RFC3339). Market date in the form: yyyy-mm-dd'
+          required: true
+          schema:
+            type: string
+            format: date
+            example: '2023-01-01'
+        - name: interval
+          in: query
+          description: 'Filter to a specific time interval (ex. "13:05", "13"), in Eastern Standard Time (UTC−05:00).'
+          schema:
+            type: string
+        - name: node
+          in: query
+          description: Filter to a specific Commercial Pricing Node.
+          schema:
+            type: string
+        - name: pageNumber
+          in: query
+          description: Format - int32.
+          schema:
+            type: integer
+            format: int32
+            default: 1
+      responses:
+        '200':
+          description: Successful operation
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/LocationalMarginalPrice'
+                  page:
+                    $ref: '#/components/schemas/PageInfo'
+              example:
+                data:
+                  - interval: '6'
+                    timeInterval:
+                      resolution: hourly
+                      start: '2023-06-29 05:00:00.000'
+                      end: '2023-06-29 06:00:00.000'
+                      value: 'HE06'
+                    node: ALTW.WELLS1
+                    lmp: 24.18
+                    mcc: 1.12
+                    mec: 22.53
+                    mlc: 0.53
+                page:
+                  pageNumber: 1
+                  pageSize: 1
+                  totalElements: 1
+                  totalPages: 1
+                  lastPage: true
+        '400':
+          description: Invalid date format
+          content:
+            application/json: { }
+        '401':
+          description: Invalid or missing Bearer Token in the Authorization header
+          content:
+            application/json: { }
+        '404':
+          description: Date not found
+          content:
+            application/json: { }
+  '/v1/day-ahead/{date}/lmp-expost':
+    get:
+      tags:
+        - Energy Market
+        - Day-ahead
+      summary: Retrieve Energy Market Day-ahead ExPost Locational Marginal Price (LMP)
+      description: 'Retrieve Energy Market Day-ahead ExPost Locational Marginal Price (LMP) and its 3 components (MCC, MEC, MLC). Prices are given in hourly intervals per Commercial Pricing Node (CPNode).'
+      operationId: get-v1-day-ahead-date-lmp-expost
+      parameters:
+        - name: date
+          in: path
+          description: 'Format - date (as full-date in RFC3339). Market date in the form: yyyy-mm-dd'
+          required: true
+          schema:
+            type: string
+            format: date
+            example: '2023-01-01'
+        - name: interval
+          in: query
+          description: 'Filter to a specific time interval (ex. "13:05", "13"), in Eastern Standard Time (UTC−05:00).'
+          schema:
+            type: string
+        - name: node
+          in: query
+          description: Filter to a specific Commercial Pricing Node.
+          schema:
+            type: string
+        - name: pageNumber
+          in: query
+          description: Format - int32.
+          schema:
+            type: integer
+            format: int32
+            default: 1
+      responses:
+        '200':
+          description: Successful operation
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/LocationalMarginalPrice'
+                  page:
+                    $ref: '#/components/schemas/PageInfo'
+              example:
+                data:
+                  - interval: '6'
+                    timeInterval:
+                      resolution: hourly
+                      start: '2023-06-29 05:00:00.000'
+                      end: '2023-06-29 06:00:00.000'
+                      value: 'HE06'
+                    node: ALTW.WELLS1
+                    lmp: 25.03
+                    mcc: 1.45
+                    mec: 22.89
+                    mlc: 0.69
+                page:
+                  pageNumber: 1
+                  pageSize: 1
+                  totalElements: 1
+                  totalPages: 1
+                  lastPage: true
+        '400':
+          description: Invalid date format
+          content:
+            application/json: { }
+        '401':
+          description: Invalid or missing Bearer Token in the Authorization header
+          content:
+            application/json: { }
+        '404':
+          description: Date not found
+          content:
+            application/json: { }
+  '/v1/real-time/{date}/lmp-exante':
+    get:
+      tags:
+        - Energy Market
+        - Real-time
+      summary: Retrieve Energy Market Real-time ExAnte Locational Marginal Price (LMP)
+      description: 'Retrieve Energy Market Real-time ExAnte Locational Marginal Price (LMP) and its 3 components (MCC, MEC, MLC). Prices are given in 5 minute intervals per Commercial Pricing Node (CPNode).'
+      operationId: get-v1-real-time-date-lmp-exante
+      parameters:
+        - name: date
+          in: path
+          description: 'Format - date (as full-date in RFC3339). Market date in the form: yyyy-mm-dd'
+          required: true
+          schema:
+            type: string
+            format: date
+            example: '2023-01-01'
+        - name: interval
+          in: query
+          description: 'Filter to a specific time interval (ex. "13:05", "13"), in Eastern Standard Time (UTC−05:00).'
+          schema:
+            type: string
+        - name: node
+          in: query
+          description: Filter to a specific Commercial Pricing Node.
+          schema:
+            type: string
+        - name: pageNumber
+          in: query
+          description: Format - int32.
+          schema:
+            type: integer
+            format: int32
+            default: 1
+      responses:
+        '200':
+          description: Successful operation
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/LocationalMarginalPrice'
+                  page:
+                    $ref: '#/components/schemas/PageInfo'
+              example:
+                data:
+                  - interval: '05:15'
+                    timeInterval:
+                      resolution: 5min
+                      start: '2023-06-29 05:15:00.000'
+                      end: '2023-06-29 05:20:00.000'
+                      value: '2023-06-29 05:15:00.000'
+                    node: ALTW.WELLS1
+                    lmp: 19.72
+                    mcc: 0.34
+                    mec: 18.95
+                    mlc: 0.43
+                page:
+                  pageNumber: 1
+                  pageSize: 1
+                  totalElements: 1
+                  totalPages: 1
+                  lastPage: true
+        '400':
+          description: Invalid date format
+          content:
+            application/json: { }
+        '401':
+          description: Invalid or missing Bearer Token in the Authorization header
+          content:
+            application/json: { }
+        '404':
+          description: Date not found
+          content:
+            application/json: { }
+  '/v1/real-time/{date}/lmp-expost':
+    get:
+      tags:
+        - Energy Market
+        - Real-time
+      summary: Retrieve Energy Market Real-time ExPost Locational Marginal Price (LMP)
+      description: 'Retrieve Energy Market Real-time ExPost Locational Marginal Price, Prices can be retrieved in five minute intervals per CPNode, aggregated per hour interval per CPNode, or both.'
+      operationId: get-v1-real-time-date-lmp-expost
+      parameters:
+        - name: date
+          in: path
+          description: 'Format - date (as full-date in RFC3339). Market date in the form: yyyy-mm-dd'
+          required: true
+          schema:
+            type: string
+            format: date
+            example: '2023-01-01'
+        - name: interval
+          in: query
+          description: 'Filter to a specific time interval (ex. "13:05", "13"), in Eastern Standard Time (UTC−05:00).'
+          schema:
+            type: string
+        - name: node
+          in: query
+          description: Filter to a specific Commercial Pricing Node.
+          schema:
+            type: string
+        - name: pageNumber
+          in: query
+          description: Format - int32.
+          schema:
+            type: integer
+            format: int32
+            default: 1
+        - name: preliminaryFinal
+          in: query
+          description: 'When set, only return data if it''s flagged as the given state.'
+          schema:
+            $ref: '#/components/schemas/PreliminaryFinalEnum'
+        - name: timeResolution
+          in: query
+          description: Time resolution of data
+          schema:
+            $ref: '#/components/schemas/Time-Res-5Min-Hourly'
+      responses:
+        '200':
+          description: Successful operation
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/RealTimeExPostLocationalMarginalPrice'
+                  page:
+                    $ref: '#/components/schemas/PageInfo'
+              example:
+                data:
+                  - timeInterval:
+                      resolution: 5min
+                      start: '2023-06-29 05:20:00.000'
+                      end: '2023-06-29 05:25:00.000'
+                      value: '2023-06-29 05:20:00.000'
+                    preliminaryFinal: Final
+                    node: ALTW.WELLS1
+                    lmp: 20.41
+                    mcc: 0.28
+                    mec: 19.63
+                    mlc: 0.50
+                page:
+                  pageNumber: 1
+                  pageSize: 1
+                  totalElements: 1
+                  totalPages: 1
+                  lastPage: true
+        '400':
+          description: Invalid date format
+          content:
+            application/json: { }
+        '401':
+          description: Invalid or missing Bearer Token in the Authorization header
+          content:
+            application/json: { }
+        '404':
+          description: Date not found
+          content:
+            application/json: { }
+components:
+  schemas:
+    LocalDate:
+      type: string
+      format: date
+      example: '2022-03-10'
+    LocationalMarginalPrice:
+      type: object
+      properties:
+        interval:
+          type: string
+          example: '1'
+        timeInterval:
+          $ref: '#/components/schemas/TimeInterval'
+        node:
+          type: string
+          description: Commercial Pricing Node
+          example: ALTW.WELLS1
+        lmp:
+          type: number
+          description: Locational Marginal Price
+          example: 21.6
+        mcc:
+          type: number
+          description: Marginal Congestion Component
+          example: 0.02
+        mec:
+          type: number
+          description: Marginal Energy Component
+          example: 20.94
+        mlc:
+          type: number
+          description: Marginal Losses Component
+          example: 0.64
+    MarketClearingPrice:
+      type: object
+      properties:
+        interval:
+          type: string
+          example: '1'
+        timeInterval:
+          $ref: '#/components/schemas/TimeInterval'
+        product:
+          type: string
+          allOf:
+            - $ref: '#/components/schemas/ProductEnum'
+          description: Ancillary Market product
+        zone:
+          type: string
+          description: Ancillary Services Reserve Zone
+          example: Zone 1
+        mcp:
+          type: number
+          description: Market Clearing Price
+          example: 6.48
+    PageInfo:
+      type: object
+      properties:
+        pageNumber:
+          type: integer
+          format: int32
+        pageSize:
+          type: integer
+          format: int32
+        totalElements:
+          type: integer
+          format: int64
+        totalPages:
+          type: integer
+          format: int64
+        lastPage:
+          type: boolean
+    PageLocationalMarginalPrice:
+      type: object
+      properties:
+        data:
+          type: array
+          items:
+            $ref: '#/components/schemas/LocationalMarginalPrice'
+        page:
+          $ref: '#/components/schemas/PageInfo'
+    PageMarketClearingPrice:
+      type: object
+      properties:
+        data:
+          type: array
+          items:
+            $ref: '#/components/schemas/MarketClearingPrice'
+        page:
+          $ref: '#/components/schemas/PageInfo'
+    PageRealTimeExPostLocationalMarginalPrice:
+      type: object
+      properties:
+        data:
+          type: array
+          items:
+            $ref: '#/components/schemas/RealTimeExPostLocationalMarginalPrice'
+        page:
+          $ref: '#/components/schemas/PageInfo'
+    PageRealTimeExPostMarketClearingPrice:
+      type: object
+      properties:
+        data:
+          type: array
+          items:
+            $ref: '#/components/schemas/RealTimeExPostMarketClearingPrice'
+        page:
+          $ref: '#/components/schemas/PageInfo'
+    PreliminaryFinalEnum:
+      enum:
+        - Preliminary
+        - Final
+      type: string
+    ProductEnum:
+      enum:
+        - Regulation
+        - Spin
+        - Supplemental
+        - STR
+        - Ramp-up
+        - Ramp-down
+      type: string
+    RealTimeExPostLocationalMarginalPrice:
+      type: object
+      properties:
+        timeInterval:
+          $ref: '#/components/schemas/TimeInterval'
+        preliminaryFinal:
+          type: string
+          allOf:
+            - $ref: '#/components/schemas/PreliminaryFinalEnum'
+          description: Whether the price is preliminary or final
+        node:
+          type: string
+          description: Commercial Pricing Node
+          example: ALTW.WELLS1
+        lmp:
+          type: number
+          description: Locational Marginal Price
+          example: 21.6
+        mcc:
+          type: number
+          description: Marginal Congestion Component
+          example: 0.02
+        mec:
+          type: number
+          description: Marginal Energy Component
+          example: 20.94
+        mlc:
+          type: number
+          description: Marginal Losses Component
+          example: 0.64
+    RealTimeExPostMarketClearingPrice:
+      type: object
+      properties:
+        preliminaryFinal:
+          type: string
+          allOf:
+            - $ref: '#/components/schemas/PreliminaryFinalEnum'
+          description: Whether the price is preliminary or final.
+        product:
+          type: string
+          allOf:
+            - $ref: '#/components/schemas/ProductEnum'
+          description: Ancillary Market product
+        zone:
+          type: string
+          description: Ancillary Services Reserve Zone
+          example: Zone 1
+        mcp:
+          type: number
+          description: Market Clearing Price
+          example: 6.48
+        timeInterval:
+          $ref: '#/components/schemas/TimeInterval'
+    Time-Res-5Min-Hourly:
+      enum:
+        - 5min
+        - hourly
+      type: string
+      default: hourly
+      example: hourly
+    Time-Res-Hourly-Daily:
+      enum:
+        - hourly
+        - daily
+      type: string
+      default: hourly
+      example: hourly
+    TimeInterval:
+      type: object
+      properties:
+        resolution:
+          enum:
+            - 5min
+            - hourly
+            - daily
+          type: string
+          example: daily
+        start:
+          pattern: '([0-9]{4})-([0-9]{2})-([0-9]{2}) ([0-9]{2}):([0-9]{2}):([0-9]{2}).([0-9]{3})'
+          type: string
+          description: In Eastern Standard Time (UTC−05:00).
+          example: '2023-06-28 00:00:00.000'
+        end:
+          pattern: '([0-9]{4})-([0-9]{2})-([0-9]{2}) ([0-9]{2}):([0-9]{2}):([0-9]{2}).([0-9]{3})'
+          type: string
+          description: In Eastern Standard Time (UTC−05:00).
+          example: '2023-06-29 00:00:00.000'
+        value:
+          type: string
+          description: 'Short hand value for time interval. Can be timestamp for 5min resolution (ex: 2023-06-28 00:00:00.000), hour ending value for hourly resolution, 1-24 (ex: 21), or date string for daily (ex: 2023-06-28). In Eastern Standard Time (UTC−05:00).'
+          example: '2023-06-29'
+  securitySchemes:
+    apiKeyHeader:
+      type: apiKey
+      name: Ocp-Apim-Subscription-Key
+      in: header
+    apiKeyQuery:
+      type: apiKey
+      name: subscription-key
+      in: query
+security:
+  - apiKeyHeader: [ ]
+  - apiKeyQuery: [ ]
+tags:
+  - name: Ancillary Services Market
+    description: 'The target data for the Ancillary Services are the Market Clearing Price (MCP) related to the 5 products in this market: Regulation, Spin, Supplemental, Short-term-reserves (STR), and Ramp (up and down). Ancillary Market prices are published at the Reserve Zone level and there are 8 zones in the current Ancillary Services Market.'
+  - name: Energy Market
+    description: 'The target data for the Energy Market is Locational Marginal Price (LMP) and its three components: Marginal Congestion Component (MCC), Marginal Energy Component (MEC), and Marginal Loss Component (MLC). Prices are published at the Commercial Pricing Node (CPNode) level. There are approximately 2,500 nodes in MISO.'
+  - name: Day-ahead
+    description: Day-ahead market prices
+  - name: Real-time
+    description: Real-time market prices

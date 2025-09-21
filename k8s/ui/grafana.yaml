@@ -122,6 +122,38 @@ data:
             "x": 0,
             "y": 9
           },
+        "fieldConfig": {
+          "defaults": {
+            "custom": {
+              "align": "left"
+            }
+          },
+          "overrides": []
+        }
+        },
+        {
+          "type": "table",
+          "title": "Iceberg Maintenance Alerts",
+          "datasource": {
+            "type": "grafana-clickhouse-datasource",
+            "uid": "clickhouse"
+          },
+          "targets": [
+            {
+              "query": "SELECT timestamp, severity, message, payload FROM ops.alerts WHERE source = 'aurum.airflow.iceberg_maintenance' ORDER BY timestamp DESC LIMIT 25",
+              "refId": "C",
+              "format": "table"
+            }
+          ],
+          "options": {
+            "showHeader": true
+          },
+          "gridPos": {
+            "h": 8,
+            "w": 24,
+            "x": 0,
+            "y": 19
+          },
           "fieldConfig": {
             "defaults": {
               "custom": {
