@@ -9,7 +9,7 @@ import os
 import time
 from calendar import monthrange
 from datetime import date, datetime, timezone
-from typing import Any, Dict, Iterable, List, Mapping, Optional, Tuple
+from typing import Any, Dict, Iterable, List, Mapping, Optional, Sequence, Tuple
 
 import psycopg
 
@@ -45,6 +45,70 @@ def _maybe_redis_client(cache_cfg: CacheConfig):
         import redis  # type: ignore
     except ModuleNotFoundError:
         LOGGER.debug("Redis package not available; caching disabled")
+        return None
+
+    socket_timeout = float(os.getenv("AURUM_API_REDIS_SOCKET_TIMEOUT", "1.5") or 1.5)
+    connect_timeout = float(os.getenv("AURUM_API_REDIS_CONNECT_TIMEOUT", "1.5") or 1.5)
+    client_kwargs = {
+        "username": cache_cfg.username,
+        "password": cache_cfg.password,
+        "socket_timeout": socket_timeout,
+        "socket_connect_timeout": connect_timeout,
+        "socket_keepalive": True,
+        "retry_on_timeout": True,
+    }
+    client_kwargs = {key: value for key, value in client_kwargs.items() if value is not None}
+
+    def _log_skip(reason: str) -> None:
+        LOGGER.debug("Skipping Redis client initialization: %s", reason)
+
+    try:
+        mode = (cache_cfg.mode or "standalone").lower()
+        if mode == "sentinel":
+            if not cache_cfg.sentinel_endpoints or not cache_cfg.sentinel_master:
+                _log_skip("sentinel configuration incomplete")
+                return None
+            from redis.sentinel import Sentinel  # type: ignore
+
+            sentinel = Sentinel(cache_cfg.sentinel_endpoints, **client_kwargs)
+            client = sentinel.master_for(cache_cfg.sentinel_master, db=cache_cfg.db, **client_kwargs)
+        elif mode == "cluster":
+            if not cache_cfg.cluster_nodes:
+                _log_skip("cluster startup nodes not provided")
+                return None
+            try:
+                from redis.cluster import RedisCluster  # type: ignore
+            except Exception:
+                LOGGER.warning("Redis cluster mode requested but redis-py cluster support is unavailable")
+                return None
+
+            startup_nodes = []
+            for node in cache_cfg.cluster_nodes:
+                host, _, port = node.partition(":")
+                if not host:
+                    continue
+                try:
+                    startup_nodes.append({"host": host, "port": int(port or "6379")})
+                except ValueError:
+                    LOGGER.debug("Ignoring invalid Redis cluster node definition: %s", node)
+                    continue
+            if not startup_nodes:
+                LOGGER.warning("Redis cluster configuration yielded no usable startup nodes")
+                return None
+            cluster_kwargs = dict(client_kwargs)
+            cluster_kwargs.setdefault("decode_responses", False)
+            client = RedisCluster(startup_nodes=startup_nodes, **cluster_kwargs)
+        elif cache_cfg.redis_url:
+            client = redis.Redis.from_url(cache_cfg.redis_url, db=cache_cfg.db, **client_kwargs)
+        else:
+            _log_skip("no Redis URL or mode configuration provided")
+            return None
+        client.ping()
+        LOGGER.debug("Redis client initialized using mode '%s'", mode)
+        return client
+    except Exception as exc:
+        LOGGER.warning("Redis client initialization failed: %s", exc)
+        LOGGER.debug("Redis client initialization failure details", exc_info=True)
         return None
 
 
@@ -513,6 +577,9 @@ def query_eia_series(
     if client is not None and cache_key is not None:
         try:  # pragma: no cover
             client.setex(cache_key, cache_cfg.ttl_seconds, json.dumps(rows, default=str))
+            index_key = f"{prefix}eia-series:index"
+            client.sadd(index_key, cache_key)
+            client.expire(index_key, cache_cfg.ttl_seconds)
         except Exception:
             pass
 
@@ -628,6 +695,9 @@ def query_eia_series_dimensions(
     if client is not None and cache_key is not None:
         try:  # pragma: no cover
             client.setex(cache_key, cache_cfg.ttl_seconds, json.dumps(results, default=str))
+            index_key = f"{prefix}eia-series-dimensions:index"
+            client.sadd(index_key, cache_key)
+            client.expire(index_key, cache_cfg.ttl_seconds)
         except Exception:
             pass
 
@@ -1421,6 +1491,143 @@ def invalidate_scenario_outputs_cache(
         return
 
 
+def _decode_member(member: Any) -> str:
+    if isinstance(member, bytes):
+        return member.decode("utf-8")
+    return str(member)
+
+
+def invalidate_eia_series_cache(cache_cfg: CacheConfig) -> Dict[str, int]:
+    client = _maybe_redis_client(cache_cfg)
+    prefix = f"{cache_cfg.namespace}:" if cache_cfg.namespace else ""
+    scopes = {
+        "eia-series": f"{prefix}eia-series:index",
+        "eia-series-dimensions": f"{prefix}eia-series-dimensions:index",
+    }
+    results: Dict[str, int] = {key: 0 for key in scopes}
+    if client is None:
+        return results
+
+    for scope, index_key in scopes.items():
+        try:
+            members = client.smembers(index_key)
+        except Exception:
+            continue
+        if not members:
+            client.delete(index_key)
+            continue
+        keys: list[str] = []
+        for member in members:
+            decoded = _decode_member(member)
+            if decoded:
+                keys.append(decoded)
+        if keys:
+            try:
+                client.delete(*keys)
+            except Exception:
+                pass
+            results[scope] = len(keys)
+        try:
+            client.srem(index_key, *members)
+        except Exception:
+            pass
+        try:
+            if hasattr(client, "scard") and client.scard(index_key) == 0:
+                client.delete(index_key)
+        except Exception:
+            client.delete(index_key)
+    return results
+
+
+def invalidate_dimensions_cache(cache_cfg: CacheConfig) -> int:
+    client = _maybe_redis_client(cache_cfg)
+    if client is None:
+        return 0
+    prefix = f"{cache_cfg.namespace}:" if cache_cfg.namespace else ""
+    index_key = f"{prefix}dimensions:index"
+    try:
+        members = client.smembers(index_key)
+    except Exception:
+        return 0
+    if not members:
+        client.delete(index_key)
+        return 0
+    keys: list[str] = []
+    for member in members:
+        decoded = _decode_member(member)
+        if decoded:
+            keys.append(decoded)
+    removed = 0
+    if keys:
+        try:
+            client.delete(*keys)
+        except Exception:
+            pass
+        removed = len(keys)
+    try:
+        client.srem(index_key, *members)
+    except Exception:
+        pass
+    try:
+        if hasattr(client, "scard") and client.scard(index_key) == 0:
+            client.delete(index_key)
+    except Exception:
+        client.delete(index_key)
+    return removed
+
+
+def invalidate_metadata_cache(cache_cfg: CacheConfig, prefixes: Sequence[str]) -> Dict[str, int]:
+    client = _maybe_redis_client(cache_cfg)
+    namespace = cache_cfg.namespace or "aurum"
+    index_key = f"{namespace}:metadata:index"
+    results: Dict[str, int] = {prefix: 0 for prefix in prefixes}
+    if client is None:
+        return results
+    try:
+        members = client.smembers(index_key)
+    except Exception:
+        return results
+
+    if not members:
+        client.delete(index_key)
+        return results
+
+    members_list = list(members)
+    keys_to_delete: list[str] = []
+    matched_members: list[Any] = []
+    for raw_member in members_list:
+        redis_key = _decode_member(raw_member)
+        if not redis_key:
+            continue
+        for prefix in prefixes:
+            expected_prefix = f"{namespace}:metadata:{prefix}"
+            if redis_key.startswith(expected_prefix):
+                keys_to_delete.append(redis_key)
+                matched_members.append(raw_member)
+                results[prefix] += 1
+                break
+
+    if keys_to_delete:
+        try:
+            client.delete(*keys_to_delete)
+        except Exception:
+            pass
+
+    if matched_members:
+        try:
+            client.srem(index_key, *matched_members)
+        except Exception:
+            pass
+
+    try:
+        if hasattr(client, "scard") and client.scard(index_key) == 0:
+            client.delete(index_key)
+    except Exception:
+        client.delete(index_key)
+
+    return results
+
+
 def query_iso_lmp_last_24h(
     *,
     iso_code: str | None = None,
@@ -1535,6 +1742,9 @@ __all__ = [
     "query_iso_lmp_daily",
     "query_iso_lmp_negative",
     "invalidate_scenario_outputs_cache",
+    "invalidate_eia_series_cache",
+    "invalidate_dimensions_cache",
+    "invalidate_metadata_cache",
     "TrinoConfig",
     "CacheConfig",
 ]
@@ -1800,8 +2010,9 @@ def query_dimensions(
 
     dims = ["asset_class", "iso", "location", "market", "product", "block", "tenor_type"]
 
-    cache_key = None
     client = _maybe_redis_client(cache_cfg)
+    cache_key = None
+    prefix = f"{cache_cfg.namespace}:" if cache_cfg.namespace else ""
     params = {
         "asof": asof.isoformat() if asof else None,
         **filters,
@@ -1809,7 +2020,7 @@ def query_dimensions(
         "include_counts": include_counts,
     }
     if client is not None:
-        cache_key = f"dimensions:{_cache_key(params)}"
+        cache_key = f"{prefix}dimensions:{_cache_key(params)}"
         cached = client.get(cache_key)
         if cached:  # pragma: no cover
             payload = json.loads(cached)
@@ -1845,6 +2056,9 @@ def query_dimensions(
                 cache_cfg.ttl_seconds,
                 json.dumps({"values": results, "counts": counts}, default=str),
             )
+            index_key = f"{prefix}dimensions:index"
+            client.sadd(index_key, cache_key)
+            client.expire(index_key, cache_cfg.ttl_seconds)
         except Exception:
             pass
     return results, counts if include_counts else None

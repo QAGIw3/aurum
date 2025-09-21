@@ -852,7 +852,7 @@ def test_ppa_valuate(monkeypatch):
     assert isinstance(body["data"], list)
     assert body["data"][0]["value"] == pytest.approx(12.5)
     assert body["data"][0]["unit"] == "USD"
-    assert persisted["ppa_contract_id"] == "ppa1"
+    assert persisted["ppa_contract_id"] == contract_id
     assert persisted["scenario_id"] == "scn-123"
     assert persisted["tenant_id"] == "tenant-42"
 

@@ -63,6 +63,8 @@ from .models import (
     PpaContractResponse,
     PpaContractListResponse,
     PpaMetric,
+    CachePurgeDetail,
+    CachePurgeResponse,
     IsoLocationOut,
     IsoLocationsResponse,
     IsoLocationResponse,
@@ -338,6 +340,17 @@ class _SimpleCache:
         self.set(key, value, ttl=ttl)
         return value
 
+    def purge_prefix(self, prefix: str) -> int:
+        with self._lock:
+            keys = [cache_key for cache_key in self._store if cache_key.startswith(prefix)]
+            for cache_key in keys:
+                self._store.pop(cache_key, None)
+            return len(keys)
+
+    def clear(self) -> None:
+        with self._lock:
+            self._store.clear()
+
 
 _INMEM_TTL = int(os.getenv("AURUM_API_INMEMORY_TTL", "60") or 60)
 _CACHE = _SimpleCache(default_ttl=_INMEM_TTL)
@@ -387,9 +400,19 @@ def _metadata_cache_get_or_set(key_suffix: str, supplier):
     if client is not None and redis_key is not None:
         try:  # pragma: no cover - best effort Redis population
             client.setex(redis_key, METADATA_CACHE_TTL, json.dumps(value, default=str))
+            index_key = f"{namespace}:metadata:index"
+            client.sadd(index_key, redis_key)
+            client.expire(index_key, METADATA_CACHE_TTL)
         except Exception:
             pass
     return value
+
+
+def _metadata_cache_purge(prefixes: Sequence[str]) -> int:
+    removed = 0
+    for prefix in prefixes:
+        removed += _CACHE.purge_prefix(prefix)
+    return removed
 
 
 def _respond_with_etag(
@@ -1410,6 +1433,11 @@ def iso_lmp_last_24h(
     market: Optional[str] = Query(None, description="Filter by market"),
     location_id: Optional[str] = Query(None, description="Filter by settlement location id"),
     limit: int = Query(500, ge=1, le=2000),
+    format: str = Query(
+        "json",
+        pattern="^(json|csv)$",
+        description="Set to 'csv' to stream results as CSV",
+    ),
     *,
     request: Request,
     response: Response,
@@ -1421,6 +1449,48 @@ def iso_lmp_last_24h(
         location_id=location_id,
         limit=limit,
     )
+
+    if format.lower() == "csv":
+        fieldnames = [
+            "iso_code",
+            "market",
+            "delivery_date",
+            "interval_start",
+            "interval_end",
+            "interval_minutes",
+            "location_id",
+            "location_name",
+            "location_type",
+            "price_total",
+            "price_energy",
+            "price_congestion",
+            "price_loss",
+            "currency",
+            "uom",
+            "settlement_point",
+            "source_run_id",
+            "ingest_ts",
+            "record_hash",
+            "metadata",
+        ]
+        serialisable_rows = [
+            {field: _prepare_csv_value(row.get(field)) for field in fieldnames}
+            for row in rows
+        ]
+        etag = _compute_etag({"data": serialisable_rows})
+        incoming = request.headers.get("if-none-match")
+        if incoming and incoming == etag:
+            return Response(status_code=304, headers={"ETag": etag, "X-Request-Id": request_id})
+
+        csv_response = _csv_response(
+            request_id,
+            rows,
+            fieldnames,
+            filename="iso-lmp-last-24h.csv",
+        )
+        csv_response.headers["ETag"] = etag
+        return csv_response
+
     data = [IsoLmpPoint(**row) for row in rows]
     model = IsoLmpResponse(meta=Meta(request_id=request_id, query_time_ms=int(elapsed)), data=data)
     return _respond_with_etag(model, request, response)
@@ -1438,6 +1508,11 @@ def iso_lmp_hourly(
     market: Optional[str] = Query(None, description="Filter by market"),
     location_id: Optional[str] = Query(None, description="Filter by settlement location id"),
     limit: int = Query(500, ge=1, le=2000),
+    format: str = Query(
+        "json",
+        pattern="^(json|csv)$",
+        description="Set to 'csv' to stream results as CSV",
+    ),
     *,
     request: Request,
     response: Response,
@@ -1449,6 +1524,39 @@ def iso_lmp_hourly(
         location_id=location_id,
         limit=limit,
     )
+
+    if format.lower() == "csv":
+        fieldnames = [
+            "iso_code",
+            "market",
+            "interval_start",
+            "location_id",
+            "currency",
+            "uom",
+            "price_avg",
+            "price_min",
+            "price_max",
+            "price_stddev",
+            "sample_count",
+        ]
+        serialisable_rows = [
+            {field: _prepare_csv_value(row.get(field)) for field in fieldnames}
+            for row in rows
+        ]
+        etag = _compute_etag({"data": serialisable_rows})
+        incoming = request.headers.get("if-none-match")
+        if incoming and incoming == etag:
+            return Response(status_code=304, headers={"ETag": etag, "X-Request-Id": request_id})
+
+        csv_response = _csv_response(
+            request_id,
+            rows,
+            fieldnames,
+            filename="iso-lmp-hourly.csv",
+        )
+        csv_response.headers["ETag"] = etag
+        return csv_response
+
     data = [IsoLmpAggregatePoint(**row) for row in rows]
     model = IsoLmpAggregateResponse(meta=Meta(request_id=request_id, query_time_ms=int(elapsed)), data=data)
     return _respond_with_etag(model, request, response)
@@ -1466,6 +1574,11 @@ def iso_lmp_daily(
     market: Optional[str] = Query(None, description="Filter by market"),
     location_id: Optional[str] = Query(None, description="Filter by settlement location id"),
     limit: int = Query(500, ge=1, le=2000),
+    format: str = Query(
+        "json",
+        pattern="^(json|csv)$",
+        description="Set to 'csv' to stream results as CSV",
+    ),
     *,
     request: Request,
     response: Response,
@@ -1477,6 +1590,39 @@ def iso_lmp_daily(
         location_id=location_id,
         limit=limit,
     )
+
+    if format.lower() == "csv":
+        fieldnames = [
+            "iso_code",
+            "market",
+            "interval_start",
+            "location_id",
+            "currency",
+            "uom",
+            "price_avg",
+            "price_min",
+            "price_max",
+            "price_stddev",
+            "sample_count",
+        ]
+        serialisable_rows = [
+            {field: _prepare_csv_value(row.get(field)) for field in fieldnames}
+            for row in rows
+        ]
+        etag = _compute_etag({"data": serialisable_rows})
+        incoming = request.headers.get("if-none-match")
+        if incoming and incoming == etag:
+            return Response(status_code=304, headers={"ETag": etag, "X-Request-Id": request_id})
+
+        csv_response = _csv_response(
+            request_id,
+            rows,
+            fieldnames,
+            filename="iso-lmp-daily.csv",
+        )
+        csv_response.headers["ETag"] = etag
+        return csv_response
+
     data = [IsoLmpAggregatePoint(**row) for row in rows]
     model = IsoLmpAggregateResponse(meta=Meta(request_id=request_id, query_time_ms=int(elapsed)), data=data)
     return _respond_with_etag(model, request, response)
@@ -1493,6 +1639,11 @@ def iso_lmp_negative(
     iso_code: Optional[str] = Query(None, description="Filter by ISO code"),
     market: Optional[str] = Query(None, description="Filter by market"),
     limit: int = Query(200, ge=1, le=1000),
+    format: str = Query(
+        "json",
+        pattern="^(json|csv)$",
+        description="Set to 'csv' to stream results as CSV",
+    ),
     *,
     request: Request,
     response: Response,
@@ -1503,6 +1654,48 @@ def iso_lmp_negative(
         market=market,
         limit=limit,
     )
+
+    if format.lower() == "csv":
+        fieldnames = [
+            "iso_code",
+            "market",
+            "delivery_date",
+            "interval_start",
+            "interval_end",
+            "interval_minutes",
+            "location_id",
+            "location_name",
+            "location_type",
+            "price_total",
+            "price_energy",
+            "price_congestion",
+            "price_loss",
+            "currency",
+            "uom",
+            "settlement_point",
+            "source_run_id",
+            "ingest_ts",
+            "record_hash",
+            "metadata",
+        ]
+        serialisable_rows = [
+            {field: _prepare_csv_value(row.get(field)) for field in fieldnames}
+            for row in rows
+        ]
+        etag = _compute_etag({"data": serialisable_rows})
+        incoming = request.headers.get("if-none-match")
+        if incoming and incoming == etag:
+            return Response(status_code=304, headers={"ETag": etag, "X-Request-Id": request_id})
+
+        csv_response = _csv_response(
+            request_id,
+            rows,
+            fieldnames,
+            filename="iso-lmp-negative.csv",
+        )
+        csv_response.headers["ETag"] = etag
+        return csv_response
+
     data = [IsoLmpPoint(**row) for row in rows]
     model = IsoLmpResponse(meta=Meta(request_id=request_id, query_time_ms=int(elapsed)), data=data)
     return _respond_with_etag(model, request, response)
@@ -2216,6 +2409,99 @@ def invalidate_scenario_cache(  # type: ignore[no-redef]
     effective_tenant = tenant_id or (principal or {}).get("tenant")
     service.invalidate_scenario_outputs_cache(CacheConfig.from_env(), effective_tenant, scenario_id)
     return Response(status_code=204)
+
+
+@app.post(
+    "/v1/admin/cache/eia/series/invalidate",
+    response_model=CachePurgeResponse,
+    tags=["Admin"],
+    summary="Invalidate cached EIA series queries",
+)
+def invalidate_eia_series_cache_admin(
+    request: Request,
+    response: Response,
+    principal: Dict[str, Any] | None = Depends(_get_principal),
+) -> CachePurgeResponse:
+    _require_admin(principal)
+    request_id = _current_request_id()
+    cache_cfg = CacheConfig.from_env()
+    results = service.invalidate_eia_series_cache(cache_cfg)
+    data = [
+        CachePurgeDetail(
+            scope="eia-series",
+            redis_keys_removed=results.get("eia-series", 0),
+            local_entries_removed=0,
+        ),
+        CachePurgeDetail(
+            scope="eia-series-dimensions",
+            redis_keys_removed=results.get("eia-series-dimensions", 0),
+            local_entries_removed=0,
+        ),
+    ]
+    model = CachePurgeResponse(meta=Meta(request_id=request_id, query_time_ms=0), data=data)
+    return _respond_with_etag(model, request, response)
+
+
+@app.post(
+    "/v1/admin/cache/metadata/{scope}/invalidate",
+    response_model=CachePurgeResponse,
+    tags=["Admin"],
+    summary="Invalidate metadata caches",
+)
+def invalidate_metadata_cache_admin(
+    scope: str,
+    request: Request,
+    response: Response,
+    iso: Optional[str] = Query(
+        None,
+        description="Optional ISO code when purging location metadata",
+    ),
+    principal: Dict[str, Any] | None = Depends(_get_principal),
+) -> CachePurgeResponse:
+    _require_admin(principal)
+    request_id = _current_request_id()
+    scope_normalized = scope.strip().lower()
+    if scope_normalized != "locations" and iso is not None:
+        raise HTTPException(status_code=400, detail="iso_not_applicable")
+
+    base_cache_cfg = CacheConfig.from_env()
+    meta_cache_cfg = replace(base_cache_cfg, ttl_seconds=METADATA_CACHE_TTL)
+
+    prefixes: list[str]
+    local_removed = 0
+    redis_removed = 0
+
+    if scope_normalized == "locations":
+        if iso:
+            iso_upper = iso.strip().upper()
+            if not iso_upper:
+                raise HTTPException(status_code=400, detail="invalid_iso")
+            prefixes = [f"iso:locations:{iso_upper}", f"iso:loc:{iso_upper}:"]
+        else:
+            prefixes = ["iso:locations:", "iso:loc:"]
+        local_removed = _metadata_cache_purge(prefixes)
+        redis_counts = service.invalidate_metadata_cache(meta_cache_cfg, prefixes)
+        redis_removed = sum(redis_counts.values())
+    elif scope_normalized == "units":
+        prefixes = ["units:canonical", "units:mapping"]
+        local_removed = _metadata_cache_purge(prefixes)
+        redis_counts = service.invalidate_metadata_cache(meta_cache_cfg, prefixes)
+        redis_removed = sum(redis_counts.values())
+    elif scope_normalized == "dimensions":
+        redis_removed = service.invalidate_dimensions_cache(meta_cache_cfg)
+    else:
+        raise HTTPException(status_code=404, detail="unknown_metadata_scope")
+
+    data = [
+        CachePurgeDetail(
+            scope=f"metadata:{scope_normalized}",
+            redis_keys_removed=redis_removed,
+            local_entries_removed=local_removed,
+        )
+    ]
+
+    model = CachePurgeResponse(meta=Meta(request_id=request_id, query_time_ms=0), data=data)
+    return _respond_with_etag(model, request, response)
 
 
 @app.get("/v1/ppa/contracts", response_model=PpaContractListResponse)

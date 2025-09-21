@@ -39,7 +39,24 @@ class FakeRedis:
     def delete(self, *keys: str):
         for key in keys:
             self.store.pop(key, None)
-        self.sets.pop(key, None)
+            self.sets.pop(key, None)
+
+    def srem(self, key: str, *members):
+        target = self.sets.get(key)
+        if not target:
+            return 0
+        removed = 0
+        for member in members:
+            member_str = member.decode("utf-8") if isinstance(member, bytes) else str(member)
+            if member_str in target:
+                target.remove(member_str)
+                removed += 1
+        if not target:
+            self.sets.pop(key, None)
+        return removed
+
+    def scard(self, key: str) -> int:
+        return len(self.sets.get(key, set()))
 
 
 SCENARIO_PIPELINE_ENABLED = os.getenv("AURUM_ENABLE_SCENARIO_PIPELINE_TESTS", "0").lower() in {

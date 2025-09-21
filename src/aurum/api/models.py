@@ -553,6 +553,17 @@ class PpaValuationListResponse(BaseModel):
     data: list[PpaValuationRecord]
 
 
+class CachePurgeDetail(BaseModel):
+    scope: str
+    redis_keys_removed: int
+    local_entries_removed: int
+
+
+class CachePurgeResponse(BaseModel):
+    meta: Meta
+    data: list[CachePurgeDetail]
+
+
 __all__ += [
     "CreateScenarioRequest",
     "ScenarioData",
@@ -574,4 +585,6 @@ __all__ += [
     "PpaContractListResponse",
     "PpaValuationRecord",
     "PpaValuationListResponse",
+    "CachePurgeDetail",
+    "CachePurgeResponse",
 ]

@@ -111,13 +111,29 @@ paths:
             minimum: 1
             maximum: 2000
           description: Maximum number of records to return (default 500).
+        - name: format
+          in: query
+          description: Response format (set to `csv` to stream results).
+          schema:
+            type: string
+            enum: [json, csv]
+            default: json
       responses:
         '200':
           description: ISO LMP records returned.
+          headers:
+            ETag:
+              description: Strong entity tag for cache validation.
+              schema:
+                type: string
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/IsoLmpResponse'
+            text/csv:
+              schema:
+                type: string
+                format: binary
         '401':
           $ref: '#/components/responses/Unauthorized'
   /v1/iso/lmp/hourly:
@@ -147,13 +163,29 @@ paths:
             minimum: 1
             maximum: 2000
           description: Maximum number of rows to return (default 500).
+        - name: format
+          in: query
+          description: Response format (set to `csv` to stream results).
+          schema:
+            type: string
+            enum: [json, csv]
+            default: json
       responses:
         '200':
           description: ISO LMP hourly aggregates returned.
+          headers:
+            ETag:
+              description: Strong entity tag for cache validation.
+              schema:
+                type: string
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/IsoLmpAggregateResponse'
+            text/csv:
+              schema:
+                type: string
+                format: binary
         '401':
           $ref: '#/components/responses/Unauthorized'
   /v1/iso/lmp/daily:
@@ -183,13 +215,29 @@ paths:
             minimum: 1
             maximum: 2000
           description: Maximum number of rows to return (default 500).
+        - name: format
+          in: query
+          description: Response format (set to `csv` to stream results).
+          schema:
+            type: string
+            enum: [json, csv]
+            default: json
       responses:
         '200':
           description: ISO LMP daily aggregates returned.
+          headers:
+            ETag:
+              description: Strong entity tag for cache validation.
+              schema:
+                type: string
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/IsoLmpAggregateResponse'
+            text/csv:
+              schema:
+                type: string
+                format: binary
         '401':
           $ref: '#/components/responses/Unauthorized'
   /v1/iso/lmp/negative:
@@ -215,13 +263,29 @@ paths:
             minimum: 1
             maximum: 1000
           description: Maximum number of rows to return (default 200).
+        - name: format
+          in: query
+          description: Response format (set to `csv` to stream results).
+          schema:
+            type: string
+            enum: [json, csv]
+            default: json
       responses:
         '200':
           description: ISO LMP records returned.
+          headers:
+            ETag:
+              description: Strong entity tag for cache validation.
+              schema:
+                type: string
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/IsoLmpResponse'
+            text/csv:
+              schema:
+                type: string
+                format: binary
         '401':
           $ref: '#/components/responses/Unauthorized'
   /v1/drought/dimensions:
