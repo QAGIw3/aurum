@@ -834,8 +834,9 @@ def test_ppa_valuate_requires_scenario(monkeypatch):
 
 
 
-def test_metadata_units_etag():
+def test_metadata_units_etag(monkeypatch):
     pytest.importorskip("fastapi", reason="fastapi not installed")
+    _ensure_opentelemetry(monkeypatch)
     from fastapi.testclient import TestClient
     from aurum.api import app as api_app
 

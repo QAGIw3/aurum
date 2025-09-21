@@ -300,7 +300,8 @@ def _respond_with_etag(
     extra_headers: Optional[Dict[str, str]] = None,
 ):
     payload = _model_dump(model)
-    etag = _compute_etag(payload)
+    etag_payload = {k: v for k, v in payload.items() if k != "meta"}
+    etag = _compute_etag(etag_payload)
     incoming = request.headers.get("if-none-match")
     if incoming and incoming == etag:
         headers = {"ETag": etag}
