@@ -1,18 +1,72 @@
 from datetime import date
 from typing import Any, Dict, List
 
+import importlib.util
+import pathlib
+import sys
+import types
+
 import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
-import aurum.api.routes as routes
-from aurum.core.settings import AurumSettings
+_PATH = pathlib.Path(__file__).resolve()
+SRC_DIR = None
+for parent in _PATH.parents:
+    if parent.name == "src":
+        SRC_DIR = parent
+        break
+
+if SRC_DIR is None:
+    raise RuntimeError("Unable to locate project src directory")
+
+if str(SRC_DIR) not in sys.path:
+    sys.path.insert(0, str(SRC_DIR))
+
+import aurum  # noqa: E402
+from aurum.core.settings import AurumSettings  # noqa: E402
+
+if "aurum.api" not in sys.modules:
+    api_pkg = types.ModuleType("aurum.api")
+    api_pkg.__path__ = [str(SRC_DIR / "aurum" / "api")]
+    sys.modules["aurum.api"] = api_pkg
+
+
+def _load_api_module(name: str):
+    if name in sys.modules:
+        return sys.modules[name]
+    module_path = SRC_DIR / "aurum" / "api" / f"{name.split('.')[-1]}.py"
+    spec = importlib.util.spec_from_file_location(name, module_path)
+    if spec is None or spec.loader is None:
+        raise RuntimeError(f"Unable to load module {name} from {module_path}")
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[name] = module
+    spec.loader.exec_module(module)
+    return module
+
+
+for dependency in (
+    "aurum.api.config",
+    "aurum.api.cache",
+    "aurum.api.container",
+    "aurum.api.exceptions",
+    "aurum.api.models",
+    "aurum.api.auth",
+    "aurum.api.scenario_service",
+    "aurum.api.service",
+):
+    _load_api_module(dependency)
+
+routes = _load_api_module("aurum.api.routes")
 
 
 @pytest.fixture
 def curves_client(monkeypatch) -> tuple[TestClient, List[Dict[str, Any]]]:
     settings = AurumSettings()
     routes.configure_routes(settings)
+    import aurum.api.state as state
+
+    state.configure(settings)
 
     app = FastAPI()
     app.state.settings = settings

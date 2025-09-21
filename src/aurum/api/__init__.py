@@ -82,6 +82,17 @@ from .streaming_manager import (
 )
 from .streaming_endpoints import router as streaming_endpoints_router
 from .streaming_management import router as streaming_management_router
+from .openapi_generator import (
+    generate_documentation,
+    OpenAPIGenerator,
+    SDKGenerator,
+    DocumentationValidator,
+    DocumentationFormat,
+    SDKLanguage,
+    APISchema,
+    APIEndpoint,
+)
+from .documentation_manager import router as documentation_manager_router
 
 create_app = app_module.create_app
 app = app_module
@@ -153,4 +164,13 @@ __all__ = [
     "initialize_streaming",
     "streaming_endpoints_router",
     "streaming_management_router",
+    "generate_documentation",
+    "OpenAPIGenerator",
+    "SDKGenerator",
+    "DocumentationValidator",
+    "DocumentationFormat",
+    "SDKLanguage",
+    "APISchema",
+    "APIEndpoint",
+    "documentation_manager_router",
 ]

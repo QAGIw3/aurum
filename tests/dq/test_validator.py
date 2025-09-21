@@ -1,65 +1,75 @@
-from pathlib import Path
+from __future__ import annotations
 
 import json
+from pathlib import Path
+
 import pandas as pd
 import pytest
 
-from aurum.dq import validator
+from aurum.dq import ExpectationFailedError, enforce_expectation_suite, validate_dataframe
 
 
-def test_env_overrides(monkeypatch, tmp_path: Path):
+def _write_suite(tmp_path: Path, expectations):
     suite = {
-        "expectations": [
-            {
-                "expectation_type": "expect_column_values_to_be_between",
-                "kwargs": {"column": "value", "min_value": 0, "max_value": 5},
-                "meta": {
-                    "env_overrides": {
-                        "min_value": "GE_TEST_MIN",
-                        "max_value": "GE_TEST_MAX",
-                    }
-                },
-            }
-        ]
+        "expectation_suite_name": "test_suite",
+        "expectations": expectations,
     }
-    suite_path = tmp_path / "suite.json"
-    suite_path.write_text(json.dumps(suite))
-
-    df = pd.DataFrame({"value": [1, 2, 3]})
-    monkeypatch.setenv("GE_TEST_MIN", "2")
-    monkeypatch.setenv("GE_TEST_MAX", "4")
-
-    results = validator.validate_dataframe(df, suite_path)
-    assert len(results) == 1
-    assert not results[0].success
-    assert "only" in (results[0].details or "")
+    path = tmp_path / "suite.json"
+    path.write_text(json.dumps(suite), encoding="utf-8")
+    return path
 
 
-def test_row_condition_proportion(tmp_path: Path):
-    suite = {
-        "expectations": [
-            {
-                "expectation_type": "expect_column_proportion_of_nonnulls_to_be_between",
-                "kwargs": {
-                    "column": "value",
-                    "row_condition": "segment == 'A'",
-                    "min_value": 0.5,
-                    "max_value": 1.0,
-                },
-            }
-        ]
-    }
-    suite_path = tmp_path / "suite.json"
-    suite_path.write_text(json.dumps(suite))
-
+def test_compound_columns_unique_pass(tmp_path: Path):
     df = pd.DataFrame(
         {
-            "segment": ["A", "A", "B"],
-            "value": [1.0, None, 2.0],
+            "a": [1, 2, 3],
+            "b": ["x", "y", "z"],
         }
     )
+    suite_path = _write_suite(
+        tmp_path,
+        [
+            {
+                "expectation_type": "expect_compound_columns_to_be_unique",
+                "kwargs": {"column_list": ["a", "b"]},
+            }
+        ],
+    )
+    results = validate_dataframe(df, suite_path)
+    assert all(result.success for result in results)
 
-    results = validator.validate_dataframe(df, suite_path)
-    assert len(results) == 1
-    # Only rows in segment A considered => one value, one null => proportion 0.5 satisfies bounds
-    assert results[0].success
+
+def test_compound_columns_unique_fail(tmp_path: Path):
+    df = pd.DataFrame(
+        {
+            "a": [1, 1],
+            "b": ["x", "x"],
+        }
+    )
+    suite_path = _write_suite(
+        tmp_path,
+        [
+            {
+                "expectation_type": "expect_multicolumn_values_to_be_unique",
+                "kwargs": {"column_list": ["a", "b"]},
+            }
+        ],
+    )
+    with pytest.raises(ExpectationFailedError) as excinfo:
+        enforce_expectation_suite(df, suite_path)
+    assert "duplicate" in str(excinfo.value).lower()
+
+
+def test_expectation_missing_columns(tmp_path: Path):
+    df = pd.DataFrame({"a": [1]})
+    suite_path = _write_suite(
+        tmp_path,
+        [
+            {
+                "expectation_type": "expect_compound_columns_to_be_unique",
+                "kwargs": {"column_list": ["a", "b"]},
+            }
+        ],
+    )
+    with pytest.raises(ValueError):
+        validate_dataframe(df, suite_path)

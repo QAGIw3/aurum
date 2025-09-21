@@ -1,0 +1,847 @@
+openapi: 3.0.3
+info:
+  title: Aurum Market Intelligence Platform API
+  description: |
+    Comprehensive API for accessing market data, curves, and analytics from the Aurum platform.
+
+    ## Overview
+    The Aurum API provides access to:
+    - Market curve data with historical and real-time pricing
+    - Scenario analysis and modeling capabilities
+    - Metadata dimensions for data exploration
+    - ISO location mappings and market intelligence
+    - Performance monitoring and health checks
+
+    ## Authentication
+    The API supports multiple authentication methods:
+    - JWT tokens for user authentication
+    - Service-to-service authentication via Kubernetes RBAC
+    - Optional OIDC integration for enterprise SSO
+
+    ## Rate Limiting
+    Rate limiting is applied per endpoint with configurable limits.
+    Default limits: 10 requests/second, 20 burst requests.
+
+    ## Pagination
+    Large datasets support cursor-based pagination for efficient data retrieval.
+
+    ## Error Handling
+    All endpoints return structured error responses with appropriate HTTP status codes.
+  version: "1.0.0"
+  contact:
+    name: Aurum Platform Team
+    email: platform@aurum.local
+  license:
+    name: MIT
+    url: https://opensource.org/licenses/MIT
+
+servers:
+  - url: http://api.aurum-dev.svc.cluster.local:8080
+    description: Development server (Kubernetes internal)
+  - url: https://api.aurum.local
+    description: Production server
+  - url: http://localhost:8080
+    description: Local development server
+
+security:
+  - BearerAuth: []
+  - ApiKeyAuth: []
+
+components:
+  securitySchemes:
+    BearerAuth:
+      type: http
+      scheme: bearer
+      description: JWT token authentication
+    ApiKeyAuth:
+      type: apiKey
+      in: header
+      name: X-API-Key
+      description: Service-to-service API key authentication
+
+  schemas:
+    Meta:
+      type: object
+      properties:
+        request_id:
+          type: string
+          description: Unique request identifier for tracing
+          example: "req-12345678-90ab-cdef-1234-567890abcdef"
+        query_time_ms:
+          type: integer
+          minimum: 0
+          description: Query execution time in milliseconds
+          example: 145
+        next_cursor:
+          type: string
+          nullable: true
+          description: Cursor for next page of results
+          example: "eyJwYWdlIjoxLCJsaW1pdCI6MTAwfQ=="
+        prev_cursor:
+          type: string
+          nullable: true
+          description: Cursor for previous page of results
+          example: "eyJwYWdlIjowLCJsaW1pdCI6MTAwfQ=="
+      required:
+        - request_id
+        - query_time_ms
+
+    CurvePoint:
+      type: object
+      properties:
+        curve_key:
+          type: string
+          description: Unique identifier for the curve
+          example: "NATURAL_GAS_NYMEX_HENRY_HUB_MONTHLY"
+        tenor_label:
+          type: string
+          description: Tenor description (e.g., "Jan24", "Q1-24")
+          example: "Jan24"
+        tenor_type:
+          type: string
+          enum: [MONTHLY, QUARTERLY, CALENDAR, SPARK]
+          nullable: true
+          description: Type of tenor period
+          example: "MONTHLY"
+        contract_month:
+          type: string
+          format: date
+          nullable: true
+          description: Contract delivery month
+          example: "2024-01-01"
+        asof_date:
+          type: string
+          format: date
+          description: Date this curve data is as of
+          example: "2024-01-15"
+        mid:
+          type: number
+          nullable: true
+          description: Mid price
+          example: 2.85
+        bid:
+          type: number
+          nullable: true
+          description: Bid price
+          example: 2.84
+        ask:
+          type: number
+          nullable: true
+          description: Ask price
+          example: 2.86
+        price_type:
+          type: string
+          enum: [MID, BID, ASK, LAST]
+          nullable: true
+          description: Type of price quoted
+          example: "MID"
+      required:
+        - curve_key
+        - tenor_label
+        - asof_date
+
+    CurveResponse:
+      type: object
+      properties:
+        meta:
+          $ref: '#/components/schemas/Meta'
+        data:
+          type: array
+          items:
+            $ref: '#/components/schemas/CurvePoint'
+          description: List of curve data points
+      required:
+        - meta
+        - data
+
+    CurveDiffPoint:
+      type: object
+      properties:
+        curve_key:
+          type: string
+          description: Curve identifier
+          example: "NATURAL_GAS_NYMEX_HENRY_HUB_MONTHLY"
+        tenor_label:
+          type: string
+          description: Tenor label
+          example: "Jan24"
+        tenor_type:
+          type: string
+          enum: [MONTHLY, QUARTERLY, CALENDAR, SPARK]
+          nullable: true
+          example: "MONTHLY"
+        contract_month:
+          type: string
+          format: date
+          nullable: true
+          example: "2024-01-01"
+        asof_a:
+          type: string
+          format: date
+          description: First comparison date
+          example: "2024-01-10"
+        mid_a:
+          type: number
+          nullable: true
+          description: Mid price on first date
+          example: 2.80
+        asof_b:
+          type: string
+          format: date
+          description: Second comparison date
+          example: "2024-01-15"
+        mid_b:
+          type: number
+          nullable: true
+          description: Mid price on second date
+          example: 2.85
+        diff_abs:
+          type: number
+          nullable: true
+          description: Absolute price difference
+          example: 0.05
+        diff_pct:
+          type: number
+          nullable: true
+          description: Percentage price difference
+          example: 1.79
+      required:
+        - curve_key
+        - tenor_label
+        - asof_a
+        - asof_b
+
+    CurveDiffResponse:
+      type: object
+      properties:
+        meta:
+          $ref: '#/components/schemas/Meta'
+        data:
+          type: array
+          items:
+            $ref: '#/components/schemas/CurveDiffPoint'
+          description: List of curve difference data points
+      required:
+        - meta
+        - data
+
+    DimensionsData:
+      type: object
+      properties:
+        asset_class:
+          type: array
+          items:
+            type: string
+          nullable: true
+          description: Available asset classes
+          example: ["NATURAL_GAS", "COAL", "OIL"]
+        iso:
+          type: array
+          items:
+            type: string
+          nullable: true
+          description: Available ISO country codes
+          example: ["US", "CA", "MX"]
+        location:
+          type: array
+          items:
+            type: string
+          nullable: true
+          description: Available locations
+          example: ["HENRY_HUB", "ALGONQUIN", "CHICAGO"]
+        market:
+          type: array
+          items:
+            type: string
+          nullable: true
+          description: Available markets
+          example: ["NYMEX", "ICE", "OTC"]
+        product:
+          type: array
+          items:
+            type: string
+          nullable: true
+          description: Available products
+          example: ["NATURAL_GAS", "POWER", "EMISSIONS"]
+        block:
+          type: array
+          items:
+            type: string
+          nullable: true
+          description: Available trading blocks
+          example: ["PEAK", "OFF_PEAK", "FLAT"]
+        tenor_type:
+          type: array
+          items:
+            type: string
+          nullable: true
+          description: Available tenor types
+          example: ["MONTHLY", "QUARTERLY", "CALENDAR"]
+      description: Available dimension values for filtering
+
+    DimensionCount:
+      type: object
+      properties:
+        value:
+          type: string
+          description: Dimension value
+          example: "NATURAL_GAS"
+        count:
+          type: integer
+          minimum: 0
+          description: Number of records with this value
+          example: 15420
+      required:
+        - value
+        - count
+
+    DimensionsCountData:
+      type: object
+      properties:
+        asset_class:
+          type: array
+          items:
+            $ref: '#/components/schemas/DimensionCount'
+          nullable: true
+          description: Asset class counts
+        iso:
+          type: array
+          items:
+            $ref: '#/components/schemas/DimensionCount'
+          nullable: true
+          description: ISO country counts
+        location:
+          type: array
+          items:
+            $ref: '#/components/schemas/DimensionCount'
+          nullable: true
+          description: Location counts
+        market:
+          type: array
+          items:
+            $ref: '#/components/schemas/DimensionCount'
+          nullable: true
+          description: Market counts
+        product:
+          type: array
+          items:
+            $ref: '#/components/schemas/DimensionCount'
+          nullable: true
+          description: Product counts
+        block:
+          type: array
+          items:
+            $ref: '#/components/schemas/DimensionCount'
+          nullable: true
+          description: Block counts
+        tenor_type:
+          type: array
+          items:
+            $ref: '#/components/schemas/DimensionCount'
+          nullable: true
+          description: Tenor type counts
+      description: Count data for each dimension
+
+    DimensionsResponse:
+      type: object
+      properties:
+        meta:
+          $ref: '#/components/schemas/Meta'
+        data:
+          $ref: '#/components/schemas/DimensionsData'
+          description: Available dimension values
+        counts:
+          $ref: '#/components/schemas/DimensionsCountData'
+          nullable: true
+          description: Count data for dimensions
+      required:
+        - meta
+        - data
+
+    IsoLocationOut:
+      type: object
+      properties:
+        iso:
+          type: string
+          description: ISO country code
+          example: "US"
+        location_id:
+          type: string
+          description: Location identifier
+          example: "HENRY_HUB"
+        location_name:
+          type: string
+          nullable: true
+          description: Human-readable location name
+          example: "Henry Hub"
+        location_type:
+          type: string
+          nullable: true
+          description: Type of location (hub, city, region, etc.)
+          example: "HUB"
+        zone:
+          type: string
+          nullable: true
+          description: Time zone identifier
+          example: "America/Chicago"
+        hub:
+          type: string
+          nullable: true
+          description: Trading hub identifier
+          example: "HENRY_HUB"
+        timezone:
+          type: string
+          nullable: true
+          description: Time zone name
+          example: "Central Time"
+      required:
+        - iso
+        - location_id
+
+    IsoLocationsResponse:
+      type: object
+      properties:
+        meta:
+          $ref: '#/components/schemas/Meta'
+        data:
+          type: array
+          items:
+            $ref: '#/components/schemas/IsoLocationOut'
+          description: List of ISO locations
+      required:
+        - meta
+        - data
+
+    IsoLocationResponse:
+      type: object
+      properties:
+        meta:
+          $ref: '#/components/schemas/Meta'
+        data:
+          $ref: '#/components/schemas/IsoLocationOut'
+          description: Single ISO location
+      required:
+        - meta
+        - data
+
+    ErrorResponse:
+      type: object
+      properties:
+        error:
+          type: object
+          properties:
+            code:
+              type: string
+              description: Error code
+              example: "VALIDATION_ERROR"
+            message:
+              type: string
+              description: Human-readable error message
+              example: "Invalid date format"
+            details:
+              type: object
+              description: Additional error details
+              additionalProperties: true
+            request_id:
+              type: string
+              description: Request identifier for debugging
+              example: "req-12345678-90ab-cdef-1234-567890abcdef"
+          required:
+            - code
+            - message
+            - request_id
+      required:
+        - error
+
+  parameters:
+    AsOfDate:
+      name: asof_date
+      in: query
+      required: true
+      schema:
+        type: string
+        format: date
+      description: Date for which to retrieve data
+      example: "2024-01-15"
+
+    CurveKey:
+      name: curve_key
+      in: query
+      required: true
+      schema:
+        type: string
+      description: Curve identifier
+      example: "NATURAL_GAS_NYMEX_HENRY_HUB_MONTHLY"
+
+    IsoCode:
+      name: iso
+      in: query
+      schema:
+        type: string
+      description: ISO country code
+      example: "US"
+
+    LocationId:
+      name: location_id
+      in: path
+      required: true
+      schema:
+        type: string
+      description: Location identifier
+      example: "HENRY_HUB"
+
+    Limit:
+      name: limit
+      in: query
+      schema:
+        type: integer
+        minimum: 1
+        maximum: 10000
+        default: 100
+      description: Maximum number of records to return
+      example: 100
+
+    Cursor:
+      name: cursor
+      in: query
+      schema:
+        type: string
+      description: Cursor for pagination
+      example: "eyJwYWdlIjoxLCJsaW1pdCI6MTAwfQ=="
+
+    Filters:
+      name: filters
+      in: query
+      schema:
+        type: string
+      description: |
+        JSON-encoded filter criteria.
+        Example: `{"asset_class": "NATURAL_GAS", "market": "NYMEX"}`
+      example: '{"asset_class": "NATURAL_GAS"}'
+
+paths:
+  /health:
+    get:
+      summary: Health Check
+      description: |
+        Basic health check endpoint for load balancer and monitoring.
+        Returns 200 OK if service is healthy.
+      tags:
+        - System
+      responses:
+        200:
+          description: Service is healthy
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    example: "ok"
+                required:
+                  - status
+
+  /ready:
+    get:
+      summary: Readiness Check
+      description: |
+        Readiness probe for load balancer checks.
+        Validates connectivity to critical dependencies (Trino, TimescaleDB, Redis).
+      tags:
+        - System
+      responses:
+        200:
+          description: Service is ready to handle requests
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    example: "ready"
+                  checks:
+                    type: object
+                    properties:
+                      trino:
+                        type: string
+                        example: "ready"
+                      timescale:
+                        type: string
+                        example: "ready"
+                      redis:
+                        type: string
+                        example: "ready"
+                required:
+                  - status
+                  - checks
+        503:
+          description: Service is not ready
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /v1/curves:
+    get:
+      summary: Get Curve Data
+      description: |
+        Retrieve market curve data with optional filtering and pagination.
+
+        ## Filtering
+        Multiple filter parameters can be combined for complex queries.
+
+        ## Pagination
+        Use cursor-based pagination for large datasets.
+        The response includes `next_cursor` and `prev_cursor` fields.
+      tags:
+        - Curves
+      parameters:
+        - $ref: '#/components/parameters/AsOfDate'
+        - $ref: '#/components/parameters/CurveKey'
+        - name: asset_class
+          in: query
+          schema:
+            type: string
+          description: Filter by asset class
+          example: "NATURAL_GAS"
+        - name: iso
+          in: query
+          schema:
+            type: string
+          description: Filter by ISO country code
+          example: "US"
+        - name: market
+          in: query
+          schema:
+            type: string
+          description: Filter by market
+          example: "NYMEX"
+        - name: location
+          in: query
+          schema:
+            type: string
+          description: Filter by location
+          example: "HENRY_HUB"
+        - name: product
+          in: query
+          schema:
+            type: string
+          description: Filter by product
+          example: "NATURAL_GAS"
+        - name: block
+          in: query
+          schema:
+            type: string
+          description: Filter by trading block
+          example: "PEAK"
+        - name: tenor_type
+          in: query
+          schema:
+            type: string
+            enum: [MONTHLY, QUARTERLY, CALENDAR, SPARK]
+          description: Filter by tenor type
+          example: "MONTHLY"
+        - name: price_type
+          in: query
+          schema:
+            type: string
+            enum: [MID, BID, ASK, LAST]
+          description: Filter by price type
+          example: "MID"
+        - $ref: '#/components/parameters/Limit'
+        - $ref: '#/components/parameters/Cursor'
+      responses:
+        200:
+          description: Curve data retrieved successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CurveResponse'
+        400:
+          description: Invalid request parameters
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        503:
+          description: Service unavailable
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /v1/curves/diff:
+    get:
+      summary: Get Curve Differences
+      description: |
+        Compare curve data between two dates to identify price changes.
+
+        ## Price Differences
+        - `diff_abs`: Absolute price difference (mid_b - mid_a)
+        - `diff_pct`: Percentage price difference ((mid_b - mid_a) / mid_a * 100)
+      tags:
+        - Curves
+      parameters:
+        - $ref: '#/components/parameters/CurveKey'
+        - name: asof_a
+          in: query
+          required: true
+          schema:
+            type: string
+            format: date
+          description: First comparison date
+          example: "2024-01-10"
+        - name: asof_b
+          in: query
+          required: true
+          schema:
+            type: string
+            format: date
+          description: Second comparison date
+          example: "2024-01-15"
+        - name: iso
+          in: query
+          schema:
+            type: string
+          description: Filter by ISO country code
+          example: "US"
+        - name: market
+          in: query
+          schema:
+            type: string
+          description: Filter by market
+          example: "NYMEX"
+        - name: location
+          in: query
+          schema:
+            type: string
+          description: Filter by location
+          example: "HENRY_HUB"
+        - $ref: '#/components/parameters/Limit'
+        - $ref: '#/components/parameters/Cursor'
+      responses:
+        200:
+          description: Curve differences retrieved successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CurveDiffResponse'
+        400:
+          description: Invalid request parameters
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        503:
+          description: Service unavailable
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /v1/metadata/dimensions:
+    get:
+      summary: Get Metadata Dimensions
+      description: |
+        Retrieve available values for metadata dimensions used in filtering.
+
+        ## Usage
+        Use this endpoint to populate filter dropdowns and understand available data dimensions.
+      tags:
+        - Metadata
+      parameters:
+        - name: include_counts
+          in: query
+          schema:
+            type: boolean
+            default: false
+          description: Include count information for each dimension value
+          example: true
+      responses:
+        200:
+          description: Dimensions retrieved successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DimensionsResponse'
+        503:
+          description: Service unavailable
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /v1/locations/iso:
+    get:
+      summary: Get ISO Locations
+      description: |
+        Retrieve mapping of ISO country codes to trading locations and hubs.
+
+        ## Location Types
+        - **HUB**: Major trading hub (e.g., Henry Hub)
+        - **CITY**: Major city trading point
+        - **REGION**: Regional trading area
+        - **ZONE**: Specific delivery zone
+      tags:
+        - Locations
+      parameters:
+        - $ref: '#/components/parameters/IsoCode'
+        - name: location_type
+          in: query
+          schema:
+            type: string
+            enum: [HUB, CITY, REGION, ZONE]
+          description: Filter by location type
+          example: "HUB"
+        - $ref: '#/components/parameters/Limit'
+        - $ref: '#/components/parameters/Cursor'
+      responses:
+        200:
+          description: ISO locations retrieved successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/IsoLocationsResponse'
+        400:
+          description: Invalid request parameters
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        503:
+          description: Service unavailable
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /v1/locations/iso/{location_id}:
+    get:
+      summary: Get ISO Location Details
+      description: |
+        Retrieve detailed information about a specific trading location.
+      tags:
+        - Locations
+      parameters:
+        - $ref: '#/components/parameters/LocationId'
+      responses:
+        200:
+          description: Location details retrieved successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/IsoLocationResponse'
+        404:
+          description: Location not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        503:
+          description: Service unavailable
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'

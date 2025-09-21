@@ -1,0 +1,46 @@
+{
+  "expectation_suite_name": "mart_scenario_output",
+  "meta": {
+    "notes": "Quality checks for the mart_scenario_output view."
+  },
+  "expectations": [
+    {
+      "expectation_type": "expect_column_values_to_not_be_null",
+      "kwargs": {"column": "scenario_id"}
+    },
+    {
+      "expectation_type": "expect_column_values_to_not_be_null",
+      "kwargs": {"column": "tenant_id"}
+    },
+    {
+      "expectation_type": "expect_column_values_to_not_be_null",
+      "kwargs": {"column": "metric"}
+    },
+    {
+      "expectation_type": "expect_column_values_to_not_be_null",
+      "kwargs": {"column": "value"}
+    },
+    {
+      "expectation_type": "expect_compound_columns_to_be_unique",
+      "kwargs": {
+        "column_list": ["tenant_id", "scenario_id", "run_id", "metric", "tenor_label"]
+      }
+    },
+    {
+      "expectation_type": "expect_column_proportion_of_nonnulls_to_be_between",
+      "kwargs": {
+        "column": "band_lower",
+        "min_value": 0.8,
+        "max_value": 1.0
+      }
+    },
+    {
+      "expectation_type": "expect_column_proportion_of_nonnulls_to_be_between",
+      "kwargs": {
+        "column": "band_upper",
+        "min_value": 0.8,
+        "max_value": 1.0
+      }
+    }
+  ]
+}

@@ -762,6 +762,73 @@ Alerting Examples:")
     print("  - Burst limit exhaustion warnings")
 
 
+async def example_api_documentation():
+    """Example of auto-generated API documentation."""
+    print("\n=== API Documentation Example ===")
+
+    from .openapi_generator import OpenAPIGenerator, DocumentationFormat
+
+    print("OpenAPI Documentation Generation:")
+    print("  - JSON format for machines")
+    print("  - YAML format for humans")
+    print("  - Markdown for documentation sites")
+    print("  - Interactive Swagger UI")
+
+    print("
+Documentation Features:")
+    print("  - Auto-generated from FastAPI routes")
+    print("  - Server information for different environments")
+    print("  - Security schemes and authentication")
+    print("  - Request/response schemas")
+    print("  - Parameter validation rules")
+
+
+async def example_sdk_generation():
+    """Example of client SDK generation."""
+    print("\n=== Client SDK Generation Example ===")
+
+    from .openapi_generator import SDKLanguage
+
+    print("Client SDK Generation:")
+    print("  - Python client with requests")
+    print("  - TypeScript client with fetch")
+    print("  - Auto-generated from OpenAPI schema")
+    print("  - Type-safe API calls")
+    print("  - Error handling and authentication")
+
+
+async def example_docs_validation():
+    """Example of API documentation validation."""
+    print("\n=== Documentation Validation Example ===")
+
+    print("Documentation Validation Features:")
+    print("  - Schema completeness checks")
+    print("  - Endpoint documentation analysis")
+    print("  - Response definition validation")
+    print("  - Parameter documentation verification")
+
+
+async def example_docs_management():
+    """Example of documentation management and analysis."""
+    print("\n=== Documentation Management Example ===")
+
+    print("Documentation Management Endpoints:")
+    endpoints = [
+        "POST /v1/admin/docs/generate - Generate docs",
+        "GET /v1/admin/docs/status - Generation status",
+        "POST /v1/admin/docs/validate - Validate docs",
+        "GET /v1/admin/docs/schema - Get API schema",
+        "GET /v1/admin/docs/endpoints - List endpoints",
+        "GET /v1/admin/docs/models - List data models",
+        "GET /v1/admin/docs/export - Export docs",
+        "GET /v1/admin/docs/completeness - Completeness analysis",
+        "GET /v1/admin/docs/examples - Usage examples"
+    ]
+
+    for endpoint in endpoints:
+        print(f"  {endpoint}")
+
+
 async def main():
     """Run all examples."""
     print("🚀 Aurum API Refactored Architecture Examples")
@@ -792,6 +859,10 @@ async def main():
     await example_streaming_scenarios()
     await example_streaming_performance()
     await example_streaming_monitoring()
+    await example_api_documentation()
+    await example_sdk_generation()
+    await example_docs_validation()
+    await example_docs_management()
 
     print("\n" + "=" * 50)
     print("✅ All examples completed successfully!")
@@ -815,6 +886,9 @@ async def main():
     print("• Real-time data streaming with WebSocket support")
     print("• Server-Sent Events for simple streaming")
     print("• Multi-protocol streaming with comprehensive management")
+    print("• Auto-generated OpenAPI documentation and client SDKs")
+    print("• Multi-format documentation (JSON, YAML, Markdown)")
+    print("• Documentation validation and completeness analysis")
 
 
 if __name__ == "__main__":

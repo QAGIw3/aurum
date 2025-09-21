@@ -20,7 +20,7 @@ jobs:
 
     - name: Install dependencies
       run: |
-        pip install black isort flake8 mypy pytest bandit safety
+        pip install black isort flake8 mypy pytest bandit safety ruff
 
     - name: Run Black formatter check
       run: |
@@ -98,7 +98,7 @@ jobs:
 
     - name: Run unit tests with coverage
       run: |
-        pytest tests/ \
+        pytest tests/ src/aurum/tests/ \
           --cov=src/ \
           --cov-report=html \
           --cov-report=xml \
@@ -150,3 +150,7 @@ jobs:
         echo "Running performance benchmarks..."
         # Performance benchmarks would go here
         echo "✅ Performance tests completed"
+    - name: Run Ruff linting
+      run: |
+        ruff check src/ src/aurum/tests/
+        echo "✅ Ruff linting passed"

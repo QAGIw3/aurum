@@ -425,6 +425,7 @@ Key endpoints:
 * **Vector** ships logs to **ClickHouse** (`ops.logs`); operational events to `ops.events`.
 * Superset operations dashboards: ingest latency, Great Expectations pass rate, API error rate, slow queries, Kafka lag.
 * Alerts (Slack/Email/Pager) via notifier on `aurum.alert.v1` and operational thresholds.
+* Observability API (`/v1/observability/...`) is admin-only. Grant operators membership in the groups defined by `AURUM_API_ADMIN_GROUP` so they can inspect metrics, traces, and cleanup endpoints.
 
 ---
 

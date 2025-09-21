@@ -181,6 +181,37 @@ jobs:
           name: dbt-docs
           path: artifacts/dbt
 
+  ge-quality:
+    name: Great Expectations Quality Gate
+    needs: dbt-build
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Download dbt artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: dbt-docs
+          path: artifacts/dbt
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements-dev.txt
+
+      - name: Run Great Expectations suites
+        env:
+          PYTHONPATH: src
+        run: |
+          python scripts/quality/run_ge_checks.py --warehouse artifacts/dbt/warehouse.duckdb
+
   api-docs:
     name: API Docs
     if: github.ref == 'refs/heads/main'
@@ -243,6 +274,7 @@ jobs:
       - security-scan
       - dbt-build
       - scenario-smoke
+      - ge-quality
     if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     steps:

@@ -108,6 +108,22 @@ def _evaluate_expectation(df: pd.DataFrame, expectation: Dict[str, Any]) -> Expe
             details = f"{duplicate_count} duplicates found"
         return ExpectationResult(expectation_type, kwargs, success, details)
 
+    if expectation_type in {
+        "expect_compound_columns_to_be_unique",
+        "expect_multicolumn_values_to_be_unique",
+    }:
+        columns = kwargs.get("column_list")
+        if not columns:
+            raise ValueError(f"{expectation_type} requires 'column_list'")
+        missing = [col for col in columns if col not in filtered_df.columns]
+        if missing:
+            raise ValueError(f"Columns {missing} missing from dataframe for {expectation_type}")
+        subset = filtered_df[columns]
+        duplicates_mask = subset.duplicated(keep=False)
+        success = not duplicates_mask.any()
+        details = None if success else f"duplicate rows for columns {columns}"
+        return ExpectationResult(expectation_type, kwargs, success, details)
+
     if expectation_type == "expect_column_values_to_match_regex":
         regex = kwargs.get("regex")
         if regex is None:
