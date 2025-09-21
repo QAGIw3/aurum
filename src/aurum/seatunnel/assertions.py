@@ -308,6 +308,93 @@ class FieldAssertion:
 
         return result
 
+    def _validate_record_assertion(self, record: Dict[str, Any], assertion_config: Dict[str, Any]) -> AssertionResult:
+        """Validate a record-level assertion.
+
+        Args:
+            record: Data record to validate
+            assertion_config: Assertion configuration
+
+        Returns:
+            Assertion result
+        """
+        assertion_type = assertion_config.get("assertion_type", "unknown")
+        assertion_name = assertion_config.get("name", f"record_assertion_{id(assertion_config)}")
+        severity = AssertionSeverity(assertion_config.get("severity", "MEDIUM"))
+
+        result = AssertionResult(
+            assertion_name=assertion_name,
+            assertion_type=AssertionType(assertion_type),
+            severity=severity,
+            passed=True,
+            message=f"Record assertion {assertion_name} passed"
+        )
+
+        try:
+            # Record count assertion
+            if assertion_type == "RECORD_COUNT":
+                min_count = assertion_config.get("min_count")
+                max_count = assertion_config.get("max_count")
+
+                record_count = 1  # Single record validation
+                if min_count is not None and record_count < min_count:
+                    result.passed = False
+                    result.message = f"Record count {record_count} below minimum {min_count}"
+                elif max_count is not None and record_count > max_count:
+                    result.passed = False
+                    result.message = f"Record count {record_count} above maximum {max_count}"
+
+            # Data freshness assertion
+            elif assertion_type == "DATA_FRESHNESS":
+                freshness_field = assertion_config.get("field", "timestamp")
+                max_age_hours = assertion_config.get("max_age_hours", 24)
+
+                if freshness_field in record:
+                    field_value = record[freshness_field]
+                    if isinstance(field_value, str):
+                        try:
+                            import dateutil.parser
+                            record_time = dateutil.parser.parse(field_value)
+                            age_hours = (datetime.now(record_time.tzinfo) - record_time).total_seconds() / 3600
+
+                            if age_hours > max_age_hours:
+                                result.passed = False
+                                result.message = f"Record is {age_hours:.1f} hours old, exceeds max age of {max_age_hours} hours"
+                        except Exception:
+                            result.passed = False
+                            result.message = f"Could not parse freshness field '{freshness_field}'"
+                    else:
+                        result.passed = False
+                        result.message = f"Freshness field '{freshness_field}' is not a string"
+
+            # Custom record assertion
+            elif assertion_type == "CUSTOM":
+                custom_validator = assertion_config.get("validator")
+                custom_message = assertion_config.get("message", "Custom record validation failed")
+
+                if custom_validator and callable(custom_validator):
+                    try:
+                        if not custom_validator(record):
+                            result.passed = False
+                            result.message = custom_message
+                    except Exception as e:
+                        result.passed = False
+                        result.message = f"Custom record validation error: {e}"
+                else:
+                    result.passed = False
+                    result.message = "Custom validator not provided or not callable"
+
+            else:
+                result.passed = False
+                result.message = f"Unknown record assertion type: {assertion_type}"
+
+        except Exception as e:
+            result.passed = False
+            result.message = f"Record assertion error: {e}"
+
+        result.record_count = 1
+        return result
+
 
 @dataclass
 class SchemaAssertion:
@@ -349,10 +436,10 @@ class SchemaAssertion:
             result = field_assertion.validate_field(record)
             results.append(result)
 
-        # TODO: Add record-level assertions
-        # for record_assertion in self.record_assertions:
-        #     result = self._validate_record_assertion(record, record_assertion)
-        #     results.append(result)
+        # Add record-level assertions
+        for record_assertion in self.record_assertions:
+            result = self._validate_record_assertion(record, record_assertion)
+            results.append(result)
 
         return results
 
@@ -414,12 +501,12 @@ class SchemaAssertion:
 
         if quality_score < self.quality_threshold:
             validation_passed = False
-            messages.append(f"Quality score {quality_score".2%"} below threshold {self.quality_threshold".2%"}")
+            messages.append(f"Quality score {quality_score:.2%} below threshold {self.quality_threshold:.2%}")
 
         # Log results
         logger.log(
             LogLevel.INFO if validation_passed else LogLevel.ERROR,
-            f"Schema assertion {self.name}: {passed_assertions}/{total_assertions} passed ({quality_score".2%"})",
+            f"Schema assertion {self.name}: {passed_assertions}/{total_assertions} passed ({quality_score:.2%})",
             "schema_assertion_batch",
             assertion_name=self.name,
             total_assertions=total_assertions,
