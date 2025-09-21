@@ -26,11 +26,29 @@ data:
 apiVersion: v1
 kind: ConfigMap
 metadata:
-  name: grafana-dashboards
+  name: grafana-dashboard-providers
   namespace: aurum-dev
   labels:
     app: grafana
-    grafana_dashboard: "1"
+data:
+  dashboards.yaml: |
+    apiVersion: 1
+    providers:
+      - name: Aurum
+        folder: Aurum
+        type: file
+        disableDeletion: false
+        editable: true
+        options:
+          path: /var/lib/grafana/dashboards
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: grafana-dashboard-defs
+  namespace: aurum-dev
+  labels:
+    app: grafana
 data:
   aurum-observability.json: |
     {
@@ -159,9 +177,9 @@ spec:
           volumeMounts:
             - name: datasources
               mountPath: /etc/grafana/provisioning/datasources
-            - name: dashboards
+            - name: dashboard-providers
               mountPath: /etc/grafana/provisioning/dashboards
-            - name: dashboards-json
+            - name: dashboard-defs
               mountPath: /var/lib/grafana/dashboards
           readinessProbe:
             httpGet:
@@ -179,14 +197,12 @@ spec:
         - name: datasources
           configMap:
             name: grafana-datasources
-        - name: dashboards
+        - name: dashboard-providers
           configMap:
-            name: grafana-dashboards
-          items:
-            - key: aurum-observability.json
-              path: aurum-observability.json
-        - name: dashboards-json
-          emptyDir: {}
+            name: grafana-dashboard-providers
+        - name: dashboard-defs
+          configMap:
+            name: grafana-dashboard-defs
 ---
 apiVersion: v1
 kind: Service
