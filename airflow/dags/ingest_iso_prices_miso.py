@@ -8,6 +8,9 @@ from typing import Any
 from airflow import DAG
 from airflow.operators.bash import BashOperator
 from airflow.operators.empty import EmptyOperator
+from airflow.operators.python import PythonOperator
+
+from aurum.airflow_utils import build_failure_callback, build_preflight_callable
 
 
 DEFAULT_ARGS: dict[str, Any] = {
@@ -15,15 +18,25 @@ DEFAULT_ARGS: dict[str, Any] = {
     "depends_on_past": False,
     "email_on_failure": True,
     "email": ["aurum-ops@example.com"],
-    "retries": 1,
+    "retries": 3,
     "retry_delay": timedelta(minutes=10),
+    "retry_exponential_backoff": True,
+    "max_retry_delay": timedelta(minutes=60),
+    "execution_timeout": timedelta(minutes=45),
 }
 
 BIN_PATH = os.environ.get("AURUM_BIN_PATH", ".venv/bin:$PATH")
 PYTHONPATH_ENTRY = os.environ.get("AURUM_PYTHONPATH_ENTRY", "/opt/airflow/src")
 
 
-def build_miso_task(task_id: str, market: str, url_var: str, interval_seconds: int) -> BashOperator:
+def build_miso_task(
+    task_id: str,
+    market: str,
+    url_var: str,
+    interval_seconds: int,
+    *,
+    pool: str | None = None,
+) -> BashOperator:
     kafka_bootstrap = "{{ var.value.get('aurum_kafka_bootstrap', 'localhost:9092') }}"
     schema_registry = "{{ var.value.get('aurum_schema_registry', 'http://localhost:8081') }}"
     report_url = f"{{{{ var.value.get('{url_var}') }}}}"
@@ -49,7 +62,9 @@ def build_miso_task(task_id: str, market: str, url_var: str, interval_seconds: i
     command = "\n".join(
         [
             "set -euo pipefail",
+            "if [ \"${AURUM_DEBUG:-0}\" != \"0\" ]; then set -x; fi",
             "cd /opt/airflow",
+            "if [ \"${AURUM_DEBUG:-0}\" != \"0\" ]; then scripts/seatunnel/run_job.sh --describe miso_lmp_to_kafka; fi",
             f"export PATH=\"{BIN_PATH}\"",
             f"export PYTHONPATH=\"${{PYTHONPATH:-}}:{PYTHONPATH_ENTRY}\"",
             env_exports,
@@ -57,7 +72,14 @@ def build_miso_task(task_id: str, market: str, url_var: str, interval_seconds: i
         ]
     )
 
-    return BashOperator(task_id=task_id, bash_command=command)
+    operator_kwargs: dict[str, object] = {
+        "task_id": task_id,
+        "bash_command": command,
+        "execution_timeout": timedelta(minutes=15),
+    }
+    if pool:
+        operator_kwargs["pool"] = pool
+    return BashOperator(**operator_kwargs)
 
 
 with DAG(
@@ -72,19 +94,39 @@ with DAG(
 ) as dag:
     start = EmptyOperator(task_id="start")
 
+    preflight = PythonOperator(
+        task_id="preflight_airflow_vars",
+        python_callable=build_preflight_callable(
+            required_variables=(
+                "aurum_kafka_bootstrap",
+                "aurum_schema_registry",
+                "aurum_miso_da_url",
+                "aurum_miso_rt_url",
+            ),
+            optional_variables=(
+                "aurum_miso_time_format",
+                "aurum_miso_lmp_column",
+            ),
+        ),
+    )
+
     da_task = build_miso_task(
         "miso_da_to_kafka",
         market="DAY_AHEAD",
         url_var="aurum_miso_da_url",
         interval_seconds=3600,
+        pool="api_miso",
     )
     rt_task = build_miso_task(
         "miso_rt_to_kafka",
         market="REAL_TIME",
         url_var="aurum_miso_rt_url",
         interval_seconds=300,
+        pool="api_miso",
     )
 
     end = EmptyOperator(task_id="end")
 
-    start >> [da_task, rt_task] >> end
+    start >> preflight >> [da_task, rt_task] >> end
+
+    dag.on_failure_callback = build_failure_callback(source="aurum.airflow.ingest_iso_prices_miso")

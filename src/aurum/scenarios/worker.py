@@ -3,10 +3,14 @@ from __future__ import annotations
 import hashlib
 import logging
 import os
+import signal
+import threading
 import time
 from dataclasses import dataclass, field
 from datetime import date, datetime, timedelta, timezone
 from typing import Dict, Iterable, Optional, Sequence
+
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 import pandas as pd
 from opentelemetry import propagate
@@ -36,11 +40,13 @@ FUEL_CURVE_WEIGHTS = {
 FLEET_RAMP_MONTHS = 24
 
 try:  # Optional Prometheus metrics support
-    from prometheus_client import Counter, Histogram, start_http_server  # type: ignore
+    from prometheus_client import CONTENT_TYPE_LATEST, Counter, Histogram, REGISTRY, generate_latest  # type: ignore
 except Exception:  # pragma: no cover - dependency not installed during unit tests
     Counter = None  # type: ignore[assignment]
     Histogram = None  # type: ignore[assignment]
-    start_http_server = None  # type: ignore[assignment]
+    CONTENT_TYPE_LATEST = "text/plain; version=0.0.4; charset=utf-8"
+    REGISTRY = None  # type: ignore[assignment]
+    generate_latest = None  # type: ignore[assignment]
 
 REQUESTS_TOTAL = Counter("aurum_scenario_requests_total", "Scenario requests consumed") if Counter else None
 REQUEST_SUCCESS = Counter("aurum_scenario_requests_success_total", "Successful scenario requests") if Counter else None
@@ -51,6 +57,73 @@ PROCESS_DURATION = Histogram(
     "Scenario request processing duration",
     buckets=(0.1, 0.25, 0.5, 1.0, 2.0, 5.0, 10.0),
 ) if Histogram else None
+
+
+SHUTDOWN_EVENT = threading.Event()
+READINESS_EVENT = threading.Event()
+_SIGNAL_INSTALLED = threading.Event()
+
+
+def _install_signal_handlers() -> None:
+    if _SIGNAL_INSTALLED.is_set():
+        return
+
+    def _handle_signal(signum, _frame):
+        if not SHUTDOWN_EVENT.is_set():
+            try:
+                signal_name = signal.Signals(signum).name  # type: ignore[attr-defined]
+            except Exception:  # pragma: no cover - defensive fallback
+                signal_name = str(signum)
+            LOGGER.info("Received %s; initiating graceful shutdown", signal_name)
+            SHUTDOWN_EVENT.set()
+
+    for sig in (getattr(signal, "SIGTERM", None), getattr(signal, "SIGINT", None)):
+        if sig is None:
+            continue
+        try:
+            signal.signal(sig, _handle_signal)
+        except ValueError:
+            LOGGER.debug("Unable to register handler for signal %s", sig, exc_info=True)
+    _SIGNAL_INSTALLED.set()
+
+
+def _start_probe_server(host: str, port: int):
+    class _ProbeHandler(BaseHTTPRequestHandler):
+        def log_message(self, format: str, *args) -> None:  # pragma: no cover - suppress noisy logs
+            LOGGER.debug("probe[%s]: " + format, self.address_string(), *args)
+
+        def _write_response(self, status: int, body: bytes, content_type: str = "text/plain; charset=utf-8") -> None:
+            self.send_response(status)
+            self.send_header("Content-Type", content_type)
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+
+        def do_GET(self) -> None:  # pragma: no cover - simple IO handler
+            path = self.path.split("?", 1)[0]
+            if path in {"/health", "/healthz"}:
+                self._write_response(200, b"ok")
+                return
+            if path in {"/ready", "/readyz"}:
+                if READINESS_EVENT.is_set() and not SHUTDOWN_EVENT.is_set():
+                    self._write_response(200, b"ready")
+                else:
+                    self._write_response(503, b"not ready")
+                return
+            if path == "/metrics" and generate_latest and REGISTRY:
+                output = generate_latest(REGISTRY)
+                self._write_response(200, output, CONTENT_TYPE_LATEST)
+                return
+            if path == "/metrics":
+                self._write_response(503, b"metrics unavailable")
+                return
+            self._write_response(404, b"not found")
+
+    server = ThreadingHTTPServer((host, port), _ProbeHandler)
+    thread = threading.Thread(target=server.serve_forever, name="worker-probes", daemon=True)
+    thread.start()
+    LOGGER.info("Probe server listening on %s:%s", host, port)
+    return server
 
 
 configure_telemetry("aurum-scenario-worker", enable_requests=False)
@@ -714,18 +787,29 @@ def run_worker():  # pragma: no cover - integration entrypoint
     output_topic = os.getenv("AURUM_SCENARIO_OUTPUT_TOPIC", "aurum.scenario.output.v1")
     group_id = os.getenv("AURUM_SCENARIO_WORKER_GROUP", "aurum-scenario-worker")
 
+    _install_signal_handlers()
+    READINESS_EVENT.clear()
+
     cons = _consumer(bootstrap, group_id, schema_registry_url)
     prod = _producer(bootstrap, schema_registry_url)
     value_schema = _load_avro_schema(_schema_path("scenario.output.v1.avsc"))
 
-    metrics_port = os.getenv("AURUM_SCENARIO_METRICS_PORT")
-    if start_http_server and metrics_port:
-        addr = os.getenv("AURUM_SCENARIO_METRICS_ADDR", "0.0.0.0")
+    http_port = os.getenv("AURUM_SCENARIO_HTTP_PORT") or os.getenv("AURUM_SCENARIO_METRICS_PORT")
+    http_addr = os.getenv(
+        "AURUM_SCENARIO_HTTP_ADDR",
+        os.getenv("AURUM_SCENARIO_METRICS_ADDR", "0.0.0.0"),
+    )
+    probe_server = None
+    if http_port:
         try:
-            start_http_server(int(metrics_port), addr=addr)
-            LOGGER.info("Prometheus metrics exposed on %s:%s", addr, metrics_port)
+            probe_server = _start_probe_server(http_addr, int(http_port))
         except Exception:
-            LOGGER.warning("Failed to start Prometheus metrics listener on %s:%s", addr, metrics_port, exc_info=True)
+            LOGGER.warning(
+                "Failed to start probe server on %s:%s",
+                http_addr,
+                http_port,
+                exc_info=True,
+            )
 
     settings = WorkerSettings.from_env()
     try:
@@ -738,11 +822,14 @@ def run_worker():  # pragma: no cover - integration entrypoint
         backoff_seconds = 0.5
 
     cons.subscribe([request_topic])
+    READINESS_EVENT.set()
 
     try:
-        while True:
+        while not SHUTDOWN_EVENT.is_set():
             msg = cons.poll(1.0)
             if msg is None:
+                if SHUTDOWN_EVENT.is_set():
+                    break
                 continue
             if msg.error():  # type: ignore[attr-defined]
                 continue
@@ -809,6 +896,13 @@ def run_worker():  # pragma: no cover - integration entrypoint
                         time.sleep(delay)
 
                     while attempts < max_attempts and not success:
+                        if SHUTDOWN_EVENT.is_set():
+                            LOGGER.info(
+                                "Shutdown requested; cancelling scenario %s",
+                                scenario_req.scenario_id,
+                            )
+                            cancelled = True
+                            break
                         if _run_is_cancelled(
                             scenario_id=scenario_req.scenario_id,
                             run_id=run_id,
@@ -926,4 +1020,19 @@ def run_worker():  # pragma: no cover - integration entrypoint
                     LOGGER.debug("Failed to record processing duration", exc_info=True)
             cons.commit(msg)
     finally:
-        cons.close()
+        LOGGER.info("Scenario worker shutting down")
+        READINESS_EVENT.clear()
+        try:
+            prod.flush(5)
+        except Exception:
+            LOGGER.debug("Failed to flush producer during shutdown", exc_info=True)
+        try:
+            cons.close()
+        except Exception:
+            LOGGER.debug("Failed to close consumer cleanly", exc_info=True)
+        if probe_server is not None:
+            try:
+                probe_server.shutdown()
+                probe_server.server_close()
+            except Exception:
+                LOGGER.debug("Failed to stop probe server", exc_info=True)

@@ -10,6 +10,8 @@ from airflow.operators.bash import BashOperator
 from airflow.operators.empty import EmptyOperator
 from airflow.operators.python import PythonOperator
 
+from aurum.airflow_utils import build_failure_callback, build_preflight_callable
+
 
 
 DEFAULT_ARGS: dict[str, Any] = {
@@ -17,8 +19,11 @@ DEFAULT_ARGS: dict[str, Any] = {
     "depends_on_past": False,
     "email_on_failure": True,
     "email": ["aurum-ops@example.com"],
-    "retries": 1,
+    "retries": 3,
     "retry_delay": timedelta(minutes=10),
+    "retry_exponential_backoff": True,
+    "max_retry_delay": timedelta(minutes=60),
+    "execution_timeout": timedelta(minutes=45),
 }
 
 
@@ -46,25 +51,6 @@ def register_stream_source(**context: Any) -> None:
         )
     except Exception as exc:  # pragma: no cover
         print(f"Failed to register ingest source iso_lmp_timescale: {exc}")
-
-
-def preflight_required_vars(keys: list[str]) -> None:
-    try:
-        from airflow.models import Variable  # type: ignore
-    except Exception as exc:  # pragma: no cover
-        print(f"Airflow Variable API unavailable: {exc}")
-        return
-    missing: list[str] = []
-    for key in keys:
-        try:
-            Variable.get(key)
-        except Exception:
-            missing.append(key)
-    if missing:
-        critical = {"aurum_kafka_bootstrap", "aurum_schema_registry", "aurum_timescale_jdbc"}
-        if any(k in critical for k in missing):
-            raise RuntimeError(f"Missing required Airflow Variables: {missing}")
-        print(f"Warning: missing optional Airflow Variables: {missing}")
 
 
 def build_timescale_task(task_id: str) -> BashOperator:
@@ -97,9 +83,11 @@ def build_timescale_task(task_id: str) -> BashOperator:
         task_id=task_id,
         bash_command=(
             "set -euo pipefail\n"
+            "if [ \"${AURUM_DEBUG:-0}\" != \"0\" ]; then set -x; fi\n"
             f"{pull_cmd}\n"
             f"export PATH=\"{BIN_PATH}\"\n"
             f"export PYTHONPATH=\"${{PYTHONPATH:-}}:{PYTHONPATH_ENTRY}\"\n"
+            "if [ \"${AURUM_DEBUG:-0}\" != \"0\" ]; then scripts/seatunnel/run_job.sh --describe iso_lmp_kafka_to_timescale; fi\n"
             f"{env_line} scripts/seatunnel/run_job.sh iso_lmp_kafka_to_timescale"
         ),
     )
@@ -119,12 +107,13 @@ with DAG(
 
     preflight = PythonOperator(
         task_id="preflight_airflow_vars",
-        python_callable=lambda **_: preflight_required_vars(
-            [
+        python_callable=build_preflight_callable(
+            required_variables=(
                 "aurum_kafka_bootstrap",
                 "aurum_schema_registry",
                 "aurum_timescale_jdbc",
-            ]
+            ),
+            optional_variables=("aurum_iso_lmp_topic_pattern", "aurum_iso_lmp_table"),
         ),
     )
 
@@ -151,3 +140,5 @@ with DAG(
     end = EmptyOperator(task_id="end")
 
     start >> preflight >> register_source >> load_timescale >> watermark >> end
+
+    dag.on_failure_callback = build_failure_callback(source="aurum.airflow.ingest_iso_prices_timescale")

@@ -17,3 +17,6 @@ spec:
     - name: metrics
       port: {{ .Values.service.port }}
       targetPort: metrics
+    - name: http
+      port: {{ .Values.service.httpPort }}
+      targetPort: http

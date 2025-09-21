@@ -35,20 +35,38 @@ def _maybe_redis_client(cache_cfg: CacheConfig):
     try:  # pragma: no cover - exercised in integration
         import redis  # type: ignore
     except ModuleNotFoundError:
+        LOGGER.debug("Redis package not available; caching disabled")
         return None
 
+    socket_timeout = float(os.getenv("AURUM_API_REDIS_SOCKET_TIMEOUT", "1.5") or 1.5)
+    connect_timeout = float(os.getenv("AURUM_API_REDIS_CONNECT_TIMEOUT", "1.5") or 1.5)
+    client_kwargs = {
+        "username": cache_cfg.username,
+        "password": cache_cfg.password,
+        "socket_timeout": socket_timeout,
+        "socket_connect_timeout": connect_timeout,
+        "socket_keepalive": True,
+        "retry_on_timeout": True,
+    }
+    client_kwargs = {key: value for key, value in client_kwargs.items() if value is not None}
+
+    def _log_skip(reason: str) -> None:
+        LOGGER.debug("Skipping Redis client initialization: %s", reason)
+
     try:
-        if cache_cfg.mode == "sentinel" and cache_cfg.sentinel_endpoints and cache_cfg.sentinel_master:
+        mode = (cache_cfg.mode or "standalone").lower()
+        if mode == "sentinel":
+            if not cache_cfg.sentinel_endpoints or not cache_cfg.sentinel_master:
+                _log_skip("sentinel configuration incomplete")
+                return None
             from redis.sentinel import Sentinel  # type: ignore
 
-            sentinel = Sentinel(
-                cache_cfg.sentinel_endpoints,
-                username=cache_cfg.username,
-                password=cache_cfg.password,
-                socket_timeout=2.0,
-            )
-            client = sentinel.master_for(cache_cfg.sentinel_master, db=cache_cfg.db)
-        elif cache_cfg.mode == "cluster" and cache_cfg.cluster_nodes:
+            sentinel = Sentinel(cache_cfg.sentinel_endpoints, **client_kwargs)
+            client = sentinel.master_for(cache_cfg.sentinel_master, db=cache_cfg.db, **client_kwargs)
+        elif mode == "cluster":
+            if not cache_cfg.cluster_nodes:
+                _log_skip("cluster startup nodes not provided")
+                return None
             try:
                 from redis.cluster import RedisCluster  # type: ignore
             except Exception:
@@ -63,28 +81,25 @@ def _maybe_redis_client(cache_cfg: CacheConfig):
                 try:
                     startup_nodes.append({"host": host, "port": int(port or "6379")})
                 except ValueError:
+                    LOGGER.debug("Ignoring invalid Redis cluster node definition: %s", node)
                     continue
             if not startup_nodes:
+                LOGGER.warning("Redis cluster configuration yielded no usable startup nodes")
                 return None
-            client = RedisCluster(
-                startup_nodes=startup_nodes,
-                username=cache_cfg.username,
-                password=cache_cfg.password,
-                decode_responses=False,
-            )
+            cluster_kwargs = dict(client_kwargs)
+            cluster_kwargs.setdefault("decode_responses", False)
+            client = RedisCluster(startup_nodes=startup_nodes, **cluster_kwargs)
         elif cache_cfg.redis_url:
-            client = redis.Redis.from_url(
-                cache_cfg.redis_url,
-                username=cache_cfg.username,
-                password=cache_cfg.password,
-                db=cache_cfg.db,
-            )
+            client = redis.Redis.from_url(cache_cfg.redis_url, db=cache_cfg.db, **client_kwargs)
         else:
+            _log_skip("no Redis URL or mode configuration provided")
             return None
         client.ping()
+        LOGGER.debug("Redis client initialized using mode '%s'", mode)
         return client
-    except Exception:
-        LOGGER.debug("Redis client initialization failed", exc_info=True)
+    except Exception as exc:
+        LOGGER.warning("Redis client initialization failed: %s", exc)
+        LOGGER.debug("Redis client initialization failure details", exc_info=True)
         return None
 
 

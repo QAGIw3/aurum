@@ -41,11 +41,18 @@ def _to_timestamp(date_str: str, hour: int, interval: int) -> datetime:
     return date + timedelta(hours=start_hour, minutes=minutes)
 
 
-def fetch_zip(url: str, params: dict[str, str], headers: dict[str, str], max_retries: int = 5, backoff: float = 2.0) -> bytes:
+def fetch_zip(
+    url: str,
+    params: dict[str, str],
+    headers: dict[str, str],
+    max_retries: int = 5,
+    backoff: float = 2.0,
+    timeout_seconds: float = 60.0,
+) -> bytes:
     attempt = 0
     while attempt < max_retries:
         attempt += 1
-        resp = requests.get(url, params=params, headers=headers, timeout=60)
+        resp = requests.get(url, params=params, headers=headers, timeout=timeout_seconds)
         if resp.status_code == 429:
             time.sleep(backoff * attempt)
             continue
@@ -199,6 +206,12 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--max-retries", type=int, default=5)
     parser.add_argument("--backoff-seconds", type=float, default=2.0)
     parser.add_argument(
+        "--http-timeout",
+        type=float,
+        default=60.0,
+        help="Timeout (seconds) applied to ERCOT MIS HTTP requests",
+    )
+    parser.add_argument(
         "--output-json",
         help="Optional path to write normalized ERCOT records as a JSON array",
     )
@@ -233,7 +246,14 @@ def main() -> int:
             dlq_schema_id = fetch_schema_id(args.schema_registry, args.dlq_subject)
 
     try:
-        zip_bytes = fetch_zip(args.url, params={}, headers=headers, max_retries=args.max_retries, backoff=args.backoff_seconds)
+        zip_bytes = fetch_zip(
+            args.url,
+            params={},
+            headers=headers,
+            max_retries=args.max_retries,
+            backoff=args.backoff_seconds,
+            timeout_seconds=args.http_timeout,
+        )
         csv_bytes = extract_csv_bytes(zip_bytes)
     except Exception as exc:
         publish_error(producer, args.dlq_topic, dlq_schema, dlq_schema_id, "ercot_mis_to_kafka", str(exc), {"url": args.url})

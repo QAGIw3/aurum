@@ -11,6 +11,7 @@ image:
 service:
   type: ClusterIP
   port: 9464
+  httpPort: 8080
   annotations: {}
 
 config:
@@ -21,6 +22,8 @@ config:
   AURUM_SCENARIO_WORKER_GROUP: aurum-scenario-worker
   AURUM_SCENARIO_METRICS_PORT: "9464"
   AURUM_SCENARIO_METRICS_ADDR: 0.0.0.0
+  AURUM_SCENARIO_HTTP_PORT: "8080"
+  AURUM_SCENARIO_HTTP_ADDR: 0.0.0.0
   AURUM_SCENARIO_MAX_ATTEMPTS: "3"
   AURUM_SCENARIO_RETRY_BACKOFF_SEC: "0.5"
   AURUM_OTEL_SERVICE_NAME: aurum-scenario-worker

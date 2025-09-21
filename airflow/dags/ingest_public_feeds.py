@@ -12,6 +12,8 @@ from airflow.operators.bash import BashOperator
 from airflow.operators.empty import EmptyOperator
 from airflow.operators.python import PythonOperator
 
+from aurum.airflow_utils import build_failure_callback, build_preflight_callable
+
 try:
     from aurum.reference.eia_catalog import get_dataset
 except Exception:  # Use in-cluster stub if package layout isn't available
@@ -27,8 +29,11 @@ DEFAULT_ARGS: dict[str, Any] = {
     "depends_on_past": False,
     "email_on_failure": True,
     "email": ["aurum-ops@example.com"],
-    "retries": 1,
+    "retries": 3,
     "retry_delay": timedelta(minutes=10),
+    "retry_exponential_backoff": True,
+    "max_retry_delay": timedelta(minutes=60),
+    "execution_timeout": timedelta(minutes=45),
 }
 
 BIN_PATH = os.environ.get("AURUM_BIN_PATH", ".venv/bin:$PATH")
@@ -127,30 +132,6 @@ def _register_sources() -> None:
                 print(f"Failed to register ingest source {name}: {exc}")
     except Exception as exc:  # pragma: no cover
         print(f"Failed during register_sources setup: {exc}")
-
-
-def _preflight_required_vars(keys: list[str]) -> None:
-    """Validate required Airflow Variables exist; log and continue if missing optional ones.
-
-    Fails the task if critical variables are missing to surface configuration issues early.
-    """
-    try:
-        from airflow.models import Variable  # type: ignore
-    except Exception as exc:  # pragma: no cover
-        print(f"Airflow Variable API unavailable: {exc}")
-        return
-    missing: list[str] = []
-    for key in keys:
-        try:
-            Variable.get(key)
-        except Exception:
-            missing.append(key)
-    if missing:
-        # Treat Kafka bootstrap and Schema Registry as critical
-        critical = {"aurum_kafka_bootstrap", "aurum_schema_registry"}
-        if any(k in critical for k in missing):
-            raise RuntimeError(f"Missing required Airflow Variables: {missing}")
-        print(f"Warning: missing optional Airflow Variables: {missing}")
 
 
 def _update_watermark(source_name: str, logical_date: datetime) -> None:
@@ -279,13 +260,16 @@ def build_seatunnel_task(
         "task_id": task_id_override or f"seatunnel_{job_name}",
         "bash_command": (
             "set -euo pipefail\n"
+            "if [ \"${AURUM_DEBUG:-0}\" != \"0\" ]; then set -x; fi\n"
             "cd /opt/airflow\n"
             f"{pull_cmd}"
+            f"if [ \"${{AURUM_DEBUG:-0}}\" != \"0\" ]; then scripts/seatunnel/run_job.sh --describe {job_name}; fi\n"
             f"export PATH=\"{BIN_PATH}\"\n"
             f"export PYTHONPATH=\"${{PYTHONPATH:-}}:{PYTHONPATH_ENTRY}\"\n"
             # Render-only in Airflow pods without Docker
             f"AURUM_EXECUTE_SEATUNNEL=0 {env_line} scripts/seatunnel/run_job.sh {job_name} --render-only"
         ),
+        "execution_timeout": timedelta(minutes=25),
     }
     if pool:
         operator_kwargs["pool"] = pool
@@ -306,12 +290,22 @@ with DAG(
 
     preflight = PythonOperator(
         task_id="preflight_airflow_vars",
-        python_callable=lambda **_: _preflight_required_vars(
-            [
+        python_callable=build_preflight_callable(
+            required_variables=(
                 "aurum_kafka_bootstrap",
                 "aurum_schema_registry",
                 "aurum_timescale_jdbc",
-            ]
+            ),
+            optional_variables=(
+                "aurum_eia_series_path",
+                "aurum_fred_topic",
+                "aurum_noaa_topic",
+                "aurum_pjm_topic",
+            ),
+            warn_only_variables=(
+                "aurum_eia_topic",
+                "aurum_fred_timescale_table",
+            ),
         ),
     )
 
@@ -329,6 +323,7 @@ with DAG(
             "SCHEMA_REGISTRY_URL='{{ var.value.get('aurum_schema_registry', 'http://localhost:8081') }}'"
         ],
         mappings=["secret/data/aurum/noaa:token=NOAA_GHCND_TOKEN"],
+        pool="api_noaa",
     )
 
     # Optional: load NOAA weather stream into Timescale after ingesting to Kafka
@@ -359,6 +354,7 @@ with DAG(
         ],
         mappings=["secret/data/aurum/eia:api_key=EIA_API_KEY"],
         task_id_override="seatunnel_eia_series_main",
+        pool="api_eia",
     )
 
     # Optional: EIA series sink to Timescale
@@ -383,6 +379,7 @@ with DAG(
             env_assignments,
             mappings=["secret/data/aurum/eia:api_key=EIA_API_KEY"],
             task_id_override=f"seatunnel_{dataset_cfg['source_name']}",
+            pool="api_eia",
         )
         watermark = PythonOperator(
             task_id=f"{dataset_cfg['source_name']}_watermark",
@@ -400,6 +397,7 @@ with DAG(
             "SCHEMA_REGISTRY_URL='{{ var.value.get('aurum_schema_registry', 'http://localhost:8081') }}'"
         ],
         mappings=["secret/data/aurum/fred:api_key=FRED_API_KEY"],
+        pool="api_fred",
     )
 
     fred_to_timescale = build_seatunnel_task(
@@ -429,6 +427,7 @@ with DAG(
             "SCHEMA_REGISTRY_URL='{{ var.value.get('aurum_schema_registry', 'http://localhost:8081') }}'"
         ],
         mappings=["secret/data/aurum/fred:api_key=FRED_API_KEY"],
+        pool="api_fred",
     )
 
     cpi_to_timescale = build_seatunnel_task(
@@ -465,6 +464,7 @@ with DAG(
         ],
         mappings=["secret/data/aurum/eia:api_key=EIA_API_KEY"],
         task_id_override="seatunnel_eia_fuel_ng",
+        pool="api_eia",
     )
 
     fuel_co2_task = build_seatunnel_task(
@@ -488,6 +488,7 @@ with DAG(
         ],
         mappings=["secret/data/aurum/eia:api_key=EIA_API_KEY"],
         task_id_override="seatunnel_eia_fuel_co2",
+        pool="api_eia",
     )
 
     pjm_task = build_seatunnel_task(
@@ -499,7 +500,7 @@ with DAG(
             "SCHEMA_REGISTRY_URL='{{ var.value.get('aurum_schema_registry', 'http://localhost:8081') }}'"
         ],
         mappings=["secret/data/aurum/pjm:token=PJM_API_KEY"],
-        pool="pjm_api",
+        pool="api_pjm",
     )
 
     pjm_load_task = build_seatunnel_task(
@@ -513,7 +514,7 @@ with DAG(
             "SCHEMA_REGISTRY_URL='{{ var.value.get('aurum_schema_registry', 'http://localhost:8081') }}'",
         ],
         mappings=["secret/data/aurum/pjm:token=PJM_API_KEY"],
-        pool="pjm_api",
+        pool="api_pjm",
     )
 
     pjm_genmix_task = build_seatunnel_task(
@@ -527,7 +528,7 @@ with DAG(
             "SCHEMA_REGISTRY_URL='{{ var.value.get('aurum_schema_registry', 'http://localhost:8081') }}'",
         ],
         mappings=["secret/data/aurum/pjm:token=PJM_API_KEY"],
-        pool="pjm_api",
+        pool="api_pjm",
     )
 
     noaa_watermark = PythonOperator(
@@ -603,3 +604,5 @@ with DAG(
         pjm_genmix_watermark,
         pjm_watermark,
     ] >> end
+
+    dag.on_failure_callback = build_failure_callback(source="aurum.airflow.ingest_public_feeds")

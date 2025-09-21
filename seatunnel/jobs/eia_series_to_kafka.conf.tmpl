@@ -117,6 +117,9 @@ sink {
       value.schema = """${EIA_SERIES_SCHEMA}"""
     }
     producer {
+      acks = "all"
+      enable.idempotence = true
+      max.in.flight.requests.per.connection = 5
       linger.ms = 500
       batch.size = 32768
       retries = 5

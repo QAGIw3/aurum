@@ -271,6 +271,7 @@ services:
       AURUM_OTEL_SERVICE_NAME: aurum-api
       AURUM_OTEL_EXPORTER_ENDPOINT: '${AURUM_OTEL_EXPORTER_ENDPOINT:-}'
       AURUM_OTEL_EXPORTER_INSECURE: "${AURUM_OTEL_EXPORTER_INSECURE:-true}"
+      <<: *ppa_smoke_defaults
     ports:
       - "8095:8085"
     healthcheck:
@@ -280,6 +281,348 @@ services:
       retries: 5
     networks:
       - aurum
+
+  ppa-smoke-seed:
+    profiles: ["ppa-smoke"]
+    image: python:3.11-slim
+    env_file: *env_file
+    depends_on:
+      postgres:
+        condition: service_healthy
+      trino:
+        condition: service_healthy
+    working_dir: /workspace
+    volumes:
+      - ..:/workspace
+    environment:
+      <<: *ppa_smoke_defaults
+    command: >-
+      bash -lc "pip install --no-cache-dir psycopg[binary]==3.2.1 trino==0.328.0 && python - <<'PY'
+import json
+import os
+
+import psycopg
+from trino.dbapi import connect
+
+
+def _dec(value: float) -> str:
+    return f"{value:.6f}"
+
+
+TENANT_ID = os.environ["PPA_SMOKE_TENANT_ID"]
+TENANT_NAME = os.environ.get("PPA_SMOKE_TENANT_NAME", "PPA Smoke Tenant")
+SCENARIO_ID = os.environ["PPA_SMOKE_SCENARIO_ID"]
+SCENARIO_NAME = os.environ.get("PPA_SMOKE_SCENARIO_NAME", "PPA Smoke Scenario")
+CONTRACT_ID = os.environ["PPA_SMOKE_CONTRACT_ID"]
+CURVE_KEY = os.environ.get("PPA_SMOKE_CURVE_KEY", "PPA.SMOKE.CURVE")
+RUN_ID = os.environ.get("PPA_SMOKE_RUN_ID", "ppa-smoke-run")
+ASOF_DATE = os.environ.get("PPA_SMOKE_ASOF_DATE", "2024-01-01")
+CONTRACT_MONTH = os.environ.get("PPA_SMOKE_CONTRACT_MONTH", "2024-02-01")
+SCENARIO_VALUE = float(os.environ.get("PPA_SMOKE_SCENARIO_VALUE", "72.5"))
+PPA_PRICE = float(os.environ.get("PPA_SMOKE_PPA_PRICE", "50.0"))
+VOLUME = float(os.environ.get("PPA_SMOKE_VOLUME_MWH", "10.0"))
+UPFRONT_COST = float(os.environ.get("PPA_SMOKE_UPFRONT_COST", "100.0"))
+VERSION_HASH = "ppa-smoke-v1"
+dsn = os.environ.get("AURUM_APP_DB_DSN", "postgresql://aurum:aurum@postgres:5432/aurum")
+with psycopg.connect(dsn) as conn:
+    with conn.cursor() as cur:
+        cur.execute(
+            """
+            INSERT INTO tenant (id, name)
+            VALUES (%s, %s)
+            ON CONFLICT (id) DO UPDATE SET name = EXCLUDED.name
+            """,
+            (TENANT_ID, TENANT_NAME),
+        )
+        cur.execute(
+            """
+            INSERT INTO scenario (id, tenant_id, name, description, created_by)
+            VALUES (%s, %s, %s, %s, %s)
+            ON CONFLICT (id) DO UPDATE
+            SET name = EXCLUDED.name,
+                description = EXCLUDED.description,
+                updated_at = NOW()
+            """,
+            (
+                SCENARIO_ID,
+                TENANT_ID,
+                SCENARIO_NAME,
+                "Seeded for PPA smoke test",
+                "ppa-smoke",
+            ),
+        )
+        cur.execute(
+            """
+            INSERT INTO ppa_contract (id, tenant_id, instrument_id, terms)
+            VALUES (%s, %s, %s, %s::jsonb)
+            ON CONFLICT (id) DO UPDATE
+            SET instrument_id = EXCLUDED.instrument_id,
+                terms = EXCLUDED.terms,
+                updated_at = NOW()
+            """,
+            (
+                CONTRACT_ID,
+                TENANT_ID,
+                None,
+                json.dumps({"ppa_price": PPA_PRICE, "volume_mwh": VOLUME}),
+            ),
+        )
+
+ddl_statements = [
+    "CREATE SCHEMA IF NOT EXISTS iceberg.market",
+    """
+    CREATE TABLE IF NOT EXISTS iceberg.market.scenario_output (
+        asof_date DATE,
+        scenario_id VARCHAR,
+        tenant_id VARCHAR,
+        run_id VARCHAR,
+        curve_key VARCHAR,
+        tenor_type VARCHAR,
+        contract_month DATE,
+        tenor_label VARCHAR,
+        metric VARCHAR,
+        value DOUBLE,
+        band_lower DOUBLE,
+        band_upper DOUBLE,
+        attribution VARCHAR,
+        version_hash VARCHAR,
+        computed_ts TIMESTAMP(6),
+        _ingest_ts TIMESTAMP(6)
+    )
+    WITH (
+        format = 'PARQUET',
+        partitioning = ARRAY['scenario_id', 'metric', 'year(asof_date)']
+    )
+    """,
+    """
+    CREATE OR REPLACE VIEW iceberg.market.scenario_output_latest AS
+    WITH ranked AS (
+        SELECT
+            asof_date,
+            scenario_id,
+            tenant_id,
+            run_id,
+            curve_key,
+            tenor_type,
+            contract_month,
+            tenor_label,
+            metric,
+            value,
+            band_lower,
+            band_upper,
+            attribution,
+            version_hash,
+            computed_ts,
+            _ingest_ts,
+            row_number() OVER (
+                PARTITION BY tenant_id, scenario_id, curve_key, metric, tenor_label
+                ORDER BY asof_date DESC, computed_ts DESC NULLS LAST, _ingest_ts DESC NULLS LAST
+            ) AS rn
+        FROM iceberg.market.scenario_output
+    )
+    SELECT
+        asof_date,
+        scenario_id,
+        tenant_id,
+        run_id,
+        curve_key,
+        tenor_type,
+        contract_month,
+        tenor_label,
+        metric,
+        value,
+        band_lower,
+        band_upper,
+        attribution,
+        version_hash,
+        computed_ts,
+        _ingest_ts
+    FROM ranked
+    WHERE rn = 1
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS iceberg.market.ppa_valuation (
+        asof_date DATE,
+        ppa_contract_id VARCHAR,
+        scenario_id VARCHAR,
+        curve_key VARCHAR,
+        period_start DATE,
+        period_end DATE,
+        cashflow DECIMAL(18, 6),
+        npv DECIMAL(18, 6),
+        irr DOUBLE,
+        metric VARCHAR,
+        value DECIMAL(18, 6),
+        version_hash VARCHAR,
+        _ingest_ts TIMESTAMP(6)
+    )
+    WITH (
+        format = 'PARQUET',
+        partitioning = ARRAY['ppa_contract_id', 'year(asof_date)']
+    )
+    """,
+]
+
+cashflow_value = (SCENARIO_VALUE - PPA_PRICE) * VOLUME
+npv_value = cashflow_value - UPFRONT_COST
+irr_value = cashflow_value / UPFRONT_COST - 1.0 if UPFRONT_COST else 0.0
+
+with connect(host="trino", port=8080, user="aurum", http_scheme="http") as trino_conn:
+    cur = trino_conn.cursor()
+    for stmt in ddl_statements:
+        cur.execute(stmt)
+
+    cur.execute(
+        f"DELETE FROM iceberg.market.scenario_output WHERE scenario_id = '{SCENARIO_ID}'"
+    )
+    cur.execute(
+        f"""
+        INSERT INTO iceberg.market.scenario_output (
+            asof_date,
+            scenario_id,
+            tenant_id,
+            run_id,
+            curve_key,
+            tenor_type,
+            contract_month,
+            tenor_label,
+            metric,
+            value,
+            band_lower,
+            band_upper,
+            attribution,
+            version_hash,
+            computed_ts,
+            _ingest_ts
+        ) VALUES (
+            DATE '{ASOF_DATE}',
+            '{SCENARIO_ID}',
+            '{TENANT_ID}',
+            '{RUN_ID}',
+            '{CURVE_KEY}',
+            'MONTHLY',
+            DATE '{CONTRACT_MONTH}',
+            '{CONTRACT_MONTH}',
+            'mid',
+            {SCENARIO_VALUE},
+            NULL,
+            NULL,
+            NULL,
+            '{VERSION_HASH}',
+            TIMESTAMP '{ASOF_DATE} 00:00:00',
+            CURRENT_TIMESTAMP
+        )
+        """
+    )
+
+    cur.execute(
+        f"DELETE FROM iceberg.market.ppa_valuation WHERE ppa_contract_id = '{CONTRACT_ID}' AND scenario_id = '{SCENARIO_ID}'"
+    )
+    cur.execute(
+        f"""
+        INSERT INTO iceberg.market.ppa_valuation (
+            asof_date,
+            ppa_contract_id,
+            scenario_id,
+            curve_key,
+            period_start,
+            period_end,
+            cashflow,
+            npv,
+            irr,
+            metric,
+            value,
+            version_hash,
+            _ingest_ts
+        ) VALUES (
+            DATE '{ASOF_DATE}',
+            '{CONTRACT_ID}',
+            '{SCENARIO_ID}',
+            '{CURVE_KEY}',
+            DATE '{CONTRACT_MONTH}',
+            DATE '{CONTRACT_MONTH}',
+            DECIMAL '{_dec(cashflow_value)}',
+            NULL,
+            NULL,
+            'cashflow',
+            DECIMAL '{_dec(cashflow_value)}',
+            '{VERSION_HASH}',
+            CURRENT_TIMESTAMP
+        )
+        """
+    )
+    cur.execute(
+        f"""
+        INSERT INTO iceberg.market.ppa_valuation (
+            asof_date,
+            ppa_contract_id,
+            scenario_id,
+            curve_key,
+            period_start,
+            period_end,
+            cashflow,
+            npv,
+            irr,
+            metric,
+            value,
+            version_hash,
+            _ingest_ts
+        ) VALUES (
+            DATE '{ASOF_DATE}',
+            '{CONTRACT_ID}',
+            '{SCENARIO_ID}',
+            '{CURVE_KEY}',
+            DATE '{CONTRACT_MONTH}',
+            DATE '{CONTRACT_MONTH}',
+            NULL,
+            DECIMAL '{_dec(npv_value)}',
+            NULL,
+            'NPV',
+            DECIMAL '{_dec(npv_value)}',
+            '{VERSION_HASH}',
+            CURRENT_TIMESTAMP
+        )
+        """
+    )
+    cur.execute(
+        f"""
+        INSERT INTO iceberg.market.ppa_valuation (
+            asof_date,
+            ppa_contract_id,
+            scenario_id,
+            curve_key,
+            period_start,
+            period_end,
+            cashflow,
+            npv,
+            irr,
+            metric,
+            value,
+            version_hash,
+            _ingest_ts
+        ) VALUES (
+            DATE '{ASOF_DATE}',
+            '{CONTRACT_ID}',
+            '{SCENARIO_ID}',
+            '{CURVE_KEY}',
+            DATE '{CONTRACT_MONTH}',
+            DATE '{CONTRACT_MONTH}',
+            NULL,
+            NULL,
+            {irr_value},
+            'IRR',
+            DECIMAL '{_dec(irr_value)}',
+            '{VERSION_HASH}',
+            CURRENT_TIMESTAMP
+        )
+        """
+    )
+
+print("Seeded PPA smoke data.")
+PY"
+    networks:
+      - aurum
+
   api-built:
     profiles: ["api-built", "pipeline"]
     image: ${AURUM_API_IMAGE:-aurum-api:local}

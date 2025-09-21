@@ -10,14 +10,19 @@ from airflow.operators.bash import BashOperator
 from airflow.operators.empty import EmptyOperator
 from airflow.operators.python import PythonOperator
 
+from aurum.airflow_utils import build_failure_callback, build_preflight_callable
+
 
 DEFAULT_ARGS: dict[str, Any] = {
     "owner": "aurum-data",
     "depends_on_past": False,
     "email_on_failure": True,
     "email": ["aurum-ops@example.com"],
-    "retries": 1,
+    "retries": 3,
     "retry_delay": timedelta(minutes=10),
+    "retry_exponential_backoff": True,
+    "max_retry_delay": timedelta(minutes=60),
+    "execution_timeout": timedelta(minutes=45),
 }
 
 BIN_PATH = os.environ.get("AURUM_BIN_PATH", ".venv/bin:$PATH")
@@ -94,6 +99,7 @@ def build_pipeline(
     # Build the stage command carefully to preserve Jinja expressions (avoid f-strings around {{ }})
     stage_command = "\n".join([
         "set -euo pipefail",
+        "if [ \"${AURUM_DEBUG:-0}\" != \"0\" ]; then set -x; fi",
         "cd /opt/airflow",
         "mkdir -p $(dirname '" + staging_path + "')",
         f"export PATH=\"{BIN_PATH}\"",
@@ -110,7 +116,12 @@ def build_pipeline(
         ),
     ])
 
-    stage_task = BashOperator(task_id=f"stage_spp_{prefix}", bash_command=stage_command)
+    stage_task = BashOperator(
+        task_id=f"stage_spp_{prefix}",
+        bash_command=stage_command,
+        execution_timeout=timedelta(minutes=20),
+        pool="api_spp",
+    )
 
     kafka_bootstrap = "{{ var.value.get('aurum_kafka_bootstrap', 'localhost:9092') }}"
     schema_registry = "{{ var.value.get('aurum_schema_registry', 'http://localhost:8081') }}"
@@ -118,7 +129,9 @@ def build_pipeline(
     seatunnel_command = "\n".join(
         [
             "set -euo pipefail",
+            "if [ \"${AURUM_DEBUG:-0}\" != \"0\" ]; then set -x; fi",
             "cd /opt/airflow",
+            f"if [ \"${{AURUM_DEBUG:-0}}\" != \"0\" ]; then scripts/seatunnel/run_job.sh --describe spp_lmp_to_kafka; fi",
             f"export PATH=\"{BIN_PATH}\"",
             f"export PYTHONPATH=\"${{PYTHONPATH:-}}:{PYTHONPATH_ENTRY}\"",
             "export ISO_LMP_SCHEMA_PATH=/opt/airflow/scripts/kafka/schemas/iso.lmp.v1.avsc",
@@ -131,16 +144,25 @@ def build_pipeline(
         ]
     )
 
-    seatunnel_task = BashOperator(task_id=f"spp_{prefix}_seatunnel", bash_command=seatunnel_command)
+    seatunnel_task = BashOperator(
+        task_id=f"spp_{prefix}_seatunnel",
+        bash_command=seatunnel_command,
+        execution_timeout=timedelta(minutes=15),
+    )
 
     run_k8s_command = "\n".join([
         "set -euo pipefail",
+        "if [ \"${AURUM_DEBUG:-0}\" != \"0\" ]; then set -x; fi",
         "cd /opt/airflow",
         f"export PATH=\"{BIN_PATH}\"",
         f"export PYTHONPATH=\"${{PYTHONPATH:-}}:{PYTHONPATH_ENTRY}\"",
         "python scripts/k8s/run_seatunnel_job.py --job-name spp_lmp_to_kafka --wait --timeout 600",
     ])
-    run_k8s_task = BashOperator(task_id=f"spp_{prefix}_execute_k8s", bash_command=run_k8s_command)
+    run_k8s_task = BashOperator(
+        task_id=f"spp_{prefix}_execute_k8s",
+        bash_command=run_k8s_command,
+        execution_timeout=timedelta(minutes=20),
+    )
 
     watermark_task = PythonOperator(
         task_id=f"spp_{prefix}_watermark",
@@ -162,6 +184,21 @@ with DAG(
 ) as dag:
     start = EmptyOperator(task_id="start")
 
+    preflight = PythonOperator(
+        task_id="preflight_airflow_vars",
+        python_callable=build_preflight_callable(
+            required_variables=(
+                "aurum_kafka_bootstrap",
+                "aurum_schema_registry",
+                "aurum_spp_file_market_url",
+            ),
+            optional_variables=(
+                "aurum_spp_topic",
+                "aurum_spp_bearer_token",
+            ),
+        ),
+    )
+
     register_sources = PythonOperator(task_id="register_sources", python_callable=_register_sources)
 
     da_stage, da_seatunnel, da_exec, da_watermark = build_pipeline(
@@ -179,6 +216,8 @@ with DAG(
 
     end = EmptyOperator(task_id="end")
 
-    start >> register_sources >> [da_stage, rt_stage]
+    start >> preflight >> register_sources >> [da_stage, rt_stage]
     da_stage >> da_seatunnel >> da_exec >> da_watermark >> end
     rt_stage >> rt_seatunnel >> rt_exec >> rt_watermark >> end
+
+    dag.on_failure_callback = build_failure_callback(source="aurum.airflow.ingest_iso_prices_spp")

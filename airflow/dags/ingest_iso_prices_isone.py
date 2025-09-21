@@ -8,6 +8,9 @@ from typing import Any
 from airflow import DAG
 from airflow.operators.bash import BashOperator
 from airflow.operators.empty import EmptyOperator
+from airflow.operators.python import PythonOperator
+
+from aurum.airflow_utils import build_failure_callback, build_preflight_callable
 
 
 DEFAULT_ARGS: dict[str, Any] = {
@@ -15,8 +18,11 @@ DEFAULT_ARGS: dict[str, Any] = {
     "depends_on_past": False,
     "email_on_failure": True,
     "email": ["aurum-ops@example.com"],
-    "retries": 1,
+    "retries": 3,
     "retry_delay": timedelta(minutes=10),
+    "retry_exponential_backoff": True,
+    "max_retry_delay": timedelta(minutes=60),
+    "execution_timeout": timedelta(minutes=45),
 }
 
 BIN_PATH = os.environ.get("AURUM_BIN_PATH", ".venv/bin:$PATH")
@@ -34,6 +40,19 @@ with DAG(
     tags=["aurum", "isone", "lmp"],
 ) as dag:
     start = EmptyOperator(task_id="start")
+
+    preflight = PythonOperator(
+        task_id="preflight_airflow_vars",
+        python_callable=build_preflight_callable(
+            required_variables=("aurum_kafka_bootstrap", "aurum_schema_registry"),
+            optional_variables=(
+                "aurum_isone_ws_username",
+                "aurum_isone_ws_password",
+                "aurum_isone_topic",
+            ),
+            warn_only_variables=("aurum_isone_timezone",),
+        ),
+    )
 
     # Best-effort pull of ISO-NE WS creds from Vault
     pull_cmd = (
@@ -79,8 +98,15 @@ with DAG(
         ]
     )
 
-    isone_ingest = BashOperator(task_id="isone_ws_to_kafka", bash_command=bash_command)
+    isone_ingest = BashOperator(
+        task_id="isone_ws_to_kafka",
+        bash_command=bash_command,
+        execution_timeout=timedelta(minutes=20),
+        pool="api_isone",
+    )
 
     end = EmptyOperator(task_id="end")
 
-    start >> isone_ingest >> end
+    start >> preflight >> isone_ingest >> end
+
+    dag.on_failure_callback = build_failure_callback(source="aurum.airflow.ingest_iso_prices_isone")

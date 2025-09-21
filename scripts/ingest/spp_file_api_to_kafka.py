@@ -31,19 +31,26 @@ def _require_fastavro() -> None:
         )
 
 
-def list_files(base_url: str, report: str, date_str: str, token: str | None) -> list[str]:
+def list_files(
+    base_url: str,
+    report: str,
+    date_str: str,
+    token: str | None,
+    *,
+    timeout_seconds: float = 60.0,
+) -> list[str]:
     url = f"{base_url.rstrip('/')}/v1/files/{report}?startDate={date_str}&endDate={date_str}"
     headers = {"Authorization": f"Bearer {token}"} if token else {}
-    resp = requests.get(url, headers=headers, timeout=60)
+    resp = requests.get(url, headers=headers, timeout=timeout_seconds)
     resp.raise_for_status()
     payload = resp.json()
     files = payload.get("files") if isinstance(payload, dict) else payload
     return [f["url"] for f in files or []]
 
 
-def download_csv(url: str, token: str | None) -> bytes:
+def download_csv(url: str, token: str | None, *, timeout_seconds: float = 60.0) -> bytes:
     headers = {"Authorization": f"Bearer {token}"} if token else {}
-    resp = requests.get(url, headers=headers, timeout=60)
+    resp = requests.get(url, headers=headers, timeout=timeout_seconds)
     resp.raise_for_status()
     return resp.content
 
@@ -148,6 +155,12 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--bootstrap-servers", default=os.getenv("KAFKA_BOOTSTRAP_SERVERS", "localhost:9092"))
     p.add_argument("--token")
     p.add_argument(
+        "--http-timeout",
+        type=float,
+        default=60.0,
+        help="Timeout (seconds) applied to SPP API HTTP requests",
+    )
+    p.add_argument(
         "--output-json",
         help="Optional path to write normalized SPP records as a JSON array",
     )
@@ -161,7 +174,13 @@ def parse_args() -> argparse.Namespace:
 
 def main() -> int:
     args = parse_args()
-    files = list_files(args.base_url, args.report, args.date, args.token)
+    files = list_files(
+        args.base_url,
+        args.report,
+        args.date,
+        args.token,
+        timeout_seconds=args.http_timeout,
+    )
     if not files:
         print("No SPP files listed; exiting")
         if args.output_json:
@@ -180,7 +199,7 @@ def main() -> int:
 
     all_records: list[dict[str, object]] = []
     for file_url in files:
-        csv_bytes = download_csv(file_url, args.token)
+        csv_bytes = download_csv(file_url, args.token, timeout_seconds=args.http_timeout)
         for row in iter_rows(csv_bytes):
             all_records.append(to_record(row, iso="SPP", interval_minutes=args.interval_minutes))
 

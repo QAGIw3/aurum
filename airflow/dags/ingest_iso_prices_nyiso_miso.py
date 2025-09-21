@@ -10,14 +10,19 @@ from airflow.operators.bash import BashOperator
 from airflow.operators.empty import EmptyOperator
 from airflow.operators.python import PythonOperator
 
+from aurum.airflow_utils import build_failure_callback, build_preflight_callable
+
 
 DEFAULT_ARGS: dict[str, Any] = {
     "owner": "aurum-data",
     "depends_on_past": False,
     "email_on_failure": True,
     "email": ["aurum-ops@example.com"],
-    "retries": 1,
+    "retries": 3,
     "retry_delay": timedelta(minutes=10),
+    "retry_exponential_backoff": True,
+    "max_retry_delay": timedelta(minutes=60),
+    "execution_timeout": timedelta(minutes=45),
 }
 
 BIN_PATH = os.environ.get("AURUM_BIN_PATH", ".venv/bin:$PATH")
@@ -88,6 +93,7 @@ def build_seatunnel_task(job_name: str, *, env_assignments: list[str], task_id_o
         f"export PYTHONPATH=\"${{PYTHONPATH:-}}:{PYTHONPATH_ENTRY}\"\n"
         f"AURUM_EXECUTE_SEATUNNEL=0 {env_line} scripts/seatunnel/run_job.sh {job_name} --render-only"
         ),
+        execution_timeout=timedelta(minutes=10),
     )
     exec_k8s = BashOperator(
         task_id=(task_id_override or f"seatunnel_{job_name}") + "_execute_k8s",
@@ -98,6 +104,7 @@ def build_seatunnel_task(job_name: str, *, env_assignments: list[str], task_id_o
             f"export PYTHONPATH=\"${{PYTHONPATH:-}}:{PYTHONPATH_ENTRY}\"\n"
             f"python scripts/k8s/run_seatunnel_job.py --job-name {job_name} --wait --timeout 600"
         ),
+        execution_timeout=timedelta(minutes=20),
     )
     return render, exec_k8s
 
@@ -113,6 +120,22 @@ with DAG(
     tags=["aurum", "iso", "nyiso", "miso"],
 ) as dag:
     start = EmptyOperator(task_id="start")
+
+    preflight = PythonOperator(
+        task_id="preflight_airflow_vars",
+        python_callable=build_preflight_callable(
+            required_variables=(
+                "aurum_kafka_bootstrap",
+                "aurum_schema_registry",
+                "aurum_nyiso_csv_url",
+                "aurum_miso_da_url",
+            ),
+            optional_variables=(
+                "aurum_nyiso_topic",
+                "aurum_miso_topic",
+            ),
+        ),
+    )
 
     register_sources = PythonOperator(
         task_id="register_sources",
@@ -168,8 +191,10 @@ with DAG(
 
     end = EmptyOperator(task_id="end")
 
-    start >> register_sources
+    start >> preflight >> register_sources
     register_sources >> nyiso_render >> nyiso_exec >> nyiso_watermark
     register_sources >> miso_da_render >> miso_da_exec >> miso_da_watermark
     register_sources >> miso_rt_render >> miso_rt_exec >> miso_rt_watermark
     [nyiso_watermark, miso_da_watermark, miso_rt_watermark] >> end
+
+    dag.on_failure_callback = build_failure_callback(source="aurum.airflow.ingest_iso_prices_nyiso_miso")

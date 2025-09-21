@@ -10,14 +10,19 @@ from airflow.operators.bash import BashOperator
 from airflow.operators.empty import EmptyOperator
 from airflow.operators.python import PythonOperator
 
+from aurum.airflow_utils import build_failure_callback, build_preflight_callable
+
 
 DEFAULT_ARGS: dict[str, Any] = {
     "owner": "aurum-data",
     "depends_on_past": False,
     "email_on_failure": True,
     "email": ["aurum-ops@example.com"],
-    "retries": 1,
+    "retries": 3,
     "retry_delay": timedelta(minutes=10),
+    "retry_exponential_backoff": True,
+    "max_retry_delay": timedelta(minutes=60),
+    "execution_timeout": timedelta(minutes=45),
 }
 
 BIN_PATH = os.environ.get("AURUM_BIN_PATH", ".venv/bin:$PATH")
@@ -64,17 +69,22 @@ def _update_watermark(source_name: str, logical_date: datetime) -> None:
         print(f"Failed to update watermark for {source_name}: {exc}")
 
 
-def build_helper_task(task_id: str, command: str) -> BashOperator:
-    return BashOperator(
-        task_id=task_id,
-        bash_command=(
+def build_helper_task(task_id: str, command: str, *, pool: str | None = None) -> BashOperator:
+    operator_kwargs: dict[str, object] = {
+        "task_id": task_id,
+        "bash_command": (
             "set -euo pipefail\n"
+            "if [ \"${AURUM_DEBUG:-0}\" != \"0\" ]; then set -x; fi\n"
             "cd /opt/airflow\n"
             f"export PATH=\"{BIN_PATH}\"\n"
             f"export PYTHONPATH=\"${{PYTHONPATH:-}}:{PYTHONPATH_ENTRY}\"\n"
             f"{command}"
         ),
-    )
+        "execution_timeout": timedelta(minutes=20),
+    }
+    if pool:
+        operator_kwargs["pool"] = pool
+    return BashOperator(**operator_kwargs)
 
 
 with DAG(
@@ -89,6 +99,18 @@ with DAG(
 ) as dag:
     start = EmptyOperator(task_id="start")
 
+    preflight = PythonOperator(
+        task_id="preflight_airflow_vars",
+        python_callable=build_preflight_callable(
+            required_variables=("aurum_kafka_bootstrap", "aurum_schema_registry"),
+            optional_variables=(
+                "aurum_caiso_market",
+                "aurum_ercot_mis_url",
+            ),
+            warn_only_variables=("aurum_ercot_bearer_token",),
+        ),
+    )
+
     register_sources = PythonOperator(
         task_id="register_sources",
         python_callable=_register_sources,
@@ -102,6 +124,7 @@ with DAG(
             "--end {{ data_interval_end.in_timezone('UTC').isoformat() }} "
             "--market {{ var.value.get('aurum_caiso_market', 'RTPD') }}"
         ),
+        pool="api_caiso",
     )
 
     ercot_task = build_helper_task(
@@ -110,6 +133,7 @@ with DAG(
             "python scripts/ingest/ercot_mis_to_kafka.py "
             "--url {{ var.value.get('aurum_ercot_mis_url') }}"
         ),
+        pool="api_ercot",
     )
 
     caiso_watermark = PythonOperator(
@@ -124,7 +148,9 @@ with DAG(
 
     end = EmptyOperator(task_id="end")
 
-    start >> register_sources
+    start >> preflight >> register_sources
     register_sources >> caiso_task >> caiso_watermark
     register_sources >> ercot_task >> ercot_watermark
     [caiso_watermark, ercot_watermark] >> end
+
+    dag.on_failure_callback = build_failure_callback(source="aurum.airflow.ingest_iso_prices")

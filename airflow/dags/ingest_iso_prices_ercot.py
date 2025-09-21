@@ -8,6 +8,9 @@ from typing import Any
 from airflow import DAG
 from airflow.operators.bash import BashOperator
 from airflow.operators.empty import EmptyOperator
+from airflow.operators.python import PythonOperator
+
+from aurum.airflow_utils import build_failure_callback, build_preflight_callable
 
 
 DEFAULT_ARGS: dict[str, Any] = {
@@ -15,8 +18,11 @@ DEFAULT_ARGS: dict[str, Any] = {
     "depends_on_past": False,
     "email_on_failure": True,
     "email": ["aurum-ops@example.com"],
-    "retries": 1,
+    "retries": 3,
     "retry_delay": timedelta(minutes=10),
+    "retry_exponential_backoff": True,
+    "max_retry_delay": timedelta(minutes=60),
+    "execution_timeout": timedelta(minutes=45),
 }
 
 BIN_PATH = os.environ.get("AURUM_BIN_PATH", ".venv/bin:$PATH")
@@ -44,6 +50,18 @@ with DAG(
 ) as dag:
     start = EmptyOperator(task_id="start")
 
+    preflight = PythonOperator(
+        task_id="preflight_airflow_vars",
+        python_callable=build_preflight_callable(
+            required_variables=(
+                "aurum_kafka_bootstrap",
+                "aurum_schema_registry",
+                "aurum_ercot_mis_url",
+            ),
+            warn_only_variables=("aurum_ercot_bearer_token",),
+        ),
+    )
+
     staging_path = f"{STAGING_DIR}/ercot/{{{{ ds }}}}.json"
 
     token_flag = _ercot_token_flag()
@@ -60,6 +78,7 @@ with DAG(
     stage_command = "\n".join(
         [
             "set -euo pipefail",
+            "if [ \"${AURUM_DEBUG:-0}\" != \"0\" ]; then set -x; fi",
             "cd /opt/airflow",
             "mkdir -p $(dirname '" + staging_path + "')",
             f"export PATH=\"{BIN_PATH}\"",
@@ -75,7 +94,12 @@ with DAG(
         ]
     )
 
-    stage_ercot = BashOperator(task_id="stage_ercot_lmp", bash_command=stage_command)
+    stage_ercot = BashOperator(
+        task_id="stage_ercot_lmp",
+        bash_command=stage_command,
+        execution_timeout=timedelta(minutes=20),
+        pool="api_ercot",
+    )
 
     kafka_bootstrap = "{{ var.value.get('aurum_kafka_bootstrap', 'localhost:9092') }}"
     schema_registry = "{{ var.value.get('aurum_schema_registry', 'http://localhost:8081') }}"
@@ -83,7 +107,9 @@ with DAG(
     seatunnel_command = "\n".join(
         [
             "set -euo pipefail",
+            "if [ \"${AURUM_DEBUG:-0}\" != \"0\" ]; then set -x; fi",
             "cd /opt/airflow",
+            f"if [ \"${{AURUM_DEBUG:-0}}\" != \"0\" ]; then scripts/seatunnel/run_job.sh --describe ercot_lmp_to_kafka; fi",
             f"export PATH=\"{BIN_PATH}\"",
             f"export PYTHONPATH=\"${{PYTHONPATH:-}}:{PYTHONPATH_ENTRY}\"",
             (
@@ -95,18 +121,26 @@ with DAG(
         ]
     )
 
-    seatunnel_task = BashOperator(task_id="ercot_lmp_seatunnel", bash_command=seatunnel_command)
+    seatunnel_task = BashOperator(
+        task_id="ercot_lmp_seatunnel",
+        bash_command=seatunnel_command,
+        execution_timeout=timedelta(minutes=15),
+    )
     exec_k8s = BashOperator(
         task_id="ercot_execute_k8s",
         bash_command=(
             "set -euo pipefail\n"
+            "if [ \"${AURUM_DEBUG:-0}\" != \"0\" ]; then set -x; fi\n"
             "cd /opt/airflow\n"
             f"export PATH=\"{BIN_PATH}\"\n"
             f"export PYTHONPATH=\"${{PYTHONPATH:-}}:{PYTHONPATH_ENTRY}\"\n"
             "python scripts/k8s/run_seatunnel_job.py --job-name ercot_lmp_to_kafka --wait --timeout 600"
         ),
+        execution_timeout=timedelta(minutes=20),
     )
 
     end = EmptyOperator(task_id="end")
 
-    start >> stage_ercot >> seatunnel_task >> exec_k8s >> end
+    start >> preflight >> stage_ercot >> seatunnel_task >> exec_k8s >> end
+
+    dag.on_failure_callback = build_failure_callback(source="aurum.airflow.ingest_iso_prices_ercot")

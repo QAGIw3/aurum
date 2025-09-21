@@ -80,6 +80,7 @@ def fetch_zip_content(
     max_retries: int = 5,
     backoff_seconds: float = 2.0,
     debug: bool = False,
+    timeout_seconds: float = 60.0,
 ) -> bytes:
     # Try multiple datetime encodings until a non-INVALID_REQUEST payload is returned.
     session = requests.Session()
@@ -98,7 +99,7 @@ def fetch_zip_content(
             attempts += 1
             if debug:
                 logging.warning("CAISO OASIS attempt %s params=%s", attempts, p)
-            resp = session.get(url, params=p, timeout=60)
+            resp = session.get(url, params=p, timeout=timeout_seconds)
             if resp.status_code == 429:
                 time.sleep(backoff_seconds * attempts)
                 continue
@@ -316,6 +317,12 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--dlq-subject", default="aurum.ingest.error.v1")
     parser.add_argument("--max-retries", type=int, default=5)
     parser.add_argument("--backoff-seconds", type=float, default=2.0)
+    parser.add_argument(
+        "--http-timeout",
+        type=float,
+        default=60.0,
+        help="Timeout (seconds) applied to CAISO HTTP requests",
+    )
     parser.add_argument("--debug", action="store_true")
     parser.add_argument(
         "--output-json",
@@ -368,6 +375,7 @@ def main() -> int:
             max_retries=args.max_retries,
             backoff_seconds=args.backoff_seconds,
             debug=args.debug,
+            timeout_seconds=args.http_timeout,
         )
         xml_bytes = extract_xml_bytes(zip_bytes)
     except Exception as exc:

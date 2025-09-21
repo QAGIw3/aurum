@@ -10,6 +10,8 @@ from airflow.operators.bash import BashOperator
 from airflow.operators.empty import EmptyOperator
 from airflow.operators.python import PythonOperator
 
+from aurum.airflow_utils import build_failure_callback, build_preflight_callable
+
 
 
 DEFAULT_ARGS: dict[str, Any] = {
@@ -17,8 +19,11 @@ DEFAULT_ARGS: dict[str, Any] = {
     "depends_on_past": False,
     "email_on_failure": True,
     "email": ["aurum-ops@example.com"],
-    "retries": 1,
+    "retries": 3,
     "retry_delay": timedelta(minutes=10),
+    "retry_exponential_backoff": True,
+    "max_retry_delay": timedelta(minutes=60),
+    "execution_timeout": timedelta(minutes=45),
 }
 
 BIN_PATH = os.environ.get("AURUM_BIN_PATH", ".venv/bin:$PATH")
@@ -83,25 +88,31 @@ def build_seatunnel_task() -> BashOperator:
         task_id="seatunnel_aeso_lmp_to_kafka",
         bash_command=(
             "set -euo pipefail\n"
+            "if [ \"${AURUM_DEBUG:-0}\" != \"0\" ]; then set -x; fi\n"
             "cd /opt/airflow\n"
             f"{pull_cmd}"
+            "if [ \"${AURUM_DEBUG:-0}\" != \"0\" ]; then scripts/seatunnel/run_job.sh --describe aeso_lmp_to_kafka; fi\n"
             f"export PATH=\"{BIN_PATH}\"\n"
             f"export PYTHONPATH=\"${{PYTHONPATH:-}}:{PYTHONPATH_ENTRY}\"\n"
             "export ISO_LMP_SCHEMA_PATH=/opt/airflow/scripts/kafka/schemas/iso.lmp.v1.avsc\n"
             # Render-only when running inside Airflow pods without Docker
             f"AURUM_EXECUTE_SEATUNNEL=0 {env_line} scripts/seatunnel/run_job.sh aeso_lmp_to_kafka --render-only"
         ),
+        execution_timeout=timedelta(minutes=10),
+        pool="api_aeso",
     )
     seatunnel_exec = BashOperator(
         task_id="aeso_execute_k8s",
         bash_command=(
             "set -euo pipefail\n"
+            "if [ \"${AURUM_DEBUG:-0}\" != \"0\" ]; then set -x; fi\n"
             "cd /opt/airflow\n"
             f"export PATH=\"{BIN_PATH}\"\n"
             f"export PYTHONPATH=\"${{PYTHONPATH:-}}:{PYTHONPATH_ENTRY}\"\n"
             "export ISO_LMP_SCHEMA_PATH=/opt/airflow/scripts/kafka/schemas/iso.lmp.v1.avsc\n"
             "python scripts/k8s/run_seatunnel_job.py --job-name aeso_lmp_to_kafka --wait --timeout 600"
         ),
+        execution_timeout=timedelta(minutes=20),
     )
     return seatunnel_render, seatunnel_exec
 
@@ -118,6 +129,18 @@ with DAG(
 ) as dag:
     start = EmptyOperator(task_id="start")
 
+    preflight = PythonOperator(
+        task_id="preflight_airflow_vars",
+        python_callable=build_preflight_callable(
+            required_variables=(
+                "aurum_kafka_bootstrap",
+                "aurum_schema_registry",
+                "aurum_aeso_smp_endpoint",
+            ),
+            optional_variables=("aurum_aeso_api_key", "aurum_aeso_smp_topic"),
+        ),
+    )
+
     register_sources = PythonOperator(task_id="register_sources", python_callable=_register_sources)
 
     aeso_render, aeso_exec = build_seatunnel_task()
@@ -129,4 +152,6 @@ with DAG(
 
     end = EmptyOperator(task_id="end")
 
-    start >> register_sources >> aeso_render >> aeso_exec >> aeso_watermark >> end
+    start >> preflight >> register_sources >> aeso_render >> aeso_exec >> aeso_watermark >> end
+
+    dag.on_failure_callback = build_failure_callback(source="aurum.airflow.ingest_iso_prices_aeso")

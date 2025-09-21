@@ -10,14 +10,19 @@ from airflow.operators.bash import BashOperator
 from airflow.operators.empty import EmptyOperator
 from airflow.operators.python import PythonOperator
 
+from aurum.airflow_utils import build_failure_callback, build_preflight_callable
+
 
 DEFAULT_ARGS: dict[str, Any] = {
     "owner": "aurum-data",
     "depends_on_past": False,
     "email_on_failure": True,
     "email": ["aurum-ops@example.com"],
-    "retries": 1,
+    "retries": 3,
     "retry_delay": timedelta(minutes=10),
+    "retry_exponential_backoff": True,
+    "max_retry_delay": timedelta(minutes=60),
+    "execution_timeout": timedelta(minutes=45),
 }
 
 BIN_PATH = os.environ.get("AURUM_BIN_PATH", ".venv/bin:$PATH")
@@ -72,6 +77,21 @@ with DAG(
 ) as dag:
     start = EmptyOperator(task_id="start")
 
+    preflight = PythonOperator(
+        task_id="preflight_airflow_vars",
+        python_callable=build_preflight_callable(
+            required_variables=(
+                "aurum_kafka_bootstrap",
+                "aurum_schema_registry",
+                "aurum_pjm_pnodes_endpoint",
+            ),
+            optional_variables=(
+                "aurum_pjm_api_key",
+                "aurum_pjm_pnodes_topic",
+            ),
+        ),
+    )
+
     register_sources = PythonOperator(task_id="register_sources", python_callable=_register_sources)
 
     env_line = " ".join(
@@ -106,7 +126,7 @@ with DAG(
             # Render-only in Airflow pods without Docker; executed via k8s job
             f"AURUM_EXECUTE_SEATUNNEL=0 {env_line} scripts/seatunnel/run_job.sh pjm_pnodes_to_kafka --render-only"
         ),
-        pool="pjm_api",
+        pool="api_pjm",
     )
 
     exec_k8s = BashOperator(
@@ -127,4 +147,6 @@ with DAG(
 
     end = EmptyOperator(task_id="end")
 
-    start >> register_sources >> pnodes_task >> exec_k8s >> pnodes_watermark >> end
+    start >> preflight >> register_sources >> pnodes_task >> exec_k8s >> pnodes_watermark >> end
+
+    dag.on_failure_callback = build_failure_callback(source="aurum.airflow.ingest_pjm_pnodes")

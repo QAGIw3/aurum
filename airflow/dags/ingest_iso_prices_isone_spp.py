@@ -10,14 +10,19 @@ from airflow.operators.bash import BashOperator
 from airflow.operators.empty import EmptyOperator
 from airflow.operators.python import PythonOperator
 
+from aurum.airflow_utils import build_failure_callback, build_preflight_callable
+
 
 DEFAULT_ARGS: dict[str, Any] = {
     "owner": "aurum-data",
     "depends_on_past": False,
     "email_on_failure": True,
     "email": ["aurum-ops@example.com"],
-    "retries": 1,
+    "retries": 3,
     "retry_delay": timedelta(minutes=10),
+    "retry_exponential_backoff": True,
+    "max_retry_delay": timedelta(minutes=60),
+    "execution_timeout": timedelta(minutes=45),
 }
 
 BIN_PATH = os.environ.get("AURUM_BIN_PATH", ".venv/bin:$PATH")
@@ -83,22 +88,27 @@ def build_seatunnel_task(job_name: str, env_assignments: list[str], mappings: li
         task_id=f"seatunnel_{job_name}",
         bash_command=(
             "set -euo pipefail\n"
+            "if [ \"${AURUM_DEBUG:-0}\" != \"0\" ]; then set -x; fi\n"
             "cd /opt/airflow\n"
             f"{pull_cmd}"
+            f"if [ \"${{AURUM_DEBUG:-0}}\" != \"0\" ]; then scripts/seatunnel/run_job.sh --describe {job_name}; fi\n"
             f"export PATH=\"{BIN_PATH}\"\n"
             f"export PYTHONPATH=\"${{PYTHONPATH:-}}:{PYTHONPATH_ENTRY}\"\n"
             f"AURUM_EXECUTE_SEATUNNEL=0 {env_line} scripts/seatunnel/run_job.sh {job_name} --render-only"
         ),
+        execution_timeout=timedelta(minutes=10),
     )
     exec_k8s = BashOperator(
         task_id=f"seatunnel_{job_name}_execute_k8s",
         bash_command=(
             "set -euo pipefail\n"
+            "if [ \"${AURUM_DEBUG:-0}\" != \"0\" ]; then set -x; fi\n"
             "cd /opt/airflow\n"
             f"export PATH=\"{BIN_PATH}\"\n"
             f"export PYTHONPATH=\"${{PYTHONPATH:-}}:{PYTHONPATH_ENTRY}\"\n"
             f"python scripts/k8s/run_seatunnel_job.py --job-name {job_name} --wait --timeout 600"
         ),
+        execution_timeout=timedelta(minutes=20),
     )
     return render, exec_k8s
 
@@ -114,6 +124,19 @@ with DAG(
     tags=["aurum", "isone", "spp", "iso"],
 ) as dag:
     start = EmptyOperator(task_id="start")
+
+    preflight = PythonOperator(
+        task_id="preflight_airflow_vars",
+        python_callable=build_preflight_callable(
+            required_variables=("aurum_kafka_bootstrap", "aurum_schema_registry"),
+            optional_variables=(
+                "aurum_isone_ws_username",
+                "aurum_isone_ws_password",
+                "aurum_spp_file_base_url",
+                "aurum_spp_topic",
+            ),
+        ),
+    )
 
     register_sources = PythonOperator(
         task_id="register_sources",
@@ -142,6 +165,7 @@ with DAG(
     stage_spp_cmd = "\n".join(
         [
             "set -euo pipefail",
+            "if [ \"${AURUM_DEBUG:-0}\" != \"0\" ]; then set -x; fi",
             "cd /opt/airflow",
             "mkdir -p $(dirname '" + spp_staging + "')",
             f"export PATH=\"{BIN_PATH}\"",
@@ -155,7 +179,11 @@ with DAG(
             ),
         ]
     )
-    stage_spp = BashOperator(task_id="stage_spp_lmp", bash_command=stage_spp_cmd)
+    stage_spp = BashOperator(
+        task_id="stage_spp_lmp",
+        bash_command=stage_spp_cmd,
+        execution_timeout=timedelta(minutes=20),
+    )
 
     spp_render, spp_exec = build_seatunnel_task(
         "spp_lmp_to_kafka",
@@ -181,7 +209,9 @@ with DAG(
 
     end = EmptyOperator(task_id="end")
 
-    start >> register_sources
+    start >> preflight >> register_sources
     register_sources >> isone_render >> isone_exec >> isone_watermark
     register_sources >> stage_spp >> spp_render >> spp_exec >> spp_watermark
     [isone_watermark, spp_watermark] >> end
+
+    dag.on_failure_callback = build_failure_callback(source="aurum.airflow.ingest_iso_prices_isone_spp")

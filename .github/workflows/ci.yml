@@ -8,6 +8,8 @@ on:
 permissions:
   contents: read
   packages: write
+  pages: write
+  id-token: write
 
 jobs:
   lint-test:
@@ -65,6 +67,12 @@ jobs:
         run: |
           bash scripts/ci/scenario_smoke.sh
 
+      - name: Run PPA valuation smoke test
+        env:
+          COMPOSE_PROFILES: ppa-smoke
+        run: |
+          bash scripts/ci/ppa_smoke.sh
+
   dbt-build:
     name: dbt Build
     needs: lint-test
@@ -98,6 +106,33 @@ jobs:
       - name: dbt build (stg,int,mart)
         run: |
           dbt build --profiles-dir "$DBT_PROFILES_DIR" --target "$DBT_TARGET" --vars "$DBT_VARS" -m stg int mart
+
+  api-docs:
+    name: API Docs
+    if: github.ref == 'refs/heads/main'
+    needs: lint-test
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pages: write
+      id-token: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Configure Pages
+        uses: actions/configure-pages@v5
+
+      - name: Prepare API documentation bundle
+        run: |
+          mkdir -p public/api
+          cp -R docs/api/. public/api/
+          cp openapi/aurum.yaml public/api/aurum.yaml
+
+      - name: Upload GitHub Pages artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: public
 
   build-and-publish:
     name: Build & Publish Images
@@ -205,6 +240,25 @@ jobs:
         with:
           name: helm-charts
           path: dist/pages
+
+  deploy-docs:
+    name: Deploy Docs
+    if: github.ref == 'refs/heads/main'
+    needs: api-docs
+    runs-on: ubuntu-latest
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deploy.outputs.page_url }}
+    concurrency:
+      group: pages
+      cancel-in-progress: false
+    steps:
+      - name: Deploy to GitHub Pages
+        id: deploy
+        uses: actions/deploy-pages@v4
 
   deploy-helm-pages:
     name: Publish Helm Repo
