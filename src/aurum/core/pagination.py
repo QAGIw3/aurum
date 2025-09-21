@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import base64
+import hashlib
 import json
 import time
 from dataclasses import dataclass
@@ -17,31 +18,55 @@ class OffsetLimit:
     offset: int = 0
 
 
-@dataclass
+@dataclass(frozen=True)
 class Cursor:
-    """Cursor for stable pagination."""
+    """Cursor for stable pagination with validation and integrity checks."""
     offset: int
     limit: int
     timestamp: float
     filters: Dict[str, Any]
+    _signature: str = ""
+
+    def __post_init__(self) -> None:
+        """Validate cursor parameters after initialization."""
+        if self.offset < 0:
+            raise ValueError(f"Cursor offset must be non-negative: {self.offset}")
+        if self.limit <= 0:
+            raise ValueError(f"Cursor limit must be positive: {self.limit}")
+        if self.timestamp <= 0:
+            raise ValueError(f"Cursor timestamp must be positive: {self.timestamp}")
 
     def to_string(self) -> str:
-        """Convert cursor to base64-encoded string."""
+        """Convert cursor to base64-encoded string with integrity signature."""
         data = {
             "offset": self.offset,
             "limit": self.limit,
             "timestamp": self.timestamp,
             "filters": self.filters,
         }
-        json_str = json.dumps(data, default=str)
-        return base64.b64encode(json_str.encode()).decode()
+        json_str = json.dumps(data, default=str, separators=(",", ":"))
+        payload = json_str.encode("utf-8")
+        signature = hashlib.sha256(payload).hexdigest()[:8]  # 8-char integrity check
+        signed_data = {"data": data, "sig": signature}
+        signed_json = json.dumps(signed_data, default=str, separators=(",", ":"))
+        return base64.urlsafe_b64encode(signed_json.encode()).decode()
 
     @classmethod
     def from_string(cls, cursor_str: str) -> "Cursor":
-        """Create cursor from base64-encoded string."""
+        """Create cursor from base64-encoded string with integrity verification."""
         try:
-            json_str = base64.b64decode(cursor_str.encode()).decode()
-            data = json.loads(json_str)
+            signed_json = base64.urlsafe_b64decode(cursor_str.encode("ascii"))
+            signed_data = json.loads(signed_json.decode("utf-8"))
+            data = signed_data["data"]
+            expected_sig = signed_data["sig"]
+
+            # Verify integrity
+            json_str = json.dumps(data, default=str, separators=(",", ":"))
+            payload = json_str.encode("utf-8")
+            actual_sig = hashlib.sha256(payload).hexdigest()[:8]
+            if actual_sig != expected_sig:
+                raise ValueError("Cursor signature mismatch - possible corruption or tampering")
+
             return cls(
                 offset=data["offset"],
                 limit=data["limit"],
@@ -50,6 +75,18 @@ class Cursor:
             )
         except Exception as exc:
             raise ValueError(f"Invalid cursor format: {exc}") from exc
+
+    def is_expired(self, max_age_seconds: int = 3600) -> bool:
+        """Check if cursor has expired."""
+        return time.time() - self.timestamp > max_age_seconds
+
+    def matches_filters(self, current_filters: Dict[str, Any]) -> bool:
+        """Check if cursor filters match current query filters."""
+        # Normalize None values for comparison
+        def normalize_filters(filters: Dict[str, Any]) -> Dict[str, Any]:
+            return {k: (v if v is not None else "") for k, v in filters.items()}
+
+        return normalize_filters(self.filters) == normalize_filters(current_filters)
 
 
 class OffsetPage(AurumBaseModel):

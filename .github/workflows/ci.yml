@@ -41,6 +41,10 @@ jobs:
         env:
           PYTHONPATH: src
         run: pytest
+      - name: Seatunnel template linter
+        env:
+          PYTHONPATH: src
+        run: python -m aurum.seatunnel.linter
       - name: Kafka schema contract check
         if: matrix.python-version == '3.11'
         env:
@@ -52,6 +56,32 @@ jobs:
           PYTHONPATH: src
         run: scripts/kafka/bootstrap.sh --schema-registry-url http://localhost:8081 --dry-run
 
+  airflow-dag-check:
+    name: Airflow DAG Syntax
+    needs: lint-test
+    runs-on: ubuntu-latest
+    env:
+      AIRFLOW_HOME: ${{ runner.temp }}/airflow
+      AIRFLOW__CORE__LOAD_EXAMPLES: "False"
+      AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: sqlite:///${{ runner.temp }}/airflow/airflow.db
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+      - name: Install Airflow and project dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install "apache-airflow==2.8.1" --constraint "https://raw.githubusercontent.com/apache/airflow/constraints-2.8.1/constraints-3.11.txt"
+          pip install -r requirements-dev.txt
+      - name: Initialize Airflow metadata DB
+        run: airflow db init
+      - name: Validate DAG imports
+        run: airflow dags list --subdir airflow/dags
+
   spectral-lint:
     name: Spectral OpenAPI Lint
     needs: lint-test
@@ -59,10 +89,63 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
-      - name: Spectral Lint
-        uses: stoplightio/spectral-action@v0.8.7
-        with:
-          file_glob: 'openapi/**/*.y*ml'
+
+      - name: Install Spectral
+        run: |
+          npm install -g @stoplight/spectral-cli
+
+      - name: Lint OpenAPI specifications
+        run: |
+          # Lint all OpenAPI files
+          spectral lint openapi/**/*.y*ml \
+            --ruleset .spectral.yml \
+            --format text \
+            --fail-severity error \
+            --output-format text \
+            --verbose
+
+      - name: Validate OpenAPI schema compliance
+        run: |
+          # Check that all required fields are present
+          for file in openapi/**/*.y*ml; do
+            echo "Validating $file..."
+
+            # Check for required OpenAPI 3.0 fields
+            if ! grep -q "openapi:" "$file"; then
+              echo "ERROR: Missing 'openapi' field in $file"
+              exit 1
+            fi
+
+            if ! grep -q "info:" "$file"; then
+              echo "ERROR: Missing 'info' section in $file"
+              exit 1
+            fi
+
+            if ! grep -q "title:" "$file"; then
+              echo "ERROR: Missing 'title' in info section of $file"
+              exit 1
+            fi
+
+            if ! grep -q "version:" "$file"; then
+              echo "ERROR: Missing 'version' in info section of $file"
+              exit 1
+            fi
+
+            if ! grep -q "paths:" "$file"; then
+              echo "ERROR: Missing 'paths' section in $file"
+              exit 1
+            fi
+          done
+
+      - name: Check API consistency
+        run: |
+          # Ensure all endpoints have consistent response models
+          python scripts/ci/validate_openapi_consistency.py
+
+      - name: Validate examples in OpenAPI
+        run: |
+          # Check that all examples in the OpenAPI spec are valid
+          python scripts/ci/validate_openapi_examples.py
 
   security-scan:
     name: Container Security Scan
@@ -72,7 +155,18 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
       - name: Prepare SBOM directory
-        run: mkdir -p sbom
+        run: |
+          mkdir -p sbom
+          mkdir -p security
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+      - name: Install security tooling
+        run: |
+          python -m pip install --upgrade pip
+          pip install bandit safety
       - name: Hadolint API Dockerfile
         uses: hadolint/hadolint-action@v3.1.0
         with:
@@ -81,6 +175,13 @@ jobs:
         uses: hadolint/hadolint-action@v3.1.0
         with:
           dockerfile: Dockerfile.worker
+      - name: Bandit SAST
+        run: |
+          bandit -r src -f sarif -o security/bandit.sarif
+      - name: Safety vulnerability audit
+        run: |
+          safety check --file constraints/dev.txt --json > security/safety.json
+        continue-on-error: true
       - name: Trivy filesystem scan
         uses: aquasecurity/trivy-action@0.13.0
         with:
@@ -89,18 +190,32 @@ jobs:
           ignore-unfixed: true
           severity: HIGH,CRITICAL
           hide-progress: true
-          format: table
+          format: sarif
+          output: security/trivy.sarif
           exit-code: '1'
       - name: Generate SBOM
         uses: anchore/sbom-action@v0
         with:
           path: .
           output-file: sbom/spdx.json
+      - name: Upload Bandit SARIF to Code Scanning
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: security/bandit.sarif
+      - name: Upload Trivy SARIF to Code Scanning
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: security/trivy.sarif
       - name: Upload SBOM artifact
         uses: actions/upload-artifact@v4
         with:
           name: sbom
           path: sbom/spdx.json
+      - name: Upload security reports
+        uses: actions/upload-artifact@v4
+        with:
+          name: security-reports
+          path: security
 
   scenario-smoke:
     name: Scenario Smoke
@@ -270,6 +385,7 @@ jobs:
     name: Build & Publish Images
     needs:
       - lint-test
+      - airflow-dag-check
       - spectral-lint
       - security-scan
       - dbt-build

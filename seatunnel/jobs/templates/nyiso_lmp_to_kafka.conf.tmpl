@@ -5,6 +5,9 @@
 #   AURUM_SCHEMA_REGISTRY_URL      - Schema Registry endpoint
 #   NYISO_TOPIC              - Kafka topic (default aurum.iso.nyiso.lmp.v1)
 # Optional environment variables:
+#   NYISO.CONF_KEY_SERIALIZER - Kafka key serializer (string/json/avro, default: string)
+#   NYISO.CONF_KEY_FORMAT - Kafka key format (json/avro, default: json)
+#
 #   NYISO_SUBJECT            - Schema Registry subject (default <topic>-value)
 #   ISO_LMP_SCHEMA           - Avro schema JSON populated by run_job.sh
 #   ISO_LOCATION_REGISTRY    - Path to iso_nodes.csv (default config/iso_nodes.csv)
@@ -19,6 +22,10 @@ source {
     url = "${NYISO_URL}"
     method = "GET"
     connection_timeout_ms = 20000
+    retry = 5
+    retry_backoff_multiplier_ms = 1500
+    retry_backoff_max_ms = 90000
+    rate_limit_sleep_ms = 200
     retry = 10
     format = "csv"
     csv {
@@ -98,8 +105,15 @@ sink {
       schema.registry.url = "${AURUM_SCHEMA_REGISTRY_URL}"
       value.schema.subject = "${NYISO_SUBJECT}"
       value.schema = """${ISO_LMP_SCHEMA}"""
+      # Key configuration for message routing and partitioning
+      key.serializer = "${NYISO.CONF_KEY_SERIALIZER:-string}"
+      key.format = "${NYISO.CONF_KEY_FORMAT:-json}"
     }
     producer {
+      request.timeout.ms = 30000
+      delivery.timeout.ms = 120000
+      retry.backoff.max.ms = 10000
+      retry.backoff.ms = 100
       acks = "all"
       enable.idempotence = true
       max.in.flight.requests.per.connection = 5

@@ -46,7 +46,8 @@ testing = [
   "pyyaml>=6.0",
   "openapi-spec-validator>=0.7",
   "dbt-core>=1.7",
-  "dbt-duckdb>=1.7"
+  "dbt-duckdb>=1.7",
+  "jsonschema>=4.17"
 ]
 quality = [
   "ruff>=0.5",

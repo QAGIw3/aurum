@@ -10,8 +10,9 @@ import json
 import os
 import time
 from dataclasses import dataclass
+from enum import Enum
 from threading import Lock
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional, Set
 
 from aurum.core import AurumSettings
 import httpx
@@ -23,6 +24,152 @@ from starlette.responses import JSONResponse
 from starlette.types import ASGIApp, Receive, Scope, Send
 
 
+class Permission(str, Enum):
+    """Authorization permissions."""
+    # Data access
+    CURVES_READ = "curves:read"
+    CURVES_WRITE = "curves:write"
+
+    # Scenario management
+    SCENARIOS_READ = "scenarios:read"
+    SCENARIOS_WRITE = "scenarios:write"
+    SCENARIOS_RUN = "scenarios:run"
+    SCENARIOS_DELETE = "scenarios:delete"
+
+    # Administration
+    ADMIN_READ = "admin:read"
+    ADMIN_WRITE = "admin:write"
+
+    # Tenant management
+    TENANT_MANAGE = "tenant:manage"
+
+
+class Role(str, Enum):
+    """User roles with associated permissions."""
+    USER = "user"  # Basic user access
+    ANALYST = "analyst"  # Data analysis access
+    TRADER = "trader"  # Trading operations
+    ADMIN = "admin"  # Full administrative access
+    SUPER_ADMIN = "super_admin"  # System administration
+
+
+@dataclass(frozen=True)
+class AuthorizationConfig:
+    """Authorization configuration."""
+    role_permissions: Dict[Role, Set[Permission]]
+    default_role: Role = Role.USER
+    admin_groups: Set[str] = frozenset()
+
+    @classmethod
+    def default(cls) -> "AuthorizationConfig":
+        """Default authorization configuration."""
+        return cls(
+            role_permissions={
+                Role.USER: {
+                    Permission.CURVES_READ,
+                    Permission.SCENARIOS_READ,
+                },
+                Role.ANALYST: {
+                    Permission.CURVES_READ,
+                    Permission.SCENARIOS_READ,
+                    Permission.SCENARIOS_RUN,
+                },
+                Role.TRADER: {
+                    Permission.CURVES_READ,
+                    Permission.CURVES_WRITE,
+                    Permission.SCENARIOS_READ,
+                    Permission.SCENARIOS_WRITE,
+                    Permission.SCENARIOS_RUN,
+                    Permission.SCENARIOS_DELETE,
+                },
+                Role.ADMIN: {
+                    Permission.CURVES_READ,
+                    Permission.CURVES_WRITE,
+                    Permission.SCENARIOS_READ,
+                    Permission.SCENARIOS_WRITE,
+                    Permission.SCENARIOS_RUN,
+                    Permission.SCENARIOS_DELETE,
+                    Permission.ADMIN_READ,
+                },
+                Role.SUPER_ADMIN: {
+                    Permission.CURVES_READ,
+                    Permission.CURVES_WRITE,
+                    Permission.SCENARIOS_READ,
+                    Permission.SCENARIOS_WRITE,
+                    Permission.SCENARIOS_RUN,
+                    Permission.SCENARIOS_DELETE,
+                    Permission.ADMIN_READ,
+                    Permission.ADMIN_WRITE,
+                    Permission.TENANT_MANAGE,
+                },
+            },
+            admin_groups={"admin", "administrator", "superuser"},
+        )
+
+
+def get_user_role(principal: Dict[str, Any]) -> Role:
+    """Determine user role from principal information."""
+    if not principal:
+        return Role.USER
+
+    # Check groups for role indicators
+    groups = principal.get("groups", [])
+    if isinstance(groups, list):
+        groups_lower = [str(g).lower() for g in groups]
+
+        if any("super" in g and "admin" in g for g in groups_lower):
+            return Role.SUPER_ADMIN
+        elif any("admin" in g for g in groups_lower):
+            return Role.ADMIN
+        elif any("trader" in g for g in groups_lower):
+            return Role.TRADER
+        elif any("analyst" in g for g in groups_lower):
+            return Role.ANALYST
+
+    # Check email domain for role hints
+    email = principal.get("email", "")
+    if "@" in email:
+        domain = email.split("@")[1].lower()
+        if "admin" in domain or "ops" in domain:
+            return Role.ADMIN
+
+    return Role.USER
+
+
+def has_permission(principal: Dict[str, Any], permission: Permission, tenant_id: Optional[str] = None) -> bool:
+    """Check if user has permission for tenant."""
+    if not principal:
+        return False
+
+    user_role = get_user_role(principal)
+    config = AuthorizationConfig.default()
+
+    # Get permissions for role
+    role_permissions = config.role_permissions.get(user_role, set())
+
+    # Check if user has the required permission
+    if permission not in role_permissions:
+        return False
+
+    # For tenant-specific operations, ensure user belongs to tenant
+    if tenant_id:
+        user_tenant = principal.get("tenant")
+        if user_tenant and user_tenant != tenant_id:
+            return False
+
+    return True
+
+
+def require_permission(principal: Dict[str, Any], permission: Permission, tenant_id: Optional[str] = None) -> None:
+    """Require permission, raising exception if not authorized."""
+    if not has_permission(principal, permission, tenant_id):
+        raise HTTPException(
+            status_code=403,
+            detail=f"Permission denied: {permission.value}",
+            headers={"X-Required-Permission": permission.value}
+        )
+
+
 @dataclass(frozen=True)
 class OIDCConfig:
     issuer: str | None
@@ -30,6 +177,8 @@ class OIDCConfig:
     jwks_url: str | None
     disabled: bool
     leeway: int
+    forward_auth_header: str | None
+    forward_auth_claims_header: str | None
 
     @classmethod
     def from_env(cls) -> "OIDCConfig":
@@ -41,7 +190,20 @@ class OIDCConfig:
         if not issuer or not jwks_url:
             disabled = True
         leeway = int(os.getenv("AURUM_API_JWT_LEEWAY", "60") or 60)
-        return cls(issuer=issuer, audience=audience, jwks_url=jwks_url, disabled=disabled, leeway=leeway)
+
+        # Traefik forward-auth support
+        forward_auth_header = os.getenv("AURUM_API_FORWARD_AUTH_HEADER")
+        forward_auth_claims_header = os.getenv("AURUM_API_FORWARD_AUTH_CLAIMS_HEADER")
+
+        return cls(
+            issuer=issuer,
+            audience=audience,
+            jwks_url=jwks_url,
+            disabled=disabled,
+            leeway=leeway,
+            forward_auth_header=forward_auth_header,
+            forward_auth_claims_header=forward_auth_claims_header,
+        )
 
     @classmethod
     def from_settings(cls, settings: AurumSettings) -> "OIDCConfig":
@@ -50,7 +212,20 @@ class OIDCConfig:
         jwks_url = settings.auth.oidc_jwks_url
         disabled = settings.auth.disabled or not issuer or not jwks_url
         leeway = settings.auth.jwt_leeway_seconds
-        return cls(issuer=issuer, audience=audience, jwks_url=jwks_url, disabled=disabled, leeway=leeway)
+
+        # Traefik forward-auth support
+        forward_auth_header = getattr(settings.auth, 'forward_auth_header', None)
+        forward_auth_claims_header = getattr(settings.auth, 'forward_auth_claims_header', None)
+
+        return cls(
+            issuer=issuer,
+            audience=audience,
+            jwks_url=jwks_url,
+            disabled=disabled,
+            leeway=leeway,
+            forward_auth_header=forward_auth_header,
+            forward_auth_claims_header=forward_auth_claims_header,
+        )
 
 
 class JWKSCache:
@@ -117,6 +292,18 @@ class AuthMiddleware:
             return
 
         request = Request(scope)
+
+        # Try Traefik forward-auth first
+        if self.config.forward_auth_header:
+            principal = self._extract_forward_auth_principal(request)
+            if principal:
+                # Attach principal to request.state for downstream use
+                scope.setdefault("state", {})
+                scope["state"]["principal"] = principal
+                await self.app(scope, receive, send)
+                return
+
+        # Fall back to OIDC JWT verification
         auth_header = request.headers.get("authorization")
         if not auth_header or not auth_header.lower().startswith("bearer "):
             response = _unauthorized("Missing bearer token")
@@ -140,6 +327,60 @@ class AuthMiddleware:
             "claims": claims,
         }
         await self.app(scope, receive, send)
+
+    def _extract_forward_auth_principal(self, request: Request) -> Dict[str, Any] | None:
+        """Extract principal from Traefik forward-auth headers."""
+        if not self.config.forward_auth_header:
+            return None
+
+        # Check for user identity header
+        user_header = request.headers.get(self.config.forward_auth_header)
+        if not user_header:
+            return None
+
+        principal = {
+            "sub": user_header,
+            "email": None,
+            "groups": [],
+            "tenant": None,
+            "claims": {},
+        }
+
+        # Extract additional claims if configured
+        if self.config.forward_auth_claims_header:
+            claims_json = request.headers.get(self.config.forward_auth_claims_header)
+            if claims_json:
+                try:
+                    claims = json.loads(claims_json)
+
+                    # Map common claim names
+                    principal["email"] = claims.get("email") or claims.get("preferred_username")
+                    principal["groups"] = claims.get("groups") or claims.get("roles") or []
+                    principal["tenant"] = claims.get("tenant") or claims.get("org") or claims.get("organization")
+                    principal["claims"] = claims
+
+                    # Extract tenant from various possible sources
+                    if not principal["tenant"]:
+                        # Try to extract from domain/email
+                        if principal["email"] and "@" in principal["email"]:
+                            domain = principal["email"].split("@")[1]
+                            if "." in domain:
+                                principal["tenant"] = domain.split(".")[0]
+
+                        # Try to extract from groups
+                        if principal["groups"]:
+                            for group in principal["groups"]:
+                                if "tenant:" in str(group).lower():
+                                    tenant_part = str(group).split("tenant:")[-1].strip()
+                                    if tenant_part:
+                                        principal["tenant"] = tenant_part
+                                        break
+
+                except (json.JSONDecodeError, KeyError):
+                    # If claims parsing fails, continue with basic info
+                    pass
+
+        return principal
 
     def _verify_jwt(self, token: str) -> dict[str, Any]:
         if not (self.config.issuer and self.config.jwks_url):

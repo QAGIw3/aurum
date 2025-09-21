@@ -10,6 +10,9 @@
 #   FRED_API_KEY           - FRED API key
 #
 # Optional environment variables:
+#   CPI_KEY_SERIALIZER - Kafka key serializer (string/json/avro, default: string)
+#   CPI_KEY_FORMAT - Kafka key format (json/avro, default: json)
+#
 #   CPI_START_DATE         - Observation start (YYYY-MM-DD)
 #   CPI_END_DATE           - Observation end (YYYY-MM-DD)
 #   CPI_AREA               - Area label (default US)
@@ -36,7 +39,10 @@ source {
     }
     connection_timeout_ms = 15000
     retry = 5
+    retry_backoff_multiplier_ms = 1500
+    retry_backoff_max_ms = 90000
     format = "json"
+    rate_limit_sleep_ms = 200
     schema = {
       fields { date = string value = string units = string series_id = string }
     }
@@ -81,6 +87,9 @@ sink {
       schema.registry.url = "${AURUM_SCHEMA_REGISTRY_URL}"
       value.schema.subject = "${CPI_SUBJECT}"
       value.schema = """${CPI_SCHEMA}"""
+      # Key configuration for message routing and partitioning
+      key.serializer = "${CPI_KEY_SERIALIZER:-string}"
+      key.format = "${CPI_KEY_FORMAT:-json}"
     }
     producer {
       acks = "all"

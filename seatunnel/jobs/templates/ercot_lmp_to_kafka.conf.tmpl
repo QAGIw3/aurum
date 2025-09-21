@@ -6,6 +6,9 @@
 #   AURUM_SCHEMA_REGISTRY_URL     - Schema Registry endpoint
 #
 # Optional environment variables:
+#   ERCOT.CONF_KEY_SERIALIZER - Kafka key serializer (string/json/avro, default: string)
+#   ERCOT.CONF_KEY_FORMAT - Kafka key format (json/avro, default: json)
+#
 #   ERCOT_TOPIC             - Kafka topic (default aurum.iso.ercot.lmp.v1)
 #   ERCOT_SUBJECT           - Schema Registry subject (default <topic>-value)
 #   ISO_LMP_SCHEMA          - Avro schema JSON populated by run_job.sh
@@ -125,6 +128,9 @@ sink {
       schema.registry.url = "${AURUM_SCHEMA_REGISTRY_URL}"
       value.schema.subject = "${ERCOT_SUBJECT}"
       value.schema = """${ISO_LMP_SCHEMA}"""
+      # Key configuration for message routing and partitioning
+      key.serializer = "${ERCOT.CONF_KEY_SERIALIZER:-string}"
+      key.format = "${ERCOT.CONF_KEY_FORMAT:-json}"
     }
     producer {
       acks = "all"

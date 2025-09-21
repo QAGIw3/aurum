@@ -4,7 +4,15 @@
   "namespace": "aurum.iso",
   "doc": "Generation mix observation by fuel type for an ISO.",
   "fields": [
-    {"name": "iso_code", "type": "string"},
+    {
+      "name": "iso_code",
+      "type": {
+        "type": "enum",
+        "name": "IsoCode",
+        "doc": "Market operator the observation belongs to.",
+        "symbols": ["PJM", "CAISO", "ERCOT", "NYISO", "MISO", "ISONE", "SPP", "AESO", "UNKNOWN"]
+      }
+    },
     {"name": "asof_time", "type": {"type": "long", "logicalType": "timestamp-micros"}},
     {"name": "fuel_type", "type": "string"},
     {"name": "mw", "type": "double"},
@@ -13,4 +21,3 @@
     {"name": "metadata", "type": ["null", {"type": "map", "values": "string"}], "default": null}
   ]
 }
-

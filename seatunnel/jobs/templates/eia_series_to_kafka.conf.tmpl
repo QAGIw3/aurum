@@ -27,6 +27,8 @@
 #   EIA_PARAM_OVERRIDES     - Additional key/value pairs injected into the params block
 #   EIA_WINDOW_END          - ISO8601 timestamp anchoring the look-back window (auto-set by Airflow)
 #   EIA_WINDOW_HOURS/DAYS/MONTHS/YEARS - Window span used when deriving start/end tokens
+#   EIA_KEY_SERIALIZER      - Kafka key serializer (string/json/avro, default: string)
+#   EIA_KEY_FORMAT          - Kafka key format (json/avro, default: json)
 
 env {
   job.mode = "BATCH"
@@ -49,7 +51,12 @@ ${EIA_PARAM_OVERRIDES}
     }
     connection_timeout_ms = 15000
     retry = 5
+    retry_backoff_multiplier_ms = 1000
+    retry_backoff_max_ms = 60000
     format = "json"
+    rate_limit_sleep_ms = 100
+    # Enhanced retry strategy for rate limiting
+    retry_strategy = "exponential_backoff"
     schema = {
       fields {
         period = string
@@ -115,6 +122,9 @@ sink {
       schema.registry.url = "${AURUM_SCHEMA_REGISTRY_URL}"
       value.schema.subject = "${EIA_SUBJECT}"
       value.schema = """${EIA_SERIES_SCHEMA}"""
+      # Key configuration for message routing and partitioning
+      key.serializer = "${EIA_KEY_SERIALIZER:-string}"
+      key.format = "${EIA_KEY_FORMAT:-json}"
     }
     producer {
       acks = "all"
@@ -122,7 +132,11 @@ sink {
       max.in.flight.requests.per.connection = 5
       linger.ms = 500
       batch.size = 32768
-      retries = 5
+      retries = 10
+      retry.backoff.ms = 100
+      retry.backoff.max.ms = 10000
+      delivery.timeout.ms = 120000
+      request.timeout.ms = 30000
     }
   }
 }

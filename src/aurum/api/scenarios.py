@@ -21,6 +21,8 @@ from .models import (
     ScenarioRunListResponse,
     ScenarioOutputResponse,
     ScenarioOutputPoint,
+    ScenarioOutputListResponse,
+    ScenarioOutputFilter,
     ScenarioMetricLatestResponse,
     ScenarioMetricLatest,
 )
@@ -41,6 +43,14 @@ async def list_scenarios(
     offset: int = Query(0, ge=0),
 ) -> ScenarioListResponse:
     """List scenarios with optional filtering."""
+    from .auth import require_permission, Permission
+
+    # Get principal from request state
+    principal = getattr(request.state, "principal", None)
+
+    # Require scenarios read permission
+    require_permission(principal, Permission.SCENARIOS_READ, tenant_id)
+
     start_time = time.perf_counter()
 
     try:
@@ -80,6 +90,14 @@ async def create_scenario(
     scenario_data: CreateScenarioRequest,
 ) -> ScenarioResponse:
     """Create a new scenario."""
+    from .auth import require_permission, Permission
+
+    # Get principal from request state
+    principal = getattr(request.state, "principal", None)
+
+    # Require scenarios write permission
+    require_permission(principal, Permission.SCENARIOS_WRITE, scenario_data.tenant_id)
+
     start_time = time.perf_counter()
 
     try:
@@ -425,7 +443,15 @@ async def cancel_scenario_run(
     request: Request,
     run_id: str,
 ) -> ScenarioRunResponse:
-    """Cancel a running scenario run."""
+    """Cancel a running scenario run with idempotency and worker signaling."""
+    from .auth import require_permission, Permission
+
+    # Get principal from request state
+    principal = getattr(request.state, "principal", None)
+
+    # Require scenarios delete permission
+    require_permission(principal, Permission.SCENARIOS_DELETE)
+
     start_time = time.perf_counter()
 
     try:
@@ -469,16 +495,30 @@ async def cancel_scenario_run(
         ) from exc
 
 
-@router.get("/v1/scenarios/{scenario_id}/outputs", response_model=ScenarioOutputResponse)
+@router.get("/v1/scenarios/{scenario_id}/outputs", response_model=ScenarioOutputListResponse)
 async def get_scenario_outputs(
     request: Request,
     scenario_id: str,
     limit: int = Query(100, ge=1, le=500),
     offset: int = Query(0, ge=0),
+    start_time: Optional[str] = Query(None, description="Start time filter (ISO 8601 format)"),
+    end_time: Optional[str] = Query(None, description="End time filter (ISO 8601 format)"),
+    metric_name: Optional[str] = Query(None, description="Filter by metric name"),
+    min_value: Optional[float] = Query(None, description="Minimum value filter", ge=0),
+    max_value: Optional[float] = Query(None, description="Maximum value filter", ge=0),
+    tags: Optional[str] = Query(None, description="Filter by tags (JSON format)"),
     format: Optional[str] = Query(None, description="Output format (json, csv)"),
-) -> ScenarioOutputResponse:
-    """Get scenario outputs."""
-    start_time = time.perf_counter()
+) -> ScenarioOutputListResponse:
+    """Get scenario outputs with time-based filtering and pagination."""
+    from .auth import require_permission, Permission
+
+    # Get principal from request state
+    principal = getattr(request.state, "principal", None)
+
+    # Require scenarios read permission
+    require_permission(principal, Permission.SCENARIOS_READ)
+
+    start_time_perf = time.perf_counter()
 
     try:
         # Validate UUID format
@@ -491,21 +531,78 @@ async def get_scenario_outputs(
                 request_id=get_request_id()
             )
 
+        # Parse tags filter if provided
+        tags_filter = None
+        if tags:
+            try:
+                import json
+                tags_filter = json.loads(tags)
+                if not isinstance(tags_filter, dict):
+                    raise ValueError("Tags must be a JSON object")
+            except (json.JSONDecodeError, ValueError) as exc:
+                raise ValidationException(
+                    field="tags",
+                    message=f"Invalid tags format: {str(exc)}",
+                    request_id=get_request_id()
+                )
+
+        # Validate time formats if provided
+        if start_time:
+            try:
+                from datetime import datetime
+                datetime.fromisoformat(start_time.replace('Z', '+00:00'))
+            except ValueError:
+                raise ValidationException(
+                    field="start_time",
+                    message="Invalid ISO 8601 datetime format",
+                    request_id=get_request_id()
+                )
+
+        if end_time:
+            try:
+                from datetime import datetime
+                datetime.fromisoformat(end_time.replace('Z', '+00:00'))
+            except ValueError:
+                raise ValidationException(
+                    field="end_time",
+                    message="Invalid ISO 8601 datetime format",
+                    request_id=get_request_id()
+                )
+
+        # Validate min/max values
+        if min_value is not None and max_value is not None and min_value > max_value:
+            raise ValidationException(
+                field="min_value",
+                message="min_value cannot be greater than max_value",
+                request_id=get_request_id()
+            )
+
         service = get_service(AsyncScenarioService)
         outputs, total, meta = await service.get_scenario_outputs(
             scenario_id=scenario_id,
             limit=limit,
             offset=offset,
+            start_time=start_time,
+            end_time=end_time,
+            metric_name=metric_name,
+            min_value=min_value,
+            max_value=max_value,
+            tags=tags_filter,
         )
 
-        query_time_ms = (time.perf_counter() - start_time) * 1000
+        query_time_ms = (time.perf_counter() - start_time_perf) * 1000
 
-        # Handle CSV format
-        if format == "csv":
-            # This would be implemented with streaming CSV response
-            pass
+        # Build applied filter for response
+        applied_filter = ScenarioOutputFilter(
+            start_time=start_time,
+            end_time=end_time,
+            metric_name=metric_name,
+            min_value=min_value,
+            max_value=max_value,
+            tags=tags_filter,
+        )
 
-        return ScenarioOutputResponse(
+        return ScenarioOutputListResponse(
             meta={
                 "request_id": get_request_id(),
                 "query_time_ms": round(query_time_ms, 2),
@@ -513,14 +610,16 @@ async def get_scenario_outputs(
                 "total": total,
                 "offset": offset,
                 "limit": limit,
+                "has_more": (offset + limit) < total,
             },
             data=outputs,
+            filter=applied_filter,
         )
 
     except (ValidationException, NotFoundException):
         raise
     except Exception as exc:
-        query_time_ms = (time.perf_counter() - start_time) * 1000
+        query_time_ms = (time.perf_counter() - start_time_perf) * 1000
         raise HTTPException(
             status_code=500,
             detail=f"Failed to get scenario outputs: {str(exc)}"

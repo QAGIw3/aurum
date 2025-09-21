@@ -1,0 +1,129 @@
+# FRED multi-series observations → Kafka (Avro)
+#
+# Required environment variables:
+#   FRED_API_KEY            - FRED API key (injected via Vault)
+#   FRED_SERIES_IDS         - Comma-separated series identifiers (e.g. DGS10,CPIAUCSL,UNRATE)
+#   FRED_FREQUENCY          - Frequency enum value (ANNUAL/QUARTERLY/MONTHLY/WEEKLY/BIWEEKLY/DAILY/BUSINESS_DAILY)
+#   FRED_SEASONAL_ADJ       - Seasonal adjustment token (SA/NSA/UNKNOWN)
+#   FRED_TOPIC              - Kafka topic (e.g. aurum.ref.fred.multi.v1)
+#   AURUM_KAFKA_BOOTSTRAP_SERVERS - Kafka brokers
+#   AURUM_SCHEMA_REGISTRY_URL     - Schema Registry endpoint
+#
+# Optional environment variables:
+#   FRED_KEY_SERIALIZER - Kafka key serializer (string/json/avro, default: string)
+#   FRED_KEY_FORMAT - Kafka key format (json/avro, default: json)
+#   FRED_START_DATE         - Observation start (YYYY-MM-DD)
+#   FRED_END_DATE           - Observation end (YYYY-MM-DD)
+#   FRED_UNITS              - Units string (default Percent)
+#   FRED_TITLE              - Title override
+#   FRED_NOTES              - Notes override
+#   FRED_SUBJECT            - Schema Registry subject (default <topic>-value)
+#   FRED_SERIES_SCHEMA      - Avro schema JSON populated by run_job.sh
+#   FRED_WINDOW_END         - ISO8601 timestamp anchoring the look-back window (auto-set by Airflow)
+#   FRED_WINDOW_HOURS/DAYS/MONTHS/YEARS - Window span used when deriving start/end dates
+#   FRED_SERIES_BATCH_SIZE  - Number of series to process in parallel (default: 5)
+
+env {
+  job.mode = "BATCH"
+  parallelism = ${FRED_SERIES_BATCH_SIZE:-5}
+}
+
+source {
+  # Split series IDs for parallel processing
+  FakeSource {
+    result_table_name = "fred_series_list"
+    row.num = ${FRED_SERIES_BATCH_SIZE:-5}
+    schema = {
+      fields {
+        series_id = string
+      }
+    }
+    data = ${FRED_SERIES_IDS:-DGS10,CPIAUCSL,UNRATE}
+  }
+
+  # Multi-series HTTP source with parallel processing
+  Http {
+    url = "https://api.stlouisfed.org/fred/series/observations"
+    method = "GET"
+    params {
+      series_id = "{{ series_id }}"
+      api_key = "${FRED_API_KEY}"
+      file_type = "json"
+      observation_start = "${FRED_START_DATE}"
+      observation_end = "${FRED_END_DATE}"
+    }
+    connection_timeout_ms = 15000
+    retry = 5
+    retry_backoff_multiplier_ms = 1500
+    retry_backoff_max_ms = 90000
+    format = "json"
+    rate_limit_sleep_ms = 200
+    schema = {
+      fields {
+        date = string
+        value = string
+        units = string
+        series_id = string
+        realtime_start = string
+      }
+    }
+    jsonpath = "$$.observations[*]"
+    result_table_name = "fred_raw"
+  }
+}
+
+transform {
+  Sql {
+    source_table_name = "fred_raw"
+    result_table_name = "fred_normalized"
+    query = """
+      SELECT
+        series_id,
+        DATEDIFF(TO_DATE(date), TO_DATE('1970-01-01'))             AS date,
+        '${FRED_FREQUENCY}'                                        AS frequency,
+        '${FRED_SEASONAL_ADJ}'                                    AS seasonal_adjustment,
+        CASE
+          WHEN value IN ('', '.') THEN NULL
+          ELSE CAST(value AS DOUBLE)
+        END                                                        AS value,
+        value                                                      AS raw_value,
+        COALESCE('${FRED_UNITS}', units)                           AS units,
+        COALESCE('${FRED_TITLE}', series_id)                       AS title,
+        COALESCE('${FRED_NOTES}', realtime_start)                  AS notes,
+        NULL                                                       AS metadata,
+        CAST(UNIX_TIMESTAMP() * 1000000 AS BIGINT)                 AS ingest_ts
+      FROM fred_raw
+    """
+  }
+}
+
+sink {
+  Kafka {
+    plugin_input = "fred_normalized"
+    bootstrap.servers = "${AURUM_KAFKA_BOOTSTRAP_SERVERS}"
+    topic = "${FRED_TOPIC}"
+    semantic = "AT_LEAST_ONCE"
+    format = "avro"
+    avro {
+      use.schema.registry = true
+      schema.registry.url = "${AURUM_SCHEMA_REGISTRY_URL}"
+      value.schema.subject = "${FRED_SUBJECT}"
+      value.schema = """${FRED_SERIES_SCHEMA}"""
+      # Key configuration for message routing and partitioning
+      key.serializer = "${FRED_KEY_SERIALIZER:-string}"
+      key.format = "${FRED_KEY_FORMAT:-json}"
+    }
+    producer {
+      acks = "all"
+      enable.idempotence = true
+      max.in.flight.requests.per.connection = 5
+      linger.ms = 500
+      batch.size = 32768
+      retries = 10
+      retry.backoff.ms = 100
+      retry.backoff.max.ms = 10000
+      delivery.timeout.ms = 120000
+      request.timeout.ms = 30000
+    }
+  }
+}

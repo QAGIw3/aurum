@@ -1,7 +1,7 @@
 # FRED series observations → Kafka (Avro)
 #
 # Required environment variables:
-#   FRED_API_KEY            - FRED API key
+#   FRED_API_KEY            - FRED API key (injected via Vault)
 #   FRED_SERIES_ID          - Series identifier (e.g. DGS10)
 #   FRED_FREQUENCY          - Frequency enum value (ANNUAL/QUARTERLY/MONTHLY/WEEKLY/BIWEEKLY/DAILY/BUSINESS_DAILY)
 #   FRED_SEASONAL_ADJ       - Seasonal adjustment token (SA/NSA/UNKNOWN)
@@ -10,6 +10,8 @@
 #   AURUM_SCHEMA_REGISTRY_URL     - Schema Registry endpoint
 #
 # Optional environment variables:
+#   FRED_KEY_SERIALIZER - Kafka key serializer (string/json/avro, default: string)
+#   FRED_KEY_FORMAT - Kafka key format (json/avro, default: json)
 #   FRED_START_DATE         - Observation start (YYYY-MM-DD)
 #   FRED_END_DATE           - Observation end (YYYY-MM-DD)
 #   FRED_UNITS              - Units string (default Percent)
@@ -17,6 +19,8 @@
 #   FRED_NOTES              - Notes override
 #   FRED_SUBJECT            - Schema Registry subject (default <topic>-value)
 #   FRED_SERIES_SCHEMA      - Avro schema JSON populated by run_job.sh
+#   FRED_WINDOW_END         - ISO8601 timestamp anchoring the look-back window (auto-set by Airflow)
+#   FRED_WINDOW_HOURS/DAYS/MONTHS/YEARS - Window span used when deriving start/end dates
 
 env {
   job.mode = "BATCH"
@@ -36,7 +40,10 @@ source {
     }
     connection_timeout_ms = 15000
     retry = 5
+    retry_backoff_multiplier_ms = 1500
+    retry_backoff_max_ms = 90000
     format = "json"
+    rate_limit_sleep_ms = 200
     schema = {
       fields {
         date = string
@@ -88,6 +95,9 @@ sink {
       schema.registry.url = "${AURUM_SCHEMA_REGISTRY_URL}"
       value.schema.subject = "${FRED_SUBJECT}"
       value.schema = """${FRED_SERIES_SCHEMA}"""
+      # Key configuration for message routing and partitioning
+      key.serializer = "${FRED_KEY_SERIALIZER:-string}"
+      key.format = "${FRED_KEY_FORMAT:-json}"
     }
     producer {
       acks = "all"

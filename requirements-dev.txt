@@ -1,1 +1,2 @@
+-c constraints/dev.txt
 -e .[ingest,testing,quality,api,worker]

@@ -1,0 +1,10 @@
+iso_code,iso_name,country,default_timezone,region,timezone_offsets
+AESO,Alberta Electric System Operator,CA,America/Edmonton,WECC,-07:00
+CAISO,California Independent System Operator,US,America/Los_Angeles,WECC,-08:00
+ERCOT,Electric Reliability Council of Texas,US,America/Chicago,ERCOT,-06:00
+ISONE,ISO New England,US,America/New_York,NPCC,-05:00
+MISO,Midcontinent Independent System Operator,US,America/Chicago,MISO,-06:00
+NYISO,New York Independent System Operator,US,America/New_York,NYISO,-05:00
+PJM,PJM Interconnection,US,America/New_York,PJM,-05:00
+SPP,Southwest Power Pool,US,America/Chicago,SPP,-06:00
+UNKNOWN,Unknown ISO,N/A,UTC,UNKNOWN,+00:00

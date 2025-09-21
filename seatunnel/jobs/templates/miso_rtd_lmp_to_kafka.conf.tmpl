@@ -129,8 +129,15 @@ sink {
       schema.registry.url = "${AURUM_SCHEMA_REGISTRY_URL}"
       value.schema.subject = "${MISO_RTD_SUBJECT}"
       value.schema = """${ISO_LMP_SCHEMA}"""
+      # Key configuration for message routing and partitioning
+      key.serializer = "${MISO.CONF_KEY_SERIALIZER:-string}"
+      key.format = "${MISO.CONF_KEY_FORMAT:-json}"
     }
     producer {
+      request.timeout.ms = 30000
+      delivery.timeout.ms = 120000
+      retry.backoff.max.ms = 10000
+      retry.backoff.ms = 100
       acks = "all"
       enable.idempotence = true
       max.in.flight.requests.per.connection = 5

@@ -1,11 +1,12 @@
 name: "aurum"
-version: "1.0.0"
+version: "1.1.0"
 config-version: 2
 profile: "aurum"
 
 model-paths: ["dbt/models"]
 macro-paths: ["dbt/macros"]
 seed-paths: ["dbt/seeds"]
+snapshot-paths: ["dbt/snapshots"]
 analysis-paths: ["dbt/analysis"]
 target-path: "artifacts/dbt/target"
 clean-targets:

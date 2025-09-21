@@ -38,6 +38,14 @@ async def get_curves(
     prev_cursor: Optional[str] = None,
 ) -> CurveResponse:
     """Retrieve curve observations with filtering by identity and tenor."""
+    from .auth import require_permission, Permission
+
+    # Get principal from request state
+    principal = getattr(request.state, "principal", None)
+
+    # Require curves read permission
+    require_permission(principal, Permission.CURVES_READ)
+
     start_time = time.perf_counter()
 
     # Handle cursor-based pagination

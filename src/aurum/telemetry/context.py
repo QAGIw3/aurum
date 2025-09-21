@@ -1,11 +1,22 @@
-"""Shared context helpers for request-scoped identifiers."""
+"""Shared context helpers for request-scoped identifiers and structured logging."""
 from __future__ import annotations
 
+import json
+import logging
+import sys
 from contextlib import contextmanager
 from contextvars import ContextVar, Token
-from typing import Iterator, Optional
+from datetime import datetime
+from typing import Iterator, Optional, Dict, Any
 
 _REQUEST_ID: ContextVar[Optional[str]] = ContextVar("aurum_request_id", default=None)
+_CORRELATION_ID: ContextVar[Optional[str]] = ContextVar("aurum_correlation_id", default=None)
+_TENANT_ID: ContextVar[Optional[str]] = ContextVar("aurum_tenant_id", default=None)
+_USER_ID: ContextVar[Optional[str]] = ContextVar("aurum_user_id", default=None)
+_SESSION_ID: ContextVar[Optional[str]] = ContextVar("aurum_session_id", default=None)
+
+# Logger for structured logging
+STRUCTURED_LOGGER = logging.getLogger("aurum.structured")
 
 
 def set_request_id(request_id: str) -> Token:

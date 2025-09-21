@@ -1,0 +1,9 @@
+block_code,block_name,start_hour,end_hour,total_hours,description
+7X24,All Hours Baseload,0,24,168,Covers every operating hour of the week.
+5X16,Weekday Peak,7,23,80,Weekday hours 7:00-23:00 local time.
+5X8,Weekday Off-Peak,23,7,40,Weekday overnight hours 23:00-07:00.
+2X16,Weekend Peak,7,23,32,Weekend daylight hours 7:00-23:00.
+7X8,Daily Off-Peak,0,8,56,All day off-peak strip covering 0:00-08:00.
+PEAK,Peak Super-Set,7,23,96,Synthetic peak combining standard blocks.
+OFFPEAK,Off-Peak Super-Set,23,7,72,Synthetic off-peak combining nights and weekends.
+UNKNOWN,Unknown Block,0,0,0,Placeholder when block metadata is unavailable.

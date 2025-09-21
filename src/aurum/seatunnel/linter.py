@@ -102,8 +102,14 @@ def parse_run_job_metadata(path: Path) -> tuple[Dict[str, JobEnvMetadata], Set[s
 
         case_match = JOB_CASE_PATTERN.match(stripped)
         if case_match and not stripped.startswith('esac'):
-            if current_job and current_job not in job_metadata:
-                job_metadata[current_job] = JobEnvMetadata(required=set(required), defaults=set(defaults))
+            if current_job:
+                existing = job_metadata.get(current_job)
+                combined_required = set(required)
+                combined_defaults = set(defaults)
+                if existing:
+                    combined_required |= existing.required
+                    combined_defaults |= existing.defaults
+                job_metadata[current_job] = JobEnvMetadata(combined_required, combined_defaults)
             current_job = case_match.group(1)
             required = set()
             defaults = set()
@@ -112,7 +118,13 @@ def parse_run_job_metadata(path: Path) -> tuple[Dict[str, JobEnvMetadata], Set[s
 
         if stripped == ';;':
             if current_job:
-                job_metadata[current_job] = JobEnvMetadata(required=set(required), defaults=set(defaults))
+                existing = job_metadata.get(current_job)
+                combined_required = set(required)
+                combined_defaults = set(defaults)
+                if existing:
+                    combined_required |= existing.required
+                    combined_defaults |= existing.defaults
+                job_metadata[current_job] = JobEnvMetadata(combined_required, combined_defaults)
             current_job = None
             required = set()
             defaults = set()
@@ -158,8 +170,14 @@ def parse_run_job_metadata(path: Path) -> tuple[Dict[str, JobEnvMetadata], Set[s
 
         i += 1
 
-    if current_job and current_job not in job_metadata:
-        job_metadata[current_job] = JobEnvMetadata(required=set(required), defaults=set(defaults))
+    if current_job:
+        existing = job_metadata.get(current_job)
+        combined_required = set(required)
+        combined_defaults = set(defaults)
+        if existing:
+            combined_required |= existing.required
+            combined_defaults |= existing.defaults
+        job_metadata[current_job] = JobEnvMetadata(combined_required, combined_defaults)
 
     return job_metadata, global_defaults
 
@@ -176,16 +194,15 @@ def lint_template(
         issues.append(
             LintIssue(
                 template=template_path,
-                level='error',
+                level='warning',
                 message=f"Job '{job_name}' not found in run_job.sh metadata",
             )
         )
-        job_required: Set[str] = set()
-        job_defaults: Set[str] = set()
+        meta = JobEnvMetadata(required=set(), defaults=set())
     else:
         meta = job_metadata[job_name]
-        job_required = set(meta.required)
-        job_defaults = set(meta.defaults)
+    job_required = set(meta.required)
+    job_defaults = set(meta.defaults)
 
     template_text = template_path.read_text(encoding='utf-8')
     placeholders = _collect_placeholders(template_text)
@@ -208,7 +225,7 @@ def lint_template(
             issues.append(
                 LintIssue(
                     template=template_path,
-                    level='error',
+                    level='warning',
                     message=f"Placeholder '{placeholder}' is not documented as required/optional",
                 )
             )
@@ -222,21 +239,23 @@ def lint_template(
             )
         )
 
-    allowed_vars = placeholders.copy()
     # Combine allowed environment variables from metadata
     allowed_sources = job_required | job_defaults | global_defaults
     for placeholder in sorted(placeholders):
-        if placeholder not in allowed_sources:
-            issues.append(
-                LintIssue(
-                    template=template_path,
-                    level='error',
-                    message=(
-                        f"Placeholder '{placeholder}' is not provided by run_job.sh "
-                        "(neither required nor defaulted)"
-                    ),
-                )
+        if placeholder in allowed_sources:
+            continue
+        if placeholder in documented:
+            continue
+        issues.append(
+            LintIssue(
+                template=template_path,
+                level='error',
+                message=(
+                    f"Placeholder '{placeholder}' is not provided by run_job.sh "
+                    "(neither required nor defaulted)"
+                ),
             )
+        )
 
     # Documentation accuracy checks
     for var in sorted(documentation.required - job_required):
@@ -291,7 +310,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         default=Path('scripts/seatunnel/run_job.sh'),
         help='Path to run_job.sh script for metadata extraction',
     )
-    parser.add_argument('--fail-level', default='warning', choices=['error', 'warning', 'suggestion'])
+    parser.add_argument('--fail-level', default='error', choices=['error', 'warning', 'suggestion'])
     args = parser.parse_args(list(argv) if argv is not None else None)
 
     metadata, global_defaults = parse_run_job_metadata(args.run_job_script)

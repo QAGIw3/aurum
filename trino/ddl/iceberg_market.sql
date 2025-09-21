@@ -1,5 +1,6 @@
 CREATE SCHEMA IF NOT EXISTS iceberg.market;
 CREATE SCHEMA IF NOT EXISTS iceberg.raw;
+CREATE SCHEMA IF NOT EXISTS iceberg.fact;
 
 CREATE TABLE IF NOT EXISTS iceberg.raw.curve_landing (
     asof_date DATE,
@@ -66,7 +67,8 @@ CREATE TABLE IF NOT EXISTS iceberg.market.curve_observation (
     mid DOUBLE,
     curve_key VARCHAR,
     version_hash VARCHAR,
-    _ingest_ts TIMESTAMP(6)
+    _ingest_ts TIMESTAMP(6),
+    lineage_tags VARCHAR
 )
 WITH (
     format = 'PARQUET',

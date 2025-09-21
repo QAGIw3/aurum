@@ -93,6 +93,33 @@ from .openapi_generator import (
     APIEndpoint,
 )
 from .documentation_manager import router as documentation_manager_router
+from .database_monitor import (
+    get_database_monitor,
+    initialize_database_monitoring,
+    DatabaseMonitor,
+    QueryMetrics,
+    QueryPattern,
+    OptimizationSuggestion,
+    QueryPerformanceLevel,
+    OptimizationType,
+)
+from .database_management import router as database_management_router
+from .feature_flags import (
+    get_feature_manager,
+    initialize_feature_flags,
+    FeatureFlagManager,
+    FeatureFlag,
+    FeatureFlagRule,
+    ABTestConfiguration,
+    FeatureFlagStatus,
+    UserSegment,
+    RolloutStrategy,
+    ABTestVariant,
+    FeatureFlagStore,
+    InMemoryFeatureFlagStore,
+    RedisFeatureFlagStore,
+)
+from .feature_management import router as feature_management_router
 
 create_app = app_module.create_app
 app = app_module
@@ -173,4 +200,27 @@ __all__ = [
     "APISchema",
     "APIEndpoint",
     "documentation_manager_router",
+    "get_database_monitor",
+    "initialize_database_monitoring",
+    "DatabaseMonitor",
+    "QueryMetrics",
+    "QueryPattern",
+    "OptimizationSuggestion",
+    "QueryPerformanceLevel",
+    "OptimizationType",
+    "database_management_router",
+    "get_feature_manager",
+    "initialize_feature_flags",
+    "FeatureFlagManager",
+    "FeatureFlag",
+    "FeatureFlagRule",
+    "ABTestConfiguration",
+    "FeatureFlagStatus",
+    "UserSegment",
+    "RolloutStrategy",
+    "ABTestVariant",
+    "FeatureFlagStore",
+    "InMemoryFeatureFlagStore",
+    "RedisFeatureFlagStore",
+    "feature_management_router",
 ]

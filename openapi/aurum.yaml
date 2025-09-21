@@ -873,7 +873,7 @@ paths:
           $ref: '#/components/responses/NotFound'
   /v1/scenarios/{id}/outputs:
     get:
-      summary: List scenario outputs
+      summary: List scenario outputs with time-based filtering
       operationId: listScenarioOutputs
       security:
         - oauth2: [aurum]
@@ -883,73 +883,96 @@ paths:
           required: true
           schema:
             type: string
-        - name: metric
+          description: Scenario ID (UUID format)
+        - name: start_time
+          in: query
+          schema:
+            type: string
+            format: date-time
+          required: false
+          description: Start time filter (ISO 8601 format)
+        - name: end_time
+          in: query
+          schema:
+            type: string
+            format: date-time
+          required: false
+          description: End time filter (ISO 8601 format)
+        - name: metric_name
           in: query
           schema:
             type: string
           required: false
-        - name: tenor_type
+          description: Filter by metric name
+        - name: min_value
+          in: query
+          schema:
+            type: number
+            minimum: 0
+          required: false
+          description: Minimum value filter
+        - name: max_value
+          in: query
+          schema:
+            type: number
+            minimum: 0
+          required: false
+          description: Maximum value filter
+        - name: tags
           in: query
           schema:
             type: string
           required: false
-        - name: curve_key
-          in: query
-          schema:
-            type: string
-          required: false
+          description: Filter by tags (JSON format, e.g., {"key": "value"})
         - name: limit
           in: query
           schema:
             type: integer
             minimum: 1
-            maximum: 1000
+            maximum: 500
           required: false
-          description: Maximum number of rows to return (capped at 500 by the service).
-        - name: cursor
+          description: Maximum number of results to return
+        - name: offset
           in: query
           schema:
-            type: string
+            type: integer
+            minimum: 0
           required: false
-          description: Opaque cursor for stable pagination.
-        - name: since_cursor
-          in: query
-          schema:
-            type: string
-          required: false
-          description: Alias for `cursor` to resume iteration from a previously returned `next_cursor`.
-        - name: prev_cursor
-          in: query
-          schema:
-            type: string
-          required: false
-          description: Cursor pointing to the previous page; use the `meta.prev_cursor` value from a prior response.
+          description: Offset for pagination
         - name: format
           in: query
           required: false
-          description: Response format (set to `csv` to stream results).
+          description: Response format
           schema:
             type: string
             enum: [json, csv]
             default: json
       responses:
         '200':
-          description: Scenario outputs.
+          description: Scenario outputs retrieved successfully
           headers:
-            ETag:
-              description: Strong entity tag for cache validation.
-              schema:
-                type: string
+            X-Rate-Limit-Limit:
+              $ref: '#/components/headers/X-Rate-Limit-Limit'
+            X-Rate-Limit-Remaining:
+              $ref: '#/components/headers/X-Rate-Limit-Remaining'
+            X-Rate-Limit-Reset:
+              $ref: '#/components/headers/X-Rate-Limit-Reset'
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/ScenarioOutputResponse'
+                $ref: '#/components/schemas/ScenarioOutputListResponse'
             text/csv:
               schema:
                 type: string
                 format: binary
+        '400':
+          $ref: '#/components/responses/BadRequest'
         '401':
           $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
   /v1/scenarios/{id}/metrics/latest:
     get:
       summary: List latest scenario metrics
@@ -2713,6 +2736,50 @@ components:
           type: array
           items:
             $ref: '#/components/schemas/ScenarioOutputPoint'
+    ScenarioOutputFilter:
+      type: object
+      properties:
+        start_time:
+          type: string
+          format: date-time
+          nullable: true
+          description: Start time filter (ISO 8601 format)
+        end_time:
+          type: string
+          format: date-time
+          nullable: true
+          description: End time filter (ISO 8601 format)
+        metric_name:
+          type: string
+          nullable: true
+          description: Filter by metric name
+        min_value:
+          type: number
+          minimum: 0
+          nullable: true
+          description: Minimum value filter
+        max_value:
+          type: number
+          minimum: 0
+          nullable: true
+          description: Maximum value filter
+        tags:
+          type: object
+          additionalProperties:
+            type: string
+          nullable: true
+          description: Filter by tags (JSON format)
+    ScenarioOutputListResponse:
+      type: object
+      properties:
+        meta:
+          $ref: '#/components/schemas/Meta'
+        data:
+          type: array
+          items:
+            $ref: '#/components/schemas/ScenarioOutputPoint'
+        filter:
+          $ref: '#/components/schemas/ScenarioOutputFilter'
     ScenarioMetricLatest:
       type: object
       required: [scenario_id, metric]

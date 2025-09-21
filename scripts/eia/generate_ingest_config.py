@@ -8,6 +8,7 @@ import sys
 from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any, Iterable, Sequence
+import jsonschema
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(REPO_ROOT / "src"))
@@ -25,6 +26,63 @@ from aurum.reference.eia_catalog import EiaDataset  # noqa: E402
 from aurum.reference.units import map_units  # noqa: E402
 DEFAULT_OUTPUT = REPO_ROOT / "config" / "eia_ingest_datasets.generated.json"
 DEFAULT_BASE_CONFIG = REPO_ROOT / "config" / "eia_ingest_overrides.json"
+SCHEMA_PATH = REPO_ROOT / "config" / "eia_ingest_datasets.schema.json"
+
+# JSON Schema for validating generated config
+INGEST_DATASET_SCHEMA = {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "type": "object",
+    "properties": {
+        "datasets": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "required": ["source_name", "path", "data_path", "schedule", "topic_var", "default_topic", "series_id_expr", "frequency"],
+                "properties": {
+                    "source_name": {"type": "string", "pattern": "^[a-zA-Z][a-zA-Z0-9_]*$"},
+                    "path": {"type": "string"},
+                    "data_path": {"type": "string"},
+                    "description": {"type": ["string", "null"]},
+                    "schedule": {"type": "string", "pattern": "^([0-9*,\-/ ]+|@yearly|@monthly|@weekly|@daily|@midnight|@noon)$"},
+                    "topic_var": {"type": "string"},
+                    "default_topic": {"type": "string"},
+                    "series_id_expr": {"type": "string"},
+                    "frequency": {"type": "string", "enum": ["HOURLY", "SUBHOURLY", "QUARTER_HOURLY", "EIGHTH_HOURLY", "DAILY", "WEEKLY", "MONTHLY", "QUARTERLY", "ANNUAL"]},
+                    "units_var": {"type": "string"},
+                    "default_units": {"type": "string"},
+                    "canonical_currency": {"type": ["string", "null"]},
+                    "canonical_unit": {"type": ["string", "null"]},
+                    "unit_conversion": {"type": ["object", "null"]},
+                    "area_expr": {"type": "string"},
+                    "sector_expr": {"type": "string"},
+                    "description_expr": {"type": "string"},
+                    "source_expr": {"type": "string"},
+                    "dataset_expr": {"type": "string"},
+                    "metadata_expr": {"type": "string"},
+                    "filter_expr": {"type": "string"},
+                    "param_overrides": {"type": "array", "items": {"type": "object"}},
+                    "period_column": {"type": "string"},
+                    "date_format": {"type": ["string", "null"]},
+                    "page_limit": {"type": "integer", "minimum": 1, "maximum": 5000},
+                    "window_hours": {"type": ["integer", "null"], "minimum": 0},
+                    "window_days": {"type": ["integer", "null"], "minimum": 0},
+                    "window_months": {"type": ["integer", "null"], "minimum": 0},
+                    "window_years": {"type": ["integer", "null"], "minimum": 0},
+                    "dlq_topic": {"type": "string"},
+                    "series_id_strategy": {
+                        "type": "object",
+                        "required": ["source", "components"],
+                        "properties": {
+                            "source": {"type": "string"},
+                            "components": {"type": "array", "items": {"type": "string"}}
+                        }
+                    }
+                }
+            }
+        }
+    },
+    "required": ["datasets"]
+}
 
 FREQUENCY_SCHEDULES: dict[str, str] = {
     "HOURLY": "5 * * * *",
@@ -60,6 +118,24 @@ def _default_window(frequency: str) -> dict[str, int | None]:
     if freq == "ANNUAL":
         return {"window_hours": None, "window_days": None, "window_months": None, "window_years": 1}
     return {"window_hours": None, "window_days": 1, "window_months": None, "window_years": None}
+
+
+def _derive_watermark_policy(frequency: str) -> str:
+    """Derive watermark policy based on dataset frequency."""
+    freq = frequency.upper()
+    if freq == "HOURLY" or freq.endswith("HOURLY"):
+        return "hour"
+    if freq == "DAILY":
+        return "day"
+    if freq == "WEEKLY":
+        return "week"
+    if freq == "MONTHLY":
+        return "month"
+    if freq == "QUARTERLY":
+        return "month"  # Round to month boundary
+    if freq == "ANNUAL":
+        return "month"  # Round to month boundary for annual data
+    return "exact"  # Default to exact timestamp
 
 
 def _slugify(path: str) -> str:
@@ -121,6 +197,7 @@ class GeneratedDataset:
     window_months: int | None
     window_years: int | None
     dlq_topic: str
+    watermark_policy: str
 
     def as_config(self) -> dict[str, Any]:
         payload = asdict(self)
@@ -164,6 +241,7 @@ def _build_generated_entry(dataset: EiaDataset, *, default_schedule: str) -> Gen
     schedule = _resolve_schedule(frequency_label, default_schedule)
     canonical_currency, canonical_unit = _canonical_units(None)
     window_defaults = _default_window(frequency_label)
+    watermark_policy = _derive_watermark_policy(frequency_label)
 
     return GeneratedDataset(
         source_name=source_name,
@@ -198,6 +276,7 @@ def _build_generated_entry(dataset: EiaDataset, *, default_schedule: str) -> Gen
         window_months=window_defaults["window_months"],
         window_years=window_defaults["window_years"],
         dlq_topic="aurum.ref.eia.series.dlq.v1",
+        watermark_policy=watermark_policy,
     )
 
 
@@ -205,6 +284,22 @@ def _load_overrides(path: Path | None) -> dict[str, Any]:
     if not path or not path.exists():
         return {}
     return json.loads(path.read_text(encoding="utf-8"))
+
+
+def _validate_config(config: dict[str, Any]) -> None:
+    """Validate the generated config against the JSON schema."""
+    try:
+        jsonschema.validate(config, INGEST_DATASET_SCHEMA)
+    except jsonschema.ValidationError as e:
+        raise ValueError(f"Generated config is invalid: {e.message}") from e
+
+
+def _write_schema_file() -> None:
+    """Write the JSON schema to file if it doesn't exist."""
+    if not SCHEMA_PATH.exists():
+        SCHEMA_PATH.parent.mkdir(parents=True, exist_ok=True)
+        SCHEMA_PATH.write_text(json.dumps(INGEST_DATASET_SCHEMA, indent=2) + "\n", encoding="utf-8")
+        print(f"Created schema file: {SCHEMA_PATH}")
 
 
 def _merge_override(entry: dict[str, Any], overrides: dict[str, Any], path: str) -> dict[str, Any]:
@@ -274,6 +369,10 @@ def parse_args(argv: Sequence[str]) -> argparse.Namespace:
 
 def main(argv: Sequence[str] | None = None) -> int:
     args = parse_args(list(argv) if argv is not None else sys.argv[1:])
+
+    # Write schema file if needed
+    _write_schema_file()
+
     catalog_path = args.catalog
     if catalog_path:
         eia_catalog.load_catalog(catalog_path)
@@ -285,10 +384,16 @@ def main(argv: Sequence[str] | None = None) -> int:
         overrides=overrides,
     )
     payload = {"datasets": entries}
+
+    # Validate generated config
+    _validate_config(payload)
+
     output_path: Path = args.output
     if args.dry_run:
         print(json.dumps(payload, indent=2))
         return 0
+
+    # Write to file
     output_path.parent.mkdir(parents=True, exist_ok=True)
     output_path.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
     print(f"Generated {len(entries)} dataset configs -> {output_path}")

@@ -26,6 +26,15 @@
         "column": "tenor_type",
         "value_set": ["MONTHLY", "QUARTER", "SEASON", "CALENDAR", "STRIP", "CUSTOM"]
       }
+    },
+    {
+      "expectation_type": "expect_column_values_to_be_between",
+      "kwargs": {
+        "column": "mid",
+        "mostly": 0.99,
+        "min_value": -10000,
+        "max_value": 10000
+      }
     }
   ]
 }

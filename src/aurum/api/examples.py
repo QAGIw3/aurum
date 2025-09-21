@@ -829,6 +829,345 @@ async def example_docs_management():
         print(f"  {endpoint}")
 
 
+async def example_database_monitoring():
+    """Example of database performance monitoring."""
+    print("\n=== Database Performance Monitoring Example ===")
+
+    from .database_monitor import DatabaseMonitor, QueryMetrics, QueryPerformanceLevel
+
+    print("Database Monitoring Features:")
+    print("  - Real-time query performance tracking")
+    print("  - Slow query detection and alerting")
+    print("  - Query pattern analysis")
+    print("  - Performance scoring and metrics")
+    print("  - Automatic cleanup of old data")
+
+    print("
+Performance Levels:")
+    for level in QueryPerformanceLevel:
+        threshold = {
+            QueryPerformanceLevel.EXCELLENT: "< 100ms",
+            QueryPerformanceLevel.GOOD: "100ms - 500ms",
+            QueryPerformanceLevel.SLOW: "500ms - 2s",
+            QueryPerformanceLevel.VERY_SLOW: "> 2s",
+            QueryPerformanceLevel.CRITICAL: "> 10s",
+        }[level]
+        print(f"  - {level.value}: {threshold}")
+
+    print("
+Query Metrics Structure:")
+    print("  {")
+    print("    'query_hash': 'abc123...'",)
+    print("    'query_text': 'SELECT * FROM curves WHERE iso = ? AND asof = ?'",)
+    print("    'execution_time': 0.245,",)
+    print("    'performance_level': 'good',")
+    print("    'timestamp': '2024-01-01T10:30:00Z',")
+    print("    'endpoint': '/v1/curves',")
+    print("    'user_id': 'user123',")
+    print("    'tenant_id': 'tenant456',")
+    print("    'parameters': {'iso': 'PJM', 'asof': '2024-01-01'}")
+    print("  }")
+
+    print("
+Monitoring Configuration:")
+    print("  - Configurable slow query thresholds")
+    print("  - Automatic data retention policies")
+    print("  - Background monitoring and analysis")
+    print("  - Integration with caching systems")
+    print("  - Performance-based alerting")
+
+
+async def example_query_optimization():
+    """Example of query optimization suggestions."""
+    print("\n=== Query Optimization Example ===")
+
+    from .database_monitor import OptimizationType
+
+    print("Optimization Suggestion Types:")
+    for opt_type in OptimizationType:
+        print(f"  - {opt_type.value}")
+
+    print("
+Example Optimization Suggestions:")
+
+    suggestions = [
+        {
+            "type": "index",
+            "title": "Add Missing Indexes",
+            "description": "Query accesses multiple tables without proper indexing. Consider adding indexes on frequently filtered columns.",
+            "impact": 0.8,
+            "effort": 0.6,
+            "confidence": 0.7
+        },
+        {
+            "type": "query_rewrite",
+            "title": "Avoid SELECT *",
+            "description": "Using SELECT * prevents query optimization. Specify only the columns you need.",
+            "impact": 0.3,
+            "effort": 0.1,
+            "confidence": 0.9
+        },
+        {
+            "type": "materialized_view",
+            "title": "Consider Materialized View",
+            "description": "Complex aggregation queries run frequently could benefit from materialized views.",
+            "impact": 0.9,
+            "effort": 0.7,
+            "confidence": 0.6
+        }
+    ]
+
+    for i, suggestion in enumerate(suggestions, 1):
+        print(f"\n  {i}. {suggestion['title']}")
+        print(f"     Type: {suggestion['type']}")
+        print(f"     Impact: {suggestion['impact']}")
+        print(f"     Effort: {suggestion['effort']}")
+        print(f"     Description: {suggestion['description']}")
+
+    print("
+Optimization Analysis:")
+    print("  - Impact Score: Estimated performance improvement (0-1)")
+    print("  - Effort Score: Implementation difficulty (0-1)")
+    print("  - Confidence Score: Reliability of suggestion (0-1)")
+    print("  - Priority Score: (Impact × Confidence) / Effort")
+    print("  - Implementation Tracking: Mark suggestions as completed")
+
+
+async def example_performance_analysis():
+    """Example of database performance analysis."""
+    print("\n=== Database Performance Analysis Example ===")
+
+    print("Performance Analysis Endpoints:")
+    endpoints = [
+        "GET /v1/admin/db/performance - Overall performance metrics",
+        "GET /v1/admin/db/slow-queries - Slow query analysis",
+        "GET /v1/admin/db/query-patterns - Query pattern analysis",
+        "GET /v1/admin/db/optimizations - Optimization suggestions",
+        "GET /v1/admin/db/connections - Connection pool stats",
+        "GET /v1/admin/db/indexes - Index recommendations",
+        "GET /v1/admin/db/alerts - Performance alerts",
+        "GET /v1/admin/db/recommendations - Actionable recommendations",
+        "GET /v1/admin/db/health - Health check and scoring"
+    ]
+
+    for endpoint in endpoints:
+        print(f"  {endpoint}")
+
+    print("
+Performance Metrics:")
+    print("  - Total queries executed")
+    print("  - Slow query count and percentage")
+    print("  - Average query execution time")
+    print("  - Performance distribution by level")
+    print("  - Top slow queries with details")
+    print("  - Query pattern analysis")
+
+    print("
+Health Scoring:")
+    print("  - Excellent: ≥90% (few slow queries, fast averages)")
+    print("  - Good: 75-89% (acceptable performance)")
+    print("  - Fair: 50-74% (needs attention)")
+    print("  - Poor: 25-49% (significant issues)")
+    print("  - Critical: <25% (major problems)")
+
+    print("
+Recommendations Engine:")
+    print("  - Automated analysis of query patterns")
+    print("  - Index optimization suggestions")
+    print("  - Query rewriting recommendations")
+    print("  - Caching strategy suggestions")
+    print("  - Connection pool tuning advice")
+
+
+async def example_feature_flags():
+    """Example of feature flag management and evaluation."""
+    print("\n=== Feature Flag Management Example ===")
+
+    from .feature_flags import (
+        FeatureFlagStatus,
+        UserSegment,
+        FeatureFlagRule,
+        get_feature_manager
+    )
+
+    print("Feature Flag System Features:")
+    print("  - Feature flag creation and management")
+    print("  - User targeting and segmentation")
+    print("  - Gradual rollouts with percentage-based releases")
+    print("  - A/B testing with multiple variants")
+    print("  - Rules-based targeting with conditions")
+    print("  - Real-time flag evaluation")
+
+    print("
+Feature Flag Statuses:")
+    for status in FeatureFlagStatus:
+        print(f"  - {status.value}")
+
+    print("
+User Segments:")
+    for segment in UserSegment:
+        print(f"  - {segment.value}")
+
+    print("
+Example Feature Flag Structure:")
+    print("  {")
+    print("    'name': 'New Dashboard',")
+    print("    'key': 'new_dashboard_feature',")
+    print("    'status': 'enabled',")
+    print("    'default_value': false,")
+    print("    'rules': [")
+    print("      {")
+    print("        'name': 'Beta Users Rollout',")
+    print("        'rollout_percentage': 25.0,")
+    print("        'user_segments': ['beta_testers', 'premium_users']")
+    print("      }")
+    print("    ],")
+    print("    'tags': ['ui', 'dashboard', 'beta']")
+    print("  }")
+
+    print("
+Feature Flag Evaluation:")
+    print("  - Deterministic user assignment")
+    print("  - Cached evaluations for performance")
+    print("  - Context-aware targeting")
+    print("  - Multi-tenant support")
+    print("  - Real-time updates")
+
+
+async def example_ab_testing():
+    """Example of A/B testing with feature flags."""
+    print("\n=== A/B Testing Example ===")
+
+    from .feature_flags import ABTestConfiguration, ABTestVariant
+
+    print("A/B Testing Features:")
+    print("  - Multiple test variants (control, A, B, C, D)")
+    print("  - Traffic splitting with percentages")
+    print("  - Deterministic user assignment")
+    print("  - Event tracking for analysis")
+    print("  - Test scheduling and lifecycle management")
+
+    print("
+A/B Test Variants:")
+    for variant in ABTestVariant:
+        print(f"  - {variant.value}")
+
+    print("
+Example A/B Test Configuration:")
+    print("  {")
+    print("    'feature_key': 'new_search_algorithm',")
+    print("    'variants': {")
+    print("      'control': 50.0,")
+    print("      'variant_a': 25.0,")
+    print("      'variant_b': 25.0")
+    print("    },")
+    print("    'control_variant': 'control',")
+    print("    'track_events': ['search_performed', 'result_clicked'],")
+    print("    'end_date': '2024-02-01T00:00:00Z'")
+    print("  }")
+
+    print("
+A/B Testing Workflow:")
+    print("  1. Create feature flag with A/B test config")
+    print("  2. Define variants and traffic percentages")
+    print("  3. Set up event tracking for analysis")
+    print("  4. Monitor user assignments and behavior")
+    print("  5. Analyze results and make decisions")
+    print("  6. Gradually roll out winning variant")
+
+    print("
+A/B Test Management:")
+    print("  - Real-time variant assignment")
+    print("  - Sticky user assignments")
+    print("  - Gradual traffic migration")
+    print("  - Automated test completion")
+    print("  - Results analysis and reporting")
+
+
+async def example_gradual_rollouts():
+    """Example of gradual feature rollouts."""
+    print("\n=== Gradual Rollout Example ===")
+
+    from .feature_flags import RolloutStrategy
+
+    print("Gradual Rollout Strategies:")
+    for strategy in RolloutStrategy:
+        print(f"  - {strategy.value}")
+
+    print("
+Rollout Scenarios:")
+
+    scenarios = [
+        {
+            "name": "Percentage-based Rollout",
+            "description": "Roll out to 25% of users initially",
+            "config": {
+                "rollout_percentage": 25.0,
+                "user_segments": ["all_users"]
+            }
+        },
+        {
+            "name": "Beta Testing",
+            "description": "Limited release to beta testers and premium users",
+            "config": {
+                "rollout_percentage": 100.0,
+                "user_segments": ["beta_testers", "premium_users"]
+            }
+        },
+        {
+            "name": "Gradual Ramp-up",
+            "description": "Gradual increase from 10% to 100% over time",
+            "config": {
+                "rollout_percentage": 10.0,
+                "user_segments": ["internal_users"]
+            }
+        },
+        {
+            "name": "Conditional Rollout",
+            "description": "Enable only for specific conditions",
+            "config": {
+                "rollout_percentage": 100.0,
+                "required_flags": ["database_migration_complete"],
+                "excluded_flags": ["legacy_system_active"]
+            }
+        }
+    ]
+
+    for i, scenario in enumerate(scenarios, 1):
+        print(f"\n  {i}. {scenario['name']}")
+        print(f"     Description: {scenario['description']}")
+        print(f"     Rollout %: {scenario['config']['rollout_percentage']}")
+        if scenario['config'].get('user_segments'):
+            print(f"     User Segments: {', '.join(scenario['config']['user_segments'])}")
+        if scenario['config'].get('required_flags'):
+            print(f"     Required Flags: {', '.join(scenario['config']['required_flags'])}")
+        if scenario['config'].get('excluded_flags'):
+            print(f"     Excluded Flags: {', '.join(scenario['config']['excluded_flags'])}")
+
+    print("
+Gradual Rollout Benefits:")
+    print("  - Risk mitigation with controlled exposure")
+    print("  - Early feedback from targeted users")
+    print("  - Performance monitoring at each stage")
+    print("  - Quick rollback capability")
+    print("  - Data-driven decisions")
+
+    print("
+Management Endpoints:")
+    endpoints = [
+        "POST /v1/admin/features - Create feature flag",
+        "GET /v1/admin/features - List feature flags",
+        "PUT /v1/admin/features/{key}/status - Update status",
+        "POST /v1/admin/features/{key}/rules - Add targeting rules",
+        "POST /v1/admin/features/{key}/ab-test - Configure A/B test",
+        "GET /v1/admin/features/evaluate - Evaluate flags for user",
+        "GET /v1/admin/features/stats - System statistics"
+    ]
+
+    for endpoint in endpoints:
+        print(f"  {endpoint}")
+
+
 async def main():
     """Run all examples."""
     print("🚀 Aurum API Refactored Architecture Examples")
@@ -863,6 +1202,12 @@ async def main():
     await example_sdk_generation()
     await example_docs_validation()
     await example_docs_management()
+    await example_database_monitoring()
+    await example_query_optimization()
+    await example_performance_analysis()
+    await example_feature_flags()
+    await example_ab_testing()
+    await example_gradual_rollouts()
 
     print("\n" + "=" * 50)
     print("✅ All examples completed successfully!")
@@ -889,6 +1234,12 @@ async def main():
     print("• Auto-generated OpenAPI documentation and client SDKs")
     print("• Multi-format documentation (JSON, YAML, Markdown)")
     print("• Documentation validation and completeness analysis")
+    print("• Database performance monitoring and optimization")
+    print("• Query pattern analysis and slow query detection")
+    print("• Automated optimization suggestions and health scoring")
+    print("• Feature flag management for gradual rollouts")
+    print("• A/B testing with multiple variants and traffic splitting")
+    print("• User segmentation and rules-based targeting")
 
 
 if __name__ == "__main__":

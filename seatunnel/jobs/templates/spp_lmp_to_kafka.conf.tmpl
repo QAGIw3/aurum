@@ -6,6 +6,9 @@
 #   AURUM_SCHEMA_REGISTRY_URL     - Schema Registry endpoint
 #
 # Optional environment variables:
+#   SPP.CONF_KEY_SERIALIZER - Kafka key serializer (string/json/avro, default: string)
+#   SPP.CONF_KEY_FORMAT - Kafka key format (json/avro, default: json)
+#
 #   SPP_TOPIC               - Kafka topic (default aurum.iso.spp.lmp.v1)
 #   SPP_SUBJECT             - Schema Registry subject (default <topic>-value)
 #   ISO_LMP_SCHEMA          - Avro schema JSON populated by run_job.sh
@@ -125,6 +128,9 @@ sink {
       schema.registry.url = "${AURUM_SCHEMA_REGISTRY_URL}"
       value.schema.subject = "${SPP_SUBJECT}"
       value.schema = """${ISO_LMP_SCHEMA}"""
+      # Key configuration for message routing and partitioning
+      key.serializer = "${SPP.CONF_KEY_SERIALIZER:-string}"
+      key.format = "${SPP.CONF_KEY_FORMAT:-json}"
     }
     producer {
       acks = "all"

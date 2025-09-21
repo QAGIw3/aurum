@@ -253,7 +253,7 @@ class SDKGenerator:
         self.components = schema.get('components', {})
 
     def generate_python_sdk(self, output_path: str) -> None:
-        """Generate Python client SDK."""
+        """Generate Python client SDK with full type hints and response models."""
         sdk_content = f'''"""
 {self.info.get('title', 'API')} Python Client SDK
 
@@ -265,17 +265,76 @@ This SDK provides convenient access to the {self.info.get('title', 'API')} API.
 from __future__ import annotations
 
 import json
-import requests
+from datetime import date, datetime
 from typing import Any, Dict, List, Optional, Union
 from dataclasses import dataclass
+from enum import Enum
+
+try:
+    import requests
+    from pydantic import BaseModel, Field
+except ImportError as e:
+    raise ImportError("Required dependencies not installed. Install with: pip install requests pydantic") from e
+
+
+# Type definitions
+class RequestFormat(str, Enum):
+    """Supported request/response formats."""
+    JSON = "json"
+    CSV = "csv"
+
+
+class PaginationMeta(BaseModel):
+    """Pagination metadata."""
+    request_id: str
+    query_time_ms: int = Field(ge=0)
+    next_cursor: Optional[str] = None
+    prev_cursor: Optional[str] = None
+    count: Optional[int] = None
+    total: Optional[int] = None
+    offset: Optional[int] = None
+    limit: Optional[int] = None
+
+
+# Response models
+@dataclass
+class CurvePoint:
+    """Curve data point."""
+    curve_key: str
+    tenor_label: str
+    tenor_type: Optional[str] = None
+    contract_month: Optional[date] = None
+    asof_date: date
+    mid: Optional[float] = None
+    bid: Optional[float] = None
+    ask: Optional[float] = None
+    price_type: Optional[str] = None
+
+
+@dataclass
+class CurveResponse:
+    """Curve data response."""
+    meta: PaginationMeta
+    data: List[CurvePoint]
+
+
+class APIError(Exception):
+    """Exception raised for API errors."""
+    pass
 
 
 class {self.info.get('title', 'API').replace(' ', '').replace('-', '')}Client:
     """Client for the {self.info.get('title', 'API')} API."""
 
-    def __init__(self, base_url: str = "{self.servers[0]['url'] if self.servers else 'https://api.example.com'}", api_key: Optional[str] = None):
+    def __init__(
+        self,
+        base_url: str = "{self.servers[0]['url'] if self.servers else 'https://api.example.com'}",
+        api_key: Optional[str] = None,
+        timeout: int = 30
+    ):
         self.base_url = base_url.rstrip("/")
         self.api_key = api_key
+        self.timeout = timeout
         self.session = requests.Session()
 
         if api_key:
@@ -284,16 +343,32 @@ class {self.info.get('title', 'API').replace(' ', '').replace('-', '')}Client:
     def _make_request(self, method: str, path: str, **kwargs) -> Dict[str, Any]:
         """Make an HTTP request to the API."""
         url = f"{{self.base_url}}{{path}}"
+
+        # Set default timeout if not specified
+        if 'timeout' not in kwargs:
+            kwargs['timeout'] = self.timeout
+
         response = self.session.request(method, url, **kwargs)
 
         if response.status_code >= 400:
-            raise APIError(f"API request failed: {{response.status_code}} - {{response.text}}")
+            error_detail = response.text
+            try:
+                error_json = response.json()
+                if 'detail' in error_json:
+                    error_detail = error_json['detail']
+            except:
+                pass
+            raise APIError(f"API request failed: {{response.status_code}} - {{error_detail}}")
 
         return response.json()
 
     def get_health(self) -> Dict[str, Any]:
         """Get API health status."""
         return self._make_request("GET", "/health")
+
+    def get_ready(self) -> Dict[str, Any]:
+        """Get API readiness status."""
+        return self._make_request("GET", "/ready")
 
 '''
 
@@ -327,7 +402,7 @@ def create_client(api_key: Optional[str] = None) -> {self.info.get('title', 'API
             f.write(sdk_content)
 
     def generate_typescript_sdk(self, output_path: str) -> None:
-        """Generate TypeScript client SDK."""
+        """Generate TypeScript client SDK with comprehensive type definitions."""
         sdk_content = f'''/**
  * {self.info.get('title', 'API')} TypeScript Client SDK
  *
@@ -336,10 +411,12 @@ def create_client(api_key: Optional[str] = None) -> {self.info.get('title', 'API
  * This SDK provides convenient access to the {self.info.get('title', 'API')} API.
  */
 
+// Type definitions
 export interface APIClientConfig {{
   baseURL?: string;
   apiKey?: string;
   timeout?: number;
+  tenant?: string;
 }}
 
 export interface APIResponse<T = any> {{
@@ -348,8 +425,54 @@ export interface APIResponse<T = any> {{
   headers: Record<string, string>;
 }}
 
+export interface PaginationMeta {{
+  requestId: string;
+  queryTimeMs: number;
+  nextCursor?: string;
+  prevCursor?: string;
+  count?: number;
+  total?: number;
+  offset?: number;
+  limit?: number;
+}}
+
+export interface CurvePoint {{
+  curveKey: string;
+  tenorLabel: string;
+  tenorType?: string;
+  contractMonth?: string; // ISO date string
+  asofDate: string; // ISO date string
+  mid?: number;
+  bid?: number;
+  ask?: number;
+  priceType?: string;
+}}
+
+export interface CurveResponse {{
+  meta: PaginationMeta;
+  data: CurvePoint[];
+}}
+
+export interface CurveDiffPoint {{
+  curveKey: string;
+  tenorLabel: string;
+  tenorType?: string;
+  contractMonth?: string;
+  asofA: string; // ISO date string
+  midA?: number;
+  asofB: string; // ISO date string
+  midB?: number;
+  diffAbs?: number;
+  diffPct?: number;
+}}
+
+export interface CurveDiffResponse {{
+  meta: PaginationMeta;
+  data: CurveDiffPoint[];
+}}
+
 export class APIError extends Error {{
-  constructor(public status: number, message: string) {{
+  constructor(public status: number, message: string, public response?: any) {{
     super(message);
     this.name = 'APIError';
   }}
@@ -358,10 +481,14 @@ export class APIError extends Error {{
 export class {self.info.get('title', 'API').replace(' ', '').replace('-', '')}Client {{
   private baseURL: string;
   private apiKey?: string;
+  private tenant?: string;
+  private timeout: number;
 
   constructor(config: APIClientConfig = {{}}) {{
     this.baseURL = config.baseURL || '{self.servers[0]['url'] if self.servers else 'https://api.example.com'}';
     this.apiKey = config.apiKey;
+    this.tenant = config.tenant;
+    this.timeout = config.timeout || 30000;
   }}
 
   private async request<T = any>(method: string, path: string, options: RequestInit = {{}}): Promise<APIResponse<T>> {{
@@ -375,26 +502,62 @@ export class {self.info.get('title', 'API').replace(' ', '').replace('-', '')}Cl
       headers['X-API-Key'] = this.apiKey;
     }}
 
-    const response = await fetch(url, {{
-      method,
-      headers,
-      ...options
-    }});
-
-    if (!response.ok) {{
-      throw new APIError(response.status, `API request failed: ${{response.status}}`);
+    if (this.tenant) {{
+      headers['X-Aurum-Tenant'] = this.tenant;
     }}
 
-    const data = await response.json();
-    return {{
-      data,
-      status: response.status,
-      headers: Object.fromEntries(response.headers.entries())
-    }};
+    // Add common headers
+    headers['User-Agent'] = '{self.info.get('title', 'API')} TypeScript Client';
+
+    try {{
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), this.timeout);
+
+      const response = await fetch(url, {{
+        method,
+        headers,
+        signal: controller.signal,
+        ...options
+      }});
+
+      clearTimeout(timeoutId);
+
+      if (!response.ok) {{
+        let errorMessage = `API request failed: ${{response.status}} ${{response.statusText}}`;
+        let errorResponse: any = undefined;
+
+        try {{
+          errorResponse = await response.json();
+          if (errorResponse.detail) {{
+            errorMessage = errorResponse.detail;
+          }}
+        }} catch {{
+          // Ignore JSON parsing errors for error responses
+        }}
+
+        throw new APIError(response.status, errorMessage, errorResponse);
+      }}
+
+      const data = await response.json();
+      return {{
+        data,
+        status: response.status,
+        headers: Object.fromEntries(response.headers.entries())
+      }};
+    }} catch (error) {{
+      if (error instanceof APIError) {{
+        throw error;
+      }}
+      throw new APIError(0, `Network error: ${{error instanceof Error ? error.message : String(error)}}`);
+    }}
   }}
 
-  async getHealth(): Promise<APIResponse> {{
+  async getHealth(): Promise<APIResponse<{{status: string}}>> {{
     return this.request('GET', '/health');
+  }}
+
+  async getReady(): Promise<APIResponse<{{status: string; checks: Record<string, any>}}>> {{
+    return this.request('GET', '/ready');
   }}
 '''
 

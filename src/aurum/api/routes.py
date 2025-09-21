@@ -588,19 +588,115 @@ def health() -> dict:
 
 @router.get("/ready")
 def ready() -> dict:
+    """Deep readiness check with comprehensive dependency validation."""
     trino_cfg = _trino_config()
     cache_cfg = _cache_config()
     settings = _settings()
 
     checks = {
-        "trino": _check_trino_ready(trino_cfg),
+        "trino": _check_trino_deep_health(trino_cfg),
         "timescale": _check_timescale_ready(settings.database.timescale_dsn),
         "redis": _check_redis_ready(cache_cfg),
+        "schema_registry": _check_schema_registry_ready(),
     }
 
     if all(checks.values()):
         return {"status": "ready", "checks": checks}
     raise HTTPException(status_code=503, detail={"status": "unavailable", "checks": checks})
+
+
+def _check_trino_deep_health(cfg: TrinoConfig) -> dict:
+    """Perform deep health check on Trino including query performance and schema validation."""
+    try:
+        connect = service._require_trino()
+    except RuntimeError:
+        return {"status": "unavailable", "error": "Trino client not available"}
+
+    try:
+        import time
+        start_time = time.perf_counter()
+
+        with connect(
+            host=cfg.host,
+            port=cfg.port,
+            user=cfg.user,
+            http_scheme=cfg.http_scheme,
+        ) as conn:
+            cur = conn.cursor()
+
+            # Basic connectivity test
+            cur.execute("SELECT 1")
+            cur.fetchone()
+
+            # Schema validation - check key tables exist
+            schema_check_start = time.perf_counter()
+            cur.execute("""
+                SELECT table_name
+                FROM information_schema.tables
+                WHERE table_schema = 'iceberg' AND table_catalog = 'market'
+                AND table_name IN ('curve_observation', 'lmp_observation', 'series_observation')
+                LIMIT 3
+            """)
+            schema_tables = [row[0] for row in cur.fetchall()]
+            schema_check_time = time.perf_counter() - schema_check_start
+
+            # Performance test - simple aggregation
+            perf_check_start = time.perf_counter()
+            cur.execute("""
+                SELECT COUNT(*) as total_count
+                FROM iceberg.market.curve_observation
+                TABLESAMPLE SYSTEM (1)
+            """)
+            sample_result = cur.fetchone()
+            perf_check_time = time.perf_counter() - perf_check_start
+
+            total_time = time.perf_counter() - start_time
+
+            return {
+                "status": "healthy",
+                "connectivity": "ok",
+                "schema_tables_found": len(schema_tables),
+                "schema_check_time_ms": round(schema_check_time * 1000, 2),
+                "performance_check_time_ms": round(perf_check_time * 1000, 2),
+                "total_check_time_ms": round(total_time * 1000, 2),
+                "sample_query_result": sample_result[0] if sample_result else 0,
+            }
+
+    except Exception as exc:
+        return {"status": "unavailable", "error": str(exc)}
+
+
+def _check_schema_registry_ready() -> dict:
+    """Check Schema Registry connectivity and health."""
+    try:
+        # Try to import and check schema registry
+        from aurum.api import kafka
+        import requests
+
+        # Get schema registry URL from settings
+        settings = _settings()
+        schema_registry_url = getattr(settings.kafka, 'schema_registry_url', None)
+
+        if not schema_registry_url:
+            return {"status": "disabled", "error": "Schema Registry URL not configured"}
+
+        # Ping schema registry health endpoint
+        try:
+            response = requests.get(f"{schema_registry_url}/subjects", timeout=5)
+            if response.status_code == 200:
+                subjects = response.json()
+                return {
+                    "status": "healthy",
+                    "subjects_count": len(subjects),
+                    "response_time_ms": round(response.elapsed.total_seconds() * 1000, 2),
+                }
+            else:
+                return {"status": "unavailable", "error": f"HTTP {response.status_code}"}
+        except requests.RequestException as exc:
+            return {"status": "unavailable", "error": f"Connection failed: {exc}"}
+
+    except Exception as exc:
+        return {"status": "unavailable", "error": str(exc)}
 
 # Register auth middleware after health/metrics route definitions
 
@@ -886,27 +982,91 @@ def list_curves(
     cursor_before: Optional[dict] = None
     descending = False
 
+    # Validate cursor consistency with query parameters
+    current_filters = {
+        "asof": asof,
+        "curve_key": curve_key,
+        "asset_class": asset_class,
+        "iso": iso,
+        "location": location,
+        "market": market,
+        "product": product,
+        "block": block,
+        "tenor_type": tenor_type,
+    }
+
     prev_token = prev_cursor
     forward_token = cursor or since_cursor
     if prev_token:
-        payload = _decode_cursor(prev_token)
-        before_payload = payload.get("before") if isinstance(payload, dict) else None
-        if before_payload:
+        try:
+            cursor_obj = Cursor.from_string(prev_token)
+            # Check if cursor has expired
+            if cursor_obj.is_expired():
+                raise HTTPException(status_code=400, detail="Cursor has expired")
+
+            # Check if cursor filters match current query
+            if not cursor_obj.matches_filters(current_filters):
+                raise HTTPException(
+                    status_code=400,
+                    detail="Cursor filters do not match current query parameters"
+                )
+
+            before_payload = cursor_obj.filters
             cursor_before = before_payload
             descending = True
             effective_offset = 0
-        elif isinstance(payload, dict) and set(payload.keys()) <= {"offset"}:
-            try:
-                effective_offset = max(int(payload.get("offset", 0)), 0)
-            except (TypeError, ValueError) as exc:
-                raise HTTPException(status_code=400, detail="Invalid cursor") from exc
-        else:
-            cursor_before = payload if isinstance(payload, dict) else None
-            descending = True
-            effective_offset = 0
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=f"Invalid cursor: {exc}") from exc
     elif forward_token:
-        payload = _decode_cursor(forward_token)
-        effective_offset, cursor_after = _normalise_cursor_input(payload)
+        try:
+            cursor_obj = Cursor.from_string(forward_token)
+            # Check if cursor has expired
+            if cursor_obj.is_expired():
+                raise HTTPException(status_code=400, detail="Cursor has expired")
+
+            # Check if cursor filters match current query
+            if not cursor_obj.matches_filters(current_filters):
+                raise HTTPException(
+                    status_code=400,
+                    detail="Cursor filters do not match current query parameters"
+                )
+
+            effective_offset = cursor_obj.offset
+            cursor_after = cursor_obj.filters
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=f"Invalid cursor: {exc}") from exc
+
+    # Validation and guardrails for dimension combinations
+    dimension_count = sum([
+        1 for dim in [curve_key, asset_class, iso, location, market, product, block, tenor_type]
+        if dim is not None
+    ])
+
+    if dimension_count == 0 and limit > 500:
+        raise HTTPException(
+            status_code=400,
+            detail="Queries without dimension filters with high limits may be too broad. Consider adding filters or reducing limit."
+        )
+
+    if dimension_count == 1 and limit > 1000:
+        raise HTTPException(
+            status_code=400,
+            detail="Single-dimension queries with high limits may be too broad. Consider adding more filters or reducing limit."
+        )
+
+    # Check for potentially expensive dimension combinations
+    expensive_combinations = [
+        {"iso": None, "market": None, "product": None},  # Too broad
+        {"asset_class": None, "location": None},  # Too broad
+        {"curve_key": None},  # May be too broad without other filters
+    ]
+
+    for combo in expensive_combinations:
+        if all(current_dims.get(k) is None for k in combo.keys()) and limit > 500:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Query with dimensions {list(combo.keys())} and limit > 500 may be too expensive. Consider adding more specific filters."
+            )
 
     try:
         rows, elapsed_ms = service.query_curves(
@@ -941,18 +1101,36 @@ def list_curves(
     next_cursor = None
     if more and rows:
         next_payload = _extract_cursor_payload(rows[-1], CURVE_CURSOR_FIELDS)
-        next_cursor = _encode_cursor(next_payload)
+        next_cursor_obj = Cursor(
+            offset=effective_offset + len(rows),
+            limit=effective_limit,
+            timestamp=time.time(),
+            filters=current_filters
+        )
+        next_cursor = next_cursor_obj.to_string()
 
     prev_cursor_value = None
     if rows:
         if descending:
             if cursor_before and more:
                 prev_payload = _extract_cursor_payload(rows[0], CURVE_CURSOR_FIELDS)
-                prev_cursor_value = _encode_cursor({"before": prev_payload})
+                prev_cursor_obj = Cursor(
+                    offset=effective_offset,
+                    limit=effective_limit,
+                    timestamp=time.time(),
+                    filters={**current_filters, "before": prev_payload}
+                )
+                prev_cursor_value = prev_cursor_obj.to_string()
         else:
             if prev_token or forward_token or effective_offset > 0:
                 prev_payload = _extract_cursor_payload(rows[0], CURVE_CURSOR_FIELDS)
-                prev_cursor_value = _encode_cursor({"before": prev_payload})
+                prev_cursor_obj = Cursor(
+                    offset=max(effective_offset - effective_limit, 0),
+                    limit=effective_limit,
+                    timestamp=time.time(),
+                    filters={**current_filters, "before": prev_payload}
+                )
+                prev_cursor_value = prev_cursor_obj.to_string()
 
     if format.lower() == "csv":
         cache_header = f"public, max-age={CURVE_CACHE_TTL}"
@@ -1026,9 +1204,96 @@ def list_curves_diff(
     effective_limit = min(limit, CURVE_MAX_LIMIT)
     cursor_after: Optional[dict] = None
     effective_cursor = cursor or since_cursor
+
+    # Validate cursor consistency with query parameters
+    current_filters = {
+        "asof_a": asof_a,
+        "asof_b": asof_b,
+        "curve_key": curve_key,
+        "asset_class": asset_class,
+        "iso": iso,
+        "location": location,
+        "market": market,
+        "product": product,
+        "block": block,
+        "tenor_type": tenor_type,
+    }
+
     if effective_cursor:
-        payload = _decode_cursor(effective_cursor)
-        offset, cursor_after = _normalise_cursor_input(payload)
+        try:
+            cursor_obj = Cursor.from_string(effective_cursor)
+            # Check if cursor has expired
+            if cursor_obj.is_expired():
+                raise HTTPException(status_code=400, detail="Cursor has expired")
+
+            # Check if cursor filters match current query
+            if not cursor_obj.matches_filters(current_filters):
+                raise HTTPException(
+                    status_code=400,
+                    detail="Cursor filters do not match current query parameters"
+                )
+
+            offset = cursor_obj.offset
+            cursor_after = cursor_obj.filters
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=f"Invalid cursor: {exc}") from exc
+
+    # Validation and guardrails for date ranges and dimensions
+    if asof_a == asof_b:
+        raise HTTPException(
+            status_code=400,
+            detail="asof_a and asof_b must be different dates for comparison"
+        )
+
+    # Check date range - prevent queries spanning too many days
+    days_diff = (asof_b - asof_a).days
+    if abs(days_diff) > 365:  # Max 1 year difference
+        raise HTTPException(
+            status_code=400,
+            detail=f"Date range too large: {abs(days_diff)} days. Maximum allowed: 365 days"
+        )
+
+    # Validate dimension combinations to prevent overly broad queries
+    dimension_count = sum([
+        1 for dim in [curve_key, asset_class, iso, location, market, product, block, tenor_type]
+        if dim is not None
+    ])
+
+    if dimension_count == 0:
+        raise HTTPException(
+            status_code=400,
+            detail="At least one dimension filter must be specified to avoid excessive result sets"
+        )
+
+    if dimension_count == 1 and limit > 1000:
+        raise HTTPException(
+            status_code=400,
+            detail="Single-dimension queries with high limits may be too broad. Consider adding more filters or reducing limit."
+        )
+
+    # Check for potentially expensive dimension combinations
+    expensive_combinations = [
+        {"iso": None, "market": None, "product": None},  # Too broad
+        {"asset_class": None, "location": None},  # Too broad
+    ]
+
+    current_dims = {
+        "curve_key": curve_key,
+        "asset_class": asset_class,
+        "iso": iso,
+        "location": location,
+        "market": market,
+        "product": product,
+        "block": block,
+        "tenor_type": tenor_type,
+    }
+
+    for combo in expensive_combinations:
+        if all(current_dims.get(k) is None for k in combo.keys()) and limit > 500:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Query with dimensions {list(combo.keys())} and limit > 500 may be too expensive. Consider adding more specific filters."
+            )
 
     try:
         rows, elapsed_ms = service.query_curves_diff(

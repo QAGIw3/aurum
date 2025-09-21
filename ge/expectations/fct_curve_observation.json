@@ -1,0 +1,49 @@
+{
+  "expectation_suite_name": "fct_curve_observation",
+  "meta": {
+    "notes": "Checks for canonical curve fact table ensuring grain and value sanity."
+  },
+  "expectations": [
+    {
+      "expectation_type": "expect_column_values_to_not_be_null",
+      "kwargs": {"column": "curve_key"}
+    },
+    {
+      "expectation_type": "expect_column_values_to_not_be_null",
+      "kwargs": {"column": "tenor_label"}
+    },
+    {
+      "expectation_type": "expect_column_values_to_not_be_null",
+      "kwargs": {"column": "asof_date"}
+    },
+    {
+      "expectation_type": "expect_column_values_to_not_be_null",
+      "kwargs": {"column": "iso_code", "mostly": 0.99}
+    },
+    {
+      "expectation_type": "expect_column_values_to_not_be_null",
+      "kwargs": {"column": "mid"}
+    },
+    {
+      "expectation_type": "expect_column_values_to_be_between",
+      "kwargs": {
+        "column": "mid",
+        "mostly": 0.995,
+        "min_value": -10000,
+        "max_value": 10000
+      }
+    },
+    {
+      "expectation_type": "expect_column_values_to_be_in_set",
+      "kwargs": {
+        "column": "price_type",
+        "value_set": ["MID", "BID", "ASK", "LAST", "SETTLE", "INDEX", "STRIP", "CUSTOM"],
+        "mostly": 0.99
+      }
+    },
+    {
+      "expectation_type": "expect_compound_columns_to_be_unique",
+      "kwargs": {"column_list": ["curve_key", "tenor_label", "asof_date"]}
+    }
+  ]
+}

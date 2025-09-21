@@ -152,6 +152,7 @@ CREATE TABLE IF NOT EXISTS ingest_watermark (
     source_name CITEXT NOT NULL REFERENCES ingest_source(name) ON DELETE CASCADE,
     watermark_key TEXT NOT NULL DEFAULT 'default',
     watermark TIMESTAMPTZ,
+    watermark_policy TEXT NOT NULL DEFAULT 'exact',
     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     PRIMARY KEY (source_name, watermark_key)
 );
@@ -179,14 +180,50 @@ $$ LANGUAGE plpgsql;
 CREATE OR REPLACE FUNCTION public.update_ingest_watermark(
     p_source_name CITEXT,
     p_watermark_key TEXT,
-    p_new_watermark TIMESTAMPTZ
+    p_new_watermark TIMESTAMPTZ,
+    p_policy TEXT DEFAULT 'exact'
 ) RETURNS VOID AS $$
+DECLARE
+    current_watermark TIMESTAMPTZ;
+    final_watermark TIMESTAMPTZ;
 BEGIN
-    INSERT INTO ingest_watermark(source_name, watermark_key, watermark, updated_at)
-    VALUES (p_source_name, p_watermark_key, p_new_watermark, NOW())
-    ON CONFLICT (source_name, watermark_key) DO UPDATE
-        SET watermark = EXCLUDED.watermark,
-            updated_at = NOW();
+    -- Get current watermark
+    SELECT watermark INTO current_watermark
+    FROM ingest_watermark
+    WHERE source_name = p_source_name AND watermark_key = p_watermark_key;
+
+    -- Apply policy to determine final watermark
+    CASE p_policy
+        WHEN 'day' THEN
+            -- Round to start of day
+            final_watermark := DATE_TRUNC('day', p_new_watermark);
+        WHEN 'hour' THEN
+            -- Round to start of hour
+            final_watermark := DATE_TRUNC('hour', p_new_watermark);
+        WHEN 'month' THEN
+            -- Round to start of month
+            final_watermark := DATE_TRUNC('month', p_new_watermark);
+        WHEN 'week' THEN
+            -- Round to start of week (Monday)
+            final_watermark := DATE_TRUNC('week', p_new_watermark);
+        WHEN 'exact' THEN
+            -- Use exact timestamp
+            final_watermark := p_new_watermark;
+        ELSE
+            -- Default to exact for unknown policies
+            final_watermark := p_new_watermark;
+    END CASE;
+
+    -- Only update if the final watermark is newer than current
+    IF current_watermark IS NULL OR final_watermark > current_watermark THEN
+        INSERT INTO ingest_watermark(source_name, watermark_key, watermark, watermark_policy, updated_at)
+        VALUES (p_source_name, p_watermark_key, final_watermark, p_policy, NOW())
+        ON CONFLICT (source_name, watermark_key) DO UPDATE
+            SET watermark = EXCLUDED.watermark,
+                watermark_policy = EXCLUDED.watermark_policy,
+                updated_at = NOW()
+            WHERE EXCLUDED.watermark > ingest_watermark.watermark;
+    END IF;
 END;
 $$ LANGUAGE plpgsql;
 

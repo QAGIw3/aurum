@@ -328,7 +328,7 @@ services:
       - aurum
 
   api:
-    profiles: ["core"]
+    profiles: ["core", "api"]
     image: python:3.11-slim
     env_file: *env_file
     deploy:
@@ -733,7 +733,7 @@ PY"
       - aurum
 
   api-built:
-    profiles: ["api-built", "pipeline"]
+    profiles: ["api", "api-built", "pipeline"]
     image: ${AURUM_API_IMAGE:-aurum-api:local}
     build:
       context: ..
@@ -905,7 +905,7 @@ PY"
       - aurum
 
   scenario-worker-built:
-    profiles: ["worker-built", "pipeline"]
+    profiles: ["worker", "worker-built", "pipeline"]
     image: ${AURUM_WORKER_IMAGE:-aurum-worker:local}
     build:
       context: ..

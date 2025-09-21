@@ -15,6 +15,10 @@ source {
       as_of_datetime_end = "${PJM_INTERVAL_END}"
     }
     connection_timeout_ms = 20000
+    retry = 5
+    retry_backoff_multiplier_ms = 1500
+    retry_backoff_max_ms = 90000
+    rate_limit_sleep_ms = 200
     retry { interval_ms = 10000, max_retries = 12 }
     format = "json"
     schema = { fields { datetime_beginning_utc = string datetime_ending_utc = string fuel_type = string gen_mw = string } }
@@ -53,6 +57,9 @@ sink {
       schema.registry.url = "${AURUM_SCHEMA_REGISTRY_URL}"
       value.schema.subject = "${PJM_GENMIX_SUBJECT}"
       value.schema = """${ISO_GENMIX_SCHEMA}"""
+      # Key configuration for message routing and partitioning
+      key.serializer = "${PJM.CONF_KEY_SERIALIZER:-string}"
+      key.format = "${PJM.CONF_KEY_FORMAT:-json}"
     }
   }
 }

@@ -60,13 +60,14 @@ def update_ingest_watermark(
     watermark_key: str,
     watermark: datetime,
     *,
+    policy: str = "exact",
     dsn: Optional[str] = None,
 ) -> None:
-    """Upsert the watermark for the given source."""
+    """Upsert the watermark for the given source with policy-based rounding."""
     with _get_connection(dsn) as conn, conn.cursor() as cur:
         cur.execute(
-            "SELECT public.update_ingest_watermark(%s, %s, %s)",
-            (source_name, watermark_key, watermark),
+            "SELECT public.update_ingest_watermark(%s, %s, %s, %s)",
+            (source_name, watermark_key, watermark, policy),
         )
         conn.commit()
 

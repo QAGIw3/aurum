@@ -1,0 +1,109 @@
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: aurum-platform-alerts
+  namespace: aurum-dev
+  labels:
+    app.kubernetes.io/name: aurum-platform-alerts
+    app.kubernetes.io/part-of: aurum
+spec:
+  groups:
+    - name: aurum-api
+      rules:
+        - alert: AurumApiHighErrorRate
+          expr: |
+            sum(rate(aurum_api_requests_total{status=~"5.."}[5m]))
+              /
+            clamp_min(sum(rate(aurum_api_requests_total[5m])), 1) > 0.05
+          for: 5m
+          labels:
+            severity: critical
+            service: api
+          annotations:
+            summary: "API 5xx rate above 5%"
+            description: "More than 5% of requests returned 5xx in the last 5 minutes"
+            runbook: "docs/runbooks/api.md#elevated-5xx"
+        - alert: AurumApiLatencyP95Degraded
+          expr: |
+            histogram_quantile(
+              0.95,
+              sum(rate(aurum_api_request_duration_seconds_bucket[5m])) by (le)
+            ) > 0.75
+          for: 10m
+          labels:
+            severity: warning
+            service: api
+          annotations:
+            summary: "API p95 latency degraded"
+            description: "The 95th percentile latency exceeded 750ms for 10 minutes"
+            runbook: "docs/runbooks/api.md#latency-spikes"
+    - name: aurum-scenarios
+      rules:
+        - alert: AurumScenarioWorkerBacklog
+          expr: |
+            max_over_time(aurum_scenario_queue_size[10m]) > 0
+              and sum(rate(aurum_scenario_requests_success_total[10m])) < 0.1
+          for: 10m
+          labels:
+            severity: critical
+            service: scenario-worker
+          annotations:
+            summary: "Scenario worker appears stuck"
+            description: "Queue backlog persisted for 10m with no successful completions"
+            runbook: "docs/runbooks/scenario-worker.md#stuck-runs"
+        - alert: AurumScenarioRetriesExhausted
+          expr: rate(aurum_scenario_retry_exhausted_total[10m]) > 0.05
+          for: 5m
+          labels:
+            severity: warning
+            service: scenario-worker
+          annotations:
+            summary: "Scenario retries exhausted"
+            description: "More than 0.05 exhausted retries/sec over 5 minutes"
+            runbook: "docs/runbooks/scenario-worker.md#retries"
+    - name: aurum-airflow
+      rules:
+        - alert: AurumDagFailuresSpike
+          expr: increase(airflow_dag_run_status{state="failed"}[15m]) > 3
+          for: 15m
+          labels:
+            severity: critical
+            service: airflow
+          annotations:
+            summary: "Airflow DAG failures detected"
+            description: "More than three DAG runs failed in the last 15 minutes"
+            runbook: "docs/runbooks/airflow.md#dag-failures"
+        - alert: AurumDagSchedulerHeartbeatMissing
+          expr: time() - airflow_scheduler_heartbeat_seconds > 300
+          for: 5m
+          labels:
+            severity: critical
+            service: airflow
+          annotations:
+            summary: "Airflow scheduler heartbeat missing"
+            description: "Airflow scheduler has not emitted a heartbeat for >5 minutes"
+            runbook: "docs/runbooks/airflow.md#scheduler-down"
+    - name: aurum-data-quality
+      rules:
+        - alert: AurumDataStale
+          expr: |
+            max(aurum_watermark_age_seconds{source!=""}) > 7200
+          for: 15m
+          labels:
+            severity: critical
+            service: ingestion
+          annotations:
+            summary: "Ingestion watermark stale"
+            description: "At least one ingestion source watermark is more than 2 hours old"
+            runbook: "docs/runbooks/ingestion.md#staleness"
+        - alert: AurumDataStaleWarning
+          expr: |
+            max(aurum_watermark_age_seconds{source!=""}) > 3600
+          for: 30m
+          labels:
+            severity: warning
+            service: ingestion
+          annotations:
+            summary: "Ingestion watermark approaching SLA"
+            description: "At least one ingestion watermark exceeds 1 hour"
+            runbook: "docs/runbooks/ingestion.md#staleness"

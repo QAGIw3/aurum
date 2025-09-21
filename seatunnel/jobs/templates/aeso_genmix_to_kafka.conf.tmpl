@@ -56,6 +56,9 @@ sink {
       schema.registry.url = "${AURUM_SCHEMA_REGISTRY_URL}"
       value.schema.subject = "${AESO_GENMIX_SUBJECT}"
       value.schema = """${ISO_GENMIX_SCHEMA}"""
+      # Key configuration for message routing and partitioning
+      key.serializer = "${AESO.CONF_KEY_SERIALIZER:-string}"
+      key.format = "${AESO.CONF_KEY_FORMAT:-json}"
     }
   }
 }

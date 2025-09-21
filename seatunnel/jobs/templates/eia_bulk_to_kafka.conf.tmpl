@@ -8,6 +8,9 @@
 #   EIA_BULK_FREQUENCY       - Frequency label (ANNUAL, QUARTERLY, MONTHLY, WEEKLY, DAILY, HOURLY)
 #
 # Optional environment variables:
+#   EIA.CONF_KEY_SERIALIZER - Kafka key serializer (string/json/avro, default: string)
+#   EIA.CONF_KEY_FORMAT - Kafka key format (json/avro, default: json)
+#
 #   EIA_BULK_SERIES_ID_EXPR  - SQL expression for the series identifier (default series_id)
 #   EIA_BULK_PERIOD_EXPR     - SQL expression yielding the period token (default period)
 #   EIA_BULK_VALUE_EXPR      - SQL expression for the numeric value (default value)
@@ -121,6 +124,9 @@ sink {
       schema.registry.url = "${AURUM_SCHEMA_REGISTRY_URL}"
       value.schema.subject = "${EIA_BULK_SUBJECT}"
       value.schema = """${EIA_BULK_SCHEMA}"""
+      # Key configuration for message routing and partitioning
+      key.serializer = "${EIA.CONF_KEY_SERIALIZER:-string}"
+      key.format = "${EIA.CONF_KEY_FORMAT:-json}"
     }
     producer {
       acks = "all"

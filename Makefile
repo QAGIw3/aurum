@@ -1,4 +1,15 @@
-.PHONY: help build test deploy lint clean docker-build docker-push k8s-deploy db-migrate security-scan
+.PHONY: help build test deploy lint clean docker-build docker-push k8s-deploy db-migrate security-scan trino-harness reconcile-kafka-lake \
+	kind-create kind-apply kind-bootstrap kind-up kind-down kind-apply-ui kind-delete-ui \
+	kafka-bootstrap kafka-register-schemas kafka-set-compat kafka-apply-topics kafka-apply-topics-kind kafka-apply-topics-dry-run \
+	compose-bootstrap
+
+TRINO_SERVER ?= http://localhost:8080
+TRINO_USER ?= aurum
+TRINO_CATALOG ?= iceberg
+TRINO_SCHEMA ?= mart
+TRINO_SERVER_HOST ?= localhost
+TRINO_SERVER_PORT ?= 8080
+KAFKA_BOOTSTRAP ?= localhost:9092
 
 # Default target
 help: ## Show this help message
@@ -29,6 +40,9 @@ clean: ## Clean up build artifacts
 	find . -type d -name "__pycache__" -delete
 	docker system prune -f
 
+compose-bootstrap: ## Run one-shot bootstrap against local Compose stack
+	COMPOSE_PROFILES=core,bootstrap docker compose -f compose/docker-compose.dev.yml up bootstrap --exit-code-from bootstrap
+
 # Docker operations
 docker-build: ## Build Docker images
 	docker build -f Dockerfile.api -t ghcr.io/aurum/api:latest .
@@ -52,6 +66,55 @@ k8s-validate: ## Validate Kubernetes deployment
 	@kubectl get svc -n aurum-dev
 	@echo "✅ Deployment validation completed"
 
+# Kind helpers
+kind-create: ## Create the local kind cluster with required port mappings
+	scripts/k8s/create_kind_cluster.sh ${KIND_FLAGS}
+
+kind-apply: ## Apply core manifests (Strimzi, Schema Registry, data services)
+	scripts/k8s/apply.sh
+
+kind-bootstrap: ## Run bootstrap jobs for lakeFS, Nessie, Schema Registry
+	scripts/k8s/bootstrap.sh
+
+kind-up: ## Create, apply, and bootstrap the kind stack
+	$(MAKE) kind-create
+	$(MAKE) kind-apply
+	$(MAKE) kind-bootstrap
+
+kind-down: ## Destroy the kind cluster and cleanup mounted volumes
+	scripts/k8s/destroy_kind_cluster.sh ${KIND_FLAGS}
+
+kind-apply-ui: ## Deploy optional UI overlay (Superset, Kafka UI, Grafana)
+	scripts/k8s/apply_ui.sh
+
+kind-delete-ui: ## Remove optional UI overlay from the kind cluster
+	scripts/k8s/delete_ui.sh
+
+# Kafka helpers
+kafka-bootstrap: ## Register Avro schemas and set compatibility in Schema Registry
+	SCHEMA_REGISTRY_URL=$${SCHEMA_REGISTRY_URL:-http://localhost:8081}; \
+		scripts/kafka/bootstrap.sh --schema-registry-url "$$SCHEMA_REGISTRY_URL"
+
+kafka-register-schemas: ## Register Kafka schemas only
+	SCHEMA_REGISTRY_URL=$${SCHEMA_REGISTRY_URL:-http://localhost:8081}; \
+		python scripts/kafka/register_schemas.py --schema-registry-url "$$SCHEMA_REGISTRY_URL"
+
+kafka-set-compat: ## Enforce BACKWARD compatibility on Kafka subjects
+	SCHEMA_REGISTRY_URL=$${SCHEMA_REGISTRY_URL:-http://localhost:8081}; \
+		python scripts/kafka/set_compatibility.py --schema-registry-url "$$SCHEMA_REGISTRY_URL"
+
+kafka-apply-topics: ## Apply topic definitions from config/kafka_topics.json
+	KAFKA_BOOTSTRAP_SERVERS=$${KAFKA_BOOTSTRAP_SERVERS:-localhost:9092}; \
+		python scripts/kafka/manage_topics.py --bootstrap-servers "$$KAFKA_BOOTSTRAP_SERVERS" --config config/kafka_topics.json
+
+kafka-apply-topics-dry-run: ## Preview topic changes without applying
+	KAFKA_BOOTSTRAP_SERVERS=$${KAFKA_BOOTSTRAP_SERVERS:-localhost:9092}; \
+		python scripts/kafka/manage_topics.py --bootstrap-servers "$$KAFKA_BOOTSTRAP_SERVERS" --config config/kafka_topics.json --dry-run
+
+kafka-apply-topics-kind: ## Apply single-node topic plan for kind cluster
+	KAFKA_BOOTSTRAP_SERVERS=$${KAFKA_BOOTSTRAP_SERVERS:-localhost:31092}; \
+		python scripts/kafka/manage_topics.py --bootstrap-servers "$$KAFKA_BOOTSTRAP_SERVERS" --config config/kafka_topics.kind.json
+
 # Database operations
 db-migrate: ## Run database migrations
 	@echo "Running database migrations..."
@@ -67,6 +130,19 @@ security-scan: ## Run security scans
 	bandit -r src/ -f json -o bandit-report.json
 	safety check --json | jq '.[] | .vulnerability' > safety-report.json
 	@echo "Security scan reports generated"
+
+# Performance
+trino-harness: ## Run Trino query harness with default plan
+	python scripts/trino/query_harness.py \
+		--server $(TRINO_SERVER) \
+		--user $(TRINO_USER) \
+		--catalog $(TRINO_CATALOG) \
+		--schema $(TRINO_SCHEMA) \
+		--plan config/trino_query_harness.json
+
+# Quality
+reconcile-kafka-lake: ## Compare Kafka offsets vs. Iceberg/Timescale counts
+	python scripts/quality/reconcile_kafka_lake.py --bootstrap $(KAFKA_BOOTSTRAP) --trino-server $(TRINO_SERVER) --trino-user $(TRINO_USER)
 
 # Monitoring
 monitoring-health: ## Check monitoring health

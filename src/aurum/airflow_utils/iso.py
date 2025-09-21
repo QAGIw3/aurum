@@ -51,8 +51,14 @@ def register_sources(sources: Sequence[IngestSource]) -> None:
             print(f"Failed to register ingest source {source.name}: {exc}")
 
 
-def update_watermark(source_name: str, watermark: datetime, *, key: str = "logical_date") -> None:
-    """Persist the watermark for ``source_name`` and emit metrics."""
+def update_watermark(
+    source_name: str,
+    watermark: datetime,
+    *,
+    key: str = "logical_date",
+    policy: str = "exact"
+) -> None:
+    """Persist the watermark for ``source_name`` and emit metrics with policy-based rounding."""
 
     try:
         _ensure_src_path()
@@ -63,7 +69,7 @@ def update_watermark(source_name: str, watermark: datetime, *, key: str = "logic
 
     ts = watermark.astimezone(timezone.utc)
     try:
-        update_ingest_watermark(source_name, key, ts)
+        update_ingest_watermark(source_name, key, ts, policy=policy)
         metrics.record_watermark_success(source_name, ts)
     except Exception as exc:  # pragma: no cover - persistence best effort
         print(f"Failed to update watermark for {source_name}: {exc}")
@@ -73,14 +79,15 @@ def make_watermark_callable(
     source_name: str,
     *,
     key: str = "logical_date",
+    policy: str = "exact",
 ) -> Callable[..., None]:
-    """Return an Airflow-compatible callable that updates ``source_name`` watermark."""
+    """Return an Airflow-compatible callable that updates ``source_name`` watermark with policy."""
 
     def _callable(**context: Any) -> None:
         value = context.get(key)
         if not isinstance(value, datetime):
             raise RuntimeError(f"Context missing datetime '{key}' for {source_name}")
-        update_watermark(source_name, value, key=key)
+        update_watermark(source_name, value, key=key, policy=policy)
 
     return _callable
 

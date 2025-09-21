@@ -57,6 +57,9 @@ sink {
       schema.registry.url = "${AURUM_SCHEMA_REGISTRY_URL}"
       value.schema.subject = "${CAISO_LOAD_SUBJECT}"
       value.schema = """${ISO_LOAD_SCHEMA}"""
+      # Key configuration for message routing and partitioning
+      key.serializer = "${CAISO.CONF_KEY_SERIALIZER:-string}"
+      key.format = "${CAISO.CONF_KEY_FORMAT:-json}"
     }
   }
 }

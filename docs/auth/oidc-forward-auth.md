@@ -38,7 +38,7 @@ Kubernetes deployment.
 3. Start the stack with the optional `auth` profile:
 
    ```bash
-   docker compose -f compose/docker-compose.dev.yml --profile auth up traefik oauth2-proxy
+   COMPOSE_PROFILES=core,auth docker compose -f compose/docker-compose.dev.yml up traefik oauth2-proxy
    ```
 
 4. Traefik listens on `http://localhost:8082`. Visiting `http://api.aurum.localhost:8082/v1/curves`

@@ -13,6 +13,9 @@
 #   AURUM_SCHEMA_REGISTRY_URL     - Confluent Schema Registry endpoint
 #
 # Optional environment variables:
+#   EIA.CONF_KEY_SERIALIZER - Kafka key serializer (string/json/avro, default: string)
+#   EIA.CONF_KEY_FORMAT - Kafka key format (json/avro, default: json)
+#
 #   FUEL_START              - Start period (YYYY-MM-DD or dataset token)
 #   FUEL_END                - End period (YYYY-MM-DD or dataset token)
 #   FUEL_OFFSET             - Pagination offset (default 0)
@@ -48,6 +51,10 @@ source {
       direction[0] = "${FUEL_DIRECTION}"
     }
     connection_timeout_ms = 15000
+    retry = 5
+    retry_backoff_multiplier_ms = 1500
+    retry_backoff_max_ms = 90000
+    rate_limit_sleep_ms = 200
     retry = 5
     format = "json"
     schema = {
@@ -104,8 +111,15 @@ sink {
       schema.registry.url = "${AURUM_SCHEMA_REGISTRY_URL}"
       value.schema.subject = "${FUEL_SUBJECT}"
       value.schema = """${FUEL_SCHEMA}"""
+      # Key configuration for message routing and partitioning
+      key.serializer = "${EIA.CONF_KEY_SERIALIZER:-string}"
+      key.format = "${EIA.CONF_KEY_FORMAT:-json}"
     }
     producer {
+      request.timeout.ms = 30000
+      delivery.timeout.ms = 120000
+      retry.backoff.max.ms = 10000
+      retry.backoff.ms = 100
       acks = "all"
       enable.idempotence = true
       max.in.flight.requests.per.connection = 5

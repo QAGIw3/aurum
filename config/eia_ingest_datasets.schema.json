@@ -1,0 +1,184 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "properties": {
+    "datasets": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "source_name",
+          "path",
+          "data_path",
+          "schedule",
+          "topic_var",
+          "default_topic",
+          "series_id_expr",
+          "frequency"
+        ],
+        "properties": {
+          "source_name": {
+            "type": "string",
+            "pattern": "^[a-zA-Z][a-zA-Z0-9_]*$"
+          },
+          "path": {
+            "type": "string"
+          },
+          "data_path": {
+            "type": "string"
+          },
+          "description": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "schedule": {
+            "type": "string",
+            "pattern": "^([0-9*,\\-/ ]+|@yearly|@monthly|@weekly|@daily|@midnight|@noon)$"
+          },
+          "topic_var": {
+            "type": "string"
+          },
+          "default_topic": {
+            "type": "string"
+          },
+          "series_id_expr": {
+            "type": "string"
+          },
+          "frequency": {
+            "type": "string",
+            "enum": [
+              "HOURLY",
+              "SUBHOURLY",
+              "QUARTER_HOURLY",
+              "EIGHTH_HOURLY",
+              "DAILY",
+              "WEEKLY",
+              "MONTHLY",
+              "QUARTERLY",
+              "ANNUAL"
+            ]
+          },
+          "units_var": {
+            "type": "string"
+          },
+          "default_units": {
+            "type": "string"
+          },
+          "canonical_currency": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "canonical_unit": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "unit_conversion": {
+            "type": [
+              "object",
+              "null"
+            ]
+          },
+          "area_expr": {
+            "type": "string"
+          },
+          "sector_expr": {
+            "type": "string"
+          },
+          "description_expr": {
+            "type": "string"
+          },
+          "source_expr": {
+            "type": "string"
+          },
+          "dataset_expr": {
+            "type": "string"
+          },
+          "metadata_expr": {
+            "type": "string"
+          },
+          "filter_expr": {
+            "type": "string"
+          },
+          "param_overrides": {
+            "type": "array",
+            "items": {
+              "type": "object"
+            }
+          },
+          "period_column": {
+            "type": "string"
+          },
+          "date_format": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "page_limit": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 5000
+          },
+          "window_hours": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "minimum": 0
+          },
+          "window_days": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "minimum": 0
+          },
+          "window_months": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "minimum": 0
+          },
+          "window_years": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "minimum": 0
+          },
+          "dlq_topic": {
+            "type": "string"
+          },
+          "series_id_strategy": {
+            "type": "object",
+            "required": [
+              "source",
+              "components"
+            ],
+            "properties": {
+              "source": {
+                "type": "string"
+              },
+              "components": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "required": [
+    "datasets"
+  ]
+}

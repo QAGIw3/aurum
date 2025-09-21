@@ -1,0 +1,162 @@
+# NOAA GHCND hourly observations → Kafka with sliding window
+#
+# Render with envsubst (see scripts/seatunnel/run_job.sh) before running via SeaTunnel.
+# Required environment variables:
+#   NOAA_GHCND_TOKEN        - NOAA API token with GHCND access (injected via Vault)
+#   NOAA_GHCND_BASE_URL     - Base URL for the NOAA datasets API (default https://www.ncdc.noaa.gov/cdo-web/api/v2)
+#   NOAA_GHCND_DATASET      - Dataset id (default GHCND)
+#   NOAA_GHCND_START_DATE   - Start date (YYYY-MM-DD) - auto-derived from sliding window
+#   NOAA_GHCND_END_DATE     - End date (YYYY-MM-DD) - auto-derived from sliding window
+#   NOAA_GHCND_LIMIT        - Page size (default 1000, max per NOAA API)
+#   NOAA_GHCND_OFFSET       - Offset for pagination (default 1)
+#   NOAA_GHCND_STATION_LIMIT- Number of station metadata rows to fetch (default 1000)
+#   NOAA_GHCND_TOPIC        - Kafka topic to write (e.g. aurum.ref.noaa.weather.hourly.v1)
+#   AURUM_KAFKA_BOOTSTRAP_SERVERS - Comma separated brokers (host:port)
+#   AURUM_SCHEMA_REGISTRY_URL     - Confluent Schema Registry endpoint
+#
+# Optional environment variables:
+#   NOAA_GHCND_STATION      - Filter for specific station id
+#   NOAA_GHCND_UNITS        - Measurement units (metric/standard)
+#   NOAA_GHCND_DATA_TYPES   - Comma separated list of data types to include (edit rendered config to use)
+#   NOAA_GHCND_TIMEOUT      - Request timeout milliseconds (default 30000)
+#   NOAA_GHCND_UNIT_CODE    - Unit string to store in the Avro payload (default "unknown")
+#   NOAA_GHCND_SUBJECT      - Schema Registry subject override (default <topic>-value)
+#   NOAA_GHCND_SCHEMA       - Avro schema JSON populated by run_job.sh
+#   NOAA_GHCND_KEY_SERIALIZER - Kafka key serializer (string/json/avro, default: string)
+#   NOAA_GHCND_KEY_FORMAT   - Kafka key format (json/avro, default: json)
+#   NOAA_GHCND_SLIDING_HOURS - Sliding window hours (default: 1 for hourly)
+#   NOAA_GHCND_SLIDING_DAYS - Sliding window days (default: 0 for hourly)
+
+env {
+  job.mode = "BATCH"
+  parallelism = 1
+}
+
+source {
+  Http {
+    url = "${NOAA_GHCND_BASE_URL}/data"
+    method = "GET"
+    headers {
+      token = "${NOAA_GHCND_TOKEN}"
+    }
+    params {
+      datasetid = "${NOAA_GHCND_DATASET}"
+      startdate = "${NOAA_GHCND_START_DATE}"
+      enddate = "${NOAA_GHCND_END_DATE}"
+      limit = ${NOAA_GHCND_LIMIT}
+      offset = ${NOAA_GHCND_OFFSET}
+    }
+    # Optional filters can be added by editing the rendered config.
+
+    connection_timeout_ms = ${NOAA_GHCND_TIMEOUT}
+    retry = 5
+    retry_backoff_multiplier_ms = 2000
+    retry_backoff_max_ms = 120000
+    format = "json"
+    rate_limit_sleep_ms = 250
+    # Zeta engine requires schema/jsonpath at top-level for JSON format
+    schema = {
+      fields {
+        station = string
+        datatype = string
+        attributes = string
+        date = string
+        value = double
+      }
+    }
+    jsonpath = "$$.results[*]"
+    result_table_name = "noaa_raw"
+  }
+  Http {
+    url = "${NOAA_GHCND_BASE_URL}/stations"
+    method = "GET"
+    headers {
+      token = "${NOAA_GHCND_TOKEN}"
+    }
+    params {
+      datasetid = "${NOAA_GHCND_DATASET}"
+      startdate = "${NOAA_GHCND_START_DATE}"
+      enddate = "${NOAA_GHCND_END_DATE}"
+      limit = ${NOAA_GHCND_STATION_LIMIT}
+    }
+    connection_timeout_ms = ${NOAA_GHCND_TIMEOUT}
+    retry = 5
+    retry_backoff_multiplier_ms = 2000
+    retry_backoff_max_ms = 120000
+    format = "json"
+    rate_limit_sleep_ms = 250
+    schema = {
+      fields {
+        id = string
+        name = string
+        latitude = double
+        longitude = double
+        elevation = double
+        elevationUnit = string
+        datacoverage = double
+        mindate = string
+        maxdate = string
+      }
+    }
+    jsonpath = "$$.results[*]"
+    result_table_name = "noaa_stations"
+  }
+}
+
+transform {
+  Sql {
+    source_table_name = "noaa_raw"
+    result_table_name = "noaa_normalized"
+    query = """
+      SELECT
+        station AS station_id,
+        datatype AS data_type,
+        CASE WHEN attributes IS NULL OR attributes = '' THEN NULL ELSE attributes END AS attributes,
+        date AS observation_date,
+        value,
+        CASE
+          WHEN value IS NULL OR value = '' THEN NULL
+          ELSE CAST(value AS DOUBLE)
+        END AS numeric_value,
+        '${NOAA_GHCND_UNIT_CODE}' AS unit_code,
+        '${NOAA_GHCND_UNITS}' AS units,
+        'NOAA' AS source,
+        'GHCND' AS dataset,
+        CAST(UNIX_TIMESTAMP() * 1000000 AS BIGINT) AS ingest_ts
+      FROM noaa_raw
+      WHERE (${NOAA_GHCND_FILTER_EXPR:-TRUE})
+    """
+  }
+}
+
+sink {
+  Kafka {
+    # Wire the output table explicitly for Zeta engine
+    plugin_input = "noaa_normalized"
+    bootstrap.servers = "${AURUM_KAFKA_BOOTSTRAP_SERVERS}"
+    topic = "${NOAA_GHCND_TOPIC}"
+    semantic = "AT_LEAST_ONCE"
+    format = "avro"
+    avro {
+      use.schema.registry = true
+      schema.registry.url = "${AURUM_SCHEMA_REGISTRY_URL}"
+      value.schema.subject = "${NOAA_GHCND_SUBJECT}"
+      value.schema = """${NOAA_GHCND_SCHEMA}"""
+      # Key configuration for message routing and partitioning
+      key.serializer = "${NOAA_GHCND_KEY_SERIALIZER:-string}"
+      key.format = "${NOAA_GHCND_KEY_FORMAT:-json}"
+    }
+    producer {
+      acks = "all"
+      enable.idempotence = true
+      max.in.flight.requests.per.connection = 5
+      linger.ms = 500
+      batch.size = 32768
+      retries = 10
+      retry.backoff.ms = 100
+      retry.backoff.max.ms = 10000
+      delivery.timeout.ms = 120000
+      request.timeout.ms = 30000
+    }
+  }
+}

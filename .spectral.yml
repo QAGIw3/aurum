@@ -1,0 +1,129 @@
+extends: [["spectral:oas", "off"]]
+
+rules:
+  # OpenAPI 3.0 compliance
+  openapi-version:
+    description: "OpenAPI version must be 3.0.x"
+    message: "OpenAPI version must be 3.0.x"
+    given: "$"
+    severity: error
+    then:
+      field: "openapi"
+      function: pattern
+      functionOptions:
+        match: "^3\\.0\\.[0-9]+$"
+
+  # Info section requirements
+  info-title:
+    description: "API must have a title"
+    message: "API must have a title"
+    given: "$.info"
+    severity: error
+    then:
+      field: "title"
+      function: truthy
+
+  info-version:
+    description: "API must have a version"
+    message: "API must have a version"
+    given: "$.info"
+    severity: error
+    then:
+      field: "version"
+      function: truthy
+
+  # Path requirements
+  paths-exist:
+    description: "API must define paths"
+    message: "API must define at least one path"
+    given: "$"
+    severity: error
+    then:
+      field: "paths"
+      function: truthy
+
+  # Operation requirements
+  operation-ids:
+    description: "All operations must have operationId"
+    message: "Operation must have operationId"
+    given: "$.paths[*][*]"
+    severity: warn
+    then:
+      field: "operationId"
+      function: truthy
+
+  # Response requirements
+  responses-success:
+    description: "Operations should define at least one success response"
+    message: "Operation should define at least one 2xx response"
+    given: "$.paths[*][*].responses"
+    severity: warn
+    then:
+      function: patternProperties
+      functionOptions:
+        match: "^[2-5][0-9][0-9]$"
+
+  # Schema requirements
+  schema-properties-camelcase:
+    description: "Schema properties should use camelCase"
+    message: "Schema property '{{property}}' should use camelCase"
+    given: "$.components.schemas[*].properties[*]"
+    severity: warn
+    then:
+      function: pattern
+      functionOptions:
+        match: "^[a-z][a-zA-Z0-9]*$"
+
+  # Parameter validation
+  parameter-descriptions:
+    description: "Parameters should have descriptions"
+    message: "Parameter '{{property}}' should have a description"
+    given: "$.paths[*][*].parameters[*]"
+    severity: warn
+    then:
+      field: "description"
+      function: truthy
+
+  # Security requirements
+  security-schemes:
+    description: "API should define security schemes if using security"
+    message: "API should define security schemes if using security"
+    given: "$"
+    severity: warn
+    then:
+      - function: xor
+        functionOptions:
+          - field: "security"
+            function: falsy
+          - field: "components.securitySchemes"
+            function: truthy
+
+  # Consistency checks
+  consistent-response-schemas:
+    description: "Response schemas should be consistent across similar operations"
+    message: "Response schema for '{{path}}' {{method}} may be inconsistent"
+    given: "$.paths[*][*].responses[2*][*].schema"
+    severity: warn
+    then:
+      function: schema
+
+  # Best practices
+  no-empty-descriptions:
+    description: "Descriptions should not be empty"
+    message: "Description should not be empty"
+    given: "$.info.description"
+    severity: warn
+    then:
+      function: pattern
+      functionOptions:
+        match: "\\S"
+
+  no-trailing-slash:
+    description: "Paths should not have trailing slashes"
+    message: "Path '{{property}}' should not end with '/'"
+    given: "$.paths"
+    severity: warn
+    then:
+      function: pattern
+      functionOptions:
+        match: "^.*[^/]$"

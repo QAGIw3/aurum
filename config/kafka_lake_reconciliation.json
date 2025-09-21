@@ -1,0 +1,20 @@
+{
+  "targets": [
+    {
+      "name": "curve_observation_last_day",
+      "topic": "aurum.curve.observation.v1",
+      "iceberg_table": "iceberg.market.curve_observation",
+      "catalog": "iceberg",
+      "schema": "market",
+      "count_sql": "select count(*) from iceberg.market.curve_observation where _ingest_ts >= current_timestamp - INTERVAL '1' DAY"
+    },
+    {
+      "name": "iso_lmp_last_day",
+      "topic": "aurum.iso.pjm.lmp.v1",
+      "iceberg_table": "timeseries.public.iso_lmp_timeseries",
+      "catalog": "timescale",
+      "schema": "public",
+      "count_sql": "select count(*) from public.iso_lmp_timeseries where interval_start >= (current_timestamp - INTERVAL '1' DAY)"
+    }
+  ]
+}

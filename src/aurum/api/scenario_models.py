@@ -3,12 +3,39 @@
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Any, Dict, List, Optional
+from enum import Enum
+from typing import Any, Dict, List, Literal, Optional
 from uuid import UUID
 
 from pydantic import BaseModel, Field
 
 from .models import AurumBaseModel
+
+
+class ScenarioStatus(str, Enum):
+    """Scenario status lifecycle."""
+    CREATED = "created"
+    ACTIVE = "active"
+    ARCHIVED = "archived"
+    DELETED = "deleted"
+
+
+class ScenarioRunStatus(str, Enum):
+    """Scenario run status lifecycle."""
+    QUEUED = "queued"          # Run has been queued for execution
+    RUNNING = "running"        # Run is currently executing
+    SUCCEEDED = "succeeded"    # Run completed successfully
+    FAILED = "failed"          # Run failed with error
+    CANCELLED = "cancelled"    # Run was cancelled
+    TIMEOUT = "timeout"        # Run timed out
+
+
+class ScenarioRunPriority(str, Enum):
+    """Scenario run priority levels."""
+    LOW = "low"
+    NORMAL = "normal"
+    HIGH = "high"
+    CRITICAL = "critical"
 
 
 class CreateScenarioRequest(AurumBaseModel):
@@ -35,7 +62,7 @@ class ScenarioData(AurumBaseModel):
     tenant_id: str = Field(..., description="Tenant identifier")
     name: str = Field(..., description="Scenario name")
     description: Optional[str] = Field(None, description="Scenario description")
-    status: str = Field(..., description="Scenario status")
+    status: ScenarioStatus = Field(..., description="Scenario status")
     assumptions: List[Dict[str, Any]] = Field(
         default_factory=list,
         description="List of scenario assumptions"
@@ -68,9 +95,9 @@ class ScenarioListResponse(AurumBaseModel):
 class ScenarioRunOptions(AurumBaseModel):
     """Options for running a scenario."""
 
-    priority: str = Field(default="normal", description="Run priority")
-    timeout_minutes: int = Field(default=60, description="Timeout in minutes")
-    max_memory_mb: int = Field(default=1024, description="Max memory in MB")
+    priority: ScenarioRunPriority = Field(default=ScenarioRunPriority.NORMAL, description="Run priority")
+    timeout_minutes: int = Field(default=60, description="Timeout in minutes", ge=1, le=1440)  # Max 24 hours
+    max_memory_mb: int = Field(default=1024, description="Max memory in MB", ge=256, le=16384)  # 256MB to 16GB
     environment: Dict[str, str] = Field(
         default_factory=dict,
         description="Environment variables"
@@ -86,12 +113,15 @@ class ScenarioRunData(AurumBaseModel):
 
     id: str = Field(..., description="Run ID")
     scenario_id: str = Field(..., description="Parent scenario ID")
-    status: str = Field(..., description="Run status")
-    priority: str = Field(..., description="Run priority")
+    status: ScenarioRunStatus = Field(..., description="Run status")
+    priority: ScenarioRunPriority = Field(..., description="Run priority")
     started_at: Optional[datetime] = Field(None, description="Start timestamp")
     completed_at: Optional[datetime] = Field(None, description="Completion timestamp")
-    duration_seconds: Optional[float] = Field(None, description="Duration in seconds")
+    duration_seconds: Optional[float] = Field(None, description="Duration in seconds", ge=0)
     error_message: Optional[str] = Field(None, description="Error message")
+    retry_count: int = Field(default=0, description="Number of retries attempted", ge=0)
+    max_retries: int = Field(default=3, description="Maximum number of retries", ge=0)
+    progress_percent: Optional[float] = Field(None, description="Progress percentage", ge=0, le=100)
     parameters: Dict[str, Any] = Field(
         default_factory=dict,
         description="Run parameters"
@@ -101,6 +131,8 @@ class ScenarioRunData(AurumBaseModel):
         description="Run environment"
     )
     created_at: datetime = Field(..., description="Creation timestamp")
+    queued_at: Optional[datetime] = Field(None, description="When run was queued")
+    cancelled_at: Optional[datetime] = Field(None, description="When run was cancelled")
 
 
 class ScenarioRunResponse(AurumBaseModel):
@@ -135,6 +167,25 @@ class ScenarioOutputResponse(AurumBaseModel):
 
     meta: Dict[str, Any] = Field(..., description="Response metadata")
     data: List[ScenarioOutputPoint] = Field(..., description="Output data points")
+
+
+class ScenarioOutputFilter(AurumBaseModel):
+    """Filter model for scenario outputs."""
+
+    start_time: Optional[datetime] = Field(None, description="Start time filter (ISO 8601)")
+    end_time: Optional[datetime] = Field(None, description="End time filter (ISO 8601)")
+    metric_name: Optional[str] = Field(None, description="Filter by metric name")
+    min_value: Optional[float] = Field(None, description="Minimum value filter", ge=0)
+    max_value: Optional[float] = Field(None, description="Maximum value filter", ge=0)
+    tags: Optional[Dict[str, str]] = Field(None, description="Filter by tags")
+
+
+class ScenarioOutputListResponse(AurumBaseModel):
+    """Response model for listing scenario outputs with filtering."""
+
+    meta: Dict[str, Any] = Field(..., description="Response metadata")
+    data: List[ScenarioOutputPoint] = Field(..., description="Output data points")
+    filter: Optional[ScenarioOutputFilter] = Field(None, description="Applied filters")
 
 
 class ScenarioMetricLatest(AurumBaseModel):

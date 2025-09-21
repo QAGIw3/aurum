@@ -1,0 +1,77 @@
+{
+  "generated_at": "2025-01-21T03:15:00.000000+00:00",
+  "dataset_count": 120000,
+  "base_url": "https://api.stlouisfed.org/fred",
+  "series": [
+    {
+      "id": "DGS10",
+      "title": "10-Year Treasury Constant Maturity Rate",
+      "units": "Percent",
+      "frequency": "Daily",
+      "seasonal_adjustment": "Not Seasonally Adjusted",
+      "last_updated": "2024-01-20",
+      "popularity": 92,
+      "notes": "For further information regarding treasury constant maturity data, please refer to the H.15 Statistical Release notes and to the Treasury Yield Curve Methodology.",
+      "category": "Money, Banking, & Finance",
+      "start_date": "1962-01-02",
+      "end_date": "2024-01-19",
+      "api_path": "series/observations"
+    },
+    {
+      "id": "CPIAUCSL",
+      "title": "Consumer Price Index for All Urban Consumers: All Items in U.S. City Average",
+      "units": "Index 1982-1984=100",
+      "frequency": "Monthly",
+      "seasonal_adjustment": "Seasonally Adjusted",
+      "last_updated": "2024-01-11",
+      "popularity": 89,
+      "notes": "The Consumer Price Index for All Urban Consumers: All Items (CPIAUCSL) is a measure of the average change over time in the prices paid by urban consumers for a market basket of consumer goods and services.",
+      "category": "Prices",
+      "start_date": "1947-01-01",
+      "end_date": "2023-12-01",
+      "api_path": "series/observations"
+    },
+    {
+      "id": "UNRATE",
+      "title": "Civilian Unemployment Rate",
+      "units": "Percent",
+      "frequency": "Monthly",
+      "seasonal_adjustment": "Seasonally Adjusted",
+      "last_updated": "2024-01-05",
+      "popularity": 88,
+      "notes": "The unemployment rate represents the number of unemployed as a percentage of the labor force.",
+      "category": "Employment & Population",
+      "start_date": "1948-01-01",
+      "end_date": "2023-12-01",
+      "api_path": "series/observations"
+    },
+    {
+      "id": "FEDFUNDS",
+      "title": "Effective Federal Funds Rate",
+      "units": "Percent",
+      "frequency": "Monthly",
+      "seasonal_adjustment": "Not Seasonally Adjusted",
+      "last_updated": "2024-01-17",
+      "popularity": 85,
+      "notes": "Effective federal funds rate is the interest rate at which depository institutions lend reserve balances to other depository institutions overnight, on an uncollateralized basis.",
+      "category": "Money, Banking, & Finance",
+      "start_date": "1954-07-01",
+      "end_date": "2023-12-01",
+      "api_path": "series/observations"
+    },
+    {
+      "id": "GDP",
+      "title": "Gross Domestic Product",
+      "units": "Billions of Dollars",
+      "frequency": "Quarterly",
+      "seasonal_adjustment": "Seasonally Adjusted Annual Rate",
+      "last_updated": "2024-01-25",
+      "popularity": 90,
+      "notes": "Gross domestic product (GDP), the featured measure of U.S. output, is the market value of the goods and services produced by labor and property located in the United States.",
+      "category": "National Accounts",
+      "start_date": "1947-01-01",
+      "end_date": "2023-10-01",
+      "api_path": "series/observations"
+    }
+  ]
+}

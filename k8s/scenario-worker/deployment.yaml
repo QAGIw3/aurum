@@ -39,17 +39,17 @@ spec:
                   key: AURUM_SCENARIO_METRICS_PORT
           readinessProbe:
             httpGet:
-              path: /metrics
+              path: /ready
               port: metrics
             initialDelaySeconds: 15
-            periodSeconds: 30
+            periodSeconds: 20
             failureThreshold: 3
           livenessProbe:
             httpGet:
-              path: /metrics
+              path: /health
               port: metrics
             initialDelaySeconds: 30
-            periodSeconds: 60
+            periodSeconds: 30
             failureThreshold: 5
           resources:
             requests:

@@ -14,6 +14,10 @@ source {
       effective_date_utc> = "${PJM_PNODES_EFFECTIVE_START}"
     }
     connection_timeout_ms = 20000
+    retry = 5
+    retry_backoff_multiplier_ms = 1500
+    retry_backoff_max_ms = 90000
+    rate_limit_sleep_ms = 200
     retry { interval_ms = 10000, max_retries = 12 }
     format = "json"
     schema = { fields { pnode_id = string name = string type = string } }
@@ -54,6 +58,9 @@ sink {
       schema.registry.url = "${AURUM_SCHEMA_REGISTRY_URL}"
       value.schema.subject = "${PJM_PNODES_SUBJECT}"
       value.schema = """${ISO_PNODE_SCHEMA}"""
+      # Key configuration for message routing and partitioning
+      key.serializer = "${PJM.CONF_KEY_SERIALIZER:-string}"
+      key.format = "${PJM.CONF_KEY_FORMAT:-json}"
     }
   }
 }

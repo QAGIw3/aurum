@@ -22,6 +22,8 @@
 #   NOAA_GHCND_UNIT_CODE    - Unit string to store in the Avro payload (default "unknown")
 #   NOAA_GHCND_SUBJECT      - Schema Registry subject override (default <topic>-value)
 #   NOAA_GHCND_SCHEMA       - Avro schema JSON populated by run_job.sh
+#   NOAA_GHCND_KEY_SERIALIZER - Kafka key serializer (string/json/avro, default: string)
+#   NOAA_GHCND_KEY_FORMAT   - Kafka key format (json/avro, default: json)
 
 env {
   job.mode = "BATCH"
@@ -47,7 +49,10 @@ source {
     connection_timeout_ms = ${NOAA_GHCND_TIMEOUT}
     # SeaTunnel Zeta Http expects integer retry count
     retry = 5
+    retry_backoff_multiplier_ms = 2000
+    retry_backoff_max_ms = 120000
     format = "json"
+    rate_limit_sleep_ms = 250
     # Zeta engine requires schema/jsonpath at top-level for JSON format
     schema = {
       fields {
@@ -75,7 +80,10 @@ source {
     }
     connection_timeout_ms = ${NOAA_GHCND_TIMEOUT}
     retry = 5
+    retry_backoff_multiplier_ms = 2000
+    retry_backoff_max_ms = 120000
     format = "json"
+    rate_limit_sleep_ms = 250
     schema = {
       fields {
         id = string
@@ -149,6 +157,9 @@ sink {
       schema.registry.url = "${AURUM_SCHEMA_REGISTRY_URL}"
       value.schema.subject = "${NOAA_GHCND_SUBJECT}"
       value.schema = """${NOAA_GHCND_SCHEMA}"""
+      # Key configuration for message routing and partitioning
+      key.serializer = "${NOAA_GHCND_KEY_SERIALIZER:-string}"
+      key.format = "${NOAA_GHCND_KEY_FORMAT:-json}"
     }
     producer {
       acks = "all"

@@ -1,3 +1,12 @@
+{{
+    config(
+        materialized='view',
+        schema='mart',
+        alias='mart_eia_series_latest',
+        tags=['eia', 'mart']
+    )
+}}
+
 with ranked as (
     select
         *,

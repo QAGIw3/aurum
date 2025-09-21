@@ -10,7 +10,7 @@
         "type": "enum",
         "name": "IsoCode",
         "doc": "Market operator the observation belongs to.",
-        "symbols": ["PJM", "CAISO", "ERCOT", "NYISO", "MISO", "ISONE", "SPP", "AESO"]
+        "symbols": ["PJM", "CAISO", "ERCOT", "NYISO", "MISO", "ISONE", "SPP", "AESO", "UNKNOWN"]
       }
     },
     {

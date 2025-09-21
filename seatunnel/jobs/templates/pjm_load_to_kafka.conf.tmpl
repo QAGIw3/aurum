@@ -20,6 +20,10 @@ source {
       datetime_end = "${PJM_INTERVAL_END}"
     }
     connection_timeout_ms = 20000
+    retry = 5
+    retry_backoff_multiplier_ms = 1500
+    retry_backoff_max_ms = 90000
+    rate_limit_sleep_ms = 200
     retry = 12
     format = "json"
     schema = { fields { datetime_beginning_utc = string datetime_ending_utc = string area = string load_mw = string } }
@@ -59,6 +63,9 @@ sink {
       schema.registry.url = "${AURUM_SCHEMA_REGISTRY_URL}"
       value.schema.subject = "${PJM_LOAD_SUBJECT}"
       value.schema = """${ISO_LOAD_SCHEMA}"""
+      # Key configuration for message routing and partitioning
+      key.serializer = "${PJM.CONF_KEY_SERIALIZER:-string}"
+      key.format = "${PJM.CONF_KEY_FORMAT:-json}"
     }
   }
 }

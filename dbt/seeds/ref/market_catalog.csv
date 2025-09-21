@@ -1,0 +1,20 @@
+iso_code,market_code,market_name,market_category,settlement_interval_minutes,timezone_override
+AESO,DAY_AHEAD,Day-Ahead Energy,LMP,60,America/Edmonton
+AESO,REAL_TIME,Real-Time Energy,LMP,60,America/Edmonton
+CAISO,DAY_AHEAD,Day-Ahead Energy,LMP,60,America/Los_Angeles
+CAISO,REAL_TIME,Real-Time Energy,LMP,15,America/Los_Angeles
+CAISO,FIFTEEN_MINUTE,15-Minute Market,LMP,15,America/Los_Angeles
+ERCOT,DAY_AHEAD,Day-Ahead Energy,LMP,60,America/Chicago
+ERCOT,REAL_TIME,5-Min Real-Time,LMP,5,America/Chicago
+ISONE,DAY_AHEAD,Day-Ahead Energy,LMP,60,America/New_York
+ISONE,REAL_TIME,Real-Time Energy,LMP,5,America/New_York
+MISO,DAY_AHEAD,Day-Ahead Energy,LMP,60,America/Chicago
+MISO,REAL_TIME,Real-Time Energy,LMP,5,America/Chicago
+NYISO,DAY_AHEAD,Day-Ahead Energy,LMP,60,America/New_York
+NYISO,REAL_TIME,Real-Time Energy,LMP,5,America/New_York
+PJM,DAY_AHEAD,Day-Ahead Energy,LMP,60,America/New_York
+PJM,REAL_TIME,Real-Time Energy,LMP,5,America/New_York
+PJM,FIVE_MINUTE,Five Minute RT,LMP,5,America/New_York
+SPP,DAY_AHEAD,Day-Ahead Energy,LMP,60,America/Chicago
+SPP,REAL_TIME,Real-Time Energy,LMP,5,America/Chicago
+UNKNOWN,UNKNOWN,Unknown Market,UNKNOWN,60,UTC

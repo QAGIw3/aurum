@@ -12,22 +12,43 @@ This directory contains Docker Compose files for the minimal development stack d
 
 ## Profiles
 
-- `ui` - enables optional Superset and Kafka UI consoles (`--profile ui`).
-- `bootstrap` - runs a one-shot initializer that creates the MinIO bucket, lakeFS repository, and Nessie namespaces (`--profile bootstrap`).
+- `core` — baseline services (MinIO, lakeFS, Nessie, Trino, ClickHouse, Postgres, Redis, Vector, API).
+- `api` — explicitly target the FastAPI container when you want to run only the service build (paired with `core`).
+- `worker` — Airflow, Kafka, Schema Registry, and the async scenario worker.
+- `ui` — optional Superset + Kafka UI consoles.
+- `bootstrap` — one-shot seeding for MinIO buckets, lakeFS repo, Nessie namespaces, and schema registry.
+- `pipeline` — build-image variants (`api-built`, `scenario-worker-built`) used by CI smoke tests.
+- `ppa-smoke` — seeding helper that loads PPA sample data for API smoke tests.
+
+Activate profiles by setting `COMPOSE_PROFILES` (comma separated). For example:
+
+```bash
+# Start the full developer core including API
+COMPOSE_PROFILES=core docker compose -f compose/docker-compose.dev.yml up -d
+
+# Add the async worker stack (Airflow + Kafka + worker)
+COMPOSE_PROFILES=core,worker docker compose -f compose/docker-compose.dev.yml up -d
+
+# Bring up UI consoles on top of the running core
+COMPOSE_PROFILES=core,ui docker compose -f compose/docker-compose.dev.yml up -d
+
+# Run the bootstrap job once after services are healthy
+COMPOSE_PROFILES=core,bootstrap docker compose -f compose/docker-compose.dev.yml up bootstrap --exit-code-from bootstrap
+```
 
 ## Usage
 
 ```bash
 # start core stack
-cp compose/.env.example .env
+cp .env.example .env
 python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"  # update AIRFLOW_FERNET_KEY in .env
-docker compose -f compose/docker-compose.dev.yml up -d
+COMPOSE_PROFILES=core docker compose -f compose/docker-compose.dev.yml up -d
 
 # run bootstrap helpers once (after stack is healthy)
-docker compose -f compose/docker-compose.dev.yml --profile bootstrap up --exit-code-from bootstrap
+COMPOSE_PROFILES=core,bootstrap docker compose -f compose/docker-compose.dev.yml up bootstrap --exit-code-from bootstrap
 
 # include optional UI services
-docker compose -f compose/docker-compose.dev.yml --profile ui up -d
+COMPOSE_PROFILES=core,ui docker compose -f compose/docker-compose.dev.yml up -d
 
 # bootstrap Kafka schemas (idempotent)
 make kafka-bootstrap

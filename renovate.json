@@ -1,0 +1,53 @@
+{
+  "$schema": "https://docs.renovatebot.com/renovate-schema.json",
+  "extends": ["config:base"],
+  "prConcurrentLimit": 5,
+  "labels": ["dependencies"],
+  "pip_requirements": {
+    "fileMatch": [
+      "(^|/)constraints/.*\\.txt$",
+      "requirements-dev\\.txt"
+    ]
+  },
+  "pip-compile": {
+    "enabled": true,
+    "lockFileMaintenance": {
+      "enabled": true
+    }
+  },
+  "packageRules": [
+    {
+      "description": "Group Python dependency updates",
+      "matchManagers": ["pip_requirements"],
+      "groupName": "python dependencies"
+    },
+    {
+      "description": "Group GitHub Actions updates",
+      "matchManagers": ["github-actions"],
+      "groupName": "github actions"
+    },
+    {
+      "description": "Group Docker image updates",
+      "matchDatasources": ["docker"],
+      "groupName": "docker images"
+    }
+  ],
+  "regexManagers": [
+    {
+      "description": "Update docker compose image tags",
+      "fileMatch": ["compose/docker-compose\\.dev\\.yml"],
+      "matchStrings": [
+        "\\s+image: (?<depName>[a-z0-9./-]+):(?<currentValue>[a-zA-Z0-9_.-]+)"
+      ],
+      "datasourceTemplate": "docker"
+    },
+    {
+      "description": "Update kind cluster image references",
+      "fileMatch": ["k8s/.+\\.(ya?ml)$"],
+      "matchStrings": [
+        "image: (?<depName>[a-z0-9./-]+):(?<currentValue>[a-zA-Z0-9_.-]+)"
+      ],
+      "datasourceTemplate": "docker"
+    }
+  ]
+}

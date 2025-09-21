@@ -24,6 +24,12 @@ repos:
       - id: isort
         args: ["--profile", "black", "--filter-files"]
 
+  - repo: https://github.com/adrienverge/yamllint
+    rev: v1.35.1
+    hooks:
+      - id: yamllint
+        args: ["--strict"]
+
   - repo: https://github.com/pycqa/flake8
     rev: 6.0.0
     hooks:
@@ -47,7 +53,13 @@ repos:
         files: \.py$
 
   - repo: local
-        hooks:
+    hooks:
+      - id: seatunnel-linter
+        name: seatunnel-template-linter
+        entry: python
+        language: system
+        args: [-m, aurum.seatunnel.linter]
+        pass_filenames: false
       - id: pytest
         name: pytest
         entry: pytest

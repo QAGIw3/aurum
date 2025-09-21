@@ -17,6 +17,10 @@ source {
       endTime = "${AESO_END}"
     }
     connection_timeout_ms = 20000
+    retry = 5
+    retry_backoff_multiplier_ms = 1500
+    retry_backoff_max_ms = 90000
+    rate_limit_sleep_ms = 200
     retry { interval_ms = 10000, max_retries = 12 }
     format = "json"
     schema = { fields { begin_datetime_utc = string end_datetime_utc = string system_marginal_price = string } }
@@ -72,6 +76,9 @@ sink {
       schema.registry.url = "${AURUM_SCHEMA_REGISTRY_URL}"
       value.schema.subject = "${AESO_SUBJECT}"
       value.schema = """${ISO_LMP_SCHEMA}"""
+      # Key configuration for message routing and partitioning
+      key.serializer = "${AESO.CONF_KEY_SERIALIZER:-string}"
+      key.format = "${AESO.CONF_KEY_FORMAT:-json}"
     }
   }
 }

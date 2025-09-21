@@ -30,6 +30,18 @@ models:
       - name: per_unit
         tests:
           - not_null
+      - name: iso
+        tests:
+          - not_null
+      - name: market
+        tests:
+          - not_null
+      - name: product
+        tests:
+          - not_null
+      - name: block
+        tests:
+          - not_null
       - name: curve_key
         tests:
           - not_null
@@ -84,6 +96,31 @@ models:
         description: Normalized currency code for the curve price.
       - name: per_unit
         description: Normalized unit denominator for the curve price.
+      - name: iso
+        tests:
+          - not_null
+          - relationships:
+              to: ref('dim_iso')
+              field: iso
+              to_field: iso_code
+      - name: market
+        tests:
+          - relationships:
+              to: ref('dim_market')
+              field: market
+              to_field: market_code
+      - name: product
+        tests:
+          - relationships:
+              to: ref('dim_product')
+              field: product
+              to_field: product_code
+      - name: block
+        tests:
+          - relationships:
+              to: ref('dim_block')
+              field: block
+              to_field: block_code
 
   - name: stg_eia_series
     description: Staging model exposing raw EIA series observations from Timescale.

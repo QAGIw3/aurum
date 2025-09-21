@@ -44,9 +44,13 @@ VENV_PYTHON = os.environ.get("AURUM_VENV_PYTHON", ".venv/bin/python")
 
 
 PUBLIC_SOURCES: dict[str, dict[str, str]] = {
-    "noaa_ghcnd": {
-        "description": "NOAA GHCND daily ingestion",
+    "noaa_ghcnd_daily": {
+        "description": "NOAA GHCND daily ingestion with sliding window",
         "schedule": "0 6 * * *",
+    },
+    "noaa_ghcnd_hourly": {
+        "description": "NOAA GHCND hourly ingestion with sliding window",
+        "schedule": "0 */6 * * *",  # Every 6 hours
     },
     "eia_series": {
         "description": "EIA v2 series ingestion",
@@ -316,12 +320,28 @@ with DAG(
         python_callable=_register_sources,
     )
 
-    noaa_task = build_seatunnel_task(
-        "noaa_ghcnd_to_kafka",
+    noaa_daily_task = build_seatunnel_task(
+        "noaa_ghcnd_daily_to_kafka",
         [
-            "NOAA_GHCND_START_DATE='{{ ds }}'",
-            "NOAA_GHCND_END_DATE='{{ ds }}'",
-            "NOAA_GHCND_TOPIC='{{ var.value.get('aurum_noaa_topic', 'aurum.ref.noaa.weather.v1') }}'",
+            "NOAA_GHCND_START_DATE='{{ data_interval_start | ds }}'",
+            "NOAA_GHCND_END_DATE='{{ data_interval_start | ds }}'",
+            "NOAA_GHCND_TOPIC='{{ var.value.get('aurum_noaa_daily_topic', 'aurum.ref.noaa.weather.daily.v1') }}'",
+            "NOAA_GHCND_SLIDING_HOURS=24",
+            "NOAA_GHCND_SLIDING_DAYS=1",
+            "SCHEMA_REGISTRY_URL='{{ var.value.get('aurum_schema_registry', 'http://localhost:8081') }}'"
+        ],
+        mappings=["secret/data/aurum/noaa:token=NOAA_GHCND_TOKEN"],
+        pool="api_noaa",
+    )
+
+    noaa_hourly_task = build_seatunnel_task(
+        "noaa_ghcnd_hourly_to_kafka",
+        [
+            "NOAA_GHCND_START_DATE='{{ data_interval_start | ds }}'",
+            "NOAA_GHCND_END_DATE='{{ data_interval_start | ds }}'",
+            "NOAA_GHCND_TOPIC='{{ var.value.get('aurum_noaa_hourly_topic', 'aurum.ref.noaa.weather.hourly.v1') }}'",
+            "NOAA_GHCND_SLIDING_HOURS=1",
+            "NOAA_GHCND_SLIDING_DAYS=0",
             "SCHEMA_REGISTRY_URL='{{ var.value.get('aurum_schema_registry', 'http://localhost:8081') }}'"
         ],
         mappings=["secret/data/aurum/noaa:token=NOAA_GHCND_TOKEN"],
@@ -533,9 +553,14 @@ with DAG(
         pool="api_pjm",
     )
 
-    noaa_watermark = PythonOperator(
-        task_id="noaa_watermark",
-        python_callable=lambda **ctx: _update_watermark("noaa_ghcnd", ctx["logical_date"]),
+    noaa_daily_watermark = PythonOperator(
+        task_id="noaa_daily_watermark",
+        python_callable=lambda **ctx: _update_watermark("noaa_ghcnd_daily", ctx["logical_date"]),
+    )
+
+    noaa_hourly_watermark = PythonOperator(
+        task_id="noaa_hourly_watermark",
+        python_callable=lambda **ctx: _update_watermark("noaa_ghcnd_hourly", ctx["logical_date"]),
     )
 
     eia_watermark = PythonOperator(
@@ -581,7 +606,8 @@ with DAG(
     end = EmptyOperator(task_id="end")
 
     start >> preflight >> register_sources
-    register_sources >> noaa_task >> noaa_to_timescale >> noaa_watermark
+    register_sources >> noaa_daily_task >> noaa_to_timescale >> noaa_daily_watermark
+    register_sources >> noaa_hourly_task >> noaa_hourly_watermark
     register_sources >> eia_task >> eia_to_timescale >> eia_watermark
     dynamic_eia_watermarks: list[PythonOperator] = []
     for dataset_cfg, dynamic_task, dynamic_watermark in dynamic_eia_results:
@@ -595,7 +621,8 @@ with DAG(
     register_sources >> pjm_load_task >> pjm_load_watermark
     register_sources >> pjm_genmix_task >> pjm_genmix_watermark
     [
-        noaa_watermark,
+        noaa_daily_watermark,
+        noaa_hourly_watermark,
         eia_watermark,
         *dynamic_eia_watermarks,
         fred_watermark,

@@ -2142,25 +2142,51 @@ def query_dimensions(
     connect = _require_trino()
     results: Dict[str, List[str]] = {}
     counts: Dict[str, List[Dict[str, Any]]] | None = {} if include_counts else None
+
     with connect(host=trino_cfg.host, port=trino_cfg.port, user=trino_cfg.user, http_scheme=trino_cfg.http_scheme) as conn:  # type: ignore[arg-type]
         cur = conn.cursor()
-        for dim in dims:
-            clause = where + (" AND " if where else " WHERE ") + f"{dim} IS NOT NULL"
-            sql = f"SELECT DISTINCT {dim} FROM {base}{clause} LIMIT {per_dim_limit}"
+
+        if include_counts:
+            # Efficient implementation: Get all dimensions and counts in a single query
+            # Use UNION ALL with CTEs to get all dimension counts efficiently
+            union_queries = []
+            for dim in dims:
+                union_queries.append(f"""
+                    SELECT
+                        '{dim}' as dimension,
+                        {dim} as value,
+                        COUNT(*) as count
+                    FROM {base}{where + (" AND " if where else " WHERE ") + f"{dim} IS NOT NULL"}
+                    GROUP BY {dim}
+                    ORDER BY count DESC
+                    LIMIT {per_dim_limit}
+                """)
+
+            union_sql = " UNION ALL ".join(union_queries)
+            sql = f"SELECT dimension, value, count FROM ({union_sql}) ORDER BY dimension, count DESC"
+
             cur.execute(sql)
-            values = [row[0] for row in cur.fetchall() if row and row[0] is not None]
-            results[dim] = values
-            if include_counts and counts is not None:
-                count_sql = (
-                    f"SELECT {dim} as value, COUNT(*) as count FROM {base}{clause} "
-                    f"GROUP BY {dim} ORDER BY count DESC LIMIT {per_dim_limit}"
-                )
-                cur.execute(count_sql)
-                counts[dim] = [
-                    {"value": row[0], "count": int(row[1])}
-                    for row in cur.fetchall()
-                    if row and row[0] is not None
-                ]
+            all_counts = cur.fetchall()
+
+            # Group by dimension
+            for dim in dims:
+                dim_values = []
+                dim_counts = []
+                for row in all_counts:
+                    if row[0] == dim:  # dimension name
+                        dim_values.append(row[1])
+                        dim_counts.append({"value": row[1], "count": int(row[2])})
+                results[dim] = dim_values
+                if counts is not None:
+                    counts[dim] = dim_counts
+        else:
+            # Original implementation for when counts are not needed
+            for dim in dims:
+                clause = where + (" AND " if where else " WHERE ") + f"{dim} IS NOT NULL"
+                sql = f"SELECT DISTINCT {dim} FROM {base}{clause} LIMIT {per_dim_limit}"
+                cur.execute(sql)
+                values = [row[0] for row in cur.fetchall() if row and row[0] is not None]
+                results[dim] = values
 
     if client is not None and cache_key is not None:
         try:  # pragma: no cover

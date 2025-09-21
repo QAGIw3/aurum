@@ -37,6 +37,8 @@ SELECT
         migrate_data => TRUE
     );
 
+SELECT set_chunk_time_interval('public.iso_lmp_timeseries', INTERVAL '3 days');
+
 CREATE INDEX IF NOT EXISTS idx_iso_lmp_lookup
     ON public.iso_lmp_timeseries (iso_code, location_id, market, interval_start DESC);
 
@@ -193,6 +195,7 @@ CREATE TABLE IF NOT EXISTS public.load_timeseries (
 );
 
 SELECT create_hypertable('public.load_timeseries', 'interval_start', if_not_exists => TRUE, migrate_data => TRUE);
+SELECT set_chunk_time_interval('public.load_timeseries', INTERVAL '7 days');
 CREATE INDEX IF NOT EXISTS idx_iso_load_lookup
     ON public.load_timeseries (iso_code, area, interval_start DESC);
 
@@ -325,6 +328,7 @@ CREATE TABLE IF NOT EXISTS public.ops_metrics (
 );
 
 SELECT create_hypertable('public.ops_metrics', 'ts', if_not_exists => TRUE, migrate_data => TRUE);
+SELECT set_chunk_time_interval('public.ops_metrics', INTERVAL '1 day');
 CREATE INDEX IF NOT EXISTS idx_ops_metrics_metric_ts ON public.ops_metrics(metric, ts DESC);
 
 ALTER TABLE IF EXISTS public.ops_metrics

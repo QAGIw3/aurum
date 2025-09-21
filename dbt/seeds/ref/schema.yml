@@ -1,0 +1,54 @@
+version: 2
+
+seeds:
+  - name: iso_catalog
+    description: Canonical list of ISO/RTO operators and primary metadata.
+    columns:
+      - name: iso_code
+        tests:
+          - not_null
+          - unique
+      - name: iso_name
+        tests:
+          - not_null
+      - name: default_timezone
+        tests:
+          - not_null
+  - name: market_catalog
+    description: Mapping of ISO markets and run types to canonical codes.
+    tests:
+      - unique_combination:
+          combination_of_columns: [iso_code, market_code]
+    columns:
+      - name: iso_code
+        tests:
+          - not_null
+      - name: market_code
+        tests:
+          - not_null
+      - name: market_category
+        tests:
+          - not_null
+  - name: block_catalog
+    description: Standard block definitions covering peak/off-peak groupings.
+    columns:
+      - name: block_code
+        tests:
+          - not_null
+          - unique
+      - name: block_name
+        tests:
+          - not_null
+  - name: product_catalog
+    description: Canonical product catalog for curve observations across commodities.
+    columns:
+      - name: product_code
+        tests:
+          - not_null
+          - unique
+      - name: product_name
+        tests:
+          - not_null
+      - name: tenor_type
+        tests:
+          - not_null

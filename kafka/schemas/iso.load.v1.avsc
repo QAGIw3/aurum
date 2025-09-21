@@ -4,7 +4,16 @@
   "namespace": "aurum.iso",
   "doc": "System or zonal load observation from an ISO feed.",
   "fields": [
-    {"name": "iso_code", "type": "string", "doc": "ISO code (e.g., PJM)."},
+    {
+      "name": "iso_code",
+      "doc": "ISO code (e.g., PJM).",
+      "type": {
+        "type": "enum",
+        "name": "IsoCode",
+        "doc": "Market operator the observation belongs to.",
+        "symbols": ["PJM", "CAISO", "ERCOT", "NYISO", "MISO", "ISONE", "SPP", "AESO", "UNKNOWN"]
+      }
+    },
     {"name": "area", "type": ["null", "string"], "default": null, "doc": "Area/zone identifier if applicable."},
     {"name": "interval_start", "type": {"type": "long", "logicalType": "timestamp-micros"}, "doc": "UTC start timestamp."},
     {"name": "interval_end", "type": ["null", {"type": "long", "logicalType": "timestamp-micros"}], "default": null, "doc": "UTC end timestamp (exclusive)."},
@@ -14,4 +23,3 @@
     {"name": "metadata", "type": ["null", {"type": "map", "values": "string"}], "default": null, "doc": "Source metadata."}
   ]
 }
-

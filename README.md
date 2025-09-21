@@ -18,21 +18,21 @@ Developer-oriented scaffolding for the Aurum market intelligence platform. Start
 
 1. Implement vendor parser logic inside `parsers/vendor_curves/` and connect to the Airflow tasks.
 2. Flesh out dbt models and add seeds/fixtures for local development.
-3. Add container healthchecks and optional UI services (Superset, Kafka UI) on top of the dev stack.
+3. Finalize environment promotion workflows (dev → staging → prod) and polish SRE runbooks.
 
 ## Dev stack
 
 1. Copy `.env.example` to `.env` and populate secrets (generate a Fernet key with `python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"`).
-2. Start the minimal platform: `docker compose -f compose/docker-compose.dev.yml up -d`.
-3. Run the bootstrap helper once to create buckets/repos: `docker compose -f compose/docker-compose.dev.yml --profile bootstrap up --exit-code-from bootstrap`.
+2. Start the minimal platform: `COMPOSE_PROFILES=core docker compose -f compose/docker-compose.dev.yml up -d`.
+3. Run the bootstrap helper once to create buckets/repos: `COMPOSE_PROFILES=core,bootstrap docker compose -f compose/docker-compose.dev.yml up bootstrap --exit-code-from bootstrap`.
 4. Access consoles: MinIO `http://localhost:9001`, lakeFS `http://localhost:8000`, Airflow `http://localhost:8088`, Trino `http://localhost:8080`, ClickHouse `http://localhost:8123`.
-5. Enable optional UIs with `docker compose -f compose/docker-compose.dev.yml --profile ui up -d`.
+5. Enable optional UIs with `COMPOSE_PROFILES=core,ui docker compose -f compose/docker-compose.dev.yml up -d`.
 6. When finished, stop the stack with `docker compose -f compose/docker-compose.dev.yml down` (add `--volumes` to reset state).
 
 Scenario outputs are now enabled on the API by default. To populate `/v1/scenarios/{id}/outputs`, start the scenario worker alongside core services:
 
 ```
-COMPOSE_PROFILES=worker docker compose -f compose/docker-compose.dev.yml up -d scenario-worker
+COMPOSE_PROFILES=core,worker docker compose -f compose/docker-compose.dev.yml up -d scenario-worker
 ```
 
 - Running on the kind stack? `make kind-scenario-smoke` will create a temporary tenant, enqueue a scenario run via the API, wait for the worker to flush outputs into Iceberg, and confirm `/v1/scenarios/{id}/outputs` returns data.
@@ -46,7 +46,7 @@ Command-line helper: once the project is installed in a virtualenv, use `aurum-s
 Spin up the API service (exposed on localhost:8095) alongside core services:
 
 ```bash
-docker compose -f compose/docker-compose.dev.yml up -d api
+COMPOSE_PROFILES=core docker compose -f compose/docker-compose.dev.yml up -d api
 curl "http://localhost:8095/v1/curves?iso=PJM&market=DA&block=ON_PEAK&limit=10"
 
 # Pagination with offset
@@ -213,13 +213,13 @@ See `seatunnel/README.md` for job rendering and environment variables; Airflow D
 Alternative: run a prebuilt API image (separate service, port 8096):
 
 ```bash
-docker compose -f compose/docker-compose.dev.yml --profile api-built up -d api-built
+COMPOSE_PROFILES=core,pipeline docker compose -f compose/docker-compose.dev.yml up -d api-built
 curl "http://localhost:8096/health"
 ```
 
 ### Kubernetes (kind) option
 
-Prefer to iterate against Kubernetes primitives? Follow the workflow in `docs/k8s-dev.md` to spin up the same core services inside a local kind cluster (`make kind-create && make kind-apply && make kind-bootstrap`). The Kubernetes stack now installs the Strimzi operator to run Kafka in KRaft mode alongside the Confluent Schema Registry, Airflow, ClickHouse, Vector, and the rest of the platform—and you can layer on Superset/Kafka UI/Grafana with `make kind-apply-ui`.
+Prefer to iterate against Kubernetes primitives? `make kind-up` will create the cluster, apply the base manifests, and bootstrap MinIO/lakeFS/Nessie in one shot (see `docs/k8s-dev.md` for a deeper walkthrough). The stack installs Strimzi for Kafka-in-KRaft plus Schema Registry, Airflow, ClickHouse, Vector, and you can layer on Superset/Kafka UI/Grafana with `make kind-apply-ui`.
 Re-running `make kind-create` while the cluster exists is safe—the helper exits early without touching the node. To rebuild from scratch in one go, run `AURUM_KIND_FORCE_RECREATE=true make kind-create` or call `scripts/k8s/create_kind_cluster.sh --force`.
 The mounted `trino/catalog` directory ships with catalogs for Iceberg, Postgres, Timescale, Kafka, and ClickHouse so federated queries work immediately once the stack is up.
 

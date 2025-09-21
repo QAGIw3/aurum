@@ -159,6 +159,8 @@ flowchart LR
 
 ## Data Model & Contracts
 
+> Detailed contracts and versioning process live in `docs/data-contracts.md`.
+
 ### Canonical tables (Iceberg)
 
 **`iceberg.raw.curve_landing`** -- enriched staging table prior to merging into canonical datasets
@@ -174,6 +176,17 @@ flowchart LR
 * Tenor: `tenor_type` (MONTHLY/QUARTER/SEASON/CALENDAR/STRIP/CUSTOM), `contract_month` (DATE), `tenor_label` (STRING)
 * Values: `value`, `bid`, `ask`, `mid`
 * Lineage: `curve_key` (hash of identity), `version_hash` (file + sheet + asof), `_ingest_ts`
+
+**`fact.fct_curve_observation`** -- star-schema fact wiring curve identities to conformed dimensions
+
+* Partitioned in Iceberg by `days(asof_date)`, `iso_code`, and `product_code` for predicate pruning
+* Incremental merge with 6 hour late-arriving window; snapshot history retained in `snapshots.curve_observation_snapshot`
+* Joins to `dim_iso`, `dim_market`, `dim_block`, `dim_product`, and `dim_asof` (seeded via dbt seeds with GE coverage)
+
+**Dimension tables (`dim_iso`, `dim_market`, `dim_block`, `dim_product`, `dim_asof`)**
+
+* Seed-backed lookups harmonizing ISO/market enums across Kafka, Iceberg, and APIs
+* Provide surrogate keys for facts, descriptive attributes (timezone, block definitions), and as-of calendar rollups
 
 **`iceberg.market.curve_observation_quarantine`** -- quarantined rows retained for remediation (mirrors canonical columns + `quarantine_reason`)  
 **`iceberg.market.scenario_output`** -- scenario curves with bands and attribution  
@@ -387,6 +400,10 @@ Key endpoints:
 
 * Read `iceberg.market.curve_observation` and downstream marts.
 * For tenant exposure, prefer per-tenant views (see Security) or serve via APIs only.
+* Catalogs:
+  * `iceberg` (Nessie REST catalog; config in `trino/catalog/iceberg.properties`)
+  * `postgres` (app metadata), `timescale` (hypertables), `kafka` (Avro topics) -- see `trino/catalog/*.properties`
+* Performance harness: `scripts/trino/query_harness.py --plan config/trino_query_harness.json --catalog iceberg --schema mart` captures latency/cost summaries (p95 wall-clock, bytes scanned, peak memory).
 
 ### Files
 
@@ -425,6 +442,7 @@ Key endpoints:
 * **Vector** ships logs to **ClickHouse** (`ops.logs`); operational events to `ops.events`.
 * Superset operations dashboards: ingest latency, Great Expectations pass rate, API error rate, slow queries, Kafka lag.
 * Alerts (Slack/Email/Pager) via notifier on `aurum.alert.v1` and operational thresholds.
+* Late-arriving guardrail: `make reconcile-kafka-lake` compares Kafka offsets vs. Iceberg/Timescale row counts using `config/kafka_lake_reconciliation.json`.
 * Observability API (`/v1/observability/...`) is admin-only. Grant operators membership in the groups defined by `AURUM_API_ADMIN_GROUP` so they can inspect metrics, traces, and cleanup endpoints.
 
 ---
@@ -501,7 +519,7 @@ def parse(path: str, asof: date) -> pd.DataFrame:
 
 ## Performance & Scalability
 
-* **Iceberg partitioning:** by `year(asof_date)`, `month(asof_date)`, and identities with `identity()` where selective.
+* **Iceberg partitioning:** canonical facts use `days(asof_date)` + `iso_code` + `product_code`; raw tables retain `identity()` on high-cardinality identifiers where it aids predicate pruning.
 * **Small files:** compact with Iceberg snapshot procedures.
 * **Trino:** tune broadcast join thresholds; worker autoscale; pin frequently queried marts in ClickHouse.
 * **API:** cache hot slices in Redis; pagination; GZIP; vectorized DB drivers.
@@ -563,7 +581,7 @@ def parse(path: str, asof: date) -> pd.DataFrame:
 
 * **Iceberg DDL:** `trino/ddl/iceberg_market.sql` (creates `curve_observation`, `scenario_output`, `ppa_valuation`, `qa_checks`)
 * **Postgres DDL:** `postgres/ddl/app.sql` (tenants, instruments, scenarios, runs, PPAs, ingest logs, ingest_source / ingest_watermark helper functions)
-* **Timescale DDL:** `timescale/ddl_timeseries.sql` (iso_lmp_timeseries, load_timeseries, ops_metrics)
+* **Timescale DDL:** `timescale/ddl_timeseries.sql` (iso_lmp_timeseries, load_timeseries, ops_metrics) and `timescale/ddl_eia.sql` (hypertable + daily/monthly aggregates for EIA series)
 * **ClickHouse DDL:** `clickhouse/ddl_ops.sql` (ops.logs, ops.events)
 * **Avro Schemas:** `kafka/schemas/*.avsc` for curve, QA, scenario, alert topics
 * **Trino catalogs:** `trino/catalog/iceberg.properties`, `postgres.properties`, `clickhouse.properties`
@@ -595,11 +613,11 @@ def parse(path: str, asof: date) -> pd.DataFrame:
 
 ### Path A – Docker Compose stack (~10 minutes)
 
-1. `docker compose -f compose/docker-compose.dev.yml up -d`
+1. `COMPOSE_PROFILES=core docker compose -f compose/docker-compose.dev.yml up -d`
 2. Wait until `docker compose ps` shows all core services `healthy`.
-3. Seed buckets/repos/catalogs once: `docker compose -f compose/docker-compose.dev.yml --profile bootstrap up --exit-code-from bootstrap`
+3. Seed buckets/repos/catalogs once: `COMPOSE_PROFILES=core,bootstrap docker compose -f compose/docker-compose.dev.yml up bootstrap --exit-code-from bootstrap`
 4. Register Kafka schemas: `make kafka-bootstrap` (Compose exposes Schema Registry at `http://localhost:8081` by default).
-5. (Optional) bring up the UI helpers: `docker compose -f compose/docker-compose.dev.yml --profile ui up -d`
+5. (Optional) bring up the UI helpers: `COMPOSE_PROFILES=core,ui docker compose -f compose/docker-compose.dev.yml up -d`
 6. Verify the API: `curl http://localhost:8095/health`
 
 > Compose tip: if a container refuses to start because a port is busy, run `docker compose down` and re-run step 1—every service is mapped under the `compose/docker-compose.dev.yml` namespace so cleanup is safe.

@@ -9,6 +9,9 @@
 #   AURUM_SCHEMA_REGISTRY_URL      - Schema Registry endpoint
 #
 # Optional environment variables:
+#   PJM.CONF_KEY_SERIALIZER - Kafka key serializer (string/json/avro, default: string)
+#   PJM.CONF_KEY_FORMAT - Kafka key format (json/avro, default: json)
+#
 #   PJM_ENDPOINT             - API endpoint (default https://api.pjm.com/api/v1/da_hrl_lmps)
 #   PJM_ROW_LIMIT            - Max rows per request (default 10000)
 #   PJM_MARKET               - Market label (default DAY_AHEAD)
@@ -37,6 +40,10 @@ source {
       datetime_end = "${PJM_INTERVAL_END}"
     }
     connection_timeout_ms = 20000
+    retry = 5
+    retry_backoff_multiplier_ms = 1500
+    retry_backoff_max_ms = 90000
+    rate_limit_sleep_ms = 200
     retry = 5
     format = "json"
     schema = {
@@ -128,8 +135,15 @@ sink {
       schema.registry.url = "${AURUM_SCHEMA_REGISTRY_URL}"
       value.schema.subject = "${PJM_SUBJECT}"
       value.schema = """${ISO_LMP_SCHEMA}"""
+      # Key configuration for message routing and partitioning
+      key.serializer = "${PJM.CONF_KEY_SERIALIZER:-string}"
+      key.format = "${PJM.CONF_KEY_FORMAT:-json}"
     }
     producer {
+      request.timeout.ms = 30000
+      delivery.timeout.ms = 120000
+      retry.backoff.max.ms = 10000
+      retry.backoff.ms = 100
       acks = "all"
       enable.idempotence = true
       max.in.flight.requests.per.connection = 5

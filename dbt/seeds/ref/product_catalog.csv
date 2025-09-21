@@ -1,0 +1,9 @@
+product_code,product_name,tenor_type,commodity,unit,description
+POWER_SWAP_DA,Day-Ahead Power Swap,MONTHLY,POWER,USD/MWh,Financial swap settling against day-ahead prices.
+POWER_SWAP_RT,Real-Time Power Swap,MONTHLY,POWER,USD/MWh,Financial swap settling against real-time prices.
+GAS_BASIS,Gas Hub Basis Swap,MONTHLY,GAS,USD/MMBtu,Differential between two natural gas hubs.
+REC_TIER1,REC Tier 1,ANNUAL,RENEWABLE,USD/MWh,Renewable energy certificate Tier 1 product.
+CAPACITY_ZONAL,Zonal Capacity Obligation,ANNUAL,CAPACITY,USD/kW-Mo,Forward capacity obligation by ISO zone.
+STORAGE_RTE,Storage Round Trip Efficiency,ANNUAL,STORAGE,%,Storage asset performance metric.
+CARBON_OFFSET,Carbon Offset Credit,ANNUAL,CARBON,USD/tonne,Carbon offset credit instrument.
+UNKNOWN,Unknown Product,UNKNOWN,UNKNOWN,N/A,Placeholder for records lacking product mapping.

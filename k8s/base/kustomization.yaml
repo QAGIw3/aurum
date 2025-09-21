@@ -32,5 +32,6 @@ resources:
   - vector.yaml
   - vector-rbac.yaml
   - jaeger.yaml
+  - prometheus-rules.yaml
   - ../api
   - ../scenario-worker

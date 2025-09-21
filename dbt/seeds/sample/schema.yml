@@ -1,0 +1,19 @@
+version: 2
+
+seeds:
+  - name: curve_observation_sample
+    description: Anonymized reference dataset for local development and documentation.
+    columns:
+      - name: asof_date
+        tests:
+          - not_null
+      - name: curve_key
+        tests:
+          - not_null
+          - unique
+      - name: currency
+        tests:
+          - not_null
+      - name: per_unit
+        tests:
+          - not_null

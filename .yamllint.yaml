@@ -1,0 +1,22 @@
+extends: default
+
+rules:
+  document-start: disable
+  line-length:
+    max: 160
+    level: warning
+  truthy:
+    allowed-values: ['true', 'false', 'on', 'off', 'yes', 'no', '1', '0']
+    level: warning
+  trailing-spaces:
+    level: error
+  indentation:
+    spaces: 2
+    indent-sequences: consistent
+
+ignore: |
+  dbt/target/
+  .venv/
+  .mypy_cache/
+  .pytest_cache/
+  artifacts/
