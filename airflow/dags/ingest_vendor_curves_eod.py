@@ -1,6 +1,7 @@
 """Airflow DAG scaffolding for the daily vendor curve ingestion pipeline."""
 from __future__ import annotations
 
+import json
 import os
 from pathlib import Path
 import subprocess
@@ -55,6 +56,16 @@ def _is_truthy(value: str | None) -> bool:
     return value is not None and value.lower() in {"1", "true", "yes", "on"}
 
 
+def run_dbt_task(*, args: list[str], extra_env: Optional[Dict[str, str]] = None) -> None:
+    repo_root = Path(__file__).resolve().parents[2]
+    env = os.environ.copy()
+    if extra_env:
+        env.update(extra_env)
+    cmd = ["dbt", *args]
+    print(f"Running dbt command: {' '.join(cmd)}")
+    subprocess.run(cmd, check=True, cwd=repo_root, env=env)
+
+
 def parse_vendor_workbook(vendor: str, **context: Any) -> None:
     """Parse vendor workbooks using shared parser utilities."""
     execution_date = date.fromisoformat(context["ds"])
@@ -105,19 +116,28 @@ def parse_vendor_workbook(vendor: str, **context: Any) -> None:
         print(f"Parsed zero rows for vendor={vendor}; skipping write")
         if ti:
             ti.xcom_push(key="rows", value=0)
+            ti.xcom_push(key="rows_quarantine", value=0)
         return
 
-    suite_path = Path(__file__).resolve().parents[2] / "ge" / "expectations" / "curve_schema.json"
+    repo_root = Path(__file__).resolve().parents[2]
     try:
         import sys
         src_path = os.environ.get("AURUM_PYTHONPATH_ENTRY", "/opt/airflow/src")
         if src_path and src_path not in sys.path:
             sys.path.insert(0, src_path)
+        from aurum.parsers.enrichment import build_dlq_records, enrich_units_currency, partition_quarantine  # type: ignore
         from aurum.dq import enforce_expectation_suite  # type: ignore
 
-        enforce_expectation_suite(df, suite_path, suite_name="curve_schema")
+        enriched_df = enrich_units_currency(df)
+        clean_df, quarantine_df = partition_quarantine(enriched_df)
+
+        canonical_df = clean_df.drop(columns=["quarantine_reason"], errors="ignore")
+        schema_suite = repo_root / "ge" / "expectations" / "curve_schema.json"
+        landing_suite = repo_root / "ge" / "expectations" / "curve_landing.json"
+        enforce_expectation_suite(canonical_df, schema_suite, suite_name="curve_schema")
+        enforce_expectation_suite(canonical_df, landing_suite, suite_name="curve_landing")
     except Exception as exc:
-        raise RuntimeError(f"Great Expectations validation failed for vendor {vendor}: {exc}") from exc
+        raise RuntimeError(f"Enrichment/validation failed for vendor {vendor}: {exc}") from exc
 
     sub_path = f"{execution_date.strftime('%Y%m%d')}/{vendor}"
     if output_uri_env:
@@ -133,13 +153,40 @@ def parse_vendor_workbook(vendor: str, **context: Any) -> None:
             sys.path.insert(0, src_path)
         from aurum.parsers.runner import write_output  # type: ignore
 
-        write_output(df, target, as_of=execution_date, fmt=output_format)
+        write_output(
+            canonical_df,
+            target,
+            as_of=execution_date,
+            fmt=output_format,
+        )
+
+        if not quarantine_df.empty:
+            write_output(
+                quarantine_df,
+                target,
+                as_of=execution_date,
+                fmt=output_format,
+                prefix="quarantine_curves",
+            )
+
+    dlq_records = list(build_dlq_records(quarantine_df)) if not quarantine_df.empty else []
+        if dlq_records and not output_uri_env:
+            dlq_dir = Path(output_root_env) / "dlq" / execution_date.strftime("%Y%m%d") / vendor
+            dlq_dir.mkdir(parents=True, exist_ok=True)
+            dlq_path = dlq_dir / "aurum.curve.observation.dlq.jsonl"
+            with dlq_path.open("w", encoding="utf-8") as fh:
+                for record in dlq_records:
+                    fh.write(json.dumps(record))
+                    fh.write("\n")
+            print(f"Wrote DLQ payloads to {dlq_path}")
 
         should_append = _is_truthy(os.getenv("AURUM_EOD_WRITE_ICEBERG", os.getenv("AURUM_WRITE_ICEBERG")))
         if should_append:
             from aurum.parsers.iceberg_writer import write_to_iceberg  # type: ignore
 
-            write_to_iceberg(df)
+            write_to_iceberg(clean_df, table="iceberg.raw.curve_landing")
+            if not quarantine_df.empty:
+                write_to_iceberg(quarantine_df, table="iceberg.market.curve_observation_quarantine")
     except Exception as exc:  # pragma: no cover
         raise RuntimeError(f"Failed to write parsed output: {exc}") from exc
 
@@ -156,7 +203,8 @@ def parse_vendor_workbook(vendor: str, **context: Any) -> None:
         print(f"Failed to update ingest watermark for {source_name}: {exc}")
 
     if ti:
-        ti.xcom_push(key="rows", value=len(df))
+        ti.xcom_push(key="rows", value=len(canonical_df))
+        ti.xcom_push(key="rows_quarantine", value=len(quarantine_df))
 
 
 def run_great_expectations(**context: Any) -> None:
@@ -164,6 +212,7 @@ def run_great_expectations(**context: Any) -> None:
     ds = context["ds"]
     vendor_tasks = ["parse_pw", "parse_eugp", "parse_rp"]
     total_rows = 0
+    total_quarantine = 0
     for task_id in vendor_tasks:
         value = ti.xcom_pull(task_ids=task_id, key="rows")
         if value is None:
@@ -296,7 +345,13 @@ def emit_openlineage_events(**context: Any) -> None:
                 try:
                     total_rows += int(rows)
                 except (TypeError, ValueError):
-                    continue
+                    pass
+            quarantined = ti.xcom_pull(task_ids=task_name, key="rows_quarantine")
+            if quarantined is not None:
+                try:
+                    total_quarantine += int(quarantined)
+                except (TypeError, ValueError):
+                    pass
 
     def _as_uri(path: str) -> str:
         try:
@@ -316,12 +371,19 @@ def emit_openlineage_events(**context: Any) -> None:
         for file_path in sorted(input_files)
     ]
 
-    output_facets: Dict[str, Any] = {}
+    canonical_facets: Dict[str, Any] = {}
+    raw_facets: Dict[str, Any] = {}
     if total_rows:
-        output_facets["outputStatistics"] = {
+        canonical_facets["outputStatistics"] = {
             "type": "OutputStatisticsDatasetFacet",
             "rowCount": total_rows,
         }
+        raw_facets["outputStatistics"] = {
+            "type": "OutputStatisticsDatasetFacet",
+            "rowCount": total_rows,
+        }
+    if total_quarantine:
+        raw_facets.setdefault("additionalProperties", {})["quarantinedRows"] = total_quarantine
 
     run_facets: Dict[str, Any] = {
         "aurumMetadata": {
@@ -352,9 +414,14 @@ def emit_openlineage_events(**context: Any) -> None:
         "outputs": [
             {
                 "namespace": "nessie",
+                "name": "iceberg.raw.curve_landing",
+                "facets": raw_facets,
+            },
+            {
+                "namespace": "nessie",
                 "name": "iceberg.market.curve_observation",
-                "facets": output_facets,
-            }
+                "facets": canonical_facets,
+            },
         ],
     }
 
@@ -494,8 +561,26 @@ def merge_branch(**context: Any) -> None:
                 continue
             metadata[f"{vendor}_rows"] = str(int_rows)
             total_rows += int_rows
+            quarantined = ti.xcom_pull(task_ids=task_id, key="rows_quarantine")
+            if quarantined is not None:
+                try:
+                    metadata[f"{vendor}_quarantine_rows"] = str(int(quarantined))
+                except (TypeError, ValueError):
+                    pass
     if total_rows:
         metadata["total_rows"] = str(total_rows)
+    if ti:
+        quarantine_totals = []
+        for task_id in vendor_tasks.values():
+            value = ti.xcom_pull(task_ids=task_id, key="rows_quarantine")
+            if value is None:
+                continue
+            try:
+                quarantine_totals.append(int(value))
+            except (TypeError, ValueError):
+                continue
+        if quarantine_totals:
+            metadata["total_quarantine_rows"] = str(sum(quarantine_totals))
     if ge_status:
         metadata["curve_ge_status"] = ge_status
     if scenario_status:
@@ -592,6 +677,41 @@ with DAG(
         python_callable=run_great_expectations,
     )
 
+    dbt_publish = PythonOperator(
+        task_id="dbt_publish_curve_observation",
+        python_callable=run_dbt_task,
+        op_kwargs={"args": ["run", "-m", "publish_curve_observation"]},
+    )
+
+    dbt_curve_marts = PythonOperator(
+        task_id="dbt_build_curve_marts",
+        python_callable=run_dbt_task,
+        op_kwargs={
+            "args": [
+                "run",
+                "-m",
+                "int_curve_monthly",
+                "int_curve_calendar",
+                "int_curve_quarter",
+                "mart_curve_latest",
+            ]
+        },
+    )
+
+    dbt_curve_tests = PythonOperator(
+        task_id="dbt_test_curve_models",
+        python_callable=run_dbt_task,
+        op_kwargs={
+            "args": [
+                "test",
+                "-m",
+                "stg_curve_observation",
+                "int_curve_monthly",
+                "mart_curve_latest",
+            ]
+        },
+    )
+
     ge_validate_scenarios = PythonOperator(
         task_id="ge_validate_scenarios",
         python_callable=validate_scenario_outputs,
@@ -623,6 +743,9 @@ with DAG(
         start,
         lakefs_branch,
         [parse_pw, parse_eugp, parse_rp],
+        dbt_publish,
+        dbt_curve_marts,
+        dbt_curve_tests,
         ge_validate,
         ge_validate_scenarios,
         openlineage_emit,

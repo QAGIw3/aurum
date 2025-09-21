@@ -160,6 +160,7 @@ Each monitor scrapes the corresponding service on `/metrics`. The services also 
 - Kafka runs under Strimzi in KRaft mode; use `aurum-kafka-kafka-bootstrap:9092` for in-cluster clients and `kafka.aurum.localtest.me:31092` for host access.
 - Use `make kind-apply-ui` / `make kind-delete-ui` to toggle Superset and Kafka UI when you want dashboards in the kind stack.
 - The manifests are organized with Kustomize (`k8s/base`, `k8s/dev`) so you can add overlays for stage/prod style experimentation or inject secrets via alternative generators.
+- Need the cluster to pull registry-hosted dev images instead of the locally-loaded ones? Apply the helper overlay in `k8s/dev-images-dev` or use the workflow-generated variant that pins the current commit SHA.
 - If you change the default credentials, update `k8s/base/secret-env.yaml` or create your own secret prior to `make kind-apply` (e.g., `kubectl create secret generic aurum-secrets --from-env-file=.env`).
 - Enable OIDC forward-auth by first populating the oauth2-proxy credentials (see `k8s/base/oauth2-proxy-secret.yaml` or create your own secret) and then applying the overlay: `kubectl apply -k k8s/dev-auth`.
 - Seed a small batch of EIA data into Timescale and validate the API by running `scripts/dev/kind_seed_eia.sh` once the cluster is healthy; the helper applies the DDL, registers schemas, runs the SeaTunnel job, and curls `/v1/ref/eia/series`.
