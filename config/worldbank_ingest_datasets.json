@@ -1,0 +1,84 @@
+{
+  "datasets": [
+    {
+      "source_name": "worldbank_gdp",
+      "indicator_id": "NY.GDP.MKTP.CD",
+      "description": "GDP (current US$)",
+      "countries": [
+        "USA",
+        "CAN",
+        "MEX",
+        "GBR",
+        "DEU"
+      ],
+      "frequency": "ANNUAL",
+      "default_unit": "USD",
+      "start_year": 2000,
+      "per_page": 1000
+    },
+    {
+      "source_name": "worldbank_cpi",
+      "indicator_id": "FP.CPI.TOTL.ZG",
+      "description": "Inflation, consumer prices (annual %)",
+      "countries": [
+        "USA",
+        "CAN",
+        "BRA",
+        "IND",
+        "ZAF"
+      ],
+      "frequency": "ANNUAL",
+      "default_unit": "percent",
+      "start_year": 2000,
+      "per_page": 1000
+    },
+    {
+      "source_name": "worldbank_population",
+      "indicator_id": "SP.POP.TOTL",
+      "description": "Population, total",
+      "countries": [
+        "USA",
+        "CAN",
+        "CHN",
+        "IND",
+        "NGA"
+      ],
+      "frequency": "ANNUAL",
+      "default_unit": "people",
+      "start_year": 1990,
+      "per_page": 1000
+    },
+    {
+      "source_name": "worldbank_energy",
+      "indicator_id": "EG.USE.PCAP.KG.OE",
+      "description": "Energy use (kg of oil equivalent per capita)",
+      "countries": [
+        "USA",
+        "CAN",
+        "FRA",
+        "JPN",
+        "AUS"
+      ],
+      "frequency": "ANNUAL",
+      "default_unit": "kg_oil_equivalent",
+      "start_year": 1990,
+      "per_page": 1000
+    },
+    {
+      "source_name": "worldbank_exports",
+      "indicator_id": "NE.EXP.GNFS.ZS",
+      "description": "Exports of goods and services (% of GDP)",
+      "countries": [
+        "USA",
+        "CAN",
+        "MEX",
+        "CHL",
+        "ESP"
+      ],
+      "frequency": "ANNUAL",
+      "default_unit": "percent_of_gdp",
+      "start_year": 2000,
+      "per_page": 1000
+    }
+  ]
+}
