@@ -35,6 +35,8 @@ data:
   AURUM_APP_DB_DSN: postgresql://aurum:aurum@postgres.aurum-dev.svc.cluster.local:5432/aurum
   AURUM_API_REDIS_URL: redis://redis.aurum-dev.svc.cluster.local:6379/0
   AURUM_API_CACHE_TTL: "60"
+  AURUM_API_ISO_LMP_CACHE_TTL: "60"
+  AURUM_API_ISO_LMP_INMEM_TTL: "30"
   AURUM_API_INMEMORY_TTL: "60"
   AURUM_API_RATE_LIMIT_RPS: "10"
   AURUM_API_RATE_LIMIT_BURST: "20"

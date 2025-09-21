@@ -1448,6 +1448,7 @@ def iso_lmp_last_24h(
         market=market,
         location_id=location_id,
         limit=limit,
+        cache_cfg=CacheConfig.from_env(),
     )
 
     if format.lower() == "csv":
@@ -1523,6 +1524,7 @@ def iso_lmp_hourly(
         market=market,
         location_id=location_id,
         limit=limit,
+        cache_cfg=CacheConfig.from_env(),
     )
 
     if format.lower() == "csv":
@@ -1589,6 +1591,7 @@ def iso_lmp_daily(
         market=market,
         location_id=location_id,
         limit=limit,
+        cache_cfg=CacheConfig.from_env(),
     )
 
     if format.lower() == "csv":
@@ -1653,6 +1656,7 @@ def iso_lmp_negative(
         iso_code=iso_code,
         market=market,
         limit=limit,
+        cache_cfg=CacheConfig.from_env(),
     )
 
     if format.lower() == "csv":

@@ -22,6 +22,8 @@ aurum-api:
     AURUM_APP_DB_DSN: postgresql://aurum@postgres.aurum.svc.cluster.local:5432/aurum
     AURUM_API_REDIS_URL: redis://redis.aurum.svc.cluster.local:6379/0
     AURUM_API_CACHE_TTL: "60"
+    AURUM_API_ISO_LMP_CACHE_TTL: "60"
+    AURUM_API_ISO_LMP_INMEM_TTL: "30"
     AURUM_API_OIDC_ISSUER: https://auth.example.com/realms/aurum
     AURUM_API_OIDC_AUDIENCE: aurum-api
     AURUM_API_OIDC_JWKS_URL: https://auth.example.com/realms/aurum/protocol/openid-connect/certs

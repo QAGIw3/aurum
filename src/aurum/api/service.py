@@ -29,6 +29,24 @@ except Exception:  # pragma: no cover - metrics optional
     _PromCounter = None  # type: ignore[assignment]
 
 
+def _read_int_env(name: str) -> int | None:
+    raw = os.getenv(name)
+    if raw is None:
+        return None
+    raw = raw.strip()
+    if not raw:
+        return None
+    try:
+        return int(raw)
+    except ValueError:
+        LOGGER.warning("Invalid integer for %s: %s", name, raw)
+        return None
+
+
+_ISO_LMP_CACHE_TTL_OVERRIDE = _read_int_env("AURUM_API_ISO_LMP_CACHE_TTL")
+_ISO_LMP_INMEM_TTL_OVERRIDE = _read_int_env("AURUM_API_ISO_LMP_INMEM_TTL")
+
+
 def _timescale_dsn() -> str:
     return os.getenv(
         "AURUM_TIMESCALE_DSN",
@@ -144,10 +162,6 @@ def _fetch_timescale_rows(sql: str, params: Mapping[str, object]) -> Tuple[List[
                 rows.append(row)
     elapsed_ms = (time.perf_counter() - start_time) * 1000.0
     return rows, elapsed_ms
-    except Exception as exc:
-        LOGGER.warning("Redis client initialization failed: %s", exc)
-        LOGGER.debug("Redis client initialization failure details", exc_info=True)
-        return None
 
 
 def _safe_literal(value: str) -> str:
@@ -1574,12 +1588,146 @@ def invalidate_metadata_cache(cache_cfg: CacheConfig, prefixes: Sequence[str]) -
     return results
 
 
+if _PromCounter is not None:  # pragma: no cover - optional metrics dependency
+    ISO_LMP_CACHE_COUNTER = _PromCounter(
+        "aurum_iso_lmp_cache_events_total",
+        "ISO LMP cache events grouped by backend and outcome.",
+        ["operation", "backend", "event"],
+    )
+else:  # pragma: no cover - metrics optional
+    ISO_LMP_CACHE_COUNTER = None  # type: ignore[assignment]
+
+
+class _IsoLmpInMemoryCache:
+    def __init__(self) -> None:
+        self._lock = threading.Lock()
+        self._store: Dict[str, tuple[float, Any]] = {}
+
+    def get(self, key: str):
+        now = time.time()
+        with self._lock:
+            entry = self._store.get(key)
+            if entry is None:
+                return None
+            expires_at, value = entry
+            if expires_at <= now:
+                self._store.pop(key, None)
+                return None
+            return value
+
+    def set(self, key: str, value: Any, ttl: int) -> None:
+        if ttl <= 0:
+            return
+        expires_at = time.time() + ttl
+        with self._lock:
+            self._store[key] = (expires_at, value)
+
+    def clear(self) -> None:
+        with self._lock:
+            self._store.clear()
+
+
+_ISO_LMP_MEMORY_CACHE = _IsoLmpInMemoryCache()
+
+
+def _iso_lmp_effective_ttl(cache_cfg: CacheConfig) -> int:
+    if _ISO_LMP_CACHE_TTL_OVERRIDE is not None:
+        return max(0, _ISO_LMP_CACHE_TTL_OVERRIDE)
+    return max(0, cache_cfg.ttl_seconds)
+
+
+def _iso_lmp_memory_ttl(base_ttl: int) -> int:
+    if _ISO_LMP_INMEM_TTL_OVERRIDE is not None:
+        return max(0, _ISO_LMP_INMEM_TTL_OVERRIDE)
+    return max(0, base_ttl)
+
+
+def _iso_lmp_cache_key(operation: str, params: Dict[str, Any], sql: str, namespace: str) -> str:
+    payload = dict(params)
+    payload["sql"] = sql
+    prefix = f"{namespace}:" if namespace else ""
+    return f"{prefix}iso-lmp:{operation}:{_cache_key(payload)}"
+
+
+def _record_iso_lmp_cache_event(operation: str, backend: str, event: str) -> None:
+    if ISO_LMP_CACHE_COUNTER is None:  # pragma: no cover - metrics optional
+        return
+    ISO_LMP_CACHE_COUNTER.labels(operation=operation, backend=backend, event=event).inc()
+
+
+def _cached_iso_lmp_query(
+    operation: str,
+    sql: str,
+    params: Dict[str, Any],
+    *,
+    cache_cfg: CacheConfig | None = None,
+) -> Tuple[List[Dict[str, Any]], float]:
+    cfg = cache_cfg or CacheConfig.from_env()
+    ttl = _iso_lmp_effective_ttl(cfg)
+    memory_ttl = _iso_lmp_memory_ttl(ttl)
+    namespace = cfg.namespace or ""
+    cache_key = _iso_lmp_cache_key(operation, params, sql, namespace)
+
+    if memory_ttl > 0:
+        cached_rows = _ISO_LMP_MEMORY_CACHE.get(cache_key)
+        if cached_rows is not None:
+            _record_iso_lmp_cache_event(operation, "memory", "hit")
+            return cached_rows, 0.0
+        _record_iso_lmp_cache_event(operation, "memory", "miss")
+
+    client = None
+    if ttl > 0:
+        client = _maybe_redis_client(cfg)
+        if client is not None:
+            try:
+                cached_blob = client.get(cache_key)
+            except Exception:
+                LOGGER.debug("ISO LMP Redis cache lookup failed", exc_info=True)
+                cached_blob = None
+            if cached_blob:
+                try:
+                    decoded = (
+                        cached_blob.decode("utf-8")
+                        if isinstance(cached_blob, (bytes, bytearray))
+                        else cached_blob
+                    )
+                    cached_payload = json.loads(decoded)
+                except (UnicodeDecodeError, json.JSONDecodeError):
+                    cached_payload = []
+                _record_iso_lmp_cache_event(operation, "redis", "hit")
+                if memory_ttl > 0:
+                    _ISO_LMP_MEMORY_CACHE.set(cache_key, cached_payload, memory_ttl)
+                    _record_iso_lmp_cache_event(operation, "memory", "store")
+                return cached_payload, 0.0
+            _record_iso_lmp_cache_event(operation, "redis", "miss")
+
+    rows, elapsed = _fetch_timescale_rows(sql, params)
+    _record_iso_lmp_cache_event(operation, "database", "query")
+
+    if ttl > 0:
+        if client is None:
+            client = _maybe_redis_client(cfg)
+        if client is not None:
+            try:
+                client.setex(cache_key, ttl, json.dumps(rows, default=str))
+                _record_iso_lmp_cache_event(operation, "redis", "store")
+            except Exception:
+                LOGGER.debug("ISO LMP Redis cache population failed", exc_info=True)
+
+    if memory_ttl > 0:
+        _ISO_LMP_MEMORY_CACHE.set(cache_key, rows, memory_ttl)
+        _record_iso_lmp_cache_event(operation, "memory", "store")
+
+    return rows, elapsed
+
+
 def query_iso_lmp_last_24h(
     *,
     iso_code: str | None = None,
     market: str | None = None,
     location_id: str | None = None,
     limit: int = 500,
+    cache_cfg: CacheConfig | None = None,
 ) -> Tuple[List[Dict[str, Any]], float]:
     sql = (
         "SELECT iso_code, market, delivery_date, interval_start, interval_end, interval_minutes, "
@@ -1598,7 +1746,7 @@ def query_iso_lmp_last_24h(
         sql += " AND upper(location_id) = upper(%(location_id)s)"
         params["location_id"] = location_id
     sql += " ORDER BY interval_start DESC LIMIT %(limit)s"
-    return _fetch_timescale_rows(sql, params)
+    return _cached_iso_lmp_query("last-24h", sql, params, cache_cfg=cache_cfg)
 
 
 def query_iso_lmp_hourly(
@@ -1607,6 +1755,7 @@ def query_iso_lmp_hourly(
     market: str | None = None,
     location_id: str | None = None,
     limit: int = 500,
+    cache_cfg: CacheConfig | None = None,
 ) -> Tuple[List[Dict[str, Any]], float]:
     sql = (
         "SELECT iso_code, market, interval_start, location_id, currency, uom, price_avg, price_min, "
@@ -1623,7 +1772,7 @@ def query_iso_lmp_hourly(
         sql += " AND upper(location_id) = upper(%(location_id)s)"
         params["location_id"] = location_id
     sql += " ORDER BY interval_start DESC LIMIT %(limit)s"
-    return _fetch_timescale_rows(sql, params)
+    return _cached_iso_lmp_query("hourly", sql, params, cache_cfg=cache_cfg)
 
 
 def query_iso_lmp_daily(
@@ -1632,6 +1781,7 @@ def query_iso_lmp_daily(
     market: str | None = None,
     location_id: str | None = None,
     limit: int = 500,
+    cache_cfg: CacheConfig | None = None,
 ) -> Tuple[List[Dict[str, Any]], float]:
     sql = (
         "SELECT iso_code, market, interval_start, location_id, currency, uom, price_avg, price_min, "
@@ -1648,7 +1798,7 @@ def query_iso_lmp_daily(
         sql += " AND upper(location_id) = upper(%(location_id)s)"
         params["location_id"] = location_id
     sql += " ORDER BY interval_start DESC LIMIT %(limit)s"
-    return _fetch_timescale_rows(sql, params)
+    return _cached_iso_lmp_query("daily", sql, params, cache_cfg=cache_cfg)
 
 
 def query_iso_lmp_negative(
@@ -1656,6 +1806,7 @@ def query_iso_lmp_negative(
     iso_code: str | None = None,
     market: str | None = None,
     limit: int = 200,
+    cache_cfg: CacheConfig | None = None,
 ) -> Tuple[List[Dict[str, Any]], float]:
     sql = (
         "SELECT iso_code, market, delivery_date, interval_start, interval_end, interval_minutes, "
@@ -1671,7 +1822,7 @@ def query_iso_lmp_negative(
         sql += " AND market = %(market)s"
         params["market"] = market.upper()
     sql += " ORDER BY price_total ASC LIMIT %(limit)s"
-    return _fetch_timescale_rows(sql, params)
+    return _cached_iso_lmp_query("negative", sql, params, cache_cfg=cache_cfg)
 
 
 __all__ = [

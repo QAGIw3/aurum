@@ -432,6 +432,114 @@ def test_query_ppa_valuation_builds_cashflows(monkeypatch):
     assert irr_row["value"] == expected_irr
 
 
+def test_query_iso_lmp_last_24h_inmemory_cache(monkeypatch):
+    calls = {"count": 0}
+    sample_rows = [{
+        "iso_code": "PJM",
+        "market": "DA",
+        "delivery_date": "2024-01-01",
+        "interval_start": "2024-01-01T00:00:00Z",
+        "interval_end": "2024-01-01T01:00:00Z",
+        "interval_minutes": 60,
+        "location_id": "AECO",
+        "location_name": "AECO",
+        "location_type": "NODE",
+        "price_total": 42.1,
+        "price_energy": 40.0,
+        "price_congestion": 1.1,
+        "price_loss": 1.0,
+        "currency": "USD",
+        "uom": "MWh",
+        "settlement_point": "AECO",
+        "source_run_id": "run-1",
+        "ingest_ts": "2024-01-01T01:05:00Z",
+        "record_hash": "hash-1",
+        "metadata": {"quality": "FINAL"},
+    }]
+
+    def fake_fetch(sql, params):
+        calls["count"] += 1
+        return sample_rows, 9.5
+
+    monkeypatch.setattr(service, "_fetch_timescale_rows", fake_fetch)
+    monkeypatch.setattr(service, "_maybe_redis_client", lambda _cfg: None)
+    monkeypatch.setattr(service, "_ISO_LMP_MEMORY_CACHE", service._IsoLmpInMemoryCache())
+    monkeypatch.setattr(service, "_ISO_LMP_CACHE_TTL_OVERRIDE", None)
+    monkeypatch.setattr(service, "_ISO_LMP_INMEM_TTL_OVERRIDE", None)
+
+    cache_cfg = service.CacheConfig(redis_url=None, ttl_seconds=30, namespace="test")
+
+    rows, elapsed = service.query_iso_lmp_last_24h(
+        iso_code="pjm",
+        market="da",
+        limit=10,
+        cache_cfg=cache_cfg,
+    )
+    assert rows == sample_rows
+    assert elapsed == 9.5
+
+    cached_rows, cached_elapsed = service.query_iso_lmp_last_24h(
+        iso_code="pjm",
+        market="da",
+        limit=10,
+        cache_cfg=cache_cfg,
+    )
+    assert cached_rows == sample_rows
+    assert cached_elapsed == 0.0
+    assert calls["count"] == 1
+
+
+def test_query_iso_lmp_daily_redis_cache(monkeypatch):
+    calls = {"count": 0}
+    fake_redis = FakeRedis()
+
+    sample_rows = [{
+        "iso_code": "MISO",
+        "market": "RT",
+        "interval_start": "2024-02-01T00:00:00Z",
+        "location_id": "ZONE",
+        "currency": "USD",
+        "uom": "MWh",
+        "price_avg": 18.2,
+        "price_min": 14.0,
+        "price_max": 22.0,
+        "price_stddev": 3.1,
+        "sample_count": 24,
+    }]
+
+    def fake_fetch(sql, params):
+        calls["count"] += 1
+        return sample_rows, 7.4
+
+    monkeypatch.setattr(service, "_fetch_timescale_rows", fake_fetch)
+    monkeypatch.setattr(service, "_maybe_redis_client", lambda _cfg: fake_redis)
+    monkeypatch.setattr(service, "_ISO_LMP_MEMORY_CACHE", service._IsoLmpInMemoryCache())
+    monkeypatch.setattr(service, "_ISO_LMP_CACHE_TTL_OVERRIDE", None)
+    monkeypatch.setattr(service, "_ISO_LMP_INMEM_TTL_OVERRIDE", 0)
+
+    cache_cfg = service.CacheConfig(redis_url="redis://localhost:6379/0", ttl_seconds=120, namespace="aurum")
+
+    rows, elapsed = service.query_iso_lmp_daily(
+        iso_code="miso",
+        limit=5,
+        cache_cfg=cache_cfg,
+    )
+    assert rows == sample_rows
+    assert elapsed == 7.4
+    assert calls["count"] == 1
+    assert fake_redis.store
+
+    cached_rows, cached_elapsed = service.query_iso_lmp_daily(
+        iso_code="miso",
+        limit=5,
+        cache_cfg=cache_cfg,
+    )
+    assert cached_rows == sample_rows
+    assert cached_elapsed == 0.0
+    assert calls["count"] == 1
+    assert fake_redis.get_called >= 1
+
+
 @pytest.mark.scenario_pipeline
 @pytest.mark.skipif(not SCENARIO_PIPELINE_ENABLED, reason="Set AURUM_ENABLE_SCENARIO_PIPELINE_TESTS=1 to run pipeline smoke test")
 def test_scenario_pipeline_smoke_invalidates_cache(monkeypatch: pytest.MonkeyPatch) -> None:
