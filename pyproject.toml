@@ -309,6 +309,8 @@ markers = [
     "slow: Slow running tests",
     "database: Database tests",
     "external: Tests requiring external services",
+    "scenario_pipeline: Scenario pipeline tests",
+    "asyncio: AsyncIO tests",
 ]
 
 [tool.coverage.run]

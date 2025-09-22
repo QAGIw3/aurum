@@ -146,16 +146,26 @@ from .http import (
 )
 from .http.clients import request as http_request
 try:  # pragma: no cover - optional dependency
-    from prometheus_client import Counter as _PromCounter
+    from prometheus_client import Counter as _PromCounter, REGISTRY as _PROM_REG
 except Exception:  # pragma: no cover - metrics optional
     _PromCounter = None  # type: ignore[assignment]
+    _PROM_REG = None  # type: ignore[assignment]
 
 if _PromCounter:
-    SCENARIO_LIST_REQUESTS = _PromCounter(
+    def _safe_counter(name: str, doc: str):
+        try:
+            existing = getattr(_PROM_REG, "_names_to_collectors", {}).get(name)
+            if existing is not None:
+                return existing
+        except Exception:
+            pass
+        return _PromCounter(name, doc)
+
+    SCENARIO_LIST_REQUESTS = _safe_counter(
         "aurum_api_scenario_list_requests_total",
         "Scenario list requests",
     )
-    SCENARIO_RUN_LIST_REQUESTS = _PromCounter(
+    SCENARIO_RUN_LIST_REQUESTS = _safe_counter(
         "aurum_api_scenario_run_list_requests_total",
         "Scenario run list requests",
     )

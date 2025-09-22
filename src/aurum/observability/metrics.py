@@ -58,16 +58,35 @@ _METRIC_TYPE_MAP = {
 
 
 if PROMETHEUS_AVAILABLE:  # pragma: no branch - simplify instrumentation when available
-    REQUEST_COUNTER = Counter(
-        "aurum_api_requests_total",
-        "Total API requests",
-        ["method", "path", "status"],
-    )
-    REQUEST_LATENCY = Histogram(
-        "aurum_api_request_duration_seconds",
-        "API request duration in seconds",
-        ["method", "path"],
-    )
+    # Legacy basic API metrics (kept for backward compatibility). The enhanced
+    # metrics defined later use the canonical names; these use distinct names to
+    # avoid duplicate registration in the default CollectorRegistry. Additionally,
+    # guard against duplicate registration by reusing existing collectors if present.
+    def _existing_collector(name: str):
+        try:
+            return REGISTRY._names_to_collectors.get(name)  # type: ignore[attr-defined]
+        except Exception:
+            return None
+
+    existing = _existing_collector("aurum_api_requests_basic_total")
+    if existing is not None:
+        REQUEST_COUNTER = existing  # type: ignore[assignment]
+    else:
+        REQUEST_COUNTER = Counter(
+            "aurum_api_requests_basic_total",
+            "Total API requests (basic labels)",
+            ["method", "path", "status"],
+        )
+
+    existing = _existing_collector("aurum_api_request_duration_basic_seconds")
+    if existing is not None:
+        REQUEST_LATENCY = existing  # type: ignore[assignment]
+    else:
+        REQUEST_LATENCY = Histogram(
+            "aurum_api_request_duration_basic_seconds",
+            "API request duration in seconds (basic labels)",
+            ["method", "path"],
+        )
     TILE_CACHE_COUNTER = Counter(
         "aurum_drought_tile_cache_total",
         "Drought tile cache lookup results",

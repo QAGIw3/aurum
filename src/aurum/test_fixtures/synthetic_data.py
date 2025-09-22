@@ -174,7 +174,7 @@ class EIATestDataGenerator(SyntheticDataGenerator):
 
         for i, date in enumerate(dates):
             record = {
-                "series_id": f"EIA_TEST_{i"03d"}",
+                "series_id": f"EIA_TEST_{i:03d}",
                 "period": date,
                 "value": round(random.uniform(10, 1000), 2),
                 "units": random.choice(["MWh", "MW", "BTU", "Gallons"]),
@@ -338,7 +338,7 @@ class NOAAWeatherDataGenerator(SyntheticDataGenerator):
 
         for i, date in enumerate(dates):
             record = {
-                "station_id": f"USW{random.randint(10000, 99999)"05d"}",
+                "station_id": f"USW{random.randint(10000, 99999):05d}",
                 "date": date,
                 "temperature_max": round(random.uniform(-10, 40), 1),
                 "temperature_min": round(random.uniform(-20, 30), 1),

@@ -414,7 +414,11 @@ class CostProfiler:
 
             self.logger.log(
                 LogLevel.DEBUG,
-                f"Recorded metrics for {dataset_name}: {throughput['rows_per_second']".1f"} rows/s, {efficiency['error_rate']".2%"} error rate",
+                (
+                    f"Recorded metrics for {dataset_name}: "
+                    f"{throughput['rows_per_second']:.1f} rows/s, "
+                    f"{efficiency['error_rate']:.2%} error rate"
+                ),
                 "metrics_recorded",
                 session_id=session_id,
                 dataset_name=dataset_name,
@@ -456,7 +460,7 @@ class CostProfiler:
                     "dataset_name": dataset_name,
                     "issue_type": "LOW_THROUGHPUT",
                     "severity": "WARNING",
-                    "message": f"Low throughput: {throughput['rows_per_second']".1f"} rows/s",
+                    "message": f"Low throughput: {throughput['rows_per_second']:.1f} rows/s",
                     "current_value": throughput["rows_per_second"],
                     "threshold": self.config.throughput_warning_threshold,
                     "metrics": avg_metrics.to_dict()
@@ -468,7 +472,7 @@ class CostProfiler:
                     "dataset_name": dataset_name,
                     "issue_type": "HIGH_ERROR_RATE",
                     "severity": "ERROR",
-                    "message": f"High error rate: {efficiency['error_rate']".2%"}",
+                    "message": f"High error rate: {efficiency['error_rate']:.2%}",
                     "current_value": efficiency["error_rate"],
                     "threshold": self.config.error_rate_warning_threshold,
                     "metrics": avg_metrics.to_dict()
@@ -480,7 +484,7 @@ class CostProfiler:
                     "dataset_name": dataset_name,
                     "issue_type": "HIGH_RETRY_RATE",
                     "severity": "WARNING",
-                    "message": f"High retry rate: {efficiency['retry_rate']".2%"}",
+                    "message": f"High retry rate: {efficiency['retry_rate']:.2%}",
                     "current_value": efficiency["retry_rate"],
                     "threshold": self.config.retry_rate_warning_threshold,
                     "metrics": avg_metrics.to_dict()
