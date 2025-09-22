@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import date, datetime, timedelta
+from datetime import datetime, timedelta
 import datetime as dt
 from enum import Enum
 from typing import Any, Dict, List, Optional, Union
@@ -12,7 +12,7 @@ from .http.pagination import DEFAULT_PAGE_SIZE, MAX_CURSOR_LENGTH, MAX_PAGE_SIZE
 from aurum.scenarios.models import ScenarioAssumption
 
 
-class AurumBaseModel(BaseModel):
+class AurumBaseModel(AurumBaseModel):
     """Base model for all Aurum API models with consistent configuration."""
 
     model_config = ConfigDict(
@@ -281,8 +281,8 @@ class CurvePoint(AurumBaseModel):
     curve_key: str = Field(..., min_length=1, max_length=255)
     tenor_label: str = Field(..., min_length=1, max_length=100)
     tenor_type: Optional[str] = Field(None, max_length=50)
-    contract_month: Optional[date] = None
-    asof_date: date
+    contract_month: Optional[datetime.date] = None
+    asof_date: datetime.date
     mid: Optional[float] = None
     bid: Optional[float] = None
     ask: Optional[float] = None
@@ -345,10 +345,10 @@ class CurveDiffPoint(AurumBaseModel):
     curve_key: str = Field(..., min_length=1, max_length=255)
     tenor_label: str = Field(..., min_length=1, max_length=100)
     tenor_type: Optional[str] = Field(None, max_length=50)
-    contract_month: Optional[date] = None
-    asof_a: date
+    contract_month: Optional[datetime.date] = None
+    asof_a: datetime.date
     mid_a: Optional[float] = None
-    asof_b: date
+    asof_b: datetime.date
     mid_b: Optional[float] = None
     diff_abs: Optional[float] = None
     diff_pct: Optional[float] = None
@@ -422,7 +422,7 @@ class CurveDiffResponse(AurumBaseModel):
         return v
 
 
-class DimensionsData(BaseModel):
+class DimensionsData(AurumBaseModel):
     asset_class: list[str] | None = None
     iso: list[str] | None = None
     location: list[str] | None = None
@@ -432,18 +432,18 @@ class DimensionsData(BaseModel):
     tenor_type: list[str] | None = None
 
 
-class DimensionsResponse(BaseModel):
+class DimensionsResponse(AurumBaseModel):
     meta: Meta
     data: DimensionsData
     counts: Optional["DimensionsCountData"] = None
 
 
-class DimensionCount(BaseModel):
+class DimensionCount(AurumBaseModel):
     value: str
     count: int = Field(ge=0)
 
 
-class DimensionsCountData(BaseModel):
+class DimensionsCountData(AurumBaseModel):
     asset_class: list[DimensionCount] | None = None
     iso: list[DimensionCount] | None = None
     location: list[DimensionCount] | None = None
@@ -453,7 +453,7 @@ class DimensionsCountData(BaseModel):
     tenor_type: list[DimensionCount] | None = None
 
 
-class IsoLocationOut(BaseModel):
+class IsoLocationOut(AurumBaseModel):
     iso: str
     location_id: str
     location_name: Optional[str] = None
@@ -463,39 +463,39 @@ class IsoLocationOut(BaseModel):
     timezone: Optional[str] = None
 
 
-class IsoLocationsResponse(BaseModel):
+class IsoLocationsResponse(AurumBaseModel):
     meta: Meta
     data: list[IsoLocationOut]
 
 
-class IsoLocationResponse(BaseModel):
+class IsoLocationResponse(AurumBaseModel):
     meta: Meta
     data: IsoLocationOut
 
 
-class UnitsCanonical(BaseModel):
+class UnitsCanonical(AurumBaseModel):
     currencies: list[str]
     units: list[str]
 
 
-class UnitsCanonicalResponse(BaseModel):
+class UnitsCanonicalResponse(AurumBaseModel):
     meta: Meta
     data: UnitsCanonical
 
 
-class UnitMappingOut(BaseModel):
+class UnitMappingOut(AurumBaseModel):
     units_raw: str
     currency: str | None = None
     per_unit: str | None = None
 
 
-class UnitsMappingResponse(BaseModel):
+class UnitsMappingResponse(AurumBaseModel):
     meta: Meta
     data: list[UnitMappingOut]
 
 
 # Series-Curve Mapping models
-class SeriesCurveMappingCreate(BaseModel):
+class SeriesCurveMappingCreate(AurumBaseModel):
     """Model for creating series-curve mappings."""
     external_provider: str = Field(..., description="External data provider (FRED, EIA, etc.)")
     external_series_id: str = Field(..., description="Provider-specific series identifier")
@@ -506,7 +506,7 @@ class SeriesCurveMappingCreate(BaseModel):
     is_active: bool = Field(True, description="Whether this mapping is currently active")
 
 
-class SeriesCurveMappingUpdate(BaseModel):
+class SeriesCurveMappingUpdate(AurumBaseModel):
     """Model for updating series-curve mappings."""
     mapping_confidence: float | None = Field(None, ge=0.0, le=1.0, description="Updated mapping confidence score")
     mapping_method: str | None = Field(None, description="Updated mapping method")
@@ -514,7 +514,7 @@ class SeriesCurveMappingUpdate(BaseModel):
     is_active: bool | None = Field(None, description="Updated active status")
 
 
-class SeriesCurveMappingOut(BaseModel):
+class SeriesCurveMappingOut(AurumBaseModel):
     """Model for series-curve mapping responses."""
     id: str
     external_provider: str
@@ -530,13 +530,13 @@ class SeriesCurveMappingOut(BaseModel):
     updated_at: datetime
 
 
-class SeriesCurveMappingListResponse(BaseModel):
+class SeriesCurveMappingListResponse(AurumBaseModel):
     """Response model for listing series-curve mappings."""
     meta: Meta
     data: list[SeriesCurveMappingOut]
 
 
-class SeriesCurveMappingSearchResponse(BaseModel):
+class SeriesCurveMappingSearchResponse(AurumBaseModel):
     """Response model for potential mapping suggestions."""
     meta: Meta
     data: list[dict]  # curve_key, similarity_score, matching_criteria
@@ -545,10 +545,10 @@ class SeriesCurveMappingSearchResponse(BaseModel):
 # ISO LMP models
 
 
-class IsoLmpPoint(BaseModel):
+class IsoLmpPoint(AurumBaseModel):
     iso_code: str
     market: str
-    delivery_date: date
+    delivery_date: datetime.date
     interval_start: datetime
     interval_end: datetime | None = None
     interval_minutes: int | None = None
@@ -568,12 +568,12 @@ class IsoLmpPoint(BaseModel):
     metadata: dict[str, str] | None = None
 
 
-class IsoLmpResponse(BaseModel):
+class IsoLmpResponse(AurumBaseModel):
     meta: Meta
     data: list[IsoLmpPoint]
 
 
-class IsoLmpAggregatePoint(BaseModel):
+class IsoLmpAggregatePoint(AurumBaseModel):
     iso_code: str
     market: str
     interval_start: datetime
@@ -587,27 +587,27 @@ class IsoLmpAggregatePoint(BaseModel):
     sample_count: int
 
 
-class IsoLmpAggregateResponse(BaseModel):
+class IsoLmpAggregateResponse(AurumBaseModel):
     meta: Meta
     data: list[IsoLmpAggregatePoint]
 
 
-class CalendarOut(BaseModel):
+class CalendarOut(AurumBaseModel):
     name: str
     timezone: str
 
 
-class CalendarsResponse(BaseModel):
+class CalendarsResponse(AurumBaseModel):
     meta: Meta
     data: list[CalendarOut]
 
 
-class CalendarBlocksResponse(BaseModel):
+class CalendarBlocksResponse(AurumBaseModel):
     meta: Meta
     data: list[str]
 
 
-class CalendarHoursResponse(BaseModel):
+class CalendarHoursResponse(AurumBaseModel):
     meta: Meta
     data: list[str]
 
@@ -615,7 +615,7 @@ class CalendarHoursResponse(BaseModel):
 # EIA catalog models
 
 
-class EiaDatasetBriefOut(BaseModel):
+class EiaDatasetBriefOut(AurumBaseModel):
     path: str
     name: str | None = None
     description: str | None = None
@@ -624,12 +624,12 @@ class EiaDatasetBriefOut(BaseModel):
     end_period: str | None = None
 
 
-class EiaDatasetsResponse(BaseModel):
+class EiaDatasetsResponse(AurumBaseModel):
     meta: Meta
     data: list[EiaDatasetBriefOut]
 
 
-class EiaDatasetDetailOut(BaseModel):
+class EiaDatasetDetailOut(AurumBaseModel):
     path: str
     name: str | None = None
     description: str | None = None
@@ -642,12 +642,12 @@ class EiaDatasetDetailOut(BaseModel):
     default_date_format: str | None = None
 
 
-class EiaDatasetResponse(BaseModel):
+class EiaDatasetResponse(AurumBaseModel):
     meta: Meta
     data: EiaDatasetDetailOut
 
 
-class EiaSeriesPoint(BaseModel):
+class EiaSeriesPoint(AurumBaseModel):
     series_id: str
     period: str
     period_start: datetime
@@ -670,12 +670,12 @@ class EiaSeriesPoint(BaseModel):
     ingest_ts: datetime | None = None
 
 
-class EiaSeriesResponse(BaseModel):
+class EiaSeriesResponse(AurumBaseModel):
     meta: Meta
     data: list[EiaSeriesPoint]
 
 
-class EiaSeriesDimensionsData(BaseModel):
+class EiaSeriesDimensionsData(AurumBaseModel):
     dataset: list[str] | None = None
     area: list[str] | None = None
     sector: list[str] | None = None
@@ -686,17 +686,17 @@ class EiaSeriesDimensionsData(BaseModel):
     source: list[str] | None = None
 
 
-class EiaSeriesDimensionsResponse(BaseModel):
+class EiaSeriesDimensionsResponse(AurumBaseModel):
     meta: Meta
     data: EiaSeriesDimensionsData
 
 
-class DroughtIndexPoint(BaseModel):
+class DroughtIndexPoint(AurumBaseModel):
     series_id: str
     dataset: str
     index: str
     timescale: str
-    valid_date: date
+    valid_date: datetime.date
     as_of: datetime | None = None
     value: float | None = None
     unit: str | None = None
@@ -708,17 +708,17 @@ class DroughtIndexPoint(BaseModel):
     source_url: str | None = None
     metadata: dict[str, Any] | None = None
 
-class DroughtIndexResponse(BaseModel):
+class DroughtIndexResponse(AurumBaseModel):
     meta: Meta
     data: list[DroughtIndexPoint]
 
 
-class DroughtUsdmPoint(BaseModel):
+class DroughtUsdmPoint(AurumBaseModel):
     region_type: str
     region_id: str
     region_name: str | None = None
     parent_region_id: str | None = None
-    valid_date: date
+    valid_date: datetime.date
     as_of: datetime | None = None
     d0_frac: float | None = None
     d1_frac: float | None = None
@@ -729,12 +729,12 @@ class DroughtUsdmPoint(BaseModel):
     metadata: dict[str, Any] | None = None
 
 
-class DroughtUsdmResponse(BaseModel):
+class DroughtUsdmResponse(AurumBaseModel):
     meta: Meta
     data: list[DroughtUsdmPoint]
 
 
-class DroughtVectorEventPoint(BaseModel):
+class DroughtVectorEventPoint(AurumBaseModel):
     layer: str
     event_id: str
     region_type: str | None = None
@@ -752,12 +752,12 @@ class DroughtVectorEventPoint(BaseModel):
     properties: dict[str, Any] | None = None
 
 
-class DroughtVectorResponse(BaseModel):
+class DroughtVectorResponse(AurumBaseModel):
     meta: Meta
     data: list[DroughtVectorEventPoint]
 
 
-class DroughtDimensions(BaseModel):
+class DroughtDimensions(AurumBaseModel):
     datasets: list[str]
     indices: list[str]
     timescales: list[str]
@@ -765,12 +765,12 @@ class DroughtDimensions(BaseModel):
     region_types: list[str]
 
 
-class DroughtDimensionsResponse(BaseModel):
+class DroughtDimensionsResponse(AurumBaseModel):
     meta: Meta
     data: DroughtDimensions
 
 
-class DroughtInfoResponse(BaseModel):
+class DroughtInfoResponse(AurumBaseModel):
     meta: Meta
     data: dict[str, Any]
 
@@ -840,16 +840,16 @@ ScenarioRunBulkResponse = _scenario_models.ScenarioRunBulkResponse
 # PPA valuation models
 
 
-class PpaValuationRequest(BaseModel):
+class PpaValuationRequest(AurumBaseModel):
     ppa_contract_id: str
     scenario_id: Optional[str] = None
-    asof_date: Optional[date] = None
+    asof_date: Optional[datetime.date] = None
     options: Optional[dict] = None
 
 
-class PpaMetric(BaseModel):
-    period_start: date
-    period_end: date
+class PpaMetric(AurumBaseModel):
+    period_start: datetime.date
+    period_end: datetime.date
     metric: str
     value: float
     currency: Optional[str] = None
@@ -859,12 +859,12 @@ class PpaMetric(BaseModel):
     tenor_type: Optional[str] = None
 
 
-class PpaValuationResponse(BaseModel):
+class PpaValuationResponse(AurumBaseModel):
     meta: Meta
     data: list[PpaMetric]
 
 
-class PpaContractBase(BaseModel):
+class PpaContractBase(AurumBaseModel):
     instrument_id: str | None = None
     terms: dict[str, Any] = Field(default_factory=dict)
 
@@ -873,7 +873,7 @@ class PpaContractCreate(PpaContractBase):
     pass
 
 
-class PpaContractUpdate(BaseModel):
+class PpaContractUpdate(AurumBaseModel):
     instrument_id: str | None = None
     terms: dict[str, Any] | None = None
 
@@ -885,21 +885,21 @@ class PpaContractOut(PpaContractBase):
     updated_at: datetime
 
 
-class PpaContractResponse(BaseModel):
+class PpaContractResponse(AurumBaseModel):
     meta: Meta
     data: PpaContractOut
 
 
-class PpaContractListResponse(BaseModel):
+class PpaContractListResponse(AurumBaseModel):
     meta: Meta
     data: list[PpaContractOut]
 
 
-class PpaValuationRecord(BaseModel):
-    asof_date: date | None = None
+class PpaValuationRecord(AurumBaseModel):
+    asof_date: datetime.date | None = None
     scenario_id: str | None = None
-    period_start: date | None = None
-    period_end: date | None = None
+    period_start: datetime.date | None = None
+    period_end: datetime.date | None = None
     metric: str | None = None
     value: float | None = None
     cashflow: float | None = None
@@ -910,18 +910,18 @@ class PpaValuationRecord(BaseModel):
     ingested_at: datetime | None = None
 
 
-class PpaValuationListResponse(BaseModel):
+class PpaValuationListResponse(AurumBaseModel):
     meta: Meta
     data: list[PpaValuationRecord]
 
 
-class CachePurgeDetail(BaseModel):
+class CachePurgeDetail(AurumBaseModel):
     scope: str
     redis_keys_removed: int
     local_entries_removed: int
 
 
-class CachePurgeResponse(BaseModel):
+class CachePurgeResponse(AurumBaseModel):
     meta: Meta
     data: list[CachePurgeDetail]
 
@@ -953,7 +953,7 @@ class ExternalSeries(AurumBaseModel):
 class ExternalObservation(AurumBaseModel):
     """External data observation."""
     series_id: str = Field(..., description="Series identifier")
-    date: dt.date = Field(..., description="Observation date")
+    observation_date: str = Field(..., description="Observation date")
     value: float = Field(..., description="Observation value")
     observation_metadata: Optional[Dict[str, Any]] = Field(None, description="Additional observation metadata")
 

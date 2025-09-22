@@ -234,7 +234,7 @@ async def _convert_curve_to_external_observations(
     for obs in curve_observations:
         external_obs = {
             "series_id": series_id,
-            "date": obs["asof_date"],
+            "observation_date": obs["asof_date"],
             "value": obs["value"],
             "metadata": {
                 "curve_key": obs["curve_key"],
