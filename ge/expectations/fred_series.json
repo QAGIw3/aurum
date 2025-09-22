@@ -1,0 +1,56 @@
+{
+  "expectation_suite_name": "fred_series",
+  "meta": {
+    "notes": "Checks for FRED series observations landing in Timescale."
+  },
+  "expectations": [
+    {
+      "expectation_type": "expect_table_columns_to_match_set",
+      "kwargs": {
+        "column_set": [
+          "tenant_id",
+          "series_id",
+          "obs_date",
+          "obs_month",
+          "frequency",
+          "seasonal_adjustment",
+          "value",
+          "raw_value",
+          "units",
+          "title",
+          "notes",
+          "metadata",
+          "ingest_ts",
+          "ingest_job_id",
+          "ingest_run_id",
+          "ingest_batch_id"
+        ]
+      }
+    },
+    {
+      "expectation_type": "expect_column_values_to_not_be_null",
+      "kwargs": {"column": "tenant_id"}
+    },
+    {
+      "expectation_type": "expect_column_values_to_not_be_null",
+      "kwargs": {"column": "series_id"}
+    },
+    {
+      "expectation_type": "expect_column_values_to_not_be_null",
+      "kwargs": {"column": "obs_date"}
+    },
+    {
+      "expectation_type": "expect_column_values_to_not_be_null",
+      "kwargs": {"column": "ingest_ts"}
+    },
+    {
+      "expectation_type": "expect_column_values_to_be_between",
+      "kwargs": {
+        "column": "value",
+        "min_value": -1000000,
+        "max_value": 1000000
+      },
+      "meta": {"notes": "Clamp FRED values to a reasonable numeric range"}
+    }
+  ]
+}

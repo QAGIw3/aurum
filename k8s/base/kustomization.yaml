@@ -16,6 +16,8 @@ resources:
   - postgres-init-configmap.yaml
   - timescale-init-configmap.yaml
   - clickhouse-init-configmap.yaml
+  - trino-catalog-configmap.yaml
+  - trino-configmap.yaml
   - minio.yaml
   - postgres.yaml
   - timescale.yaml

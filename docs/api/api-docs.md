@@ -1,363 +1,150 @@
-# Aurum Market Intelligence Platform API
+# Aurum API
 
-Comprehensive API for accessing market data, curves, and analytics from the Aurum platform.
+API for retrieving market intelligence data, managing scenarios, and valuing PPAs.
 
-## Overview
-The Aurum API provides access to:
-- Market curve data with historical and real-time pricing
-- Scenario analysis and modeling capabilities
-- Metadata dimensions for data exploration
-- ISO location mappings and market intelligence
-- Performance monitoring and health checks
-
-## Authentication
-The API supports multiple authentication methods:
-- JWT tokens for user authentication
-- Service-to-service authentication via Kubernetes RBAC
-- Optional OIDC integration for enterprise SSO
-
-## Rate Limiting
-Rate limiting is applied per endpoint with configurable limits.
-Default limits: 10 requests/second, 20 burst requests.
-
-## Pagination
-Large datasets support cursor-based pagination for efficient data retrieval.
-
-## Error Handling
-All endpoints return structured error responses with appropriate HTTP status codes.
-
-
-## Base URLs
-
-- **Development server (Kubernetes internal)**: `http://api.aurum-dev.svc.cluster.local:8080`
-- **Production server**: `https://api.aurum.local`
-- **Local development server**: `http://localhost:8080`
-
-## Authentication
-
-The API supports multiple authentication methods:
-
-### JWT Token Authentication
-```bash
-curl -H "Authorization: Bearer <jwt_token>" \
-     http://api.aurum-dev.svc.cluster.local:8080/v1/curves
-```
-
-### API Key Authentication
-```bash
-curl -H "X-API-Key: <api_key>" \
-     http://api.aurum-dev.svc.cluster.local:8080/v1/curves
-```
+Version: `0.1.0`
 
 ## Endpoints
-
-### /health
-
-#### GET Health Check
-
-Basic health check endpoint for load balancer and monitoring.
-Returns 200 OK if service is healthy.
-
-
-**Responses:**
-
-- `200`: Service is healthy
-
-**Example:**
-```bash
-curl "http://api.aurum-dev.svc.cluster.local:8080/health"
-```
-
-### /ready
-
-#### GET Readiness Check
-
-Readiness probe for load balancer checks.
-Validates connectivity to critical dependencies (Trino, TimescaleDB, Redis).
-
-
-**Responses:**
-
-- `200`: Service is ready to handle requests
-- `503`: Service is not ready
-
-**Example:**
-```bash
-curl "http://api.aurum-dev.svc.cluster.local:8080/ready"
-```
-
-### /v1/curves
-
-#### GET Get Curve Data
-
-Retrieve market curve data with optional filtering and pagination.
-
-## Filtering
-Multiple filter parameters can be combined for complex queries.
-
-## Pagination
-Use cursor-based pagination for large datasets.
-The response includes `next_cursor` and `prev_cursor` fields.
-
-
-**Parameters:**
-
-- `` (string): 
-- `` (string): 
-- `asset_class` (string): Filter by asset class
-- `iso` (string): Filter by ISO country code
-- `market` (string): Filter by market
-- `location` (string): Filter by location
-- `product` (string): Filter by product
-- `block` (string): Filter by trading block
-- `tenor_type` (string): Filter by tenor type
-- `price_type` (string): Filter by price type
-- `` (string): 
-- `` (string): 
-
-**Responses:**
-
-- `200`: Curve data retrieved successfully
-- `400`: Invalid request parameters
-- `503`: Service unavailable
-
-**Example:**
-```bash
-curl "http://api.aurum-dev.svc.cluster.local:8080/v1/curves"
-```
-
-### /v1/curves/diff
-
-#### GET Get Curve Differences
-
-Compare curve data between two dates to identify price changes.
-
-## Price Differences
-- `diff_abs`: Absolute price difference (mid_b - mid_a)
-- `diff_pct`: Percentage price difference ((mid_b - mid_a) / mid_a * 100)
-
-
-**Parameters:**
-
-- `` (string): 
-- `asof_a` (string) (required): First comparison date
-- `asof_b` (string) (required): Second comparison date
-- `iso` (string): Filter by ISO country code
-- `market` (string): Filter by market
-- `location` (string): Filter by location
-- `` (string): 
-- `` (string): 
-
-**Responses:**
-
-- `200`: Curve differences retrieved successfully
-- `400`: Invalid request parameters
-- `503`: Service unavailable
-
-**Example:**
-```bash
-curl "http://api.aurum-dev.svc.cluster.local:8080/v1/curves/diff"
-```
-
-### /v1/metadata/dimensions
-
-#### GET Get Metadata Dimensions
-
-Retrieve available values for metadata dimensions used in filtering.
-
-## Usage
-Use this endpoint to populate filter dropdowns and understand available data dimensions.
-
-
-**Parameters:**
-
-- `include_counts` (boolean): Include count information for each dimension value
-
-**Responses:**
-
-- `200`: Dimensions retrieved successfully
-- `503`: Service unavailable
-
-**Example:**
-```bash
-curl "http://api.aurum-dev.svc.cluster.local:8080/v1/metadata/dimensions"
-```
-
-### /v1/locations/iso
-
-#### GET Get ISO Locations
-
-Retrieve mapping of ISO country codes to trading locations and hubs.
-
-## Location Types
-- **HUB**: Major trading hub (e.g., Henry Hub)
-- **CITY**: Major city trading point
-- **REGION**: Regional trading area
-- **ZONE**: Specific delivery zone
-
-
-**Parameters:**
-
-- `` (string): 
-- `location_type` (string): Filter by location type
-- `` (string): 
-- `` (string): 
-
-**Responses:**
-
-- `200`: ISO locations retrieved successfully
-- `400`: Invalid request parameters
-- `503`: Service unavailable
-
-**Example:**
-```bash
-curl "http://api.aurum-dev.svc.cluster.local:8080/v1/locations/iso"
-```
-
-### /v1/locations/iso/{location_id}
-
-#### GET Get ISO Location Details
-
-Retrieve detailed information about a specific trading location.
-
-
-**Parameters:**
-
-- `` (string): 
-
-**Responses:**
-
-- `200`: Location details retrieved successfully
-- `404`: Location not found
-- `503`: Service unavailable
-
-**Example:**
-```bash
-curl "http://api.aurum-dev.svc.cluster.local:8080/v1/locations/iso/{location_id}"
-```
-
-## Data Models
-
-### Meta
-
-**Properties:**
-
-- `request_id` (string) (required): Unique request identifier for tracing Example: `req-12345678-90ab-cdef-1234-567890abcdef`
-- `query_time_ms` (integer) (required): Query execution time in milliseconds Example: `145`
-- `next_cursor` (string): Cursor for next page of results Example: `eyJwYWdlIjoxLCJsaW1pdCI6MTAwfQ==`
-- `prev_cursor` (string): Cursor for previous page of results Example: `eyJwYWdlIjowLCJsaW1pdCI6MTAwfQ==`
-
-### CurvePoint
-
-**Properties:**
-
-- `curve_key` (string) (required): Unique identifier for the curve Example: `NATURAL_GAS_NYMEX_HENRY_HUB_MONTHLY`
-- `tenor_label` (string) (required): Tenor description (e.g., "Jan24", "Q1-24") Example: `Jan24`
-- `tenor_type` (string): Type of tenor period Example: `MONTHLY`
-- `contract_month` (string): Contract delivery month Example: `2024-01-01`
-- `asof_date` (string) (required): Date this curve data is as of Example: `2024-01-15`
-- `mid` (number): Mid price Example: `2.85`
-- `bid` (number): Bid price Example: `2.84`
-- `ask` (number): Ask price Example: `2.86`
-- `price_type` (string): Type of price quoted Example: `MID`
-
-### CurveResponse
-
-**Properties:**
-
-- `meta` (any) (required): 
-- `data` (array) (required): List of curve data points
-
-### CurveDiffPoint
-
-**Properties:**
-
-- `curve_key` (string) (required): Curve identifier Example: `NATURAL_GAS_NYMEX_HENRY_HUB_MONTHLY`
-- `tenor_label` (string) (required): Tenor label Example: `Jan24`
-- `tenor_type` (string):  Example: `MONTHLY`
-- `contract_month` (string):  Example: `2024-01-01`
-- `asof_a` (string) (required): First comparison date Example: `2024-01-10`
-- `mid_a` (number): Mid price on first date Example: `2.8`
-- `asof_b` (string) (required): Second comparison date Example: `2024-01-15`
-- `mid_b` (number): Mid price on second date Example: `2.85`
-- `diff_abs` (number): Absolute price difference Example: `0.05`
-- `diff_pct` (number): Percentage price difference Example: `1.79`
-
-### CurveDiffResponse
-
-**Properties:**
-
-- `meta` (any) (required): 
-- `data` (array) (required): List of curve difference data points
-
-### DimensionsData
-
-**Properties:**
-
-- `asset_class` (array): Available asset classes Example: `['NATURAL_GAS', 'COAL', 'OIL']`
-- `iso` (array): Available ISO country codes Example: `['US', 'CA', 'MX']`
-- `location` (array): Available locations Example: `['HENRY_HUB', 'ALGONQUIN', 'CHICAGO']`
-- `market` (array): Available markets Example: `['NYMEX', 'ICE', 'OTC']`
-- `product` (array): Available products Example: `['NATURAL_GAS', 'POWER', 'EMISSIONS']`
-- `block` (array): Available trading blocks Example: `['PEAK', 'OFF_PEAK', 'FLAT']`
-- `tenor_type` (array): Available tenor types Example: `['MONTHLY', 'QUARTERLY', 'CALENDAR']`
-
-### DimensionCount
-
-**Properties:**
-
-- `value` (string) (required): Dimension value Example: `NATURAL_GAS`
-- `count` (integer) (required): Number of records with this value Example: `15420`
-
-### DimensionsCountData
-
-**Properties:**
-
-- `asset_class` (array): Asset class counts
-- `iso` (array): ISO country counts
-- `location` (array): Location counts
-- `market` (array): Market counts
-- `product` (array): Product counts
-- `block` (array): Block counts
-- `tenor_type` (array): Tenor type counts
-
-### DimensionsResponse
-
-**Properties:**
-
-- `meta` (any) (required): 
-- `data` (any) (required): Available dimension values
-- `counts` (any): Count data for dimensions
-
-### IsoLocationOut
-
-**Properties:**
-
-- `iso` (string) (required): ISO country code Example: `US`
-- `location_id` (string) (required): Location identifier Example: `HENRY_HUB`
-- `location_name` (string): Human-readable location name Example: `Henry Hub`
-- `location_type` (string): Type of location (hub, city, region, etc.) Example: `HUB`
-- `zone` (string): Time zone identifier Example: `America/Chicago`
-- `hub` (string): Trading hub identifier Example: `HENRY_HUB`
-- `timezone` (string): Time zone name Example: `Central Time`
-
-### IsoLocationsResponse
-
-**Properties:**
-
-- `meta` (any) (required): 
-- `data` (array) (required): List of ISO locations
-
-### IsoLocationResponse
-
-**Properties:**
-
-- `meta` (any) (required): 
-- `data` (any) (required): Single ISO location
-
-### ErrorResponse
-
-**Properties:**
-
-- `error` (object) (required): 
-
+- `EXTERNALMETADATARESPONSE` `/health` - 
+- `EXTERNALOBSERVATION` `/health` - 
+- `EXTERNALOBSERVATIONSRESPONSE` `/health` - 
+- `EXTERNALPROVIDER` `/health` - 
+- `EXTERNALPROVIDERSRESPONSE` `/health` - 
+- `EXTERNALSERIES` `/health` - 
+- `EXTERNALSERIESRESPONSE` `/health` - 
+- `GET` `/health` - Health check
+- `GET` `/metrics` - Prometheus metrics
+- `GET` `/ready` - Readiness probe
+- `POST` `/v1/admin/cache/eia/series/invalidate` - Invalidate cached EIA series queries
+- `POST` `/v1/admin/cache/metadata/{scope}/invalidate` - Invalidate metadata caches
+- `GET` `/v1/admin/config/audit-log` - Get audit log for configuration changes.
+- `GET` `/v1/admin/config/feature-flags/{tenant_id}` - Get feature flags for a tenant.
+- `PUT` `/v1/admin/config/feature-flags/{tenant_id}/{feature_name}` - Update feature flag for a tenant.
+- `GET` `/v1/admin/config/ratelimit/{tenant_id}` - Get rate limit configuration for a tenant.
+- `PUT` `/v1/admin/config/ratelimit/{tenant_id}/{path:path}` - Update rate limit configuration for a tenant and path.
+- `GET` `/v1/admin/mappings` - List series-curve mappings
+- `POST` `/v1/admin/mappings` - Create a new series-curve mapping
+- `GET` `/v1/admin/mappings/search` - Find potential curve mappings
+- `DELETE` `/v1/admin/mappings/{provider}/{series_id}` - Deactivate a series-curve mapping
+- `PUT` `/v1/admin/mappings/{provider}/{series_id}` - Update a series-curve mapping
+- `GET` `/v1/admin/ratelimit/config` - Get current rate limiting configuration.
+- `GET` `/v1/admin/ratelimit/metrics` - Get rate limiting metrics.
+- `GET` `/v1/admin/ratelimit/status` - Get current rate limiting status and active windows.
+- `POST` `/v1/admin/ratelimit/test` - Test rate limiting for a specific path and tenant.
+- `GET` `/v1/curves` - Retrieve curve observations with filtering by identity and tenor.
+- `GET` `/v1/curves/diff` - Diff curve observations between two as-of dates.
+- `GET` `/v1/curves/strips` - Retrieve non-monthly (strip) curves by type.
+- `GET` `/v1/drought/dimensions` - List available drought datasets, indices, and layers.
+- `GET` `/v1/drought/indices` - Retrieve drought index time series aggregated by geography.
+- `GET` `/v1/drought/info/{dataset}/{index}/{timescale}` - Retrieve vector overlay events (QPF, AHPS, AQI, wildfire, etc.).
+- `GET` `/v1/drought/layers` - List drought vector layers
+- `GET` `/v1/drought/tiles/{dataset}/{index}/{timescale}/{z}/{x}/{y}.png` - Proxy XYZ tiles for drought rasters.
+- `GET` `/v1/drought/usdm` - Retrieve USDM area fractions by geography.
+- `GET` `/v1/external/providers` - List external data providers.
+- `GET` `/v1/external/series` - List external data series.
+- `GET` `/v1/external/series/{series_id}/observations` - Get observations for an external series.
+- `GET` `/v1/iso/lmp/daily` - Daily ISO LMP aggregates
+- `GET` `/v1/iso/lmp/hourly` - Hourly ISO LMP aggregates
+- `GET` `/v1/iso/lmp/last-24h` - Latest ISO LMP observations
+- `GET` `/v1/iso/lmp/negative` - Recent negative ISO LMP events
+- `GET` `/v1/metadata/calendars` - List calendars
+- `GET` `/v1/metadata/calendars/{name}/blocks` - List calendar blocks
+- `GET` `/v1/metadata/calendars/{name}/expand` - Expand block over date range
+- `GET` `/v1/metadata/calendars/{name}/hours` - Block hours for a date
+- `GET` `/v1/metadata/dimensions` - List distinct dimension values useful for filters.
+- `GET` `/v1/metadata/eia/datasets` - List EIA datasets
+- `GET` `/v1/metadata/eia/datasets/{dataset_path}` - Get EIA dataset
+- `GET` `/v1/metadata/external` - Get external metadata.
+- `GET` `/v1/metadata/locations` - List ISO locations
+- `GET` `/v1/metadata/locations/{iso}/{location_id}` - Get ISO location
+- `GET` `/v1/metadata/units` - List canonical currencies and units
+- `GET` `/v1/metadata/units/mapping` - List unit mappings
+- `GET` `/v1/ppa/contracts` - List PPA contracts.
+- `POST` `/v1/ppa/contracts` - Create a new PPA contract definition.
+- `DELETE` `/v1/ppa/contracts/{contract_id}` - Delete a PPA contract.
+- `GET` `/v1/ppa/contracts/{contract_id}` - Retrieve a PPA contract.
+- `PATCH` `/v1/ppa/contracts/{contract_id}` - Update attributes on a PPA contract.
+- `GET` `/v1/ppa/contracts/{contract_id}/valuations` - List historical valuations for a PPA contract.
+- `POST` `/v1/ppa/valuate` - Calculate cashflows and risk metrics for a PPA contract.
+- `GET` `/v1/ref/eia/series` - List EIA series observations
+- `GET` `/v1/ref/eia/series/dimensions` - List EIA series dimensions
+- `GET` `/v1/scenarios` - List scenarios for the authenticated tenant.
+- `POST` `/v1/scenarios` - Create a new scenario definition with assumptions.
+- `POST` `/v1/scenarios/runs/{run_id}/cancel` - Cancel a scenario run.
+- `POST` `/v1/scenarios/runs/{run_id}/state` - Update the state of a scenario run.
+- `DELETE` `/v1/scenarios/{id}` - Delete a scenario definition and associated runs.
+- `GET` `/v1/scenarios/{id}` - Retrieve a scenario definition.
+- `GET` `/v1/scenarios/{id}/metrics/latest` - List latest scenario metrics
+- `GET` `/v1/scenarios/{id}/outputs` - List scenario outputs with time-based filtering
+- `POST` `/v1/scenarios/{id}/run` - Trigger a scenario run asynchronously via Kafka.
+- `GET` `/v1/scenarios/{id}/runs` - List runs for a scenario.
+- `GET` `/v1/scenarios/{id}/runs/{run_id}` - Get the status of a scenario run.
+- `POST` `/v1/scenarios/{id}/runs:bulk` - Create multiple scenario runs in bulk with deduplication
+
+## Schemas
+- `BulkScenarioRunDuplicate`
+- `BulkScenarioRunItem`
+- `BulkScenarioRunRequest`
+- `BulkScenarioRunResponse`
+- `BulkScenarioRunResult`
+- `CalendarBlocksResponse`
+- `CalendarHoursResponse`
+- `CalendarOut`
+- `CalendarsResponse`
+- `CreateScenarioRequest`
+- `CurveDiffPoint`
+- `CurveDiffResponse`
+- `CurvePoint`
+- `CurveResponse`
+- `DimensionCount`
+- `DimensionsCountData`
+- `DimensionsData`
+- `DimensionsResponse`
+- `DroughtDimensions`
+- `DroughtDimensionsResponse`
+- `DroughtIndexPoint`
+- `DroughtIndexResponse`
+- `DroughtInfoResponse`
+- `DroughtUsdmPoint`
+- `DroughtUsdmResponse`
+- `DroughtVectorEventPoint`
+- `DroughtVectorResponse`
+- `EiaDatasetBriefOut`
+- `EiaDatasetDetailOut`
+- `EiaDatasetResponse`
+- `EiaDatasetsResponse`
+- `EiaSeriesDimensionsData`
+- `EiaSeriesDimensionsResponse`
+- `EiaSeriesPoint`
+- `EiaSeriesResponse`
+- `IsoLocationOut`
+- `IsoLocationResponse`
+- `IsoLocationsResponse`
+- `Meta`
+- `PpaContract`
+- `PpaContractCreate`
+- `PpaContractListResponse`
+- `PpaContractResponse`
+- `PpaContractUpdate`
+- `PpaMetric`
+- `PpaValuationListResponse`
+- `PpaValuationRecord`
+- `PpaValuationRequest`
+- `PpaValuationResponse`
+- `ScenarioAssumption`
+- `ScenarioListResponse`
+- `ScenarioMetricLatest`
+- `ScenarioMetricLatestResponse`
+- `ScenarioOutputFilter`
+- `ScenarioOutputListResponse`
+- `ScenarioOutputPoint`
+- `ScenarioOutputResponse`
+- `ScenarioResponse`
+- `ScenarioRunBulkResponse`
+- `ScenarioRunListResponse`
+- `ScenarioRunOptions`
+- `ScenarioRunResponse`
+- `UnitMappingOut`
+- `UnitsCanonical`
+- `UnitsCanonicalResponse`
+- `UnitsMappingResponse`

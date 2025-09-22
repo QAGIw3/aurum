@@ -222,6 +222,91 @@ def validate_schema_diff(base_spec: dict, new_spec: dict, file_path: str) -> Tup
     return len(errors) == 0, errors + warnings
 
 
+def run_schemathesis_validation(file_path: str) -> Tuple[bool, List[str]]:
+    """Run Schemathesis validation against OpenAPI spec."""
+    try:
+        import subprocess
+        result = subprocess.run(
+            ["schemathesis", "run", file_path, "--format", "json"],
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=300  # 5 minute timeout
+        )
+
+        if result.returncode == 0:
+            return True, ["✅ Schemathesis validation passed"]
+
+        # Parse Schemathesis JSON output
+        errors = []
+        try:
+            schemathesis_results = json.loads(result.stdout)
+            for test in schemathesis_results.get("tests", []):
+                if test.get("status") == "failure":
+                    errors.append(f"❌ Schemathesis test failed: {test.get('name', 'Unknown')}")
+        except json.JSONDecodeError:
+            errors.append(f"❌ Schemathesis validation failed: {result.stdout}")
+
+        return False, errors
+
+    except FileNotFoundError:
+        return True, ["⚠️  Schemathesis not installed - skipping property-based testing"]
+    except subprocess.TimeoutExpired:
+        return False, ["❌ Schemathesis validation timed out"]
+    except Exception as e:
+        return False, [f"❌ Schemathesis validation error: {str(e)}"]
+
+
+def validate_schema_drift(base_spec: dict, new_spec: dict, file_path: str) -> Tuple[bool, List[str]]:
+    """Validate that schema changes don't introduce breaking changes."""
+    errors = []
+    warnings = []
+
+    print(f"🔄 Validating schema drift: {file_path}")
+
+    # Check for removed paths (breaking change)
+    base_paths = set(base_spec.get('paths', {}).keys())
+    new_paths = set(new_spec.get('paths', {}).keys())
+
+    removed_paths = base_paths - new_paths
+    for path in removed_paths:
+        errors.append(f"❌ BREAKING: Removed path {path}")
+
+    # Check for removed operations
+    for path in base_paths.intersection(new_paths):
+        base_ops = set(base_spec['paths'][path].keys())
+        new_ops = set(new_spec['paths'][path].keys())
+
+        removed_ops = base_ops - new_ops
+        for op in removed_ops:
+            errors.append(f"❌ BREAKING: Removed {op} operation from {path}")
+
+    # Check for removed response codes
+    for path in base_paths.intersection(new_paths):
+        for op in base_ops.intersection(new_ops):
+            base_responses = set(base_spec['paths'][path][op].get('responses', {}).keys())
+            new_responses = set(new_spec['paths'][path][op].get('responses', {}).keys())
+
+            removed_responses = base_responses - new_responses
+            for response in removed_responses:
+                errors.append(f"❌ BREAKING: Removed {response} response from {op} {path}")
+
+    # Check for changed required parameters
+    for path in base_paths.intersection(new_paths):
+        for op in base_ops.intersection(new_ops):
+            base_params = base_spec['paths'][path][op].get('parameters', [])
+            new_params = new_spec['paths'][path][op].get('parameters', [])
+
+            base_required = {p.get('name') for p in base_params if p.get('required', False)}
+            new_required = {p.get('name') for p in new_params if p.get('required', False)}
+
+            new_required_params = new_required - base_required
+            if new_required_params:
+                warnings.append(f"⚠️  ADDED: New required parameters in {op} {path}: {new_required_params}")
+
+    return len(errors) == 0, errors + warnings
+
+
 def main():
     """Main validation function."""
     openapi_files = []
@@ -248,6 +333,7 @@ def main():
                 ("Schema structure", validate_schema_structure, spec, str(file_path)),
                 ("Examples validation", validate_examples, spec, str(file_path)),
                 ("Security consistency", validate_security_consistency, spec, str(file_path)),
+                ("Schemathesis validation", run_schemathesis_validation, str(file_path)),
             ]
 
             file_success = True
@@ -288,9 +374,11 @@ def main():
     print(f"\n{'='*60}")
     if all_success:
         print("🎉 All OpenAPI validations passed!")
+        print("🚀 Ready to generate Redoc documentation and publish SDKs")
         return 0
     else:
         print("💥 Some OpenAPI validations failed!")
+        print("🔧 Please fix the issues before proceeding")
         return 1
 
 

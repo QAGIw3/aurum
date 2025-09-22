@@ -1,0 +1,3 @@
+tenant_id,station_id,observation_date,element,station_name,latitude,longitude,elevation_m,dataset,value,raw_value,unit,observation_time,measurement_flag,quality_flag,source_flag,attributes,ingest_ts,ingest_job_id,ingest_run_id,ingest_batch_id
+TENANT_ACME,USW00094728,2024-01-02,TMAX,NEW YORK CENTRAL PARK OBS BELVEDERE TOWER,40.7789,-73.9692,39.6,GHCND,5.0,50,Fahrenheit,2024-01-02T18:00:00Z,,"",,"","2024-01-02T20:05:00Z","noaa_job","noaa_run","noaa_batch"
+TENANT_ACME,USW00094728,2024-01-02,TMIN,NEW YORK CENTRAL PARK OBS BELVEDERE TOWER,40.7789,-73.9692,39.6,GHCND,-1.0,-10,Fahrenheit,2024-01-02T06:00:00Z,,"",,"","2024-01-02T20:05:00Z","noaa_job","noaa_run","noaa_batch"

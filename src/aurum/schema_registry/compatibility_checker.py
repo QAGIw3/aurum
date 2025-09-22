@@ -525,8 +525,14 @@ class CompatibilityChecker:
         """
         if isinstance(schema, list):
             types = schema
-        elif isinstance(schema, dict) and schema.get("type") == "union":
-            types = schema.get("types", [])
+        elif isinstance(schema, dict):
+            schema_type = schema.get("type")
+            if isinstance(schema_type, list):
+                types = schema_type
+            elif schema_type == "union":
+                types = schema.get("types", [])
+            else:
+                types = [schema_type]
         else:
             types = [schema]
 

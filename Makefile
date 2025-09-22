@@ -202,7 +202,8 @@ docs-serve: ## Serve documentation locally
 
 docs-build: ## Build documentation
 	@echo "Building documentation..."
-	# Add documentation build commands here
+	@python scripts/docs/build_docs.py 2>/dev/null || python3 scripts/docs/build_docs.py
+	@echo "Run 'make docs-serve' to preview static docs"
 
 # Canary & Chaos
 canary-api: ## Run basic API canary against local Compose or cluster

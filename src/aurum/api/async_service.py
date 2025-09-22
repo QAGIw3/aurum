@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import time
+from datetime import datetime
 from typing import Any, Dict, List, Optional, Tuple
 from concurrent.futures import ThreadPoolExecutor
 
@@ -419,7 +420,11 @@ class AsyncScenarioService:
         tenant_id: Optional[str] = None,
         status: Optional[str] = None,
         limit: int = 20,
-        offset: int = 0
+        offset: int = 0,
+        name_contains: Optional[str] = None,
+        tag: Optional[str] = None,
+        created_after: Optional[datetime] = None,
+        created_before: Optional[datetime] = None,
     ) -> Tuple[List[Any], int, Any]:
         """List scenarios with filtering."""
         store = get_scenario_store()
@@ -427,7 +432,11 @@ class AsyncScenarioService:
             tenant_id=tenant_id,
             status=status,
             limit=limit,
-            offset=offset
+            offset=offset,
+            name_contains=name_contains,
+            tag=tag,
+            created_after=created_after,
+            created_before=created_before,
         )
         meta = {"request_id": get_request_id()}
         return scenarios, total, meta
@@ -451,14 +460,20 @@ class AsyncScenarioService:
         self,
         scenario_id: str,
         limit: int = 20,
-        offset: int = 0
+        offset: int = 0,
+        state: Optional[str] = None,
+        created_after: Optional[datetime] = None,
+        created_before: Optional[datetime] = None,
     ) -> Tuple[List[Any], int, Any]:
         """List runs for a scenario."""
         store = get_scenario_store()
         runs, total = await store.list_runs(
             scenario_id=scenario_id,
             limit=limit,
-            offset=offset
+            offset=offset,
+            state=state,
+            created_after=created_after,
+            created_before=created_before,
         )
         meta = {"request_id": get_request_id()}
         return runs, total, meta

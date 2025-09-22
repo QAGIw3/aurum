@@ -79,12 +79,130 @@ sources:
         description: Canonical Timescale hypertable populated by the SeaTunnel Kafka→Timescale job.
         loaded_at_field: ingest_ts
         columns:
+          - name: tenant_id
+            tests:
+              - not_null
           - name: series_id
             tests:
               - not_null
           - name: period_start
             tests:
               - not_null
+          - name: ingest_job_id
+          - name: ingest_run_id
+          - name: ingest_batch_id
+  - name: timescale_fred
+    description: Timescale hypertable storing FRED macroeconomic series observations.
+    database: "{{ 'timeseries' if target.name != 'duckdb' else (target.database if target.database else 'main') }}"
+    schema: "{{ 'public' if target.name != 'duckdb' else target.schema ~ '_public' }}"
+    freshness:
+      warn_after: {count: 6, period: hour}
+      error_after: {count: 12, period: hour}
+    tables:
+      - name: fred_series_timeseries
+        description: Canonical Timescale hypertable populated by the FRED SeaTunnel job.
+        loaded_at_field: ingest_ts
+        columns:
+          - name: tenant_id
+            tests:
+              - not_null
+          - name: series_id
+            tests:
+              - not_null
+          - name: obs_date
+            tests:
+              - not_null
+          - name: frequency
+          - name: seasonal_adjustment
+          - name: value
+          - name: raw_value
+          - name: units
+          - name: title
+          - name: notes
+          - name: metadata
+          - name: ingest_ts
+            tests:
+              - not_null
+          - name: ingest_job_id
+          - name: ingest_run_id
+          - name: ingest_batch_id
+  - name: timescale_cpi
+    description: Timescale hypertable storing CPI series observations sourced from FRED.
+    database: "{{ 'timeseries' if target.name != 'duckdb' else (target.database if target.database else 'main') }}"
+    schema: "{{ 'public' if target.name != 'duckdb' else target.schema ~ '_public' }}"
+    freshness:
+      warn_after: {count: 6, period: hour}
+      error_after: {count: 12, period: hour}
+    tables:
+      - name: cpi_series_timeseries
+        description: CPI series staging table hydrated via Kafka → Timescale streaming job.
+        loaded_at_field: ingest_ts
+        columns:
+          - name: tenant_id
+            tests:
+              - not_null
+          - name: series_id
+            tests:
+              - not_null
+          - name: period
+            tests:
+              - not_null
+          - name: area
+          - name: frequency
+          - name: seasonal_adjustment
+          - name: value
+          - name: units
+          - name: source
+          - name: metadata
+          - name: ingest_ts
+            tests:
+              - not_null
+          - name: ingest_job_id
+          - name: ingest_run_id
+          - name: ingest_batch_id
+  - name: timescale_noaa
+    description: Timescale hypertable storing NOAA GHCND observations.
+    database: "{{ 'timeseries' if target.name != 'duckdb' else (target.database if target.database else 'main') }}"
+    schema: "{{ 'public' if target.name != 'duckdb' else target.schema ~ '_public' }}"
+    freshness:
+      warn_after: {count: 12, period: hour}
+      error_after: {count: 24, period: hour}
+    tables:
+      - name: noaa_weather_timeseries
+        description: Timescale sink populated from NOAA Kafka ingestion streams.
+        loaded_at_field: ingest_ts
+        columns:
+          - name: tenant_id
+            tests:
+              - not_null
+          - name: station_id
+            tests:
+              - not_null
+          - name: observation_date
+            tests:
+              - not_null
+          - name: element
+            tests:
+              - not_null
+          - name: station_name
+          - name: latitude
+          - name: longitude
+          - name: elevation_m
+          - name: dataset
+          - name: value
+          - name: raw_value
+          - name: unit
+          - name: observation_time
+          - name: measurement_flag
+          - name: quality_flag
+          - name: source_flag
+          - name: attributes
+          - name: ingest_ts
+            tests:
+              - not_null
+          - name: ingest_job_id
+          - name: ingest_run_id
+          - name: ingest_batch_id
   - name: timescale_ops
     description: Operational metrics persisted to Timescale for platform observability.
     database: "{{ 'timeseries' if target.name != 'duckdb' else (target.database if target.database else 'main') }}"
@@ -177,6 +295,9 @@ sources:
         description: External series catalog from upstream providers (FRED, EIA, etc.).
         loaded_at_field: _ingest_ts
         columns:
+          - name: tenant_id
+            tests:
+              - not_null
           - name: provider
             tests:
               - not_null
@@ -199,11 +320,17 @@ sources:
           - name: ingest_ts
             tests:
               - not_null
+          - name: ingest_job_id
+          - name: ingest_run_id
+          - name: ingest_batch_id
           - name: version
       - name: timeseries_observation
         description: External timeseries observations from upstream providers.
         loaded_at_field: _ingest_ts
         columns:
+          - name: tenant_id
+            tests:
+              - not_null
           - name: provider
             tests:
               - not_null
@@ -224,6 +351,10 @@ sources:
           - name: frequency_code
           - name: status
           - name: quality_flag
+          - name: source_event_id
           - name: ingest_ts
             tests:
               - not_null
+          - name: ingest_job_id
+          - name: ingest_run_id
+          - name: ingest_batch_id

@@ -84,6 +84,11 @@ from .models import (
     UnitsCanonical,
     UnitMappingOut,
     UnitsMappingResponse,
+    SeriesCurveMappingCreate,
+    SeriesCurveMappingUpdate,
+    SeriesCurveMappingOut,
+    SeriesCurveMappingListResponse,
+    SeriesCurveMappingSearchResponse,
     CalendarsResponse,
     CalendarOut,
     CalendarBlocksResponse,
@@ -133,6 +138,23 @@ from .scenario_models import (
     ScenarioRunStatus,
     ScenarioStatus,
 )
+try:  # pragma: no cover - optional dependency
+    from prometheus_client import Counter as _PromCounter
+except Exception:  # pragma: no cover - metrics optional
+    _PromCounter = None  # type: ignore[assignment]
+
+if _PromCounter:
+    SCENARIO_LIST_REQUESTS = _PromCounter(
+        "aurum_api_scenario_list_requests_total",
+        "Scenario list requests",
+    )
+    SCENARIO_RUN_LIST_REQUESTS = _PromCounter(
+        "aurum_api_scenario_run_list_requests_total",
+        "Scenario run list requests",
+    )
+else:  # pragma: no cover - metrics optional
+    SCENARIO_LIST_REQUESTS = None  # type: ignore[assignment]
+    SCENARIO_RUN_LIST_REQUESTS = None  # type: ignore[assignment]
 import aurum.observability.metrics as observability_metrics
 from aurum.observability.metrics import (
     CONTENT_TYPE_LATEST,
@@ -761,18 +783,9 @@ def _check_schema_registry_ready() -> dict:
 # Register auth middleware after health/metrics route definitions
 
 
-CURVE_CURSOR_FIELDS = ["curve_key", "tenor_label", "contract_month", "asof_date", "price_type"]
-CURVE_DIFF_CURSOR_FIELDS = ["curve_key", "tenor_label", "contract_month"]
-SCENARIO_OUTPUT_CURSOR_FIELDS = [
-    "scenario_id",
-    "curve_key",
-    "tenor_label",
-    "contract_month",
-    "metric",
-    "run_id",
-]
-SCENARIO_METRIC_CURSOR_FIELDS = ["metric", "tenor_label", "curve_key"]
-
+# Frozen cursor field definitions - these are now defined in pagination.py
+# Use FROZEN_CURSOR_SCHEMAS instead of these legacy field lists
+# These constants are kept for backward compatibility but should be deprecated
 
 METADATA_CACHE_TTL = 300
 SCENARIO_OUTPUT_CACHE_TTL = 60
@@ -790,17 +803,26 @@ EIA_SERIES_MAX_LIMIT = 1000
 EIA_SERIES_CACHE_TTL = 120
 EIA_SERIES_DIMENSIONS_CACHE_TTL = 300
 
+# Import the hardened cursor functions
+from .http.pagination import (
+    encode_cursor,
+    decode_cursor,
+    extract_cursor_values,
+    validate_cursor_schema,
+    FROZEN_CURSOR_SCHEMAS,
+    CursorPayload,
+    SortDirection,
+)
+
+# Legacy functions for backward compatibility - these will be deprecated
 def _encode_cursor(payload: dict) -> str:
-    raw = json.dumps(payload, separators=(",", ":")).encode("utf-8")
-    return base64.urlsafe_b64encode(raw).decode("ascii")
+    """Legacy cursor encoding function - deprecated."""
+    return encode_cursor(payload)
 
 
-def _decode_cursor(token: str) -> dict:
-    try:
-        raw = base64.urlsafe_b64decode(token.encode("ascii"))
-        return json.loads(raw.decode("utf-8"))
-    except Exception as exc:  # pragma: no cover
-        raise HTTPException(status_code=400, detail="Invalid cursor") from exc
+def _decode_cursor(token: str) -> CursorPayload:
+    """Legacy cursor decoding function - returns CursorPayload."""
+    return decode_cursor(token)
 
 
 def _resolve_tenant(request: Request, explicit: Optional[str]) -> str:
@@ -844,6 +866,7 @@ def _resolve_tenant_optional(request: Request, explicit: Optional[str]) -> Optio
 
 
 def _extract_cursor_payload(row: Dict[str, Any], fields: list[str]) -> Dict[str, Any]:
+    """Legacy function - use the hardened cursor system instead."""
     payload: Dict[str, Any] = {}
     for field in fields:
         value = row.get(field)
@@ -858,13 +881,199 @@ def _extract_cursor_payload(row: Dict[str, Any], fields: list[str]) -> Dict[str,
     return payload
 
 
+def create_cursor_from_row(row: Dict[str, Any], schema_name: str, direction: SortDirection = SortDirection.ASC) -> CursorPayload:
+    """Create a cursor payload from a database row using the hardened cursor system.
+
+    Args:
+        row: Database row data
+        schema_name: Name of the cursor schema to use
+        direction: Sort direction
+
+    Returns:
+        CursorPayload object
+    """
+    if schema_name not in FROZEN_CURSOR_SCHEMAS:
+        raise ValueError(f"Unknown cursor schema: {schema_name}")
+
+    schema = FROZEN_CURSOR_SCHEMAS[schema_name]
+    values = {}
+
+    for sort_key in schema.sort_keys:
+        value = row.get(sort_key.name)
+        if isinstance(value, date):
+            values[sort_key.name] = value.isoformat()
+        elif isinstance(value, datetime):
+            values[sort_key.name] = value.isoformat()
+        elif value is not None:
+            values[sort_key.name] = value
+        else:
+            values[sort_key.name] = None
+
+    return CursorPayload(
+        schema_name=schema_name,
+        values=values,
+        direction=direction
+    )
+
+
+def extract_cursor_values_for_query(cursor: CursorPayload, schema_name: str) -> Dict[str, Any]:
+    """Extract cursor values for database query construction.
+
+    Args:
+        cursor: CursorPayload object
+        schema_name: Schema name to validate against
+
+    Returns:
+        Dictionary of values for query construction
+    """
+    return extract_cursor_values(cursor, schema_name)
+
+
 def _normalise_cursor_input(payload: dict) -> tuple[Optional[int], Optional[dict]]:
+    """Legacy function - use extract_cursor_values_for_query instead."""
     if "offset" in payload:
         try:
             return int(payload.get("offset", 0)), None
         except (TypeError, ValueError) as exc:
             raise HTTPException(status_code=400, detail="Invalid offset cursor") from exc
     return 0, payload
+
+
+def create_cursor_from_row(row: Dict[str, Any], schema_name: str, direction: SortDirection = SortDirection.ASC) -> CursorPayload:
+    """Create a cursor payload from a database row using the hardened cursor system.
+
+    Args:
+        row: Database row data
+        schema_name: Name of the cursor schema to use
+        direction: Sort direction
+
+    Returns:
+        CursorPayload object
+    """
+    if schema_name not in FROZEN_CURSOR_SCHEMAS:
+        raise ValueError(f"Unknown cursor schema: {schema_name}")
+
+    schema = FROZEN_CURSOR_SCHEMAS[schema_name]
+    values = {}
+
+    for sort_key in schema.sort_keys:
+        value = row.get(sort_key.name)
+        if isinstance(value, date):
+            values[sort_key.name] = value.isoformat()
+        elif isinstance(value, datetime):
+            values[sort_key.name] = value.isoformat()
+        elif value is not None:
+            values[sort_key.name] = value
+        else:
+            values[sort_key.name] = None
+
+    return CursorPayload(
+        schema_name=schema_name,
+        values=values,
+        direction=direction
+    )
+
+
+def extract_cursor_values_for_query(cursor: CursorPayload, schema_name: str) -> Dict[str, Any]:
+    """Extract cursor values for database query construction.
+
+    Args:
+        cursor: CursorPayload object
+        schema_name: Schema name to validate against
+
+    Returns:
+        Dictionary of values for query construction
+    """
+    return extract_cursor_values(cursor, schema_name)
+
+
+def build_stable_cursor_condition(
+    cursor: CursorPayload,
+    schema_name: str,
+    comparison: str = ">",
+    include_equals: bool = False
+) -> tuple[str, Dict[str, Any]]:
+    """Build a stable cursor condition for database queries that handles concurrent inserts.
+
+    Args:
+        cursor: CursorPayload object
+        schema_name: Schema name to validate against
+        comparison: Comparison operator ("<" or ">")
+        include_equals: Whether to include equality condition for tie-breaking
+
+    Returns:
+        Tuple of (SQL condition, parameters dict)
+    """
+    validate_cursor_schema(cursor, schema_name)
+    schema = FROZEN_CURSOR_SCHEMAS[schema_name]
+
+    if not cursor.values:
+        return "1=1", {}  # No cursor condition
+
+    conditions = []
+    params = {}
+
+    for i, sort_key in enumerate(schema.sort_keys):
+        value = cursor.values[sort_key.name]
+        param_name = f"cursor_{sort_key.name}_{i}"
+
+        if value is None:
+            if comparison == ">":
+                condition = f"{sort_key.name} IS NOT NULL"
+            else:
+                condition = f"{sort_key.name} IS NULL"
+        else:
+            operator = ">=" if include_equals else ">"
+            condition = f"{sort_key.name} {operator} :{param_name}"
+            params[param_name] = value
+
+        conditions.append(condition)
+
+    sql_condition = f"({') AND ('.join(conditions)})"
+    return sql_condition, params
+
+
+def ensure_cursor_stability(
+    rows: List[Dict[str, Any]],
+    schema_name: str,
+    max_items: int
+) -> List[Dict[str, Any]]:
+    """Ensure cursor pagination stability by handling ties and duplicates.
+
+    Args:
+        rows: Database query results
+        schema_name: Cursor schema name
+        max_items: Maximum number of items to return
+
+    Returns:
+        List of stable results with proper tie handling
+    """
+    if not rows:
+        return rows
+
+    schema = FROZEN_CURSOR_SCHEMAS[schema_name]
+    if not schema.sort_keys:
+        return rows[:max_items]
+
+    # Group by sort key values to handle ties
+    grouped_rows = {}
+    for row in rows:
+        key_values = tuple(row.get(key.name) for key in schema.sort_keys)
+        if key_values not in grouped_rows:
+            grouped_rows[key_values] = []
+        grouped_rows[key_values].append(row)
+
+    # Sort groups by sort key values
+    sorted_groups = sorted(grouped_rows.items())
+
+    # Flatten and limit results
+    stable_rows = []
+    for _, group_rows in sorted_groups:
+        stable_rows.extend(group_rows)
+        if len(stable_rows) >= max_items:
+            break
+
+    return stable_rows[:max_items]
 
 
 def _scenario_outputs_enabled() -> bool:
@@ -2503,11 +2712,6 @@ def list_strips(
     cursor: Optional[str] = Query(None, description="Opaque cursor for stable pagination"),
     since_cursor: Optional[str] = Query(None, description="Alias for 'cursor' to resume iteration from a previous next_cursor value"),
     offset: Optional[int] = Query(None, ge=0, description="DEPRECATED: Use cursor for pagination instead"),
-    cursor: Optional[str] = Query(None),
-    since_cursor: Optional[str] = Query(
-        None,
-        description="Alias for 'cursor' to resume iteration from a previously returned next_cursor",
-    ),
     *,
     response: Response,
 ) -> CurveResponse:
@@ -2681,23 +2885,37 @@ def list_scenarios(
     cursor: Optional[str] = Query(None, description="Opaque cursor for stable pagination"),
     since_cursor: Optional[str] = Query(None, description="Alias for 'cursor' to resume iteration from a previous next_cursor value"),
     offset: Optional[int] = Query(None, ge=0, description="DEPRECATED: Use cursor for pagination instead"),
-    cursor: Optional[str] = Query(None),
-    since_cursor: Optional[str] = Query(None),
+    name: Optional[str] = Query(None, description="Filter by scenario name (case-insensitive substring match)"),
+    tag: Optional[str] = Query(None, description="Filter by tag"),
+    created_after: Optional[datetime] = Query(None, description="Return scenarios created at or after this timestamp (ISO 8601)"),
+    created_before: Optional[datetime] = Query(None, description="Return scenarios created at or before this timestamp (ISO 8601)"),
 ) -> ScenarioListResponse:
+    if SCENARIO_LIST_REQUESTS:
+        try:
+            SCENARIO_LIST_REQUESTS.inc()
+        except Exception:
+            pass
     tenant_id = _resolve_tenant_optional(request, None)
     request_id = _current_request_id()
     start = time.perf_counter()
-    effective_offset = offset
+    effective_offset = offset or 0
     cursor_token = cursor or since_cursor
     if cursor_token:
         payload = _decode_cursor(cursor_token)
         effective_offset, _cursor_after = _normalise_cursor_input(payload)
+
+    if created_after and created_before and created_after > created_before:
+        raise HTTPException(status_code=400, detail="created_after must be before created_before")
 
     records = ScenarioStore.list_scenarios(
         tenant_id=tenant_id,
         status=status,
         limit=limit,
         offset=effective_offset,
+        name_contains=name,
+        tag=tag,
+        created_after=created_after,
+        created_before=created_before,
     )
     duration_ms = int((time.perf_counter() - start) * 1000.0)
     next_cursor = None
@@ -2760,17 +2978,25 @@ def list_scenario_runs(
     cursor: Optional[str] = Query(None, description="Opaque cursor for stable pagination"),
     since_cursor: Optional[str] = Query(None, description="Alias for 'cursor' to resume iteration from a previous next_cursor value"),
     offset: Optional[int] = Query(None, ge=0, description="DEPRECATED: Use cursor for pagination instead"),
-    cursor: Optional[str] = Query(None),
-    since_cursor: Optional[str] = Query(None),
+    created_after: Optional[datetime] = Query(None, description="Return runs queued at or after this timestamp (ISO 8601)"),
+    created_before: Optional[datetime] = Query(None, description="Return runs queued at or before this timestamp (ISO 8601)"),
 ) -> ScenarioRunListResponse:
+    if SCENARIO_RUN_LIST_REQUESTS:
+        try:
+            SCENARIO_RUN_LIST_REQUESTS.inc()
+        except Exception:
+            pass
     tenant_id = _resolve_tenant_optional(request, None)
     request_id = _current_request_id()
     start = time.perf_counter()
-    effective_offset = offset
+    effective_offset = offset or 0
     cursor_token = cursor or since_cursor
     if cursor_token:
         payload = _decode_cursor(cursor_token)
         effective_offset, _cursor_after = _normalise_cursor_input(payload)
+
+    if created_after and created_before and created_after > created_before:
+        raise HTTPException(status_code=400, detail="created_after must be before created_before")
 
     runs = ScenarioStore.list_runs(
         tenant_id=tenant_id,
@@ -2778,6 +3004,8 @@ def list_scenario_runs(
         state=state,
         limit=limit,
         offset=effective_offset,
+        created_after=created_after,
+        created_before=created_before,
     )
     duration_ms = int((time.perf_counter() - start) * 1000.0)
     next_cursor = None
@@ -3029,6 +3257,167 @@ def invalidate_metadata_cache_admin(
     return _respond_with_etag(model, request, response)
 
 
+# === Series-Curve Mapping Admin Endpoints ===
+
+@router.post(
+    "/v1/admin/mappings",
+    response_model=SeriesCurveMappingOut,
+    tags=["Admin", "Mappings"],
+    summary="Create a new series-curve mapping",
+    description="Create a new mapping between an external series and an internal curve key. Requires admin privileges.",
+)
+async def create_series_curve_mapping(
+    mapping: SeriesCurveMappingCreate,
+    request: Request,
+    response: Response,
+    principal: Dict[str, Any] = Depends(_get_principal),
+) -> SeriesCurveMappingOut:
+    """Create a new series-curve mapping with audit logging."""
+    _require_admin(principal)
+    request_id = _current_request_id()
+
+    await log_structured(
+        "info",
+        "series_curve_mapping_create_attempt",
+        request_id=request_id,
+        user_id=principal.get("sub"),
+        external_provider=mapping.external_provider,
+        external_series_id=mapping.external_series_id,
+        curve_key=mapping.curve_key
+    )
+
+    # Placeholder implementation - will be implemented with database layer
+    raise NotImplementedError("Series-curve mapping creation not yet implemented")
+
+
+@router.get(
+    "/v1/admin/mappings",
+    response_model=SeriesCurveMappingListResponse,
+    tags=["Admin", "Mappings"],
+    summary="List series-curve mappings",
+    description="List series-curve mappings with optional filtering.",
+)
+async def list_series_curve_mappings(
+    request: Request,
+    response: Response,
+    external_provider: Optional[str] = Query(None, description="Filter by external provider"),
+    active_only: bool = Query(True, description="Show only active mappings"),
+    limit: int = Query(100, ge=1, le=1000),
+    cursor: Optional[str] = Query(None, description="Opaque cursor for pagination"),
+    principal: Dict[str, Any] = Depends(_get_principal),
+) -> SeriesCurveMappingListResponse:
+    """List series-curve mappings."""
+    _require_admin(principal)
+    request_id = _current_request_id()
+
+    await log_structured(
+        "info",
+        "series_curve_mapping_list_access",
+        request_id=request_id,
+        user_id=principal.get("sub"),
+        external_provider=external_provider,
+        active_only=active_only
+    )
+
+    # Placeholder implementation - will be implemented with database layer
+    raise NotImplementedError("Series-curve mapping listing not yet implemented")
+
+
+@router.put(
+    "/v1/admin/mappings/{provider}/{series_id}",
+    response_model=SeriesCurveMappingOut,
+    tags=["Admin", "Mappings"],
+    summary="Update a series-curve mapping",
+    description="Update an existing series-curve mapping.",
+)
+async def update_series_curve_mapping(
+    provider: str,
+    series_id: str,
+    mapping_update: SeriesCurveMappingUpdate,
+    request: Request,
+    response: Response,
+    principal: Dict[str, Any] = Depends(_get_principal),
+) -> SeriesCurveMappingOut:
+    """Update an existing series-curve mapping."""
+    _require_admin(principal)
+    request_id = _current_request_id()
+
+    await log_structured(
+        "info",
+        "series_curve_mapping_update_attempt",
+        request_id=request_id,
+        user_id=principal.get("sub"),
+        external_provider=provider,
+        external_series_id=series_id
+    )
+
+    # Placeholder implementation - will be implemented with database layer
+    raise NotImplementedError("Series-curve mapping update not yet implemented")
+
+
+@router.delete(
+    "/v1/admin/mappings/{provider}/{series_id}",
+    response_model=SeriesCurveMappingOut,
+    tags=["Admin", "Mappings"],
+    summary="Deactivate a series-curve mapping",
+    description="Deactivate an existing series-curve mapping.",
+)
+async def deactivate_series_curve_mapping(
+    provider: str,
+    series_id: str,
+    request: Request,
+    response: Response,
+    principal: Dict[str, Any] = Depends(_get_principal),
+) -> SeriesCurveMappingOut:
+    """Deactivate a series-curve mapping."""
+    _require_admin(principal)
+    request_id = _current_request_id()
+
+    await log_structured(
+        "info",
+        "series_curve_mapping_deactivate_attempt",
+        request_id=request_id,
+        user_id=principal.get("sub"),
+        external_provider=provider,
+        external_series_id=series_id
+    )
+
+    # Placeholder implementation - will be implemented with database layer
+    raise NotImplementedError("Series-curve mapping deactivation not yet implemented")
+
+
+@router.get(
+    "/v1/admin/mappings/search",
+    response_model=SeriesCurveMappingSearchResponse,
+    tags=["Admin", "Mappings"],
+    summary="Find potential curve mappings",
+    description="Find potential curve mappings for unmapped external series.",
+)
+async def find_potential_mappings(
+    request: Request,
+    response: Response,
+    external_provider: str = Query(..., description="External provider name"),
+    external_series_id: str = Query(..., description="External series identifier"),
+    limit: int = Query(10, ge=1, le=100, description="Maximum number of suggestions"),
+    principal: Dict[str, Any] = Depends(_get_principal),
+) -> SeriesCurveMappingSearchResponse:
+    """Find potential curve mappings for unmapped series."""
+    _require_admin(principal)
+    request_id = _current_request_id()
+
+    await log_structured(
+        "info",
+        "series_curve_mapping_search",
+        request_id=request_id,
+        user_id=principal.get("sub"),
+        external_provider=external_provider,
+        external_series_id=external_series_id
+    )
+
+    # Placeholder implementation - will be implemented with database layer
+    raise NotImplementedError("Potential mapping search not yet implemented")
+
+
 @router.get("/v1/ppa/contracts", response_model=PpaContractListResponse)
 def list_ppa_contracts(
     request: Request,
@@ -3037,8 +3426,6 @@ def list_ppa_contracts(
     cursor: Optional[str] = Query(None, description="Opaque cursor for stable pagination"),
     since_cursor: Optional[str] = Query(None, description="Alias for 'cursor' to resume iteration from a previous next_cursor value"),
     offset: Optional[int] = Query(None, ge=0, description="DEPRECATED: Use cursor for pagination instead"),
-    cursor: Optional[str] = Query(None),
-    since_cursor: Optional[str] = Query(None),
 ) -> PpaContractListResponse:
     request_id = _current_request_id()
     tenant_id = _resolve_tenant_optional(request, None)
@@ -3164,8 +3551,6 @@ def list_ppa_contract_valuations(
     cursor: Optional[str] = Query(None, description="Opaque cursor for stable pagination"),
     since_cursor: Optional[str] = Query(None, description="Alias for 'cursor' to resume iteration from a previous next_cursor value"),
     offset: Optional[int] = Query(None, ge=0, description="DEPRECATED: Use cursor for pagination instead"),
-    cursor: Optional[str] = Query(None),
-    since_cursor: Optional[str] = Query(None),
     prev_cursor: Optional[str] = Query(None),
 ) -> PpaValuationListResponse:
     request_id = _current_request_id()

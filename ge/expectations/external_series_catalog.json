@@ -5,6 +5,43 @@
   },
   "expectations": [
     {
+      "expectation_type": "expect_table_columns_to_match_set",
+      "kwargs": {
+        "column_set": [
+          "tenant_id",
+          "provider",
+          "series_id",
+          "dataset_code",
+          "title",
+          "description",
+          "unit_code",
+          "frequency_code",
+          "geo_id",
+          "status",
+          "category",
+          "source_url",
+          "notes",
+          "start_ts",
+          "end_ts",
+          "last_observation_ts",
+          "asof_date",
+          "created_at",
+          "updated_at",
+          "ingest_ts",
+          "ingest_job_id",
+          "ingest_run_id",
+          "ingest_batch_id",
+          "tags",
+          "metadata",
+          "version"
+        ]
+      }
+    },
+    {
+      "expectation_type": "expect_column_values_to_not_be_null",
+      "kwargs": {"column": "tenant_id"}
+    },
+    {
       "expectation_type": "expect_column_values_to_not_be_null",
       "kwargs": {"column": "provider"}
     },

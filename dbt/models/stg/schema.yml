@@ -148,9 +148,17 @@ models:
     tests:
       - unique_combination:
           combination_of_columns:
+            - tenant_id
             - series_id
             - period
     columns:
+      - name: tenant_id
+        tests:
+          - not_null
+          - relationships:
+              to: source('timescale_eia', 'eia_series_timeseries')
+              field: tenant_id
+              to_field: tenant_id
       - name: series_id
         tests:
           - not_null
@@ -169,6 +177,100 @@ models:
       - name: ingest_ts
         tests:
           - not_null
+      - name: ingest_job_id
+      - name: ingest_run_id
+      - name: ingest_batch_id
+
+  - name: stg_fred_series
+    description: Staging model exposing FRED series observations with tenant context.
+    tests:
+      - unique_combination:
+          combination_of_columns:
+            - tenant_id
+            - series_id
+            - obs_date
+    columns:
+      - name: tenant_id
+        tests:
+          - not_null
+          - relationships:
+              to: source('timescale_fred', 'fred_series_timeseries')
+              field: tenant_id
+              to_field: tenant_id
+      - name: series_id
+        tests:
+          - not_null
+      - name: obs_date
+        tests:
+          - not_null
+      - name: ingest_ts
+        tests:
+          - not_null
+      - name: ingest_job_id
+      - name: ingest_run_id
+      - name: ingest_batch_id
+
+  - name: stg_cpi_series
+    description: Staging model exposing CPI series observations with tenant context.
+    tests:
+      - unique_combination:
+          combination_of_columns:
+            - tenant_id
+            - series_id
+            - period
+    columns:
+      - name: tenant_id
+        tests:
+          - not_null
+          - relationships:
+              to: source('timescale_cpi', 'cpi_series_timeseries')
+              field: tenant_id
+              to_field: tenant_id
+      - name: series_id
+        tests:
+          - not_null
+      - name: period
+        tests:
+          - not_null
+      - name: ingest_ts
+        tests:
+          - not_null
+      - name: ingest_job_id
+      - name: ingest_run_id
+      - name: ingest_batch_id
+
+  - name: stg_noaa_weather
+    description: Staging model for NOAA weather observations streamed into Timescale.
+    tests:
+      - unique_combination:
+          combination_of_columns:
+            - tenant_id
+            - station_id
+            - observation_date
+            - element
+    columns:
+      - name: tenant_id
+        tests:
+          - not_null
+          - relationships:
+              to: source('timescale_noaa', 'noaa_weather_timeseries')
+              field: tenant_id
+              to_field: tenant_id
+      - name: station_id
+        tests:
+          - not_null
+      - name: observation_date
+        tests:
+          - not_null
+      - name: element
+        tests:
+          - not_null
+      - name: ingest_ts
+        tests:
+          - not_null
+      - name: ingest_job_id
+      - name: ingest_run_id
+      - name: ingest_batch_id
 
   - name: stg_drought_index
     description: Staging view exposing raw drought index records with JSON metadata.
@@ -255,10 +357,18 @@ models:
     tests:
       - unique_combination:
           combination_of_columns:
+            - tenant_id
             - provider
             - series_id
             - version
     columns:
+      - name: tenant_id
+        tests:
+          - not_null
+          - relationships:
+              to: source('iceberg_external', 'series_catalog')
+              field: tenant_id
+              to_field: tenant_id
       - name: provider
         tests:
           - not_null
@@ -271,6 +381,9 @@ models:
       - name: ingest_ts
         tests:
           - not_null
+      - name: ingest_job_id
+      - name: ingest_run_id
+      - name: ingest_batch_id
       - name: version
 
   - name: stg_external__obs
@@ -278,11 +391,19 @@ models:
     tests:
       - unique_combination:
           combination_of_columns:
+            - tenant_id
             - provider
             - series_id
             - ts
             - asof_date
     columns:
+      - name: tenant_id
+        tests:
+          - not_null
+          - relationships:
+              to: source('iceberg_external', 'timeseries_observation')
+              field: tenant_id
+              to_field: tenant_id
       - name: provider
         tests:
           - not_null
@@ -298,3 +419,6 @@ models:
       - name: ingest_ts
         tests:
           - not_null
+      - name: ingest_job_id
+      - name: ingest_run_id
+      - name: ingest_batch_id

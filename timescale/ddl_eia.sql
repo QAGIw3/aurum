@@ -2,6 +2,7 @@ CREATE EXTENSION IF NOT EXISTS timescaledb;
 
 -- EIA series observations loaded from Kafka via SeaTunnel
 CREATE TABLE IF NOT EXISTS public.eia_series_timeseries (
+    tenant_id TEXT NOT NULL,
     series_id TEXT NOT NULL,
     period TEXT NOT NULL,
     period_start TIMESTAMPTZ NOT NULL,
@@ -22,7 +23,10 @@ CREATE TABLE IF NOT EXISTS public.eia_series_timeseries (
     dataset TEXT,
     metadata JSONB,
     ingest_ts TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    PRIMARY KEY (series_id, period)
+    ingest_job_id TEXT,
+    ingest_run_id TEXT,
+    ingest_batch_id TEXT,
+    PRIMARY KEY (tenant_id, series_id, period)
 );
 
 SELECT
@@ -36,18 +40,18 @@ SELECT
 SELECT set_chunk_time_interval('public.eia_series_timeseries', INTERVAL '30 days');
 
 CREATE INDEX IF NOT EXISTS idx_eia_series_period_start
-    ON public.eia_series_timeseries (series_id, period_start DESC);
+    ON public.eia_series_timeseries (tenant_id, series_id, period_start DESC);
 
 CREATE INDEX IF NOT EXISTS idx_eia_series_dataset_period
-    ON public.eia_series_timeseries (dataset, period_start DESC);
+    ON public.eia_series_timeseries (tenant_id, dataset, period_start DESC);
 
 CREATE INDEX IF NOT EXISTS idx_eia_series_area_period
-    ON public.eia_series_timeseries (area, period_start DESC);
+    ON public.eia_series_timeseries (tenant_id, area, period_start DESC);
 
 ALTER TABLE IF EXISTS public.eia_series_timeseries
     SET (
         timescaledb.compress = true,
-        timescaledb.compress_segmentby = 'series_id',
+        timescaledb.compress_segmentby = 'tenant_id,series_id',
         timescaledb.compress_orderby = 'period_start DESC'
     );
 
@@ -66,6 +70,7 @@ BEGIN
             WITH (timescaledb.continuous) AS
             SELECT
                 time_bucket('1 day', period_start) AS bucket_start,
+                tenant_id,
                 series_id,
                 dataset,
                 area,
@@ -76,14 +81,14 @@ BEGIN
                 last(value, period_start) AS value_last,
                 count(*) AS sample_count
             FROM public.eia_series_timeseries
-            GROUP BY 1, 2, 3, 4, 5
+            GROUP BY 1, 2, 3, 4, 5, 6
             WITH NO DATA;
         $DDL$;
     END IF;
 END$$;
 
 CREATE INDEX IF NOT EXISTS idx_eia_series_daily_key
-    ON public.eia_series_daily (series_id, bucket_start DESC);
+    ON public.eia_series_daily (tenant_id, series_id, bucket_start DESC);
 SELECT add_continuous_aggregate_policy(
     'public.eia_series_daily',
     start_offset => INTERVAL '400 days',
@@ -104,6 +109,7 @@ BEGIN
             WITH (timescaledb.continuous) AS
             SELECT
                 time_bucket('1 month', period_start) AS bucket_start,
+                tenant_id,
                 series_id,
                 dataset,
                 area,
@@ -112,14 +118,14 @@ BEGIN
                 last(value, period_start) AS value_last,
                 count(*) AS sample_count
             FROM public.eia_series_timeseries
-            GROUP BY 1, 2, 3, 4, 5
+            GROUP BY 1, 2, 3, 4, 5, 6
             WITH NO DATA;
         $DDL$;
     END IF;
 END$$;
 
 CREATE INDEX IF NOT EXISTS idx_eia_series_monthly_key
-    ON public.eia_series_monthly (series_id, bucket_start DESC);
+    ON public.eia_series_monthly (tenant_id, series_id, bucket_start DESC);
 SELECT add_continuous_aggregate_policy(
     'public.eia_series_monthly',
     start_offset => INTERVAL '1825 days',

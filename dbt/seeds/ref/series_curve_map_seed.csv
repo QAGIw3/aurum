@@ -1,0 +1,48 @@
+external_provider,external_series_id,curve_key,mapping_confidence,mapping_method,mapping_notes,is_active
+FRED,DGS10,US_TREASURY_10Y,1.0,manual,"Direct mapping from FRED 10-Year Treasury Rate",true
+FRED,DGS5,US_TREASURY_5Y,1.0,manual,"Direct mapping from FRED 5-Year Treasury Rate",true
+FRED,DGS2,US_TREASURY_2Y,1.0,manual,"Direct mapping from FRED 2-Year Treasury Rate",true
+FRED,DGS1,US_TREASURY_1Y,1.0,manual,"Direct mapping from FRED 1-Year Treasury Rate",true
+FRED,DEXUSEU,EUR_USD_SPOT,0.95,manual,"EUR/USD exchange rate mapping with high confidence",true
+FRED,DEXJPUS,JPY_USD_SPOT,0.95,manual,"JPY/USD exchange rate mapping with high confidence",true
+FRED,DEXUSUK,GBP_USD_SPOT,0.95,manual,"GBP/USD exchange rate mapping with high confidence",true
+EIA,PET.W_EPC0_SAX_Y05LA_DPG.W,PETROLEUM_WTI_SPOT,0.9,manual,"WTI crude oil spot price mapping",true
+EIA,PET.W_EPC0_SAX_Y44MB_DPG.W,PETROLEUM_BRENT_SPOT,0.9,manual,"Brent crude oil spot price mapping",true
+EIA,NG.NW2_EPG0_SAX_Y05LA_MMCF.M,NATURAL_GAS_HENRY_HUB,0.85,manual,"Henry Hub natural gas price mapping",true
+NOAA,CDO.TAVG,CLIMATE_TEMP_GLOBAL,0.8,automated,"Global temperature anomaly mapping",true
+NOAA,CDO.TMAX,CLIMATE_TEMP_MAX_GLOBAL,0.8,automated,"Global maximum temperature mapping",true
+FRED,UNRATE,US_UNEMPLOYMENT_RATE,1.0,manual,"US unemployment rate mapping",true
+FRED,CPIAUCSL,US_CPI_ALL_ITEMS,1.0,manual,"US Consumer Price Index mapping",true
+FRED,DEXCAUS,CAD_USD_SPOT,0.95,manual,"CAD/USD exchange rate mapping",true
+FRED,DEXCHUS,CNY_USD_SPOT,0.9,manual,"CNY/USD exchange rate mapping",true
+FRED,DEXINUS,INR_USD_SPOT,0.9,manual,"INR/USD exchange rate mapping",true
+FRED,DEXKOUS,KRW_USD_SPOT,0.9,manual,"KRW/USD exchange rate mapping",true
+FRED,DEXMXUS,MXN_USD_SPOT,0.9,manual,"MXN/USD exchange rate mapping",true
+FRED,DEXBZUS,BRL_USD_SPOT,0.9,manual,"BRL/USD exchange rate mapping",true
+FRED,DGS30,US_TREASURY_30Y,1.0,manual,"Direct mapping from FRED 30-Year Treasury Rate",true
+FRED,DGS3MO,US_TREASURY_3M,1.0,manual,"Direct mapping from FRED 3-Month Treasury Rate",true
+FRED,DGS6MO,US_TREASURY_6M,1.0,manual,"Direct mapping from FRED 6-Month Treasury Rate",true
+FRED,BAA10Y,CORPORATE_BAA_10Y,0.95,manual,"Corporate BAA bond yield mapping",true
+FRED,AAA10Y,CORPORATE_AAA_10Y,0.95,manual,"Corporate AAA bond yield mapping",true
+FRED,SP500,S_P_500_INDEX,1.0,manual,"S&P 500 index mapping",true
+FRED,DJIA,DOW_JONES_INDEX,1.0,manual,"Dow Jones Industrial Average mapping",true
+FRED,NASDAQCOM,NASDAQ_COMPOSITE_INDEX,1.0,manual,"NASDAQ Composite index mapping",true
+FRED,VIX,VIX_INDEX,1.0,manual,"VIX volatility index mapping",true
+FRED,DFF,FEDERAL_FUNDS_RATE,1.0,manual,"Federal Funds Rate mapping",true
+FRED,DFEDTAR,FEDERAL_FUNDS_TARGET,1.0,manual,"Federal Funds Target Rate mapping",true
+FRED,MORTGAGE30US,US_MORTGAGE_30Y,1.0,manual,"30-Year mortgage rate mapping",true
+FRED,MORTGAGE15US,US_MORTGAGE_15Y,1.0,manual,"15-Year mortgage rate mapping",true
+FRED,MORTGAGE5US,US_MORTGAGE_5Y,1.0,manual,"5-Year mortgage rate mapping",true
+FRED,RECPROUSM156N,US_HOUSE_PRICE_INDEX,0.9,manual,"US House Price Index mapping",true
+FRED,DEXSZUS,CHF_USD_SPOT,0.95,manual,"CHF/USD exchange rate mapping",true
+FRED,DEXSDUS,SEK_USD_SPOT,0.95,manual,"SEK/USD exchange rate mapping",true
+FRED,DEXNOUS,NOK_USD_SPOT,0.95,manual,"NOK/USD exchange rate mapping",true
+FRED,DEXDNUS,DKK_USD_SPOT,0.95,manual,"DKK/USD exchange rate mapping",true
+FRED,DEXAUUS,AUD_USD_SPOT,0.95,manual,"AUD/USD exchange rate mapping",true
+FRED,DEXNZUS,NZD_USD_SPOT,0.95,manual,"NZD/USD exchange rate mapping",true
+FRED,DEXSFUS,ZAR_USD_SPOT,0.9,manual,"ZAR/USD exchange rate mapping",true
+FRED,DEXPLUS,PLN_USD_SPOT,0.9,manual,"PLN/USD exchange rate mapping",true
+FRED,DEXCZUS,CZK_USD_SPOT,0.9,manual,"CZK/USD exchange rate mapping",true
+FRED,DEXHUUS,HUF_USD_SPOT,0.85,manual,"HUF/USD exchange rate mapping",true
+FRED,DEXILUS,ILS_USD_SPOT,0.85,manual,"ILS/USD exchange rate mapping",true
+FRED,DEXRUUS,RUB_USD_SPOT,0.8,manual,"RUB/USD exchange rate mapping",true

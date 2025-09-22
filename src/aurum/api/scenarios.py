@@ -17,6 +17,7 @@ events and Trino query metrics for downstream analysis.
 from __future__ import annotations
 
 import time
+from datetime import datetime
 from typing import List, Optional
 from uuid import UUID
 
@@ -49,6 +50,12 @@ from .exceptions import ValidationException, NotFoundException, ForbiddenExcepti
 from .container import get_service
 from .async_service import AsyncScenarioService
 from .routes import _resolve_tenant, _resolve_tenant_optional
+from .http import (
+    respond_with_etag,
+    decode_cursor,
+    encode_cursor,
+    normalize_cursor_input,
+)
 from ..scenarios.feature_flags import (
     ScenarioOutputFeature,
     require_scenario_output_feature,
@@ -69,6 +76,10 @@ async def list_scenarios(
     cursor: Optional[str] = Query(None, description="Opaque cursor for stable pagination"),
     since_cursor: Optional[str] = Query(None, description="Alias for 'cursor' to resume iteration"),
     offset: Optional[int] = Query(None, ge=0, description="DEPRECATED: Use cursor for pagination instead"),
+    name: Optional[str] = Query(None, description="Filter by scenario name (case-insensitive substring match)"),
+    tag: Optional[str] = Query(None, description="Filter by tag"),
+    created_after: Optional[datetime] = Query(None, description="Return scenarios created at or after this timestamp (ISO 8601)"),
+    created_before: Optional[datetime] = Query(None, description="Return scenarios created at or before this timestamp (ISO 8601)"),
 ) -> ScenarioListResponse:
     """List scenarios with optional filtering.
 
@@ -91,14 +102,13 @@ async def list_scenarios(
     start_time = time.perf_counter()
 
     try:
-        from .routes import _decode_cursor, _encode_cursor, _normalise_cursor_input
 
         # Handle cursor-based pagination (offset is deprecated)
         effective_offset = offset or 0
         cursor_token = cursor or since_cursor
         if cursor_token:
-            payload = _decode_cursor(cursor_token)
-            effective_offset, _cursor_after = _normalise_cursor_input(payload)
+            payload = decode_cursor(cursor_token)
+            effective_offset, _cursor_after = normalize_cursor_input(payload)
         elif offset is not None:
             # Log deprecation warning for offset usage
             log_structured(
@@ -111,12 +121,19 @@ async def list_scenarios(
                 request_id=get_request_id()
             )
 
+        if created_after and created_before and created_after > created_before:
+            raise ValidationException("created_after must be before created_before")
+
         service = get_service(AsyncScenarioService)
         scenarios, total, meta = await service.list_scenarios(
             tenant_id=tenant_id,
             status=status,
             limit=limit,
             offset=effective_offset,
+            name_contains=name,
+            tag=tag,
+            created_after=created_after,
+            created_before=created_before,
         )
 
         query_time_ms = (time.perf_counter() - start_time) * 1000
@@ -124,7 +141,7 @@ async def list_scenarios(
         # Generate next cursor if there are more results
         next_cursor = None
         if len(scenarios) == limit:
-            next_cursor = _encode_cursor({"offset": effective_offset + limit})
+            next_cursor = encode_cursor({"offset": effective_offset + limit})
 
         model = ScenarioListResponse(
             meta={
@@ -140,7 +157,7 @@ async def list_scenarios(
         )
 
         # Handle ETag and If-None-Match
-        return _respond_with_etag(model, request, response)
+        return respond_with_etag(model, request, response)
 
     except Exception as exc:
         query_time_ms = (time.perf_counter() - start_time) * 1000
@@ -200,7 +217,7 @@ async def create_scenario(
         )
 
         # Handle ETag and If-None-Match
-        return _respond_with_etag(model, request, response)
+        return respond_with_etag(model, request, response)
 
     except Exception as exc:
         query_time_ms = (time.perf_counter() - start_time) * 1000
@@ -265,7 +282,7 @@ async def get_scenario(
         )
 
         # Handle ETag and If-None-Match
-        return _respond_with_etag(model, request, response)
+        return respond_with_etag(model, request, response)
 
     except (ValidationException, NotFoundException):
         raise
@@ -339,6 +356,9 @@ async def list_scenario_runs(
     cursor: Optional[str] = Query(None, description="Opaque cursor for stable pagination"),
     since_cursor: Optional[str] = Query(None, description="Alias for 'cursor' to resume iteration"),
     offset: Optional[int] = Query(None, ge=0, description="DEPRECATED: Use cursor for pagination instead"),
+    state: Optional[str] = Query(None, pattern="^(QUEUED|RUNNING|SUCCEEDED|FAILED|CANCELLED)$", description="Filter runs by state"),
+    created_after: Optional[datetime] = Query(None, description="Return runs queued at or after this timestamp (ISO 8601)"),
+    created_before: Optional[datetime] = Query(None, description="Return runs queued at or before this timestamp (ISO 8601)"),
 ) -> ScenarioRunListResponse:
     """List runs for a specific scenario."""
     from .auth import require_permission, Permission
@@ -369,8 +389,8 @@ async def list_scenario_runs(
         effective_offset = offset or 0
         cursor_token = cursor or since_cursor
         if cursor_token:
-            payload = _decode_cursor(cursor_token)
-            effective_offset, _cursor_after = _normalise_cursor_input(payload)
+            payload = decode_cursor(cursor_token)
+            effective_offset, _cursor_after = normalize_cursor_input(payload)
         elif offset is not None:
             # Log deprecation warning for offset usage
             log_structured(
@@ -382,11 +402,21 @@ async def list_scenario_runs(
                 request_id=get_request_id()
             )
 
+        if created_after and created_before and created_after > created_before:
+            raise ValidationException(
+                field="created_after",
+                message="created_after must be before created_before",
+                request_id=get_request_id(),
+            )
+
         service = get_service(AsyncScenarioService)
         runs, total, meta = await service.list_scenario_runs(
             scenario_id=scenario_id,
             limit=limit,
             offset=effective_offset,
+            state=state,
+            created_after=created_after,
+            created_before=created_before,
         )
 
         query_time_ms = (time.perf_counter() - start_time) * 1000
@@ -394,7 +424,7 @@ async def list_scenario_runs(
         # Generate next cursor if there are more results
         next_cursor = None
         if len(runs) == limit:
-            next_cursor = _encode_cursor({"offset": effective_offset + limit})
+            next_cursor = encode_cursor({"offset": effective_offset + limit})
 
         model = ScenarioRunListResponse(
             meta={
@@ -410,7 +440,7 @@ async def list_scenario_runs(
         )
 
         # Handle ETag and If-None-Match
-        return _respond_with_etag(model, request, response)
+        return respond_with_etag(model, request, response)
 
     except ValidationException:
         raise
@@ -470,7 +500,7 @@ async def create_scenario_run(
         )
 
         # Handle ETag and If-None-Match
-        return _respond_with_etag(model, request, response)
+        return respond_with_etag(model, request, response)
 
     except ValidationException:
         raise
@@ -535,7 +565,7 @@ async def get_scenario_run(
         )
 
         # Handle ETag and If-None-Match
-        return _respond_with_etag(model, request, response)
+        return respond_with_etag(model, request, response)
 
     except (ValidationException, NotFoundException):
         raise
@@ -607,7 +637,7 @@ async def update_scenario_run_state(
         )
 
         # Handle ETag and If-None-Match
-        return _respond_with_etag(model, request, response)
+        return respond_with_etag(model, request, response)
 
     except (ValidationException, NotFoundException):
         raise
@@ -670,7 +700,7 @@ async def cancel_scenario_run(
         )
 
         # Handle ETag and If-None-Match
-        return _respond_with_etag(model, request, response)
+        return respond_with_etag(model, request, response)
 
     except (ValidationException, NotFoundException):
         raise
@@ -795,8 +825,8 @@ async def get_scenario_outputs(
         effective_offset = offset
         cursor_token = cursor or since_cursor
         if cursor_token:
-            payload = _decode_cursor(cursor_token)
-            effective_offset, _cursor_after = _normalise_cursor_input(payload)
+            payload = decode_cursor(cursor_token)
+            effective_offset, _cursor_after = normalize_cursor_input(payload)
 
         service = get_service(AsyncScenarioService)
         outputs, total, meta = await service.get_scenario_outputs(
@@ -816,7 +846,7 @@ async def get_scenario_outputs(
         # Generate next cursor if there are more results
         next_cursor = None
         if len(outputs) == limit:
-            next_cursor = _encode_cursor({"offset": effective_offset + limit})
+            next_cursor = encode_cursor({"offset": effective_offset + limit})
 
         # Build applied filter for response
         applied_filter = ScenarioOutputFilter(
@@ -905,7 +935,7 @@ async def get_scenario_metrics_latest(
         )
 
         # Handle ETag and If-None-Match
-        return _respond_with_etag(model, request, response)
+        return respond_with_etag(model, request, response)
 
     except (ValidationException, NotFoundException):
         raise
@@ -1023,7 +1053,7 @@ async def create_bulk_scenario_runs(
         )
 
         # Handle ETag and If-None-Match
-        return _respond_with_etag(model, request, response)
+        return respond_with_etag(model, request, response)
 
     except ValidationException:
         raise

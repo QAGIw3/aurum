@@ -1,0 +1,39 @@
+{
+  "catalogs": [
+    {
+      "catalog": "iceberg",
+      "allow": "all"
+    },
+    {
+      "catalog": "postgres",
+      "allow": "read-only"
+    },
+    {
+      "catalog": "timescale",
+      "allow": "read-only"
+    },
+    {
+      "catalog": "clickhouse",
+      "allow": "read-only"
+    },
+    {
+      "catalog": "kafka",
+      "allow": "read-only"
+    }
+  ],
+  "schemas": [
+    {
+      "catalog": "iceberg",
+      "schema": "external",
+      "allow": "all"
+    }
+  ],
+  "tables": [
+    {
+      "catalog": "iceberg",
+      "schema": "external",
+      "table": ".*",
+      "allow": "all"
+    }
+  ]
+}

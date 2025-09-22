@@ -1,0 +1,436 @@
+# Vault Agent sidecar configuration for automatic secret injection and lease renewal
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: vault-agent-config
+  namespace: aurum-dev
+  labels:
+    app: vault
+    component: agent
+    managed-by: aurum-platform
+data:
+  vault-agent-config.hcl: |
+    # Vault Agent configuration
+    pid_file = "/tmp/vault-agent.pid"
+
+    # Auto-auth configuration using Kubernetes Service Account Token
+    auto_auth {
+      method "kubernetes" {
+        mount_path = "auth/kubernetes"
+        config = {
+          role = "aurum-secrets-rotator"
+        }
+      }
+
+      sink "file" {
+        config = {
+          path = "/tmp/vault-token"
+          mode = 0600
+        }
+      }
+    }
+
+    # Template configuration for secret injection
+    template {
+      source      = "/etc/vault/templates/rotation-config.ctmpl"
+      destination = "/etc/rotation/config.json"
+      perms       = 0600
+    }
+
+    # Cache configuration for improved performance
+    cache {
+      use_auto_auth_token = true
+    }
+
+    # Listener for health checks
+    listener "tcp" {
+      address = "127.0.0.1:8200"
+      tls_disable = true
+    }
+
+    # Vault address
+    vault {
+      address = "https://vault.aurum-dev.svc.cluster.local:8200"
+      retry {
+        num_retries = 5
+      }
+    }
+
+  rotation-config.ctmpl: |
+    {
+      "vault_address": "https://vault.aurum-dev.svc.cluster.local:8200",
+      "rotation_paths": [
+        "secret/aurum/api-keys",
+        "secret/aurum/database-credentials",
+        "secret/aurum/external-api-keys",
+        "secret/aurum/jwt-secrets"
+      ],
+      "database_paths": [
+        "database/creds/aurum-db-user",
+        "database/creds/aurum-readonly-user"
+      ],
+      "transit_paths": [
+        "transit/keys/aurum-encryption",
+        "transit/keys/aurum-signing"
+      ],
+      "escrow_path": "secret/escrow",
+      "reports_path": "secret/rotation-reports",
+      "rotation_schedule": "0 2 * * 1",
+      "retention_policy": {
+        "secret_versions": 5,
+        "report_days": 90,
+        "backup_days": 30
+      }
+    }
+
+---
+# Vault Agent deployment for the rotation system
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: vault-agent
+  namespace: aurum-dev
+  labels:
+    app: vault
+    component: agent
+    managed-by: aurum-platform
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: vault
+      component: agent
+
+  template:
+    metadata:
+      labels:
+        app: vault
+        component: agent
+        managed-by: aurum-platform
+      annotations:
+        # Inject Vault Agent
+        vault.security.banzaicloud.io/vault-addr: "https://vault.aurum-dev.svc.cluster.local:8200"
+        vault.security.banzaicloud.io/vault-role: "aurum-secrets-rotator"
+        vault.security.banzaicloud.io/vault-agent: "true"
+        vault.security.banzaicloud.io/vault-agent-configmap: "vault-agent-config"
+        vault.security.banzaicloud.io/vault-agent-template-file-rotation-config: "/etc/vault/templates/rotation-config.ctmpl"
+
+    spec:
+      # Use the same restricted service account
+      serviceAccountName: aurum-secrets-rotator
+
+      # Security context
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1001
+        runAsGroup: 1001
+        fsGroup: 1001
+
+      # Node selection for security
+      nodeSelector:
+        kubernetes.io/os: linux
+        workload-type: security-sensitive
+
+      containers:
+      # Vault Agent sidecar
+      - name: vault-agent
+        image: hashicorp/vault:1.15.5
+        command: ["vault", "agent", "-config=/etc/vault/vault-agent-config.hcl"]
+        env:
+        - name: VAULT_ADDR
+          value: "https://vault.aurum-dev.svc.cluster.local:8200"
+        - name: VAULT_SKIP_VERIFY
+          value: "false"
+        securityContext:
+          allowPrivilegeEscalation: false
+          readOnlyRootFilesystem: true
+          capabilities:
+            drop: ["ALL"]
+        resources:
+          requests:
+            memory: "32Mi"
+            cpu: "25m"
+          limits:
+            memory: "128Mi"
+            cpu: "100m"
+        volumeMounts:
+        - name: config
+          mountPath: /etc/vault
+          readOnly: true
+        - name: templates
+          mountPath: /etc/vault/templates
+          readOnly: true
+        - name: vault-token
+          mountPath: /tmp
+        - name: shared-data
+          mountPath: /etc/rotation
+
+        # Health check
+        livenessProbe:
+          httpGet:
+            path: /v1/sys/health
+            port: 8200
+            scheme: HTTPS
+          initialDelaySeconds: 30
+          periodSeconds: 10
+          timeoutSeconds: 5
+          failureThreshold: 3
+
+        readinessProbe:
+          httpGet:
+            path: /v1/sys/health
+            port: 8200
+            scheme: HTTPS
+          initialDelaySeconds: 5
+          periodSeconds: 5
+          timeoutSeconds: 3
+          failureThreshold: 3
+
+        # Startup probe
+        startupProbe:
+          httpGet:
+            path: /v1/sys/health
+            port: 8200
+            scheme: HTTPS
+          initialDelaySeconds: 10
+          periodSeconds: 10
+          timeoutSeconds: 5
+          failureThreshold: 12  # Allow 2 minutes for startup
+
+      # Application container using injected secrets
+      - name: rotation-manager
+        image: hashicorp/vault:1.15.5
+        command: ["/bin/sh", "-c"]
+        args:
+        - |
+          set -euo pipefail
+
+          # Colors for output
+          RED='\033[0;31m'
+          GREEN='\033[0;32m'
+          YELLOW='\033[1;33m'
+          BLUE='\033[0;34m'
+          NC='\033[0m'
+
+          echo -e "${GREEN}🔐 Starting Vault Agent-powered rotation manager...${NC}"
+
+          # Wait for Vault Agent to be ready
+          echo -e "${YELLOW}⏳ Waiting for Vault Agent...${NC}"
+          while [ ! -f /tmp/vault-token ]; do
+            sleep 1
+          done
+
+          # Export Vault token
+          export VAULT_TOKEN=$(cat /tmp/vault-token)
+          export VAULT_ADDR="https://vault.aurum-dev.svc.cluster.local:8200"
+
+          echo -e "${GREEN}✅ Vault Agent ready, starting rotation management...${NC}"
+
+          # Load configuration from injected template
+          CONFIG_FILE="/etc/rotation/config.json"
+          if [ -f "$CONFIG_FILE" ]; then
+            echo -e "${BLUE}📋 Loaded configuration from Vault Agent${NC}"
+          else
+            echo -e "${RED}❌ Configuration not found from Vault Agent${NC}"
+            exit 1
+          fi
+
+          # Main rotation management loop
+          while true; do
+            echo -e "${YELLOW}🔄 Checking rotation schedule...${NC}"
+
+            # Check if it's time to rotate
+            # This would normally check the schedule from config
+            # For now, just sleep and check periodically
+
+            sleep 300  # Check every 5 minutes
+
+            echo -e "${BLUE}💤 Rotation check completed${NC}"
+          done
+        env:
+        - name: VAULT_ADDR
+          value: "https://vault.aurum-dev.svc.cluster.local:8200"
+        - name: VAULT_SKIP_VERIFY
+          value: "false"
+        securityContext:
+          allowPrivilegeEscalation: false
+          readOnlyRootFilesystem: true
+          capabilities:
+            drop: ["ALL"]
+        resources:
+          requests:
+            memory: "64Mi"
+            cpu: "50m"
+          limits:
+            memory: "256Mi"
+            cpu: "200m"
+        volumeMounts:
+        - name: vault-token
+          mountPath: /tmp
+        - name: shared-data
+          mountPath: /etc/rotation
+
+      volumes:
+      - name: config
+        configMap:
+          name: vault-agent-config
+      - name: templates
+        configMap:
+          name: vault-agent-templates
+      - name: vault-token
+        emptyDir: {}
+      - name: shared-data
+        emptyDir: {}
+
+---
+# ConfigMap for Vault Agent templates
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: vault-agent-templates
+  namespace: aurum-dev
+  labels:
+    app: vault
+    component: agent
+    managed-by: aurum-platform
+data:
+  rotation-config.ctmpl: |
+    {
+      "vault_address": "https://vault.aurum-dev.svc.cluster.local:8200",
+      "rotation_paths": [
+        "secret/aurum/api-keys",
+        "secret/aurum/database-credentials",
+        "secret/aurum/external-api-keys",
+        "secret/aurum/jwt-secrets"
+      ],
+      "database_paths": [
+        "database/creds/aurum-db-user",
+        "database/creds/aurum-readonly-user"
+      ],
+      "transit_paths": [
+        "transit/keys/aurum-encryption",
+        "transit/keys/aurum-signing"
+      ],
+      "escrow_path": "secret/escrow",
+      "reports_path": "secret/rotation-reports",
+      "rotation_schedule": "0 2 * * 1",
+      "retention_policy": {
+        "secret_versions": 5,
+        "report_days": 90,
+        "backup_days": 30
+      },
+      "agent_status": "ready",
+      "last_updated": "{{ timestamp }}"
+    }
+
+---
+# Service to expose Vault Agent for health checks
+apiVersion: v1
+kind: Service
+metadata:
+  name: vault-agent
+  namespace: aurum-dev
+  labels:
+    app: vault
+    component: agent
+    managed-by: aurum-platform
+spec:
+  selector:
+    app: vault
+    component: agent
+  ports:
+  - name: http
+    port: 80
+    targetPort: 8200
+    protocol: TCP
+  - name: metrics
+    port: 9102
+    targetPort: 9102
+    protocol: TCP
+  type: ClusterIP
+
+---
+# NetworkPolicy for Vault Agent
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: vault-agent
+  namespace: aurum-dev
+  labels:
+    app: vault
+    component: agent
+    managed-by: aurum-platform
+spec:
+  podSelector:
+    matchLabels:
+      app: vault
+      component: agent
+
+  policyTypes:
+    - Ingress
+    - Egress
+
+  ingress:
+    # Allow traffic from rotation jobs
+    - from:
+        - podSelector:
+            matchLabels:
+              app: vault
+              component: secrets-rotation
+      ports:
+        - protocol: TCP
+          port: 8200
+
+    # Allow health checks
+    - from: []
+      ports:
+        - protocol: TCP
+          port: 8200
+
+  egress:
+    # Allow DNS resolution
+    - to: []
+      ports:
+        - protocol: UDP
+          port: 53
+        - protocol: TCP
+          port: 53
+
+    # Allow HTTPS to Vault
+    - to:
+        - podSelector:
+            matchLabels:
+              app: vault
+              component: server
+      ports:
+        - protocol: TCP
+          port: 8200
+
+---
+# ServiceMonitor for Prometheus monitoring
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: vault-agent
+  namespace: aurum-dev
+  labels:
+    app: vault
+    component: agent
+    managed-by: aurum-platform
+spec:
+  selector:
+    matchLabels:
+      app: vault
+      component: agent
+  endpoints:
+  - port: http
+    path: /v1/sys/metrics
+    scheme: https
+    interval: 30s
+    scrapeTimeout: 10s
+    tlsConfig:
+      insecureSkipVerify: true
+  - port: metrics
+    path: /metrics
+    interval: 30s
+    scrapeTimeout: 10s

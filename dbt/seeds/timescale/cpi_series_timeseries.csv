@@ -1,0 +1,3 @@
+tenant_id,series_id,period,area,frequency,seasonal_adjustment,value,units,source,metadata,ingest_ts,ingest_job_id,ingest_run_id,ingest_batch_id
+TENANT_ACME,CPIAUCSL,2024-01,US,MONTHLY,SA,308.417,Index,FRED,"{}","2024-02-15T10:00:00Z","cpi_job","cpi_run","cpi_batch"
+TENANT_ACME,CPIAUCSL,2024-02,US,MONTHLY,SA,309.195,Index,FRED,"{}","2024-03-15T10:00:00Z","cpi_job","cpi_run","cpi_batch"

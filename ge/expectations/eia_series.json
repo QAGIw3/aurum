@@ -8,6 +8,7 @@
       "expectation_type": "expect_table_columns_to_match_set",
       "kwargs": {
         "column_set": [
+          "tenant_id",
           "series_id",
           "period",
           "period_start",
@@ -27,8 +28,17 @@
           "source",
           "dataset",
           "metadata",
-          "ingest_ts"
+          "ingest_ts",
+          "ingest_job_id",
+          "ingest_run_id",
+          "ingest_batch_id"
         ]
+      }
+    },
+    {
+      "expectation_type": "expect_column_values_to_not_be_null",
+      "kwargs": {
+        "column": "tenant_id"
       }
     },
     {

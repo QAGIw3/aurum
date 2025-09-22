@@ -1,0 +1,394 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: alertmanager-config-with-runbooks
+  namespace: aurum-dev
+data:
+  alertmanager.yml: |
+    global:
+      smtp_smarthost: 'smtp.gmail.com:587'
+      smtp_from: 'alerts@aurum.com'
+      smtp_auth_username: 'alerts@aurum.com'
+      smtp_auth_password: 'your-app-password'
+
+    route:
+      group_by: ['alertname']
+      group_wait: 10s
+      group_interval: 10s
+      repeat_interval: 1h
+      receiver: 'team-platform'
+      routes:
+        # Critical alerts go to on-call immediately
+        - match:
+            severity: critical
+          receiver: 'oncall-platform'
+          continue: true
+
+        # Data quality alerts
+        - match_re:
+            alertname: '.*Great Expectations.*|.*Data Quality.*|.*Schema.*'
+          receiver: 'team-data'
+          group_by: ['alertname', 'datasource']
+          continue: true
+
+        # Performance alerts
+        - match_re:
+            alertname: '.*Latency.*|.*Throughput.*|.*Error Rate.*'
+          receiver: 'team-platform'
+          group_by: ['alertname', 'service']
+          continue: true
+
+        # Infrastructure alerts
+        - match_re:
+            alertname: '.*CPU.*|.*Memory.*|.*Disk.*|.*Node.*'
+          receiver: 'team-infra'
+          group_by: ['alertname', 'instance']
+          continue: true
+
+    receivers:
+    - name: 'team-platform'
+      email_configs:
+      - to: 'platform-team@aurum.com'
+        subject: 'Aurum Platform Alert: {{ .GroupLabels.alertname }}'
+        body: |
+          {{ range .Alerts }}{{ .Annotations.summary }}
+
+          {{ .Annotations.description }}
+
+          {{ .Annotations.runbook_url }}
+
+          Labels: {{ .Labels | toJson }}
+          {{ end }}
+
+    - name: 'team-data'
+      email_configs:
+      - to: 'data-team@aurum.com'
+        subject: 'Aurum Data Quality Alert: {{ .GroupLabels.alertname }}'
+        body: |
+          {{ range .Alerts }}{{ .Annotations.summary }}
+
+          {{ .Annotations.description }}
+
+          {{ .Annotations.runbook_url }}
+
+          Data Source: {{ .Labels.datasource }}
+          Severity: {{ .Labels.severity }}
+          {{ end }}
+
+    - name: 'team-infra'
+      email_configs:
+      - to: 'infra-team@aurum.com'
+        subject: 'Aurum Infrastructure Alert: {{ .GroupLabels.alertname }}'
+        body: |
+          {{ range .Alerts }}{{ .Annotations.summary }}
+
+          {{ .Annotations.description }}
+
+          {{ .Annotations.runbook_url }}
+
+          Instance: {{ .Labels.instance }}
+          Severity: {{ .Labels.severity }}
+          {{ end }}
+
+    - name: 'oncall-platform'
+      email_configs:
+      - to: 'oncall-platform@aurum.com'
+        subject: '🚨 CRITICAL: Aurum Platform Alert: {{ .GroupLabels.alertname }}'
+        body: |
+          {{ range .Alerts }}🚨 CRITICAL ALERT 🚨
+
+          {{ .Annotations.summary }}
+
+          {{ .Annotations.description }}
+
+          📋 RUNBOOK: {{ .Annotations.runbook_url }}
+
+          🔧 TROUBLESHOOTING:
+          {{ .Annotations.troubleshooting }}
+
+          Instance: {{ .Labels.instance }}
+          Service: {{ .Labels.service }}
+          Severity: {{ .Labels.severity }}
+
+          Time: {{ .StartsAt.Format "2006-01-02 15:04:05 UTC" }}
+          {{ end }}
+
+      slack_configs:
+      - api_url: 'YOUR_SLACK_WEBHOOK_URL'
+        channel: '#platform-alerts'
+        title: '🚨 CRITICAL Platform Alert'
+        text: |
+          🚨 *CRITICAL ALERT* 🚨
+
+          *{{ .GroupLabels.alertname }}*
+
+          {{ range .Alerts }}{{ .Annotations.summary }}
+
+          📋 *Runbook*: {{ .Annotations.runbook_url }}
+
+          🔧 *Troubleshooting*: {{ .Annotations.troubleshooting }}
+
+          *Service*: {{ .Labels.service }}
+          *Severity*: {{ .Labels.severity }}
+          *Time*: {{ .StartsAt.Format "15:04:05 UTC" }}
+          {{ end }}
+
+    # Inhibition rules to reduce alert noise
+    inhibit_rules:
+      - source_match:
+          severity: 'critical'
+        target_match:
+          severity: 'warning'
+        equal: ['alertname', 'instance']
+
+      - source_match:
+          alertname: 'AurumServiceDown'
+        target_match:
+          alertname: 'AurumServiceErrorRate'
+        equal: ['instance']
+
+---
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: aurum-alerts-with-runbooks
+  namespace: aurum-dev
+spec:
+  groups:
+  - name: aurum_synthetic_monitoring
+    rules:
+    - alert: SyntheticMonitoringFailure
+      expr: |
+        up{job="synthetic-monitoring"} == 0
+      for: 5m
+      labels:
+        severity: critical
+        service: synthetic-monitoring
+        category: monitoring
+      annotations:
+        summary: "Synthetic monitoring is down"
+        description: "Synthetic monitoring system has been down for more than 5 minutes"
+        runbook_url: "docs/runbooks/synthetic-monitoring-runbook.md"
+        troubleshooting: "Check synthetic monitoring pods and logs"
+
+    - alert: SyntheticMonitoringTestFailures
+      expr: |
+        increase(synthetic_monitoring_failures_total[15m]) > 5
+      for: 5m
+      labels:
+        severity: warning
+        service: synthetic-monitoring
+        category: monitoring
+      annotations:
+        summary: "Multiple synthetic monitoring test failures"
+        description: "More than 5 synthetic monitoring tests have failed in the last 15 minutes"
+        runbook_url: "docs/runbooks/synthetic-monitoring-runbook.md#test-failures"
+        troubleshooting: "Review synthetic monitoring test results and system health"
+
+  - name: aurum_game_days
+    rules:
+    - alert: GameDaySimulationFailed
+      expr: |
+        up{job="game-day-simulation"} == 0
+      for: 5m
+      labels:
+        severity: warning
+        service: game-day-simulation
+        category: resilience
+      annotations:
+        summary: "Game day simulation system is down"
+        description: "Game day simulation system has been down for more than 5 minutes"
+        runbook_url: "docs/runbooks/game-day-runbook.md"
+        troubleshooting: "Check game day simulation pods and recent simulation results"
+
+    - alert: GameDayResilienceIssues
+      expr: |
+        increase(game_day_failures_total[1h]) > 3
+      for: 10m
+      labels:
+        severity: warning
+        service: game-day-simulation
+        category: resilience
+      annotations:
+        summary: "Game day simulation detected resilience issues"
+        description: "Game day simulation has detected multiple system failures in the last hour"
+        runbook_url: "docs/runbooks/game-day-runbook.md#resilience-issues"
+        troubleshooting: "Review game day simulation report and address identified issues"
+
+  - name: aurum_cross_region
+    rules:
+    - alert: CrossRegionReplicationFailure
+      expr: |
+        up{job="cross-region-replication"} == 0
+      for: 15m
+      labels:
+        severity: critical
+        service: cross-region-replication
+        category: disaster-recovery
+      annotations:
+        summary: "Cross-region backup replication is failing"
+        description: "Cross-region backup replication has been failing for more than 15 minutes"
+        runbook_url: "docs/runbooks/multi-region-failover-runbook.md#replication-issues"
+        troubleshooting: "Check replication jobs, network connectivity, and storage permissions"
+
+    - alert: CrossRegionReplicationLag
+      expr: |
+        time() - cross_region_replication_last_success > 3600
+      for: 10m
+      labels:
+        severity: warning
+        service: cross-region-replication
+        category: disaster-recovery
+      annotations:
+        summary: "Cross-region replication lag detected"
+        description: "Cross-region replication hasn't completed successfully in over an hour"
+        runbook_url: "docs/runbooks/multi-region-failover-runbook.md#replication-lag"
+        troubleshooting: "Check replication logs, network performance, and data transfer volumes"
+
+  - name: aurum_data_contracts
+    rules:
+    - alert: DataContractViolations
+      expr: |
+        increase(data_contract_violations_total[1h]) > 0
+      for: 5m
+      labels:
+        severity: warning
+        service: data-contracts
+        category: data-quality
+      annotations:
+        summary: "Data contract violations detected"
+        description: "Data contract validation has found schema or quality violations"
+        runbook_url: "docs/runbooks/data-contracts-runbook.md#violations"
+        troubleshooting: "Review data contract validation reports and fix schema issues"
+
+    - alert: GreatExpectationsFailures
+      expr: |
+        increase(great_expectations_failures_total[1h]) > 0
+      for: 5m
+      labels:
+        severity: warning
+        service: great-expectations
+        category: data-quality
+      annotations:
+        summary: "Great Expectations validation failures"
+        description: "Great Expectations data quality checks are failing"
+        runbook_url: "docs/runbooks/data-contracts-runbook.md#great-expectations"
+        troubleshooting: "Review Great Expectations validation results and data quality reports"
+
+  - name: aurum_secrets_lifecycle
+    rules:
+    - alert: SecretsRotationFailure
+      expr: |
+        up{job="vault-secrets-rotation"} == 0
+      for: 30m
+      labels:
+        severity: critical
+        service: secrets-rotation
+        category: security
+      annotations:
+        summary: "Automated secrets rotation is failing"
+        description: "Vault secrets rotation job has been failing for more than 30 minutes"
+        runbook_url: "docs/runbooks/secrets-lifecycle-runbook.md#rotation-failures"
+        troubleshooting: "Check Vault connectivity, permissions, and rotation job logs"
+
+    - alert: SecretsAccessAnomalies
+      expr: |
+        increase(vault_audit_anomalies_total[1h]) > 10
+      for: 5m
+      labels:
+        severity: warning
+        service: vault
+        category: security
+      annotations:
+        summary: "Anomalous secrets access detected"
+        description: "Unusual patterns detected in Vault access logs"
+        runbook_url: "docs/runbooks/secrets-lifecycle-runbook.md#access-anomalies"
+        troubleshooting: "Review Vault audit logs and access patterns"
+
+  - name: aurum_slo_monitoring
+    rules:
+    - alert: SLOViolationAPI
+      expr: |
+        (1 - (sum(rate(aurum_api_requests_total{status=~"5.."}[15m])) / sum(rate(aurum_api_requests_total[15m])))) < 0.999
+      for: 15m
+      labels:
+        severity: critical
+        service: api
+        category: slo
+      annotations:
+        summary: "API availability SLO violation (99.9%)"
+        description: "API availability dropped below 99.9% for 15 minutes"
+        runbook_url: "docs/runbooks/slo-monitoring-runbook.md#api-availability"
+        troubleshooting: "Check API pod health, database connectivity, and error logs"
+
+    - alert: SLOViolationLatency
+      expr: |
+        histogram_quantile(0.95, sum(rate(aurum_api_request_duration_seconds_bucket[5m])) by (le)) > 0.5
+      for: 10m
+      labels:
+        severity: warning
+        service: api
+        category: slo
+      annotations:
+        summary: "API latency SLO violation (p95 > 500ms)"
+        description: "API response time p95 exceeded 500ms for 10 minutes"
+        runbook_url: "docs/runbooks/slo-monitoring-runbook.md#api-latency"
+        troubleshooting: "Check API performance, database query optimization, and resource utilization"
+
+    - alert: SLOViolationErrorRate
+      expr: |
+        sum(rate(aurum_api_requests_total{status=~"5.."}[5m])) / sum(rate(aurum_api_requests_total[5m])) > 0.01
+      for: 5m
+      labels:
+        severity: warning
+        service: api
+        category: slo
+      annotations:
+        summary: "API error rate SLO violation (>1%)"
+        description: "API error rate exceeded 1% for 5 minutes"
+        runbook_url: "docs/runbooks/slo-monitoring-runbook.md#api-errors"
+        troubleshooting: "Check API error logs, recent deployments, and dependency health"
+
+  - name: aurum_probe_health
+    rules:
+    - alert: ReadinessProbeFailures
+      expr: |
+        up{job="kubernetes-pods"} == 0
+      for: 5m
+      labels:
+        severity: critical
+        service: kubernetes
+        category: infrastructure
+      annotations:
+        summary: "Multiple readiness probe failures"
+        description: "Readiness probes are failing across multiple pods"
+        runbook_url: "docs/runbooks/probe-health-checks-playbook.md#readiness-probe-issues"
+        troubleshooting: "Check pod logs, resource utilization, and service dependencies"
+
+    - alert: LivenessProbeFailures
+      expr: |
+        kube_pod_status_phase{phase="Failed"} > 0
+      for: 2m
+      labels:
+        severity: critical
+        service: kubernetes
+        category: infrastructure
+      annotations:
+        summary: "Pod liveness probe failures"
+        description: "Pods are failing liveness probes and being restarted"
+        runbook_url: "docs/runbooks/probe-health-checks-playbook.md#liveness-probe-issues"
+        troubleshooting: "Check pod logs, application health endpoints, and resource limits"
+
+    - alert: StartupProbeFailures
+      expr: |
+        kube_pod_status_phase{phase="Pending"} > 0
+      for: 10m
+      labels:
+        severity: warning
+        service: kubernetes
+        category: infrastructure
+      annotations:
+        summary: "Pod startup probe failures"
+        description: "Pods are stuck in pending state due to startup probe failures"
+        runbook_url: "docs/runbooks/probe-health-checks-playbook.md#startup-probe-issues"
+        troubleshooting: "Check pod startup logs, initialization containers, and application startup time"

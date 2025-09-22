@@ -15,11 +15,14 @@ from functools import wraps
 
 from ..telemetry.context import get_correlation_id, get_tenant_id, log_structured
 from .cache import AsyncCache, CacheManager, CacheBackend
+from ..core import get_settings
 
 
 class QueryType(Enum):
     """Types of queries that can be cached."""
     CURVE_DATA = "curve_data"
+    CURVE_DIFF = "curve_diff"
+    CURVE_STRIPS = "curve_strips"
     METADATA_DIMENSIONS = "metadata_dimensions"
     SCENARIO_OUTPUTS = "scenario_outputs"
     SCENARIO_METRICS = "scenario_metrics"
@@ -101,12 +104,36 @@ class GoldenQueryCache:
         self._patterns: Dict[str, QueryPattern] = {}
         self._query_stats: Dict[str, Dict[str, Any]] = {}
         self._lock = asyncio.Lock()
+        self._settings = get_settings()
 
         # Register default query patterns
         self._register_default_patterns()
 
+    def _get_ttl_for_query_type(self, query_type: QueryType) -> int:
+        """Get appropriate TTL based on query type."""
+        settings = self._settings.api.cache
+
+        if query_type == QueryType.CURVE_DATA:
+            return settings.cache_ttl_curve_data
+        elif query_type == QueryType.METADATA_DIMENSIONS:
+            return settings.cache_ttl_metadata
+        elif query_type in [QueryType.SCENARIO_OUTPUTS, QueryType.SCENARIO_METRICS]:
+            return settings.cache_ttl_scenario_data
+        elif query_type == QueryType.CUSTOM:
+            return settings.cache_ttl_low_frequency
+        else:
+            return settings.cache_ttl_medium_frequency
+
     def _register_default_patterns(self) -> None:
         """Register default query patterns for common endpoints."""
+
+        # Get dynamic TTL values
+        curve_ttl = self._get_ttl_for_query_type(QueryType.CURVE_DATA)
+        metadata_ttl = self._get_ttl_for_query_type(QueryType.METADATA_DIMENSIONS)
+        scenario_ttl = self._get_ttl_for_query_type(QueryType.SCENARIO_OUTPUTS)
+        scenario_metrics_ttl = self._get_ttl_for_query_type(QueryType.SCENARIO_METRICS)
+        diff_ttl = self._get_ttl_for_query_type(QueryType.CURVE_DIFF)
+        strips_ttl = self._get_ttl_for_query_type(QueryType.CURVE_STRIPS)
 
         patterns = [
             # Curve data queries
@@ -115,7 +142,7 @@ class GoldenQueryCache:
                 query_type=QueryType.CURVE_DATA,
                 pattern=r"SELECT.*FROM.*curve_observation.*WHERE.*asof.*=.*'(?P<asof>\d{4}-\d{2}-\d{2})'.*AND.*iso.*=.*'(?P<iso>[A-Z]{3})'",
                 key_template="curve_data:{asof}:{iso}",
-                ttl_seconds=3600,  # 1 hour
+                ttl_seconds=curve_ttl,  # Dynamic TTL
                 invalidation_strategy=CacheInvalidationStrategy.BUST_ON_WRITE,
                 dependencies=["curve_observation"]
             ),
@@ -124,7 +151,7 @@ class GoldenQueryCache:
                 query_type=QueryType.CURVE_DATA,
                 pattern=r"SELECT.*FROM.*curve_observation.*WHERE.*asof.*BETWEEN.*'(?P<start_date>\d{4}-\d{2}-\d{2})'.*AND.*'(?P<end_date>\d{4}-\d{2}-\d{2})'.*AND.*iso.*=.*'(?P<iso>[A-Z]{3})'",
                 key_template="curve_data_range:{start_date}:{end_date}:{iso}",
-                ttl_seconds=1800,  # 30 minutes
+                ttl_seconds=int(curve_ttl * 0.75),  # Slightly shorter for ranges
                 invalidation_strategy=CacheInvalidationStrategy.BUST_ON_WRITE,
                 dependencies=["curve_observation"]
             ),
@@ -135,7 +162,7 @@ class GoldenQueryCache:
                 query_type=QueryType.METADATA_DIMENSIONS,
                 pattern=r"SELECT.*DISTINCT.*(?P<dimension>\w+).*FROM.*(?P<table>\w+).*WHERE.*tenant_id.*=.*\$1",
                 key_template="metadata_dimensions:{dimension}:{table}",
-                ttl_seconds=7200,  # 2 hours
+                ttl_seconds=metadata_ttl,  # Dynamic TTL
                 invalidation_strategy=CacheInvalidationStrategy.BUST_ON_WRITE,
                 dependencies=["metadata_dimensions"]
             ),
@@ -146,7 +173,7 @@ class GoldenQueryCache:
                 query_type=QueryType.SCENARIO_OUTPUTS,
                 pattern=r"SELECT.*FROM.*scenario_output.*WHERE.*scenario_id.*=.*'(?P<scenario_id>[\w-]+)'.*ORDER BY.*timestamp.*DESC.*LIMIT.*(?P<limit>\d+)",
                 key_template="scenario_outputs:{scenario_id}:limit_{limit}",
-                ttl_seconds=600,  # 10 minutes
+                ttl_seconds=scenario_ttl,  # Dynamic TTL
                 invalidation_strategy=CacheInvalidationStrategy.BUST_ON_WRITE,
                 dependencies=["scenario_output"]
             ),
@@ -157,7 +184,7 @@ class GoldenQueryCache:
                 query_type=QueryType.SCENARIO_METRICS,
                 pattern=r"SELECT.*FROM.*scenario_output.*WHERE.*scenario_id.*=.*'(?P<scenario_id>[\w-]+)'.*AND.*metric_name.*=.*'(?P<metric_name>[\w_]+)'.*ORDER BY.*timestamp.*DESC.*LIMIT.*1",
                 key_template="scenario_metrics:{scenario_id}:{metric_name}",
-                ttl_seconds=300,  # 5 minutes
+                ttl_seconds=scenario_metrics_ttl,  # Dynamic TTL
                 invalidation_strategy=CacheInvalidationStrategy.BUST_ON_WRITE,
                 dependencies=["scenario_output"]
             ),
@@ -168,9 +195,31 @@ class GoldenQueryCache:
                 query_type=QueryType.AGGREGATION,
                 pattern=r"SELECT.*(?P<aggregate_func>AVG|SUM|COUNT|MIN|MAX)\((?P<column>\w+)\).*FROM.*(?P<table>\w+).*WHERE.*date.*=.*'(?P<date>\d{4}-\d{2}-\d{2})'",
                 key_template="agg:{aggregate_func}:{column}:{table}:{date}",
-                ttl_seconds=900,  # 15 minutes
+                ttl_seconds=int(curve_ttl * 0.5),  # Shorter TTL for aggregations
                 invalidation_strategy=CacheInvalidationStrategy.BUST_ON_WRITE,
                 dependencies=["aggregation_table"]
+            ),
+
+            # Curve diff queries
+            QueryPattern(
+                name="curve_diff_by_dates",
+                query_type=QueryType.CURVE_DIFF,
+                pattern=r"SELECT.*FROM.*curve_observation.*WHERE.*asof.*IN.*\('(?P<asof_a>\d{4}-\d{2}-\d{2})'.*,\s*'(?P<asof_b>\d{4}-\d{2}-\d{2})'\).*AND.*iso.*=.*'(?P<iso>[A-Z]{3})'",
+                key_template="curve_diff:{asof_a}:{asof_b}:{iso}",
+                ttl_seconds=diff_ttl,  # Dynamic TTL
+                invalidation_strategy=CacheInvalidationStrategy.BUST_ON_WRITE,
+                dependencies=["curve_observation"]
+            ),
+
+            # Curve strips queries
+            QueryPattern(
+                name="curve_strips_by_type",
+                query_type=QueryType.CURVE_STRIPS,
+                pattern=r"SELECT.*FROM.*curve_observation.*WHERE.*asof.*=.*'(?P<asof>\d{4}-\d{2}-\d{2})'.*AND.*tenor_type.*=.*'(?P<tenor_type>\w+)'",
+                key_template="curve_strips:{asof}:{tenor_type}",
+                ttl_seconds=strips_ttl,  # Dynamic TTL
+                invalidation_strategy=CacheInvalidationStrategy.BUST_ON_WRITE,
+                dependencies=["curve_observation"]
             ),
         ]
 
@@ -378,6 +427,49 @@ class GoldenQueryCache:
 
         return invalidated_count
 
+    async def invalidate_on_asof_publish(
+        self,
+        table_name: str,
+        asof_date: str,
+        tenant_id: Optional[str] = None
+    ) -> int:
+        """Invalidate cache entries when new as-of data is published."""
+        tenant_id = tenant_id or get_tenant_id()
+        invalidated_count = 0
+
+        # Find patterns that depend on the published table and as-of date
+        asof_patterns = [
+            "curve_data_by_date",
+            "curve_data_by_range",
+            "curve_diff_by_dates",
+            "curve_strips_by_type"
+        ]
+
+        for pattern_name in asof_patterns:
+            pattern = self._patterns.get(pattern_name)
+            if pattern and table_name in pattern.dependencies:
+                # For as-of patterns, we need to invalidate all entries that might be affected
+                # This is a simplified approach - in production would use more sophisticated pattern matching
+                cache_keys_to_invalidate = [
+                    key for key in self._query_stats.keys()
+                    if key.startswith(f"{tenant_id}:{pattern.query_type.value}")
+                ]
+
+                for key in cache_keys_to_invalidate:
+                    await self.cache.delete(key)
+                    invalidated_count += 1
+
+        log_structured(
+            "info",
+            "golden_query_asof_publish_invalidation",
+            table_name=table_name,
+            asof_date=asof_date,
+            tenant_id=tenant_id,
+            invalidated_count=invalidated_count
+        )
+
+        return invalidated_count
+
     async def get_cache_stats(self) -> Dict[str, Any]:
         """Get comprehensive cache statistics."""
         base_stats = await self.cache.get_stats()
@@ -390,6 +482,30 @@ class GoldenQueryCache:
             # Calculate hit rate
             total_requests = total_hits + total_misses
             hit_rate = total_hits / total_requests if total_requests > 0 else 0
+
+            # Calculate cache efficiency metrics
+            cache_efficiency = hit_rate * 100
+            average_hit_rate = 0
+            if total_queries > 0:
+                pattern_hit_rates = []
+                for pattern in self._patterns.values():
+                    pattern_queries = [
+                        key for key in self._query_stats.keys()
+                        if f":{pattern.query_type.value}:" in key
+                    ]
+                    pattern_hits = sum(
+                        self._query_stats[key].get("hits", 0)
+                        for key in pattern_queries
+                    )
+                    pattern_misses = sum(
+                        self._query_stats[key].get("misses", 0)
+                        for key in pattern_queries
+                    )
+                    if pattern_hits + pattern_misses > 0:
+                        pattern_hit_rates.append(pattern_hits / (pattern_hits + pattern_misses))
+
+                if pattern_hit_rates:
+                    average_hit_rate = sum(pattern_hit_rates) / len(pattern_hit_rates)
 
             # Get pattern-specific stats
             pattern_stats = {}
@@ -425,8 +541,16 @@ class GoldenQueryCache:
                 "total_hits": total_hits,
                 "total_misses": total_misses,
                 "hit_rate": hit_rate,
+                "cache_efficiency_percent": cache_efficiency,
+                "average_pattern_hit_rate": average_hit_rate,
                 "patterns": pattern_stats,
                 "last_updated": time.time()
+            },
+            "cache_performance": {
+                "redis_enabled": "redis_used_memory" in base_stats,
+                "memory_efficiency": f"{base_stats.get('memory_size_bytes', 0) / (1024 * 1024):.2f}MB" if "memory_size_bytes" in base_stats else "0MB",
+                "total_cache_requests": total_requests,
+                "cache_savings_ratio": hit_rate if total_requests > 0 else 0
             }
         }
 
@@ -665,3 +789,39 @@ def generate_cache_recommendations(stats: Dict[str, Any]) -> List[str]:
             recommendations.append(f"Pattern '{pattern_name}' has more misses than hits - consider optimization")
 
     return recommendations
+
+
+# === AS-OF PUBLISH INVALIDATION UTILITIES ===
+
+async def invalidate_cache_on_data_publish(
+    table_name: str,
+    asof_date: str,
+    tenant_id: Optional[str] = None
+) -> int:
+    """Utility function to invalidate cache when new data is published."""
+    cache = get_golden_query_cache()
+    return await cache.invalidate_on_asof_publish(table_name, asof_date, tenant_id)
+
+
+def register_publish_hook(
+    table_name: str,
+    invalidation_func: Optional[Callable[[str, str, Optional[str]], Awaitable[int]]] = None
+):
+    """Decorator to register a function to be called when data is published for a table."""
+    if invalidation_func is None:
+        invalidation_func = invalidate_cache_on_data_publish
+
+    def decorator(func):
+        @wraps(func)
+        async def wrapper(*args, **kwargs):
+            result = await func(*args, **kwargs)
+
+            # Extract asof_date from result or kwargs if available
+            asof_date = kwargs.get('asof_date') or getattr(result, 'asof_date', None)
+            if asof_date:
+                tenant_id = kwargs.get('tenant_id') or get_tenant_id()
+                await invalidation_func(table_name, asof_date, tenant_id)
+
+            return result
+        return wrapper
+    return decorator

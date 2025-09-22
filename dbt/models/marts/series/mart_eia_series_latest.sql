@@ -10,10 +10,11 @@
 with ranked as (
     select
         *,
-        row_number() over (partition by series_id order by period_start desc, ingest_ts desc) as rn
+        row_number() over (partition by tenant_id, series_id order by period_start desc, ingest_ts desc) as rn
     from {{ ref('int_eia_series_enriched') }}
 )
 select
+    tenant_id,
     series_id,
     period,
     period_start,
@@ -33,6 +34,9 @@ select
     dataset,
     metadata,
     ingest_ts,
+    ingest_job_id,
+    ingest_run_id,
+    ingest_batch_id,
     period_date
 from ranked
 where rn = 1

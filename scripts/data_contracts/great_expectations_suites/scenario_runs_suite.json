@@ -1,0 +1,137 @@
+{
+  "expectation_suite_name": "aurum.scenario_runs",
+  "expectations": [
+    {
+      "expectation_type": "expect_table_row_count_to_be_between",
+      "kwargs": {
+        "min_value": 0,
+        "max_value": 10000
+      },
+      "meta": {
+        "notes": "Scenario runs table should be reasonable size"
+      }
+    },
+    {
+      "expectation_type": "expect_column_values_to_not_be_null",
+      "kwargs": {
+        "column": "id"
+      },
+      "meta": {
+        "notes": "Run ID is required"
+      }
+    },
+    {
+      "expectation_type": "expect_column_values_to_not_be_null",
+      "kwargs": {
+        "column": "scenario_id"
+      },
+      "meta": {
+        "notes": "Scenario ID reference is required"
+      }
+    },
+    {
+      "expectation_type": "expect_column_values_to_not_be_null",
+      "kwargs": {
+        "column": "status"
+      },
+      "meta": {
+        "notes": "Status is required"
+      }
+    },
+    {
+      "expectation_type": "expect_column_values_to_be_of_type",
+      "kwargs": {
+        "column": "id",
+        "type_": "str"
+      },
+      "meta": {
+        "notes": "Run ID should be string"
+      }
+    },
+    {
+      "expectation_type": "expect_column_values_to_be_of_type",
+      "kwargs": {
+        "column": "scenario_id",
+        "type_": "str"
+      },
+      "meta": {
+        "notes": "Scenario ID should be string"
+      }
+    },
+    {
+      "expectation_type": "expect_column_values_to_be_in_set",
+      "kwargs": {
+        "column": "status",
+        "value_set": ["pending", "running", "completed", "failed", "cancelled"]
+      },
+      "meta": {
+        "notes": "Status should be one of the valid values"
+      }
+    },
+    {
+      "expectation_type": "expect_column_values_to_match_regex",
+      "kwargs": {
+        "column": "id",
+        "regex": "^run-[a-zA-Z0-9-]+$"
+      },
+      "meta": {
+        "notes": "Run ID should follow naming convention"
+      }
+    },
+    {
+      "expectation_type": "expect_column_values_to_match_regex",
+      "kwargs": {
+        "column": "scenario_id",
+        "regex": "^scenario-[a-zA-Z0-9-]+$"
+      },
+      "meta": {
+        "notes": "Scenario ID should follow naming convention"
+      }
+    },
+    {
+      "expectation_type": "expect_column_values_to_be_unique",
+      "kwargs": {
+        "column": "id"
+      },
+      "meta": {
+        "notes": "Run IDs must be unique"
+      }
+    },
+    {
+      "expectation_type": "expect_column_values_to_be_of_type",
+      "kwargs": {
+        "column": "parameters",
+        "type_": "dict"
+      },
+      "meta": {
+        "notes": "Parameters should be a dictionary"
+      }
+    },
+    {
+      "expectation_type": "expect_column_values_to_be_of_type",
+      "kwargs": {
+        "column": "created_at",
+        "type_": "str"
+      },
+      "meta": {
+        "notes": "Created timestamp should be string"
+      }
+    },
+    {
+      "expectation_type": "expect_column_values_to_match_regex",
+      "kwargs": {
+        "column": "created_at",
+        "regex": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}Z$"
+      },
+      "meta": {
+        "notes": "Timestamps should follow ISO 8601 format"
+      }
+    }
+  ],
+  "meta": {
+    "great_expectations_version": "0.18.0",
+    "notes": "Expectation suite for Aurum scenario runs data validation",
+    "created_by": "Aurum Data Contract Validation System",
+    "data_asset_type": "Dataset"
+  }
+}

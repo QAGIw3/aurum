@@ -9,6 +9,7 @@ units as (
     from {{ ref('eia_units_map') }}
 )
 select
+    s.tenant_id,
     s.series_id,
     s.period,
     s.period_start,
@@ -29,6 +30,9 @@ select
     s.dataset,
     s.metadata,
     s.ingest_ts,
+    s.ingest_job_id,
+    s.ingest_run_id,
+    s.ingest_batch_id,
     coalesce(s.canonical_currency, u.currency) as currency_normalized,
     coalesce(s.canonical_unit, u.per_unit) as unit_normalized,
     case

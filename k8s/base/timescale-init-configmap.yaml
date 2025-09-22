@@ -7,9 +7,9 @@ data:
   ddl_timeseries.sql: |
     CREATE EXTENSION IF NOT EXISTS timescaledb;
     CREATE EXTENSION IF NOT EXISTS pgcrypto;
-    
+
     CREATE TABLE IF NOT EXISTS public.iso_lmp_timeseries (
-        record_hash TEXT PRIMARY KEY,
+        record_hash TEXT NOT NULL,
         tenant_id UUID,
         iso_code TEXT NOT NULL,
         market TEXT NOT NULL,
@@ -20,6 +20,9 @@ data:
         location_id TEXT NOT NULL,
         location_name TEXT,
         location_type TEXT,
+        zone TEXT,
+        hub TEXT,
+        timezone TEXT,
         price_total DOUBLE PRECISION NOT NULL,
         price_energy DOUBLE PRECISION,
         price_congestion DOUBLE PRECISION,
@@ -28,34 +31,761 @@ data:
         uom TEXT DEFAULT 'MWh',
         settlement_point TEXT,
         source_run_id TEXT,
+        ingest_job_id TEXT,
+        ingest_run_id TEXT,
+        ingest_batch_id TEXT,
         metadata JSONB,
         ingest_ts TIMESTAMPTZ NOT NULL DEFAULT NOW()
+        , PRIMARY KEY (record_hash, interval_start)
     );
-    
-    SELECT create_hypertable('public.iso_lmp_timeseries', 'interval_start', if_not_exists => TRUE, migrate_data => TRUE);
-    CREATE INDEX IF NOT EXISTS idx_iso_lmp_lookup ON public.iso_lmp_timeseries(iso_code, location_id, market, interval_start DESC);
-    
+
+    SELECT
+        create_hypertable(
+            'public.iso_lmp_timeseries',
+            'interval_start',
+            if_not_exists => TRUE,
+            migrate_data => TRUE
+        );
+
+    SELECT set_chunk_time_interval('public.iso_lmp_timeseries', INTERVAL '3 days');
+
+    CREATE INDEX IF NOT EXISTS idx_iso_lmp_lookup
+        ON public.iso_lmp_timeseries (tenant_id, iso_code, location_id, market, interval_start DESC);
+
+    -- Enable native compression and lifecycle policies for ISO LMP data
+    ALTER TABLE IF EXISTS public.iso_lmp_timeseries
+        SET (
+            timescaledb.compress = true,
+            timescaledb.compress_segmentby = 'tenant_id,iso_code,location_id,market',
+            timescaledb.compress_orderby = 'interval_start DESC'
+        );
+
+    SELECT add_compression_policy('public.iso_lmp_timeseries', INTERVAL '7 days', if_not_exists => TRUE);
+    SELECT add_retention_policy('public.iso_lmp_timeseries', INTERVAL '180 days', if_not_exists => TRUE);
+
+    -- Five minute aggregate (rolling 7 days)
+    DO $$
+    BEGIN
+        IF NOT EXISTS (
+            SELECT 1 FROM pg_catalog.pg_class c
+            JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace
+            WHERE n.nspname = 'public' AND c.relname = 'lmp_agg_5m'
+        ) THEN
+            EXECUTE $DDL$
+                CREATE MATERIALIZED VIEW public.iso_lmp_agg_5m
+                WITH (timescaledb.continuous) AS
+                SELECT
+                    time_bucket('5 minutes', interval_start) AS bucket_start,
+                    tenant_id,
+                    iso_code,
+                    location_id,
+                    market,
+                    zone,
+                    hub,
+                    timezone,
+                    currency,
+                    uom,
+                    avg(price_total) AS price_avg,
+                    min(price_total) AS price_min,
+                    max(price_total) AS price_max,
+                    stddev_pop(price_total) AS price_stddev,
+                    count(*) AS sample_count
+                FROM public.iso_lmp_timeseries
+                GROUP BY 1, 2, 3, 4, 5, 6, 7, 8, 9, 10
+                WITH NO DATA;
+            $DDL$;
+        END IF;
+    END$$;
+
+    CREATE INDEX IF NOT EXISTS idx_iso_lmp_agg_5m_key
+        ON public.iso_lmp_agg_5m(tenant_id, iso_code, location_id, market, bucket_start DESC);
+    SELECT add_continuous_aggregate_policy(
+        'public.iso_lmp_agg_5m',
+        start_offset => INTERVAL '7 days',
+        end_offset => INTERVAL '5 minutes',
+        schedule_interval => INTERVAL '5 minutes',
+        if_not_exists => TRUE
+    );
+
+    -- Hourly aggregate (rolling 30 days)
+    DO $$
+    BEGIN
+        IF NOT EXISTS (
+            SELECT 1 FROM pg_catalog.pg_class c
+            JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace
+            WHERE n.nspname = 'public' AND c.relname = 'lmp_agg_1h'
+        ) THEN
+            EXECUTE $DDL$
+                CREATE MATERIALIZED VIEW public.iso_lmp_agg_1h
+                WITH (timescaledb.continuous) AS
+                SELECT
+                    time_bucket('1 hour', interval_start) AS bucket_start,
+                    tenant_id,
+                    iso_code,
+                    location_id,
+                    market,
+                    zone,
+                    hub,
+                    timezone,
+                    currency,
+                    uom,
+                    avg(price_total) AS price_avg,
+                    min(price_total) AS price_min,
+                    max(price_total) AS price_max,
+                    stddev_pop(price_total) AS price_stddev,
+                    count(*) AS sample_count
+                FROM public.iso_lmp_timeseries
+                GROUP BY 1, 2, 3, 4, 5, 6, 7, 8, 9, 10
+                WITH NO DATA;
+            $DDL$;
+        END IF;
+    END$$;
+
+    CREATE INDEX IF NOT EXISTS idx_iso_lmp_agg_1h_key
+        ON public.iso_lmp_agg_1h(tenant_id, iso_code, location_id, market, bucket_start DESC);
+    SELECT add_continuous_aggregate_policy(
+        'public.iso_lmp_agg_1h',
+        start_offset => INTERVAL '30 days',
+        end_offset => INTERVAL '1 hour',
+        schedule_interval => INTERVAL '1 hour',
+        if_not_exists => TRUE
+    );
+
+    -- Daily aggregate (rolling 365 days)
+    DO $$
+    BEGIN
+        IF NOT EXISTS (
+            SELECT 1 FROM pg_catalog.pg_class c
+            JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace
+            WHERE n.nspname = 'public' AND c.relname = 'lmp_agg_1d'
+        ) THEN
+            EXECUTE $DDL$
+                CREATE MATERIALIZED VIEW public.iso_lmp_agg_1d
+                WITH (timescaledb.continuous) AS
+                SELECT
+                    time_bucket('1 day', interval_start) AS bucket_start,
+                    tenant_id,
+                    iso_code,
+                    location_id,
+                    market,
+                    currency,
+                    uom,
+                    avg(price_total) AS price_avg,
+                    min(price_total) AS price_min,
+                    max(price_total) AS price_max,
+                    stddev_pop(price_total) AS price_stddev,
+                    count(*) AS sample_count
+                FROM public.iso_lmp_timeseries
+                GROUP BY 1, 2, 3, 4, 5, 6, 7
+                WITH NO DATA;
+            $DDL$;
+        END IF;
+    END$$;
+
+    CREATE INDEX IF NOT EXISTS idx_iso_lmp_agg_1d_key
+        ON public.iso_lmp_agg_1d(tenant_id, iso_code, location_id, market, bucket_start DESC);
+    SELECT add_continuous_aggregate_policy(
+        'public.iso_lmp_agg_1d',
+        start_offset => INTERVAL '365 days',
+        end_offset => INTERVAL '1 day',
+        schedule_interval => INTERVAL '1 day',
+        if_not_exists => TRUE
+    );
+
     CREATE TABLE IF NOT EXISTS public.load_timeseries (
-        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-        tenant_id UUID,
-        region TEXT NOT NULL,
-        ts TIMESTAMPTZ NOT NULL,
-        value DOUBLE PRECISION NOT NULL,
-        units TEXT DEFAULT 'MW',
-        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+        tenant_id TEXT NOT NULL,
+        iso_code TEXT NOT NULL,
+        area TEXT NOT NULL DEFAULT 'SYSTEM',
+        interval_start TIMESTAMPTZ NOT NULL,
+        interval_end TIMESTAMPTZ,
+        interval_minutes INTEGER,
+        mw DOUBLE PRECISION NOT NULL,
+        ingest_ts TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        ingest_job_id TEXT,
+        ingest_run_id TEXT,
+        ingest_batch_id TEXT,
+        metadata TEXT,
+        PRIMARY KEY (tenant_id, iso_code, area, interval_start)
     );
-    
-    SELECT create_hypertable('public.load_timeseries', 'ts', if_not_exists => TRUE, migrate_data => TRUE);
-    CREATE INDEX IF NOT EXISTS idx_load_region_ts ON public.load_timeseries(region, ts DESC);
-    
+
+    SELECT create_hypertable('public.load_timeseries', 'interval_start', if_not_exists => TRUE, migrate_data => TRUE);
+    SELECT set_chunk_time_interval('public.load_timeseries', INTERVAL '7 days');
+    CREATE INDEX IF NOT EXISTS idx_iso_load_lookup
+        ON public.load_timeseries (tenant_id, iso_code, area, interval_start DESC);
+
+    ALTER TABLE IF EXISTS public.load_timeseries
+        SET (
+            timescaledb.compress = true,
+            timescaledb.compress_segmentby = 'iso_code,area',
+            timescaledb.compress_orderby = 'interval_start DESC'
+        );
+
+    SELECT add_compression_policy('public.load_timeseries', INTERVAL '14 days', if_not_exists => TRUE);
+    SELECT add_retention_policy('public.load_timeseries', INTERVAL '1825 days', if_not_exists => TRUE);
+
+    DO $$
+    BEGIN
+        IF NOT EXISTS (
+            SELECT 1 FROM pg_catalog.pg_class c
+            JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace
+            WHERE n.nspname = 'public' AND c.relname = 'iso_load_agg_15m'
+        ) THEN
+            EXECUTE $DDL$
+                CREATE MATERIALIZED VIEW public.iso_load_agg_15m
+                WITH (timescaledb.continuous) AS
+                SELECT
+                    time_bucket('15 minutes', interval_start) AS bucket_start,
+                    iso_code,
+                    area,
+                    avg(mw) AS mw_avg,
+                    min(mw) AS mw_min,
+                    max(mw) AS mw_max,
+                    stddev_pop(mw) AS mw_stddev,
+                    count(*) AS sample_count
+                FROM public.load_timeseries
+                GROUP BY 1, 2, 3
+                WITH NO DATA;
+            $DDL$;
+        END IF;
+    END$$;
+
+    CREATE INDEX IF NOT EXISTS idx_iso_load_agg_15m_key
+        ON public.iso_load_agg_15m (iso_code, area, bucket_start DESC);
+    SELECT add_continuous_aggregate_policy(
+        'public.iso_load_agg_15m',
+        start_offset => INTERVAL '14 days',
+        end_offset => INTERVAL '15 minutes',
+        schedule_interval => INTERVAL '15 minutes',
+        if_not_exists => TRUE
+    );
+
+    DO $$
+    BEGIN
+        IF NOT EXISTS (
+            SELECT 1 FROM pg_catalog.pg_class c
+            JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace
+            WHERE n.nspname = 'public' AND c.relname = 'iso_load_agg_1h'
+        ) THEN
+            EXECUTE $DDL$
+                CREATE MATERIALIZED VIEW public.iso_load_agg_1h
+                WITH (timescaledb.continuous) AS
+                SELECT
+                    time_bucket('1 hour', interval_start) AS bucket_start,
+                    iso_code,
+                    area,
+                    avg(mw) AS mw_avg,
+                    min(mw) AS mw_min,
+                    max(mw) AS mw_max,
+                    stddev_pop(mw) AS mw_stddev,
+                    count(*) AS sample_count
+                FROM public.load_timeseries
+                GROUP BY 1, 2, 3
+                WITH NO DATA;
+            $DDL$;
+        END IF;
+    END$$;
+
+    CREATE INDEX IF NOT EXISTS idx_iso_load_agg_1h_key
+        ON public.iso_load_agg_1h (iso_code, area, bucket_start DESC);
+    SELECT add_continuous_aggregate_policy(
+        'public.iso_load_agg_1h',
+        start_offset => INTERVAL '90 days',
+        end_offset => INTERVAL '1 hour',
+        schedule_interval => INTERVAL '1 hour',
+        if_not_exists => TRUE
+    );
+
+    DO $$
+    BEGIN
+        IF NOT EXISTS (
+            SELECT 1 FROM pg_catalog.pg_class c
+            JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace
+            WHERE n.nspname = 'public' AND c.relname = 'iso_load_agg_1d'
+        ) THEN
+            EXECUTE $DDL$
+                CREATE MATERIALIZED VIEW public.iso_load_agg_1d
+                WITH (timescaledb.continuous) AS
+                SELECT
+                    time_bucket('1 day', interval_start) AS bucket_start,
+                    iso_code,
+                    area,
+                    avg(mw) AS mw_avg,
+                    min(mw) AS mw_min,
+                    max(mw) AS mw_max,
+                    stddev_pop(mw) AS mw_stddev,
+                    count(*) AS sample_count
+                FROM public.load_timeseries
+                GROUP BY 1, 2, 3
+                WITH NO DATA;
+            $DDL$;
+        END IF;
+    END$$;
+
+    CREATE INDEX IF NOT EXISTS idx_iso_load_agg_1d_key
+        ON public.iso_load_agg_1d (iso_code, area, bucket_start DESC);
+    SELECT add_continuous_aggregate_policy(
+        'public.iso_load_agg_1d',
+        start_offset => INTERVAL '730 days',
+        end_offset => INTERVAL '1 day',
+        schedule_interval => INTERVAL '1 day',
+        if_not_exists => TRUE
+    );
+
     CREATE TABLE IF NOT EXISTS public.ops_metrics (
-        id BIGSERIAL PRIMARY KEY,
+        id BIGSERIAL,
         metric TEXT NOT NULL,
         labels JSONB DEFAULT '{}'::JSONB,
         ts TIMESTAMPTZ NOT NULL,
         value DOUBLE PRECISION NOT NULL,
         created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+        , PRIMARY KEY (id, ts)
     );
-    
+
     SELECT create_hypertable('public.ops_metrics', 'ts', if_not_exists => TRUE, migrate_data => TRUE);
+    SELECT set_chunk_time_interval('public.ops_metrics', INTERVAL '1 day');
     CREATE INDEX IF NOT EXISTS idx_ops_metrics_metric_ts ON public.ops_metrics(metric, ts DESC);
+
+    ALTER TABLE IF EXISTS public.ops_metrics
+        SET (
+            timescaledb.compress = true,
+            timescaledb.compress_segmentby = 'metric',
+            timescaledb.compress_orderby = 'ts DESC'
+        );
+
+    SELECT add_compression_policy('public.ops_metrics', INTERVAL '7 days', if_not_exists => TRUE);
+    SELECT add_retention_policy('public.ops_metrics', INTERVAL '365 days', if_not_exists => TRUE);
+
+    DO $$
+    BEGIN
+        IF NOT EXISTS (
+            SELECT 1 FROM pg_catalog.pg_class c
+            JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace
+            WHERE n.nspname = 'public' AND c.relname = 'ops_metrics_agg_5m'
+        ) THEN
+            EXECUTE $DDL$
+                CREATE MATERIALIZED VIEW public.ops_metrics_agg_5m
+                WITH (timescaledb.continuous) AS
+                SELECT
+                    time_bucket('5 minutes', ts) AS bucket_start,
+                    metric,
+                    labels,
+                    avg(value) AS value_avg,
+                    min(value) AS value_min,
+                    max(value) AS value_max,
+                    stddev_pop(value) AS value_stddev,
+                    count(*) AS sample_count
+                FROM public.ops_metrics
+                GROUP BY 1, 2, 3
+                WITH NO DATA;
+            $DDL$;
+        END IF;
+    END$$;
+
+    CREATE INDEX IF NOT EXISTS idx_ops_metrics_agg_5m_key
+        ON public.ops_metrics_agg_5m (metric, bucket_start DESC);
+    CREATE INDEX IF NOT EXISTS idx_ops_metrics_agg_5m_labels
+        ON public.ops_metrics_agg_5m USING GIN (labels);
+
+    SELECT add_continuous_aggregate_policy(
+        'public.ops_metrics_agg_5m',
+        start_offset => INTERVAL '2 days',
+        end_offset => INTERVAL '5 minutes',
+        schedule_interval => INTERVAL '5 minutes',
+        if_not_exists => TRUE
+    );
+
+    DO $$
+    BEGIN
+        IF NOT EXISTS (
+            SELECT 1 FROM pg_catalog.pg_class c
+            JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace
+            WHERE n.nspname = 'public' AND c.relname = 'ops_metrics_agg_1h'
+        ) THEN
+            EXECUTE $DDL$
+                CREATE MATERIALIZED VIEW public.ops_metrics_agg_1h
+                WITH (timescaledb.continuous) AS
+                SELECT
+                    time_bucket('1 hour', ts) AS bucket_start,
+                    metric,
+                    labels,
+                    avg(value) AS value_avg,
+                    min(value) AS value_min,
+                    max(value) AS value_max,
+                    stddev_pop(value) AS value_stddev,
+                    count(*) AS sample_count
+                FROM public.ops_metrics
+                GROUP BY 1, 2, 3
+                WITH NO DATA;
+            $DDL$;
+        END IF;
+    END$$;
+
+    CREATE INDEX IF NOT EXISTS idx_ops_metrics_agg_1h_key
+        ON public.ops_metrics_agg_1h (metric, bucket_start DESC);
+    CREATE INDEX IF NOT EXISTS idx_ops_metrics_agg_1h_labels
+        ON public.ops_metrics_agg_1h USING GIN (labels);
+
+    SELECT add_continuous_aggregate_policy(
+        'public.ops_metrics_agg_1h',
+        start_offset => INTERVAL '30 days',
+        end_offset => INTERVAL '1 hour',
+        schedule_interval => INTERVAL '1 hour',
+        if_not_exists => TRUE
+    );
+  ddl_eia.sql: |
+    CREATE EXTENSION IF NOT EXISTS timescaledb;
+
+    -- EIA series observations loaded from Kafka via SeaTunnel
+    CREATE TABLE IF NOT EXISTS public.eia_series_timeseries (
+        tenant_id TEXT NOT NULL,
+        series_id TEXT NOT NULL,
+        period TEXT NOT NULL,
+        period_start TIMESTAMPTZ NOT NULL,
+        period_end TIMESTAMPTZ,
+        frequency TEXT,
+        value DOUBLE PRECISION,
+        raw_value TEXT,
+        unit TEXT,
+        canonical_unit TEXT,
+        canonical_currency TEXT,
+        canonical_value DOUBLE PRECISION,
+        conversion_factor DOUBLE PRECISION,
+        area TEXT,
+        sector TEXT,
+        seasonal_adjustment TEXT,
+        description TEXT,
+        source TEXT,
+        dataset TEXT,
+        metadata JSONB,
+        ingest_ts TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        ingest_job_id TEXT,
+        ingest_run_id TEXT,
+        ingest_batch_id TEXT,
+        PRIMARY KEY (tenant_id, series_id, period)
+    );
+
+    SELECT
+        create_hypertable(
+            'public.eia_series_timeseries',
+            'period_start',
+            if_not_exists => TRUE,
+            migrate_data => TRUE
+        );
+
+    SELECT set_chunk_time_interval('public.eia_series_timeseries', INTERVAL '30 days');
+
+    CREATE INDEX IF NOT EXISTS idx_eia_series_period_start
+        ON public.eia_series_timeseries (tenant_id, series_id, period_start DESC);
+
+    CREATE INDEX IF NOT EXISTS idx_eia_series_dataset_period
+        ON public.eia_series_timeseries (tenant_id, dataset, period_start DESC);
+
+    CREATE INDEX IF NOT EXISTS idx_eia_series_area_period
+        ON public.eia_series_timeseries (tenant_id, area, period_start DESC);
+
+    ALTER TABLE IF EXISTS public.eia_series_timeseries
+        SET (
+            timescaledb.compress = true,
+            timescaledb.compress_segmentby = 'tenant_id,series_id',
+            timescaledb.compress_orderby = 'period_start DESC'
+        );
+
+    SELECT add_compression_policy('public.eia_series_timeseries', INTERVAL '365 days', if_not_exists => TRUE);
+    SELECT add_retention_policy('public.eia_series_timeseries', INTERVAL '3650 days', if_not_exists => TRUE);
+
+    DO $$
+    BEGIN
+        IF NOT EXISTS (
+            SELECT 1 FROM pg_catalog.pg_class c
+            JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace
+            WHERE n.nspname = 'public' AND c.relname = 'eia_series_daily'
+        ) THEN
+            EXECUTE $DDL$
+                CREATE MATERIALIZED VIEW public.eia_series_daily
+                WITH (timescaledb.continuous) AS
+                SELECT
+                    time_bucket('1 day', period_start) AS bucket_start,
+                    tenant_id,
+                    series_id,
+                    dataset,
+                    area,
+                    sector,
+                    avg(value) AS value_avg,
+                    min(value) AS value_min,
+                    max(value) AS value_max,
+                    last(value, period_start) AS value_last,
+                    count(*) AS sample_count
+                FROM public.eia_series_timeseries
+                GROUP BY 1, 2, 3, 4, 5, 6
+                WITH NO DATA;
+            $DDL$;
+        END IF;
+    END$$;
+
+    CREATE INDEX IF NOT EXISTS idx_eia_series_daily_key
+        ON public.eia_series_daily (tenant_id, series_id, bucket_start DESC);
+    SELECT add_continuous_aggregate_policy(
+        'public.eia_series_daily',
+        start_offset => INTERVAL '400 days',
+        end_offset => INTERVAL '1 day',
+        schedule_interval => INTERVAL '1 day',
+        if_not_exists => TRUE
+    );
+
+    DO $$
+    BEGIN
+        IF NOT EXISTS (
+            SELECT 1 FROM pg_catalog.pg_class c
+            JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace
+            WHERE n.nspname = 'public' AND c.relname = 'eia_series_monthly'
+        ) THEN
+            EXECUTE $DDL$
+                CREATE MATERIALIZED VIEW public.eia_series_monthly
+                WITH (timescaledb.continuous) AS
+                SELECT
+                    time_bucket('1 month', period_start) AS bucket_start,
+                    tenant_id,
+                    series_id,
+                    dataset,
+                    area,
+                    sector,
+                    avg(value) AS value_avg,
+                    last(value, period_start) AS value_last,
+                    count(*) AS sample_count
+                FROM public.eia_series_timeseries
+                GROUP BY 1, 2, 3, 4, 5, 6
+                WITH NO DATA;
+            $DDL$;
+        END IF;
+    END$$;
+
+    CREATE INDEX IF NOT EXISTS idx_eia_series_monthly_key
+        ON public.eia_series_monthly (tenant_id, series_id, bucket_start DESC);
+    SELECT add_continuous_aggregate_policy(
+        'public.eia_series_monthly',
+        start_offset => INTERVAL '1825 days',
+        end_offset => INTERVAL '1 month',
+        schedule_interval => INTERVAL '1 day',
+        if_not_exists => TRUE
+    );
+  ddl_cpi.sql: |
+    CREATE EXTENSION IF NOT EXISTS timescaledb;
+
+    -- CPI series observations loaded from Kafka via SeaTunnel
+    CREATE TABLE IF NOT EXISTS public.cpi_series_timeseries (
+        tenant_id TEXT NOT NULL,
+        series_id TEXT NOT NULL,
+        period TEXT NOT NULL,
+        area TEXT,
+        frequency TEXT,
+        seasonal_adjustment TEXT,
+        value DOUBLE PRECISION,
+        units TEXT DEFAULT 'Index',
+        source TEXT DEFAULT 'FRED',
+        ingest_ts TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        ingest_job_id TEXT,
+        ingest_run_id TEXT,
+        ingest_batch_id TEXT,
+        metadata TEXT,
+        PRIMARY KEY (tenant_id, series_id, period)
+    );
+
+    -- Hypertable on ingest timestamp to enable compression/retention policies
+    SELECT create_hypertable(
+        'public.cpi_series_timeseries',
+        'ingest_ts',
+        if_not_exists => TRUE,
+        migrate_data => TRUE
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_cpi_series_period
+        ON public.cpi_series_timeseries (tenant_id, series_id, period);
+    CREATE INDEX IF NOT EXISTS idx_cpi_period
+        ON public.cpi_series_timeseries (tenant_id, period);
+
+    ALTER TABLE IF EXISTS public.cpi_series_timeseries
+        SET (
+            timescaledb.compress = true,
+            timescaledb.compress_segmentby = 'tenant_id,series_id',
+            timescaledb.compress_orderby = 'ingest_ts DESC'
+        );
+
+    SELECT add_compression_policy('public.cpi_series_timeseries', INTERVAL '180 days', if_not_exists => TRUE);
+    SELECT add_retention_policy('public.cpi_series_timeseries', INTERVAL '3650 days', if_not_exists => TRUE);
+  ddl_noaa.sql: |
+    CREATE EXTENSION IF NOT EXISTS timescaledb;
+
+    -- NOAA daily weather observations (GHCND) loaded from Kafka via SeaTunnel
+    CREATE TABLE IF NOT EXISTS public.noaa_weather_timeseries (
+        tenant_id TEXT NOT NULL,
+        station_id TEXT NOT NULL,
+        observation_date DATE NOT NULL,
+        element TEXT NOT NULL,
+        station_name TEXT,
+        latitude DOUBLE PRECISION,
+        longitude DOUBLE PRECISION,
+        elevation_m DOUBLE PRECISION,
+        dataset TEXT NOT NULL,
+        value DOUBLE PRECISION,
+        raw_value TEXT,
+        unit TEXT,
+        observation_time TIMESTAMPTZ,
+        measurement_flag TEXT,
+        quality_flag TEXT,
+        source_flag TEXT,
+        attributes TEXT,
+        ingest_ts TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        ingest_job_id TEXT,
+        ingest_run_id TEXT,
+        ingest_batch_id TEXT,
+        PRIMARY KEY (tenant_id, station_id, observation_date, element)
+    );
+
+    SELECT create_hypertable('public.noaa_weather_timeseries', 'observation_date', if_not_exists => TRUE, migrate_data => TRUE);
+
+    CREATE INDEX IF NOT EXISTS idx_noaa_element_date
+        ON public.noaa_weather_timeseries (tenant_id, element, observation_date DESC);
+
+    CREATE INDEX IF NOT EXISTS idx_noaa_station_date
+        ON public.noaa_weather_timeseries (tenant_id, station_id, observation_date DESC);
+
+    -- Enable native compression and retention policies
+    ALTER TABLE IF EXISTS public.noaa_weather_timeseries
+        SET (
+            timescaledb.compress = true,
+            timescaledb.compress_segmentby = 'tenant_id,station_id,element',
+            timescaledb.compress_orderby = 'observation_date DESC'
+        );
+
+    -- Compress data older than 30 days; retain for 5 years
+    SELECT add_compression_policy('public.noaa_weather_timeseries', INTERVAL '30 days', if_not_exists => TRUE);
+    SELECT add_retention_policy('public.noaa_weather_timeseries', INTERVAL '1825 days', if_not_exists => TRUE);
+  ddl_drought.sql: |
+    CREATE EXTENSION IF NOT EXISTS timescaledb;
+
+    -- Daily drought index zonal statistics hydrated from Kafka
+    CREATE TABLE IF NOT EXISTS public.drought_index_timeseries (
+        tenant_id TEXT NOT NULL,
+        series_id TEXT NOT NULL,
+        region_type TEXT NOT NULL,
+        region_id TEXT NOT NULL,
+        dataset TEXT NOT NULL,
+        index TEXT NOT NULL,
+        timescale TEXT NOT NULL,
+        valid_time DATE NOT NULL,
+        value DOUBLE PRECISION,
+        unit TEXT,
+        as_of TIMESTAMPTZ,
+        source_url TEXT,
+        ingest_job_id TEXT,
+        ingest_run_id TEXT,
+        ingest_batch_id TEXT,
+        ingest_ts TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        metadata JSONB DEFAULT '{}'::jsonb,
+        PRIMARY KEY (tenant_id, series_id, valid_time)
+    );
+
+    SELECT create_hypertable('public.drought_index_timeseries', 'valid_time', if_not_exists => TRUE, migrate_data => TRUE);
+
+    CREATE INDEX IF NOT EXISTS idx_drought_index_region_date
+        ON public.drought_index_timeseries (tenant_id, region_type, region_id, valid_time DESC);
+
+    CREATE INDEX IF NOT EXISTS idx_drought_index_dataset
+        ON public.drought_index_timeseries (tenant_id, dataset, index, timescale, valid_time DESC);
+
+    ALTER TABLE IF EXISTS public.drought_index_timeseries
+        SET (
+            timescaledb.compress = true,
+            timescaledb.compress_segmentby = 'tenant_id,series_id',
+            timescaledb.compress_orderby = 'valid_time DESC'
+        );
+
+    SELECT add_compression_policy('public.drought_index_timeseries', INTERVAL '14 days', if_not_exists => TRUE);
+    SELECT add_retention_policy('public.drought_index_timeseries', INTERVAL '3 years', if_not_exists => TRUE);
+
+    -- Continuous aggregate for weekly means by region
+    CREATE MATERIALIZED VIEW IF NOT EXISTS public.drought_index_timeseries_wk
+    WITH (timescaledb.continuous) AS
+    SELECT
+        tenant_id,
+        series_id,
+        region_type,
+        region_id,
+        dataset,
+        index,
+        timescale,
+        time_bucket('7 days', valid_time) AS bucket_start,
+        AVG(value) AS avg_value,
+        MAX(value) AS max_value,
+        MIN(value) AS min_value,
+        MAX(as_of) AS latest_as_of,
+        MAX(ingest_ts) AS latest_ingest_ts
+    FROM public.drought_index_timeseries
+    GROUP BY tenant_id, series_id, region_type, region_id, dataset, index, timescale, bucket_start;
+
+    SELECT add_continuous_aggregate_policy('public.drought_index_timeseries_wk',
+        start_offset => INTERVAL '30 days',
+        end_offset   => INTERVAL '1 day',
+        schedule_interval => INTERVAL '1 day',
+        if_not_exists => TRUE);
+
+    SELECT add_retention_policy('public.drought_index_timeseries_wk', INTERVAL '5 years', if_not_exists => TRUE);
+  ddl_fred.sql: |
+    CREATE EXTENSION IF NOT EXISTS timescaledb;
+
+    -- FRED series observations loaded from Kafka via SeaTunnel
+    CREATE TABLE IF NOT EXISTS public.fred_series_timeseries (
+        tenant_id TEXT NOT NULL,
+        series_id TEXT NOT NULL,
+        obs_date DATE NOT NULL,
+        frequency TEXT,
+        seasonal_adjustment TEXT,
+        value DOUBLE PRECISION,
+        raw_value TEXT,
+        units TEXT,
+        title TEXT,
+        notes TEXT,
+        metadata TEXT,
+        ingest_ts TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        ingest_job_id TEXT,
+        ingest_run_id TEXT,
+        ingest_batch_id TEXT,
+        PRIMARY KEY (series_id, obs_date)
+    );
+
+    -- Make the time column a hypertable (Timescale supports DATE)
+    SELECT create_hypertable('public.fred_series_timeseries', 'obs_date', if_not_exists => TRUE, migrate_data => TRUE);
+
+    CREATE INDEX IF NOT EXISTS idx_fred_series_id_date ON public.fred_series_timeseries (tenant_id, series_id, obs_date DESC);
+
+    -- Enable compression and retention policies (older than 90 days compressed; keep 10 years)
+    ALTER TABLE IF EXISTS public.fred_series_timeseries
+        SET (
+            timescaledb.compress = true,
+            timescaledb.compress_segmentby = 'series_id',
+            timescaledb.compress_orderby = 'obs_date DESC'
+        );
+
+    SELECT add_compression_policy('public.fred_series_timeseries', INTERVAL '90 days', if_not_exists => TRUE);
+    SELECT add_retention_policy('public.fred_series_timeseries', INTERVAL '3650 days', if_not_exists => TRUE);
+
+    CREATE MATERIALIZED VIEW IF NOT EXISTS public.fred_series_daily_summary
+    WITH (timescaledb.continuous) AS
+    SELECT
+        tenant_id,
+        series_id,
+        obs_date,
+        AVG(value) AS avg_value,
+        MIN(value) AS min_value,
+        MAX(value) AS max_value,
+        COUNT(*) AS observation_count
+    FROM public.fred_series_timeseries
+    GROUP BY tenant_id, series_id, obs_date;
+
+    SELECT add_continuous_aggregate_policy(
+        'public.fred_series_daily_summary',
+        start_offset => INTERVAL '7 days',
+        end_offset => INTERVAL '1 hour',
+        schedule_interval => INTERVAL '30 minutes',
+        if_not_exists => TRUE
+    );

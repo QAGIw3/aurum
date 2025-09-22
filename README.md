@@ -3,10 +3,17 @@
 Developer-oriented scaffolding for the Aurum market intelligence platform.
 
 Quick links:
+- Docs index: `docs/README.md`
 - Onboarding guide: `docs/onboarding.md`
 - Architecture & deep dive: `docs/aurum-developer-documentation.md`
 - Scenarios guide: `docs/scenarios.md`
 - Kubernetes developer flow: `docs/k8s-dev.md`
+- API usage: `docs/api/README.md` and `docs/api_usage_guide.md`
+- Pagination model: `docs/pagination.md`
+- Runtime config (admin): `docs/runtime-config.md`
+- Cache patterns & TTLs: `docs/golden_query_cache.md`
+- Configuration reference: `docs/configuration.md`
+- Tenant RLS/security: `docs/security/tenant-rls.md`
 - Runbooks (API, ingestion, worker): `docs/runbooks/`
 
 ## Repository layout

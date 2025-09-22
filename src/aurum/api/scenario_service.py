@@ -250,6 +250,10 @@ class BaseScenarioStore:
         status: Optional[str] = None,
         limit: int = 100,
         offset: int = 0,
+        name_contains: Optional[str] = None,
+        tag: Optional[str] = None,
+        created_after: Optional[datetime] = None,
+        created_before: Optional[datetime] = None,
     ) -> List[ScenarioRecord]:
         raise NotImplementedError
 
@@ -285,6 +289,8 @@ class BaseScenarioStore:
         state: Optional[str] = None,
         limit: int = 100,
         offset: int = 0,
+        created_after: Optional[datetime] = None,
+        created_before: Optional[datetime] = None,
     ) -> List[ScenarioRunRecord]:
         raise NotImplementedError
 
@@ -405,6 +411,10 @@ class InMemoryScenarioStore(BaseScenarioStore):
         status: Optional[str] = None,
         limit: int = 100,
         offset: int = 0,
+        name_contains: Optional[str] = None,
+        tag: Optional[str] = None,
+        created_after: Optional[datetime] = None,
+        created_before: Optional[datetime] = None,
     ) -> List[ScenarioRecord]:
         matches = list(self._scenarios.values())
         if tenant_id:
@@ -420,6 +430,27 @@ class InMemoryScenarioStore(BaseScenarioStore):
                     status_enum = None
             if status_enum is not None:
                 matches = [record for record in matches if record.status == status_enum]
+        if name_contains:
+            needle = name_contains.lower()
+            matches = [record for record in matches if needle in record.name.lower()]
+        if tag:
+            matches = [
+                record
+                for record in matches
+                if tag in (record.tags or [])
+            ]
+        if created_after:
+            matches = [
+                record
+                for record in matches
+                if record.created_at and record.created_at >= created_after
+            ]
+        if created_before:
+            matches = [
+                record
+                for record in matches
+                if record.created_at and record.created_at <= created_before
+            ]
         matches.sort(key=lambda rec: rec.created_at, reverse=True)
         return matches[offset : offset + limit]
 
@@ -598,6 +629,8 @@ class InMemoryScenarioStore(BaseScenarioStore):
         state: Optional[str] = None,
         limit: int = 100,
         offset: int = 0,
+        created_after: Optional[datetime] = None,
+        created_before: Optional[datetime] = None,
     ) -> List[ScenarioRunRecord]:
         if isinstance(state, ScenarioRunStatus):
             state_enum: Optional[ScenarioRunStatus] = state
@@ -630,6 +663,18 @@ class InMemoryScenarioStore(BaseScenarioStore):
             )
             if scenario_match and state_match and scenario_exists and tenant_match:
                 runs.append(run)
+        if created_after:
+            runs = [
+                run
+                for run in runs
+                if run.created_at and run.created_at >= created_after
+            ]
+        if created_before:
+            runs = [
+                run
+                for run in runs
+                if run.created_at and run.created_at <= created_before
+            ]
         runs.sort(key=lambda rec: rec.created_at, reverse=True)
         return runs[offset : offset + limit]
 
@@ -900,6 +945,10 @@ class PostgresScenarioStore(BaseScenarioStore):
         status: Optional[str] = None,
         limit: int = 100,
         offset: int = 0,
+        name_contains: Optional[str] = None,
+        tag: Optional[str] = None,
+        created_after: Optional[datetime] = None,
+        created_before: Optional[datetime] = None,
     ) -> List[ScenarioRecord]:
         with self._connect() as conn:
             with conn.cursor() as cur:
@@ -921,6 +970,18 @@ class PostgresScenarioStore(BaseScenarioStore):
                     if status_value:
                         clauses.append("status = %s")
                         params.append(status_value)
+                if name_contains:
+                    clauses.append("name ILIKE %s")
+                    params.append(f"%{name_contains}%")
+                if tag:
+                    clauses.append("tags @> %s::jsonb")
+                    params.append(json.dumps([tag]))
+                if created_after:
+                    clauses.append("created_at >= %s")
+                    params.append(created_after)
+                if created_before:
+                    clauses.append("created_at <= %s")
+                    params.append(created_before)
                 where_clause = f"WHERE {' AND '.join(clauses)}" if clauses else ""
                 params.extend([limit, offset])
                 base_query = """
@@ -1182,6 +1243,8 @@ class PostgresScenarioStore(BaseScenarioStore):
         state: Optional[str] = None,
         limit: int = 100,
         offset: int = 0,
+        created_after: Optional[datetime] = None,
+        created_before: Optional[datetime] = None,
     ) -> List[ScenarioRunRecord]:
         with self._connect() as conn:
             with conn.cursor() as cur:
@@ -1208,9 +1271,15 @@ class PostgresScenarioStore(BaseScenarioStore):
                             state_value = ScenarioRunStatus(str(state).lower()).value
                         except ValueError:
                             state_value = None
-                    if state_value:
-                        query.append("AND mr.state = %s")
-                        params.append(state_value)
+                if state_value:
+                    query.append("AND mr.state = %s")
+                    params.append(state_value)
+                if created_after:
+                    query.append("AND mr.submitted_at >= %s")
+                    params.append(created_after)
+                if created_before:
+                    query.append("AND mr.submitted_at <= %s")
+                    params.append(created_before)
                 query.append("ORDER BY mr.submitted_at DESC")
                 query.append("LIMIT %s OFFSET %s")
                 params.extend([limit, offset])

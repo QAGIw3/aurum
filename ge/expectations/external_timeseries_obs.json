@@ -5,6 +5,36 @@
   },
   "expectations": [
     {
+      "expectation_type": "expect_table_columns_to_match_set",
+      "kwargs": {
+        "column_set": [
+          "tenant_id",
+          "provider",
+          "series_id",
+          "ts",
+          "asof_date",
+          "value",
+          "value_raw",
+          "unit_code",
+          "geo_id",
+          "dataset_code",
+          "frequency_code",
+          "status",
+          "quality_flag",
+          "ingest_ts",
+          "ingest_job_id",
+          "ingest_run_id",
+          "ingest_batch_id",
+          "source_event_id",
+          "metadata"
+        ]
+      }
+    },
+    {
+      "expectation_type": "expect_column_values_to_not_be_null",
+      "kwargs": {"column": "tenant_id"}
+    },
+    {
       "expectation_type": "expect_column_values_to_not_be_null",
       "kwargs": {"column": "provider"}
     },

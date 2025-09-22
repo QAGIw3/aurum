@@ -40,6 +40,20 @@ Messages on both topics should use a compound Kafka key of `provider|series_id` 
 
 The Trino Iceberg catalog (`trino/catalog/iceberg.properties`) is pinned to Iceberg format v2 with merge-on-read enabled and ZSTD compression. Default session overrides in `conf/trino/session.properties` turn on predicate pushdown and spill to match the merge and compaction workload characteristics.
 
+- Default catalog/schema session overrides now point at `iceberg.external`, so `trino` CLI invocations automatically land in the external Lakehouse namespace.
+- `conf/trino/access-control.properties` + `conf/trino/access-control/rules.json` enforce read-only access for `postgres`, `timescale`, `clickhouse`, and `kafka` catalogs while keeping Iceberg writable for ingestion/QA jobs.
+
+### Timescale hypertables
+
+Operational hot-path queries (alerting, dashboards) rely on Timescale hypertables defined under `timescale/*.sql`. Each table now standardizes on:
+
+- `tenant_id` (TEXT/UUID depending on table) as a leading column in the primary key and indexes so multi-tenant retention and compression policies can be enforced.
+- Audit metadata (`ingest_ts`, `ingest_job_id`, `ingest_run_id`, `ingest_batch_id`) to track the Airflow/SeaTunnel execution responsible for a row.
+- Continuous aggregates (e.g., `fred_series_daily_summary`, `eia_series_daily`, `iso_lmp_agg_*`) updated to group by `tenant_id` and expose per-tenant rollups.
+- Compression knobs (`timescaledb.compress_segmentby`) extended with `tenant_id` to avoid cross-tenant chunk mingling.
+
+Re-apply the DDLs after updating the Airflow charts to ensure hypertables pick up the new columns. Timescale will backfill metadata for existing chunks when the new columns are added with `NULL` defaults.
+
 ## Sample fixtures
 
 `testdata/external/` contains small `series_catalog.jsonl` and `timeseries_observation.csv` samples. Run the loader script to push the fixtures into a running Trino/Iceberg stack:

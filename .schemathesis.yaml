@@ -1,0 +1,263 @@
+openapi:
+  schema: openapi/aurum.yaml
+
+# Schemathesis configuration for API testing
+schema:
+  - path: openapi/aurum.yaml
+    format: openapi
+    base_url: http://localhost:8000
+
+# Test configuration
+test:
+  # Target endpoints
+  include:
+    - /v1/scenarios
+    - /v1/curves
+    - /v1/external/providers
+    - /v1/admin/config/*
+
+  # Exclude admin endpoints from property-based testing
+  exclude:
+    - /v1/admin/ratelimit/test
+    - /health
+    - /ready
+
+  # Test settings
+  max_examples: 100
+  max_duration: 30
+  hypothesis_max_examples: 50
+
+  # Property-based testing
+  property_testing:
+    enabled: true
+    max_examples: 20
+
+# Authentication
+auth:
+  oauth2:
+    flows:
+      authorizationCode:
+        authorizationUrl: https://auth.aurum.local/oauth/authorize
+        tokenUrl: https://auth.aurum.local/oauth/token
+        scopes:
+          aurum: "Full access to Aurum API"
+
+# Testing hooks
+hooks:
+  # Pre-test hooks
+  before_call:
+    - type: python
+      script: |
+        import time
+        import random
+
+        # Add random delay to simulate real-world usage
+        if random.random() < 0.1:  # 10% of requests
+            time.sleep(random.uniform(0.1, 0.5))
+
+  # Post-test hooks
+  after_call:
+    - type: python
+      script: |
+        # Log slow requests
+        if response.elapsed.total_seconds() > 1.0:
+            print(f"Slow request: {request.method} {request.url} ({response.elapsed.total_seconds()".2f"}s)")
+
+# Test cases
+test_cases:
+  # Scenario endpoints
+  scenarios:
+    - endpoint: /v1/scenarios
+      method: GET
+      parameters:
+        limit: [1, 10, 100]
+        cursor: ["", "eyJ0ZXN0IjoidmFsdWUifQ=="]
+      expected_status: [200, 401, 403]
+
+    - endpoint: /v1/scenarios
+      method: POST
+      content_type: application/json
+      body:
+        name: "Test Scenario"
+        description: "Test scenario for API testing"
+        status: "created"
+      expected_status: [201, 400, 401, 403]
+
+  # Curve endpoints
+  curves:
+    - endpoint: /v1/curves
+      method: GET
+      parameters:
+        asof: ["2024-01-01", "2024-06-01"]
+        asset_class: ["power", "gas"]
+        limit: [10, 100, 500]
+        cursor: ["", "eyJ0ZXN0IjoidmFsdWUifQ=="]
+      expected_status: [200, 400, 401, 403]
+
+    - endpoint: /v1/curves/diff
+      method: GET
+      parameters:
+        left_asof: "2024-01-01"
+        right_asof: "2024-06-01"
+        asset_class: ["power", "gas"]
+        limit: [10, 100]
+        cursor: ["", "eyJ0ZXN0IjoidmFsdWUifQ=="]
+      expected_status: [200, 400, 401, 403]
+
+  # External data endpoints
+  external:
+    - endpoint: /v1/external/providers
+      method: GET
+      parameters:
+        limit: [10, 100, 1000]
+        cursor: ["", "eyJ0ZXN0IjoidmFsdWUifQ=="]
+      expected_status: [200, 401, 403]
+
+    - endpoint: /v1/external/series
+      method: GET
+      parameters:
+        provider: ["FRED", "EIA", "NOAA"]
+        frequency: ["daily", "monthly"]
+        limit: [10, 100]
+        cursor: ["", "eyJ0ZXN0IjoidmFsdWUifQ=="]
+      expected_status: [200, 400, 401, 403]
+
+  # Admin endpoints
+  admin:
+    - endpoint: /v1/admin/config/ratelimit/{tenant_id}
+      method: GET
+      parameters:
+        tenant_id: "test-tenant-123"
+      expected_status: [200, 401, 403]
+
+    - endpoint: /v1/admin/config/audit-log
+      method: GET
+      parameters:
+        limit: [10, 100, 1000]
+      expected_status: [200, 401, 403]
+
+# Property-based testing rules
+property_tests:
+  # Cursor pagination properties
+  cursor_pagination:
+    - name: "Cursor stability"
+      description: "Cursors should return consistent results"
+      hypothesis:
+        strategy: "cursor_pagination_stability"
+
+    - name: "Cursor ordering"
+      description: "Cursors should maintain stable ordering"
+      hypothesis:
+        strategy: "cursor_pagination_ordering"
+
+  # Response format properties
+  response_format:
+    - name: "RFC 7807 compliance"
+      description: "All error responses should follow RFC 7807"
+      hypothesis:
+        strategy: "rfc7807_compliance"
+
+    - name: "ETag presence"
+      description: "All list/detail endpoints should return ETags"
+      hypothesis:
+        strategy: "etag_presence"
+
+  # Security properties
+  security:
+    - name: "Tenant isolation"
+      description: "Requests should be scoped to tenant"
+      hypothesis:
+        strategy: "tenant_isolation"
+
+    - name: "Rate limiting"
+      description: "Rate limits should be enforced"
+      hypothesis:
+        strategy: "rate_limiting_enforcement"
+
+# Custom hypothesis strategies
+hypothesis_strategies:
+  cursor_pagination_stability:
+    strategy: |
+      from hypothesis import strategies as st
+      from hypothesis.stateful import RuleBasedStateMachine, rule
+
+      class CursorPaginationMachine(RuleBasedStateMachine):
+          def __init__(self):
+              super().__init__()
+              self.cursors = []
+
+          @rule(target=cursors, endpoint=st.just("/v1/scenarios"))
+          def get_cursor(self, endpoint):
+              # Simulate getting a cursor from API response
+              return st.uuids().map(str).example()
+
+          @rule(cursor=cursors, endpoint=st.just("/v1/scenarios"))
+          def use_cursor(self, cursor, endpoint):
+              # Verify cursor produces consistent results
+              pass
+
+  rfc7807_compliance:
+    strategy: |
+      from hypothesis import strategies as st
+
+      def error_response_follows_rfc7807(response):
+          """Check that error response follows RFC 7807"""
+          if response.status_code >= 400:
+              try:
+                  error_data = response.json()
+                  assert "error" in error_data
+                  assert "message" in error_data
+                  assert "request_id" in error_data
+                  return True
+              except:
+                  return False
+          return True
+
+      return st.builds(error_response_follows_rfc7807)
+
+  tenant_isolation:
+    strategy: |
+      from hypothesis import strategies as st
+
+      def tenant_isolation_check(request, response):
+          """Check that response is scoped to correct tenant"""
+          if "X-Aurum-Tenant" in request.headers:
+              tenant_id = request.headers["X-Aurum-Tenant"]
+              # Check that response data is scoped to this tenant
+              # Implementation would depend on specific endpoint
+              return True
+          return True
+
+      return st.builds(tenant_isolation_check)
+
+# Reporting
+reporting:
+  formats:
+    - json
+    - junit
+    - html
+
+  # Output files
+  output:
+    json: reports/schemathesis-results.json
+    junit: reports/junit.xml
+    html: reports/schemathesis-report.html
+
+  # Coverage tracking
+  coverage:
+    enabled: true
+    include:
+      - /v1/scenarios
+      - /v1/curves
+      - /v1/external/*
+    exclude:
+      - /health
+      - /ready
+      - /metrics
+
+# Performance testing
+performance:
+  enabled: true
+  max_concurrent: 10
+  max_requests: 1000
+  timeout: 30

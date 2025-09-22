@@ -65,6 +65,48 @@ def preflight_required_vars(keys: list[str]) -> None:
         print(f"Warning: missing optional Airflow Variables: {missing}")
 
 
+def emit_lakefs_lineage(dataset: str, **context: Any) -> None:
+    repo = os.environ.get("AURUM_LAKEFS_REPO")
+    if not repo:
+        print("LakeFS repo not configured; skipping lineage commit")
+        return
+
+    branch = os.environ.get("AURUM_LAKEFS_BRANCH", "main")
+    run_id = context.get("run_id", "unknown")
+    dag = context.get("dag")
+    dag_id = dag.dag_id if dag else "unknown"
+    backfill_flag = context.get("dag_run").conf.get("backfill", False) if context.get("dag_run") else False
+    logical_date = context.get("logical_date")
+
+    metadata = {
+        "dataset": dataset,
+        "dag_id": dag_id,
+        "run_id": run_id,
+        "backfill": str(bool(backfill_flag)).lower(),
+    }
+    if logical_date:
+        metadata["logical_date"] = logical_date.astimezone(timezone.utc).isoformat()
+
+    try:
+        import sys
+
+        src_path = os.environ.get("AURUM_PYTHONPATH_ENTRY", "/opt/airflow/src")
+        if src_path and src_path not in sys.path:
+            sys.path.insert(0, src_path)
+
+        from aurum.lakefs_client import commit_branch, ensure_branch  # type: ignore
+
+        ensure_branch(repo, branch)
+        commit_branch(
+            repo,
+            branch,
+            f"airflow:{dag_id}:{run_id}",
+            metadata,
+        )
+    except Exception as exc:  # pragma: no cover
+        print(f"LakeFS lineage commit failed: {exc}")
+
+
 def build_timescale_task(task_id: str) -> BashOperator:
     mappings = [
         "secret/data/aurum/timescale:user=TIMESCALE_USER",
@@ -82,13 +124,21 @@ def build_timescale_task(task_id: str) -> BashOperator:
     jdbc_url = "{{ var.value.get('aurum_timescale_jdbc', 'jdbc:postgresql://timescale:5432/timeseries') }}"
     topic_pattern = "{{ var.value.get('aurum_eia_topic_pattern', 'aurum\\.ref\\.eia\\..*\\.v1') }}"
     table_name = "{{ var.value.get('aurum_eia_series_table', 'eia_series_timeseries') }}"
+    dlq_topic = "{{ var.value.get('aurum_eia_dlq_topic', 'aurum.ref.eia.series.dlq.v1') }}"
+    backfill_flag = "{{ dag_run.conf.get('backfill', '0') }}"
+    backfill_start = "{{ dag_run.conf.get('backfill_start', '') }}"
+    backfill_end = "{{ dag_run.conf.get('backfill_end', '') }}"
 
     env_line = (
         f"KAFKA_BOOTSTRAP_SERVERS='{kafka_bootstrap}' "
         f"SCHEMA_REGISTRY_URL='{schema_registry}' "
         f"TIMESCALE_JDBC_URL='{jdbc_url}' "
         f"EIA_TOPIC_PATTERN='{topic_pattern}' "
-        f"EIA_SERIES_TABLE='{table_name}'"
+        f"EIA_SERIES_TABLE='{table_name}' "
+        f"DLQ_TOPIC='{dlq_topic}' "
+        f"BACKFILL_ENABLED='{backfill_flag}' "
+        f"BACKFILL_START='{backfill_start}' "
+        f"BACKFILL_END='{backfill_end}'"
     )
 
     return BashOperator(
@@ -148,4 +198,10 @@ with DAG(
 
     end = EmptyOperator(task_id="end")
 
-    start >> preflight >> register_source >> load_timescale >> watermark >> end
+    lakefs_commit = PythonOperator(
+        task_id="lakefs_lineage_commit",
+        python_callable=emit_lakefs_lineage,
+        op_kwargs={"dataset": "timescale.public.eia_series_timeseries"},
+    )
+
+    start >> preflight >> register_source >> load_timescale >> watermark >> lakefs_commit >> end

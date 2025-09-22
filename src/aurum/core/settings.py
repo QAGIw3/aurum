@@ -32,6 +32,59 @@ class RedisMode(str, Enum):
     DISABLED = "disabled"
 
 
+class DataBackendType(str, Enum):
+    TRINO = "trino"
+    CLICKHOUSE = "clickhouse"
+    TIMESCALE = "timescale"
+
+
+class DataBackendSettings(AurumBaseModel):
+    """Configuration for pluggable data backends."""
+    backend_type: DataBackendType = Field(
+        default=DataBackendType.TRINO,
+        validation_alias=AliasChoices("AURUM_API_BACKEND")
+    )
+
+    # Trino-specific settings
+    trino_host: str = Field(default="localhost", validation_alias=AliasChoices("API_TRINO_HOST"))
+    trino_port: int = Field(default=8080, ge=0, validation_alias=AliasChoices("API_TRINO_PORT"))
+    trino_user: str = Field(default="aurum", validation_alias=AliasChoices("API_TRINO_USER"))
+    trino_catalog: str = Field(default="iceberg", validation_alias=AliasChoices("API_TRINO_CATALOG"))
+    trino_schema: str = Field(default="market", validation_alias=AliasChoices("API_TRINO_SCHEMA"))
+    trino_password: str | None = Field(default=None, validation_alias=AliasChoices("API_TRINO_PASSWORD"))
+    trino_http_scheme: str = Field(default="http", validation_alias=AliasChoices("API_TRINO_SCHEME"))
+
+    # ClickHouse-specific settings
+    clickhouse_host: str = Field(default="localhost", validation_alias=AliasChoices("API_CLICKHOUSE_HOST"))
+    clickhouse_port: int = Field(default=9000, ge=0, validation_alias=AliasChoices("API_CLICKHOUSE_PORT"))
+    clickhouse_database: str = Field(default="aurum", validation_alias=AliasChoices("API_CLICKHOUSE_DATABASE"))
+    clickhouse_user: str = Field(default="aurum", validation_alias=AliasChoices("API_CLICKHOUSE_USER"))
+    clickhouse_password: str | None = Field(default=None, validation_alias=AliasChoices("API_CLICKHOUSE_PASSWORD"))
+
+    # Timescale-specific settings
+    timescale_host: str = Field(default="localhost", validation_alias=AliasChoices("API_TIMESCALE_HOST"))
+    timescale_port: int = Field(default=5432, ge=0, validation_alias=AliasChoices("API_TIMESCALE_PORT"))
+    timescale_database: str = Field(default="aurum", validation_alias=AliasChoices("API_TIMESCALE_DATABASE"))
+    timescale_user: str = Field(default="aurum", validation_alias=AliasChoices("API_TIMESCALE_USER"))
+    timescale_password: str | None = Field(default=None, validation_alias=AliasChoices("API_TIMESCALE_PASSWORD"))
+
+    # Connection pool settings (shared across all backends)
+    connection_pool_min_size: int = Field(default=5, ge=0, validation_alias=AliasChoices("API_CONNECTION_POOL_MIN_SIZE"))
+    connection_pool_max_size: int = Field(default=20, ge=1, validation_alias=AliasChoices("API_CONNECTION_POOL_MAX_SIZE"))
+    connection_pool_max_idle_time: int = Field(default=300, ge=0, validation_alias=AliasChoices("API_CONNECTION_POOL_MAX_IDLE"))
+    connection_pool_timeout_seconds: float = Field(default=30.0, gt=0.0, validation_alias=AliasChoices("API_CONNECTION_POOL_TIMEOUT"))
+    connection_pool_acquire_timeout_seconds: float = Field(default=10.0, gt=0.0, validation_alias=AliasChoices("API_CONNECTION_POOL_ACQUIRE_TIMEOUT"))
+
+    @field_validator("backend_type", mode="before")
+    @classmethod
+    def parse_backend_type(cls, v: str | DataBackendType) -> DataBackendType:
+        if isinstance(v, str):
+            v = v.lower()
+            if v in ["trino", "clickhouse", "timescale"]:
+                return DataBackendType(v)
+        return v
+
+
 class TrinoSettings(AurumBaseModel):
     host: str = Field(default="localhost", validation_alias=AliasChoices("API_TRINO_HOST"))
     port: int = Field(default=8080, ge=0, validation_alias=AliasChoices("API_TRINO_PORT"))
@@ -254,6 +307,18 @@ class ApiCacheSettings(AurumBaseModel):
     eia_series_ttl: int = Field(default=120, ge=0, validation_alias=AliasChoices("API_EIA_SERIES_TTL"))
     eia_series_dimensions_ttl: int = Field(default=300, ge=0, validation_alias=AliasChoices("API_EIA_SERIES_DIMENSIONS_TTL"))
 
+    # Per-dimension TTL settings for fine-grained caching
+    cache_ttl_high_frequency: int = Field(default=60, ge=0, validation_alias=AliasChoices("API_CACHE_TTL_HIGH_FREQUENCY"))
+    cache_ttl_medium_frequency: int = Field(default=300, ge=0, validation_alias=AliasChoices("API_CACHE_TTL_MEDIUM_FREQUENCY"))
+    cache_ttl_low_frequency: int = Field(default=3600, ge=0, validation_alias=AliasChoices("API_CACHE_TTL_LOW_FREQUENCY"))
+    cache_ttl_static: int = Field(default=7200, ge=0, validation_alias=AliasChoices("API_CACHE_TTL_STATIC"))
+
+    # Dimension-specific TTL overrides
+    cache_ttl_curve_data: int = Field(default=120, ge=0, validation_alias=AliasChoices("API_CACHE_TTL_CURVE_DATA"))
+    cache_ttl_metadata: int = Field(default=300, ge=0, validation_alias=AliasChoices("API_CACHE_TTL_METADATA"))
+    cache_ttl_external_data: int = Field(default=1800, ge=0, validation_alias=AliasChoices("API_CACHE_TTL_EXTERNAL_DATA"))
+    cache_ttl_scenario_data: int = Field(default=60, ge=0, validation_alias=AliasChoices("API_CACHE_TTL_SCENARIO_DATA"))
+
 
 class PaginationLimits(AurumBaseModel):
     curves_max_limit: int = Field(default=500, ge=1, validation_alias=AliasChoices("API_CURVE_MAX_LIMIT"))
@@ -332,6 +397,7 @@ class AurumSettings(BaseSettings):
     env: str = Field(default="local", validation_alias=AliasChoices("ENV"))
     debug: bool = Field(default=False, validation_alias=AliasChoices("DEBUG"))
     api: ApiSettings = Field(default_factory=ApiSettings)
+    data_backend: DataBackendSettings = Field(default_factory=DataBackendSettings)
     trino: TrinoSettings = Field(default_factory=TrinoSettings)
     redis: RedisSettings = Field(default_factory=RedisSettings)
     database: DatabaseSettings = Field(default_factory=DatabaseSettings)
@@ -526,6 +592,24 @@ class AurumSettings(BaseSettings):
             update_cache(eia_series_ttl=int(value))
         if (value := env.get("AURUM_API_EIA_SERIES_DIMENSIONS_TTL")) is not None:
             update_cache(eia_series_dimensions_ttl=int(value))
+
+        # Per-dimension cache TTL settings
+        if (value := env.get("AURUM_API_CACHE_TTL_HIGH_FREQUENCY")) is not None:
+            update_cache(cache_ttl_high_frequency=int(value))
+        if (value := env.get("AURUM_API_CACHE_TTL_MEDIUM_FREQUENCY")) is not None:
+            update_cache(cache_ttl_medium_frequency=int(value))
+        if (value := env.get("AURUM_API_CACHE_TTL_LOW_FREQUENCY")) is not None:
+            update_cache(cache_ttl_low_frequency=int(value))
+        if (value := env.get("AURUM_API_CACHE_TTL_STATIC")) is not None:
+            update_cache(cache_ttl_static=int(value))
+        if (value := env.get("AURUM_API_CACHE_TTL_CURVE_DATA")) is not None:
+            update_cache(cache_ttl_curve_data=int(value))
+        if (value := env.get("AURUM_API_CACHE_TTL_METADATA")) is not None:
+            update_cache(cache_ttl_metadata=int(value))
+        if (value := env.get("AURUM_API_CACHE_TTL_EXTERNAL_DATA")) is not None:
+            update_cache(cache_ttl_external_data=int(value))
+        if (value := env.get("AURUM_API_CACHE_TTL_SCENARIO_DATA")) is not None:
+            update_cache(cache_ttl_scenario_data=int(value))
 
         if (value := env.get("AURUM_API_CURVE_MAX_LIMIT")) is not None:
             update_pagination(curves_max_limit=int(value))

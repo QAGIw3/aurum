@@ -24,6 +24,9 @@ CREATE TABLE IF NOT EXISTS public.iso_lmp_timeseries (
     uom TEXT DEFAULT 'MWh',
     settlement_point TEXT,
     source_run_id TEXT,
+    ingest_job_id TEXT,
+    ingest_run_id TEXT,
+    ingest_batch_id TEXT,
     metadata JSONB,
     ingest_ts TIMESTAMPTZ NOT NULL DEFAULT NOW()
     , PRIMARY KEY (record_hash, interval_start)
@@ -40,7 +43,7 @@ SELECT
 SELECT set_chunk_time_interval('public.iso_lmp_timeseries', INTERVAL '3 days');
 
 CREATE INDEX IF NOT EXISTS idx_iso_lmp_lookup
-    ON public.iso_lmp_timeseries (iso_code, location_id, market, interval_start DESC);
+    ON public.iso_lmp_timeseries (tenant_id, iso_code, location_id, market, interval_start DESC);
 
 -- Enable native compression and lifecycle policies for ISO LMP data
 ALTER TABLE IF EXISTS public.iso_lmp_timeseries
@@ -183,6 +186,7 @@ SELECT add_continuous_aggregate_policy(
 );
 
 CREATE TABLE IF NOT EXISTS public.load_timeseries (
+    tenant_id TEXT NOT NULL,
     iso_code TEXT NOT NULL,
     area TEXT NOT NULL DEFAULT 'SYSTEM',
     interval_start TIMESTAMPTZ NOT NULL,
@@ -190,14 +194,17 @@ CREATE TABLE IF NOT EXISTS public.load_timeseries (
     interval_minutes INTEGER,
     mw DOUBLE PRECISION NOT NULL,
     ingest_ts TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    ingest_job_id TEXT,
+    ingest_run_id TEXT,
+    ingest_batch_id TEXT,
     metadata TEXT,
-    PRIMARY KEY (iso_code, area, interval_start)
+    PRIMARY KEY (tenant_id, iso_code, area, interval_start)
 );
 
 SELECT create_hypertable('public.load_timeseries', 'interval_start', if_not_exists => TRUE, migrate_data => TRUE);
 SELECT set_chunk_time_interval('public.load_timeseries', INTERVAL '7 days');
 CREATE INDEX IF NOT EXISTS idx_iso_load_lookup
-    ON public.load_timeseries (iso_code, area, interval_start DESC);
+    ON public.load_timeseries (tenant_id, iso_code, area, interval_start DESC);
 
 ALTER TABLE IF EXISTS public.load_timeseries
     SET (

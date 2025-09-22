@@ -1,5 +1,6 @@
 with source as (
     select
+        tenant_id,
         series_id,
         period,
         period_start,
@@ -19,10 +20,14 @@ with source as (
         source,
         dataset,
         metadata,
-        ingest_ts
+        ingest_ts,
+        ingest_job_id,
+        ingest_run_id,
+        ingest_batch_id
     from {{ source('timescale_eia', 'eia_series_timeseries') }}
 )
 select
+    tenant_id,
     series_id,
     period,
     period_start,
@@ -42,5 +47,8 @@ select
     source,
     dataset,
     metadata,
-    ingest_ts
+    ingest_ts,
+    ingest_job_id,
+    ingest_run_id,
+    ingest_batch_id
 from source

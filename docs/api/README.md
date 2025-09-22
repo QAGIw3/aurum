@@ -65,6 +65,15 @@ diffs = client.compare_curves(
 | `/v1/metadata/dimensions` | GET | Get metadata dimensions |
 | `/v1/locations/iso` | GET | Get ISO locations |
 | `/v1/locations/iso/{location_id}` | GET | Get location details |
+| `/v1/scenarios` | GET/POST | List or create scenarios |
+| `/v1/scenarios/{scenario_id}` | GET/DELETE | Get or delete scenario |
+| `/v1/scenarios/{scenario_id}/run` | POST | Trigger a scenario run |
+| `/v1/scenarios/{scenario_id}/runs` | GET | List runs for a scenario |
+| `/v1/scenarios/{scenario_id}/runs/{run_id}` | GET | Get run detail |
+| `/v1/scenarios/runs/{run_id}/state` | POST | Update run state |
+| `/v1/scenarios/runs/{run_id}/cancel` | POST | Cancel a run |
+| `/v1/scenarios/{scenario_id}/outputs` | GET | Latest outputs (JSON/CSV) |
+| `/v1/scenarios/{scenario_id}/metrics/latest` | GET | Latest metrics |
 
 ## 🔧 Configuration
 

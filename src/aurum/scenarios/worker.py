@@ -1605,9 +1605,9 @@ def run_worker():  # pragma: no cover - integration entrypoint
                         )
                         if RETRY_EXHAUSTED:
                             RETRY_EXHAUSTED.inc()
-            finally:
-                if token:
-                    reset_request_id(token)
+                finally:
+                    if token:
+                        reset_request_id(token)
 
             # Record comprehensive metrics
             processing_time = max(time.perf_counter() - process_start, 0.0)

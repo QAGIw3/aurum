@@ -19,10 +19,12 @@ This guide explains how to define scenarios, run them asynchronously, retrieve o
 ## Endpoints
 
 - List scenarios: `GET /v1/scenarios?limit=20&status=active`
+  - Filters: `name` (substring match), `tag`, `created_after`, `created_before`
 - Create scenario: `POST /v1/scenarios`
 - Get / Delete: `GET|DELETE /v1/scenarios/{id}`
 - Trigger run: `POST /v1/scenarios/{id}/run` (202 Accepted)
 - List runs: `GET /v1/scenarios/{id}/runs?limit=20`
+  - Filters: `state`, `created_after`, `created_before`
 - Get run: `GET /v1/scenarios/{id}/runs/{run_id}`
 - Cancel run: `POST /v1/scenarios/runs/{run_id}/cancel`
 - Update run state (internal/admin): `POST /v1/scenarios/runs/{run_id}/state`
@@ -75,6 +77,26 @@ Latest metrics rollup:
 ```bash
 curl -s "http://localhost:8095/v1/scenarios/{scenario_id}/metrics/latest"
 ```
+
+## Caching and invalidation
+
+- Scenario output queries are cached per-tenant with Redis (if configured). Cache keys incorporate a tenant-level version that is bumped whenever new outputs are written—this prevents stale reads without needing to flush entire namespaces.
+- Concurrent cache misses use a singleflight guard so only one query hits Trino at a time for a given key.
+- Cache hit/miss metrics are exported via Prometheus (`aurum_scenario_cache_*`).
+- Worker writes and API mutations publish Kafka invalidation events when `AURUM_SCENARIO_CACHE_INVALIDATION_TOPIC` is set, allowing external consumers to invalidate their own caches.
+
+## Benchmarking
+
+The repository ships with a lightweight benchmarking harness that exercises the output query path:
+
+```bash
+python scripts/bench/scenario_benchmark.py \\
+  --tenant-id TENANT_UUID \\
+  --scenario-id SCENARIO_UUID \\
+  --iterations 10 --limit 200 --use-cache
+```
+
+The script relies on `AurumSettings` environment variables for Trino/Redis connection details and prints latency/throughput summaries for quick regression checks.
 
 ## Async Flow
 

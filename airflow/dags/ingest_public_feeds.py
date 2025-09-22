@@ -153,6 +153,44 @@ def _update_watermark(source_name: str, logical_date: datetime) -> None:
         print(f"Failed to update watermark for {source_name}: {exc}")
 
 
+def emit_lakefs_lineage(dataset: str, **context: Any) -> None:
+    repo = os.environ.get("AURUM_LAKEFS_REPO")
+    if not repo:
+        print("LakeFS repo not configured; skipping lineage commit")
+        return
+
+    branch = os.environ.get("AURUM_LAKEFS_BRANCH", "main")
+    dag = context.get("dag")
+    dag_id = dag.dag_id if dag else "unknown"
+    run_id = context.get("run_id", "unknown")
+    dag_run = context.get("dag_run")
+    backfill_flag = dag_run.conf.get("backfill", False) if dag_run else False
+    logical_date = context.get("logical_date")
+
+    metadata = {
+        "dataset": dataset,
+        "dag_id": dag_id,
+        "run_id": run_id,
+        "backfill": str(bool(backfill_flag)).lower(),
+    }
+    if logical_date:
+        metadata["logical_date"] = logical_date.astimezone(timezone.utc).isoformat()
+
+    try:
+        import sys
+
+        src_path = os.environ.get("AURUM_PYTHONPATH_ENTRY", "/opt/airflow/src")
+        if src_path and src_path not in sys.path:
+            sys.path.insert(0, src_path)
+
+        from aurum.lakefs_client import commit_branch, ensure_branch  # type: ignore
+
+        ensure_branch(repo, branch)
+        commit_branch(repo, branch, f"airflow:{dag_id}:{run_id}", metadata)
+    except Exception as exc:  # pragma: no cover
+        print(f"LakeFS lineage commit failed: {exc}")
+
+
 def _shell_quote(value: str) -> str:
     return value.replace("'", "'\"'\"'")
 
@@ -355,12 +393,22 @@ with DAG(
             "SCHEMA_REGISTRY_URL='{{ var.value.get('aurum_schema_registry', 'http://localhost:8081') }}'",
             "TIMESCALE_JDBC_URL='{{ var.value.get('aurum_timescale_jdbc', 'jdbc:postgresql://timescale:5432/timeseries') }}'",
             "NOAA_TABLE='{{ var.value.get('aurum_noaa_timescale_table', 'noaa_weather_timeseries') }}'",
+            "DLQ_TOPIC='{{ var.value.get('aurum_noaa_dlq_topic', 'aurum.ref.noaa.weather.dlq.v1') }}'",
+            "BACKFILL_ENABLED='{{ dag_run.conf.get('backfill', '0') }}'",
+            "BACKFILL_START='{{ dag_run.conf.get('backfill_start', '') }}'",
+            "BACKFILL_END='{{ dag_run.conf.get('backfill_end', '') }}'",
         ],
         mappings=[
             "secret/data/aurum/timescale:user=TIMESCALE_USER",
             "secret/data/aurum/timescale:password=TIMESCALE_PASSWORD",
         ],
         task_id_override="seatunnel_noaa_weather_timescale",
+    )
+
+    noaa_lineage = PythonOperator(
+        task_id="lakefs_lineage_noaa_weather",
+        python_callable=emit_lakefs_lineage,
+        op_kwargs={"dataset": "timescale.public.noaa_weather_timeseries"},
     )
 
     eia_task = build_seatunnel_task(
@@ -385,12 +433,22 @@ with DAG(
         [
             "SCHEMA_REGISTRY_URL='{{ var.value.get('aurum_schema_registry', 'http://localhost:8081') }}'",
             "TIMESCALE_JDBC_URL='{{ var.value.get('aurum_timescale_jdbc', 'jdbc:postgresql://timescale:5432/timeseries') }}'",
+            "DLQ_TOPIC='{{ var.value.get('aurum_eia_dlq_topic', 'aurum.ref.eia.series.dlq.v1') }}'",
+            "BACKFILL_ENABLED='{{ dag_run.conf.get('backfill', '0') }}'",
+            "BACKFILL_START='{{ dag_run.conf.get('backfill_start', '') }}'",
+            "BACKFILL_END='{{ dag_run.conf.get('backfill_end', '') }}'",
         ],
         mappings=[
             "secret/data/aurum/timescale:user=TIMESCALE_USER",
             "secret/data/aurum/timescale:password=TIMESCALE_PASSWORD",
         ],
         task_id_override="seatunnel_eia_series_timescale",
+    )
+
+    eia_lineage = PythonOperator(
+        task_id="lakefs_lineage_eia_series",
+        python_callable=emit_lakefs_lineage,
+        op_kwargs={"dataset": "timescale.public.eia_series_timeseries"},
     )
 
     dynamic_eia_results: list[tuple[dict[str, Any], BashOperator, PythonOperator]] = []
@@ -427,12 +485,22 @@ with DAG(
         [
             "SCHEMA_REGISTRY_URL='{{ var.value.get('aurum_schema_registry', 'http://localhost:8081') }}'",
             "TIMESCALE_JDBC_URL='{{ var.value.get('aurum_timescale_jdbc', 'jdbc:postgresql://timescale:5432/timeseries') }}'",
+            "DLQ_TOPIC='{{ var.value.get('aurum_fred_dlq_topic', 'aurum.ref.fred.series.dlq.v1') }}'",
+            "BACKFILL_ENABLED='{{ dag_run.conf.get('backfill', '0') }}'",
+            "BACKFILL_START='{{ dag_run.conf.get('backfill_start', '') }}'",
+            "BACKFILL_END='{{ dag_run.conf.get('backfill_end', '') }}'",
         ],
         mappings=[
             "secret/data/aurum/timescale:user=TIMESCALE_USER",
             "secret/data/aurum/timescale:password=TIMESCALE_PASSWORD",
         ],
         task_id_override="seatunnel_fred_series_timescale",
+    )
+
+    fred_lineage = PythonOperator(
+        task_id="lakefs_lineage_fred_series",
+        python_callable=emit_lakefs_lineage,
+        op_kwargs={"dataset": "timescale.public.fred_series_timeseries"},
     )
 
     cpi_task = build_seatunnel_task(
@@ -457,12 +525,22 @@ with DAG(
         [
             "SCHEMA_REGISTRY_URL='{{ var.value.get('aurum_schema_registry', 'http://localhost:8081') }}'",
             "TIMESCALE_JDBC_URL='{{ var.value.get('aurum_timescale_jdbc', 'jdbc:postgresql://timescale:5432/timeseries') }}'",
+            "DLQ_TOPIC='{{ var.value.get('aurum_cpi_dlq_topic', 'aurum.ref.cpi.series.dlq.v1') }}'",
+            "BACKFILL_ENABLED='{{ dag_run.conf.get('backfill', '0') }}'",
+            "BACKFILL_START='{{ dag_run.conf.get('backfill_start', '') }}'",
+            "BACKFILL_END='{{ dag_run.conf.get('backfill_end', '') }}'",
         ],
         mappings=[
             "secret/data/aurum/timescale:user=TIMESCALE_USER",
             "secret/data/aurum/timescale:password=TIMESCALE_PASSWORD",
         ],
         task_id_override="seatunnel_cpi_series_timescale",
+    )
+
+    cpi_lineage = PythonOperator(
+        task_id="lakefs_lineage_cpi_series",
+        python_callable=emit_lakefs_lineage,
+        op_kwargs={"dataset": "timescale.public.cpi_series_timeseries"},
     )
 
     fuel_natgas_task = build_seatunnel_task(
@@ -606,15 +684,15 @@ with DAG(
     end = EmptyOperator(task_id="end")
 
     start >> preflight >> register_sources
-    register_sources >> noaa_daily_task >> noaa_to_timescale >> noaa_daily_watermark
+    register_sources >> noaa_daily_task >> noaa_to_timescale >> noaa_lineage >> noaa_daily_watermark
     register_sources >> noaa_hourly_task >> noaa_hourly_watermark
-    register_sources >> eia_task >> eia_to_timescale >> eia_watermark
+    register_sources >> eia_task >> eia_to_timescale >> eia_lineage >> eia_watermark
     dynamic_eia_watermarks: list[PythonOperator] = []
     for dataset_cfg, dynamic_task, dynamic_watermark in dynamic_eia_results:
         register_sources >> dynamic_task >> dynamic_watermark
         dynamic_eia_watermarks.append(dynamic_watermark)
-    register_sources >> fred_task >> fred_to_timescale >> fred_watermark
-    register_sources >> cpi_task >> cpi_to_timescale >> cpi_watermark
+    register_sources >> fred_task >> fred_to_timescale >> fred_lineage >> fred_watermark
+    register_sources >> cpi_task >> cpi_to_timescale >> cpi_lineage >> cpi_watermark
     register_sources >> fuel_natgas_task >> fuel_natgas_watermark
     register_sources >> fuel_co2_task >> fuel_co2_watermark
     register_sources >> pjm_task >> pjm_watermark

@@ -1,5 +1,6 @@
 WITH raw_series_catalog AS (
     SELECT
+        tenant_id,
         provider,
         series_id,
         dataset_code,
@@ -19,18 +20,22 @@ WITH raw_series_catalog AS (
         created_at,
         updated_at,
         ingest_ts,
+        ingest_job_id,
+        ingest_run_id,
+        ingest_batch_id,
         tags,
         metadata,
         version,
         -- Add row number to handle duplicates based on natural key + version
         ROW_NUMBER() OVER (
-            PARTITION BY provider, series_id, COALESCE(version, 0)
+            PARTITION BY tenant_id, provider, series_id, COALESCE(version, 0)
             ORDER BY ingest_ts DESC
         ) as rn
     FROM {{ source('iceberg_external', 'series_catalog') }}
 )
 
 SELECT
+    tenant_id,
     provider,
     series_id,
     dataset_code,
@@ -50,6 +55,9 @@ SELECT
     created_at,
     updated_at,
     ingest_ts,
+    ingest_job_id,
+    ingest_run_id,
+    ingest_batch_id,
     tags,
     metadata,
     version

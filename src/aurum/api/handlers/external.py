@@ -19,7 +19,7 @@ from ..exceptions import (
     AurumAPIException,
     ValidationException,
 )
-from ..routes import _respond_with_etag
+from ..http import respond_with_etag
     NotFoundException,
     ServiceUnavailableException,
     DataProcessingException,

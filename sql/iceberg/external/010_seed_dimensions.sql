@@ -3,14 +3,14 @@
 MERGE INTO iceberg.external.unit AS target
 USING (
     VALUES
-        ('PCT', 'Percent', '%', 'dimensionless', 'Percentage expressed as a decimal fraction.', 0.01, TIMESTAMP '2024-01-01 00:00:00', TIMESTAMP '2024-01-01 00:00:00'),
-        ('USD', 'US Dollar', '$', 'currency', 'United States dollar.', NULL, TIMESTAMP '2024-01-01 00:00:00', TIMESTAMP '2024-01-01 00:00:00'),
-        ('MW', 'Megawatt', 'MW', 'power', 'One million watts.', 1000000.0, TIMESTAMP '2024-01-01 00:00:00', TIMESTAMP '2024-01-01 00:00:00'),
-        ('MWH', 'Megawatt hour', 'MWh', 'energy', 'Energy produced by one megawatt for one hour.', 3600000000.0, TIMESTAMP '2024-01-01 00:00:00', TIMESTAMP '2024-01-01 00:00:00'),
-        ('MMBTU', 'Million British thermal units', 'MMBtu', 'energy', 'One million BTUs.', 1055055852.62, TIMESTAMP '2024-01-01 00:00:00', TIMESTAMP '2024-01-01 00:00:00'),
-        ('DEGC', 'Degree Celsius', 'degC', 'temperature', 'Temperature in degrees Celsius.', 1.0, TIMESTAMP '2024-01-01 00:00:00', TIMESTAMP '2024-01-01 00:00:00')
-) AS source (unit_code, unit_name, unit_symbol, quantity, description, si_conversion_factor, created_at, updated_at)
-    ON target.unit_code = source.unit_code
+        ('aurum', 'PCT', 'Percent', '%', 'dimensionless', 'Percentage expressed as a decimal fraction.', 0.01, TIMESTAMP '2024-01-01 00:00:00', TIMESTAMP '2024-01-01 00:00:00', TIMESTAMP '2024-01-01 00:00:00', 'seed-static', 'seed-static', 'seed-static'),
+        ('aurum', 'USD', 'US Dollar', '$', 'currency', 'United States dollar.', NULL, TIMESTAMP '2024-01-01 00:00:00', TIMESTAMP '2024-01-01 00:00:00', TIMESTAMP '2024-01-01 00:00:00', 'seed-static', 'seed-static', 'seed-static'),
+        ('aurum', 'MW', 'Megawatt', 'MW', 'power', 'One million watts.', 1000000.0, TIMESTAMP '2024-01-01 00:00:00', TIMESTAMP '2024-01-01 00:00:00', TIMESTAMP '2024-01-01 00:00:00', 'seed-static', 'seed-static', 'seed-static'),
+        ('aurum', 'MWH', 'Megawatt hour', 'MWh', 'energy', 'Energy produced by one megawatt for one hour.', 3600000000.0, TIMESTAMP '2024-01-01 00:00:00', TIMESTAMP '2024-01-01 00:00:00', TIMESTAMP '2024-01-01 00:00:00', 'seed-static', 'seed-static', 'seed-static'),
+        ('aurum', 'MMBTU', 'Million British thermal units', 'MMBtu', 'energy', 'One million BTUs.', 1055055852.62, TIMESTAMP '2024-01-01 00:00:00', TIMESTAMP '2024-01-01 00:00:00', TIMESTAMP '2024-01-01 00:00:00', 'seed-static', 'seed-static', 'seed-static'),
+        ('aurum', 'DEGC', 'Degree Celsius', 'degC', 'temperature', 'Temperature in degrees Celsius.', 1.0, TIMESTAMP '2024-01-01 00:00:00', TIMESTAMP '2024-01-01 00:00:00', TIMESTAMP '2024-01-01 00:00:00', 'seed-static', 'seed-static', 'seed-static')
+) AS source (tenant_id, unit_code, unit_name, unit_symbol, quantity, description, si_conversion_factor, created_at, updated_at, ingest_ts, ingest_job_id, ingest_run_id, ingest_batch_id)
+    ON target.tenant_id = source.tenant_id AND target.unit_code = source.unit_code
 WHEN MATCHED AND (
        target.unit_name IS DISTINCT FROM source.unit_name
     OR target.unit_symbol IS DISTINCT FROM source.unit_symbol
@@ -20,13 +20,19 @@ WHEN MATCHED AND (
     OR target.updated_at IS DISTINCT FROM source.updated_at
 )
 THEN UPDATE SET
+    tenant_id = source.tenant_id,
     unit_name = source.unit_name,
     unit_symbol = source.unit_symbol,
     quantity = source.quantity,
     description = source.description,
     si_conversion_factor = source.si_conversion_factor,
-    updated_at = source.updated_at
+    updated_at = source.updated_at,
+    ingest_ts = source.ingest_ts,
+    ingest_job_id = source.ingest_job_id,
+    ingest_run_id = source.ingest_run_id,
+    ingest_batch_id = source.ingest_batch_id
 WHEN NOT MATCHED THEN INSERT (
+    tenant_id,
     unit_code,
     unit_name,
     unit_symbol,
@@ -34,8 +40,13 @@ WHEN NOT MATCHED THEN INSERT (
     description,
     si_conversion_factor,
     created_at,
-    updated_at
+    updated_at,
+    ingest_ts,
+    ingest_job_id,
+    ingest_run_id,
+    ingest_batch_id
 ) VALUES (
+    source.tenant_id,
     source.unit_code,
     source.unit_name,
     source.unit_symbol,
@@ -43,20 +54,24 @@ WHEN NOT MATCHED THEN INSERT (
     source.description,
     source.si_conversion_factor,
     source.created_at,
-    source.updated_at
+    source.updated_at,
+    source.ingest_ts,
+    source.ingest_job_id,
+    source.ingest_run_id,
+    source.ingest_batch_id
 );
 
 -- Frequencies
 MERGE INTO iceberg.external.frequency AS target
 USING (
     VALUES
-        ('DAILY', '1 day', 86400, 'Daily published series.', 'calendar', TIMESTAMP '2024-01-01 00:00:00', TIMESTAMP '2024-01-01 00:00:00'),
-        ('WEEKLY', '7 days', 604800, 'Weekly published series.', 'calendar', TIMESTAMP '2024-01-01 00:00:00', TIMESTAMP '2024-01-01 00:00:00'),
-        ('MONTHLY', '1 month', 2592000, 'Monthly published series.', 'calendar', TIMESTAMP '2024-01-01 00:00:00', TIMESTAMP '2024-01-01 00:00:00'),
-        ('QUARTERLY', '3 months', 7776000, 'Quarterly published series.', 'calendar', TIMESTAMP '2024-01-01 00:00:00', TIMESTAMP '2024-01-01 00:00:00'),
-        ('ANNUAL', '1 year', 31536000, 'Annual published series.', 'calendar', TIMESTAMP '2024-01-01 00:00:00', TIMESTAMP '2024-01-01 00:00:00')
-) AS source (frequency_code, interval_label, interval_seconds, description, calendar_alignment, created_at, updated_at)
-    ON target.frequency_code = source.frequency_code
+        ('aurum', 'DAILY', '1 day', 86400, 'Daily published series.', 'calendar', TIMESTAMP '2024-01-01 00:00:00', TIMESTAMP '2024-01-01 00:00:00', TIMESTAMP '2024-01-01 00:00:00', 'seed-static', 'seed-static', 'seed-static'),
+        ('aurum', 'WEEKLY', '7 days', 604800, 'Weekly published series.', 'calendar', TIMESTAMP '2024-01-01 00:00:00', TIMESTAMP '2024-01-01 00:00:00', TIMESTAMP '2024-01-01 00:00:00', 'seed-static', 'seed-static', 'seed-static'),
+        ('aurum', 'MONTHLY', '1 month', 2592000, 'Monthly published series.', 'calendar', TIMESTAMP '2024-01-01 00:00:00', TIMESTAMP '2024-01-01 00:00:00', TIMESTAMP '2024-01-01 00:00:00', 'seed-static', 'seed-static', 'seed-static'),
+        ('aurum', 'QUARTERLY', '3 months', 7776000, 'Quarterly published series.', 'calendar', TIMESTAMP '2024-01-01 00:00:00', TIMESTAMP '2024-01-01 00:00:00', TIMESTAMP '2024-01-01 00:00:00', 'seed-static', 'seed-static', 'seed-static'),
+        ('aurum', 'ANNUAL', '1 year', 31536000, 'Annual published series.', 'calendar', TIMESTAMP '2024-01-01 00:00:00', TIMESTAMP '2024-01-01 00:00:00', TIMESTAMP '2024-01-01 00:00:00', 'seed-static', 'seed-static', 'seed-static')
+) AS source (tenant_id, frequency_code, interval_label, interval_seconds, description, calendar_alignment, created_at, updated_at, ingest_ts, ingest_job_id, ingest_run_id, ingest_batch_id)
+    ON target.tenant_id = source.tenant_id AND target.frequency_code = source.frequency_code
 WHEN MATCHED AND (
        target.interval_label IS DISTINCT FROM source.interval_label
     OR target.interval_seconds IS DISTINCT FROM source.interval_seconds
@@ -65,38 +80,53 @@ WHEN MATCHED AND (
     OR target.updated_at IS DISTINCT FROM source.updated_at
 )
 THEN UPDATE SET
+    tenant_id = source.tenant_id,
     interval_label = source.interval_label,
     interval_seconds = source.interval_seconds,
     description = source.description,
     calendar_alignment = source.calendar_alignment,
-    updated_at = source.updated_at
+    updated_at = source.updated_at,
+    ingest_ts = source.ingest_ts,
+    ingest_job_id = source.ingest_job_id,
+    ingest_run_id = source.ingest_run_id,
+    ingest_batch_id = source.ingest_batch_id
 WHEN NOT MATCHED THEN INSERT (
+    tenant_id,
     frequency_code,
     interval_label,
     interval_seconds,
     description,
     calendar_alignment,
     created_at,
-    updated_at
+    updated_at,
+    ingest_ts,
+    ingest_job_id,
+    ingest_run_id,
+    ingest_batch_id
 ) VALUES (
+    source.tenant_id,
     source.frequency_code,
     source.interval_label,
     source.interval_seconds,
     source.description,
     source.calendar_alignment,
     source.created_at,
-    source.updated_at
+    source.updated_at,
+    source.ingest_ts,
+    source.ingest_job_id,
+    source.ingest_run_id,
+    source.ingest_batch_id
 );
 
 -- Geography seeds
 MERGE INTO iceberg.external.geo AS target
 USING (
     VALUES
-        ('US', 'COUNTRY', 'UN', 'US', 'USA', NULL, 'United States', NULL, 37.0902, -95.7129, 'America/New_York', JSON '{"iso_level":"country"}', TIMESTAMP '2024-01-01 00:00:00', TIMESTAMP '2024-01-01 00:00:00'),
-        ('CA', 'COUNTRY', 'UN', 'CA', 'CAN', NULL, 'Canada', NULL, 56.1304, -106.3468, 'America/Toronto', JSON '{"iso_level":"country"}', TIMESTAMP '2024-01-01 00:00:00', TIMESTAMP '2024-01-01 00:00:00'),
-        ('MX', 'COUNTRY', 'UN', 'MX', 'MEX', NULL, 'Mexico', NULL, 23.6345, -102.5528, 'America/Mexico_City', JSON '{"iso_level":"country"}', TIMESTAMP '2024-01-01 00:00:00', TIMESTAMP '2024-01-01 00:00:00')
-) AS source (geo_id, geo_type, provider, iso_3166_1_alpha2, iso_3166_1_alpha3, iso_3166_2, name, parent_geo_id, latitude, longitude, timezone, metadata, created_at, updated_at)
-    ON target.geo_id = source.geo_id
+        ('aurum', 'US', 'COUNTRY', 'UN', 'US', 'USA', NULL, 'United States', NULL, 37.0902, -95.7129, 'America/New_York', JSON '{"iso_level":"country"}', TIMESTAMP '2024-01-01 00:00:00', TIMESTAMP '2024-01-01 00:00:00', TIMESTAMP '2024-01-01 00:00:00', 'seed-static', 'seed-static', 'seed-static'),
+        ('aurum', 'CA', 'COUNTRY', 'UN', 'CA', 'CAN', NULL, 'Canada', NULL, 56.1304, -106.3468, 'America/Toronto', JSON '{"iso_level":"country"}', TIMESTAMP '2024-01-01 00:00:00', TIMESTAMP '2024-01-01 00:00:00', TIMESTAMP '2024-01-01 00:00:00', 'seed-static', 'seed-static', 'seed-static'),
+        ('aurum', 'MX', 'COUNTRY', 'UN', 'MX', 'MEX', NULL, 'Mexico', NULL, 23.6345, -102.5528, 'America/Mexico_City', JSON '{"iso_level":"country"}', TIMESTAMP '2024-01-01 00:00:00', TIMESTAMP '2024-01-01 00:00:00', TIMESTAMP '2024-01-01 00:00:00', 'seed-static', 'seed-static', 'seed-static')
+) AS source (tenant_id, geo_id, geo_type, provider, iso_3166_1_alpha2, iso_3166_1_alpha3, iso_3166_2, name, parent_geo_id, latitude, longitude, timezone, metadata, created_at, updated_at, ingest_ts, ingest_job_id, ingest_run_id, ingest_batch_id)
+    ON target.tenant_id = source.tenant_id AND target.geo_id = source.geo_id
 WHEN MATCHED AND (
        target.geo_type IS DISTINCT FROM source.geo_type
     OR target.provider IS DISTINCT FROM source.provider
@@ -112,6 +142,7 @@ WHEN MATCHED AND (
     OR target.updated_at IS DISTINCT FROM source.updated_at
 )
 THEN UPDATE SET
+    tenant_id = source.tenant_id,
     geo_type = source.geo_type,
     provider = source.provider,
     iso_3166_1_alpha2 = source.iso_3166_1_alpha2,
@@ -123,8 +154,13 @@ THEN UPDATE SET
     longitude = source.longitude,
     timezone = source.timezone,
     metadata = source.metadata,
-    updated_at = source.updated_at
+    updated_at = source.updated_at,
+    ingest_ts = source.ingest_ts,
+    ingest_job_id = source.ingest_job_id,
+    ingest_run_id = source.ingest_run_id,
+    ingest_batch_id = source.ingest_batch_id
 WHEN NOT MATCHED THEN INSERT (
+    tenant_id,
     geo_id,
     geo_type,
     provider,
@@ -138,8 +174,13 @@ WHEN NOT MATCHED THEN INSERT (
     timezone,
     metadata,
     created_at,
-    updated_at
+    updated_at,
+    ingest_ts,
+    ingest_job_id,
+    ingest_run_id,
+    ingest_batch_id
 ) VALUES (
+    source.tenant_id,
     source.geo_id,
     source.geo_type,
     source.provider,
@@ -153,18 +194,22 @@ WHEN NOT MATCHED THEN INSERT (
     source.timezone,
     source.metadata,
     source.created_at,
-    source.updated_at
+    source.updated_at,
+    source.ingest_ts,
+    source.ingest_job_id,
+    source.ingest_run_id,
+    source.ingest_batch_id
 );
 
 -- Datasets
 MERGE INTO iceberg.external.dataset AS target
 USING (
     VALUES
-        ('H15', 'FRED', 'H.15 Selected Interest Rates', 'Federal Reserve statistical release covering selected interest rates.', 'macro', 'DAILY', 'PCT', 'https://fred.stlouisfed.org/release?rid=119', 'https://www.federalreserve.gov/releases/h15.htm', 'Public Domain', JSON '{"category":"interest_rates"}', TIMESTAMP '2024-01-01 00:00:00', TIMESTAMP '2024-01-01 00:00:00'),
-        ('STEO', 'EIA', 'Short-Term Energy Outlook', 'EIA short-term energy outlook series.', 'energy', 'MONTHLY', 'USD', 'https://www.eia.gov/outlooks/steo/', 'https://www.eia.gov/outlooks/steo/documentation/', 'Public Domain', JSON '{"category":"energy_outlook"}', TIMESTAMP '2024-01-01 00:00:00', TIMESTAMP '2024-01-01 00:00:00'),
-        ('GHCND', 'NOAA', 'Global Historical Climatology Network Daily', 'Daily weather observations published by NOAA.', 'weather', 'DAILY', 'DEGC', 'https://www.ncei.noaa.gov/products/land-based-station/global-historical-climatology-network-daily', 'https://www.ncdc.noaa.gov/ghcnd-data-access', 'Public Domain', JSON '{"category":"climate"}', TIMESTAMP '2024-01-01 00:00:00', TIMESTAMP '2024-01-01 00:00:00')
-) AS source (dataset_code, provider, name, description, topic, default_frequency_code, default_unit_code, source_url, documentation_url, license, metadata, created_at, updated_at)
-    ON target.dataset_code = source.dataset_code
+        ('aurum', 'H15', 'FRED', 'H.15 Selected Interest Rates', 'Federal Reserve statistical release covering selected interest rates.', 'macro', 'DAILY', 'PCT', 'https://fred.stlouisfed.org/release?rid=119', 'https://www.federalreserve.gov/releases/h15.htm', 'Public Domain', JSON '{"category":"interest_rates"}', TIMESTAMP '2024-01-01 00:00:00', TIMESTAMP '2024-01-01 00:00:00', TIMESTAMP '2024-01-01 00:00:00', 'seed-static', 'seed-static', 'seed-static'),
+        ('aurum', 'STEO', 'EIA', 'Short-Term Energy Outlook', 'EIA short-term energy outlook series.', 'energy', 'MONTHLY', 'USD', 'https://www.eia.gov/outlooks/steo/', 'https://www.eia.gov/outlooks/steo/documentation/', 'Public Domain', JSON '{"category":"energy_outlook"}', TIMESTAMP '2024-01-01 00:00:00', TIMESTAMP '2024-01-01 00:00:00', TIMESTAMP '2024-01-01 00:00:00', 'seed-static', 'seed-static', 'seed-static'),
+        ('aurum', 'GHCND', 'NOAA', 'Global Historical Climatology Network Daily', 'Daily weather observations published by NOAA.', 'weather', 'DAILY', 'DEGC', 'https://www.ncei.noaa.gov/products/land-based-station/global-historical-climatology-network-daily', 'https://www.ncdc.noaa.gov/ghcnd-data-access', 'Public Domain', JSON '{"category":"climate"}', TIMESTAMP '2024-01-01 00:00:00', TIMESTAMP '2024-01-01 00:00:00', TIMESTAMP '2024-01-01 00:00:00', 'seed-static', 'seed-static', 'seed-static')
+) AS source (tenant_id, dataset_code, provider, name, description, topic, default_frequency_code, default_unit_code, source_url, documentation_url, license, metadata, created_at, updated_at, ingest_ts, ingest_job_id, ingest_run_id, ingest_batch_id)
+    ON target.tenant_id = source.tenant_id AND target.dataset_code = source.dataset_code
 WHEN MATCHED AND (
        target.provider IS DISTINCT FROM source.provider
     OR target.name IS DISTINCT FROM source.name
@@ -179,6 +224,7 @@ WHEN MATCHED AND (
     OR target.updated_at IS DISTINCT FROM source.updated_at
 )
 THEN UPDATE SET
+    tenant_id = source.tenant_id,
     provider = source.provider,
     name = source.name,
     description = source.description,
@@ -189,8 +235,13 @@ THEN UPDATE SET
     documentation_url = source.documentation_url,
     license = source.license,
     metadata = source.metadata,
-    updated_at = source.updated_at
+    updated_at = source.updated_at,
+    ingest_ts = source.ingest_ts,
+    ingest_job_id = source.ingest_job_id,
+    ingest_run_id = source.ingest_run_id,
+    ingest_batch_id = source.ingest_batch_id
 WHEN NOT MATCHED THEN INSERT (
+    tenant_id,
     dataset_code,
     provider,
     name,
@@ -203,8 +254,13 @@ WHEN NOT MATCHED THEN INSERT (
     license,
     metadata,
     created_at,
-    updated_at
+    updated_at,
+    ingest_ts,
+    ingest_job_id,
+    ingest_run_id,
+    ingest_batch_id
 ) VALUES (
+    source.tenant_id,
     source.dataset_code,
     source.provider,
     source.name,
@@ -217,7 +273,11 @@ WHEN NOT MATCHED THEN INSERT (
     source.license,
     source.metadata,
     source.created_at,
-    source.updated_at
+    source.updated_at,
+    source.ingest_ts,
+    source.ingest_job_id,
+    source.ingest_run_id,
+    source.ingest_batch_id
 );
 
 -- Sanity checks

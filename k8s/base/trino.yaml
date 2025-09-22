@@ -86,6 +86,15 @@ spec:
           volumeMounts:
             - name: catalog
               mountPath: /etc/trino/catalog
+            - name: trino-config
+              mountPath: /etc/trino/session.properties
+              subPath: session.properties
+            - name: trino-config
+              mountPath: /etc/trino/access-control.properties
+              subPath: access-control.properties
+            - name: trino-config
+              mountPath: /etc/trino/access-control-rules.json
+              subPath: access-control-rules.json
           readinessProbe:
             httpGet:
               path: /v1/info
@@ -96,6 +105,9 @@ spec:
         - name: catalog
           configMap:
             name: trino-catalog
+        - name: trino-config
+          configMap:
+            name: trino-config
 ---
 apiVersion: v1
 kind: Service

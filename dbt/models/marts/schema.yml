@@ -288,8 +288,12 @@ models:
     tests:
       - unique_combination:
           combination_of_columns:
+            - tenant_id
             - series_id
     columns:
+      - name: tenant_id
+        tests:
+          - not_null
       - name: series_id
         tests:
           - relationships:
@@ -308,12 +312,21 @@ models:
       - name: unit_normalized
         tests:
           - not_null
+      - name: ingest_ts
+        tests:
+          - not_null
+      - name: ingest_job_id
+      - name: ingest_run_id
+      - name: ingest_batch_id
       - name: period_date
         tests:
           - not_null
   - name: mart_eia_series_facets
     description: Distinct facet values (dataset, frequency, area, sector, units) for filtering APIs.
     columns:
+      - name: tenant_id
+        tests:
+          - not_null
       - name: dataset
         tests:
           - not_null
@@ -325,10 +338,55 @@ models:
   - name: mart_eia_series_units
     description: Lookup of raw units to normalized currency and unit denominators.
     tests:
-      - unique:
-          column_name: unit_raw
+      - unique_combination:
+          combination_of_columns:
+            - tenant_id
+            - unit_raw
     columns:
+      - name: tenant_id
+        tests:
+          - not_null
       - name: unit_raw
+        tests:
+          - not_null
+  - name: mart_fred_series_latest
+    description: Latest FRED observation per tenant and series identifier.
+    tests:
+      - unique_combination:
+          combination_of_columns:
+            - tenant_id
+            - series_id
+    columns:
+      - name: tenant_id
+        tests:
+          - not_null
+      - name: series_id
+        tests:
+          - not_null
+      - name: obs_date
+        tests:
+          - not_null
+      - name: ingest_ts
+        tests:
+          - not_null
+  - name: mart_cpi_series_latest
+    description: Latest CPI observation per tenant and series identifier.
+    tests:
+      - unique_combination:
+          combination_of_columns:
+            - tenant_id
+            - series_id
+    columns:
+      - name: tenant_id
+        tests:
+          - not_null
+      - name: series_id
+        tests:
+          - not_null
+      - name: period
+        tests:
+          - not_null
+      - name: ingest_ts
         tests:
           - not_null
   - name: fct_drought_index

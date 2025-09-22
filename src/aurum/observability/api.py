@@ -10,6 +10,8 @@ from fastapi import APIRouter, HTTPException, Query, Request
 from ..telemetry.context import get_request_id
 from .metrics import get_metrics_collector, MetricPoint, MetricType
 from .tracing import get_trace_collector, get_trace_report
+from .slo_dashboard import get_slo_dashboard_config, check_slo_status, get_sli_values
+from .enhanced_logging import get_logger
 
 
 router = APIRouter(prefix="/v1/observability", tags=["Observability"])
@@ -476,6 +478,10 @@ async def get_observability_performance(
         # Get trace collection info
         active_traces = await trace_collector.get_active_traces()
 
+        # Get SLO status
+        slo_status = check_slo_status()
+        sli_values = get_sli_values()
+
         query_time_ms = (time.perf_counter() - start_time) * 1000
 
         return {
@@ -485,9 +491,12 @@ async def get_observability_performance(
                 "total_metrics": len(metrics),
                 "memory_usage_mb": 0,  # Would implement actual memory tracking
             },
+            "slos": slo_status,
+            "slis": sli_values,
             "recommendations": [
                 "Consider increasing cleanup frequency if trace count is high",
                 "Monitor metrics collection time for performance degradation",
+                "Review SLO violations and adjust targets if needed",
             ],
             "meta": {
                 "request_id": get_request_id(),
@@ -500,4 +509,249 @@ async def get_observability_performance(
         raise HTTPException(
             status_code=500,
             detail=f"Failed to get observability performance: {str(exc)}"
+        ) from exc
+
+
+@router.get("/slos")
+async def get_slos(
+    request: Request,
+    category: Optional[str] = Query(None, description="Filter by SLO category"),
+) -> Dict[str, Any]:
+    """Get Service Level Objectives status."""
+    start_time = time.perf_counter()
+
+    try:
+        slo_status = check_slo_status()
+        sli_values = get_sli_values()
+
+        # Apply category filter if specified
+        if category:
+            slo_status = {
+                k: v for k, v in slo_status.items()
+                if category in k or category in str(v.get("status", ""))
+            }
+
+        query_time_ms = (time.perf_counter() - start_time) * 1000
+
+        return {
+            "slos": slo_status,
+            "slis": sli_values,
+            "meta": {
+                "request_id": get_request_id(),
+                "query_time_ms": round(query_time_ms, 2),
+            }
+        }
+
+    except Exception as exc:
+        query_time_ms = (time.perf_counter() - start_time) * 1000
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to get SLOs: {str(exc)}"
+        ) from exc
+
+
+@router.get("/slos/{slo_name}")
+async def get_slo_detail(
+    request: Request,
+    slo_name: str,
+) -> Dict[str, Any]:
+    """Get detailed information about a specific SLO."""
+    start_time = time.perf_counter()
+
+    try:
+        slo_status = check_slo_status()
+        sli_values = get_sli_values()
+
+        if slo_name not in slo_status:
+            raise HTTPException(
+                status_code=404,
+                detail=f"SLO '{slo_name}' not found"
+            )
+
+        slo_info = slo_status[slo_name]
+        relevant_slis = {
+            k: v for k, v in sli_values.items()
+            if slo_name in k
+        }
+
+        query_time_ms = (time.perf_counter() - start_time) * 1000
+
+        return {
+            "slo": {
+                "name": slo_name,
+                "status": slo_info,
+                "relevant_slis": relevant_slis,
+            },
+            "meta": {
+                "request_id": get_request_id(),
+                "query_time_ms": round(query_time_ms, 2),
+            }
+        }
+
+    except HTTPException:
+        raise
+    except Exception as exc:
+        query_time_ms = (time.perf_counter() - start_time) * 1000
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to get SLO detail: {str(exc)}"
+        ) from exc
+
+
+@router.get("/dashboard")
+async def get_dashboard_config(
+    request: Request,
+    format: str = Query("json", description="Output format (json, grafana)"),
+) -> Dict[str, Any]:
+    """Get dashboard configuration for monitoring systems."""
+    start_time = time.perf_counter()
+
+    try:
+        dashboard_config = get_slo_dashboard_config()
+
+        if format == "grafana":
+            config = dashboard_config.generate_grafana_dashboard()
+        else:
+            config = {
+                "slos": dashboard_config.get_slo_panels(),
+                "business_metrics": dashboard_config.get_business_metrics_panels(),
+                "infrastructure": dashboard_config.get_infrastructure_panels(),
+                "performance": dashboard_config.get_performance_panels(),
+                "alerts": dashboard_config.get_alert_panels(),
+            }
+
+        query_time_ms = (time.perf_counter() - start_time) * 1000
+
+        return {
+            "dashboard": config,
+            "format": format,
+            "meta": {
+                "request_id": get_request_id(),
+                "query_time_ms": round(query_time_ms, 2),
+            }
+        }
+
+    except Exception as exc:
+        query_time_ms = (time.perf_counter() - start_time) * 1000
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to get dashboard config: {str(exc)}"
+        ) from exc
+
+
+@router.get("/logs/schema")
+async def get_log_schema(
+    request: Request,
+) -> Dict[str, Any]:
+    """Get the schema for structured logs."""
+    start_time = time.perf_counter()
+
+    try:
+        schema = {
+            "fields": {
+                "timestamp": {
+                    "type": "string",
+                    "format": "date-time",
+                    "description": "ISO 8601 timestamp"
+                },
+                "level": {
+                    "type": "string",
+                    "enum": ["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"],
+                    "description": "Log level"
+                },
+                "message": {
+                    "type": "string",
+                    "description": "Log message"
+                },
+                "request_id": {
+                    "type": "string",
+                    "description": "Request correlation ID"
+                },
+                "correlation_id": {
+                    "type": "string",
+                    "description": "Request correlation ID across services"
+                },
+                "tenant_id": {
+                    "type": "string",
+                    "description": "Tenant identifier"
+                },
+                "user_id": {
+                    "type": "string",
+                    "description": "User identifier"
+                },
+                "service_name": {
+                    "type": "string",
+                    "description": "Service name"
+                },
+                "component": {
+                    "type": "string",
+                    "description": "Component that generated the log"
+                },
+                "operation": {
+                    "type": "string",
+                    "description": "Operation being performed"
+                },
+                "duration_ms": {
+                    "type": "number",
+                    "description": "Operation duration in milliseconds"
+                },
+                "status_code": {
+                    "type": "integer",
+                    "description": "HTTP status code"
+                },
+                "error": {
+                    "type": "string",
+                    "description": "Error message"
+                },
+                "error_type": {
+                    "type": "string",
+                    "description": "Error type/class"
+                },
+                "stack_trace": {
+                    "type": "string",
+                    "description": "Stack trace for errors"
+                },
+                "metadata": {
+                    "type": "object",
+                    "description": "Additional metadata"
+                }
+            },
+            "examples": [
+                {
+                    "timestamp": "2024-01-01T12:00:00.000Z",
+                    "level": "INFO",
+                    "message": "Scenario creation completed",
+                    "component": "scenario",
+                    "operation": "create",
+                    "duration_ms": 45.2,
+                    "tenant_id": "acme-corp"
+                },
+                {
+                    "timestamp": "2024-01-01T12:01:00.000Z",
+                    "level": "ERROR",
+                    "message": "Database connection failed",
+                    "component": "database",
+                    "operation": "connect",
+                    "error": "Connection timeout",
+                    "error_type": "ConnectionError",
+                    "stack_trace": "..."
+                }
+            ]
+        }
+
+        query_time_ms = (time.perf_counter() - start_time) * 1000
+
+        return {
+            "schema": schema,
+            "meta": {
+                "request_id": get_request_id(),
+                "query_time_ms": round(query_time_ms, 2),
+            }
+        }
+
+    except Exception as exc:
+        query_time_ms = (time.perf_counter() - start_time) * 1000
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to get log schema: {str(exc)}"
         ) from exc

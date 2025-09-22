@@ -4,6 +4,7 @@
 
 WITH raw_observations AS (
     SELECT
+        tenant_id,
         provider,
         series_id,
         ts,
@@ -28,6 +29,7 @@ WITH raw_observations AS (
 
 standardized_observations AS (
     SELECT
+        tenant_id,
         provider,
         series_id,
         ts,

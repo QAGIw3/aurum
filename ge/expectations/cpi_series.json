@@ -1,0 +1,56 @@
+{
+  "expectation_suite_name": "cpi_series",
+  "meta": {
+    "notes": "Checks for CPI series observations landing in Timescale."
+  },
+  "expectations": [
+    {
+      "expectation_type": "expect_table_columns_to_match_set",
+      "kwargs": {
+        "column_set": [
+          "tenant_id",
+          "series_id",
+          "period",
+          "period_date",
+          "area",
+          "frequency",
+          "seasonal_adjustment",
+          "value",
+          "units",
+          "source",
+          "metadata",
+          "ingest_ts",
+          "ingest_job_id",
+          "ingest_run_id",
+          "ingest_batch_id"
+        ]
+      }
+    },
+    {
+      "expectation_type": "expect_column_values_to_not_be_null",
+      "kwargs": {"column": "tenant_id"}
+    },
+    {
+      "expectation_type": "expect_column_values_to_not_be_null",
+      "kwargs": {"column": "series_id"}
+    },
+    {
+      "expectation_type": "expect_column_values_to_not_be_null",
+      "kwargs": {"column": "period"}
+    },
+    {
+      "expectation_type": "expect_column_values_to_not_be_null",
+      "kwargs": {"column": "ingest_ts"}
+    },
+    {
+      "expectation_type": "expect_column_values_to_be_between",
+      "kwargs": {
+        "column": "value",
+        "min_value": 0,
+        "max_value": 1000,
+        "mostly": 0.99
+      },
+      "meta": {"notes": "CPI index values should be positive and within reasonable bounds"}
+    }
+  ]
+}

@@ -1,0 +1,387 @@
+"""v2 Scenarios API with enhanced features.
+
+This module provides the v2 implementation of the scenarios API with:
+- Cursor-only pagination (offset deprecated)
+- Consistent error shapes using RFC 7807
+- Enhanced ETag support
+- Improved validation and error handling
+- Better observability
+"""
+
+from __future__ import annotations
+
+import time
+from typing import List, Optional
+from uuid import uuid4
+
+from fastapi import APIRouter, HTTPException, Query, Request, Response
+from pydantic import BaseModel, Field
+
+from ..http import respond_with_etag
+from ..scenario_models import (
+    ScenarioCreateRequest,
+    ScenarioResponse,
+    ScenarioRunCreateRequest,
+    ScenarioRunResponse,
+    ScenarioRunStatus,
+)
+from ..scenarios import get_scenario_service
+from ...telemetry.context import get_request_id
+
+router = APIRouter()
+
+
+class ScenarioListResponse(BaseModel):
+    """Response for listing scenarios with v2 enhancements."""
+    data: List[ScenarioResponse] = Field(..., description="List of scenarios")
+    meta: dict = Field(..., description="Pagination and metadata")
+    links: dict = Field(..., description="Pagination links")
+
+
+class ScenarioRunListResponse(BaseModel):
+    """Response for listing scenario runs with v2 enhancements."""
+    data: List[ScenarioRunResponse] = Field(..., description="List of scenario runs")
+    meta: dict = Field(..., description="Pagination and metadata")
+    links: dict = Field(..., description="Pagination links")
+
+
+@router.get("/scenarios", response_model=ScenarioListResponse)
+async def list_scenarios_v2(
+    request: Request,
+    response: Response,
+    tenant_id: str = Query(..., description="Tenant ID"),
+    cursor: Optional[str] = Query(None, description="Cursor for pagination"),
+    limit: int = Query(10, ge=1, le=100, description="Maximum number of items to return"),
+    name_filter: Optional[str] = Query(None, description="Filter by scenario name"),
+) -> ScenarioListResponse:
+    """List scenarios with enhanced pagination and error handling."""
+    start_time = time.perf_counter()
+
+    try:
+        # Get scenario service
+        service = await get_scenario_service()
+
+        # Parse cursor if provided
+        offset = 0
+        if cursor:
+            try:
+                import base64
+                import json
+                cursor_data = json.loads(base64.urlsafe_b64decode(cursor.encode()).decode())
+                offset = cursor_data.get("offset", 0)
+            except Exception:
+                raise HTTPException(
+                    status_code=400,
+                    detail={
+                        "type": "invalid_cursor",
+                        "title": "Invalid cursor format",
+                        "detail": "The provided cursor is not valid",
+                        "instance": "/v2/scenarios"
+                    }
+                )
+
+        # List scenarios
+        scenarios = await service.list_scenarios(
+            tenant_id=tenant_id,
+            offset=offset,
+            limit=limit,
+            name_filter=name_filter
+        )
+
+        # Create next cursor
+        next_cursor = None
+        if len(scenarios) == limit:
+            next_offset = offset + limit
+            cursor_data = {"offset": next_offset}
+            import base64
+            import json
+            next_cursor = base64.urlsafe_b64encode(
+                json.dumps(cursor_data).encode()
+            ).decode()
+
+        duration_ms = (time.perf_counter() - start_time) * 1000
+
+        # Create response with enhanced metadata
+        result = ScenarioListResponse(
+            data=scenarios,
+            meta={
+                "request_id": get_request_id(),
+                "tenant_id": tenant_id,
+                "total_count": len(scenarios) + (1 if next_cursor else 0),  # Estimate
+                "returned_count": len(scenarios),
+                "has_more": next_cursor is not None,
+                "cursor": cursor,
+                "next_cursor": next_cursor,
+                "processing_time_ms": round(duration_ms, 2),
+            },
+            links={
+                "self": str(request.url),
+                "next": f"{request.url}&cursor={next_cursor}" if next_cursor else None,
+            }
+        )
+
+        # Add ETag for caching
+        return respond_with_etag(result, request, response)
+
+    except HTTPException:
+        raise
+    except Exception as exc:
+        duration_ms = (time.perf_counter() - start_time) * 1000
+        raise HTTPException(
+            status_code=500,
+            detail={
+                "type": "internal_error",
+                "title": "Internal server error",
+                "detail": f"Failed to list scenarios: {str(exc)}",
+                "instance": "/v2/scenarios",
+                "request_id": get_request_id(),
+                "processing_time_ms": round(duration_ms, 2)
+            }
+        )
+
+
+@router.post("/scenarios", response_model=ScenarioResponse, status_code=201)
+async def create_scenario_v2(
+    request: Request,
+    response: Response,
+    scenario: ScenarioCreateRequest,
+) -> ScenarioResponse:
+    """Create a scenario with enhanced validation and error handling."""
+    start_time = time.perf_counter()
+
+    try:
+        # Get scenario service
+        service = await get_scenario_service()
+
+        # Create scenario
+        created_scenario = await service.create_scenario(scenario)
+
+        duration_ms = (time.perf_counter() - start_time) * 1000
+
+        # Create response with metadata
+        result = ScenarioResponse(
+            **created_scenario.dict(),
+            meta={
+                "request_id": get_request_id(),
+                "created_at": created_scenario.created_at,
+                "processing_time_ms": round(duration_ms, 2),
+                "version": "v2"
+            }
+        )
+
+        # Add ETag for caching
+        return respond_with_etag(result, request, response)
+
+    except HTTPException:
+        raise
+    except Exception as exc:
+        duration_ms = (time.perf_counter() - start_time) * 1000
+        raise HTTPException(
+            status_code=500,
+            detail={
+                "type": "internal_error",
+                "title": "Internal server error",
+                "detail": f"Failed to create scenario: {str(exc)}",
+                "instance": "/v2/scenarios",
+                "request_id": get_request_id(),
+                "processing_time_ms": round(duration_ms, 2)
+            }
+        )
+
+
+@router.get("/scenarios/{scenario_id}", response_model=ScenarioResponse)
+async def get_scenario_v2(
+    request: Request,
+    response: Response,
+    scenario_id: str,
+    tenant_id: str = Query(..., description="Tenant ID"),
+) -> ScenarioResponse:
+    """Get a scenario with enhanced error handling."""
+    start_time = time.perf_counter()
+
+    try:
+        # Get scenario service
+        service = await get_scenario_service()
+
+        # Get scenario
+        scenario = await service.get_scenario(scenario_id, tenant_id)
+
+        duration_ms = (time.perf_counter() - start_time) * 1000
+
+        # Create response with metadata
+        result = ScenarioResponse(
+            **scenario.dict(),
+            meta={
+                "request_id": get_request_id(),
+                "processing_time_ms": round(duration_ms, 2),
+                "version": "v2"
+            }
+        )
+
+        # Add ETag for caching
+        return respond_with_etag(result, request, response)
+
+    except HTTPException:
+        raise
+    except Exception as exc:
+        duration_ms = (time.perf_counter() - start_time) * 1000
+        raise HTTPException(
+            status_code=500,
+            detail={
+                "type": "internal_error",
+                "title": "Internal server error",
+                "detail": f"Failed to get scenario: {str(exc)}",
+                "instance": f"/v2/scenarios/{scenario_id}",
+                "request_id": get_request_id(),
+                "processing_time_ms": round(duration_ms, 2)
+            }
+        )
+
+
+@router.post("/scenarios/{scenario_id}/runs", response_model=ScenarioRunResponse, status_code=201)
+async def create_scenario_run_v2(
+    request: Request,
+    response: Response,
+    scenario_id: str,
+    run: ScenarioRunCreateRequest,
+    tenant_id: str = Query(..., description="Tenant ID"),
+) -> ScenarioRunResponse:
+    """Create a scenario run with enhanced validation and idempotency."""
+    start_time = time.perf_counter()
+
+    try:
+        # Get scenario service
+        service = await get_scenario_service()
+
+        # Create scenario run
+        created_run = await service.create_scenario_run(scenario_id, run, tenant_id)
+
+        duration_ms = (time.perf_counter() - start_time) * 1000
+
+        # Create response with metadata
+        result = ScenarioRunResponse(
+            **created_run.dict(),
+            meta={
+                "request_id": get_request_id(),
+                "created_at": created_run.created_at,
+                "processing_time_ms": round(duration_ms, 2),
+                "version": "v2"
+            }
+        )
+
+        # Add ETag for caching
+        return respond_with_etag(result, request, response)
+
+    except HTTPException:
+        raise
+    except Exception as exc:
+        duration_ms = (time.perf_counter() - start_time) * 1000
+        raise HTTPException(
+            status_code=500,
+            detail={
+                "type": "internal_error",
+                "title": "Internal server error",
+                "detail": f"Failed to create scenario run: {str(exc)}",
+                "instance": f"/v2/scenarios/{scenario_id}/runs",
+                "request_id": get_request_id(),
+                "processing_time_ms": round(duration_ms, 2)
+            }
+        )
+
+
+@router.get("/scenarios/{scenario_id}/runs", response_model=ScenarioRunListResponse)
+async def list_scenario_runs_v2(
+    request: Request,
+    response: Response,
+    scenario_id: str,
+    tenant_id: str = Query(..., description="Tenant ID"),
+    cursor: Optional[str] = Query(None, description="Cursor for pagination"),
+    limit: int = Query(10, ge=1, le=100, description="Maximum number of items to return"),
+    status_filter: Optional[ScenarioRunStatus] = Query(None, description="Filter by run status"),
+) -> ScenarioRunListResponse:
+    """List scenario runs with enhanced pagination and filtering."""
+    start_time = time.perf_counter()
+
+    try:
+        # Get scenario service
+        service = await get_scenario_service()
+
+        # Parse cursor if provided
+        offset = 0
+        if cursor:
+            try:
+                import base64
+                import json
+                cursor_data = json.loads(base64.urlsafe_b64decode(cursor.encode()).decode())
+                offset = cursor_data.get("offset", 0)
+            except Exception:
+                raise HTTPException(
+                    status_code=400,
+                    detail={
+                        "type": "invalid_cursor",
+                        "title": "Invalid cursor format",
+                        "detail": "The provided cursor is not valid",
+                        "instance": f"/v2/scenarios/{scenario_id}/runs"
+                    }
+                )
+
+        # List scenario runs
+        runs = await service.list_scenario_runs(
+            scenario_id=scenario_id,
+            tenant_id=tenant_id,
+            offset=offset,
+            limit=limit,
+            status_filter=status_filter
+        )
+
+        # Create next cursor
+        next_cursor = None
+        if len(runs) == limit:
+            next_offset = offset + limit
+            cursor_data = {"offset": next_offset}
+            import base64
+            import json
+            next_cursor = base64.urlsafe_b64encode(
+                json.dumps(cursor_data).encode()
+            ).decode()
+
+        duration_ms = (time.perf_counter() - start_time) * 1000
+
+        # Create response with enhanced metadata
+        result = ScenarioRunListResponse(
+            data=runs,
+            meta={
+                "request_id": get_request_id(),
+                "scenario_id": scenario_id,
+                "tenant_id": tenant_id,
+                "total_count": len(runs) + (1 if next_cursor else 0),  # Estimate
+                "returned_count": len(runs),
+                "has_more": next_cursor is not None,
+                "cursor": cursor,
+                "next_cursor": next_cursor,
+                "processing_time_ms": round(duration_ms, 2),
+            },
+            links={
+                "self": str(request.url),
+                "next": f"{request.url}&cursor={next_cursor}" if next_cursor else None,
+            }
+        )
+
+        # Add ETag for caching
+        return respond_with_etag(result, request, response)
+
+    except HTTPException:
+        raise
+    except Exception as exc:
+        duration_ms = (time.perf_counter() - start_time) * 1000
+        raise HTTPException(
+            status_code=500,
+            detail={
+                "type": "internal_error",
+                "title": "Internal server error",
+                "detail": f"Failed to list scenario runs: {str(exc)}",
+                "instance": f"/v2/scenarios/{scenario_id}/runs",
+                "request_id": get_request_id(),
+                "processing_time_ms": round(duration_ms, 2)
+            }
+        )

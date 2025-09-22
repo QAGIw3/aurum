@@ -4,6 +4,10 @@ meta:
 expectations:
   - expectation_type: expect_column_values_to_not_be_null
     kwargs:
+      column: tenant_id
+    table: stg_external__series_catalog
+  - expectation_type: expect_column_values_to_not_be_null
+    kwargs:
       column: provider
     table: stg_external__series_catalog
   - expectation_type: expect_column_values_to_not_be_null
@@ -17,11 +21,16 @@ expectations:
   - expectation_type: expect_multicolumn_values_to_be_unique
     kwargs:
       column_list:
+        - tenant_id
         - provider
         - series_id
         - version
     table: stg_external__series_catalog
 
+  - expectation_type: expect_column_values_to_not_be_null
+    kwargs:
+      column: tenant_id
+    table: stg_external__obs
   - expectation_type: expect_column_values_to_not_be_null
     kwargs:
       column: provider
@@ -37,6 +46,7 @@ expectations:
   - expectation_type: expect_multicolumn_values_to_be_unique
     kwargs:
       column_list:
+        - tenant_id
         - provider
         - series_id
         - ts
@@ -45,7 +55,7 @@ expectations:
 
   - expectation_type: expect_column_values_to_not_be_null
     kwargs:
-      column: provider
+      column: tenant_id
     table: int_external__obs_conformed
   - expectation_type: expect_column_values_to_not_be_null
     kwargs:
@@ -86,3 +96,64 @@ expectations:
         - tenor_label
         - asof_date
     table: cur_external__obs_mapped
+
+  - expectation_type: expect_column_values_to_not_be_null
+    kwargs:
+      column: tenant_id
+    table: stg_fred_series
+  - expectation_type: expect_column_values_to_not_be_null
+    kwargs:
+      column: series_id
+    table: stg_fred_series
+  - expectation_type: expect_column_values_to_not_be_null
+    kwargs:
+      column: obs_date
+    table: stg_fred_series
+
+  - expectation_type: expect_column_values_to_not_be_null
+    kwargs:
+      column: tenant_id
+    table: stg_cpi_series
+  - expectation_type: expect_column_values_to_not_be_null
+    kwargs:
+      column: series_id
+    table: stg_cpi_series
+  - expectation_type: expect_column_values_to_not_be_null
+    kwargs:
+      column: period
+    table: stg_cpi_series
+
+  - expectation_type: expect_column_values_to_not_be_null
+    kwargs:
+      column: tenant_id
+    table: stg_noaa_weather
+  - expectation_type: expect_column_values_to_not_be_null
+    kwargs:
+      column: station_id
+    table: stg_noaa_weather
+  - expectation_type: expect_column_values_to_not_be_null
+    kwargs:
+      column: observation_date
+    table: stg_noaa_weather
+  - expectation_type: expect_column_values_to_not_be_null
+    kwargs:
+      column: element
+    table: stg_noaa_weather
+
+  - expectation_type: expect_column_values_to_not_be_null
+    kwargs:
+      column: tenant_id
+    table: mart_fred_series_latest
+  - expectation_type: expect_column_values_to_not_be_null
+    kwargs:
+      column: series_id
+    table: mart_fred_series_latest
+
+  - expectation_type: expect_column_values_to_not_be_null
+    kwargs:
+      column: tenant_id
+    table: mart_cpi_series_latest
+  - expectation_type: expect_column_values_to_not_be_null
+    kwargs:
+      column: series_id
+    table: mart_cpi_series_latest

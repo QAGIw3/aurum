@@ -5,9 +5,11 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
+import os
 import threading
 import time
 from calendar import monthrange
+from contextlib import contextmanager
 from datetime import date, datetime, timezone
 from typing import Any, Dict, Iterable, List, Mapping, Optional, Sequence, Tuple
 
@@ -27,6 +29,57 @@ try:  # pragma: no cover - optional dependency
     from prometheus_client import Counter as _PromCounter
 except Exception:  # pragma: no cover - metrics optional
     _PromCounter = None  # type: ignore[assignment]
+
+
+if _PromCounter:
+    SCENARIO_CACHE_HITS = _PromCounter(
+        "aurum_scenario_cache_hits_total",
+        "Scenario cache hits",
+    )
+    SCENARIO_CACHE_MISSES = _PromCounter(
+        "aurum_scenario_cache_misses_total",
+        "Scenario cache misses",
+    )
+    SCENARIO_CACHE_INVALIDATIONS = _PromCounter(
+        "aurum_scenario_cache_invalidations_total",
+        "Scenario cache invalidations",
+    )
+else:  # pragma: no cover - metrics optional
+    SCENARIO_CACHE_HITS = None  # type: ignore[assignment]
+    SCENARIO_CACHE_MISSES = None  # type: ignore[assignment]
+    SCENARIO_CACHE_INVALIDATIONS = None  # type: ignore[assignment]
+
+
+class _Singleflight:
+    """Simple singleflight helper to deduplicate concurrent fetches."""
+
+    def __init__(self) -> None:
+        self._locks: Dict[str, threading.Lock] = {}
+        self._counts: Dict[str, int] = {}
+        self._guard = threading.Lock()
+
+    @contextmanager
+    def acquire(self, key: str):
+        with self._guard:
+            lock = self._locks.get(key)
+            if lock is None:
+                lock = threading.Lock()
+                self._locks[key] = lock
+                self._counts[key] = 0
+            self._counts[key] += 1
+        lock.acquire()
+        try:
+            yield
+        finally:
+            lock.release()
+            with self._guard:
+                self._counts[key] -= 1
+                if self._counts[key] <= 0:
+                    self._locks.pop(key, None)
+                    self._counts.pop(key, None)
+
+
+_SCENARIO_SINGLEFLIGHT = _Singleflight()
 
 
 def _settings() -> AurumSettings:
@@ -903,6 +956,70 @@ def _scenario_metrics_cache_index_key(namespace: str, tenant_id: Optional[str], 
     return f"{prefix}scenario-metrics:index:{tenant_key}:{scenario_id}"
 
 
+def _scenario_cache_version_key(namespace: str, tenant_id: Optional[str]) -> str:
+    tenant_key = tenant_id or "anon"
+    prefix = f"{namespace}:" if namespace else ""
+    return f"{prefix}scenario-cache:version:{tenant_key}"
+
+
+def _get_scenario_cache_version(client, namespace: str, tenant_id: Optional[str]) -> str:
+    if client is None:
+        return "1"
+    key = _scenario_cache_version_key(namespace, tenant_id)
+    try:  # pragma: no cover - external IO
+        value = client.get(key)
+        if value is None:
+            client.set(key, "1")
+            return "1"
+        if isinstance(value, bytes):
+            return value.decode("utf-8") or "1"
+        return str(value)
+    except Exception:
+        return "1"
+
+
+def _bump_scenario_cache_version(client, namespace: str, tenant_id: Optional[str]) -> None:
+    if client is None:
+        return
+    key = _scenario_cache_version_key(namespace, tenant_id)
+    try:  # pragma: no cover - external IO
+        client.incr(key)
+        if SCENARIO_CACHE_INVALIDATIONS:
+            try:
+                SCENARIO_CACHE_INVALIDATIONS.inc()
+            except Exception:
+                pass
+    except Exception:
+        LOGGER.debug("Failed to increment scenario cache version", exc_info=True)
+
+
+def _publish_cache_invalidation_event(tenant_id: Optional[str], scenario_id: str) -> None:
+    topic = os.getenv("AURUM_SCENARIO_CACHE_INVALIDATION_TOPIC", "")
+    bootstrap = os.getenv("KAFKA_BOOTSTRAP_SERVERS", "")
+    if not topic or not bootstrap:
+        return
+    try:  # pragma: no cover - optional dependency
+        from confluent_kafka import Producer  # type: ignore
+    except Exception:
+        LOGGER.debug("Kafka producer unavailable for cache invalidation events", exc_info=True)
+        return
+
+    payload = json.dumps(
+        {
+            "tenant_id": tenant_id,
+            "scenario_id": scenario_id,
+            "timestamp": time.time(),
+        }
+    ).encode("utf-8")
+
+    try:  # pragma: no cover - external IO
+        producer = Producer({"bootstrap.servers": bootstrap})
+        producer.produce(topic=topic, value=payload)
+        producer.flush(0.5)
+    except Exception:
+        LOGGER.debug("Failed to publish cache invalidation event", exc_info=True)
+
+
 def _build_sql_scenario_outputs(
     *,
     tenant_id: str,
@@ -995,36 +1112,64 @@ def query_scenario_outputs(
 
     client = _maybe_redis_client(cache_cfg)
     cache_key = None
+    singleflight_key = None
     prefix = f"{cache_cfg.namespace}:" if cache_cfg.namespace else ""
     if client is not None:
-        cache_key = f"{prefix}scenario-outputs:{_cache_key({**params, 'sql': sql})}"
+        version = _get_scenario_cache_version(client, cache_cfg.namespace, tenant_id)
+        cache_key = f"{prefix}scenario-outputs:v{version}:{_cache_key({**params, 'sql': sql})}"
         cached = client.get(cache_key)
-        if cached:  # pragma: no cover
-            data = json.loads(cached)
-            return data, 0.0
+        if cached:  # pragma: no cover - best effort cache usage
+            try:
+                data = json.loads(cached)
+                if SCENARIO_CACHE_HITS:
+                    SCENARIO_CACHE_HITS.inc()
+                return data, 0.0
+            except Exception:
+                LOGGER.debug("Failed to decode scenario outputs cache payload", exc_info=True)
+        singleflight_key = f"sf:{cache_key}"
+    else:
+        singleflight_key = f"sf:scenario-outputs:{tenant_id}:{scenario_id}:{hash(sql)}"
 
-    connect = _require_trino()
-    start = time.perf_counter()
-    rows: List[Dict[str, Any]] = []
-    with connect(host=trino_cfg.host, port=trino_cfg.port, user=trino_cfg.user, http_scheme=trino_cfg.http_scheme) as conn:  # type: ignore[arg-type]
-        cur = conn.cursor()
-        cur.execute(sql)
-        columns = [c[0] for c in cur.description]
-        for rec in cur.fetchall():
-            row = {col: val for col, val in zip(columns, rec)}
-            rows.append(row)
-    elapsed = (time.perf_counter() - start) * 1000.0
+    with _SCENARIO_SINGLEFLIGHT.acquire(singleflight_key):
+        if client is not None and cache_key is not None:
+            cached = client.get(cache_key)
+            if cached:  # pragma: no cover - best effort cache usage
+                try:
+                    data = json.loads(cached)
+                    if SCENARIO_CACHE_HITS:
+                        SCENARIO_CACHE_HITS.inc()
+                    return data, 0.0
+                except Exception:
+                    LOGGER.debug("Failed to decode scenario outputs cache payload", exc_info=True)
 
-    if client is not None and cache_key is not None:
-        try:  # pragma: no cover
-            client.setex(cache_key, cache_cfg.ttl_seconds, json.dumps(rows, default=str))
-            index_key = _scenario_cache_index_key(cache_cfg.namespace, tenant_id, scenario_id)
-            client.sadd(index_key, cache_key)
-            client.expire(index_key, cache_cfg.ttl_seconds)
-        except Exception:
-            pass
+        if SCENARIO_CACHE_MISSES:
+            try:
+                SCENARIO_CACHE_MISSES.inc()
+            except Exception:
+                pass
 
-    return rows, elapsed
+        connect = _require_trino()
+        start = time.perf_counter()
+        rows: List[Dict[str, Any]] = []
+        with connect(host=trino_cfg.host, port=trino_cfg.port, user=trino_cfg.user, http_scheme=trino_cfg.http_scheme) as conn:  # type: ignore[arg-type]
+            cur = conn.cursor()
+            cur.execute(sql)
+            columns = [c[0] for c in cur.description]
+            for rec in cur.fetchall():
+                row = {col: val for col, val in zip(columns, rec)}
+                rows.append(row)
+        elapsed = (time.perf_counter() - start) * 1000.0
+
+        if client is not None and cache_key is not None:
+            try:  # pragma: no cover
+                client.setex(cache_key, cache_cfg.ttl_seconds, json.dumps(rows, default=str))
+                index_key = _scenario_cache_index_key(cache_cfg.namespace, tenant_id, scenario_id)
+                client.sadd(index_key, cache_key)
+                client.expire(index_key, cache_cfg.ttl_seconds)
+            except Exception:
+                LOGGER.debug("Failed to populate scenario cache", exc_info=True)
+
+        return rows, elapsed
 
 
 def _coerce_float(value: Any, default: float = 0.0) -> float:
@@ -1387,35 +1532,63 @@ def query_scenario_metrics_latest(
 
     client = _maybe_redis_client(cache_cfg)
     cache_key = None
+    singleflight_key = None
     prefix = f"{cache_cfg.namespace}:" if cache_cfg.namespace else ""
     if client is not None:
-        cache_key = f"{prefix}scenario-metrics:{_cache_key(params)}"
+        version = _get_scenario_cache_version(client, cache_cfg.namespace, tenant_id)
+        cache_key = f"{prefix}scenario-metrics:v{version}:{_cache_key(params)}"
         cached = client.get(cache_key)
         if cached:
-            data = json.loads(cached)
-            return data, 0.0
+            try:
+                data = json.loads(cached)
+                if SCENARIO_CACHE_HITS:
+                    SCENARIO_CACHE_HITS.inc()
+                return data, 0.0
+            except Exception:
+                LOGGER.debug("Failed to decode scenario metrics cache payload", exc_info=True)
+        singleflight_key = f"sf:{cache_key}"
+    else:
+        singleflight_key = f"sf:scenario-metrics:{tenant_id}:{scenario_id}:{hash(sql)}"
 
-    connect = _require_trino()
-    start = time.perf_counter()
-    rows: List[Dict[str, Any]] = []
-    with connect(host=trino_cfg.host, port=trino_cfg.port, user=trino_cfg.user, http_scheme=trino_cfg.http_scheme) as conn:  # type: ignore[arg-type]
-        cur = conn.cursor()
-        cur.execute(sql)
-        columns = [col[0] for col in cur.description]
-        for rec in cur.fetchall():
-            rows.append({col: val for col, val in zip(columns, rec)})
-    elapsed = (time.perf_counter() - start) * 1000.0
+    with _SCENARIO_SINGLEFLIGHT.acquire(singleflight_key):
+        if client is not None and cache_key is not None:
+            cached = client.get(cache_key)
+            if cached:
+                try:
+                    data = json.loads(cached)
+                    if SCENARIO_CACHE_HITS:
+                        SCENARIO_CACHE_HITS.inc()
+                    return data, 0.0
+                except Exception:
+                    LOGGER.debug("Failed to decode scenario metrics cache payload", exc_info=True)
 
-    if client is not None and cache_key is not None:
-        try:  # pragma: no cover
-            client.setex(cache_key, cache_cfg.ttl_seconds, json.dumps(rows, default=str))
-            index_key = _scenario_metrics_cache_index_key(cache_cfg.namespace, tenant_id, scenario_id)
-            client.sadd(index_key, cache_key)
-            client.expire(index_key, cache_cfg.ttl_seconds)
-        except Exception:
-            pass
+        if SCENARIO_CACHE_MISSES:
+            try:
+                SCENARIO_CACHE_MISSES.inc()
+            except Exception:
+                pass
 
-    return rows, elapsed
+        connect = _require_trino()
+        start = time.perf_counter()
+        rows: List[Dict[str, Any]] = []
+        with connect(host=trino_cfg.host, port=trino_cfg.port, user=trino_cfg.user, http_scheme=trino_cfg.http_scheme) as conn:  # type: ignore[arg-type]
+            cur = conn.cursor()
+            cur.execute(sql)
+            columns = [col[0] for col in cur.description]
+            for rec in cur.fetchall():
+                rows.append({col: val for col, val in zip(columns, rec)})
+        elapsed = (time.perf_counter() - start) * 1000.0
+
+        if client is not None and cache_key is not None:
+            try:  # pragma: no cover
+                client.setex(cache_key, cache_cfg.ttl_seconds, json.dumps(rows, default=str))
+                index_key = _scenario_metrics_cache_index_key(cache_cfg.namespace, tenant_id, scenario_id)
+                client.sadd(index_key, cache_key)
+                client.expire(index_key, cache_cfg.ttl_seconds)
+            except Exception:
+                LOGGER.debug("Failed to populate scenario metrics cache", exc_info=True)
+
+        return rows, elapsed
 
 
 def invalidate_scenario_outputs_cache(
@@ -1424,8 +1597,10 @@ def invalidate_scenario_outputs_cache(
     scenario_id: str,
 ) -> None:
     client = _maybe_redis_client(cache_cfg)
+    _publish_cache_invalidation_event(tenant_id, scenario_id)
     if client is None:
         return
+    _bump_scenario_cache_version(client, cache_cfg.namespace, tenant_id)
     index_key = _scenario_cache_index_key(cache_cfg.namespace, tenant_id, scenario_id)
     metrics_index_key = _scenario_metrics_cache_index_key(cache_cfg.namespace, tenant_id, scenario_id)
     try:  # pragma: no cover

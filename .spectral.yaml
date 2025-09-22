@@ -1,0 +1,136 @@
+extends: ["spectral:oas"]
+
+rules:
+  # Custom rules for Aurum API
+  aurum-api-security:
+    description: All endpoints must have security requirements
+    message: "Missing security requirements for endpoint"
+    severity: error
+    given: "$.paths[*][*]"
+    then:
+      function: "truthy"
+      field: "security"
+
+  aurum-api-operation-ids:
+    description: All operations must have unique operationIds
+    message: "Missing or duplicate operationId"
+    severity: error
+    given: "$.paths[*][*]"
+    then:
+      function: "truthy"
+      field: "operationId"
+
+  aurum-api-responses:
+    description: All operations must have 200, 400, 401, 403, 404, 429, and 500 responses
+    message: "Missing required response codes"
+    severity: error
+    given: "$.paths[*][*].responses"
+    then:
+      function: "schema"
+      functionOptions:
+        schema:
+          type: object
+          properties:
+            "200":
+              type: object
+            "400":
+              type: object
+            "401":
+              type: object
+            "403":
+              type: object
+            "404":
+              type: object
+            "429":
+              type: object
+            "500":
+              type: object
+          additionalProperties: false
+
+  aurum-api-pagination:
+    description: All list endpoints should use cursor-based pagination
+    message: "Deprecated offset parameter found - use cursor instead"
+    severity: warn
+    given: "$.paths[*][*].parameters[*]"
+    then:
+      function: "pattern"
+      functionOptions:
+        notMatch: "offset"
+
+  aurum-api-examples:
+    description: All request/response schemas should have examples
+    message: "Missing example for schema"
+    severity: warn
+    given: "$.components.schemas[*]"
+    then:
+      function: "any"
+      functionOptions:
+        properties:
+          - example
+          - examples
+
+  aurum-api-tenant-context:
+    description: All operations should support tenant context
+    message: "Missing tenant context documentation"
+    severity: info
+    given: "$.paths[*][*].summary"
+    then:
+      function: "pattern"
+      functionOptions:
+        match: "tenant"
+
+  aurum-api-metadata:
+    description: All responses should include metadata
+    message: "Response should include meta field"
+    severity: warn
+    given: "$.paths[*][*].responses[*].content[*].schema"
+    then:
+      function: "schema"
+      functionOptions:
+        schema:
+          type: object
+          properties:
+            meta:
+              type: object
+          required:
+            - meta
+
+  aurum-api-error-format:
+    description: All error responses should follow RFC 7807 format
+    message: "Error responses should follow RFC 7807"
+    severity: warn
+    given: "$.paths[*][*].responses[4??].content[*].schema"
+    then:
+      function: "schema"
+      functionOptions:
+        schema:
+          type: object
+          properties:
+            error:
+              type: string
+            message:
+              type: string
+            request_id:
+              type: string
+          required:
+            - error
+            - message
+
+  aurum-api-cursor-format:
+    description: Cursor parameters should be properly documented
+    message: "Cursor parameter missing description"
+    severity: warn
+    given: "$.paths[*][*].parameters[?(@.name=='cursor')]"
+    then:
+      function: "truthy"
+      field: "description"
+
+  aurum-api-rate-limiting:
+    description: All endpoints should document rate limiting behavior
+    message: "Missing rate limiting documentation"
+    severity: info
+    given: "$.paths[*][*].description"
+    then:
+      function: "pattern"
+      functionOptions:
+        match: "rate limit|429|throttle"

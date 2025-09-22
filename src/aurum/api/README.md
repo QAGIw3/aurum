@@ -22,7 +22,8 @@ The refactored API introduces several key improvements:
 - `health.py` - Health checks and monitoring
 - `curves.py` - Curve data endpoints
 - `metadata.py` - Metadata and reference data
-- `scenarios.py` - Scenario management (planned)
+- `scenarios.py` - Scenario management endpoints
+- `handlers/external.py` - External data API handlers
 - `ppa.py` - PPA valuation endpoints (planned)
 
 #### 2. Service Layer
@@ -36,6 +37,11 @@ The refactored API introduces several key improvements:
 - `exceptions.py` - Standardized error handling
 - `config.py` - Simplified configuration management
 - `testing.py` - Enhanced testing utilities
+
+#### 4. HTTP Utilities
+- `http/responses.py` - Response handling (ETags, CSV, errors)
+- `http/pagination.py` - Cursor-based pagination utilities
+- `http/__init__.py` - HTTP utilities package exports
 
 ## Usage
 
@@ -102,253 +108,147 @@ except AurumAPIException as e:
     print(f"API error: {e.detail}")
 ```
 
-### Caching
+### HTTP Response Utilities
 
 ```python
-from aurum.api.cache import AsyncCache, CacheManager, CacheBackend
+from aurum.api.http import respond_with_etag, create_error_response
 
-# Create cache
-cache = AsyncCache(CacheBackend.REDIS)
+# Add ETag handling to your endpoint
+return respond_with_etag(model, request, response)
 
-# Use cache manager
-manager = CacheManager(cache)
-
-# Cache data
-await manager.cache_curve_data(
-    data=curve_data,
-    iso="PJM",
-    market="DAY_AHEAD",
-    location="HUB"
+# Create standardized error responses
+error_response = create_error_response(
+    400,
+    "Invalid request parameters",
+    request_id=get_request_id(),
+    field_errors={"tenant_id": "Required field"}
 )
-
-# Retrieve cached data
-data = await manager.get_curve_data("PJM", "DAY_AHEAD", "HUB")
 ```
 
-### Data Processing
+### Pagination Utilities
 
 ```python
-from aurum.api.data_processing import get_data_pipeline
+from aurum.api.http import encode_cursor, decode_cursor, normalize_cursor_input
 
-# Get processing pipeline
-pipeline = get_data_pipeline()
+# Generate next cursor
+next_cursor = encode_cursor({"offset": offset + limit})
 
-# Process data with validation and enrichment
-enriched_data, metrics = await pipeline.validate_and_enrich_batch(
-    raw_data,
-    "curve_observation"
-)
-
-print(f"Quality score: {metrics.get_quality_score():.1f}%")
+# Decode incoming cursor
+payload = decode_cursor(cursor_token)
+effective_offset, metadata = normalize_cursor_input(payload)
 ```
 
 ## Configuration
 
-The refactored API uses simplified configuration:
+The API uses environment-based configuration through the AurumSettings class:
 
 ```python
-from aurum.api.config import AurumConfig
+from aurum.core import AurumSettings
 
 # Environment-based configuration
-config = AurumConfig.from_env()
+settings = AurumSettings.from_env()
 
 # Access settings
-print(f"Cache TTL: {config.cache.ttl_seconds}")
-print(f"API timeout: {config.api.request_timeout_seconds}")
+print(f"Cache TTL: {settings.api.cache.metadata_ttl}")
+print(f"API timeout: {settings.api.request_timeout_seconds}")
+print(f"CORS origins: {settings.api.cors_allow_origins}")
 ```
 
 ## Testing
 
-### Test Data Factory
+The API is designed for easy testing with dependency injection. Use standard Python testing libraries like pytest and mock:
 
 ```python
-from aurum.api.testing import TestDataFactory, APITestCase
+from unittest.mock import AsyncMock, patch
+from aurum.api.container import get_service
 
-# Create test data
-factory = TestDataFactory()
-curve_data = factory.create_curve_points(10)
-scenario_data = factory.create_scenario_data()
+# Mock the service layer
+with patch('aurum.api.container.get_service') as mock_get_service:
+    mock_service = AsyncMock()
+    mock_get_service.return_value = mock_service
 
-# Use in test cases
-test_case = APITestCase()
-mock_service = test_case.mock_service(CurveService, mock_instance)
-```
-
-### Performance Testing
-
-```python
-from aurum.api.testing import LoadTestHelper
-
-load_tester = LoadTestHelper(concurrency=10)
-
-async def test_function():
-    # Your test code here
-    pass
-
-results = await load_tester.run_load_test(
-    test_function,
-    num_requests=100
-)
-```
-
-### Mock Services
-
-```python
-from aurum.api.testing import MockServiceProvider
-from unittest.mock import AsyncMock
-
-provider = MockServiceProvider()
-mock_service = AsyncMock()
-provider.register_mock(CurveService, mock_service)
-
-service = provider.get(CurveService)  # Returns the mock
+    # Test your endpoint
+    response = client.get("/v1/scenarios")
+    assert response.status_code == 200
 ```
 
 ## Performance Optimizations
 
-### Query Optimization
+The API includes built-in performance optimizations:
 
-```python
-from aurum.api.performance import get_query_optimizer
-
-optimizer = get_query_optimizer()
-
-# Queries are automatically batched and optimized
-results = await optimizer.execute_query(
-    "SELECT * FROM table WHERE condition = ?",
-    {"condition": value}
-)
-```
-
-### Connection Pooling
-
-```python
-from aurum.api.performance import get_connection_pool
-
-pool = get_connection_pool()
-
-# Connections are automatically pooled and reused
-conn = await pool.get_connection()
-try:
-    # Use connection
-    pass
-finally:
-    await pool.return_connection(conn)
-```
-
-### Performance Monitoring
-
-```python
-from aurum.api.performance import get_performance_monitor
-
-monitor = get_performance_monitor()
-
-# Record query metrics
-await monitor.record_query(
-    query_type="curve_data",
-    execution_time=0.123,
-    result_count=100,
-    cached=False
-)
-
-# Get statistics
-stats = await monitor.get_stats()
-```
-
-## Data Processing Pipeline
-
-### Pipeline Usage
-
-```python
-from aurum.api.data_processing import get_data_pipeline
-
-pipeline = get_data_pipeline()
-
-# Process streaming data
-async for processed_row in pipeline.process_dataset(data_stream, "curve_observation"):
-    # Handle processed row
-    pass
-
-# Get processing statistics
-stats = await pipeline.get_pipeline_stats(request_id)
-```
-
-### Data Quality
-
-```python
-from aurum.api.data_processing import DataQualityReporter
-
-reporter = get_data_quality_reporter()
-quality_report = await reporter.generate_report(metrics, "curve_observation", request_id)
-```
+- **Async Operations**: All I/O operations are async for better concurrency
+- **Caching**: Multi-level caching with Redis and in-memory backends
+- **Connection Pooling**: Database connections are pooled and reused
+- **Query Optimization**: Large queries are automatically optimized
+- **Streaming Responses**: Large datasets are streamed to avoid memory issues
 
 ## Migration Guide
 
-### From Old API
-
-**Before (synchronous):**
-```python
-from aurum.api.service import fetch_curve_data
-
-data = fetch_curve_data(iso="PJM", market="DAY_AHEAD")
-```
-
-**After (asynchronous):**
-```python
-from aurum.api.container import get_service
-from aurum.api.async_service import AsyncCurveService
-
-service = get_service(AsyncCurveService)
-data, meta = await service.fetch_curves(iso="PJM", market="DAY_AHEAD")
-```
-
-### Error Handling Migration
+### HTTP Utilities Migration
 
 **Before:**
 ```python
-try:
-    # API call
-except HTTPException as e:
-    # Handle
+from aurum.api.routes import _respond_with_etag, _encode_cursor, _decode_cursor
+
+return _respond_with_etag(model, request, response)
+next_cursor = _encode_cursor({"offset": offset + limit})
+payload = _decode_cursor(cursor_token)
 ```
 
 **After:**
 ```python
+from aurum.api.http import respond_with_etag, encode_cursor, decode_cursor
+
+return respond_with_etag(model, request, response)
+next_cursor = encode_cursor({"offset": offset + limit})
+payload = decode_cursor(cursor_token)
+```
+
+### Error Handling
+
+The API provides structured error responses with RFC 7807 compliance:
+
+```python
 try:
     # API call
+    pass
 except ValidationException as e:
-    # Handle validation errors
+    # Handle validation errors with field-specific details
+    print(f"Validation error: {e.detail}")
+    print(f"Field errors: {e.context.get('field_errors', {})}")
 except NotFoundException as e:
     # Handle not found errors
+    print(f"Resource not found: {e.resource_type}")
 except AurumAPIException as e:
     # Handle other API errors
+    print(f"API error: {e.detail}")
 ```
 
 ## Benefits
 
 ### Performance
-- **25% faster API responses** through async operations
-- **Multi-level caching** reduces database load
-- **Query optimization** batches similar operations
-- **Connection pooling** improves resource utilization
+- **Async-first design** enables better concurrency and resource utilization
+- **Multi-level caching** with Redis and in-memory backends reduces database load
+- **Connection pooling** optimizes database connections
+- **Streaming responses** handle large datasets efficiently
+- **ETag support** reduces unnecessary data transfer
 
 ### Maintainability
-- **40% reduction in code complexity** through modularization
-- **Clear separation of concerns** with focused modules
-- **Consistent error handling** across all endpoints
-- **Comprehensive documentation** and examples
+- **Modular architecture** with clear separation of concerns
+- **HTTP utilities package** centralizes common functionality
+- **Consistent error handling** with structured error responses
+- **Comprehensive documentation** with examples and migration guides
 
 ### Testability
-- **60% improvement in test coverage** through dependency injection
-- **Mock services** for isolated testing
-- **Test data factories** for realistic test data
-- **Performance testing utilities** for load testing
+- **Dependency injection** enables easy mocking and testing
+- **Standardized HTTP utilities** make testing more predictable
+- **Clear interfaces** between modules reduce coupling
 
 ### Reliability
-- **50% fewer production issues** through better error handling
-- **Data validation pipeline** ensures data quality
-- **Comprehensive monitoring** with metrics and alerts
-- **Graceful degradation** when services are unavailable
+- **Robust error handling** with RFC 7807 compliant responses
+- **Cursor-based pagination** provides stable, performant pagination
+- **Structured logging** with request correlation IDs
+- **Graceful degradation** when external services are unavailable
 
 ## Best Practices
 

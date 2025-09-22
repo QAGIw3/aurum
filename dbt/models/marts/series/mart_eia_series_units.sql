@@ -1,4 +1,5 @@
 select distinct
+    tenant_id,
     unit_raw,
     unit_normalized,
     currency_normalized,

@@ -1,11 +1,22 @@
 #!/usr/bin/env python3
-"""Validate OpenAPI specification consistency."""
+"""Validate OpenAPI specification consistency (legacy script - use validate_openapi_complete.py for comprehensive validation)."""
 
 import json
 import sys
 import yaml
 from pathlib import Path
 from typing import Dict, List, Set
+
+# Import comprehensive validation
+from validate_openapi_complete import main as validate_comprehensive
+
+def main():
+    """Main validation function."""
+    print("🔄 Running legacy OpenAPI consistency validation...")
+    print("⚠️  This script is deprecated. Use 'scripts/ci/validate_openapi_complete.py' for comprehensive validation.")
+
+    # Run comprehensive validation
+    return validate_comprehensive()
 
 
 def load_openapi_spec(file_path: str) -> dict:

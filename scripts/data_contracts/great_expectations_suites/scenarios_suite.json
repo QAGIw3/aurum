@@ -1,0 +1,137 @@
+{
+  "expectation_suite_name": "aurum.scenarios",
+  "expectations": [
+    {
+      "expectation_type": "expect_table_row_count_to_be_between",
+      "kwargs": {
+        "min_value": 1,
+        "max_value": 1000
+      },
+      "meta": {
+        "notes": "Scenarios table should not be empty and should be reasonable size"
+      }
+    },
+    {
+      "expectation_type": "expect_column_values_to_not_be_null",
+      "kwargs": {
+        "column": "id"
+      },
+      "meta": {
+        "notes": "Scenario ID is required"
+      }
+    },
+    {
+      "expectation_type": "expect_column_values_to_not_be_null",
+      "kwargs": {
+        "column": "tenant_id"
+      },
+      "meta": {
+        "notes": "Tenant ID is required for multi-tenancy"
+      }
+    },
+    {
+      "expectation_type": "expect_column_values_to_not_be_null",
+      "kwargs": {
+        "column": "name"
+      },
+      "meta": {
+        "notes": "Scenario name is required"
+      }
+    },
+    {
+      "expectation_type": "expect_column_values_to_be_of_type",
+      "kwargs": {
+        "column": "id",
+        "type_": "str"
+      },
+      "meta": {
+        "notes": "Scenario ID should be string"
+      }
+    },
+    {
+      "expectation_type": "expect_column_values_to_be_of_type",
+      "kwargs": {
+        "column": "tenant_id",
+        "type_": "str"
+      },
+      "meta": {
+        "notes": "Tenant ID should be string"
+      }
+    },
+    {
+      "expectation_type": "expect_column_values_to_be_of_type",
+      "kwargs": {
+        "column": "name",
+        "type_": "str"
+      },
+      "meta": {
+        "notes": "Scenario name should be string"
+      }
+    },
+    {
+      "expectation_type": "expect_column_values_to_match_regex",
+      "kwargs": {
+        "column": "id",
+        "regex": "^scenario-[a-zA-Z0-9-]+$"
+      },
+      "meta": {
+        "notes": "Scenario ID should follow naming convention"
+      }
+    },
+    {
+      "expectation_type": "expect_column_values_to_match_regex",
+      "kwargs": {
+        "column": "tenant_id",
+        "regex": "^[a-zA-Z0-9-._]+$"
+      },
+      "meta": {
+        "notes": "Tenant ID should be alphanumeric with dashes, dots, underscores"
+      }
+    },
+    {
+      "expectation_type": "expect_column_values_to_be_unique",
+      "kwargs": {
+        "column": "id"
+      },
+      "meta": {
+        "notes": "Scenario IDs must be unique"
+      }
+    },
+    {
+      "expectation_type": "expect_column_values_to_be_of_type",
+      "kwargs": {
+        "column": "parameters",
+        "type_": "dict"
+      },
+      "meta": {
+        "notes": "Parameters should be a dictionary"
+      }
+    },
+    {
+      "expectation_type": "expect_column_values_to_be_of_type",
+      "kwargs": {
+        "column": "created_at",
+        "type_": "str"
+      },
+      "meta": {
+        "notes": "Created timestamp should be string"
+      }
+    },
+    {
+      "expectation_type": "expect_column_values_to_match_regex",
+      "kwargs": {
+        "column": "created_at",
+        "regex": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}Z$"
+      },
+      "meta": {
+        "notes": "Timestamps should follow ISO 8601 format"
+      }
+    }
+  ],
+  "meta": {
+    "great_expectations_version": "0.18.0",
+    "notes": "Expectation suite for Aurum scenario data validation",
+    "created_by": "Aurum Data Contract Validation System",
+    "data_asset_type": "Dataset"
+  }
+}

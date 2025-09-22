@@ -7,7 +7,7 @@ import time
 from typing import Any, Dict, List, Optional
 
 from fastapi import APIRouter, HTTPException, Query, Request
-from fastapi.responses import StreamingResponse
+from fastapi.responses import StreamingResponse, Response
 
 from ..core.pagination import Cursor, OffsetLimit
 from ..telemetry.context import get_request_id
@@ -19,6 +19,7 @@ from .service import (
     invalidate_curve_cache,
 )
 from .guardrails import enforce_basic_query_guardrails
+from .http import respond_with_etag
 
 router = APIRouter()
 
@@ -26,6 +27,7 @@ router = APIRouter()
 @router.get("/v1/curves", response_model=CurveResponse)
 async def get_curves(
     request: Request,
+    response: Response,
     asof: Optional[str] = None,
     iso: Optional[str] = None,
     market: Optional[str] = None,
@@ -36,9 +38,7 @@ async def get_curves(
     cursor: Optional[str] = Query(None, description="Opaque cursor for stable pagination"),
     since_cursor: Optional[str] = Query(None, description="Alias for 'cursor' to resume iteration from a previous next_cursor value"),
     offset: Optional[int] = Query(None, ge=0, description="DEPRECATED: Use cursor for pagination instead"),
-    cursor: Optional[str] = None,
-    since_cursor: Optional[str] = None,
-    prev_cursor: Optional[str] = None,
+    prev_cursor: Optional[str] = Query(None, description="Cursor for previous page"),
 ) -> CurveResponse:
     """Retrieve curve observations with filtering by identity and tenor."""
     from .auth import require_permission, Permission
@@ -62,6 +62,14 @@ async def get_curves(
 
     # Handle offset-based pagination
     pagination = OffsetLimit(limit=limit, offset=offset)
+
+    # Add deprecation headers if offset is used
+    if offset is not None:
+        from .http import deprecation_warning_headers
+        response.headers.update(deprecation_warning_headers(
+            "offset-based pagination",
+            "v2.0.0"
+        ))
 
     try:
         # Guardrails: require at least one filter unless explicitly overridden
@@ -128,7 +136,7 @@ async def get_curves(
             await increment_api_requests("/v1/curves", "GET", 200)
             await observe_api_latency("/v1/curves", "GET", query_time_ms / 1000)
 
-            return CurveResponse(
+            model = CurveResponse(
                 meta={
                     "request_id": get_request_id(),
                     "query_time_ms": round(query_time_ms, 2),
@@ -137,6 +145,9 @@ async def get_curves(
                 },
                 data=points,
             )
+
+            # Handle ETag and If-None-Match
+            return respond_with_etag(model, request, response)
 
     except Exception as exc:
         query_time_ms = (time.perf_counter() - start_time) * 1000
@@ -165,6 +176,7 @@ async def get_curves(
 @router.get("/v1/curves/diff", response_model=CurveDiffResponse)
 async def get_curve_diff(
     request: Request,
+    response: Response,
     asof_a: str,
     asof_b: str,
     iso: Optional[str] = None,
@@ -181,6 +193,14 @@ async def get_curve_diff(
     start_time = time.perf_counter()
 
     pagination = OffsetLimit(limit=limit, offset=offset)
+
+    # Add deprecation headers if offset is used
+    if offset is not None:
+        from .http import deprecation_warning_headers
+        response.headers.update(deprecation_warning_headers(
+            "offset-based pagination",
+            "v2.0.0"
+        ))
 
     try:
         enforce_basic_query_guardrails({
@@ -203,13 +223,16 @@ async def get_curve_diff(
 
         query_time_ms = (time.perf_counter() - start_time) * 1000
 
-        return CurveDiffResponse(
+        model = CurveDiffResponse(
             meta={
                 "request_id": get_request_id(),
                 "query_time_ms": round(query_time_ms, 2),
             },
             data=points,
         )
+
+        # Handle ETag and If-None-Match
+        return respond_with_etag(model, request, response)
 
     except Exception as exc:
         query_time_ms = (time.perf_counter() - start_time) * 1000

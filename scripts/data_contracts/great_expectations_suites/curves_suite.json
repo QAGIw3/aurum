@@ -1,0 +1,128 @@
+{
+  "expectation_suite_name": "aurum.curves",
+  "expectations": [
+    {
+      "expectation_type": "expect_table_row_count_to_be_between",
+      "kwargs": {
+        "min_value": 1,
+        "max_value": 10000
+      },
+      "meta": {
+        "notes": "Curves table should not be empty and should be reasonable size"
+      }
+    },
+    {
+      "expectation_type": "expect_column_values_to_not_be_null",
+      "kwargs": {
+        "column": "id"
+      },
+      "meta": {
+        "notes": "Curve ID is required"
+      }
+    },
+    {
+      "expectation_type": "expect_column_values_to_not_be_null",
+      "kwargs": {
+        "column": "name"
+      },
+      "meta": {
+        "notes": "Curve name is required"
+      }
+    },
+    {
+      "expectation_type": "expect_column_values_to_not_be_null",
+      "kwargs": {
+        "column": "data_points"
+      },
+      "meta": {
+        "notes": "Data points count is required"
+      }
+    },
+    {
+      "expectation_type": "expect_column_values_to_be_of_type",
+      "kwargs": {
+        "column": "id",
+        "type_": "str"
+      },
+      "meta": {
+        "notes": "Curve ID should be string"
+      }
+    },
+    {
+      "expectation_type": "expect_column_values_to_be_of_type",
+      "kwargs": {
+        "column": "name",
+        "type_": "str"
+      },
+      "meta": {
+        "notes": "Curve name should be string"
+      }
+    },
+    {
+      "expectation_type": "expect_column_values_to_be_of_type",
+      "kwargs": {
+        "column": "data_points",
+        "type_": "int"
+      },
+      "meta": {
+        "notes": "Data points should be integer"
+      }
+    },
+    {
+      "expectation_type": "expect_column_values_to_match_regex",
+      "kwargs": {
+        "column": "id",
+        "regex": "^curve-[a-zA-Z0-9-]+$"
+      },
+      "meta": {
+        "notes": "Curve ID should follow naming convention"
+      }
+    },
+    {
+      "expectation_type": "expect_column_values_to_be_unique",
+      "kwargs": {
+        "column": "id"
+      },
+      "meta": {
+        "notes": "Curve IDs must be unique"
+      }
+    },
+    {
+      "expectation_type": "expect_column_values_to_be_between",
+      "kwargs": {
+        "column": "data_points",
+        "min_value": 1,
+        "max_value": 100000
+      },
+      "meta": {
+        "notes": "Data points should be reasonable range"
+      }
+    },
+    {
+      "expectation_type": "expect_column_values_to_be_of_type",
+      "kwargs": {
+        "column": "created_at",
+        "type_": "str"
+      },
+      "meta": {
+        "notes": "Created timestamp should be string"
+      }
+    },
+    {
+      "expectation_type": "expect_column_values_to_match_regex",
+      "kwargs": {
+        "column": "created_at",
+        "regex": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}Z$"
+      },
+      "meta": {
+        "notes": "Timestamps should follow ISO 8601 format"
+      }
+    }
+  ],
+  "meta": {
+    "great_expectations_version": "0.18.0",
+    "notes": "Expectation suite for Aurum curves data validation",
+    "created_by": "Aurum Data Contract Validation System",
+    "data_asset_type": "Dataset"
+  }
+}

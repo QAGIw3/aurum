@@ -484,6 +484,54 @@ class UnitsMappingResponse(BaseModel):
     data: list[UnitMappingOut]
 
 
+# Series-Curve Mapping models
+class SeriesCurveMappingCreate(BaseModel):
+    """Model for creating series-curve mappings."""
+    external_provider: str = Field(..., description="External data provider (FRED, EIA, etc.)")
+    external_series_id: str = Field(..., description="Provider-specific series identifier")
+    curve_key: str = Field(..., description="Internal curve key")
+    mapping_confidence: float = Field(1.0, ge=0.0, le=1.0, description="Mapping confidence score (0.0-1.0)")
+    mapping_method: str = Field("manual", description="How the mapping was determined (manual, automated, heuristic)")
+    mapping_notes: str | None = Field(None, description="Human-readable mapping rationale")
+    is_active: bool = Field(True, description="Whether this mapping is currently active")
+
+
+class SeriesCurveMappingUpdate(BaseModel):
+    """Model for updating series-curve mappings."""
+    mapping_confidence: float | None = Field(None, ge=0.0, le=1.0, description="Updated mapping confidence score")
+    mapping_method: str | None = Field(None, description="Updated mapping method")
+    mapping_notes: str | None = Field(None, description="Updated mapping rationale")
+    is_active: bool | None = Field(None, description="Updated active status")
+
+
+class SeriesCurveMappingOut(BaseModel):
+    """Model for series-curve mapping responses."""
+    id: str
+    external_provider: str
+    external_series_id: str
+    curve_key: str
+    mapping_confidence: float
+    mapping_method: str
+    mapping_notes: str | None
+    is_active: bool
+    created_by: str
+    created_at: datetime
+    updated_by: str | None
+    updated_at: datetime
+
+
+class SeriesCurveMappingListResponse(BaseModel):
+    """Response model for listing series-curve mappings."""
+    meta: Meta
+    data: list[SeriesCurveMappingOut]
+
+
+class SeriesCurveMappingSearchResponse(BaseModel):
+    """Response model for potential mapping suggestions."""
+    meta: Meta
+    data: list[dict]  # curve_key, similarity_score, matching_criteria
+
+
 # ISO LMP models
 
 
@@ -733,6 +781,11 @@ __all__ = [
     "UnitsCanonicalResponse",
     "UnitMappingOut",
     "UnitsMappingResponse",
+    "SeriesCurveMappingCreate",
+    "SeriesCurveMappingUpdate",
+    "SeriesCurveMappingOut",
+    "SeriesCurveMappingListResponse",
+    "SeriesCurveMappingSearchResponse",
     "CalendarOut",
     "CalendarsResponse",
     "CalendarBlocksResponse",
@@ -892,7 +945,7 @@ class ExternalObservation(AurumBaseModel):
     series_id: str = Field(..., description="Series identifier")
     date: date = Field(..., description="Observation date")
     value: float = Field(..., description="Observation value")
-    metadata: Optional[Dict[str, Any]] = Field(None, description="Additional observation metadata")
+    observation_metadata: Optional[Dict[str, Any]] = Field(None, description="Additional observation metadata")
 
 
 class ExternalProvidersResponse(AurumBaseModel):

@@ -1,0 +1,3 @@
+tenant_id,series_id,obs_date,frequency,seasonal_adjustment,value,raw_value,units,title,notes,metadata,ingest_ts,ingest_job_id,ingest_run_id,ingest_batch_id
+TENANT_ACME,DGS10,2024-01-02,DAILY,NSA,3.95,3.95,Percent,"10-Year Treasury Constant Maturity Rate","demo row","{}","2024-01-02T06:15:00Z","fred_job","fred_run","fred_batch"
+TENANT_ACME,DGS10,2024-01-03,DAILY,NSA,4.02,4.02,Percent,"10-Year Treasury Constant Maturity Rate","demo row","{}","2024-01-03T06:15:00Z","fred_job","fred_run","fred_batch"

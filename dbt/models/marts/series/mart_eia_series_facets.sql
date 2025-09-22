@@ -1,4 +1,5 @@
 select distinct
+    tenant_id,
     dataset,
     frequency,
     area,

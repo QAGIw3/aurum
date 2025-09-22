@@ -1,111 +1,187 @@
-# Aurum Data Contracts
+# Data Contract Validation System
 
-This guide captures the structured interfaces that external consumers rely on. Every contract is versioned and monitored; breaking changes require a major version bump and a migration plan.
+This document describes the comprehensive data contract validation system for the Aurum platform, ensuring data quality, consistency, and compliance through automated validation using Great Expectations.
 
-## Iceberg Tables
+## Overview
 
-### `iceberg.market.curve_observation`
-- **Primary key:** `(curve_key, tenor_label, asof_date)`
-- **Schema stability:** backwards-compatible additions are allowed (nullable columns, metadata). Renames/removals require `aurum/curve.observation` schema bump + migration.
-- **Partition spec:** `days(asof_date)`, `iso`, `product`
-- **Quality gates:** Great Expectations `curve_schema`, `curve_business`, and dbt tests (`publish_curve_observation`, `fct_curve_observation`).
+The data contract validation system provides:
 
-### `fact.fct_curve_observation`
-- **Primary key:** `(curve_key, tenor_label, asof_date)`
-- **Dimension FKs:** `iso_sk`, `market_sk`, `block_sk`, `product_sk`, `asof_sk`
-- **Change log:** Snapshotted via `snapshots.curve_observation_snapshot`
-- **Intended use:** downstream marts, API diff (`mart_curve_asof_diff`), reconciliation.
+- **Automated Validation**: Continuous validation of data contracts against Great Expectations suites
+- **Sample Data Testing**: Validation against realistic sample datasets
+- **Comprehensive Reporting**: JSON and HTML reports with detailed results
+- **CI/CD Integration**: Automated gating of deployments based on validation results
+- **Performance Monitoring**: Tracking of validation performance over time
 
-### `mart.mart_curve_latest`
-- Latest record per `(curve_key, tenor_label)`; always points to `fct_curve_observation`
-- Consumers should store Nessie snapshot IDs or `version_hash` when caching.
+## Architecture
 
-### `mart.mart_curve_asof_diff`
-- Pre-computed deltas between consecutive as-of dates.
-- Pairs with API `GET /v1/curves/diff` (planned) to avoid double-scanning facts.
+```
+┌─────────────────┐    ┌─────────────────────┐    ┌──────────────────┐
+│ Data Sources    │───▶│ Great Expectations  │───▶│ Validation       │
+│ (CSV, DB, API)  │    │ Validation Engine   │    │ Engine           │
+└─────────────────┘    └─────────────────────┘    └──────────────────┘
+          │                       │                       │
+          ▼                       ▼                       ▼
+┌─────────────────┐    ┌─────────────────────┐    ┌──────────────────┐
+│ Sample Dataset  │    │ Expectation Suites  │    │ Validation       │
+│ Generation      │    │ (JSON/YAML)         │    │ Reports          │
+└─────────────────┘    └─────────────────────┘    └──────────────────┘
+```
 
-### `mart.mart_eia_series_latest`
-- Latest normalized EIA value per `series_id`.
-- Guarantee: `value`, `unit_normalized`, `currency_normalized` are non-null.
+## Components
 
-### `iceberg.market.curve_dead_letter`
-- DLQ capture table populated by ingestion workers when schema drift or serialization errors occur.
-- Columns align with `aurum.ingest.error.v1` (`source`, `error_message`, `context`, `severity`, `recommended_action`, `ingest_ts`) plus `raw_payload` (stringified original record).
-- Partition spec: `days(ingest_ts)`
-- Use cases: monitoring dashboards (`mart_curve_dead_letter_summary`), root-cause analysis, alerting integrations.
+### 1. Enhanced Validation Script
 
-### `mart.mart_curve_dead_letter_summary`
-- Aggregated DLQ counts grouped by `source`, `severity`, and `ingest_day` with sample error messages.
-- Serves Superset dashboards and alerting thresholds; pairs with `ops_metrics` for unified observability.
+**Features:**
+- Great Expectations integration with actual data execution
+- Sample dataset generation for testing
+- Comprehensive JSON and HTML reporting
+- Critical failure gating
+- Performance metrics collection
 
-### Seeded dimensions
-- `dim_iso`, `dim_market`, `dim_block`, `dim_product`, `dim_asof` provide surrogate keys + descriptive attributes.
-- Seeds live under `dbt/seeds/ref/**` with not-null/unique tests.
-- Any additions must keep existing identifiers stable; changes are versioned in Git and surfaced via release notes.
+### 2. Great Expectations Suites
 
-## Kafka / Avro Topics
+#### Scenarios Suite
+Validates scenario data contracts:
+- Required fields (id, tenant_id, name)
+- Data types (strings, dictionaries, timestamps)
+- Naming conventions (regex patterns)
+- Uniqueness constraints
+- Reasonable value ranges
 
-| Topic | Schema | Contract notes |
-| --- | --- | --- |
-| `aurum.curve.observation.v1` | `curve.observation.v1.avsc` | Emits when canonical row lands in Iceberg. `IsoCode` enum now includes `UNKNOWN` for forward compatibility. |
-| `aurum.iso.*.lmp.v1` | `iso.lmp.v1.avsc` | LMP payloads; `IsoCode` enum shared across LMP/load/genmix. |
-| `aurum.iso.*.load.v1` | `iso.load.v1.avsc` | Load payloads use same enum + field names as LMP | 
-| `aurum.iso.*.genmix.v1` | `iso.genmix.v1.avsc` | Generation mix payloads harmonized with `IsoCode`. |
+#### Scenario Runs Suite
+Validates scenario run data contracts:
+- Required fields (id, scenario_id, status)
+- Valid status values
+- Reference integrity
+- Timestamp formats
+- Uniqueness constraints
 
-### Contract Catalog
+#### Curves Suite
+Validates curve data contracts:
+- Required fields (id, name, data_points)
+- Data types (strings, integers)
+- Reasonable value ranges
+- Naming conventions
 
-- Contracts are centralized in `kafka/schemas/contracts.yml`; every subject entry pins the schema file, logical Kafka topic, and the enforced compatibility mode.
-- Subject names must match `^aurum\.[a-z0-9_.]+\.v[0-9]+(-key|-value)?$` (see `exceptions` inside the catalog for the narrow set of grandfathered subjects).
-- Default compatibility is `BACKWARD`; individual subjects may override via the `compatibility` key.
-- CI uses `scripts/ci/register_schemas.py --contracts kafka/schemas/contracts.yml kafka/schemas` to validate + register subjects. Contract mismatches now fail the job before hitting Schema Registry.
+### 3. Sample Dataset Generation
 
-### Schema Evolution Policy
-- **Semantic versioning**: MAJOR change = incompatible (field removal/rename, enum removal); MINOR = backwards-compatible addition (nullable field, enum append); PATCH = documentation/metadata update.
-- Avro schemas pinned via `kafka/schemas/subjects.json`. Update process:
-  1. Modify Avro schema
-  2. Run `pytest tests/kafka/test_schemas.py`
-  3. Bump semantic version or add `aliases` in docstring.
+Creates realistic test data:
+- **Scenarios**: Sample scenario definitions
+- **Scenario Runs**: Sample execution records
+- **Curves**: Sample curve metadata
 
-## API Surface
+### 4. Validation Reports
 
-### `GET /v1/curves`
-- Mirrors `mart_curve_latest` with filters: `iso`, `market`, `product`, `as_of`, `tenor_type`, pagination.
-- Response envelope: `{ "meta": {"as_of": "2024-02-01"}, "data": [ ... rows ... ] }`
-- Enum alignment: `iso`, `market`, `product`, `block` values must match `dim_*` seeds; API guards via normalization + 400 for unknown enums.
+#### JSON Report Structure
+```json
+{
+  "validation_timestamp": "2024-01-01T12:00:00.000Z",
+  "total_datasets": 3,
+  "total_suites": 3,
+  "passed_validations": 8,
+  "failed_validations": 1,
+  "results": [...]
+}
+```
 
-### `GET /v1/curves/diff` (planned)
-- Will leverage `mart_curve_asof_diff`; request parameters `current_as_of`, `previous_as_of`, `iso`, `market`, `product`. Deltas surfaced per `(curve_key, tenor_label)`.
+#### HTML Report Features
+- Executive summary with overall status
+- Detailed results per dataset
+- Failed expectation details
+- Performance metrics
+- Visual indicators for pass/fail status
 
-### `GET /v1/eia/series/latest`
-- Mirrors `mart_eia_series_latest`. Guarantees normalized units/currency.
+## CI/CD Integration
 
-### Version discipline
-- **OpenAPI** lives in `openapi/aurum.yaml`; contract changes require updating examples + running `make docs-serve`.
-- API follows semantic versioning using media type suffix: `application/vnd.aurum.v1+json`. Bump MAJOR for breaking field changes.
+### Workflow Integration
 
-## Semantic Versioning Process
+**Triggers:**
+- Push to main/develop branches
+- Pull requests to main/develop branches
+- Changes to data contract files
 
-| Artifact | Version source | Trigger for bump |
-| --- | --- | --- |
-| Avro schemas | Schema `doc` + Git tag (`schemas/vX.Y.Z`) | Enum removal/rename = MAJOR; optional field addition = MINOR |
-| dbt project | `dbt_project.yml` (`version`) | Model contract change (new column) = MINOR; breaking rename/remove = MAJOR |
-| API | `pyproject.toml` (`aurum-api`), OpenAPI `info.version` | Breaking response change = MAJOR; additive field = MINOR |
+**Quality Gates:**
+- Fail on critical validation failures
+- Comment on PRs with detailed results
+- Block merges if critical contracts fail
+- Upload reports as artifacts
 
-1. Align versions in a release PR and document in `docs/release-notes.md` (create if absent).
-2. Register updated Avro schemas via `make kafka-register-schemas`.
-3. Capture Nessie snapshot ID for Iceberg changes; store in release notes.
-4. Tag repo: `git tag data-vX.Y.Z` covering aggregated change.
+### Usage Examples
 
-## Sample & Validation Assets
+```bash
+# Run validation
+python scripts/data_contracts/validate_contracts_enhanced.py \
+  --ge-expectations scripts/data_contracts/great_expectations_suites \
+  --report-dir validation_reports \
+  --create-sample-data \
+  --fail-on-critical
+```
 
-- **Sample data:** `dbt/seeds/sample/curve_observation_sample.csv` (anonymized). Run `dbt seed --select curve_observation_sample` for quick demos.
-- **Validation notebooks:** `notebooks/iso_validation_template.ipynb` + `make trino-harness`/`make reconcile-kafka-lake` to capture metrics.
-- **Reference strips macro:** `aurum_reference_strips(start_date, end_date)` generates calendar/weekly/peak strips off `dim_asof`.
+## Configuration
 
-## Change Management Checklist
+### Environment Variables
 
-1. Update dbt models + seeds; run `dbt test` and refresh GE suites.
-2. If Kafka schema changes, bump Avro version and publish to Schema Registry (ensure compatibility mode).
-3. Re-run query harness and reconciliation scripts; capture outputs in PR description.
-4. Update documentation (`docs/data-contracts.md`, OpenAPI examples).
-5. Tag release and notify consumers (API, SQL, file drops) with migration notes.
+```bash
+# Great Expectations Configuration
+GE_HOME=/path/to/great_expectations
+GE_ENVIRONMENT=local
+
+# Validation Configuration
+VALIDATION_REPORT_DIR=validation_reports
+FAIL_ON_CRITICAL=true
+CREATE_SAMPLE_DATA=true
+```
+
+### Expectation Suite Design
+
+1. **Start Simple**: Begin with basic expectations (not null, types)
+2. **Add Business Logic**: Include domain-specific validations
+3. **Test Thoroughly**: Validate expectations against real data
+4. **Document Clearly**: Add meta information to expectations
+
+## Troubleshooting
+
+### Common Issues
+
+#### Validation Failures
+```bash
+# Run with debug output
+python scripts/data_contracts/validate_contracts_enhanced.py \
+  --verbose \
+  --report-dir ./debug_reports
+```
+
+#### Performance Issues
+```bash
+# Profile validation performance
+python -m cProfile scripts/data_contracts/validate_contracts_enhanced.py
+```
+
+## Best Practices
+
+### Expectation Suite Design
+
+1. **Start Simple**: Begin with basic expectations
+2. **Add Business Logic**: Include domain-specific validations
+3. **Test Thoroughly**: Validate expectations against real data
+4. **Document Clearly**: Add meta information
+
+### CI/CD Integration
+
+1. **Fast Feedback**: Run validation early in pipeline
+2. **Clear Reporting**: Provide actionable error messages
+3. **Gradual Rollout**: Start with warnings, then gate deployments
+4. **Regular Updates**: Keep expectations current with data model
+
+## Security Considerations
+
+### Data Protection
+
+- **Sensitive Data**: Avoid including PII in sample datasets
+- **Encryption**: Encrypt sensitive validation results
+- **Access Control**: Restrict access to validation reports
+- **Data Retention**: Clean up old validation artifacts
+
+---
+
+*This data contract validation system ensures high data quality and consistency across the Aurum platform while providing actionable feedback and comprehensive reporting.*
