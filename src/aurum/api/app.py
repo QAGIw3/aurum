@@ -21,7 +21,13 @@ from .ratelimit import RateLimitConfig, RateLimitMiddleware, ratelimit_admin_rou
 from .runtime_config import router as runtime_config_router
 from .routes import METRICS_MIDDLEWARE, access_log_middleware, configure_routes, router
 from .state import configure as configure_state
-from aurum.observability.api import router as observability_router
+# Observability router is optional during docs generation/local import. If
+# dependencies are missing, skip registering the router rather than failing
+# import (keeps app importable for tooling like docs builders).
+try:  # pragma: no cover - optional
+    from aurum.observability.api import router as observability_router
+except Exception:  # broad except to avoid import-time issues in tooling contexts
+    observability_router = None  # type: ignore
 
 # Import versioning system
 from .versioning import (
@@ -31,7 +37,11 @@ from .versioning import (
     VersionStatus,
     DeprecationInfo
 )
-from .v2 import scenarios as v2_scenarios, curves as v2_curves
+try:  # optional at import time for tooling
+    from .v2 import scenarios as v2_scenarios, curves as v2_curves
+except Exception:  # pragma: no cover
+    v2_scenarios = None  # type: ignore
+    v2_curves = None  # type: ignore
 
 
 async def create_app(settings: AurumSettings | None = None) -> FastAPI:
@@ -41,9 +51,11 @@ async def create_app(settings: AurumSettings | None = None) -> FastAPI:
     configure_routes(settings)
 
     # Create versioned application
+    # Some environments may not define description; default to empty
+    api_description = getattr(settings.api, "description", "")
     version_manager, versioned_router = create_versioned_app(
         title=settings.api.title,
-        description=settings.api.description,
+        description=api_description,
         version=settings.api.version
     )
 
@@ -115,42 +127,44 @@ async def create_app(settings: AurumSettings | None = None) -> FastAPI:
 
         return yaml.dump(schema, default_flow_style=False, sort_keys=False)
 
-    # Register v1 endpoints (deprecated) with deprecation headers
-    from . import scenarios, curves
+    import os as _os
+    if _os.getenv("AURUM_API_LIGHT_INIT", "0") != "1":
+        # Register v1 endpoints (deprecated) with deprecation headers
+        from . import scenarios, curves
 
-    # Deprecate v1 scenarios
-    v1_scenarios_router = scenarios.router
-    # Add deprecation middleware to v1 scenarios
-    @app.middleware("http")
-    async def add_v1_deprecation_headers(request: Request, call_next):
-        """Add deprecation headers to v1 endpoints."""
-        if request.url.path.startswith("/v1/"):
-            response = await call_next(request)
-            response.headers["X-API-Deprecation"] = "true"
-            response.headers["X-API-Version"] = "v1"
-            response.headers["X-API-Deprecation-Info"] = "v1 API is deprecated. Please migrate to v2."
-            response.headers["X-API-Sunset"] = "2025-12-31"
-            response.headers["X-API-Removed"] = "v3.0.0"
-            response.headers["X-API-Migration-Guide"] = "https://github.com/supernova-corp/aurum/blob/main/docs/migration-guide.md"
-            return response
-        return await call_next(request)
+        # Deprecate v1 scenarios
+        v1_scenarios_router = scenarios.router
+        # Add deprecation middleware to v1 scenarios
+        @app.middleware("http")
+        async def add_v1_deprecation_headers(request: Request, call_next):
+            """Add deprecation headers to v1 endpoints."""
+            if request.url.path.startswith("/v1/"):
+                response = await call_next(request)
+                response.headers["X-API-Deprecation"] = "true"
+                response.headers["X-API-Version"] = "v1"
+                response.headers["X-API-Deprecation-Info"] = "v1 API is deprecated. Please migrate to v2."
+                response.headers["X-API-Sunset"] = "2025-12-31"
+                response.headers["X-API-Removed"] = "v3.0.0"
+                response.headers["X-API-Migration-Guide"] = "https://github.com/supernova-corp/aurum/blob/main/docs/migration-guide.md"
+                return response
+            return await call_next(request)
 
-    app.include_router(v1_scenarios_router)
+        app.include_router(v1_scenarios_router)
 
-    # Register v1 curves with deprecation headers
-    v1_curves_router = curves.router
-    app.include_router(v1_curves_router)
+        # Register v1 curves with deprecation headers
+        v1_curves_router = curves.router
+        app.include_router(v1_curves_router)
 
-    # Register v2 endpoints (new and improved)
-    from .v2 import scenarios as v2_scenarios, curves as v2_curves
+        # Register v2 endpoints (new and improved)
+        from .v2 import scenarios as v2_scenarios, curves as v2_curves
 
-    # Register v2 scenarios
-    v2_scenarios_router = v2_scenarios.router
-    app.include_router(v2_scenarios_router)
+        # Register v2 scenarios
+        v2_scenarios_router = v2_scenarios.router
+        app.include_router(v2_scenarios_router)
 
-    # Register v2 curves
-    v2_curves_router = v2_curves.router
-    app.include_router(v2_curves_router)
+        # Register v2 curves
+        v2_curves_router = v2_curves.router
+        app.include_router(v2_curves_router)
 
     # Set up versioning
     await version_manager.register_version(
@@ -183,10 +197,11 @@ async def create_app(settings: AurumSettings | None = None) -> FastAPI:
     await version_manager.add_version_alias("v2", "2.0")
     await version_manager.add_version_alias("latest", "2.0")
 
-    app.include_router(
-        observability_router,
-        dependencies=[Depends(_observability_admin_guard)],
-    )
+    if observability_router is not None:
+        app.include_router(
+            observability_router,
+            dependencies=[Depends(_observability_admin_guard)],
+        )
     app.include_router(
         ratelimit_admin_router,
         dependencies=[Depends(_observability_admin_guard)],
@@ -199,7 +214,11 @@ async def create_app(settings: AurumSettings | None = None) -> FastAPI:
     return app
 
 
-app = create_app()
+import inspect as _inspect
+if _inspect.iscoroutinefunction(create_app):  # avoid creating coroutine at import time
+    app = None  # type: ignore[assignment]
+else:
+    app = create_app()
 
 __all__ = ["create_app", "app"]
 

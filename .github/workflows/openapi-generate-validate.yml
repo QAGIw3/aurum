@@ -1,0 +1,54 @@
+name: OpenAPI Generate and Validate
+
+on:
+  push:
+    branches: [ main, develop ]
+    paths:
+      - 'src/aurum/api/**'
+      - 'aurum/scripts/docs/**'
+      - 'aurum/docs/api/**'
+  pull_request:
+    branches: [ main, develop ]
+    paths:
+      - 'src/aurum/api/**'
+      - 'aurum/scripts/docs/**'
+      - 'aurum/docs/api/**'
+
+jobs:
+  generate-validate-openapi:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install pyyaml openapi-spec-validator
+
+      - name: Generate OpenAPI
+        run: |
+          python aurum/scripts/docs/generate_openapi.py
+
+      - name: Validate OpenAPI
+        run: |
+          python - << 'PY'
+          import yaml
+          from openapi_spec_validator import validate_spec
+          with open('aurum/docs/api/openapi-spec.yaml') as f:
+              spec = yaml.safe_load(f)
+          validate_spec(spec)
+          print('✅ OpenAPI spec is valid')
+          PY
+
+      - name: Check for spec drift
+        run: |
+          git diff --quiet -- aurum/docs/api/openapi-spec.yaml aurum/docs/api/openapi-spec.json || (echo '❌ OpenAPI spec drift detected. Run: make docs-openapi and commit changes.' && exit 1)
+

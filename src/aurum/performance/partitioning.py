@@ -8,7 +8,17 @@ from dataclasses import dataclass
 from datetime import date, datetime, timedelta
 from typing import Any, Dict, List, Optional
 
-from opentelemetry import trace
+try:  # optional dependency
+    from opentelemetry import trace  # type: ignore
+except Exception:  # pragma: no cover - fallback noop tracer
+    import types
+    from contextlib import nullcontext
+
+    class _NoopTracer:
+        def start_as_current_span(self, name: str):
+            return nullcontext()
+
+    trace = types.SimpleNamespace(get_tracer=lambda name: _NoopTracer())  # type: ignore
 
 from ..telemetry.context import get_request_id
 

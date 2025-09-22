@@ -263,6 +263,497 @@ if PROMETHEUS_AVAILABLE:  # pragma: no branch - simplify instrumentation when av
         ["operation", "error_type"],
     )
 
+    # SLO Metrics
+    SLO_COMPLIANCE = Counter(
+        "aurum_slo_compliance_total",
+        "SLO compliance counter",
+        ["slo_name", "status"],
+    )
+    SLO_VIOLATION_DURATION = Histogram(
+        "aurum_slo_violation_duration_seconds",
+        "SLO violation duration",
+        ["slo_name"],
+        buckets=(1, 5, 10, 30, 60, 300, 600, 1800, 3600),
+    )
+
+    # API Performance Metrics (Enhanced)
+    API_REQUESTS_TOTAL = Counter(
+        "aurum_api_requests_total",
+        "Total API requests",
+        ["method", "path", "status", "tenant_id", "user_id"],
+    )
+    API_REQUEST_DURATION = Histogram(
+        "aurum_api_request_duration_seconds",
+        "API request duration",
+        ["method", "path", "status", "tenant_id"],
+        buckets=(0.001, 0.005, 0.01, 0.025, 0.05, 0.075, 0.1, 0.25, 0.5, 0.75, 1.0, 2.5, 5.0, 7.5, 10.0),
+    )
+    API_REQUEST_DURATION_PERCENTILES = Histogram(
+        "aurum_api_request_duration_percentiles_seconds",
+        "API request duration percentiles",
+        ["method", "path", "percentile"],
+        buckets=(0.001, 0.005, 0.01, 0.025, 0.05, 0.075, 0.1, 0.25, 0.5, 0.75, 1.0, 2.5, 5.0, 7.5, 10.0),
+    )
+    API_REQUEST_SIZE = Histogram(
+        "aurum_api_request_size_bytes",
+        "API request size",
+        ["method", "path"],
+        buckets=(100, 500, 1000, 5000, 10000, 50000, 100000),
+    )
+    API_RESPONSE_SIZE = Histogram(
+        "aurum_api_response_size_bytes",
+        "API response size",
+        ["method", "path", "status"],
+        buckets=(100, 500, 1000, 5000, 10000, 50000, 100000, 500000, 1000000),
+    )
+
+    # Database Connection Pool Metrics (Enhanced)
+    DB_POOL_CONNECTIONS_CREATED = Counter(
+        "aurum_db_pool_connections_created_total",
+        "Database connections created",
+        ["pool_name"],
+    )
+    DB_POOL_CONNECTIONS_DESTROYED = Counter(
+        "aurum_db_pool_connections_destroyed_total",
+        "Database connections destroyed",
+        ["pool_name"],
+    )
+    DB_POOL_CONNECTIONS_ACTIVE_CURRENT = Gauge(
+        "aurum_db_pool_connections_active_current",
+        "Current active database connections",
+        ["pool_name"],
+    )
+    DB_POOL_CONNECTIONS_IDLE_CURRENT = Gauge(
+        "aurum_db_pool_connections_idle_current",
+        "Current idle database connections",
+        ["pool_name"],
+    )
+    DB_POOL_CONNECTIONS_TOTAL_CURRENT = Gauge(
+        "aurum_db_pool_connections_total_current",
+        "Current total database connections",
+        ["pool_name"],
+    )
+    DB_POOL_ACQUIRE_TIME = Histogram(
+        "aurum_db_pool_acquire_time_seconds",
+        "Database connection acquire time",
+        ["pool_name"],
+        buckets=(0.001, 0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1.0, 2.5, 5.0),
+    )
+    DB_POOL_CONNECTION_TIMEOUTS = Counter(
+        "aurum_db_pool_connection_timeouts_total",
+        "Database connection timeouts",
+        ["pool_name"],
+    )
+    DB_POOL_CONNECTION_ERRORS = Counter(
+        "aurum_db_pool_connection_errors_total",
+        "Database connection errors",
+        ["pool_name", "error_type"],
+    )
+
+    # Cache Performance Metrics (Enhanced)
+    CACHE_HIT_RATIO = Gauge(
+        "aurum_cache_hit_ratio",
+        "Cache hit ratio",
+        ["cache_type"],
+    )
+    CACHE_EFFICIENCY = Gauge(
+        "aurum_cache_efficiency",
+        "Cache efficiency score",
+        ["cache_type"],
+    )
+    CACHE_MEMORY_USAGE = Gauge(
+        "aurum_cache_memory_usage_bytes",
+        "Cache memory usage",
+        ["cache_type"],
+    )
+    CACHE_INVALIDATION_COUNT = Counter(
+        "aurum_cache_invalidation_total",
+        "Cache invalidations",
+        ["cache_type", "reason"],
+    )
+    CACHE_STALE_HITS = Counter(
+        "aurum_cache_stale_hits_total",
+        "Cache stale hits",
+        ["cache_type"],
+    )
+
+    # Data Freshness Metrics
+    DATA_FRESHNESS_HOURS = Gauge(
+        "aurum_data_freshness_hours",
+        "Data freshness in hours",
+        ["dataset", "source"],
+    )
+    DATA_FRESHNESS_SCORE = Gauge(
+        "aurum_data_freshness_score",
+        "Data freshness score (0-1)",
+        ["dataset", "source"],
+    )
+    DATA_STALENESS_VIOLATIONS = Counter(
+        "aurum_data_staleness_violations_total",
+        "Data staleness violations",
+        ["dataset", "severity"],
+    )
+
+    # Great Expectations Validation Metrics
+    GE_VALIDATION_RUNS = Counter(
+        "aurum_ge_validation_runs_total",
+        "Great Expectations validation runs",
+        ["dataset", "suite", "status"],
+    )
+    GE_VALIDATION_DURATION = Histogram(
+        "aurum_ge_validation_duration_seconds",
+        "Great Expectations validation duration",
+        ["dataset", "suite"],
+        buckets=(0.1, 0.5, 1.0, 2.0, 5.0, 10.0, 30.0, 60.0, 300.0),
+    )
+    GE_VALIDATION_EXPECTATIONS = Counter(
+        "aurum_ge_validation_expectations_total",
+        "Great Expectations validation expectations",
+        ["dataset", "suite", "status"],
+    )
+    GE_VALIDATION_QUALITY_SCORE = Gauge(
+        "aurum_ge_validation_quality_score",
+        "Great Expectations validation quality score",
+        ["dataset", "suite"],
+    )
+
+    # Canary Metrics
+    CANARY_EXECUTION_STATUS = Counter(
+        "aurum_canary_execution_status_total",
+        "Canary execution status",
+        ["canary_name", "status"],
+    )
+    CANARY_EXECUTION_DURATION = Histogram(
+        "aurum_canary_execution_duration_seconds",
+        "Canary execution duration",
+        ["canary_name"],
+        buckets=(0.1, 0.5, 1.0, 2.0, 5.0, 10.0, 30.0, 60.0, 300.0),
+    )
+    CANARY_API_HEALTH_SCORE = Gauge(
+        "aurum_canary_api_health_score",
+        "Canary API health score",
+        ["canary_name"],
+    )
+    CANARY_DATA_QUALITY_SCORE = Gauge(
+        "aurum_canary_data_quality_score",
+        "Canary data quality score",
+        ["canary_name"],
+    )
+
+    # Staleness Monitoring Metrics
+    STALENESS_MONITOR_CHECKS = Counter(
+        "aurum_staleness_monitor_checks_total",
+        "Staleness monitor checks",
+        ["dataset", "status"],
+    )
+    STALENESS_MONITOR_DURATION = Histogram(
+        "aurum_staleness_monitor_duration_seconds",
+        "Staleness monitor check duration",
+        ["dataset"],
+        buckets=(0.01, 0.05, 0.1, 0.25, 0.5, 1.0, 2.0, 5.0),
+    )
+    STALENESS_LEVEL = Gauge(
+        "aurum_staleness_level",
+        "Current staleness level",
+        ["dataset"],
+    )
+    STALENESS_AGE_HOURS = Gauge(
+        "aurum_staleness_age_hours",
+        "Hours since last update",
+        ["dataset"],
+    )
+
+    # Alerting Metrics
+    ALERTS_FIRED = Counter(
+        "aurum_alerts_fired_total",
+        "Alerts fired",
+        ["alert_name", "severity", "channel"],
+    )
+    ALERTS_SUPPRESSED = Counter(
+        "aurum_alerts_suppressed_total",
+        "Alerts suppressed",
+        ["alert_name", "reason"],
+    )
+    ALERT_PROCESSING_DURATION = Histogram(
+        "aurum_alert_processing_duration_seconds",
+        "Alert processing duration",
+        ["alert_name"],
+        buckets=(0.001, 0.005, 0.01, 0.05, 0.1, 0.5, 1.0, 2.0, 5.0),
+    )
+
+    # System Health Metrics
+    SYSTEM_HEALTH_SCORE = Gauge(
+        "aurum_system_health_score",
+        "Overall system health score",
+    )
+    COMPONENT_HEALTH_STATUS = Gauge(
+        "aurum_component_health_status",
+        "Component health status",
+        ["component", "status"],
+    )
+    SYSTEM_UPTIME_SECONDS = Counter(
+        "aurum_system_uptime_seconds_total",
+        "System uptime in seconds",
+    )
+
+    # SLO Metrics (Enhanced)
+    SLO_COMPLIANCE = Counter(
+        "aurum_slo_compliance_total",
+        "SLO compliance counter",
+        ["slo_name", "status"],
+    )
+    SLO_VIOLATION_DURATION = Histogram(
+        "aurum_slo_violation_duration_seconds",
+        "SLO violation duration",
+        ["slo_name"],
+        buckets=(1, 5, 10, 30, 60, 300, 600, 1800, 3600),
+    )
+    SLO_AVAILABILITY = Gauge(
+        "aurum_slo_availability",
+        "SLO availability percentage",
+        ["slo_name"],
+    )
+    SLO_LATENCY_P50 = Gauge(
+        "aurum_slo_latency_p50_seconds",
+        "SLO p50 latency",
+        ["slo_name"],
+    )
+    SLO_LATENCY_P95 = Gauge(
+        "aurum_slo_latency_p95_seconds",
+        "SLO p95 latency",
+        ["slo_name"],
+    )
+    SLO_LATENCY_P99 = Gauge(
+        "aurum_slo_latency_p99_seconds",
+        "SLO p99 latency",
+        ["slo_name"],
+    )
+    SLO_ERROR_RATE = Gauge(
+        "aurum_slo_error_rate",
+        "SLO error rate percentage",
+        ["slo_name"],
+    )
+
+    # API Performance Metrics (Enhanced)
+    API_REQUESTS_TOTAL = Counter(
+        "aurum_api_requests_total",
+        "Total API requests",
+        ["method", "path", "status", "tenant_id", "user_id"],
+    )
+    API_REQUEST_DURATION = Histogram(
+        "aurum_api_request_duration_seconds",
+        "API request duration",
+        ["method", "path", "status", "tenant_id"],
+        buckets=(0.001, 0.005, 0.01, 0.025, 0.05, 0.075, 0.1, 0.25, 0.5, 0.75, 1.0, 2.5, 5.0, 7.5, 10.0),
+    )
+    API_REQUEST_DURATION_PERCENTILES = Histogram(
+        "aurum_api_request_duration_percentiles_seconds",
+        "API request duration percentiles",
+        ["method", "path", "percentile"],
+        buckets=(0.001, 0.005, 0.01, 0.025, 0.05, 0.075, 0.1, 0.25, 0.5, 0.75, 1.0, 2.5, 5.0, 7.5, 10.0),
+    )
+    API_REQUEST_SIZE = Histogram(
+        "aurum_api_request_size_bytes",
+        "API request size",
+        ["method", "path"],
+        buckets=(100, 500, 1000, 5000, 10000, 50000, 100000),
+    )
+    API_RESPONSE_SIZE = Histogram(
+        "aurum_api_response_size_bytes",
+        "API response size",
+        ["method", "path", "status"],
+        buckets=(100, 500, 1000, 5000, 10000, 50000, 100000, 500000, 1000000),
+    )
+
+    # Database Connection Pool Metrics (Enhanced)
+    DB_POOL_CONNECTIONS_CREATED = Counter(
+        "aurum_db_pool_connections_created_total",
+        "Database connections created",
+        ["pool_name"],
+    )
+    DB_POOL_CONNECTIONS_DESTROYED = Counter(
+        "aurum_db_pool_connections_destroyed_total",
+        "Database connections destroyed",
+        ["pool_name"],
+    )
+    DB_POOL_CONNECTIONS_ACTIVE_CURRENT = Gauge(
+        "aurum_db_pool_connections_active_current",
+        "Current active database connections",
+        ["pool_name"],
+    )
+    DB_POOL_CONNECTIONS_IDLE_CURRENT = Gauge(
+        "aurum_db_pool_connections_idle_current",
+        "Current idle database connections",
+        ["pool_name"],
+    )
+    DB_POOL_CONNECTIONS_TOTAL_CURRENT = Gauge(
+        "aurum_db_pool_connections_total_current",
+        "Current total database connections",
+        ["pool_name"],
+    )
+    DB_POOL_ACQUIRE_TIME = Histogram(
+        "aurum_db_pool_acquire_time_seconds",
+        "Database connection acquire time",
+        ["pool_name"],
+        buckets=(0.001, 0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1.0, 2.5, 5.0),
+    )
+    DB_POOL_CONNECTION_TIMEOUTS = Counter(
+        "aurum_db_pool_connection_timeouts_total",
+        "Database connection timeouts",
+        ["pool_name"],
+    )
+    DB_POOL_CONNECTION_ERRORS = Counter(
+        "aurum_db_pool_connection_errors_total",
+        "Database connection errors",
+        ["pool_name", "error_type"],
+    )
+
+    # Cache Performance Metrics (Enhanced)
+    CACHE_HIT_RATIO = Gauge(
+        "aurum_cache_hit_ratio",
+        "Cache hit ratio",
+        ["cache_type"],
+    )
+    CACHE_EFFICIENCY = Gauge(
+        "aurum_cache_efficiency",
+        "Cache efficiency score",
+        ["cache_type"],
+    )
+    CACHE_MEMORY_USAGE = Gauge(
+        "aurum_cache_memory_usage_bytes",
+        "Cache memory usage",
+        ["cache_type"],
+    )
+    CACHE_INVALIDATION_COUNT = Counter(
+        "aurum_cache_invalidation_total",
+        "Cache invalidations",
+        ["cache_type", "reason"],
+    )
+    CACHE_STALE_HITS = Counter(
+        "aurum_cache_stale_hits_total",
+        "Cache stale hits",
+        ["cache_type"],
+    )
+
+    # Data Freshness Metrics
+    DATA_FRESHNESS_HOURS = Gauge(
+        "aurum_data_freshness_hours",
+        "Data freshness in hours",
+        ["dataset", "source"],
+    )
+    DATA_FRESHNESS_SCORE = Gauge(
+        "aurum_data_freshness_score",
+        "Data freshness score (0-1)",
+        ["dataset", "source"],
+    )
+    DATA_STALENESS_VIOLATIONS = Counter(
+        "aurum_data_staleness_violations_total",
+        "Data staleness violations",
+        ["dataset", "severity"],
+    )
+
+    # Great Expectations Validation Metrics
+    GE_VALIDATION_RUNS = Counter(
+        "aurum_ge_validation_runs_total",
+        "Great Expectations validation runs",
+        ["dataset", "suite", "status"],
+    )
+    GE_VALIDATION_DURATION = Histogram(
+        "aurum_ge_validation_duration_seconds",
+        "Great Expectations validation duration",
+        ["dataset", "suite"],
+        buckets=(0.1, 0.5, 1.0, 2.0, 5.0, 10.0, 30.0, 60.0, 300.0),
+    )
+    GE_VALIDATION_EXPECTATIONS = Counter(
+        "aurum_ge_validation_expectations_total",
+        "Great Expectations validation expectations",
+        ["dataset", "suite", "status"],
+    )
+    GE_VALIDATION_QUALITY_SCORE = Gauge(
+        "aurum_ge_validation_quality_score",
+        "Great Expectations validation quality score",
+        ["dataset", "suite"],
+    )
+
+    # Canary Metrics
+    CANARY_EXECUTION_STATUS = Counter(
+        "aurum_canary_execution_status_total",
+        "Canary execution status",
+        ["canary_name", "status"],
+    )
+    CANARY_EXECUTION_DURATION = Histogram(
+        "aurum_canary_execution_duration_seconds",
+        "Canary execution duration",
+        ["canary_name"],
+        buckets=(0.1, 0.5, 1.0, 2.0, 5.0, 10.0, 30.0, 60.0, 300.0),
+    )
+    CANARY_API_HEALTH_SCORE = Gauge(
+        "aurum_canary_api_health_score",
+        "Canary API health score",
+        ["canary_name"],
+    )
+    CANARY_DATA_QUALITY_SCORE = Gauge(
+        "aurum_canary_data_quality_score",
+        "Canary data quality score",
+        ["canary_name"],
+    )
+
+    # Staleness Monitoring Metrics
+    STALENESS_MONITOR_CHECKS = Counter(
+        "aurum_staleness_monitor_checks_total",
+        "Staleness monitor checks",
+        ["dataset", "status"],
+    )
+    STALENESS_MONITOR_DURATION = Histogram(
+        "aurum_staleness_monitor_duration_seconds",
+        "Staleness monitor check duration",
+        ["dataset"],
+        buckets=(0.01, 0.05, 0.1, 0.25, 0.5, 1.0, 2.0, 5.0),
+    )
+    STALENESS_LEVEL = Gauge(
+        "aurum_staleness_level",
+        "Current staleness level",
+        ["dataset"],
+    )
+    STALENESS_AGE_HOURS = Gauge(
+        "aurum_staleness_age_hours",
+        "Hours since last update",
+        ["dataset"],
+    )
+
+    # Alerting Metrics
+    ALERTS_FIRED = Counter(
+        "aurum_alerts_fired_total",
+        "Alerts fired",
+        ["alert_name", "severity", "channel"],
+    )
+    ALERTS_SUPPRESSED = Counter(
+        "aurum_alerts_suppressed_total",
+        "Alerts suppressed",
+        ["alert_name", "reason"],
+    )
+    ALERT_PROCESSING_DURATION = Histogram(
+        "aurum_alert_processing_duration_seconds",
+        "Alert processing duration",
+        ["alert_name"],
+        buckets=(0.001, 0.005, 0.01, 0.05, 0.1, 0.5, 1.0, 2.0, 5.0),
+    )
+
+    # System Health Metrics
+    SYSTEM_HEALTH_SCORE = Gauge(
+        "aurum_system_health_score",
+        "Overall system health score",
+    )
+    COMPONENT_HEALTH_STATUS = Gauge(
+        "aurum_component_health_status",
+        "Component health status",
+        ["component", "status"],
+    )
+    SYSTEM_UPTIME_SECONDS = Counter(
+        "aurum_system_uptime_seconds_total",
+        "System uptime in seconds",
+    )
+
     CONTENT_TYPE_LATEST = _PROM_CONTENT_TYPE
     generate_latest = _prom_generate_latest
 
@@ -653,6 +1144,512 @@ async def increment_business_errors(operation: str, error_type: str) -> None:
         pass
 
 
+# SLO Metrics Helper Functions
+async def increment_slo_compliance(slo_name: str, status: str = "success") -> None:
+    """Increment SLO compliance counter."""
+    if SLO_COMPLIANCE is None:
+        return
+    try:
+        SLO_COMPLIANCE.labels(slo_name=slo_name, status=status).inc()
+    except Exception:
+        pass
+
+
+async def observe_slo_violation_duration(slo_name: str, duration_seconds: float) -> None:
+    """Observe SLO violation duration."""
+    if SLO_VIOLATION_DURATION is None:
+        return
+    try:
+        SLO_VIOLATION_DURATION.labels(slo_name=slo_name).observe(duration_seconds)
+    except Exception:
+        pass
+
+
+async def set_slo_availability(slo_name: str, availability: float) -> None:
+    """Set SLO availability percentage."""
+    if SLO_AVAILABILITY is None:
+        return
+    try:
+        SLO_AVAILABILITY.labels(slo_name=slo_name).set(availability)
+    except Exception:
+        pass
+
+
+async def set_slo_latency_p50(slo_name: str, latency_seconds: float) -> None:
+    """Set SLO p50 latency."""
+    if SLO_LATENCY_P50 is None:
+        return
+    try:
+        SLO_LATENCY_P50.labels(slo_name=slo_name).set(latency_seconds)
+    except Exception:
+        pass
+
+
+async def set_slo_latency_p95(slo_name: str, latency_seconds: float) -> None:
+    """Set SLO p95 latency."""
+    if SLO_LATENCY_P95 is None:
+        return
+    try:
+        SLO_LATENCY_P95.labels(slo_name=slo_name).set(latency_seconds)
+    except Exception:
+        pass
+
+
+async def set_slo_latency_p99(slo_name: str, latency_seconds: float) -> None:
+    """Set SLO p99 latency."""
+    if SLO_LATENCY_P99 is None:
+        return
+    try:
+        SLO_LATENCY_P99.labels(slo_name=slo_name).set(latency_seconds)
+    except Exception:
+        pass
+
+
+async def set_slo_error_rate(slo_name: str, error_rate: float) -> None:
+    """Set SLO error rate percentage."""
+    if SLO_ERROR_RATE is None:
+        return
+    try:
+        SLO_ERROR_RATE.labels(slo_name=slo_name).set(error_rate)
+    except Exception:
+        pass
+
+
+# Enhanced API Metrics Helper Functions
+async def increment_api_requests(
+    method: str,
+    path: str,
+    status_code: int,
+    tenant_id: str = "",
+    user_id: str = ""
+) -> None:
+    """Increment API requests counter with enhanced labels."""
+    if API_REQUESTS_TOTAL is None:
+        return
+    try:
+        API_REQUESTS_TOTAL.labels(
+            method=method,
+            path=path,
+            status=str(status_code),
+            tenant_id=tenant_id,
+            user_id=user_id
+        ).inc()
+    except Exception:
+        pass
+
+
+async def observe_api_request_duration(
+    method: str,
+    path: str,
+    status_code: int,
+    duration_seconds: float,
+    tenant_id: str = ""
+) -> None:
+    """Observe API request duration with enhanced labels."""
+    if API_REQUEST_DURATION is None:
+        return
+    try:
+        API_REQUEST_DURATION.labels(
+            method=method,
+            path=path,
+            status=str(status_code),
+            tenant_id=tenant_id
+        ).observe(duration_seconds)
+    except Exception:
+        pass
+
+
+async def observe_api_request_duration_percentile(
+    method: str,
+    path: str,
+    percentile: str,
+    duration_seconds: float
+) -> None:
+    """Observe API request duration percentiles."""
+    if API_REQUEST_DURATION_PERCENTILES is None:
+        return
+    try:
+        API_REQUEST_DURATION_PERCENTILES.labels(
+            method=method,
+            path=path,
+            percentile=percentile
+        ).observe(duration_seconds)
+    except Exception:
+        pass
+
+
+async def observe_api_request_size(method: str, path: str, size_bytes: int) -> None:
+    """Observe API request size."""
+    if API_REQUEST_SIZE is None:
+        return
+    try:
+        API_REQUEST_SIZE.labels(method=method, path=path).observe(size_bytes)
+    except Exception:
+        pass
+
+
+async def observe_api_response_size(method: str, path: str, status_code: int, size_bytes: int) -> None:
+    """Observe API response size."""
+    if API_RESPONSE_SIZE is None:
+        return
+    try:
+        API_RESPONSE_SIZE.labels(
+            method=method,
+            path=path,
+            status=str(status_code)
+        ).observe(size_bytes)
+    except Exception:
+        pass
+
+
+# Enhanced Database Connection Pool Metrics Helper Functions
+async def increment_db_pool_connections_created(pool_name: str) -> None:
+    """Increment database pool connections created counter."""
+    if DB_POOL_CONNECTIONS_CREATED is None:
+        return
+    try:
+        DB_POOL_CONNECTIONS_CREATED.labels(pool_name=pool_name).inc()
+    except Exception:
+        pass
+
+
+async def increment_db_pool_connections_destroyed(pool_name: str) -> None:
+    """Increment database pool connections destroyed counter."""
+    if DB_POOL_CONNECTIONS_DESTROYED is None:
+        return
+    try:
+        DB_POOL_CONNECTIONS_DESTROYED.labels(pool_name=pool_name).inc()
+    except Exception:
+        pass
+
+
+async def set_db_pool_connections_active(pool_name: str, count: int) -> None:
+    """Set current active database connections."""
+    if DB_POOL_CONNECTIONS_ACTIVE_CURRENT is None:
+        return
+    try:
+        DB_POOL_CONNECTIONS_ACTIVE_CURRENT.labels(pool_name=pool_name).set(count)
+    except Exception:
+        pass
+
+
+async def set_db_pool_connections_idle(pool_name: str, count: int) -> None:
+    """Set current idle database connections."""
+    if DB_POOL_CONNECTIONS_IDLE_CURRENT is None:
+        return
+    try:
+        DB_POOL_CONNECTIONS_IDLE_CURRENT.labels(pool_name=pool_name).set(count)
+    except Exception:
+        pass
+
+
+async def set_db_pool_connections_total(pool_name: str, count: int) -> None:
+    """Set current total database connections."""
+    if DB_POOL_CONNECTIONS_TOTAL_CURRENT is None:
+        return
+    try:
+        DB_POOL_CONNECTIONS_TOTAL_CURRENT.labels(pool_name=pool_name).set(count)
+    except Exception:
+        pass
+
+
+async def observe_db_pool_acquire_time(pool_name: str, duration_seconds: float) -> None:
+    """Observe database connection pool acquire time."""
+    if DB_POOL_ACQUIRE_TIME is None:
+        return
+    try:
+        DB_POOL_ACQUIRE_TIME.labels(pool_name=pool_name).observe(duration_seconds)
+    except Exception:
+        pass
+
+
+async def increment_db_pool_connection_timeouts(pool_name: str) -> None:
+    """Increment database pool connection timeouts counter."""
+    if DB_POOL_CONNECTION_TIMEOUTS is None:
+        return
+    try:
+        DB_POOL_CONNECTION_TIMEOUTS.labels(pool_name=pool_name).inc()
+    except Exception:
+        pass
+
+
+async def increment_db_pool_connection_errors(pool_name: str, error_type: str) -> None:
+    """Increment database pool connection errors counter."""
+    if DB_POOL_CONNECTION_ERRORS is None:
+        return
+    try:
+        DB_POOL_CONNECTION_ERRORS.labels(pool_name=pool_name, error_type=error_type).inc()
+    except Exception:
+        pass
+
+
+# Enhanced Cache Performance Metrics Helper Functions
+async def set_cache_hit_ratio(cache_type: str, hit_ratio: float) -> None:
+    """Set cache hit ratio gauge."""
+    if CACHE_HIT_RATIO is None:
+        return
+    try:
+        CACHE_HIT_RATIO.labels(cache_type=cache_type).set(hit_ratio)
+    except Exception:
+        pass
+
+
+async def set_cache_efficiency(cache_type: str, efficiency: float) -> None:
+    """Set cache efficiency score."""
+    if CACHE_EFFICIENCY is None:
+        return
+    try:
+        CACHE_EFFICIENCY.labels(cache_type=cache_type).set(efficiency)
+    except Exception:
+        pass
+
+
+async def set_cache_memory_usage(cache_type: str, size_bytes: int) -> None:
+    """Set cache memory usage."""
+    if CACHE_MEMORY_USAGE is None:
+        return
+    try:
+        CACHE_MEMORY_USAGE.labels(cache_type=cache_type).set(size_bytes)
+    except Exception:
+        pass
+
+
+async def increment_cache_invalidation(cache_type: str, reason: str) -> None:
+    """Increment cache invalidation counter."""
+    if CACHE_INVALIDATION_COUNT is None:
+        return
+    try:
+        CACHE_INVALIDATION_COUNT.labels(cache_type=cache_type, reason=reason).inc()
+    except Exception:
+        pass
+
+
+async def increment_cache_stale_hits(cache_type: str) -> None:
+    """Increment cache stale hits counter."""
+    if CACHE_STALE_HITS is None:
+        return
+    try:
+        CACHE_STALE_HITS.labels(cache_type=cache_type).inc()
+    except Exception:
+        pass
+
+
+# Data Freshness Metrics Helper Functions
+async def set_data_freshness_hours(dataset: str, source: str, hours: float) -> None:
+    """Set data freshness in hours."""
+    if DATA_FRESHNESS_HOURS is None:
+        return
+    try:
+        DATA_FRESHNESS_HOURS.labels(dataset=dataset, source=source).set(hours)
+    except Exception:
+        pass
+
+
+async def set_data_freshness_score(dataset: str, source: str, score: float) -> None:
+    """Set data freshness score."""
+    if DATA_FRESHNESS_SCORE is None:
+        return
+    try:
+        DATA_FRESHNESS_SCORE.labels(dataset=dataset, source=source).set(score)
+    except Exception:
+        pass
+
+
+async def increment_data_staleness_violations(dataset: str, severity: str) -> None:
+    """Increment data staleness violations counter."""
+    if DATA_STALENESS_VIOLATIONS is None:
+        return
+    try:
+        DATA_STALENESS_VIOLATIONS.labels(dataset=dataset, severity=severity).inc()
+    except Exception:
+        pass
+
+
+# Great Expectations Validation Metrics Helper Functions
+async def increment_ge_validation_runs(dataset: str, suite: str, status: str = "success") -> None:
+    """Increment Great Expectations validation runs counter."""
+    if GE_VALIDATION_RUNS is None:
+        return
+    try:
+        GE_VALIDATION_RUNS.labels(dataset=dataset, suite=suite, status=status).inc()
+    except Exception:
+        pass
+
+
+async def observe_ge_validation_duration(dataset: str, suite: str, duration_seconds: float) -> None:
+    """Observe Great Expectations validation duration."""
+    if GE_VALIDATION_DURATION is None:
+        return
+    try:
+        GE_VALIDATION_DURATION.labels(dataset=dataset, suite=suite).observe(duration_seconds)
+    except Exception:
+        pass
+
+
+async def increment_ge_validation_expectations(dataset: str, suite: str, status: str) -> None:
+    """Increment Great Expectations validation expectations counter."""
+    if GE_VALIDATION_EXPECTATIONS is None:
+        return
+    try:
+        GE_VALIDATION_EXPECTATIONS.labels(dataset=dataset, suite=suite, status=status).inc()
+    except Exception:
+        pass
+
+
+async def set_ge_validation_quality_score(dataset: str, suite: str, score: float) -> None:
+    """Set Great Expectations validation quality score."""
+    if GE_VALIDATION_QUALITY_SCORE is None:
+        return
+    try:
+        GE_VALIDATION_QUALITY_SCORE.labels(dataset=dataset, suite=suite).set(score)
+    except Exception:
+        pass
+
+
+# Canary Metrics Helper Functions
+async def increment_canary_execution_status(canary_name: str, status: str) -> None:
+    """Increment canary execution status counter."""
+    if CANARY_EXECUTION_STATUS is None:
+        return
+    try:
+        CANARY_EXECUTION_STATUS.labels(canary_name=canary_name, status=status).inc()
+    except Exception:
+        pass
+
+
+async def observe_canary_execution_duration(canary_name: str, duration_seconds: float) -> None:
+    """Observe canary execution duration."""
+    if CANARY_EXECUTION_DURATION is None:
+        return
+    try:
+        CANARY_EXECUTION_DURATION.labels(canary_name=canary_name).observe(duration_seconds)
+    except Exception:
+        pass
+
+
+async def set_canary_api_health_score(canary_name: str, score: float) -> None:
+    """Set canary API health score."""
+    if CANARY_API_HEALTH_SCORE is None:
+        return
+    try:
+        CANARY_API_HEALTH_SCORE.labels(canary_name=canary_name).set(score)
+    except Exception:
+        pass
+
+
+async def set_canary_data_quality_score(canary_name: str, score: float) -> None:
+    """Set canary data quality score."""
+    if CANARY_DATA_QUALITY_SCORE is None:
+        return
+    try:
+        CANARY_DATA_QUALITY_SCORE.labels(canary_name=canary_name).set(score)
+    except Exception:
+        pass
+
+
+# Staleness Monitoring Metrics Helper Functions
+async def increment_staleness_monitor_checks(dataset: str, status: str = "success") -> None:
+    """Increment staleness monitor checks counter."""
+    if STALENESS_MONITOR_CHECKS is None:
+        return
+    try:
+        STALENESS_MONITOR_CHECKS.labels(dataset=dataset, status=status).inc()
+    except Exception:
+        pass
+
+
+async def observe_staleness_monitor_duration(dataset: str, duration_seconds: float) -> None:
+    """Observe staleness monitor check duration."""
+    if STALENESS_MONITOR_DURATION is None:
+        return
+    try:
+        STALENESS_MONITOR_DURATION.labels(dataset=dataset).observe(duration_seconds)
+    except Exception:
+        pass
+
+
+async def set_staleness_level(dataset: str, level: float) -> None:
+    """Set current staleness level."""
+    if STALENESS_LEVEL is None:
+        return
+    try:
+        STALENESS_LEVEL.labels(dataset=dataset).set(level)
+    except Exception:
+        pass
+
+
+async def set_staleness_age_hours(dataset: str, age_hours: float) -> None:
+    """Set hours since last update."""
+    if STALENESS_AGE_HOURS is None:
+        return
+    try:
+        STALENESS_AGE_HOURS.labels(dataset=dataset).set(age_hours)
+    except Exception:
+        pass
+
+
+# Alerting Metrics Helper Functions
+async def increment_alerts_fired(alert_name: str, severity: str, channel: str) -> None:
+    """Increment alerts fired counter."""
+    if ALERTS_FIRED is None:
+        return
+    try:
+        ALERTS_FIRED.labels(alert_name=alert_name, severity=severity, channel=channel).inc()
+    except Exception:
+        pass
+
+
+async def increment_alerts_suppressed(alert_name: str, reason: str) -> None:
+    """Increment alerts suppressed counter."""
+    if ALERTS_SUPPRESSED is None:
+        return
+    try:
+        ALERTS_SUPPRESSED.labels(alert_name=alert_name, reason=reason).inc()
+    except Exception:
+        pass
+
+
+async def observe_alert_processing_duration(alert_name: str, duration_seconds: float) -> None:
+    """Observe alert processing duration."""
+    if ALERT_PROCESSING_DURATION is None:
+        return
+    try:
+        ALERT_PROCESSING_DURATION.labels(alert_name=alert_name).observe(duration_seconds)
+    except Exception:
+        pass
+
+
+# System Health Metrics Helper Functions
+async def set_system_health_score(score: float) -> None:
+    """Set overall system health score."""
+    if SYSTEM_HEALTH_SCORE is None:
+        return
+    try:
+        SYSTEM_HEALTH_SCORE.set(score)
+    except Exception:
+        pass
+
+
+async def set_component_health_status(component: str, status: str) -> None:
+    """Set component health status."""
+    if COMPONENT_HEALTH_STATUS is None:
+        return
+    try:
+        COMPONENT_HEALTH_STATUS.labels(component=component, status=status).set(1)
+    except Exception:
+        pass
+
+
+async def increment_system_uptime_seconds() -> None:
+    """Increment system uptime counter."""
+    if SYSTEM_UPTIME_SECONDS is None:
+        return
+    try:
+        SYSTEM_UPTIME_SECONDS.inc()
+    except Exception:
+        pass
+
+
 __all__ = [
     "MetricPoint",
     "MetricType",
@@ -723,4 +1720,106 @@ __all__ = [
     "increment_business_transactions",
     "observe_business_value",
     "increment_business_errors",
+    # SLO Metrics
+    "SLO_COMPLIANCE",
+    "SLO_VIOLATION_DURATION",
+    "SLO_AVAILABILITY",
+    "SLO_LATENCY_P50",
+    "SLO_LATENCY_P95",
+    "SLO_LATENCY_P99",
+    "SLO_ERROR_RATE",
+    "increment_slo_compliance",
+    "observe_slo_violation_duration",
+    "set_slo_availability",
+    "set_slo_latency_p50",
+    "set_slo_latency_p95",
+    "set_slo_latency_p99",
+    "set_slo_error_rate",
+    # Enhanced API Metrics
+    "API_REQUESTS_TOTAL",
+    "API_REQUEST_DURATION",
+    "API_REQUEST_DURATION_PERCENTILES",
+    "API_REQUEST_SIZE",
+    "API_RESPONSE_SIZE",
+    "increment_api_requests",
+    "observe_api_request_duration",
+    "observe_api_request_duration_percentile",
+    "observe_api_request_size",
+    "observe_api_response_size",
+    # Enhanced Database Connection Pool Metrics
+    "DB_POOL_CONNECTIONS_CREATED",
+    "DB_POOL_CONNECTIONS_DESTROYED",
+    "DB_POOL_CONNECTIONS_ACTIVE_CURRENT",
+    "DB_POOL_CONNECTIONS_IDLE_CURRENT",
+    "DB_POOL_CONNECTIONS_TOTAL_CURRENT",
+    "DB_POOL_ACQUIRE_TIME",
+    "DB_POOL_CONNECTION_TIMEOUTS",
+    "DB_POOL_CONNECTION_ERRORS",
+    "increment_db_pool_connections_created",
+    "increment_db_pool_connections_destroyed",
+    "set_db_pool_connections_active",
+    "set_db_pool_connections_idle",
+    "set_db_pool_connections_total",
+    "observe_db_pool_acquire_time",
+    "increment_db_pool_connection_timeouts",
+    "increment_db_pool_connection_errors",
+    # Enhanced Cache Performance Metrics
+    "CACHE_HIT_RATIO",
+    "CACHE_EFFICIENCY",
+    "CACHE_MEMORY_USAGE",
+    "CACHE_INVALIDATION_COUNT",
+    "CACHE_STALE_HITS",
+    "set_cache_hit_ratio",
+    "set_cache_efficiency",
+    "set_cache_memory_usage",
+    "increment_cache_invalidation",
+    "increment_cache_stale_hits",
+    # Data Freshness Metrics
+    "DATA_FRESHNESS_HOURS",
+    "DATA_FRESHNESS_SCORE",
+    "DATA_STALENESS_VIOLATIONS",
+    "set_data_freshness_hours",
+    "set_data_freshness_score",
+    "increment_data_staleness_violations",
+    # Great Expectations Validation Metrics
+    "GE_VALIDATION_RUNS",
+    "GE_VALIDATION_DURATION",
+    "GE_VALIDATION_EXPECTATIONS",
+    "GE_VALIDATION_QUALITY_SCORE",
+    "increment_ge_validation_runs",
+    "observe_ge_validation_duration",
+    "increment_ge_validation_expectations",
+    "set_ge_validation_quality_score",
+    # Canary Metrics
+    "CANARY_EXECUTION_STATUS",
+    "CANARY_EXECUTION_DURATION",
+    "CANARY_API_HEALTH_SCORE",
+    "CANARY_DATA_QUALITY_SCORE",
+    "increment_canary_execution_status",
+    "observe_canary_execution_duration",
+    "set_canary_api_health_score",
+    "set_canary_data_quality_score",
+    # Staleness Monitoring Metrics
+    "STALENESS_MONITOR_CHECKS",
+    "STALENESS_MONITOR_DURATION",
+    "STALENESS_LEVEL",
+    "STALENESS_AGE_HOURS",
+    "increment_staleness_monitor_checks",
+    "observe_staleness_monitor_duration",
+    "set_staleness_level",
+    "set_staleness_age_hours",
+    # Alerting Metrics
+    "ALERTS_FIRED",
+    "ALERTS_SUPPRESSED",
+    "ALERT_PROCESSING_DURATION",
+    "increment_alerts_fired",
+    "increment_alerts_suppressed",
+    "observe_alert_processing_duration",
+    # System Health Metrics
+    "SYSTEM_HEALTH_SCORE",
+    "COMPONENT_HEALTH_STATUS",
+    "SYSTEM_UPTIME_SECONDS",
+    "set_system_health_score",
+    "set_component_health_status",
+    "increment_system_uptime_seconds",
 ]

@@ -1,0 +1,647 @@
+name: E2E Pipeline
+
+on:
+  push:
+    branches: [main, develop]
+    paths-ignore:
+      - 'docs/**'
+      - '*.md'
+      - '.gitignore'
+  pull_request:
+    branches: [main, develop]
+    paths-ignore:
+      - 'docs/**'
+      - '*.md'
+      - '.gitignore'
+  workflow_dispatch:
+    inputs:
+      test_suite:
+        description: 'Test suite to run'
+        required: false
+        default: 'all'
+        type: choice
+        options:
+          - all
+          - smoke
+          - integration
+          - load
+          - security
+
+env:
+  DOCKER_BUILDKIT: 1
+  COMPOSE_DOCKER_CLI_BUILD: 1
+  AURUM_API_IMAGE: aurum-api:latest
+  AURUM_EXTERNAL_IMAGE: aurum-external:latest
+  AURUM_WORKER_IMAGE: aurum-worker:latest
+
+jobs:
+  # Lint and Static Analysis
+  lint-and-type-check:
+    name: Lint and Type Check
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements-dev.txt
+
+      - name: Run black
+        run: black --check src/ tests/ scripts/
+
+      - name: Run isort
+        run: isort --check-only src/ tests/ scripts/
+
+      - name: Run flake8
+        run: flake8 src/ tests/ scripts/
+
+      - name: Run mypy
+        run: mypy src/ tests/
+
+      - name: Run bandit
+        run: bandit -r src/ -f json -o bandit-report.json || true
+
+      - name: Upload bandit report
+        uses: actions/upload-artifact@v3
+        with:
+          name: bandit-report
+          path: bandit-report.json
+
+  # Unit Tests
+  unit-tests:
+    name: Unit Tests
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:15
+        env:
+          POSTGRES_DB: aurum_test
+          POSTGRES_USER: aurum
+          POSTGRES_PASSWORD: aurum
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements-dev.txt
+
+      - name: Wait for PostgreSQL
+        run: |
+          until pg_isready -h localhost -p 5432 -U aurum; do
+            echo "Waiting for PostgreSQL..."
+            sleep 2
+          done
+
+      - name: Run unit tests
+        run: |
+          pytest tests/unit/ \
+            -v \
+            --tb=short \
+            --junitxml=test-results/junit-unit.xml \
+            --cov=src/aurum \
+            --cov-report=xml:test-results/coverage-unit.xml \
+            --cov-report=html:test-results/htmlcov-unit
+
+      - name: Upload test results
+        uses: actions/upload-artifact@v3
+        if: always()
+        with:
+          name: unit-test-results
+          path: test-results/
+
+  # Build Docker Images
+  build-docker-images:
+    name: Build Docker Images
+    runs-on: ubuntu-latest
+    needs: [lint-and-type-check, unit-tests]
+    outputs:
+      images-built: ${{ steps.build.outputs.images-built }}
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v2
+
+      - name: Build API image
+        uses: docker/build-push-action@v4
+        with:
+          context: .
+          file: Dockerfile.api
+          push: false
+          tags: ${{ env.AURUM_API_IMAGE }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+          load: true
+
+      - name: Build External Data image
+        uses: docker/build-push-action@v4
+        with:
+          context: .
+          file: Dockerfile.external
+          push: false
+          tags: ${{ env.AURUM_EXTERNAL_IMAGE }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+          load: true
+
+      - name: Build Worker image
+        uses: docker/build-push-action@v4
+        with:
+          context: .
+          file: Dockerfile.worker
+          push: false
+          tags: ${{ env.AURUM_WORKER_IMAGE }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+          load: true
+
+      - name: Run Trivy vulnerability scanner
+        uses: aquasecurity/trivy-action@master
+        with:
+          image-ref: ${{ env.AURUM_API_IMAGE }}
+          format: 'sarif'
+          output: 'trivy-results.sarif'
+
+      - name: Upload Trivy scan results
+        uses: github/codeql-action/upload-sarif@v2
+        if: always()
+        with:
+          sarif_file: 'trivy-results.sarif'
+
+  # Integration Tests
+  integration-tests:
+    name: Integration Tests
+    runs-on: ubuntu-latest
+    needs: build-docker-images
+    services:
+      postgres:
+        image: postgres:15
+        env:
+          POSTGRES_DB: aurum_test
+          POSTGRES_USER: aurum
+          POSTGRES_PASSWORD: aurum
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+      redis:
+        image: redis:7
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements-dev.txt
+
+      - name: Wait for databases
+        run: |
+          until pg_isready -h localhost -p 5432 -U aurum; do
+            echo "Waiting for PostgreSQL..."
+            sleep 2
+          done
+          until redis-cli -h localhost ping; do
+            echo "Waiting for Redis..."
+            sleep 2
+          done
+
+      - name: Run database migrations
+        run: |
+          python -c "
+          from aurum.db.migrations import run_migrations
+          run_migrations('postgresql://aurum:aurum@localhost:5432/aurum_test')
+          "
+
+      - name: Run integration tests
+        run: |
+          pytest tests/integration/ \
+            -v \
+            --tb=short \
+            --junitxml=test-results/junit-integration.xml \
+            --cov=src/aurum \
+            --cov-report=xml:test-results/coverage-integration.xml \
+            --cov-report=html:test-results/htmlcov-integration
+
+      - name: Upload test results
+        uses: actions/upload-artifact@v3
+        if: always()
+        with:
+          name: integration-test-results
+          path: test-results/
+
+  # E2E Tests
+  e2e-tests:
+    name: E2E Tests
+    runs-on: ubuntu-latest
+    needs: build-docker-images
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Compose
+        run: |
+          curl -L "https://github.com/docker/compose/releases/download/v2.15.1/docker-compose-$(uname -s)-$(uname -m)" -o /usr/local/bin/docker-compose
+          chmod +x /usr/local/bin/docker-compose
+
+      - name: Pull test dependencies
+        run: docker-compose -f docker-compose.e2e.yml pull
+
+      - name: Build test images
+        run: docker-compose -f docker-compose.e2e.yml build --no-cache test-runner data-seeder
+
+      - name: Start E2E infrastructure
+        run: |
+          docker-compose -f docker-compose.e2e.yml up -d postgres redis kafka schema-registry
+          docker-compose -f docker-compose.e2e.yml up -d aurum-api aurum-external-data
+
+      - name: Wait for services
+        run: |
+          echo "Waiting for services to be ready..."
+          for i in {1..60}; do
+            if curl -f http://localhost:8000/health/ready && curl -f http://localhost:8001/health/external; then
+              echo "Services are ready!"
+              break
+            fi
+            echo "Waiting... ($i/60)"
+            sleep 5
+          done
+
+      - name: Load seed data
+        run: docker-compose -f docker-compose.e2e.yml run --rm data-seeder
+
+      - name: Run smoke tests
+        run: |
+          pytest tests/e2e/test_smoke.py \
+            -v \
+            --tb=short \
+            --junitxml=test-results/junit-smoke.xml
+
+      - name: Run E2E tests
+        run: |
+          pytest tests/e2e/ \
+            -v \
+            --tb=short \
+            --junitxml=test-results/junit-e2e.xml \
+            --cov=src/aurum \
+            --cov-report=xml:test-results/coverage-e2e.xml \
+            --cov-report=html:test-results/htmlcov-e2e \
+            -k "not load_test"
+
+      - name: Run security tests
+        run: |
+          python scripts/security/security_test_suite.py \
+            --output test-results/security-report.json
+
+      - name: Upload test results
+        uses: actions/upload-artifact@v3
+        if: always()
+        with:
+          name: e2e-test-results
+          path: test-results/
+
+      - name: Stop E2E infrastructure
+        if: always()
+        run: docker-compose -f docker-compose.e2e.yml down -v
+
+  # Load Tests
+  load-tests:
+    name: Load Tests
+    runs-on: ubuntu-latest
+    needs: e2e-tests
+    if: github.event.inputs.test_suite == 'all' || github.event.inputs.test_suite == 'load' || github.event_name == 'workflow_dispatch'
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Compose
+        run: |
+          curl -L "https://github.com/docker/compose/releases/download/v2.15.1/docker-compose-$(uname -s)-$(uname -m)" -o /usr/local/bin/docker-compose
+          chmod +x /usr/local/bin/docker-compose
+
+      - name: Start load test infrastructure
+        run: |
+          docker-compose -f docker-compose.e2e.yml up -d postgres redis
+          docker-compose -f docker-compose.e2e.yml up -d aurum-api
+
+      - name: Wait for API
+        run: |
+          for i in {1..30}; do
+            if curl -f http://localhost:8000/health/ready; then
+              echo "API is ready!"
+              break
+            fi
+            echo "Waiting... ($i/30)"
+            sleep 5
+          done
+
+      - name: Load test data
+        run: docker-compose -f docker-compose.e2e.yml run --rm data-seeder
+
+      - name: Run load tests
+        run: |
+          docker run --network host \
+            -v $(pwd)/tests/e2e/load:/scripts \
+            grafana/k6:latest run \
+            -o experimental-prometheus-rw \
+            /scripts/api_load_test.js
+
+      - name: Run stress tests
+        run: |
+          docker run --network host \
+            -v $(pwd)/tests/e2e/load:/scripts \
+            grafana/k6:latest run \
+            --vus 100 --duration 5m \
+            -o experimental-prometheus-rw \
+            /scripts/api_stress_test.js
+
+      - name: Stop load test infrastructure
+        if: always()
+        run: docker-compose -f docker-compose.e2e.yml down -v
+
+  # OpenAPI Validation
+  openapi-validation:
+    name: OpenAPI Validation
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '18'
+
+      - name: Install Spectral
+        run: npm install -g @stoplight/spectral-cli
+
+      - name: Install Schemathesis
+        run: pip install schemathesis
+
+      - name: Validate OpenAPI spec
+        run: |
+          spectral lint openapi/aurum.yaml \
+            --ruleset .spectral.yaml \
+            --format=json \
+            --output-file spectral-report.json || true
+
+      - name: Run API schema tests
+        run: |
+          schemathesis run \
+            --checks all \
+            --max-examples=10 \
+            openapi/aurum.yaml \
+            --report-junit-xml=schema-test-results.xml || true
+
+      - name: Upload validation reports
+        uses: actions/upload-artifact@v3
+        with:
+          name: openapi-validation-results
+          path: |
+            spectral-report.json
+            schema-test-results.xml
+
+  # Security Scanning
+  security-scan:
+    name: Security Scan
+    runs-on: ubuntu-latest
+    needs: build-docker-images
+    permissions:
+      security-events: write
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Run Trivy vulnerability scanner
+        uses: aquasecurity/trivy-action@master
+        with:
+          image-ref: ${{ env.AURUM_API_IMAGE }}
+          format: 'sarif'
+          output: 'trivy-results.sarif'
+
+      - name: Run Snyk to check for vulnerabilities
+        uses: snyk/actions/docker@master
+        continue-on-error: true
+        env:
+          SNYK_TOKEN: ${{ secrets.SNYK_TOKEN }}
+        with:
+          image: ${{ env.AURUM_API_IMAGE }}
+          args: --file=Dockerfile.api
+
+      - name: Upload Trivy scan results to GitHub Security tab
+        uses: github/codeql-action/upload-sarif@v2
+        with:
+          sarif_file: 'trivy-results.sarif'
+
+  # Performance Benchmarks
+  performance-benchmark:
+    name: Performance Benchmark
+    runs-on: ubuntu-latest
+    needs: e2e-tests
+    if: github.event.inputs.test_suite == 'all' || github.event_name == 'workflow_dispatch'
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: pip install pytest-benchmark
+
+      - name: Run performance benchmarks
+        run: |
+          pytest tests/performance/ \
+            --benchmark-only \
+            --benchmark-json=benchmark-results.json \
+            --benchmark-save-data-dir=benchmark-data
+
+      - name: Upload benchmark results
+        uses: actions/upload-artifact@v3
+        with:
+          name: performance-benchmark-results
+          path: |
+            benchmark-results.json
+            benchmark-data/
+
+  # Deploy to Staging (if all tests pass)
+  deploy-staging:
+    name: Deploy to Staging
+    runs-on: ubuntu-latest
+    needs: [
+      lint-and-type-check,
+      unit-tests,
+      integration-tests,
+      e2e-tests,
+      openapi-validation,
+      security-scan
+    ]
+    if: github.ref == 'refs/heads/develop' && github.event_name == 'push'
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v2
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: us-west-2
+
+      - name: Login to Amazon ECR
+        id: login-ecr
+        uses: aws-actions/amazon-ecr-login@v1
+
+      - name: Build and push API image
+        uses: docker/build-push-action@v4
+        with:
+          context: .
+          file: Dockerfile.api
+          push: true
+          tags: |
+            ${{ steps.login-ecr.outputs.registry }}/aurum-api:staging-${{ github.sha }}
+            ${{ steps.login-ecr.outputs.registry }}/aurum-api:staging-latest
+
+      - name: Build and push External Data image
+        uses: docker/build-push-action@v4
+        with:
+          context: .
+          file: Dockerfile.external
+          push: true
+          tags: |
+            ${{ steps.login-ecr.outputs.registry }}/aurum-external:staging-${{ github.sha }}
+            ${{ steps.login-ecr.outputs.registry }}/aurum-external:staging-latest
+
+      - name: Build and push Worker image
+        uses: docker/build-push-action@v4
+        with:
+          context: .
+          file: Dockerfile.worker
+          push: true
+          tags: |
+            ${{ steps.login-ecr.outputs.registry }}/aurum-worker:staging-${{ github.sha }}
+            ${{ steps.login-ecr.outputs.registry }}/aurum-worker:staging-latest
+
+      - name: Deploy to Kubernetes staging
+        run: |
+          # Update Kubernetes manifests with new image tags
+          sed -i 's|aurum-api:latest|${{ steps.login-ecr.outputs.registry }}/aurum-api:staging-${{ github.sha }}|g' k8s/aurum-api-deployment.yaml
+          sed -i 's|aurum-external:latest|${{ steps.login-ecr.outputs.registry }}/aurum-external:staging-${{ github.sha }}|g' k8s/aurum-external-deployment.yaml
+          sed -i 's|aurum-worker:latest|${{ steps.login-ecr.outputs.registry }}/aurum-worker:staging-${{ github.sha }}|g' k8s/aurum-worker-deployment.yaml
+
+          # Deploy to staging cluster
+          kubectl apply -f k8s/namespace.yaml
+          kubectl apply -f k8s/aurum-api-deployment.yaml
+          kubectl apply -f k8s/aurum-external-deployment.yaml
+          kubectl apply -f k8s/aurum-worker-deployment.yaml
+
+      - name: Run staging smoke tests
+        run: |
+          # Wait for deployment
+          kubectl rollout status deployment/aurum-api -n aurum --timeout=300s
+          kubectl rollout status deployment/aurum-external -n aurum --timeout=300s
+          kubectl rollout status deployment/aurum-worker -n aurum --timeout=300s
+
+          # Run smoke tests against staging
+          pytest tests/e2e/test_smoke.py \
+            --base-url=https://aurum-staging.example.com \
+            -v
+
+  # Summary and Notifications
+  summary:
+    name: Pipeline Summary
+    runs-on: ubuntu-latest
+    needs: [
+      lint-and-type-check,
+      unit-tests,
+      integration-tests,
+      e2e-tests,
+      openapi-validation,
+      security-scan,
+      performance-benchmark,
+      deploy-staging
+    ]
+    if: always()
+
+    steps:
+      - name: Generate pipeline summary
+        run: |
+          echo "## E2E Pipeline Summary" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "| Job | Status |" >> $GITHUB_STEP_SUMMARY
+          echo "|-----|--------|" >> $GITHUB_STEP_SUMMARY
+
+          for job in ${{ join(needs.*.result, ' ') }}; do
+            echo "| $job | ✅ |" >> $GITHUB_STEP_SUMMARY
+          done
+
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### Test Results Summary" >> $GITHUB_STEP_SUMMARY
+          echo "- All tests completed successfully" >> $GITHUB_STEP_SUMMARY
+          echo "- Images built and security scanned" >> $GITHUB_STEP_SUMMARY
+          echo "- Deployed to staging environment" >> $GITHUB_STEP_SUMMARY
+
+      - name: Notify on failure
+        if: failure()
+        uses: 8398a7/action-slack@v3
+        with:
+          status: failure
+          text: "E2E Pipeline failed! Check the GitHub Actions for details."
+        env:
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+
+      - name: Notify on success
+        if: success()
+        uses: 8398a7/action-slack@v3
+        with:
+          status: success
+          text: "E2E Pipeline completed successfully! Ready for production deployment."
+        env:
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}

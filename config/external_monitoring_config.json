@@ -1,0 +1,152 @@
+{
+  "slos": {
+    "data_freshness": {
+      "name": "External Data Freshness",
+      "description": "External data should be no older than 24 hours",
+      "target": 0.99,
+      "threshold_hours": 24,
+      "measurement_window": "7d",
+      "burn_rate_config": {
+        "fast_burn_rate_threshold": 0.05,
+        "fast_burn_rate_window": "2h",
+        "slow_burn_rate_threshold": 0.01,
+        "slow_burn_rate_window": "6h"
+      }
+    },
+    "data_quality": {
+      "name": "External Data Quality",
+      "description": "External data should pass Great Expectations validation",
+      "target": 0.995,
+      "threshold": 0.8,
+      "measurement_window": "7d",
+      "burn_rate_config": {
+        "fast_burn_rate_threshold": 0.03,
+        "fast_burn_rate_window": "1h",
+        "slow_burn_rate_threshold": 0.005,
+        "slow_burn_rate_window": "24h"
+      }
+    },
+    "pipeline_availability": {
+      "name": "External Pipeline Availability",
+      "description": "External data pipeline should be operational",
+      "target": 0.999,
+      "measurement_window": "7d",
+      "burn_rate_config": {
+        "fast_burn_rate_threshold": 0.02,
+        "fast_burn_rate_window": "30m",
+        "slow_burn_rate_threshold": 0.003,
+        "slow_burn_rate_window": "4h"
+      }
+    },
+    "sla_compliance": {
+      "name": "External SLA Compliance",
+      "description": "External data processing should meet SLAs",
+      "target": 0.98,
+      "measurement_window": "7d"
+    }
+  },
+  "alerts": {
+    "critical": {
+      "data_freshness_critical": {
+        "name": "Data freshness critical",
+        "description": "External data is more than 48 hours old",
+        "severity": "critical",
+        "channels": ["slack", "pagerduty"],
+        "threshold_hours": 48
+      },
+      "data_quality_critical": {
+        "name": "Data quality critical",
+        "description": "External data quality score below 0.5",
+        "severity": "critical",
+        "channels": ["slack", "pagerduty"],
+        "threshold": 0.5
+      },
+      "pipeline_down": {
+        "name": "Pipeline down",
+        "description": "External data pipeline is not operational",
+        "severity": "critical",
+        "channels": ["slack", "pagerduty"]
+      }
+    },
+    "warning": {
+      "data_freshness_warning": {
+        "name": "Data freshness warning",
+        "description": "External data is more than 36 hours old",
+        "severity": "warning",
+        "channels": ["slack"],
+        "threshold_hours": 36
+      },
+      "data_quality_warning": {
+        "name": "Data quality warning",
+        "description": "External data quality score below 0.7",
+        "severity": "warning",
+        "channels": ["slack"],
+        "threshold": 0.7
+      },
+      "sla_violation": {
+        "name": "SLA violation",
+        "description": "External data processing exceeded SLA",
+        "severity": "warning",
+        "channels": ["slack"]
+      }
+    },
+    "info": {
+      "backfill_completed": {
+        "name": "Backfill completed",
+        "description": "External data backfill completed successfully",
+        "severity": "info",
+        "channels": ["slack"]
+      },
+      "quality_improvement": {
+        "name": "Quality improvement",
+        "description": "External data quality score improved significantly",
+        "severity": "info",
+        "channels": ["slack"]
+      }
+    }
+  },
+  "dashboards": {
+    "external_data_overview": {
+      "title": "External Data Overview",
+      "description": "High-level metrics for external data pipeline",
+      "refresh_interval": "5m",
+      "panels": [
+        "pipeline_health",
+        "data_freshness",
+        "data_quality",
+        "sla_compliance",
+        "throughput_metrics"
+      ]
+    },
+    "provider_details": {
+      "title": "Provider Details",
+      "description": "Detailed metrics by external provider",
+      "refresh_interval": "1m",
+      "panels": [
+        "fred_metrics",
+        "eia_metrics",
+        "noaa_metrics",
+        "worldbank_metrics",
+        "rate_limit_usage",
+        "error_rates"
+      ]
+    },
+    "data_quality_dashboard": {
+      "title": "Data Quality Dashboard",
+      "description": "Great Expectations validation results and quality scores",
+      "refresh_interval": "5m",
+      "panels": [
+        "validation_results",
+        "quality_scores",
+        "failed_expectations",
+        "quality_trends"
+      ]
+    }
+  },
+  "monitoring_intervals": {
+    "health_check": 300,  # 5 minutes
+    "sla_check": 600,     # 10 minutes
+    "quality_check": 1800, # 30 minutes
+    "freshness_check": 3600 # 1 hour
+  }
+}

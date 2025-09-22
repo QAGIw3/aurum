@@ -28,7 +28,7 @@ class TrinoConfig:
             user=trino.user,
             http_scheme=trino.http_scheme,
             catalog=trino.catalog,
-            schema=trino.schema,
+            schema=trino.database_schema,
             password=trino.password,
         )
 

@@ -310,7 +310,10 @@ def validate_schema_drift(base_spec: dict, new_spec: dict, file_path: str) -> Tu
 def main():
     """Main validation function."""
     openapi_files = []
-    for pattern in ['openapi/**/*.yaml', 'openapi/**/*.yml', '**/openapi.yaml', '**/openapi.yml']:
+    for pattern in [
+        'openapi/**/*.yaml', 'openapi/**/*.yml', '**/openapi.yaml', '**/openapi.yml',
+        'docs/api/**/*.yaml', 'docs/api/**/*.yml', '**/openapi-spec.yaml'
+    ]:
         openapi_files.extend(Path('.').glob(pattern))
 
     if not openapi_files:

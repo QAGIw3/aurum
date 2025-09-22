@@ -101,7 +101,7 @@ class QueryOptimizer:
                 port=trino_config.port,
                 user=trino_config.user,
                 catalog=trino_config.catalog,
-                schema=trino_config.schema,
+                schema=trino_config.database_schema,
                 http_scheme=trino_config.http_scheme,
             )
 
@@ -171,7 +171,7 @@ class ConnectionPool:
                     port=self.config.port,
                     user=self.config.user,
                     catalog=self.config.catalog,
-                    schema=self.config.schema,
+                    schema=self.config.database_schema,
                     http_scheme=self.config.http_scheme,
                 )
 

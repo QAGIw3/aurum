@@ -1,0 +1,319 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: aurum-api
+  namespace: aurum
+  labels:
+    app: aurum-api
+    component: api
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app: aurum-api
+  template:
+    metadata:
+      labels:
+        app: aurum-api
+        component: api
+        version: "v1"
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "8000"
+        prometheus.io/path: "/metrics"
+        checksum/config: "{{ include (print $.Template.BasePath \"/configmap.yaml\") . | sha256sum }}"
+    spec:
+      containers:
+      - name: aurum-api
+        image: aurum-api:latest
+        imagePullPolicy: Always
+        ports:
+        - containerPort: 8000
+          name: http
+          protocol: TCP
+        - containerPort: 8001
+          name: admin
+          protocol: TCP
+        env:
+        - name: AURUM_APP_DB_DSN
+          valueFrom:
+            secretKeyRef:
+              name: aurum-secrets
+              key: app-db-dsn
+        - name: AURUM_CACHE_REDIS_DSN
+          valueFrom:
+            secretKeyRef:
+              name: aurum-secrets
+              key: redis-dsn
+        - name: AURUM_API_DATA_BACKEND
+          valueFrom:
+            configMapKeyRef:
+              name: aurum-config
+              key: data-backend
+        - name: AURUM_API_AUTH_DISABLED
+          valueFrom:
+            configMapKeyRef:
+              name: aurum-config
+              key: auth-disabled
+        - name: AURUM_API_OIDC_ISSUER
+          valueFrom:
+            secretKeyRef:
+              name: aurum-secrets
+              key: oidc-issuer
+        - name: AURUM_API_OIDC_AUDIENCE
+          valueFrom:
+            secretKeyRef:
+              name: aurum-secrets
+              key: oidc-audience
+        - name: AURUM_API_OIDC_JWKS_URL
+          valueFrom:
+            secretKeyRef:
+              name: aurum-secrets
+              key: oidc-jwks-url
+        - name: AURUM_API_JWT_SECRET
+          valueFrom:
+            secretKeyRef:
+              name: aurum-secrets
+              key: jwt-secret
+        - name: AURUM_RATE_LIMIT_DEFAULT_RPS
+          valueFrom:
+            configMapKeyRef:
+              name: aurum-config
+              key: rate-limit-default-rps
+        - name: AURUM_SESSION_TIMEOUT_MINUTES
+          valueFrom:
+            configMapKeyRef:
+              name: aurum-config
+              key: session-timeout-minutes
+        - name: AURUM_SECURITY_AUDIT_ENABLED
+          valueFrom:
+            configMapKeyRef:
+              name: aurum-config
+              key: security-audit-enabled
+        - name: AURUM_TENANT_ISOLATION_ENABLED
+          valueFrom:
+            configMapKeyRef:
+              name: aurum-config
+              key: tenant-isolation-enabled
+        livenessProbe:
+          httpGet:
+            path: /health/live
+            port: 8000
+          initialDelaySeconds: 30
+          periodSeconds: 10
+          timeoutSeconds: 5
+          failureThreshold: 3
+          successThreshold: 1
+        readinessProbe:
+          httpGet:
+            path: /health/ready
+            port: 8000
+          initialDelaySeconds: 5
+          periodSeconds: 5
+          timeoutSeconds: 3
+          failureThreshold: 3
+          successThreshold: 1
+        startupProbe:
+          httpGet:
+            path: /health/startup
+            port: 8000
+          initialDelaySeconds: 10
+          periodSeconds: 10
+          timeoutSeconds: 5
+          failureThreshold: 30
+          successThreshold: 1
+        resources:
+          requests:
+            cpu: 200m
+            memory: 512Mi
+          limits:
+            cpu: 2000m
+            memory: 4Gi
+        volumeMounts:
+        - name: config-volume
+          mountPath: /app/config
+          readOnly: true
+        - name: cache-volume
+          mountPath: /tmp/cache
+      volumes:
+      - name: config-volume
+        configMap:
+          name: aurum-config
+      - name: cache-volume
+        emptyDir: {}
+      restartPolicy: Always
+      terminationGracePeriodSeconds: 60
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        runAsGroup: 1000
+        fsGroup: 1000
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: aurum-api
+  namespace: aurum
+  labels:
+    app: aurum-api
+spec:
+  selector:
+    app: aurum-api
+  ports:
+  - name: http
+    port: 80
+    targetPort: 8000
+    protocol: TCP
+  - name: admin
+    port: 8001
+    targetPort: 8001
+    protocol: TCP
+  type: ClusterIP
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: aurum-api-external
+  namespace: aurum
+  labels:
+    app: aurum-api
+spec:
+  selector:
+    app: aurum-api
+  ports:
+  - name: http
+    port: 80
+    targetPort: 8000
+    protocol: TCP
+  type: LoadBalancer
+
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: aurum-api-pdb
+  namespace: aurum
+  labels:
+    app: aurum-api
+spec:
+  minAvailable: 2  # Always keep 2 replicas available
+  selector:
+    matchLabels:
+      app: aurum-api
+
+---
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: aurum-api-hpa
+  namespace: aurum
+  labels:
+    app: aurum-api
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: aurum-api
+  minReplicas: 3
+  maxReplicas: 20
+  metrics:
+  - type: Resource
+    resource:
+      name: cpu
+      target:
+        type: Utilization
+        averageUtilization: 70
+  - type: Resource
+    resource:
+      name: memory
+      target:
+        type: Utilization
+        averageUtilization: 80
+  - type: Pods
+    pods:
+      metric:
+        name: aurum_api_requests_total
+      target:
+        type: AverageValue
+        averageValue: "100"  # Scale based on request rate
+  behavior:
+    scaleDown:
+      stabilizationWindowSeconds: 300
+      policies:
+      - type: Percent
+        value: 10
+        periodSeconds: 60
+      - type: Pods
+        value: 1
+        periodSeconds: 60
+      selectPolicy: Min
+    scaleUp:
+      stabilizationWindowSeconds: 60
+      policies:
+      - type: Percent
+        value: 50
+        periodSeconds: 60
+      - type: Pods
+        value: 2
+        periodSeconds: 60
+      selectPolicy: Max
+
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: aurum-api-netpol
+  namespace: aurum
+spec:
+  podSelector:
+    matchLabels:
+      app: aurum-api
+  policyTypes:
+  - Ingress
+  - Egress
+  ingress:
+  - from:
+    - podSelector:
+        matchLabels:
+          app: aurum-external-data
+    - podSelector:
+        matchLabels:
+          app: aurum-worker
+    - namespaceSelector:
+        matchLabels:
+          name: ingress-nginx
+    ports:
+    - protocol: TCP
+      port: 8000
+    - protocol: TCP
+      port: 8001
+  egress:
+  - to:
+    - podSelector:
+        matchLabels:
+          app: postgres
+    ports:
+    - protocol: TCP
+      port: 5432
+  - to:
+    - podSelector:
+        matchLabels:
+          app: redis
+    ports:
+    - protocol: TCP
+      port: 6379
+  - to:
+    - podSelector:
+        matchLabels:
+          app: kafka
+    ports:
+    - protocol: TCP
+      port: 9092
+  - to: []  # Allow DNS resolution
+    ports:
+    - protocol: UDP
+      port: 53
+    - protocol: TCP
+      port: 53

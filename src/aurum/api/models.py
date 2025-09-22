@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import date, datetime, timedelta
+import datetime as dt
 from enum import Enum
 from typing import Any, Dict, List, Optional, Union
 from uuid import UUID
@@ -943,7 +944,7 @@ class ExternalSeries(AurumBaseModel):
 class ExternalObservation(AurumBaseModel):
     """External data observation."""
     series_id: str = Field(..., description="Series identifier")
-    date: date = Field(..., description="Observation date")
+    date: dt.date = Field(..., description="Observation date")
     value: float = Field(..., description="Observation value")
     observation_metadata: Optional[Dict[str, Any]] = Field(None, description="Additional observation metadata")
 

@@ -32,7 +32,7 @@ This guide explains how to define scenarios, run them asynchronously, retrieve o
 - Latest metrics: `GET /v1/scenarios/{id}/metrics/latest`
 - Bulk runs: `POST /v1/scenarios/{id}/runs:bulk`
 
-OpenAPI contract with schemas and examples: `openapi/aurum.yaml`.
+OpenAPI contract with schemas and examples: `docs/api/openapi-spec.yaml`.
 
 ## Examples
 
@@ -141,5 +141,5 @@ Responses include `meta.request_id` for support.
 
 ## Versioning
 
-- API follows semantic versioning through `openapi/aurum.yaml` (`info.version`).
+- API follows semantic versioning through `docs/api/openapi-spec.yaml` (`info.version`).
 - Scenario schema evolution is additive where possible; breaking changes require a version bump and migration notes.

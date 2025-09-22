@@ -17,11 +17,12 @@ from dataclasses import dataclass, field
 from concurrent.futures import ThreadPoolExecutor
 
 try:
-    import trino
-    import trino.dbapi
+    import trino  # type: ignore
+    import trino.dbapi  # type: ignore
 except ImportError:
-    trino = None
-    trino.dbapi = None
+    # Trino is optional for import-time tooling (e.g., docs). Runtime paths
+    # that require Trino will raise a clear error when invoked.
+    trino = None  # type: ignore
 
 from ..telemetry.context import log_structured
 from .config import TrinoConfig
@@ -141,7 +142,7 @@ class ConnectionPool:
                 port=self.config.port,
                 user=self.config.user,
                 catalog=self.config.catalog,
-                schema=self.config.schema,
+                schema=self.config.database_schema,
                 http_scheme=self.config.http_scheme,
             )
 
@@ -325,7 +326,7 @@ class TrinoClient:
         for attempt in range(self.retry_config.max_retries + 1):
             try:
                 # Execute the query
-        result = await self._execute_query_with_timeout(query, params, tenant_id)
+                result = await self._execute_query_with_timeout(query, params, tenant_id)
 
                 # Record success
                 self.circuit_breaker.record_success()
@@ -488,7 +489,7 @@ class TrinoClient:
         payload.update(
             {
                 "catalog": self.config.catalog,
-                "schema": self.config.schema,
+                "schema": self.config.database_schema,
             }
         )
 

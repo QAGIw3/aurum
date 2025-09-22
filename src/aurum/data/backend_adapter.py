@@ -38,7 +38,7 @@ class BackendAdapter:
             return ConnectionConfig(
                 host=backend_settings.trino_host,
                 port=backend_settings.trino_port,
-                database=f"{backend_settings.trino_catalog}.{backend_settings.trino_schema}",
+                database=f"{backend_settings.trino_catalog}.{backend_settings.trino_database_schema}",
                 username=backend_settings.trino_user,
                 password=backend_settings.trino_password or "",
                 ssl=False,  # Trino uses HTTP scheme instead

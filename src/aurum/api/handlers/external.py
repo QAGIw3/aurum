@@ -9,7 +9,7 @@ import time
 from datetime import date, datetime
 from typing import Any, Dict, List, Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Request
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response
 from fastapi.responses import StreamingResponse
 from pydantic import ValidationError
 
@@ -18,12 +18,11 @@ from ..cache import CacheManager, AsyncCache, CacheBackend
 from ..exceptions import (
     AurumAPIException,
     ValidationException,
-)
-from ..http import respond_with_etag
     NotFoundException,
     ServiceUnavailableException,
     DataProcessingException,
 )
+from ..http import respond_with_etag
 from ..models import (
     ExternalProvider,
     ExternalSeries,
@@ -365,7 +364,7 @@ async def list_external_providers(
             query_time_ms = int((time.time() - start_time) * 1000)
             meta = create_external_meta(request_id, query_time_ms)
             model = ExternalProvidersResponse(data=cached_result, meta=meta)
-            return _respond_with_etag(model, request, response)
+            return respond_with_etag(model, request, response)
 
         if EXTERNAL_CACHE_MISS_COUNTER:
             EXTERNAL_CACHE_MISS_COUNTER.labels(endpoint="/v1/external/providers").inc()
@@ -392,7 +391,7 @@ async def list_external_providers(
         meta = create_external_meta(request_id, query_time_ms)
 
         model = ExternalProvidersResponse(data=providers, meta=meta)
-        return _respond_with_etag(model, request, response)
+        return respond_with_etag(model, request, response)
 
     except ValidationError as exc:
         raise HTTPException(
@@ -486,7 +485,7 @@ async def list_external_series(
             query_time_ms = int((time.time() - start_time) * 1000)
             meta = create_external_meta(request_id, query_time_ms)
             model = ExternalSeriesResponse(data=cached_result, meta=meta)
-            return _respond_with_etag(model, request, response)
+            return respond_with_etag(model, request, response)
 
         # Query series
         series = await dao.get_series(
@@ -509,7 +508,7 @@ async def list_external_series(
         meta = create_external_meta(request_id, query_time_ms)
 
         model = ExternalSeriesResponse(data=series, meta=meta)
-        return _respond_with_etag(model, request, response)
+        return respond_with_etag(model, request, response)
 
     except ValidationError as exc:
         raise HTTPException(

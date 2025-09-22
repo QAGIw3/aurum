@@ -1,0 +1,457 @@
+{
+  "dashboards": {
+    "aurum-api-overview": {
+      "title": "Aurum API Overview",
+      "description": "Comprehensive overview of API performance and health",
+      "refresh": "30s",
+      "panels": [
+        {
+          "title": "API Request Rate",
+          "type": "graph",
+          "targets": [
+            {
+              "expr": "rate(aurum_api_requests_total[5m])",
+              "legendFormat": "{{method}} {{path}} - {{status}}"
+            }
+          ],
+          "thresholds": [
+            { "value": 100, "color": "green" },
+            { "value": 500, "color": "yellow" },
+            { "value": 1000, "color": "red" }
+          ]
+        },
+        {
+          "title": "API Latency (p95)",
+          "type": "graph",
+          "targets": [
+            {
+              "expr": "aurum_api_request_duration_seconds{quantile=\"0.95\"}",
+              "legendFormat": "{{method}} {{path}}"
+            }
+          ],
+          "thresholds": [
+            { "value": 0.5, "color": "green" },
+            { "value": 1.0, "color": "yellow" },
+            { "value": 2.0, "color": "red" }
+          ]
+        },
+        {
+          "title": "Error Rate by Endpoint",
+          "type": "graph",
+          "targets": [
+            {
+              "expr": "rate(aurum_api_requests_total{status=~\"5..\"}[5m]) / rate(aurum_api_requests_total[5m])",
+              "legendFormat": "{{path}} error rate"
+            }
+          ],
+          "thresholds": [
+            { "value": 0.01, "color": "green" },
+            { "value": 0.05, "color": "yellow" },
+            { "value": 0.1, "color": "red" }
+          ]
+        },
+        {
+          "title": "Database Connection Pool",
+          "type": "graph",
+          "targets": [
+            {
+              "expr": "aurum_db_pool_connections_active_current",
+              "legendFormat": "{{pool_name}} active"
+            },
+            {
+              "expr": "aurum_db_pool_connections_idle_current",
+              "legendFormat": "{{pool_name}} idle"
+            },
+            {
+              "expr": "aurum_db_pool_connections_total_current",
+              "legendFormat": "{{pool_name}} total"
+            }
+          ]
+        },
+        {
+          "title": "Cache Performance",
+          "type": "graph",
+          "targets": [
+            {
+              "expr": "aurum_cache_hit_ratio",
+              "legendFormat": "{{cache_type}} hit ratio"
+            },
+            {
+              "expr": "aurum_cache_efficiency",
+              "legendFormat": "{{cache_type}} efficiency"
+            }
+          ],
+          "thresholds": [
+            { "value": 0.8, "color": "yellow" },
+            { "value": 0.9, "color": "green" }
+          ]
+        },
+        {
+          "title": "Active Connections",
+          "type": "singlestat",
+          "targets": [
+            {
+              "expr": "aurum_active_connections"
+            }
+          ]
+        }
+      ]
+    },
+    "aurum-slo-dashboard": {
+      "title": "Aurum SLO Dashboard",
+      "description": "Service Level Objective monitoring and compliance",
+      "refresh": "1m",
+      "panels": [
+        {
+          "title": "SLO Compliance Status",
+          "type": "table",
+          "targets": [
+            {
+              "expr": "aurum_slo_compliance_total",
+              "format": "table"
+            }
+          ]
+        },
+        {
+          "title": "SLO Availability",
+          "type": "graph",
+          "targets": [
+            {
+              "expr": "aurum_slo_availability",
+              "legendFormat": "{{slo_name}} availability"
+            }
+          ],
+          "thresholds": [
+            { "value": 0.95, "color": "yellow" },
+            { "value": 0.99, "color": "green" }
+          ]
+        },
+        {
+          "title": "SLO Latency",
+          "type": "graph",
+          "targets": [
+            {
+              "expr": "aurum_slo_latency_p95_seconds",
+              "legendFormat": "{{slo_name}} p95 latency"
+            }
+          ],
+          "thresholds": [
+            { "value": 0.5, "color": "green" },
+            { "value": 1.0, "color": "yellow" },
+            { "value": 2.0, "color": "red" }
+          ]
+        },
+        {
+          "title": "SLO Error Rate",
+          "type": "graph",
+          "targets": [
+            {
+              "expr": "aurum_slo_error_rate",
+              "legendFormat": "{{slo_name}} error rate"
+            }
+          ],
+          "thresholds": [
+            { "value": 0.01, "color": "green" },
+            { "value": 0.05, "color": "yellow" },
+            { "value": 0.1, "color": "red" }
+          ]
+        },
+        {
+          "title": "SLO Violations",
+          "type": "graph",
+          "targets": [
+            {
+              "expr": "rate(aurum_slo_violation_duration_seconds_count[1h])",
+              "legendFormat": "{{slo_name}} violations"
+            }
+          ]
+        }
+      ]
+    },
+    "aurum-external-data": {
+      "title": "External Data Pipeline",
+      "description": "Monitoring for external data collection and processing",
+      "refresh": "30s",
+      "panels": [
+        {
+          "title": "Data Freshness",
+          "type": "graph",
+          "targets": [
+            {
+              "expr": "aurum_data_freshness_hours",
+              "legendFormat": "{{dataset}} from {{source}}"
+            }
+          ],
+          "thresholds": [
+            { "value": 12, "color": "green" },
+            { "value": 24, "color": "yellow" },
+            { "value": 48, "color": "red" }
+          ]
+        },
+        {
+          "title": "Great Expectations Validation",
+          "type": "graph",
+          "targets": [
+            {
+              "expr": "aurum_ge_validation_runs_total",
+              "legendFormat": "{{dataset}} - {{suite}} - {{status}}"
+            }
+          ]
+        },
+        {
+          "title": "Canary Status",
+          "type": "graph",
+          "targets": [
+            {
+              "expr": "aurum_canary_execution_status_total",
+              "legendFormat": "{{canary_name}} - {{status}}"
+            }
+          ]
+        },
+        {
+          "title": "Staleness Monitoring",
+          "type": "graph",
+          "targets": [
+            {
+              "expr": "aurum_staleness_age_hours",
+              "legendFormat": "{{dataset}} age (hours)"
+            }
+          ],
+          "thresholds": [
+            { "value": 6, "color": "green" },
+            { "value": 12, "color": "yellow" },
+            { "value": 24, "color": "red" }
+          ]
+        },
+        {
+          "title": "External API Performance",
+          "type": "graph",
+          "targets": [
+            {
+              "expr": "rate(aurum_external_api_requests_total[5m])",
+              "legendFormat": "{{endpoint}} requests"
+            },
+            {
+              "expr": "aurum_external_api_request_duration_seconds",
+              "legendFormat": "{{endpoint}} latency"
+            }
+          ]
+        }
+      ]
+    },
+    "aurum-system-health": {
+      "title": "Aurum System Health",
+      "description": "Overall system health and component status",
+      "refresh": "10s",
+      "panels": [
+        {
+          "title": "System Health Score",
+          "type": "singlestat",
+          "targets": [
+            {
+              "expr": "aurum_system_health_score"
+            }
+          ],
+          "thresholds": [
+            { "value": 0.8, "color": "yellow" },
+            { "value": 0.95, "color": "green" }
+          ]
+        },
+        {
+          "title": "Component Health Status",
+          "type": "table",
+          "targets": [
+            {
+              "expr": "aurum_component_health_status",
+              "format": "table"
+            }
+          ]
+        },
+        {
+          "title": "System Uptime",
+          "type": "singlestat",
+          "targets": [
+            {
+              "expr": "aurum_system_uptime_seconds_total / 86400",  # Days
+              "format": "time_series"
+            }
+          ]
+        },
+        {
+          "title": "Alert Status",
+          "type": "graph",
+          "targets": [
+            {
+              "expr": "aurum_alerts_fired_total",
+              "legendFormat": "{{alert_name}} - {{severity}}"
+            }
+          ]
+        },
+        {
+          "title": "Resource Usage",
+          "type": "graph",
+          "targets": [
+            {
+              "expr": "rate(process_cpu_seconds_total[5m])",
+              "legendFormat": "CPU usage"
+            },
+            {
+              "expr": "process_resident_memory_bytes",
+              "legendFormat": "Memory usage"
+            }
+          ]
+        }
+      ]
+    },
+    "aurum-business-metrics": {
+      "title": "Aurum Business Metrics",
+      "description": "Business-level KPIs and metrics",
+      "refresh": "1m",
+      "panels": [
+        {
+          "title": "Transaction Volume",
+          "type": "graph",
+          "targets": [
+            {
+              "expr": "rate(aurum_business_transactions_total[5m])",
+              "legendFormat": "{{transaction_type}} - {{entity}} - {{status}}"
+            }
+          ]
+        },
+        {
+          "title": "Business Value",
+          "type": "graph",
+          "targets": [
+            {
+              "expr": "aurum_business_value",
+              "legendFormat": "{{metric_type}} - {{entity}}"
+            }
+          ]
+        },
+        {
+          "title": "Error Rate by Operation",
+          "type": "graph",
+          "targets": [
+            {
+              "expr": "rate(aurum_business_errors_total[5m])",
+              "legendFormat": "{{operation}} - {{error_type}}"
+            }
+          ],
+          "thresholds": [
+            { "value": 0.01, "color": "green" },
+            { "value": 0.05, "color": "yellow" },
+            { "value": 0.1, "color": "red" }
+          ]
+        },
+        {
+          "title": "User Activity",
+          "type": "graph",
+          "targets": [
+            {
+              "expr": "count(aurum_api_requests_total{user_id!=\"\"}) by (user_id)",
+              "legendFormat": "User {{user_id}}"
+            }
+          ]
+        }
+      ]
+    }
+  },
+  "alert_rules": {
+    "api_high_error_rate": {
+      "name": "API High Error Rate",
+      "expr": "rate(aurum_api_requests_total{status=~\"5..\"}[5m]) / rate(aurum_api_requests_total[5m]) > 0.05",
+      "for": "5m",
+      "labels": {
+        "severity": "critical"
+      },
+      "annotations": {
+        "summary": "API error rate is above 5%",
+        "description": "API endpoints are returning 5xx errors at a rate > 5%"
+      }
+    },
+    "api_high_latency": {
+      "name": "API High Latency",
+      "expr": "aurum_api_request_duration_seconds{quantile=\"0.95\"} > 2.0",
+      "for": "10m",
+      "labels": {
+        "severity": "warning"
+      },
+      "annotations": {
+        "summary": "API p95 latency > 2 seconds",
+        "description": "API requests are taking longer than 2 seconds (p95)"
+      }
+    },
+    "data_stale": {
+      "name": "Data Stale",
+      "expr": "aurum_data_freshness_hours > 24",
+      "for": "1h",
+      "labels": {
+        "severity": "warning"
+      },
+      "annotations": {
+        "summary": "Data freshness violation",
+        "description": "Data is older than 24 hours"
+      }
+    },
+    "ge_validation_failed": {
+      "name": "GE Validation Failed",
+      "expr": "aurum_ge_validation_runs_total{status=\"failure\"} > 0",
+      "for": "5m",
+      "labels": {
+        "severity": "critical"
+      },
+      "annotations": {
+        "summary": "Great Expectations validation failure",
+        "description": "Data validation failed for external data"
+      }
+    },
+    "canary_unhealthy": {
+      "name": "Canary Unhealthy",
+      "expr": "aurum_canary_execution_status_total{status!=\"healthy\"} > 0",
+      "for": "5m",
+      "labels": {
+        "severity": "critical"
+      },
+      "annotations": {
+        "summary": "Canary execution unhealthy",
+        "description": "Canary checks are failing"
+      }
+    },
+    "db_pool_exhausted": {
+      "name": "Database Pool Exhausted",
+      "expr": "aurum_db_pool_connections_active_current / aurum_db_pool_connections_total_current > 0.95",
+      "for": "5m",
+      "labels": {
+        "severity": "warning"
+      },
+      "annotations": {
+        "summary": "Database connection pool exhausted",
+        "description": "Database connection pool utilization > 95%"
+      }
+    },
+    "cache_hit_rate_low": {
+      "name": "Cache Hit Rate Low",
+      "expr": "aurum_cache_hit_ratio < 0.8",
+      "for": "30m",
+      "labels": {
+        "severity": "warning"
+      },
+      "annotations": {
+        "summary": "Cache hit rate below threshold",
+        "description": "Cache hit rate is below 80%"
+      }
+    },
+    "slo_violation": {
+      "name": "SLO Violation",
+      "expr": "aurum_slo_compliance_total{status=\"violation\"} > 0",
+      "for": "15m",
+      "labels": {
+        "severity": "warning"
+      },
+      "annotations": {
+        "summary": "SLO compliance violation",
+        "description": "Service Level Objective is being violated"
+      }
+    }
+  }
+}

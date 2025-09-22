@@ -12,7 +12,7 @@ This directory contains developer and operator documentation for the Aurum platf
 ## API
 
 - API index and examples: `api/README.md`
-- OpenAPI spec: `../openapi/aurum.yaml`
+- OpenAPI spec (source of truth): `api/openapi-spec.yaml`
 - Generated reference: `api/api-docs.md` (see build below)
 - Pagination model: `pagination.md`
 - Runtime configuration (admin): `runtime-config.md`
@@ -29,6 +29,7 @@ This directory contains developer and operator documentation for the Aurum platf
 - Data contracts: `data-contracts.md`
 - Schema registry and Avro: `schema_registry.md`
 - External data: `external-data.md`
+- External incremental processor: `external/incremental.md`
 
 ## Runbooks
 
@@ -45,5 +46,7 @@ This directory contains developer and operator documentation for the Aurum platf
 ## Build Docs
 
 - Serve statically: `make docs-serve` (http://localhost:8000)
-- Build API docs from the FastAPI app and export OpenAPI:
-  - `make docs-build` (writes `docs/api/api-docs.md` and `docs/api/openapi.json`, plus `openapi/aurum.generated.yaml`)
+- Regenerate OpenAPI and API docs from the FastAPI app:
+  - `make docs-openapi` (writes `docs/api/openapi-spec.yaml` and `docs/api/openapi-spec.json`)
+  - `make docs-openapi-validate` (validates the spec)
+  - `make docs-build` (writes `docs/api/api-docs.md` and `docs/api/openapi.json`)

@@ -50,7 +50,7 @@ class DataBackendSettings(AurumBaseModel):
     trino_port: int = Field(default=8080, ge=0, validation_alias=AliasChoices("API_TRINO_PORT"))
     trino_user: str = Field(default="aurum", validation_alias=AliasChoices("API_TRINO_USER"))
     trino_catalog: str = Field(default="iceberg", validation_alias=AliasChoices("API_TRINO_CATALOG"))
-    trino_schema: str = Field(default="market", validation_alias=AliasChoices("API_TRINO_SCHEMA"))
+    trino_database_schema: str = Field(default="market", validation_alias=AliasChoices("API_TRINO_SCHEMA"))
     trino_password: str | None = Field(default=None, validation_alias=AliasChoices("API_TRINO_PASSWORD"))
     trino_http_scheme: str = Field(default="http", validation_alias=AliasChoices("API_TRINO_SCHEME"))
 
@@ -247,6 +247,80 @@ class AuthSettings(AurumBaseModel):
     jwt_leeway_seconds: int = Field(default=60, ge=0, validation_alias=AliasChoices("API_JWT_LEEWAY"))
     forward_auth_header: str | None = Field(default=None, validation_alias=AliasChoices("API_FORWARD_AUTH_HEADER"))
     forward_auth_claims_header: str | None = Field(default=None, validation_alias=AliasChoices("API_FORWARD_AUTH_CLAIMS_HEADER"))
+
+    # Security and Compliance Settings
+    security_audit_enabled: bool = Field(
+        default=True,
+        validation_alias=AliasChoices("API_SECURITY_AUDIT_ENABLED")
+    )
+    security_audit_log_level: str = Field(
+        default="INFO",
+        validation_alias=AliasChoices("API_SECURITY_AUDIT_LOG_LEVEL")
+    )
+    security_audit_retention_days: int = Field(
+        default=90,
+        ge=1,
+        le=365,
+        validation_alias=AliasChoices("API_SECURITY_AUDIT_RETENTION_DAYS")
+    )
+
+    # Compliance Settings
+    compliance_mode_enabled: bool = Field(
+        default=True,
+        validation_alias=AliasChoices("API_COMPLIANCE_MODE_ENABLED")
+    )
+    data_classification_level: str = Field(
+        default="internal",
+        validation_alias=AliasChoices("API_DATA_CLASSIFICATION_LEVEL")
+    )
+
+    # Session Management
+    session_timeout_minutes: int = Field(
+        default=480,  # 8 hours
+        ge=5,
+        le=1440,  # 24 hours
+        validation_alias=AliasChoices("API_SESSION_TIMEOUT_MINUTES")
+    )
+    session_inactivity_timeout_minutes: int = Field(
+        default=30,
+        ge=1,
+        le=120,
+        validation_alias=AliasChoices("API_SESSION_INACTIVITY_TIMEOUT_MINUTES")
+    )
+
+    # Enhanced Access Control
+    access_control_strict_mode: bool = Field(
+        default=True,
+        validation_alias=AliasChoices("API_ACCESS_CONTROL_STRICT_MODE")
+    )
+    access_control_default_deny: bool = Field(
+        default=False,
+        validation_alias=AliasChoices("API_ACCESS_CONTROL_DEFAULT_DENY")
+    )
+
+    # Tenant Isolation
+    tenant_isolation_enabled: bool = Field(
+        default=True,
+        validation_alias=AliasChoices("API_TENANT_ISOLATION_ENABLED")
+    )
+    tenant_isolation_strict: bool = Field(
+        default=True,
+        validation_alias=AliasChoices("API_TENANT_ISOLATION_STRICT")
+    )
+
+    # Security Monitoring
+    security_monitoring_enabled: bool = Field(
+        default=True,
+        validation_alias=AliasChoices("API_SECURITY_MONITORING_ENABLED")
+    )
+    anomaly_detection_enabled: bool = Field(
+        default=True,
+        validation_alias=AliasChoices("API_ANOMALY_DETECTION_ENABLED")
+    )
+    intrusion_detection_enabled: bool = Field(
+        default=True,
+        validation_alias=AliasChoices("API_INTRUSION_DETECTION_ENABLED")
+    )
 
     @field_validator("admin_groups", mode="before")
     @classmethod

@@ -1,0 +1,46 @@
+# Dockerfile for External Data Pipeline
+FROM python:3.11-slim
+
+# Set environment variables
+ENV PYTHONUNBUFFERED=1
+ENV PYTHONDONTWRITEBYTECODE=1
+ENV PIP_NO_CACHE_DIR=1
+
+# Set work directory
+WORKDIR /app
+
+# Install system dependencies
+RUN apt-get update && apt-get install -y \
+    build-essential \
+    libssl-dev \
+    libffi-dev \
+    libpq-dev \
+    curl \
+    && rm -rf /var/lib/apt/lists/*
+
+# Install Python dependencies
+COPY requirements-external.txt /app/
+RUN pip install --no-cache-dir -r requirements-external.txt
+
+# Copy application code
+COPY src/aurum /app/aurum
+COPY config /app/config
+COPY kafka/schemas /app/kafka/schemas
+
+# Set Python path
+ENV PYTHONPATH=/app
+
+# Create non-root user
+RUN useradd --create-home --shell /bin/bash aurum-external
+RUN chown -R aurum-external:aurum-external /app
+USER aurum-external
+
+# Health check
+HEALTHCHECK --interval=30s --timeout=10s --start-period=30s --retries=3 \
+    CMD curl -f http://localhost:8000/health/external || exit 1
+
+# Expose port
+EXPOSE 8000
+
+# Default command
+CMD ["python", "-m", "aurum.external.runner", "--loop", "--interval", "3600"]

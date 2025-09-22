@@ -10,7 +10,7 @@ from aurum.api.openapi_generator import OpenAPIGenerator
 def main():
     """Generate Python and TypeScript clients."""
     # Find the OpenAPI spec
-    openapi_file = Path("openapi/aurum.yaml")
+    openapi_file = Path("docs/api/openapi-spec.yaml")
     if not openapi_file.exists():
         print(f"OpenAPI specification not found at {openapi_file}")
         return 1

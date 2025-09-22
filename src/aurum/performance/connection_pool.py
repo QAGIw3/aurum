@@ -7,9 +7,19 @@ import logging
 from abc import ABC, abstractmethod
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
-from typing import Any, Dict, Optional, TypeVar
+from typing import Any, Dict, Optional, TypeVar, Generic
 
-from opentelemetry import trace
+try:  # optional dependency
+    from opentelemetry import trace  # type: ignore
+except Exception:  # pragma: no cover - fallback noop tracer
+    import types
+    from contextlib import nullcontext
+
+    class _NoopTracer:
+        def start_as_current_span(self, name: str):  # noqa: D401 - simple noop
+            return nullcontext()
+
+    trace = types.SimpleNamespace(get_tracer=lambda name: _NoopTracer())  # type: ignore
 
 from ..telemetry.context import get_request_id
 

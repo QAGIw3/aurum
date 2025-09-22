@@ -394,7 +394,7 @@ Key endpoints:
 * `GET /v1/scenarios/{id}` / `GET /v1/scenarios/{id}/runs/{run_id}` -- inspect scenario metadata and run status
 * `POST /v1/ppa/valuate` -- PPA cashflows and risk (scenario or ensemble aware)
 
-> OpenAPI spec lives at `openapi/aurum.yaml`. Responses include `meta` and `data` arrays.
+> OpenAPI spec lives at `docs/api/openapi-spec.yaml`. Responses include `meta` and `data` arrays.
 
 **Auth:** Traefik OIDC --> JWT; API enforces RBAC and tenant scoping; Redis caching for hot queries.
 
@@ -603,7 +603,7 @@ def parse(path: str, asof: date) -> pd.DataFrame:
 * **ClickHouse DDL:** `clickhouse/ddl_ops.sql` (ops.logs, ops.events)
 * **Avro Schemas:** `kafka/schemas/*.avsc` for curve, QA, scenario, alert topics
 * **Trino catalogs:** `trino/catalog/iceberg.properties`, `postgres.properties`, `clickhouse.properties`
-* **OpenAPI:** `openapi/aurum.yaml`
+* **OpenAPI:** `docs/api/openapi-spec.yaml`
 * **Airflow DAGs:** `airflow/dags/*.py` (ingest, scenarios, ppa, exports). Recent additions:
   * `ingest_public_feeds` – NOAA, EIA, FRED, PJM ingestion via SeaTunnel, registers/writes watermarks automatically.
   * `ingest_iso_prices` – CAISO & ERCOT helper scripts to Kafka with watermark tracking.

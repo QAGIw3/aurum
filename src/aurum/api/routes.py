@@ -182,8 +182,11 @@ except ModuleNotFoundError:  # pragma: no cover - drought features optional
     DroughtCatalog = None  # type: ignore[assignment]
 from aurum.telemetry.context import get_request_id, set_request_id, reset_request_id
 
-# Import external API router
-from .handlers.external import router as external_router
+# Import external API router (optional during tooling/doc generation)
+try:  # pragma: no cover
+    from .handlers.external import router as external_router
+except Exception:  # pragma: no cover - optional
+    external_router = None  # type: ignore
 
 router = APIRouter()
 
@@ -937,54 +940,6 @@ def _normalise_cursor_input(payload: dict) -> tuple[Optional[int], Optional[dict
         except (TypeError, ValueError) as exc:
             raise HTTPException(status_code=400, detail="Invalid offset cursor") from exc
     return 0, payload
-
-
-def create_cursor_from_row(row: Dict[str, Any], schema_name: str, direction: SortDirection = SortDirection.ASC) -> CursorPayload:
-    """Create a cursor payload from a database row using the hardened cursor system.
-
-    Args:
-        row: Database row data
-        schema_name: Name of the cursor schema to use
-        direction: Sort direction
-
-    Returns:
-        CursorPayload object
-    """
-    if schema_name not in FROZEN_CURSOR_SCHEMAS:
-        raise ValueError(f"Unknown cursor schema: {schema_name}")
-
-    schema = FROZEN_CURSOR_SCHEMAS[schema_name]
-    values = {}
-
-    for sort_key in schema.sort_keys:
-        value = row.get(sort_key.name)
-        if isinstance(value, date):
-            values[sort_key.name] = value.isoformat()
-        elif isinstance(value, datetime):
-            values[sort_key.name] = value.isoformat()
-        elif value is not None:
-            values[sort_key.name] = value
-        else:
-            values[sort_key.name] = None
-
-    return CursorPayload(
-        schema_name=schema_name,
-        values=values,
-        direction=direction
-    )
-
-
-def extract_cursor_values_for_query(cursor: CursorPayload, schema_name: str) -> Dict[str, Any]:
-    """Extract cursor values for database query construction.
-
-    Args:
-        cursor: CursorPayload object
-        schema_name: Schema name to validate against
-
-    Returns:
-        Dictionary of values for query construction
-    """
-    return extract_cursor_values(cursor, schema_name)
 
 
 def build_stable_cursor_condition(
@@ -4269,4 +4224,5 @@ def get_drought_tile_metadata(
 
 
 # Include external API router
-router.include_router(external_router)
+if external_router is not None:
+    router.include_router(external_router)

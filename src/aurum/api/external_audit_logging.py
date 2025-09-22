@@ -35,7 +35,7 @@ class AuditEvent(BaseModel):
     correlation_id: Optional[str]
 
 class ExternalDataAuditLogger:
-    """Audit logger for external data operations."""
+    """Enhanced audit logger for external data operations with compliance support."""
 
     def __init__(self):
         self.audit_logger = logging.getLogger("audit.external_data")
@@ -50,6 +50,32 @@ class ExternalDataAuditLogger:
                 )
             )
             self.audit_logger.addHandler(handler)
+
+        # Compliance logging
+        self.compliance_logger = logging.getLogger("compliance.external_data")
+        self.compliance_logger.setLevel(logging.INFO)
+
+        if not self.compliance_logger.handlers:
+            compliance_handler = logging.FileHandler("/var/log/aurum/compliance_audit.log")
+            compliance_handler.setFormatter(
+                logging.Formatter(
+                    '%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+                )
+            )
+            self.compliance_logger.addHandler(compliance_handler)
+
+        # Security event logging
+        self.security_logger = logging.getLogger("security.external_data")
+        self.security_logger.setLevel(logging.WARNING)
+
+        if not self.security_logger.handlers:
+            security_handler = logging.FileHandler("/var/log/aurum/security_events.log")
+            security_handler.setFormatter(
+                logging.Formatter(
+                    '%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+                )
+            )
+            self.security_logger.addHandler(security_handler)
 
     def log_event(self, event: AuditEvent):
         """Log an audit event."""
@@ -167,6 +193,215 @@ class ExternalDataAuditLogger:
             correlation_id=correlation_id
         )
         self.log_event(event)
+
+    def log_compliance_event(self, event: AuditEvent):
+        """Log a compliance-related audit event."""
+        log_entry = {
+            "event_id": event.event_id,
+            "timestamp": event.timestamp.isoformat(),
+            "event_type": event.event_type,
+            "user_id": event.user_id,
+            "service": event.service,
+            "resource": event.resource,
+            "operation": event.operation,
+            "status": event.status,
+            "details": event.details,
+            "ip_address": event.ip_address,
+            "user_agent": event.user_agent,
+            "session_id": event.session_id,
+            "correlation_id": event.correlation_id,
+            "compliance": True
+        }
+
+        self.compliance_logger.info(json.dumps(log_entry))
+
+    def log_security_event(self, event: AuditEvent):
+        """Log a security-related audit event."""
+        log_entry = {
+            "event_id": event.event_id,
+            "timestamp": event.timestamp.isoformat(),
+            "event_type": event.event_type,
+            "user_id": event.user_id,
+            "service": event.service,
+            "resource": event.resource,
+            "operation": event.operation,
+            "status": event.status,
+            "details": event.details,
+            "ip_address": event.ip_address,
+            "user_agent": event.user_agent,
+            "session_id": event.session_id,
+            "correlation_id": event.correlation_id,
+            "security": True
+        }
+
+        self.security_logger.warning(json.dumps(log_entry))
+
+    def log_tenant_isolation_violation(
+        self,
+        user_id: str,
+        tenant_id: str,
+        attempted_tenant_id: str,
+        resource: str,
+        operation: str,
+        details: Dict[str, Any],
+        correlation_id: Optional[str] = None
+    ):
+        """Log tenant isolation violation."""
+        event = AuditEvent(
+            event_id=str(uuid4()),
+            timestamp=datetime.now(timezone.utc),
+            event_type="tenant_isolation_violation",
+            user_id=user_id,
+            resource=resource,
+            operation=operation,
+            status="failure",
+            details={
+                "user_tenant_id": tenant_id,
+                "attempted_tenant_id": attempted_tenant_id,
+                **details
+            },
+            correlation_id=correlation_id
+        )
+        self.log_security_event(event)
+
+    def log_privilege_escalation_attempt(
+        self,
+        user_id: str,
+        requested_permission: str,
+        user_permissions: List[str],
+        resource: str,
+        operation: str,
+        details: Dict[str, Any],
+        correlation_id: Optional[str] = None
+    ):
+        """Log privilege escalation attempt."""
+        event = AuditEvent(
+            event_id=str(uuid4()),
+            timestamp=datetime.now(timezone.utc),
+            event_type="privilege_escalation",
+            user_id=user_id,
+            resource=resource,
+            operation=operation,
+            status="failure",
+            details={
+                "requested_permission": requested_permission,
+                "user_permissions": user_permissions,
+                **details
+            },
+            correlation_id=correlation_id
+        )
+        self.log_security_event(event)
+
+    def log_data_classification_access(
+        self,
+        user_id: str,
+        tenant_id: str,
+        resource: str,
+        classification_level: str,
+        operation: str,
+        details: Dict[str, Any],
+        correlation_id: Optional[str] = None
+    ):
+        """Log data classification access for compliance."""
+        event = AuditEvent(
+            event_id=str(uuid4()),
+            timestamp=datetime.now(timezone.utc),
+            event_type="data_classification_access",
+            user_id=user_id,
+            resource=resource,
+            operation=operation,
+            status="success",
+            details={
+                "tenant_id": tenant_id,
+                "classification_level": classification_level,
+                **details
+            },
+            correlation_id=correlation_id
+        )
+        self.log_compliance_event(event)
+
+    def log_admin_action_audit(
+        self,
+        user_id: str,
+        tenant_id: str,
+        action: str,
+        resource: str,
+        details: Dict[str, Any],
+        status: str = "success",
+        correlation_id: Optional[str] = None
+    ):
+        """Log administrative action for audit trail."""
+        event = AuditEvent(
+            event_id=str(uuid4()),
+            timestamp=datetime.now(timezone.utc),
+            event_type="admin_action",
+            user_id=user_id,
+            resource=resource,
+            operation=action,
+            status=status,
+            details={
+                "tenant_id": tenant_id,
+                **details
+            },
+            correlation_id=correlation_id
+        )
+        self.log_compliance_event(event)
+
+    def log_cross_tenant_data_access(
+        self,
+        user_id: str,
+        user_tenant_id: str,
+        accessed_tenant_id: str,
+        resource: str,
+        operation: str,
+        details: Dict[str, Any],
+        correlation_id: Optional[str] = None
+    ):
+        """Log cross-tenant data access attempts."""
+        event = AuditEvent(
+            event_id=str(uuid4()),
+            timestamp=datetime.now(timezone.utc),
+            event_type="cross_tenant_access",
+            user_id=user_id,
+            resource=resource,
+            operation=operation,
+            status="failure" if user_tenant_id != accessed_tenant_id else "success",
+            details={
+                "user_tenant_id": user_tenant_id,
+                "accessed_tenant_id": accessed_tenant_id,
+                **details
+            },
+            correlation_id=correlation_id
+        )
+
+        if user_tenant_id != accessed_tenant_id:
+            self.log_security_event(event)
+        else:
+            self.log_event(event)
+
+    def get_audit_report(
+        self,
+        start_time: datetime,
+        end_time: datetime,
+        event_types: Optional[List[str]] = None,
+        user_ids: Optional[List[str]] = None,
+        tenant_ids: Optional[List[str]] = None
+    ) -> List[Dict[str, Any]]:
+        """Generate audit report for compliance."""
+        # This would normally query audit logs from storage
+        # For now, return placeholder implementation
+        return []
+
+    def get_security_incident_report(
+        self,
+        start_time: datetime,
+        end_time: datetime,
+        severity_levels: Optional[List[str]] = None
+    ) -> List[Dict[str, Any]]:
+        """Generate security incident report."""
+        # This would normally query security events from storage
+        # For now, return placeholder implementation
+        return []
 
 
 # Global audit logger instance

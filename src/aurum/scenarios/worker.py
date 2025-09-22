@@ -1470,8 +1470,8 @@ def run_worker():  # pragma: no cover - integration entrypoint
                                 output_topic=output_topic,
                                 request_id=request_id,
                             ):
-                                cancelled = True
-                                break
+                            cancelled = True
+                            break
 
                             _maybe_update_run_state(
                                 run_id,

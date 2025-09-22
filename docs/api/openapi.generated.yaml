@@ -1,0 +1,844 @@
+openapi: 3.1.0
+info:
+  title: Aurum API
+  description: Aurum Market Intelligence Platform API
+  version: 0.1.0
+  contact:
+    name: Aurum API Support
+    email: api-support@aurum-platform.com
+  license:
+    name: MIT
+    url: https://opensource.org/licenses/MIT
+paths:
+  /v1/admin/ratelimit/config:
+    get:
+      summary: Get Ratelimit Config
+      description: Get current rate limiting configuration.
+      operationId: get_ratelimit_config_v1_admin_ratelimit_config_get
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                type: object
+                title: Response Get Ratelimit Config V1 Admin Ratelimit Config Get
+        '400':
+          description: Bad Request
+          content:
+            application/json:
+              schema:
+                oneOf:
+                - $ref: '#/components/schemas/ErrorEnvelope'
+                - $ref: '#/components/schemas/ValidationErrorResponse'
+        '401':
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+        '403':
+          description: Forbidden
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+        '404':
+          description: Not Found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+        '429':
+          description: Too Many Requests
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+        '500':
+          description: Internal Server Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+  /v1/admin/ratelimit/status:
+    get:
+      summary: Get Ratelimit Status
+      description: Get current rate limiting status and active windows.
+      operationId: get_ratelimit_status_v1_admin_ratelimit_status_get
+      parameters:
+      - name: tenant_id
+        in: query
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          description: Filter by tenant ID
+          title: Tenant Id
+        description: Filter by tenant ID
+      - name: path
+        in: query
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          description: Filter by path prefix
+          title: Path
+        description: Filter by path prefix
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                type: object
+                title: Response Get Ratelimit Status V1 Admin Ratelimit Status Get
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+        '400':
+          description: Bad Request
+          content:
+            application/json:
+              schema:
+                oneOf:
+                - $ref: '#/components/schemas/ErrorEnvelope'
+                - $ref: '#/components/schemas/ValidationErrorResponse'
+        '401':
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+        '403':
+          description: Forbidden
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+        '404':
+          description: Not Found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+        '429':
+          description: Too Many Requests
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+        '500':
+          description: Internal Server Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+  /v1/admin/ratelimit/metrics:
+    get:
+      summary: Get Ratelimit Metrics
+      description: Get rate limiting metrics.
+      operationId: get_ratelimit_metrics_v1_admin_ratelimit_metrics_get
+      parameters:
+      - name: tenant_id
+        in: query
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          description: Filter by tenant ID
+          title: Tenant Id
+        description: Filter by tenant ID
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                type: object
+                title: Response Get Ratelimit Metrics V1 Admin Ratelimit Metrics Get
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+        '400':
+          description: Bad Request
+          content:
+            application/json:
+              schema:
+                oneOf:
+                - $ref: '#/components/schemas/ErrorEnvelope'
+                - $ref: '#/components/schemas/ValidationErrorResponse'
+        '401':
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+        '403':
+          description: Forbidden
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+        '404':
+          description: Not Found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+        '429':
+          description: Too Many Requests
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+        '500':
+          description: Internal Server Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+  /v1/admin/ratelimit/test:
+    post:
+      summary: Test Ratelimit
+      description: Test rate limiting for a specific path and tenant.
+      operationId: test_ratelimit_v1_admin_ratelimit_test_post
+      parameters:
+      - name: path
+        in: query
+        required: true
+        schema:
+          type: string
+          description: Path to test rate limiting for
+          title: Path
+        description: Path to test rate limiting for
+      - name: tenant_id
+        in: query
+        required: true
+        schema:
+          type: string
+          description: Tenant ID to test
+          title: Tenant Id
+        description: Tenant ID to test
+      - name: requests_per_second
+        in: query
+        required: false
+        schema:
+          type: integer
+          description: RPS to test with
+          default: 10
+          title: Requests Per Second
+        description: RPS to test with
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                type: object
+                title: Response Test Ratelimit V1 Admin Ratelimit Test Post
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+        '400':
+          description: Bad Request
+          content:
+            application/json:
+              schema:
+                oneOf:
+                - $ref: '#/components/schemas/ErrorEnvelope'
+                - $ref: '#/components/schemas/ValidationErrorResponse'
+        '401':
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+        '403':
+          description: Forbidden
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+        '404':
+          description: Not Found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+        '429':
+          description: Too Many Requests
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+        '500':
+          description: Internal Server Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+  /v1/admin/config/ratelimit/{tenant_id}/{path}:
+    put:
+      summary: Update Tenant Rate Limit
+      description: Update rate limit configuration for a specific tenant and path.
+      operationId: update_tenant_rate_limit_v1_admin_config_ratelimit__tenant_id___path__put
+      parameters:
+      - name: tenant_id
+        in: path
+        required: true
+        schema:
+          type: string
+          title: Tenant Id
+      - name: path
+        in: path
+        required: true
+        schema:
+          type: string
+          title: Path
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RateLimitConfigUpdate'
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                type: object
+                title: Response Update Tenant Rate Limit V1 Admin Config Ratelimit  Tenant
+                  Id   Path  Put
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+        '400':
+          description: Bad Request
+          content:
+            application/json:
+              schema:
+                oneOf:
+                - $ref: '#/components/schemas/ErrorEnvelope'
+                - $ref: '#/components/schemas/ValidationErrorResponse'
+        '401':
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+        '403':
+          description: Forbidden
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+        '404':
+          description: Not Found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+        '429':
+          description: Too Many Requests
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+        '500':
+          description: Internal Server Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+  /v1/admin/config/feature-flags/{tenant_id}/{feature_name}:
+    put:
+      summary: Update Feature Flag
+      description: Update feature flag configuration for a specific tenant.
+      operationId: update_feature_flag_v1_admin_config_feature_flags__tenant_id___feature_name__put
+      parameters:
+      - name: tenant_id
+        in: path
+        required: true
+        schema:
+          type: string
+          title: Tenant Id
+      - name: feature_name
+        in: path
+        required: true
+        schema:
+          type: string
+          title: Feature Name
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/FeatureFlagUpdate'
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                type: object
+                title: Response Update Feature Flag V1 Admin Config Feature Flags  Tenant
+                  Id   Feature Name  Put
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+        '400':
+          description: Bad Request
+          content:
+            application/json:
+              schema:
+                oneOf:
+                - $ref: '#/components/schemas/ErrorEnvelope'
+                - $ref: '#/components/schemas/ValidationErrorResponse'
+        '401':
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+        '403':
+          description: Forbidden
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+        '404':
+          description: Not Found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+        '429':
+          description: Too Many Requests
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+        '500':
+          description: Internal Server Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+  /v1/admin/config/audit-log:
+    get:
+      summary: Get Audit Log
+      description: Get audit log for configuration changes.
+      operationId: get_audit_log_v1_admin_config_audit_log_get
+      parameters:
+      - name: tenant_id
+        in: query
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          description: Filter by tenant ID
+          title: Tenant Id
+        description: Filter by tenant ID
+      - name: user_id
+        in: query
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          description: Filter by user ID
+          title: User Id
+        description: Filter by user ID
+      - name: limit
+        in: query
+        required: false
+        schema:
+          type: integer
+          maximum: 1000
+          minimum: 1
+          description: Maximum number of entries to return
+          default: 100
+          title: Limit
+        description: Maximum number of entries to return
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                type: object
+                title: Response Get Audit Log V1 Admin Config Audit Log Get
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+        '400':
+          description: Bad Request
+          content:
+            application/json:
+              schema:
+                oneOf:
+                - $ref: '#/components/schemas/ErrorEnvelope'
+                - $ref: '#/components/schemas/ValidationErrorResponse'
+        '401':
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+        '403':
+          description: Forbidden
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+        '404':
+          description: Not Found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+        '429':
+          description: Too Many Requests
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+        '500':
+          description: Internal Server Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+  /v1/admin/config/feature-flags/{tenant_id}:
+    get:
+      summary: Get Tenant Feature Flags
+      description: Get all feature flags for a tenant.
+      operationId: get_tenant_feature_flags_v1_admin_config_feature_flags__tenant_id__get
+      parameters:
+      - name: tenant_id
+        in: path
+        required: true
+        schema:
+          type: string
+          title: Tenant Id
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                type: object
+                title: Response Get Tenant Feature Flags V1 Admin Config Feature Flags  Tenant
+                  Id  Get
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+        '400':
+          description: Bad Request
+          content:
+            application/json:
+              schema:
+                oneOf:
+                - $ref: '#/components/schemas/ErrorEnvelope'
+                - $ref: '#/components/schemas/ValidationErrorResponse'
+        '401':
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+        '403':
+          description: Forbidden
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+        '404':
+          description: Not Found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+        '429':
+          description: Too Many Requests
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+        '500':
+          description: Internal Server Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+  /v1/admin/config/ratelimit/{tenant_id}:
+    get:
+      summary: Get Tenant Rate Limits
+      description: Get all rate limit configurations for a tenant.
+      operationId: get_tenant_rate_limits_v1_admin_config_ratelimit__tenant_id__get
+      parameters:
+      - name: tenant_id
+        in: path
+        required: true
+        schema:
+          type: string
+          title: Tenant Id
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                type: object
+                title: Response Get Tenant Rate Limits V1 Admin Config Ratelimit  Tenant
+                  Id  Get
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+        '400':
+          description: Bad Request
+          content:
+            application/json:
+              schema:
+                oneOf:
+                - $ref: '#/components/schemas/ErrorEnvelope'
+                - $ref: '#/components/schemas/ValidationErrorResponse'
+        '401':
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+        '403':
+          description: Forbidden
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+        '404':
+          description: Not Found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+        '429':
+          description: Too Many Requests
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+        '500':
+          description: Internal Server Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+components:
+  schemas:
+    FeatureFlagUpdate:
+      properties:
+        enabled:
+          type: boolean
+          title: Enabled
+          description: Whether the feature is enabled
+        configuration:
+          type: object
+          title: Configuration
+          description: Feature configuration
+      type: object
+      required:
+      - enabled
+      title: FeatureFlagUpdate
+      description: Feature flag configuration update.
+    HTTPValidationError:
+      properties:
+        detail:
+          items:
+            $ref: '#/components/schemas/ValidationError'
+          type: array
+          title: Detail
+      type: object
+      title: HTTPValidationError
+    RateLimitConfigUpdate:
+      properties:
+        requests_per_second:
+          type: integer
+          exclusiveMinimum: 0.0
+          title: Requests Per Second
+          description: Requests per second
+        burst:
+          type: integer
+          exclusiveMinimum: 0.0
+          title: Burst
+          description: Burst capacity
+        enabled:
+          type: boolean
+          title: Enabled
+          description: Whether rate limiting is enabled
+          default: true
+      type: object
+      required:
+      - requests_per_second
+      - burst
+      title: RateLimitConfigUpdate
+      description: Rate limit configuration update.
+    ValidationError:
+      properties:
+        loc:
+          items:
+            anyOf:
+            - type: string
+            - type: integer
+          type: array
+          title: Location
+        msg:
+          type: string
+          title: Message
+        type:
+          type: string
+          title: Error Type
+      type: object
+      required:
+      - loc
+      - msg
+      - type
+      title: ValidationError
+    ErrorEnvelope:
+      type: object
+      description: Standard error response envelope following RFC 7807
+      properties:
+        error:
+          type: string
+          description: Error type identifier
+        message:
+          type: string
+          description: Human-readable error message
+        code:
+          type: string
+          description: Application-specific error code
+        field:
+          type: string
+          description: Field name that caused the error (for validation errors)
+        value:
+          description: Invalid value that caused the error
+        context:
+          type: object
+          description: Additional error context
+        request_id:
+          type: string
+          description: Request identifier for debugging
+        timestamp:
+          type: string
+          format: date-time
+          description: Error timestamp
+      required:
+      - error
+      - timestamp
+    ValidationErrorDetail:
+      type: object
+      description: Detailed validation error information
+      properties:
+        field:
+          type: string
+          description: Field path that failed validation
+        message:
+          type: string
+          description: Validation error message
+        value:
+          description: Invalid value
+        code:
+          type: string
+          description: Validation error code
+        constraint:
+          type: string
+          enum:
+          - required
+          - type
+          - format
+          - min
+          - max
+          - length
+          - pattern
+          - enum
+          - unique
+          - custom
+          description: Constraint type that failed
+      required:
+      - field
+      - message
+    ValidationErrorResponse:
+      type: object
+      description: Validation error response
+      properties:
+        error:
+          type: string
+          description: Error type
+          default: Validation Error
+        message:
+          type: string
+          description: Error message
+        field_errors:
+          type: array
+          items:
+            $ref: '#/components/schemas/ValidationErrorDetail'
+          description: List of field validation errors
+        request_id:
+          type: string
+          description: Request identifier
+        timestamp:
+          type: string
+          format: date-time
+          description: Error timestamp
+      required:
+      - error
+      - message
+      - timestamp
+  securitySchemes:
+    APIKeyAuth:
+      type: apiKey
+      in: header
+      name: X-API-Key
+    BearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+    BasicAuth:
+      type: http
+      scheme: basic
+servers:
+- url: https://api.aurum-platform.com
+  description: Production server
+- url: https://staging.api.aurum-platform.com
+  description: Staging server
+- url: http://localhost:8000
+  description: Development server

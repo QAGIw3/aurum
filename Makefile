@@ -198,6 +198,23 @@ git-release: ## Create a release
 # Documentation
 docs-serve: ## Serve documentation locally
 	@echo "Documentation available at http://localhost:8000"
+
+docs-build: ## Build API docs markdown + JSON (fallback reads docs/api/openapi-spec.yaml)
+	python3 scripts/docs/build_docs.py
+
+docs-redoc: ## Generate Redoc HTML/JSON from docs/api/openapi-spec.yaml
+	python3 scripts/generate_redoc.py
+
+# OpenAPI generation and validation
+docs-openapi: ## Generate OpenAPI spec from FastAPI routes
+	python3 scripts/docs/generate_openapi.py
+
+docs-openapi-validate: ## Validate OpenAPI spec (requires openapi-spec-validator)
+	python3 -c "import sys, yaml; from openapi_spec_validator import validate_spec; s=yaml.safe_load(open('docs/api/openapi-spec.yaml')); validate_spec(s); print('✅ OpenAPI spec valid')"
+
+docs-openapi-check-drift: ## Fail if OpenAPI spec differs from generated output
+	python3 scripts/docs/generate_openapi.py
+	@git diff --quiet -- docs/api/openapi-spec.yaml docs/api/openapi-spec.json || (echo '\n❌ OpenAPI spec drift detected. Run: make docs-openapi && commit changes.' && exit 1)
 	@cd docs && python -m http.server 8000
 
 docs-build: ## Build documentation

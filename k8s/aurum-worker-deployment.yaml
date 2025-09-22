@@ -1,0 +1,318 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: aurum-worker
+  namespace: aurum
+  labels:
+    app: aurum-worker
+    component: worker
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: aurum-worker
+  template:
+    metadata:
+      labels:
+        app: aurum-worker
+        component: worker
+        version: "v1"
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "8000"
+        prometheus.io/path: "/metrics"
+    spec:
+      containers:
+      - name: aurum-worker
+        image: aurum-worker:latest
+        imagePullPolicy: Always
+        ports:
+        - containerPort: 8000
+          name: http
+          protocol: TCP
+        env:
+        - name: AURUM_APP_DB_DSN
+          valueFrom:
+            secretKeyRef:
+              name: aurum-secrets
+              key: app-db-dsn
+        - name: AURUM_CACHE_REDIS_DSN
+          valueFrom:
+            secretKeyRef:
+              name: aurum-secrets
+              key: redis-dsn
+        - name: AURUM_API_DATA_BACKEND
+          valueFrom:
+            configMapKeyRef:
+              name: aurum-config
+              key: data-backend
+        - name: AURUM_WORKER_TYPE
+          value: "external_data_processor"
+        - name: AURUM_WORKER_THREADS
+          value: "4"
+        - name: AURUM_WORKER_MAX_TASKS_PER_CHILD
+          value: "100"
+        - name: AURUM_WORKER_TIMEOUT_SECONDS
+          value: "3600"
+        - name: KAFKA_BOOTSTRAP_SERVERS
+          valueFrom:
+            configMapKeyRef:
+              name: aurum-config
+              key: kafka-bootstrap-servers
+        - name: SCHEMA_REGISTRY_URL
+          valueFrom:
+            configMapKeyRef:
+              name: aurum-config
+              key: schema-registry-url
+        - name: VAULT_ADDR
+          valueFrom:
+            configMapKeyRef:
+              name: aurum-config
+              key: vault-addr
+        - name: VAULT_TOKEN
+          valueFrom:
+            secretKeyRef:
+              name: aurum-secrets
+              key: vault-token
+        - name: FRED_API_KEY
+          valueFrom:
+            secretKeyRef:
+              name: aurum-external-secrets
+              key: fred-api-key
+        - name: EIA_API_KEY
+          valueFrom:
+            secretKeyRef:
+              name: aurum-external-secrets
+              key: eia-api-key
+        - name: NOAA_GHCND_TOKEN
+          valueFrom:
+            secretKeyRef:
+              name: aurum-external-secrets
+              key: noaa-token
+        livenessProbe:
+          exec:
+            command:
+            - python
+            - -c
+            - |
+              import sys
+              from aurum.api.worker import WorkerHealthCheck
+              check = WorkerHealthCheck()
+              sys.exit(0 if check.is_healthy() else 1)
+          initialDelaySeconds: 60
+          periodSeconds: 30
+          timeoutSeconds: 10
+          failureThreshold: 3
+          successThreshold: 1
+        readinessProbe:
+          exec:
+            command:
+            - python
+            - -c
+            - |
+              import sys
+              from aurum.api.worker import WorkerHealthCheck
+              check = WorkerHealthCheck()
+              sys.exit(0 if check.is_ready() else 1)
+          initialDelaySeconds: 30
+          periodSeconds: 10
+          timeoutSeconds: 5
+          failureThreshold: 3
+          successThreshold: 1
+        startupProbe:
+          exec:
+            command:
+            - python
+            - -c
+            - |
+              import sys
+              from aurum.api.worker import WorkerHealthCheck
+              check = WorkerHealthCheck()
+              sys.exit(0 if check.is_started() else 1)
+          initialDelaySeconds: 10
+          periodSeconds: 10
+          timeoutSeconds: 5
+          failureThreshold: 30
+          successThreshold: 1
+        resources:
+          requests:
+            cpu: 500m
+            memory: 1Gi
+          limits:
+            cpu: 4000m
+            memory: 8Gi
+        volumeMounts:
+        - name: config-volume
+          mountPath: /app/config
+          readOnly: true
+        - name: tmp-volume
+          mountPath: /tmp
+        - name: cache-volume
+          mountPath: /app/cache
+      volumes:
+      - name: config-volume
+        configMap:
+          name: aurum-config
+      - name: tmp-volume
+        emptyDir: {}
+      - name: cache-volume
+        emptyDir: {}
+      restartPolicy: Always
+      terminationGracePeriodSeconds: 120
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        runAsGroup: 1000
+        fsGroup: 1000
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: aurum-worker
+  namespace: aurum
+  labels:
+    app: aurum-worker
+spec:
+  selector:
+    app: aurum-worker
+  ports:
+  - name: http
+    port: 80
+    targetPort: 8000
+    protocol: TCP
+  type: ClusterIP
+
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: aurum-worker-pdb
+  namespace: aurum
+  labels:
+    app: aurum-worker
+spec:
+  minAvailable: 1  # Always keep at least 1 worker available
+  selector:
+    matchLabels:
+      app: aurum-worker
+
+---
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: aurum-worker-hpa
+  namespace: aurum
+  labels:
+    app: aurum-worker
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: aurum-worker
+  minReplicas: 2
+  maxReplicas: 10
+  metrics:
+  - type: Resource
+    resource:
+      name: cpu
+      target:
+        type: Utilization
+        averageUtilization: 70
+  - type: Resource
+    resource:
+      name: memory
+      target:
+        type: Utilization
+        averageUtilization: 80
+  - type: Pods
+    pods:
+      metric:
+        name: aurum_worker_queue_size
+      target:
+        type: AverageValue
+        averageValue: "10"  # Scale based on queue depth
+  behavior:
+    scaleDown:
+      stabilizationWindowSeconds: 600
+      policies:
+      - type: Percent
+        value: 25
+        periodSeconds: 120
+      - type: Pods
+        value: 1
+        periodSeconds: 120
+      selectPolicy: Min
+    scaleUp:
+      stabilizationWindowSeconds: 60
+      policies:
+      - type: Percent
+        value: 100
+        periodSeconds: 60
+      - type: Pods
+        value: 3
+        periodSeconds: 60
+      selectPolicy: Max
+
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: aurum-worker-netpol
+  namespace: aurum
+spec:
+  podSelector:
+    matchLabels:
+      app: aurum-worker
+  policyTypes:
+  - Ingress
+  - Egress
+  ingress:
+  - from:
+    - podSelector:
+        matchLabels:
+          app: aurum-api
+    - podSelector:
+        matchLabels:
+          app: aurum-external-data
+    - namespaceSelector:
+        matchLabels:
+          name: kube-system
+    ports:
+    - protocol: TCP
+      port: 8000
+  egress:
+  - to:
+    - podSelector:
+        matchLabels:
+          app: postgres
+    ports:
+    - protocol: TCP
+      port: 5432
+  - to:
+    - podSelector:
+        matchLabels:
+          app: redis
+    ports:
+    - protocol: TCP
+      port: 6379
+  - to:
+    - podSelector:
+        matchLabels:
+          app: kafka
+    ports:
+    - protocol: TCP
+      port: 9092
+  - to:
+    - podSelector:
+        matchLabels:
+          app: aurum-api
+    ports:
+    - protocol: TCP
+      port: 8000
+  - to: []  # Allow DNS resolution
+    ports:
+    - protocol: UDP
+      port: 53
+    - protocol: TCP
+      port: 53

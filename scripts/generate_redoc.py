@@ -54,13 +54,16 @@ def generate_redoc_json(openapi_spec: Dict[str, Any], output_path: str) -> None:
 def main():
     """Generate Redoc documentation from OpenAPI spec."""
 
-    # Find OpenAPI spec files
-    openapi_files = []
-    for pattern in ['openapi/**/*.yaml', 'openapi/**/*.yml', '**/openapi.yaml', '**/openapi.yml']:
-        openapi_files.extend(Path('.').glob(pattern))
+    # Find OpenAPI spec files (prefer docs/api)
+    root = Path(__file__).resolve().parents[1]
+    preferred = root / 'docs/api/openapi-spec.yaml'
+    openapi_files = [preferred] if preferred.exists() else []
+    if not openapi_files:
+        for pattern in ['docs/api/**/*.yaml', 'docs/api/**/*.yml']:
+            openapi_files.extend((root).glob(pattern))
 
     if not openapi_files:
-        print("❌ No OpenAPI specification files found")
+        print("❌ No OpenAPI specification files found under docs/api/")
         return 1
 
     for spec_file in openapi_files:
@@ -187,8 +190,7 @@ def main():
 
         print(f"✅ Generated version index: {index_file}")
 
-    print("
-🎉 Redoc documentation generation completed!"    print(f"📁 Output directory: {base_dir}")
+    print("\n🎉 Redoc documentation generation completed!")
     print("🌐 Open the generated HTML files in your browser to view the documentation")
 
     return 0

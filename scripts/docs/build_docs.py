@@ -4,7 +4,7 @@
 Outputs:
 - docs/api/openapi.json (generated from running app routes)
 - docs/api/api-docs.md (markdown reference)
-- openapi/aurum.generated.yaml (OpenAPI YAML export)
+- docs/api/openapi.generated.yaml (OpenAPI YAML export)
 """
 
 from __future__ import annotations
@@ -12,12 +12,14 @@ from __future__ import annotations
 import json
 from pathlib import Path
 import sys
+import os
 
 ROOT = Path(__file__).resolve().parents[2]
 SRC = ROOT / "src"
 if str(SRC) not in sys.path:
     sys.path.insert(0, str(SRC))
 
+os.environ.setdefault("AURUM_API_LIGHT_INIT", "1")
 try:
     from aurum.api.app import create_app
     from aurum.api.openapi_generator import OpenAPIGenerator, DocumentationFormat
@@ -68,11 +70,15 @@ def _write_simple_markdown(schema: dict, md_out: Path) -> None:
 def main() -> None:
     md_out = Path("docs/api/api-docs.md")
     json_out = Path("docs/api/openapi.json")
-    yaml_out = Path("openapi/aurum.generated.yaml")
-    yaml_src = Path("openapi/aurum.yaml")
+    yaml_out = Path("docs/api/openapi.generated.yaml")
+    yaml_src = Path("docs/api/openapi-spec.yaml")
 
     if create_app and OpenAPIGenerator:
-        app = create_app()  # Uses defaults
+        app = create_app()  # May be sync or async
+        # Handle async create_app
+        if hasattr(app, "__await__"):
+            import asyncio
+            app = asyncio.run(app)  # type: ignore
         generator = OpenAPIGenerator(app, title=app.title, version=app.version)
         generator.generate_markdown_docs(str(md_out))
         schema = generator.generate_schema()
@@ -104,7 +110,7 @@ def main() -> None:
         else:
             md_out.parent.mkdir(parents=True, exist_ok=True)
             md_out.write_text(
-                "# Aurum API\n\nOpenAPI spec available at `openapi/aurum.yaml`. "
+                "# Aurum API\n\nOpenAPI spec available at `docs/api/openapi-spec.yaml`. "
                 "Generation fell back to copying YAML due to parse issues.\n"
             )
             print("✅ Copied OpenAPI YAML; wrote stub markdown:")

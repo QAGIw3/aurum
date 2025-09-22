@@ -44,7 +44,7 @@ class AsyncTrinoClient:
                 port=self.config.port,
                 user=self.config.user,
                 catalog=self.config.catalog,
-                schema=self.config.schema,
+                schema=self.config.database_schema,
                 http_scheme=self.config.http_scheme,
             )
 
@@ -85,7 +85,7 @@ class AsyncTrinoClient:
                 port=self.config.port,
                 user=self.config.user,
                 catalog=self.config.catalog,
-                schema=self.config.schema,
+                schema=self.config.database_schema,
                 http_scheme=self.config.http_scheme,
             )
 
