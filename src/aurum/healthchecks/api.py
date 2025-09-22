@@ -1,5 +1,17 @@
 from __future__ import annotations
 
+"""Simple health probe for the Aurum API service.
+
+Resolves the API `http://<host>:<port>/<path>` from environment variables and
+returns a non‑zero exit code if the probe fails. Intended for use in
+Kubernetes/containers as a liveness/readiness check.
+
+Config env vars (with defaults):
+- `AURUM_API_HEALTH_HOST` (127.0.0.1)
+- `AURUM_API_HEALTH_PORT` (8080)
+- `AURUM_API_HEALTH_PATH` (/health)
+"""
+
 import os
 import sys
 import urllib.error

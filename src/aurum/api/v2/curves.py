@@ -6,6 +6,10 @@ This module provides the v2 implementation of the curves API with:
 - Enhanced ETag support
 - Improved validation and error handling
 - Better observability
+
+Notes:
+- Base path: `/v2/*` (see app wiring in src/aurum/api/app.py)
+- Migration guidance from v1 endpoints: docs/migration-guide.md
 """
 
 from __future__ import annotations

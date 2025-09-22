@@ -1,5 +1,13 @@
 from __future__ import annotations
 
+"""Scenario worker processing pipeline with robust observability.
+
+Consumes scenario run requests, performs simulation/valuation work, persists
+outputs, and exposes health/metrics endpoints. The worker emphasizes
+operational safety (circuit breakers, poison‑pill detection), performance
+metrics, and graceful shutdown semantics suitable for container orchestration.
+"""
+
 import hashlib
 import logging
 import os

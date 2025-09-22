@@ -1,5 +1,12 @@
 from __future__ import annotations
 
+"""CLI runner for external data collectors (EIA, FRED, NOAA, WorldBank).
+
+Provides a unified entrypoint to sync catalogs and ingest observations either
+once or in a managed loop. Emission targets Kafka topics with Avro schemas or
+can be configured to run in HTTP/no‑op mode for debugging.
+"""
+
 import argparse
 import json
 import logging

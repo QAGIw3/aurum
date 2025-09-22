@@ -1,3 +1,5 @@
+"""HTTP pagination tests for curve endpoints validating cursor semantics."""
+
 from datetime import date
 from typing import Any, Dict, List
 

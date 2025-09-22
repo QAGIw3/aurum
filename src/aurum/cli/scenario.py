@@ -1,5 +1,12 @@
 from __future__ import annotations
 
+"""Scenario management CLI for interacting with the Aurum API.
+
+This tool offers convenience commands to list/create scenarios, trigger runs,
+inspect outputs, cancel runs, and manage PPA valuations. It communicates with
+the HTTP API and is suitable for ops workflows, demos, and quick diagnostics.
+"""
+
 import argparse
 import json
 import os

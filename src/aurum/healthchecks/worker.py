@@ -1,5 +1,17 @@
 from __future__ import annotations
 
+"""Lightweight readiness probe for the scenario worker process.
+
+This script is intended to be used as a container readiness/liveness probe.
+It succeeds if either:
+
+- An HTTP endpoint exposed by the worker responds with a 2xx/3xx status, or
+- Importing the worker module succeeds (process is at least able to start).
+
+Probe target address/port/path can be configured with environment variables
+(see `_PROBE_PORT_VARS`, `_PROBE_ADDR_VARS`, and `AURUM_WORKER_PROBE_PATH`).
+"""
+
 import importlib
 import os
 import sys

@@ -6,6 +6,16 @@ This module provides production-ready rate limiting with:
 - Graceful degradation to in-memory limiting
 - Comprehensive metrics and monitoring
 - Admin endpoints for inspection and management
+
+Environment variables (selected):
+- `AURUM_API_RATE_LIMIT_RPS` / `AURUM_API_RATE_LIMIT_BURST` (defaults)
+- `AURUM_API_RATE_LIMIT_OVERRIDES` – per-path rps:burst (comma‑separated)
+- `AURUM_API_RATE_LIMIT_HEADER` – custom identifier header
+- `AURUM_API_RATE_LIMIT_WHITELIST` – comma‑separated identifiers to skip RL
+
+See also:
+- src/aurum/api/rate_limit_management.py (admin routes)
+- docs/README.md → Runtime configuration and Admin APIs
 """
 
 from __future__ import annotations

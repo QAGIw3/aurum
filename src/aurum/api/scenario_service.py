@@ -231,6 +231,13 @@ class PpaContractRecord:
 
 
 class BaseScenarioStore:
+    """Abstract scenario persistence contract used by the API layer.
+
+    Implementations should provide tenant‑aware CRUD for scenarios and their
+    runs plus a minimal PPA contract store. Stores are expected to enforce
+    idempotency for run creation (via input fingerprinting) and may support
+    additional features like optimistic concurrency when applicable.
+    """
     def create_scenario(
         self,
         tenant_id: str,
@@ -362,6 +369,13 @@ class BaseScenarioStore:
 
 
 class InMemoryScenarioStore(BaseScenarioStore):
+    """Simple, process‑local store useful for tests and ephemeral runs.
+
+    Data is kept in dictionaries keyed by identifiers. Run creation is
+    deduplicated using a deterministic fingerprint of inputs to ensure
+    idempotency. This backend is not durable and not safe for multi‑process
+    usage.
+    """
     def __init__(self) -> None:
         self._scenarios: Dict[str, ScenarioRecord] = {}
         self._runs: Dict[str, ScenarioRunRecord] = {}
@@ -748,6 +762,13 @@ class InMemoryScenarioStore(BaseScenarioStore):
 
 
 class PostgresScenarioStore(BaseScenarioStore):
+    """Postgres‑backed implementation with explicit tenant scoping.
+
+    The store uses per‑session `app.current_tenant` to scope reads/writes and
+    persists scenario definitions, assumptions, runs, and PPA contracts.
+    Where possible, it preserves idempotency by reusing prior runs with the
+    same version hash. All SQL uses parameter binding.
+    """
     def __init__(self, dsn: str) -> None:
         self._dsn = dsn
         # Lazy import psycopg to avoid hard dep in unit tests

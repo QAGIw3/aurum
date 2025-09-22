@@ -1,5 +1,13 @@
 from __future__ import annotations
 
+"""Render SeaTunnel job templates from environment variables with validation.
+
+The renderer resolves placeholders like ``${VAR}`` from the process env (with
+support for legacy aliases), validates key settings for correctness, and
+writes a fully materialized configuration file. Designed for use by CI/CD,
+Airflow tasks, and ad‑hoc operations.
+"""
+
 import argparse
 import os
 import re

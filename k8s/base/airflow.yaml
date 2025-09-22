@@ -23,7 +23,8 @@ spec:
           args:
             - |
               set -e
-              airflow db init
+              airflow db migrate
+              airflow connections create-default-connections
               airflow users create \
                 --role Admin \
                 --username "${AIRFLOW_ADMIN_USER}" \

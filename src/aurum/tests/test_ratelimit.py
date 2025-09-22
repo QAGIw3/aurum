@@ -1,3 +1,5 @@
+"""Unit tests covering API rate limiter behavior and edge cases."""
+
 import importlib.util
 import pathlib
 import sys

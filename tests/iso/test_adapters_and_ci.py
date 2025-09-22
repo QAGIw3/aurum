@@ -19,10 +19,16 @@ def _mk_chunk():
 
 def test_parse_pages_with_golden_samples(tmp_path: Path) -> None:
     # Mock the PostgresCheckpointStore to avoid database connection
-    with patch('aurum.external.collect.PostgresCheckpointStore') as mock_store_class:
+    with patch('aurum.external.collect.checkpoints.psycopg') as mock_psycopg, \
+         patch('aurum.external.collect.PostgresCheckpointStore') as mock_store_class:
+        mock_psycopg = MagicMock()
         mock_store = MagicMock()
         mock_store_class.return_value = mock_store
         mock_store._ensure_table = MagicMock()  # Mock the table creation
+        mock_store._connection_factory = MagicMock()
+        mock_store._manage_close = True
+        mock_store.get = MagicMock(return_value=None)  # Mock the get method
+        mock_store.set = MagicMock()  # Mock the set method
 
         # MISO
         miso = MisoAdapter(series_id="test.miso.lmp", kafka_topic="aurum.iso.miso.lmp.v1")

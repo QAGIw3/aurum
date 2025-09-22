@@ -4,6 +4,7 @@ This directory contains developer and operator documentation for the Aurum platf
 
 ## Getting Started
 
+- Architecture overview: architecture-overview.md
 - Architecture & deep dive: aurum-developer-documentation.md
 - API usage guide: api_usage_guide.md
 - Scenarios overview: scenarios.md
@@ -46,6 +47,7 @@ This directory contains developer and operator documentation for the Aurum platf
 ## Security
 
 - Tenant isolation and RLS: security/tenant-rls.md
+- API auth & RBAC: auth/api-auth.md
 - OIDC forward-auth setup: auth/oidc-forward-auth.md
 
 ## Observability

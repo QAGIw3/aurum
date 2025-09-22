@@ -1,5 +1,12 @@
 from __future__ import annotations
 
+"""API data models and validation helpers using Pydantic v2.
+
+Defines canonical response envelopes, error payloads, and request parameter
+schemas used across the HTTP surface. The models enforce strict validation and
+offer clear error messages while remaining serialization‑friendly for clients.
+"""
+
 from datetime import datetime, timedelta
 import datetime as dt
 from enum import Enum
@@ -281,8 +288,8 @@ class CurvePoint(AurumBaseModel):
     curve_key: str = Field(..., min_length=1, max_length=255)
     tenor_label: str = Field(..., min_length=1, max_length=100)
     tenor_type: Optional[str] = Field(None, max_length=50)
-    contract_month: Optional[datetime.date] = None
-    asof_date: datetime.date
+    contract_month: Optional[dt.date] = None
+    asof_date: dt.date
     mid: Optional[float] = None
     bid: Optional[float] = None
     ask: Optional[float] = None
@@ -345,10 +352,10 @@ class CurveDiffPoint(AurumBaseModel):
     curve_key: str = Field(..., min_length=1, max_length=255)
     tenor_label: str = Field(..., min_length=1, max_length=100)
     tenor_type: Optional[str] = Field(None, max_length=50)
-    contract_month: Optional[datetime.date] = None
-    asof_a: datetime.date
+    contract_month: Optional[dt.date] = None
+    asof_a: dt.date
     mid_a: Optional[float] = None
-    asof_b: datetime.date
+    asof_b: dt.date
     mid_b: Optional[float] = None
     diff_abs: Optional[float] = None
     diff_pct: Optional[float] = None
@@ -548,7 +555,7 @@ class SeriesCurveMappingSearchResponse(AurumBaseModel):
 class IsoLmpPoint(AurumBaseModel):
     iso_code: str
     market: str
-    delivery_date: datetime.date
+    delivery_date: dt.date
     interval_start: datetime
     interval_end: datetime | None = None
     interval_minutes: int | None = None
@@ -696,7 +703,7 @@ class DroughtIndexPoint(AurumBaseModel):
     dataset: str
     index: str
     timescale: str
-    valid_date: datetime.date
+    valid_date: dt.date
     as_of: datetime | None = None
     value: float | None = None
     unit: str | None = None
@@ -718,7 +725,7 @@ class DroughtUsdmPoint(AurumBaseModel):
     region_id: str
     region_name: str | None = None
     parent_region_id: str | None = None
-    valid_date: datetime.date
+    valid_date: dt.date
     as_of: datetime | None = None
     d0_frac: float | None = None
     d1_frac: float | None = None
@@ -843,13 +850,13 @@ ScenarioRunBulkResponse = _scenario_models.ScenarioRunBulkResponse
 class PpaValuationRequest(AurumBaseModel):
     ppa_contract_id: str
     scenario_id: Optional[str] = None
-    asof_date: Optional[datetime.date] = None
+    asof_date: Optional[dt.date] = None
     options: Optional[dict] = None
 
 
 class PpaMetric(AurumBaseModel):
-    period_start: datetime.date
-    period_end: datetime.date
+    period_start: dt.date
+    period_end: dt.date
     metric: str
     value: float
     currency: Optional[str] = None
@@ -896,10 +903,10 @@ class PpaContractListResponse(AurumBaseModel):
 
 
 class PpaValuationRecord(AurumBaseModel):
-    asof_date: datetime.date | None = None
+    asof_date: dt.date | None = None
     scenario_id: str | None = None
-    period_start: datetime.date | None = None
-    period_end: datetime.date | None = None
+    period_start: dt.date | None = None
+    period_end: dt.date | None = None
     metric: str | None = None
     value: float | None = None
     cashflow: float | None = None

@@ -115,7 +115,7 @@ paths:
         required: false
         schema:
           type: integer
-          maximum: 1000
+          maximum: 500
           minimum: 1
           default: 200
           title: Limit
@@ -278,7 +278,7 @@ paths:
         required: false
         schema:
           type: integer
-          maximum: 1000
+          maximum: 500
           minimum: 1
           default: 200
           title: Limit
@@ -406,9 +406,9 @@ paths:
         required: false
         schema:
           type: integer
-          maximum: 5000
+          maximum: 500
           minimum: 1
-          default: 1000
+          default: 500
           title: Per Dim Limit
       - name: prefix
         in: query
@@ -820,7 +820,7 @@ paths:
         required: false
         schema:
           type: integer
-          maximum: 2000
+          maximum: 500
           minimum: 1
           default: 500
           title: Limit
@@ -918,7 +918,7 @@ paths:
         required: false
         schema:
           type: integer
-          maximum: 2000
+          maximum: 500
           minimum: 1
           default: 500
           title: Limit
@@ -1016,7 +1016,7 @@ paths:
         required: false
         schema:
           type: integer
-          maximum: 2000
+          maximum: 500
           minimum: 1
           default: 500
           title: Limit
@@ -1077,7 +1077,7 @@ paths:
         required: false
         schema:
           type: integer
-          maximum: 1000
+          maximum: 500
           minimum: 1
           default: 200
           title: Limit
@@ -1305,7 +1305,7 @@ paths:
         required: false
         schema:
           type: integer
-          maximum: 2000
+          maximum: 500
           minimum: 1
           default: 200
           title: Limit
@@ -1569,7 +1569,7 @@ paths:
         required: false
         schema:
           type: integer
-          maximum: 1000
+          maximum: 500
           minimum: 1
           default: 200
           title: Limit
@@ -2105,7 +2105,7 @@ paths:
         required: false
         schema:
           type: integer
-          maximum: 1000
+          maximum: 500
           minimum: 1
           default: 100
           title: Limit
@@ -2444,7 +2444,7 @@ paths:
         required: false
         schema:
           type: integer
-          maximum: 1000
+          maximum: 500
           minimum: 1
           default: 200
           title: Limit
@@ -2575,7 +2575,7 @@ paths:
         required: false
         schema:
           type: integer
-          maximum: 1000
+          maximum: 500
           minimum: 1
           default: 200
           title: Limit
@@ -2668,7 +2668,7 @@ paths:
         required: false
         schema:
           type: integer
-          maximum: 1000
+          maximum: 500
           minimum: 1
           default: 200
           title: Limit
@@ -2816,7 +2816,7 @@ paths:
         required: false
         schema:
           type: integer
-          maximum: 5000
+          maximum: 500
           minimum: 1
           default: 250
           title: Limit
@@ -2887,7 +2887,7 @@ paths:
         required: false
         schema:
           type: integer
-          maximum: 5000
+          maximum: 500
           minimum: 1
           default: 250
           title: Limit
@@ -3113,7 +3113,7 @@ paths:
         required: false
         schema:
           type: integer
-          maximum: 1000
+          maximum: 500
           minimum: 1
           default: 100
           title: Limit
@@ -3199,7 +3199,7 @@ paths:
         required: false
         schema:
           type: integer
-          maximum: 10000
+          maximum: 500
           minimum: 1
           default: 500
           title: Limit
@@ -3291,6 +3291,7 @@ components:
             type: string
           type: array
           title: Data
+      additionalProperties: false
       type: object
       required:
       - meta
@@ -3305,6 +3306,7 @@ components:
             type: string
           type: array
           title: Data
+      additionalProperties: false
       type: object
       required:
       - meta
@@ -3318,6 +3320,7 @@ components:
         timezone:
           type: string
           title: Timezone
+      additionalProperties: false
       type: object
       required:
       - name
@@ -3332,6 +3335,7 @@ components:
             $ref: '#/components/schemas/CalendarOut'
           type: array
           title: Data
+      additionalProperties: false
       type: object
       required:
       - meta
@@ -3535,6 +3539,7 @@ components:
           type: integer
           minimum: 0.0
           title: Count
+      additionalProperties: false
       type: object
       required:
       - value
@@ -3591,6 +3596,7 @@ components:
             type: array
           - type: 'null'
           title: Tenor Type
+      additionalProperties: false
       type: object
       title: DimensionsCountData
     DimensionsData:
@@ -3644,6 +3650,7 @@ components:
             type: array
           - type: 'null'
           title: Tenor Type
+      additionalProperties: false
       type: object
       title: DimensionsData
     DimensionsResponse:
@@ -3656,6 +3663,7 @@ components:
           anyOf:
           - $ref: '#/components/schemas/DimensionsCountData'
           - type: 'null'
+      additionalProperties: false
       type: object
       required:
       - meta
@@ -3688,6 +3696,7 @@ components:
             type: string
           type: array
           title: Region Types
+      additionalProperties: false
       type: object
       required:
       - datasets
@@ -3702,6 +3711,7 @@ components:
           $ref: '#/components/schemas/Meta'
         data:
           $ref: '#/components/schemas/DroughtDimensions'
+      additionalProperties: false
       type: object
       required:
       - meta
@@ -3772,6 +3782,7 @@ components:
           - type: object
           - type: 'null'
           title: Metadata
+      additionalProperties: false
       type: object
       required:
       - series_id
@@ -3791,6 +3802,7 @@ components:
             $ref: '#/components/schemas/DroughtIndexPoint'
           type: array
           title: Data
+      additionalProperties: false
       type: object
       required:
       - meta
@@ -3803,6 +3815,7 @@ components:
         data:
           type: object
           title: Data
+      additionalProperties: false
       type: object
       required:
       - meta
@@ -3871,6 +3884,7 @@ components:
           - type: object
           - type: 'null'
           title: Metadata
+      additionalProperties: false
       type: object
       required:
       - region_type
@@ -3886,6 +3900,7 @@ components:
             $ref: '#/components/schemas/DroughtUsdmPoint'
           type: array
           title: Data
+      additionalProperties: false
       type: object
       required:
       - meta
@@ -3921,6 +3936,7 @@ components:
           - type: string
           - type: 'null'
           title: End Period
+      additionalProperties: false
       type: object
       required:
       - path
@@ -3975,6 +3991,7 @@ components:
           - type: string
           - type: 'null'
           title: Default Date Format
+      additionalProperties: false
       type: object
       required:
       - path
@@ -3988,6 +4005,7 @@ components:
           $ref: '#/components/schemas/Meta'
         data:
           $ref: '#/components/schemas/EiaDatasetDetailOut'
+      additionalProperties: false
       type: object
       required:
       - meta
@@ -4002,6 +4020,7 @@ components:
             $ref: '#/components/schemas/EiaDatasetBriefOut'
           type: array
           title: Data
+      additionalProperties: false
       type: object
       required:
       - meta
@@ -4065,6 +4084,7 @@ components:
             type: array
           - type: 'null'
           title: Source
+      additionalProperties: false
       type: object
       title: EiaSeriesDimensionsData
     EiaSeriesDimensionsResponse:
@@ -4073,6 +4093,7 @@ components:
           $ref: '#/components/schemas/Meta'
         data:
           $ref: '#/components/schemas/EiaSeriesDimensionsData'
+      additionalProperties: false
       type: object
       required:
       - meta
@@ -4179,6 +4200,7 @@ components:
             format: date-time
           - type: 'null'
           title: Ingest Ts
+      additionalProperties: false
       type: object
       required:
       - series_id
@@ -4194,6 +4216,7 @@ components:
             $ref: '#/components/schemas/EiaSeriesPoint'
           type: array
           title: Data
+      additionalProperties: false
       type: object
       required:
       - meta
@@ -4231,10 +4254,9 @@ components:
           type: string
           title: Series Id
           description: Series identifier
-        date:
+        observation_date:
           type: string
-          format: date
-          title: Date
+          title: Observation Date
           description: Observation date
         value:
           type: number
@@ -4250,7 +4272,7 @@ components:
       type: object
       required:
       - series_id
-      - date
+      - observation_date
       - value
       title: ExternalObservation
       description: External data observation.
@@ -4453,6 +4475,7 @@ components:
         sample_count:
           type: integer
           title: Sample Count
+      additionalProperties: false
       type: object
       required:
       - iso_code
@@ -4472,6 +4495,7 @@ components:
             $ref: '#/components/schemas/IsoLmpAggregatePoint'
           type: array
           title: Data
+      additionalProperties: false
       type: object
       required:
       - meta
@@ -4567,6 +4591,7 @@ components:
             type: object
           - type: 'null'
           title: Metadata
+      additionalProperties: false
       type: object
       required:
       - iso_code
@@ -4588,6 +4613,7 @@ components:
             $ref: '#/components/schemas/IsoLmpPoint'
           type: array
           title: Data
+      additionalProperties: false
       type: object
       required:
       - meta
@@ -4626,6 +4652,7 @@ components:
           - type: string
           - type: 'null'
           title: Timezone
+      additionalProperties: false
       type: object
       required:
       - iso
@@ -4637,6 +4664,7 @@ components:
           $ref: '#/components/schemas/Meta'
         data:
           $ref: '#/components/schemas/IsoLocationOut'
+      additionalProperties: false
       type: object
       required:
       - meta
@@ -4651,6 +4679,7 @@ components:
             $ref: '#/components/schemas/IsoLocationOut'
           type: array
           title: Data
+      additionalProperties: false
       type: object
       required:
       - meta
@@ -4717,6 +4746,7 @@ components:
         terms:
           type: object
           title: Terms
+      additionalProperties: false
       type: object
       title: PpaContractCreate
     PpaContractListResponse:
@@ -4728,6 +4758,7 @@ components:
             $ref: '#/components/schemas/PpaContractOut'
           type: array
           title: Data
+      additionalProperties: false
       type: object
       required:
       - meta
@@ -4757,6 +4788,7 @@ components:
           type: string
           format: date-time
           title: Updated At
+      additionalProperties: false
       type: object
       required:
       - ppa_contract_id
@@ -4770,6 +4802,7 @@ components:
           $ref: '#/components/schemas/Meta'
         data:
           $ref: '#/components/schemas/PpaContractOut'
+      additionalProperties: false
       type: object
       required:
       - meta
@@ -4787,6 +4820,7 @@ components:
           - type: object
           - type: 'null'
           title: Terms
+      additionalProperties: false
       type: object
       title: PpaContractUpdate
     PpaMetric:
@@ -4830,6 +4864,7 @@ components:
           - type: string
           - type: 'null'
           title: Tenor Type
+      additionalProperties: false
       type: object
       required:
       - period_start
@@ -4846,6 +4881,7 @@ components:
             $ref: '#/components/schemas/PpaValuationRecord'
           type: array
           title: Data
+      additionalProperties: false
       type: object
       required:
       - meta
@@ -4917,6 +4953,7 @@ components:
             format: date-time
           - type: 'null'
           title: Ingested At
+      additionalProperties: false
       type: object
       title: PpaValuationRecord
     PpaValuationRequest:
@@ -4940,6 +4977,7 @@ components:
           - type: object
           - type: 'null'
           title: Options
+      additionalProperties: false
       type: object
       required:
       - ppa_contract_id
@@ -4953,6 +4991,7 @@ components:
             $ref: '#/components/schemas/PpaMetric'
           type: array
           title: Data
+      additionalProperties: false
       type: object
       required:
       - meta
@@ -5462,6 +5501,7 @@ components:
           title: Is Active
           description: Whether this mapping is currently active
           default: true
+      additionalProperties: false
       type: object
       required:
       - external_provider
@@ -5478,6 +5518,7 @@ components:
             $ref: '#/components/schemas/SeriesCurveMappingOut'
           type: array
           title: Data
+      additionalProperties: false
       type: object
       required:
       - meta
@@ -5528,6 +5569,7 @@ components:
           type: string
           format: date-time
           title: Updated At
+      additionalProperties: false
       type: object
       required:
       - id
@@ -5553,6 +5595,7 @@ components:
             type: object
           type: array
           title: Data
+      additionalProperties: false
       type: object
       required:
       - meta
@@ -5587,6 +5630,7 @@ components:
           - type: 'null'
           title: Is Active
           description: Updated active status
+      additionalProperties: false
       type: object
       title: SeriesCurveMappingUpdate
       description: Model for updating series-curve mappings.
@@ -5605,6 +5649,7 @@ components:
           - type: string
           - type: 'null'
           title: Per Unit
+      additionalProperties: false
       type: object
       required:
       - units_raw
@@ -5621,6 +5666,7 @@ components:
             type: string
           type: array
           title: Units
+      additionalProperties: false
       type: object
       required:
       - currencies
@@ -5632,6 +5678,7 @@ components:
           $ref: '#/components/schemas/Meta'
         data:
           $ref: '#/components/schemas/UnitsCanonical'
+      additionalProperties: false
       type: object
       required:
       - meta
@@ -5646,6 +5693,7 @@ components:
             $ref: '#/components/schemas/UnitMappingOut'
           type: array
           title: Data
+      additionalProperties: false
       type: object
       required:
       - meta

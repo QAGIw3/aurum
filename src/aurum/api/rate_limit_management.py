@@ -1,4 +1,19 @@
-"""Rate limiting management endpoints for administrators."""
+"""Rate limiting management endpoints for administrators.
+
+Surface: `/v1/admin/ratelimit/*`
+
+Provides read/write helpers around quotas, rules, usage, and housekeeping:
+- `GET /quotas`, `GET /quotas/{tier}`, `POST /quotas/{tier}`
+- `GET /rules`, `POST /rules`
+- `GET /usage`, `GET /violations`
+- `POST /cleanup`, `POST /reset`
+- `GET /configuration`
+
+Notes:
+- Current implementation uses an in-memory manager stub; wire to durable storage
+  to persist changes in production.
+- All responses include `meta.request_id` and simple timing for observability.
+"""
 
 from __future__ import annotations
 

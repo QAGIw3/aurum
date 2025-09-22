@@ -1,3 +1,5 @@
+"""Admin/observability endpoint tests, including auth/metrics behavior."""
+
 import importlib.util
 import pathlib
 import sys

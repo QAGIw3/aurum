@@ -1,3 +1,5 @@
+"""Tests for parser validator utilities (schema, nulls, ranges, patterns)."""
+
 import asyncio
 import importlib.util
 import pathlib

@@ -51,10 +51,11 @@ diffs = client.compare_curves(
 ## 📚 Documentation
 
 ### API Reference
-- **Interactive Docs**: [https://api.aurum.local/docs](https://api.aurum.local/docs)
-- **OpenAPI Spec**: [openapi-spec.yaml](openapi-spec.yaml)
-- **Markdown Docs**: [api-docs.md](api-docs.md)
-- **HTML Docs**: [api-docs.html](api-docs.html)
+- Interactive Docs (server): https://api.aurum.local/docs
+- OpenAPI Spec (YAML): openapi-spec.yaml
+- Markdown Docs: api-docs.md
+- HTML (Redoc) Viewer: index.html
+- HTML (Swagger UI) Viewer: swagger.html
 
 ### Endpoints
 

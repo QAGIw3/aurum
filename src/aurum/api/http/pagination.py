@@ -1,9 +1,9 @@
 """Pagination utilities for the Aurum API.
 
-This module provides cursor-based pagination functionality including:
-- Cursor encoding/decoding
-- Pagination metadata generation
-- Offset-based pagination utilities (deprecated)
+Provides cursor-based pagination primitives (encoding/decoding, schema validation,
+and metadata helpers) and legacy offset helpers.
+
+See also: docs/pagination.md for behavior guarantees and examples.
 """
 
 from __future__ import annotations

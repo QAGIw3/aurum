@@ -1,6 +1,22 @@
 from __future__ import annotations
 
-"""Sliding-window rate limiting middleware with optional Redis backend."""
+"""Sliding-window rate limiting middleware with optional Redis backend.
+
+Features:
+- Per-path and per-tenant overrides (longest-prefix match)
+- Optional Redis-backed sliding window; falls back to in-memory windows
+- Standard headers: `X-RateLimit-{Limit,Remaining,Reset}` and 429 with `Retry-After`
+- Metrics (Prometheus) when `prometheus_client` is available
+
+Environment variables:
+- `AURUM_API_RATE_LIMIT_RPS` / `AURUM_API_RATE_LIMIT_BURST`
+- `AURUM_API_RATE_LIMIT_OVERRIDES` (e.g., "/v1/curves=20:40,/v1/metadata=50:100")
+- `AURUM_API_RATE_LIMIT_HEADER` (custom identifier header)
+- `AURUM_API_RATE_LIMIT_WHITELIST` (comma‑separated identifiers)
+
+See also:
+- docs/README.md → Runtime config for admin endpoints to update limits at runtime.
+"""
 
 import math
 import time

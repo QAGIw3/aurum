@@ -1193,6 +1193,12 @@ def list_curves(
     *,
     response: Response,
 ) -> CurveResponse:
+    """List curve observations with cursor pagination and optional CSV.
+
+    Supports forward (`cursor`/`since_cursor`) and backward (`prev_cursor`)
+    iteration using opaque tokens produced in `meta`. When `format=csv`, the
+    endpoint streams a CSV response with appropriate Cache-Control headers.
+    """
     request_id = _current_request_id()
     trino_cfg = _trino_config()
     base_cache_cfg = _cache_config()
@@ -2907,6 +2913,12 @@ def list_scenarios(
     created_after: Optional[datetime] = Query(None, description="Return scenarios created at or after this timestamp (ISO 8601)"),
     created_before: Optional[datetime] = Query(None, description="Return scenarios created at or before this timestamp (ISO 8601)"),
 ) -> ScenarioListResponse:
+    """List scenarios for the authenticated tenant with offset/cursor support.
+
+    Accepts optional filters (status, name, tag, created_{after,before}). When
+    the number of results equals `limit`, a `meta.next_cursor` is returned that
+    can be supplied via `cursor` on subsequent requests.
+    """
     if SCENARIO_LIST_REQUESTS:
         try:
             SCENARIO_LIST_REQUESTS.inc()
@@ -2948,6 +2960,7 @@ def list_scenarios(
 
 @router.post("/v1/scenarios", response_model=ScenarioResponse, status_code=201)
 def create_scenario(payload: CreateScenarioRequest, request: Request) -> ScenarioResponse:
+    """Create a new scenario for the resolved tenant and return its definition."""
     request_id = _current_request_id()
     tenant_id = _resolve_tenant(request, payload.tenant_id)
     record = ScenarioStore.create_scenario(
@@ -2964,6 +2977,7 @@ def create_scenario(payload: CreateScenarioRequest, request: Request) -> Scenari
 
 @router.get("/v1/scenarios/{scenario_id}", response_model=ScenarioResponse)
 def get_scenario(scenario_id: str, request: Request, response: Response) -> ScenarioResponse:
+    """Fetch a scenario by id with ETag support for conditional responses."""
     request_id = _current_request_id()
     tenant_id = _resolve_tenant_optional(request, None)
     record = ScenarioStore.get_scenario(scenario_id, tenant_id=tenant_id)
@@ -2978,6 +2992,7 @@ def get_scenario(scenario_id: str, request: Request, response: Response) -> Scen
 
 @router.delete("/v1/scenarios/{scenario_id}", status_code=204)
 def delete_scenario(scenario_id: str, request: Request) -> Response:
+    """Delete a scenario by id. Returns 204 when deletion succeeds."""
     tenant_id = _resolve_tenant(request, None)
     deleted = ScenarioStore.delete_scenario(scenario_id, tenant_id=tenant_id)
     if not deleted:
@@ -2998,6 +3013,7 @@ def list_scenario_runs(
     created_after: Optional[datetime] = Query(None, description="Return runs queued at or after this timestamp (ISO 8601)"),
     created_before: Optional[datetime] = Query(None, description="Return runs queued at or before this timestamp (ISO 8601)"),
 ) -> ScenarioRunListResponse:
+    """List runs for a scenario with cursor/offset pagination and time filters."""
     if SCENARIO_RUN_LIST_REQUESTS:
         try:
             SCENARIO_RUN_LIST_REQUESTS.inc()
@@ -3042,6 +3058,7 @@ def run_scenario(
     request: Request,
     options: ScenarioRunOptions | None = None,
 ) -> ScenarioRunResponse:
+    """Create or reuse a scenario run (idempotent by input fingerprint)."""
     request_id = _current_request_id()
     tenant_id = _resolve_tenant_optional(request, None)
     record = ScenarioStore.get_scenario(scenario_id, tenant_id=tenant_id)
@@ -3067,6 +3084,7 @@ def run_scenario(
 
 @router.get("/v1/scenarios/{scenario_id}/runs/{run_id}", response_model=ScenarioRunResponse)
 def get_scenario_run(scenario_id: str, run_id: str, request: Request, response: Response) -> ScenarioRunResponse:
+    """Fetch a specific run for a scenario; responds with ETag headers."""
     request_id = _current_request_id()
     tenant_id = _resolve_tenant_optional(request, None)
     run = ScenarioStore.get_run_for_scenario(scenario_id, run_id, tenant_id=tenant_id)
@@ -3085,6 +3103,7 @@ def update_scenario_run_state(
     request: Request,
     state: str = Query(..., pattern="^(QUEUED|RUNNING|SUCCEEDED|FAILED|CANCELLED)$"),
 ) -> ScenarioRunResponse:
+    """Update the state of an existing run (e.g., RUNNING, SUCCEEDED, FAILED)."""
     request_id = _current_request_id()
     tenant_id = _resolve_tenant_optional(request, None)
     run = ScenarioStore.update_run_state(run_id, state=state, tenant_id=tenant_id)
@@ -3098,6 +3117,7 @@ def update_scenario_run_state(
 
 @router.post("/v1/scenarios/runs/{run_id}/cancel", response_model=ScenarioRunResponse)
 def cancel_scenario_run(run_id: str, request: Request) -> ScenarioRunResponse:
+    """Cancel a run by id and return its updated state."""
     request_id = _current_request_id()
     tenant_id = _resolve_tenant_optional(request, None)
     run = ScenarioStore.update_run_state(run_id, state="CANCELLED", tenant_id=tenant_id)
@@ -3729,6 +3749,12 @@ def list_scenario_outputs(
         description="Set to 'csv' to stream results as CSV",
     ),
 ) -> ScenarioOutputResponse:
+    """List scenario outputs with hardened cursor pagination and CSV option.
+
+    Uses `cursor`/`since_cursor` for forward iteration and `prev_cursor` to
+    fetch the previous page. When `format=csv`, streams a CSV with `next_cursor`
+    and `prev_cursor` included in headers.
+    """
     if not _scenario_outputs_enabled():
         raise HTTPException(status_code=503, detail="Scenario outputs not enabled")
 
@@ -3874,6 +3900,11 @@ def list_scenario_metrics_latest(
         description="Cursor pointing to the previous page; obtained from meta.prev_cursor",
     ),
 ) -> ScenarioMetricLatestResponse:
+    """Return the latest metrics for a scenario with stable pagination.
+
+    Designed to fetch most recent metric points per curve/metric, with
+    `cursor` tokens enabling resumable iteration.
+    """
     if not _scenario_outputs_enabled():
         raise HTTPException(status_code=503, detail="Scenario outputs not enabled")
 

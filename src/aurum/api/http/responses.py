@@ -1,10 +1,12 @@
 """HTTP response utilities for the Aurum API.
 
-This module provides standardized response handling including:
-- ETag generation and conditional responses
-- CSV streaming responses
-- Error response formatting
-- Response metadata handling
+Standardized helpers for:
+- ETag generation + conditional responses (304)
+- CSV streaming responses with pagination headers
+- Cache-Control headers (`stale-while-revalidate`, `stale-if-error`)
+- Error envelope construction
+
+See also: docs/api_usage_guide.md for endpoint examples.
 """
 
 from __future__ import annotations

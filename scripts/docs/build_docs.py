@@ -67,6 +67,30 @@ def _write_simple_markdown(schema: dict, md_out: Path) -> None:
     md_out.write_text("\n".join(lines) + "\n")
 
 
+def _write_redoc_html(json_path: Path, html_out: Path) -> None:
+    """Write a Redoc HTML wrapper pointing at the given JSON spec.
+
+    The resulting HTML relies on the Redoc CDN and can be served statically.
+    """
+    rel = os.path.relpath(json_path, html_out.parent)
+    html = f"""<!doctype html>
+<html>
+  <head>
+    <meta charset=\"utf-8\"/>
+    <meta name=\"viewport\" content=\"width=device-width, initial-scale=1\"/>
+    <title>Aurum API – OpenAPI Reference</title>
+    <link rel=\"icon\" href=\"data:,\"/>
+    <style>body {{ margin: 0; padding: 0 }}</style>
+    <script src=\"https://cdn.redoc.ly/redoc/latest/bundles/redoc.standalone.js\"></script>
+  </head>
+  <body>
+    <redoc spec-url=\"{rel}\" expand-responses=\"200,201\" hide-download-button></redoc>
+  </body>
+</html>\n"""
+    html_out.parent.mkdir(parents=True, exist_ok=True)
+    html_out.write_text(html)
+
+
 def main() -> None:
     md_out = Path("docs/api/api-docs.md")
     json_out = Path("docs/api/openapi.json")
@@ -74,20 +98,28 @@ def main() -> None:
     yaml_src = Path("docs/api/openapi-spec.yaml")
 
     if create_app and OpenAPIGenerator:
-        app = create_app()  # May be sync or async
-        # Handle async create_app
-        if hasattr(app, "__await__"):
-            import asyncio
-            app = asyncio.run(app)  # type: ignore
-        generator = OpenAPIGenerator(app, title=app.title, version=app.version)
-        generator.generate_markdown_docs(str(md_out))
-        schema = generator.generate_schema()
-        json_out.parent.mkdir(parents=True, exist_ok=True)
-        json_out.write_text(json.dumps(schema, indent=2))
-        yaml_out.parent.mkdir(parents=True, exist_ok=True)
-        generator.save_schema(str(yaml_out), format_type=DocumentationFormat.YAML)
-        print("✅ API docs written from running app:")
-    else:
+        try:
+            app = create_app()  # May be sync or async
+            # Handle async create_app
+            if hasattr(app, "__await__"):
+                import asyncio
+                app = asyncio.run(app)  # type: ignore
+            generator = OpenAPIGenerator(app, title=app.title, version=app.version)
+            generator.generate_markdown_docs(str(md_out))
+            schema = generator.generate_schema()
+            json_out.parent.mkdir(parents=True, exist_ok=True)
+            json_out.write_text(json.dumps(schema, indent=2))
+            yaml_out.parent.mkdir(parents=True, exist_ok=True)
+            generator.save_schema(str(yaml_out), format_type=DocumentationFormat.YAML)
+            print("✅ API docs written from running app:")
+            # Also emit a Redoc HTML viewer
+            _write_redoc_html(json_out, Path("docs/api/api-docs.html"))
+            _write_redoc_html(json_out, Path("docs/api/index.html"))
+        except Exception as exc:
+            print(f"⚠️  Falling back to OpenAPI YAML due to app init failure: {exc}")
+            schema = None
+            # fall through to fallback path below
+    if not (create_app and OpenAPIGenerator) or schema is None:
         # Fallback: read existing OpenAPI YAML
         if not yaml_src.exists():
             raise SystemExit(
@@ -106,6 +138,9 @@ def main() -> None:
             json_out.parent.mkdir(parents=True, exist_ok=True)
             json_out.write_text(json.dumps(schema, indent=2))
             _write_simple_markdown(schema, md_out)
+            # Emit a Redoc HTML viewer against the generated JSON
+            _write_redoc_html(json_out, Path("docs/api/api-docs.html"))
+            _write_redoc_html(json_out, Path("docs/api/index.html"))
             print("✅ API docs written from OpenAPI spec:")
         else:
             md_out.parent.mkdir(parents=True, exist_ok=True)

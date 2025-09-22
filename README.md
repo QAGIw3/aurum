@@ -5,6 +5,7 @@ Developer-oriented scaffolding for the Aurum market intelligence platform.
 Quick links:
 - Docs index: docs/README.md
 - Onboarding guide: docs/onboarding.md
+- Architecture overview: docs/architecture-overview.md
 - Architecture & deep dive: docs/aurum-developer-documentation.md
 - Scenarios guide: docs/scenarios.md
 - Kubernetes developer flow: docs/k8s-dev.md
@@ -16,6 +17,8 @@ Quick links:
 - Tenant RLS/security: docs/security/tenant-rls.md
 - Runbooks (API, ingestion, worker): docs/runbooks/
 - Contributing guide: CONTRIBUTING.md
+ - Airflow guide: docs/airflow.md (variables: docs/airflow-variables.md)
+ - Audit logging: docs/observability/audit-logging.md
 
 ## Repository layout
 
@@ -131,6 +134,24 @@ python scripts/ingest/fx_rates_to_kafka.py --base EUR --symbols USD,GBP,JPY --bo
 ```
 
 The API queries `iceberg.market.curve_observation` via Trino and caches hot slices in Redis when `AURUM_API_REDIS_URL` is set.
+
+### API Auth Quickstart
+
+Enable OIDC/JWT and call an endpoint:
+
+```
+export AURUM_API_AUTH_DISABLED=0
+export AURUM_API_OIDC_ISSUER=https://login.example.com/realms/aurum
+export AURUM_API_OIDC_AUDIENCE=aurum-api
+export AURUM_API_OIDC_JWKS_URL=https://login.example.com/realms/aurum/protocol/openid-connect/certs
+
+TOKEN=eyJhbGciOi...
+TENANT=my-tenant
+curl -s -H "Authorization: Bearer $TOKEN" -H "X-Tenant-ID: $TENANT" \
+  "http://localhost:8095/v1/scenarios?limit=5"
+```
+
+See docs/auth/api-auth.md for details and troubleshooting.
 
 Observability and limits:
 - Metrics at `/metrics` (Prometheus format)

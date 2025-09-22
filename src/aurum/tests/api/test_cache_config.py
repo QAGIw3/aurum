@@ -1,3 +1,5 @@
+"""Tests for cache configuration parsing and Redis client resolution."""
+
 import builtins
 import importlib.util
 import pathlib

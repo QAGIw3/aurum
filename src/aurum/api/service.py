@@ -905,6 +905,12 @@ def _build_sql_scenario_outputs(
     cursor_before: Optional[Dict[str, Any]] = None,
     descending: bool = False,
 ) -> str:
+    """Build SQL for scenario outputs with keyset pagination.
+
+    Uses `iceberg.market.scenario_output_latest` as the base. When a cursor is
+    provided, applies a keyset clause over `SCENARIO_OUTPUT_ORDER_COLUMNS`.
+    If `cursor_before` is set, comparison is flipped and `offset` is reset to 0.
+    """
     base = "iceberg.market.scenario_output_latest"
     filters: Dict[str, Optional[str]] = {
         "tenant_id": tenant_id,
@@ -954,6 +960,13 @@ def query_scenario_outputs(
     cursor_before: Optional[Dict[str, Any]] = None,
     descending: bool = False,
 ) -> Tuple[List[Dict[str, Any]], float]:
+    """Execute scenario outputs query with optional caching.
+
+    - Builds SQL via `_build_sql_scenario_outputs` with cursor/offset semantics
+    - Uses a Redis versioned key (`scenario-outputs:v{N}`) to avoid stale reads
+      after writes and a singleflight guard to collapse concurrent cache misses
+    - Returns (rows, elapsed_ms)
+    """
     if not tenant_id:
         raise ValueError("tenant_id is required")
 
