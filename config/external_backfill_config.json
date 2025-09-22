@@ -1,0 +1,94 @@
+{
+  "providers": [
+    {
+      "name": "fred",
+      "datasets": [
+        "DGS10",
+        "DGS5",
+        "DGS2",
+        "DGS1",
+        "DEXUSEU",
+        "DEXJPUS",
+        "DEXUSUK",
+        "UNRATE",
+        "CPIAUCSL",
+        "SP500",
+        "DJIA",
+        "VIX",
+        "DFF",
+        "MORTGAGE30US"
+      ],
+      "start_date": "2020-01-01",
+      "end_date": "2024-01-01",
+      "priority": "high",
+      "max_workers": 4,
+      "batch_size": 1000,
+      "rate_limit_rps": 2,
+      "daily_quota": 1000
+    },
+    {
+      "name": "eia",
+      "datasets": [
+        "PET.W_EPC0_SAX_Y05LA_DPG.W",
+        "PET.W_EPC0_SAX_Y44MB_DPG.W",
+        "NG.NW2_EPG0_SAX_Y05LA_MMCF.M"
+      ],
+      "start_date": "2020-01-01",
+      "end_date": "2024-01-01",
+      "priority": "high",
+      "max_workers": 2,
+      "batch_size": 2000,
+      "rate_limit_rps": 1,
+      "daily_quota": 1000
+    },
+    {
+      "name": "noaa",
+      "datasets": [
+        "CDO.TAVG",
+        "CDO.TMAX",
+        "CDO.TMIN",
+        "CDO.PRCP"
+      ],
+      "start_date": "2020-01-01",
+      "end_date": "2024-01-01",
+      "priority": "medium",
+      "max_workers": 8,
+      "batch_size": 500,
+      "rate_limit_rps": 1,
+      "daily_quota": 1000
+    },
+    {
+      "name": "worldbank",
+      "datasets": [
+        "NY.GDP.MKTP.CD",
+        "SP.POP.TOTL",
+        "EN.ATM.CO2E.KT"
+      ],
+      "start_date": "2020-01-01",
+      "end_date": "2024-01-01",
+      "priority": "low",
+      "max_workers": 4,
+      "batch_size": 1000,
+      "rate_limit_rps": 1,
+      "daily_quota": null
+    }
+  ],
+  "scheduling": {
+    "max_concurrent_backfills": 2,
+    "priority_order": ["high", "medium", "low"],
+    "retry_failed_datasets": true,
+    "resume_from_checkpoint": true
+  },
+  "quality": {
+    "run_validation": true,
+    "validation_threshold": 0.9,
+    "require_lineage_tracking": true,
+    "generate_quality_reports": true
+  },
+  "performance": {
+    "memory_limit_gb": 8,
+    "cpu_limit": 4,
+    "timeout_hours": 8,
+    "progress_reporting_interval_minutes": 30
+  }
+}
