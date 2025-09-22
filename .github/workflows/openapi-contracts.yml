@@ -176,15 +176,17 @@ jobs:
     steps:
     - name: Notify team of contract changes
       run: |
-        echo "Contract validation failed. Please review:"
-        echo "- OpenAPI breaking changes"
-        echo "- Avro schema compatibility issues"
-        echo "- API contract violations"
+        echo "Contract validation failed. Please review the following checks:"
+        echo "- OpenAPI lint/structure/examples/security (Spectral + custom checks)"
+        echo "- Avro schema compatibility"
+        echo "- API contract tests"
+        echo "\nTips:"
+        echo "- Regenerate spec: make docs-openapi && make docs-openapi-validate"
+        echo "- See CI artifacts from 'Build Documentation' and 'OpenAPI Generate and Validate' jobs"
 
         # This would integrate with Slack, Teams, or other notification systems
         # Example Slack notification (if webhook configured)
         if [ -n "$SLACK_WEBHOOK_URL" ]; then
-          curl -X POST -H 'Content-type: application/json' \
-            --data '{"text":"⚠️ API Contract Validation Failed - Manual review required"}' \
-            $SLACK_WEBHOOK_URL
+          payload='{"text":"⚠️ API Contract Validation Failed. Check OpenAPI validation, Avro compatibility, and API contract tests. See CI artifacts for details."}'
+          curl -X POST -H 'Content-type: application/json' --data "$payload" "$SLACK_WEBHOOK_URL"
         fi

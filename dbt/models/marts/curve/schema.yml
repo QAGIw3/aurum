@@ -1,0 +1,203 @@
+version: 2
+models:
+- name: dim_iso
+  description: Canonical ISO/RTO dimension with metadata used by curve facts.
+  columns:
+  - name: iso_sk
+    tests:
+    - not_null
+    - unique
+  - name: iso_code
+    tests:
+    - not_null
+    - unique
+  - name: default_timezone
+    tests:
+    - not_null
+- name: dim_market
+  description: ISO market dimension aligning run types with settlement intervals.
+  tests:
+  - unique_combination:
+      combination_of_columns:
+      - iso_code
+      - market_code
+  columns:
+  - name: market_sk
+    tests:
+    - not_null
+    - unique
+  - name: iso_sk
+    tests:
+    - not_null
+    - relationships:
+        to: ref('dim_iso')
+        field: iso_sk
+        to_field: iso_sk
+  - name: settlement_interval_minutes
+    tests:
+    - not_null
+- name: dim_block
+  description: Standard block dimension capturing peak/off-peak groupings.
+  columns:
+  - name: block_sk
+    tests:
+    - not_null
+    - unique
+  - name: block_code
+    tests:
+    - not_null
+    - unique
+- name: dim_product
+  description: Product dimension enumerating curve instrument definitions.
+  columns:
+  - name: product_sk
+    tests:
+    - not_null
+    - unique
+  - name: product_code
+    tests:
+    - not_null
+    - unique
+  - name: tenor_type
+    tests:
+    - not_null
+- name: dim_asof
+  description: As-of calendar dimension generated from curve observations.
+  columns:
+  - name: asof_sk
+    tests:
+    - not_null
+    - unique
+  - name: asof_date
+    tests:
+    - not_null
+    - unique
+- name: fct_curve_observation
+  description: Canonical curve fact table joining dimensions for downstream marts.
+  tests:
+  - unique_combination:
+      combination_of_columns:
+      - curve_key
+      - tenor_label
+      - asof_date
+  columns:
+  - name: curve_key
+    tests:
+    - not_null
+  - name: tenor_label
+    tests:
+    - not_null
+  - name: asof_date
+    tests:
+    - not_null
+    - relationships:
+        to: ref('dim_asof')
+        field: asof_date
+        to_field: asof_date
+  - name: iso_sk
+    tests:
+    - relationships:
+        to: ref('dim_iso')
+        field: iso_sk
+        to_field: iso_sk
+  - name: market_sk
+    tests:
+    - relationships:
+        to: ref('dim_market')
+        field: market_sk
+        to_field: market_sk
+  - name: product_sk
+    tests:
+    - relationships:
+        to: ref('dim_product')
+        field: product_sk
+        to_field: product_sk
+  - name: block_sk
+    tests:
+    - relationships:
+        to: ref('dim_block')
+        field: block_sk
+        to_field: block_sk
+  - name: mid
+    tests:
+    - not_null
+  - name: currency
+    tests:
+    - not_null
+  - name: lineage_tags
+    description: Pipe-delimited lineage tag string (source|topic|table|fact).
+    tests:
+    - not_null
+- name: mart_curve_asof_diff
+  description: Precomputed as-of deltas for curve observations to power diff APIs.
+  tests:
+  - unique_combination:
+      combination_of_columns:
+      - curve_key
+      - tenor_label
+      - current_asof_date
+  columns:
+  - name: current_asof_date
+    tests:
+    - not_null
+  - name: compare_asof_date
+    tests:
+    - not_null
+  - name: delta_mid
+    description: Difference between current and comparison mid values.
+- name: mart_curve_dead_letter_summary
+  description: Daily dead-letter summary for dashboards and alerting.
+  columns:
+  - name: source
+    tests:
+    - not_null
+  - name: severity
+    tests:
+    - not_null
+  - name: ingest_day
+    tests:
+    - not_null
+- name: publish_curve_observation
+  description: Incremental publish step that materializes the canonical curve table
+    from landing data.
+  tests:
+  - unique_combination:
+      combination_of_columns:
+      - curve_key
+      - tenor_label
+      - asof_date
+  meta:
+    notes: Add data tests for measurement tolerance once Iceberg fixtures are available.
+- name: mart_curve_latest
+  description: Business mart exposing the latest available curve per identity and
+    tenor.
+  tests:
+  - unique_combination:
+      combination_of_columns:
+      - curve_key
+      - tenor_label
+  columns:
+  - name: curve_key
+    tests:
+    - not_null
+    - relationships:
+        to: ref('int_curve_monthly')
+        field: curve_key
+        to_field: curve_key
+  - name: tenor_type
+    tests:
+    - accepted_values:
+        values:
+        - MONTHLY
+        - QUARTER
+        - SEASON
+        - CALENDAR
+        - STRIP
+        - CUSTOM
+  - name: mid
+    tests:
+    - not_null
+  - name: currency
+    description: Currency associated with the curve mid price.
+  - name: per_unit
+    description: Unit denominator associated with the curve mid price.

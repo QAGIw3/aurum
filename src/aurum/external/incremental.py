@@ -154,20 +154,20 @@ class IncrementalProcessor:
             raise ValueError(f"Unsupported provider: {provider}")
 
     async def _create_eia_processor(self, catalog_collector: ExternalCollector, obs_collector: ExternalCollector) -> Any:
-        """Create EIA incremental processor (stub)."""
-        return _StubProviderProcessor("eia", catalog_collector, obs_collector, self._checkpoint_store)
+        """Create EIA incremental processor."""
+        return _EiaIncrementalProcessor(catalog_collector, obs_collector, self._checkpoint_store)
 
     async def _create_fred_processor(self, catalog_collector: ExternalCollector, obs_collector: ExternalCollector) -> Any:
         """Create FRED incremental processor."""
         return _FredIncrementalProcessor(catalog_collector, obs_collector, self._checkpoint_store)
 
     async def _create_noaa_processor(self, catalog_collector: ExternalCollector, obs_collector: ExternalCollector) -> Any:
-        """Create NOAA incremental processor (stub)."""
-        return _StubProviderProcessor("noaa", catalog_collector, obs_collector, self._checkpoint_store)
+        """Create NOAA incremental processor."""
+        return _NoaaIncrementalProcessor(catalog_collector, obs_collector, self._checkpoint_store)
 
     async def _create_worldbank_processor(self, catalog_collector: ExternalCollector, obs_collector: ExternalCollector) -> Any:
-        """Create WorldBank incremental processor (stub)."""
-        return _StubProviderProcessor("worldbank", catalog_collector, obs_collector, self._checkpoint_store)
+        """Create WorldBank incremental processor."""
+        return _WorldBankIncrementalProcessor(catalog_collector, obs_collector, self._checkpoint_store)
 
     async def _execute_incremental_update(self, processor: Any) -> Dict[str, Any]:
         """Execute the incremental update process (provider-specific)."""
@@ -261,6 +261,200 @@ class _FredIncrementalProcessor:
 
         return {
             "provider": "fred",
+            "datasets": len(datasets),
+            "catalog_records": total_catalog,
+            "observation_records": total_obs,
+            "errors": errors,
+        }
+
+
+class _EiaIncrementalProcessor:
+    """Incremental processor for EIA datasets.
+
+    Loads configured datasets, respects per-series checkpoints, and emits
+    catalog + observation records within a recent window.
+    """
+
+    def __init__(
+        self,
+        catalog_collector: ExternalCollector,
+        obs_collector: ExternalCollector,
+        checkpoint_store: Any,
+    ) -> None:
+        self.catalog = catalog_collector
+        self.obs = obs_collector
+        self.checkpoints = checkpoint_store
+
+    async def run(self, *, window_hours: int, max_records: int) -> Dict[str, Any]:
+        import os
+        from datetime import datetime, timedelta, timezone
+
+        api_key = os.getenv("EIA_API_KEY")
+        base_url = os.getenv("EIA_API_BASE_URL", "https://api.eia.gov/v2/")
+
+        http = _build_http_collector("eia-http", base_url)
+        api_client = EiaApiClient(http, api_key=api_key or "")
+
+        datasets = load_eia_dataset_configs()
+
+        total_catalog = 0
+        total_obs = 0
+        errors = 0
+
+        window_start = datetime.now(timezone.utc) - timedelta(hours=max(1, window_hours))
+
+        for ds in datasets:
+            try:
+                collector = EiaCollector(
+                    ds,
+                    api_client=api_client,
+                    catalog_collector=self.catalog,
+                    observation_collector=self.obs,
+                    checkpoint_store=self.checkpoints,
+                )
+                total_catalog += collector.sync_catalog()
+                total_obs += collector.ingest_observations(start=window_start)
+            except Exception:
+                errors += 1
+
+        try:
+            self.catalog.flush()
+        except Exception:
+            pass
+        try:
+            self.obs.flush()
+        except Exception:
+            pass
+
+        return {
+            "provider": "eia",
+            "datasets": len(datasets),
+            "catalog_records": total_catalog,
+            "observation_records": total_obs,
+            "errors": errors,
+        }
+
+
+class _NoaaIncrementalProcessor:
+    """Incremental processor for NOAA CDO datasets with rate-limit and quota support."""
+
+    def __init__(
+        self,
+        catalog_collector: ExternalCollector,
+        obs_collector: ExternalCollector,
+        checkpoint_store: Any,
+    ) -> None:
+        self.catalog = catalog_collector
+        self.obs = obs_collector
+        self.checkpoints = checkpoint_store
+
+    async def run(self, *, window_hours: int, max_records: int) -> Dict[str, Any]:
+        import os
+        from datetime import datetime, timedelta, timezone
+
+        token = os.getenv("NOAA_GHCND_TOKEN")
+        base_url = os.getenv("NOAA_API_BASE_URL", "https://www.ncdc.noaa.gov/cdo-web/api/v2")
+        rate = float(os.getenv("NOAA_RATE_LIMIT_RPS", "5"))
+        daily_quota = os.getenv("NOAA_DAILY_QUOTA")
+        quota_limit = int(daily_quota) if daily_quota else 0
+
+        http = _build_http_collector("noaa-http", base_url)
+        rate_limiter = NoaaRateLimiter(rate_per_sec=rate)
+        quota = DailyQuota(limit=quota_limit) if quota_limit else None
+        api_client = NoaaApiClient(http, token=token or "", rate_limiter=rate_limiter, quota=quota, base_url=base_url)
+
+        datasets = load_noaa_dataset_configs()
+
+        total_catalog = 0
+        total_obs = 0
+        errors = 0
+
+        window_start = datetime.now(timezone.utc) - timedelta(hours=max(1, window_hours))
+
+        for ds in datasets:
+            try:
+                collector = NoaaCollector(
+                    ds,
+                    api_client=api_client,
+                    catalog_collector=self.catalog,
+                    observation_collector=self.obs,
+                    checkpoint_store=self.checkpoints,
+                )
+                total_catalog += collector.sync_catalog()
+                # NOAA collector takes day windows; pass start and let collector deduce proper range
+                total_obs += collector.ingest_observations(start=window_start)
+            except Exception:
+                errors += 1
+
+        try:
+            self.catalog.flush()
+        except Exception:
+            pass
+        try:
+            self.obs.flush()
+        except Exception:
+            pass
+
+        return {
+            "provider": "noaa",
+            "datasets": len(datasets),
+            "catalog_records": total_catalog,
+            "observation_records": total_obs,
+            "errors": errors,
+        }
+
+
+class _WorldBankIncrementalProcessor:
+    """Incremental processor for World Bank indicators."""
+
+    def __init__(
+        self,
+        catalog_collector: ExternalCollector,
+        obs_collector: ExternalCollector,
+        checkpoint_store: Any,
+    ) -> None:
+        self.catalog = catalog_collector
+        self.obs = obs_collector
+        self.checkpoints = checkpoint_store
+
+    async def run(self, *, window_hours: int, max_records: int) -> Dict[str, Any]:
+        import os
+
+        base_url = os.getenv("WORLD_BANK_API_BASE_URL", "https://api.worldbank.org/v2")
+        http = _build_http_collector("worldbank-http", base_url)
+        api_client = WorldBankApiClient(http, base_url=base_url)
+
+        datasets = load_worldbank_dataset_configs()
+
+        total_catalog = 0
+        total_obs = 0
+        errors = 0
+
+        for ds in datasets:
+            try:
+                collector = WorldBankCollector(
+                    ds,
+                    api_client=api_client,
+                    catalog_collector=self.catalog,
+                    observation_collector=self.obs,
+                    checkpoint_store=self.checkpoints,
+                )
+                total_catalog += collector.sync_catalog()
+                total_obs += collector.ingest_observations()
+            except Exception:
+                errors += 1
+
+        try:
+            self.catalog.flush()
+        except Exception:
+            pass
+        try:
+            self.obs.flush()
+        except Exception:
+            pass
+
+        return {
+            "provider": "worldbank",
             "datasets": len(datasets),
             "catalog_records": total_catalog,
             "observation_records": total_obs,

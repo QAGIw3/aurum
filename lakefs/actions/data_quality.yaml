@@ -1,0 +1,48 @@
+actions:
+  validate_raw_precommit:
+    on:
+      - pre-commit
+    hooks:
+      - id: ge-raw-landing
+        type: executable
+        description: Validate raw curve landing data before committing to lakeFS.
+        properties:
+          executable: hooks/run_ge_for_lakefs_event.py
+          args:
+            - --prefix
+            - raw/curve_landing
+            - --suite
+            - ge/expectations/curve_landing.json
+            - --suite-name
+            - curve_landing_precommit
+            - --allow-empty
+  validate_raw_and_curated_premerge:
+    on:
+      - pre-merge
+    hooks:
+      - id: ge-premerge-raw
+        type: executable
+        description: Re-run raw landing Great Expectations suite prior to merge.
+        properties:
+          executable: hooks/run_ge_for_lakefs_event.py
+          args:
+            - --prefix
+            - raw/curve_landing
+            - --suite
+            - ge/expectations/curve_landing.json
+            - --suite-name
+            - curve_landing_premerge
+            - --allow-empty
+      - id: ge-premerge-curated
+        type: executable
+        description: Validate curated curve observation table before merge.
+        properties:
+          executable: hooks/run_ge_for_lakefs_event.py
+          args:
+            - --prefix
+            - market/curve_observation
+            - --suite
+            - ge/expectations/publish_curve_observation.json
+            - --suite-name
+            - curve_observation_premerge
+            - --allow-empty

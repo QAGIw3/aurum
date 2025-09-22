@@ -3,9 +3,9 @@
 from __future__ import annotations
 
 from enum import Enum
-from typing import Literal, Optional
+from typing import Any, Literal, Optional
 
-from pydantic import BaseModel, Field, root_validator
+from pydantic import BaseModel, Field, model_validator
 
 
 class DriverType(str, Enum):
@@ -55,9 +55,9 @@ class ScenarioAssumption(BaseModel):
     payload: dict
     version: Optional[str] = None
 
-    @root_validator(pre=True, skip_on_failure=True)
+    @model_validator(mode="before")
     @classmethod
-    def _validate_payload(cls, values) -> dict:
+    def _validate_payload(cls, values: dict[str, Any]) -> dict[str, Any]:
         driver_type: DriverType = values.get("driver_type")
         payload_data: dict = values.get("payload", {})
         model = _PAYLOAD_MODELS.get(driver_type)

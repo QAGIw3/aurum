@@ -1,0 +1,165 @@
+version: 2
+models:
+- name: stg_curve_landing
+  description: Staging model that normalizes landing rows and retains quarantine context.
+  tests:
+  - unique_combination:
+      combination_of_columns:
+      - curve_key
+      - tenor_label
+      - _ingest_ts
+  columns:
+  - name: asset_class
+    description: Asset class emitted by the upstream ingestion feed.
+    tests:
+    - accepted_values:
+        values:
+        - power
+        - renewable
+        - gas
+        - carbon
+        - storage
+        - other
+  - name: price_type
+    description: Price classification provided by the vendor feed.
+    tests:
+    - accepted_values:
+        values:
+        - MID
+        - BID
+        - ASK
+        - LAST
+        - SETTLE
+        - INDEX
+        - STRIP
+        - CUSTOM
+  - name: tenor_type
+    tests:
+    - accepted_values:
+        values:
+        - MONTHLY
+        - QUARTER
+        - SEASON
+        - CALENDAR
+        - STRIP
+        - CUSTOM
+  - name: currency
+    tests:
+    - not_null
+  - name: per_unit
+    tests:
+    - not_null
+  - name: iso
+    tests:
+    - not_null
+  - name: market
+    tests:
+    - not_null
+  - name: product
+    tests:
+    - not_null
+  - name: block
+    tests:
+    - not_null
+  - name: curve_key
+    tests:
+    - not_null
+    - relationships:
+        to: source('iceberg_raw', 'curve_landing')
+        field: curve_key
+        to_field: curve_key
+  - name: _ingest_ts
+    tests:
+    - not_null
+- name: stg_curve_quarantine
+  description: Filtered view of landing rows that were quarantined with reasons attached.
+  tests:
+  - unique_combination:
+      combination_of_columns:
+      - curve_key
+      - tenor_label
+      - _ingest_ts
+  columns:
+  - name: curve_key
+    tests:
+    - not_null
+    - relationships:
+        to: ref('stg_curve_landing')
+        field: curve_key
+        to_field: curve_key
+  - name: quarantine_reason
+    tests:
+    - not_null
+- name: stg_curve_observation
+  description: Staging model that harmonizes curve observations for downstream consumption.
+  tests:
+  - unique_combination:
+      combination_of_columns:
+      - curve_key
+      - tenor_label
+      - asof_date
+  columns:
+  - name: curve_key
+    tests:
+    - not_null
+    - relationships:
+        to: ref('stg_curve_landing')
+        field: curve_key
+        to_field: curve_key
+  - name: tenor_label
+    tests:
+    - not_null
+  - name: currency
+    description: Normalized currency code for the curve price.
+  - name: per_unit
+    description: Normalized unit denominator for the curve price.
+  - name: iso
+    tests:
+    - not_null
+    - relationships:
+        to: ref('dim_iso')
+        field: iso
+        to_field: iso_code
+  - name: market
+    tests:
+    - relationships:
+        to: ref('dim_market')
+        field: market
+        to_field: market_code
+  - name: product
+    tests:
+    - relationships:
+        to: ref('dim_product')
+        field: product
+        to_field: product_code
+  - name: block
+    tests:
+    - relationships:
+        to: ref('dim_block')
+        field: block
+        to_field: block_code
+- name: stg_curve_dead_letter
+  description: Dead letter staging view capturing failed curve records and schema
+    drift context.
+  tests:
+  - unique_combination:
+      combination_of_columns:
+      - source
+      - ingest_ts
+      - error_message
+  columns:
+  - name: source
+    tests:
+    - not_null
+  - name: severity
+    tests:
+    - not_null
+    - accepted_values:
+        values:
+        - INFO
+        - WARN
+        - ERROR
+        - CRITICAL
+  - name: ingest_ts
+    tests:
+    - not_null

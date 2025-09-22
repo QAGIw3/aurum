@@ -122,34 +122,31 @@ def correlation_context(
     user_id: Optional[str] = None,
     session_id: Optional[str] = None,
 ) -> Iterator[Dict[str, Optional[str]]]:
-    """Context manager that temporarily sets all correlation identifiers."""
+    """Temporarily bind correlation, tenant, user, and session identifiers.
+
+    Ensures that each context variable is reset to its previous value on exit,
+    even if an exception occurs inside the context manager.
+    """
     import uuid
 
     correlation_id = correlation_id or str(uuid.uuid4())
-    tokens = []
 
-    tokens.append(set_correlation_id(correlation_id))
-    tokens.append(set_tenant_id(tenant_id or "unknown"))
-    tokens.append(set_user_id(user_id or "unknown"))
-    tokens.append(set_session_id(session_id or correlation_id))
-
-    context = get_context()
+    # Capture tokens along with their corresponding reset functions
+    tokens: list[tuple[callable, Token]] = []
+    tokens.append((reset_correlation_id, set_correlation_id(correlation_id)))
+    tokens.append((reset_tenant_id, set_tenant_id(tenant_id or "unknown")))
+    tokens.append((reset_user_id, set_user_id(user_id or "unknown")))
+    tokens.append((reset_session_id, set_session_id(session_id or correlation_id)))
 
     try:
-        yield context
+        yield get_context()
     finally:
-        # Reset in reverse order
-        for token in reversed(tokens):
+        # Reset in reverse order of setting
+        for reset_fn, token in reversed(tokens):
             try:
-                if token is not None:
-                    reset_correlation_id(token)
-                elif token is not None:
-                    reset_tenant_id(token)
-                elif token is not None:
-                    reset_user_id(token)
-                else:
-                    reset_session_id(token)
+                reset_fn(token)
             except Exception:
+                # Never raise from cleanup
                 pass
 
 

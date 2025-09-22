@@ -162,7 +162,7 @@ def _stable_dumps(payload: Dict[str, Any]) -> str:
 
 def _assumption_to_payload(assumption: ScenarioAssumption) -> Dict[str, Any]:
     try:
-        return assumption.dict()
+        return assumption.model_dump()
     except AttributeError:  # pragma: no cover - defensive path for non-pydantic
         return dict(assumption)  # type: ignore[arg-type]
 

@@ -9,16 +9,21 @@ This module provides standardized response handling including:
 
 from __future__ import annotations
 
+import asyncio
 import csv
 import hashlib
 import io
 import json
+from collections.abc import AsyncIterable, AsyncIterator, Iterable, Mapping, Sequence
 from datetime import date, datetime
 from decimal import Decimal
-from typing import Any, Dict, Iterable, Mapping, Optional, Sequence
+from typing import Any, Dict, Optional
 
 from fastapi import HTTPException, Request, Response
 from fastapi.responses import StreamingResponse
+
+DEFAULT_CACHE_SECONDS = 60
+_MAX_STALE_IF_ERROR_SECONDS = 86_400
 
 
 def model_dump(value: Any) -> Dict[str, Any]:
@@ -30,13 +35,35 @@ def model_dump(value: Any) -> Dict[str, Any]:
     Returns:
         Dictionary representation of the value
     """
-    if hasattr(value, "model_dump"):
-        return value.model_dump()  # type: ignore[attr-defined]
-    if hasattr(value, "dict"):
-        return value.dict()  # type: ignore[attr-defined]
-    if isinstance(value, dict):
+    dump_method = getattr(value, "model_dump", None)
+    if callable(dump_method):
+        return dump_method()
+    if isinstance(value, Mapping):
         return value
-    return dict(value)  # type: ignore[arg-type]
+    try:
+        return dict(value)
+    except TypeError as exc:  # pragma: no cover - defensive
+        raise TypeError(f"Unsupported payload type for serialization: {type(value)!r}") from exc
+
+
+def build_cache_control_header(cache_seconds: int) -> str:
+    """Return a standards-compliant Cache-Control header string.
+
+    Args:
+        cache_seconds: Desired max-age in seconds. Zero disables caching.
+
+    Returns:
+        Cache-Control header value.
+    """
+    if cache_seconds <= 0:
+        return "no-store"
+    stale_while_revalidate = min(max(cache_seconds // 2, 1), 600)
+    stale_if_error = min(cache_seconds * 3, _MAX_STALE_IF_ERROR_SECONDS)
+    return (
+        f"public, max-age={cache_seconds}, "
+        f"stale-while-revalidate={stale_while_revalidate}, "
+        f"stale-if-error={stale_if_error}"
+    )
 
 
 def compute_etag(payload: Dict[str, Any]) -> str:
@@ -58,6 +85,8 @@ def respond_with_etag(
     response: Response,
     *,
     extra_headers: Optional[Dict[str, str]] = None,
+    cache_seconds: Optional[int] = DEFAULT_CACHE_SECONDS,
+    cache_control: Optional[str] = None,
 ) -> Any:
     """Add ETag header and handle conditional requests.
 
@@ -66,6 +95,8 @@ def respond_with_etag(
         request: FastAPI request object
         response: FastAPI response object
         extra_headers: Additional headers to set
+        cache_seconds: TTL used to build Cache-Control header; ``None`` disables automatic header
+        cache_control: Explicit Cache-Control header value (takes precedence over ``cache_seconds``)
 
     Returns:
         304 Response if ETag matches, otherwise original model with ETag header
@@ -75,16 +106,22 @@ def respond_with_etag(
     etag = compute_etag(etag_payload)
     incoming = request.headers.get("if-none-match")
 
+    headers: Dict[str, str] = {}
+    if extra_headers:
+        headers.update(extra_headers)
+
+    if cache_control:
+        headers.setdefault("Cache-Control", cache_control)
+    elif cache_seconds is not None:
+        headers.setdefault("Cache-Control", build_cache_control_header(cache_seconds))
+
     if incoming and incoming == etag:
-        headers = {"ETag": etag}
-        if extra_headers:
-            headers.update(extra_headers)
+        headers["ETag"] = etag
         return Response(status_code=304, headers=headers)
 
     response.headers["ETag"] = etag
-    if extra_headers:
-        for key, value in extra_headers.items():
-            response.headers.setdefault(key, value)
+    for key, value in headers.items():
+        response.headers.setdefault(key, value)
     return model
 
 
@@ -111,11 +148,14 @@ def prepare_csv_value(value: Any) -> str:
     return str(value)
 
 
-def csv_stream(rows: Iterable[Mapping[str, Any]], fieldnames: Sequence[str]) -> Iterable[str]:
-    """Generate CSV content as a streaming response.
+async def csv_stream(
+    rows: Iterable[Mapping[str, Any]] | AsyncIterable[Mapping[str, Any]],
+    fieldnames: Sequence[str],
+) -> AsyncIterator[str]:
+    """Generate CSV content as an async streaming response.
 
     Args:
-        rows: Data rows to convert to CSV
+        rows: Data rows to convert to CSV (sync or async iterable)
         fieldnames: Column names in order
 
     Yields:
@@ -128,20 +168,31 @@ def csv_stream(rows: Iterable[Mapping[str, Any]], fieldnames: Sequence[str]) -> 
     buffer.seek(0)
     buffer.truncate(0)
 
-    for row in rows:
+    async def _write_row(row: Mapping[str, Any]) -> AsyncIterator[str]:
         writer.writerow({field: prepare_csv_value(row.get(field)) for field in fieldnames})
         yield buffer.getvalue()
         buffer.seek(0)
         buffer.truncate(0)
 
+    if isinstance(rows, AsyncIterable):
+        async for row in rows:
+            async for chunk in _write_row(row):
+                yield chunk
+    else:
+        for row in rows:
+            async for chunk in _write_row(row):
+                yield chunk
+            await asyncio.sleep(0)
+
 
 def csv_response(
     request_id: str,
-    rows: Iterable[Mapping[str, Any]],
+    rows: Iterable[Mapping[str, Any]] | AsyncIterable[Mapping[str, Any]],
     fieldnames: Sequence[str],
     filename: str,
     *,
     cache_control: Optional[str] = None,
+    cache_seconds: Optional[int] = DEFAULT_CACHE_SECONDS,
     next_cursor: Optional[str] = None,
     prev_cursor: Optional[str] = None,
 ) -> StreamingResponse:
@@ -153,6 +204,7 @@ def csv_response(
         fieldnames: Column names in order
         filename: Suggested filename for download
         cache_control: Cache-Control header value
+        cache_seconds: TTL used to build Cache-Control header when ``cache_control`` is not supplied
         next_cursor: Pagination cursor for next page
         prev_cursor: Pagination cursor for previous page
 
@@ -163,7 +215,9 @@ def csv_response(
     response = StreamingResponse(stream, media_type="text/csv; charset=utf-8")
     response.headers["X-Request-Id"] = request_id
     if cache_control:
-        response.headers["Cache-Control"] = cache_control
+        response.headers.setdefault("Cache-Control", cache_control)
+    elif cache_seconds is not None:
+        response.headers.setdefault("Cache-Control", build_cache_control_header(cache_seconds))
     if next_cursor:
         response.headers["X-Next-Cursor"] = next_cursor
     if prev_cursor:

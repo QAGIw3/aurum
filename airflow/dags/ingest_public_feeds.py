@@ -1,4 +1,13 @@
-"""Airflow DAG to ingest public reference feeds (NOAA, EIA, FRED, CPI, PJM)."""
+"""Airflow DAG to ingest public reference feeds (EIA, FRED, CPI, PJM).
+
+NOAA weather data ingestion has been moved to dedicated DAGs:
+- noaa_data_ingestion (comprehensive NOAA pipeline)
+- noaa_ghcnd_daily_ingest
+- noaa_ghcnd_hourly_ingest
+- noaa_gsom_monthly_ingest
+- noaa_normals_daily_ingest
+- noaa_data_monitoring (monitoring and alerting)
+"""
 from __future__ import annotations
 
 import json
@@ -322,7 +331,7 @@ def build_seatunnel_task(
 
 with DAG(
     dag_id="ingest_public_feeds",
-    description="Ingest NOAA, EIA, FRED, CPI, and PJM public data feeds",
+    description="Ingest EIA, FRED, CPI, and PJM public data feeds (NOAA moved to dedicated DAGs)",
     default_args=DEFAULT_ARGS,
     schedule_interval="0 6 * * *",
     start_date=datetime(2024, 1, 1),
@@ -591,45 +600,55 @@ with DAG(
         pool="api_eia",
     )
 
-    pjm_task = build_seatunnel_task(
-        "pjm_lmp_to_kafka",
-        [
-            "PJM_TOPIC='{{ var.value.get('aurum_pjm_topic', 'aurum.iso.pjm.lmp.v1') }}'",
-            "PJM_INTERVAL_START='{{ data_interval_start.in_timezone('America/New_York').isoformat() }}'",
-            "PJM_INTERVAL_END='{{ data_interval_end.in_timezone('America/New_York').isoformat() }}'",
-            "SCHEMA_REGISTRY_URL='{{ var.value.get('aurum_schema_registry', 'http://localhost:8081') }}'"
-        ],
-        mappings=["secret/data/aurum/pjm:token=PJM_API_KEY"],
-        pool="api_pjm",
-    )
+    # Optionally include PJM tasks here. Default disabled to avoid duplication
+    # with dedicated DAGs under aurum/airflow/dags/ingest_iso_prices_pjm.py and
+    # aurum/airflow/dags/ingest_iso_metrics_pjm.py.
+    try:
+        from airflow.models import Variable  # type: ignore
+        _enable_pjm = str(Variable.get("aurum_enable_pjm_in_public_feeds", default_var="0")).lower() not in {"", "0", "false", "no"}
+    except Exception:
+        _enable_pjm = False
 
-    pjm_load_task = build_seatunnel_task(
-        "pjm_load_to_kafka",
-        [
-            "PJM_LOAD_ENDPOINT='{{ var.value.get('aurum_pjm_load_endpoint', 'https://api.pjm.com/api/v1/inst_load') }}'",
-            "PJM_ROW_LIMIT='{{ var.value.get('aurum_pjm_row_limit', '10000') }}'",
-            "PJM_INTERVAL_START='{{ data_interval_start.in_timezone('America/New_York').isoformat() }}'",
-            "PJM_INTERVAL_END='{{ data_interval_end.in_timezone('America/New_York').isoformat() }}'",
-            "PJM_LOAD_TOPIC='{{ var.value.get('aurum_pjm_load_topic', 'aurum.iso.pjm.load.v1') }}'",
-            "SCHEMA_REGISTRY_URL='{{ var.value.get('aurum_schema_registry', 'http://localhost:8081') }}'",
-        ],
-        mappings=["secret/data/aurum/pjm:token=PJM_API_KEY"],
-        pool="api_pjm",
-    )
+    if _enable_pjm:
+        pjm_task = build_seatunnel_task(
+            "pjm_lmp_to_kafka",
+            [
+                "PJM_TOPIC='{{ var.value.get('aurum_pjm_topic', 'aurum.iso.pjm.lmp.v1') }}'",
+                "PJM_INTERVAL_START='{{ data_interval_start.in_timezone('America/New_York').isoformat() }}'",
+                "PJM_INTERVAL_END='{{ data_interval_end.in_timezone('America/New_York').isoformat() }}'",
+                "SCHEMA_REGISTRY_URL='{{ var.value.get('aurum_schema_registry', 'http://localhost:8081') }}'"
+            ],
+            mappings=["secret/data/aurum/pjm:token=PJM_API_KEY"],
+            pool="api_pjm",
+        )
 
-    pjm_genmix_task = build_seatunnel_task(
-        "pjm_genmix_to_kafka",
-        [
-            "PJM_GENMIX_ENDPOINT='{{ var.value.get('aurum_pjm_genmix_endpoint', 'https://api.pjm.com/api/v1/gen_by_fuel') }}'",
-            "PJM_ROW_LIMIT='{{ var.value.get('aurum_pjm_row_limit', '10000') }}'",
-            "PJM_INTERVAL_START='{{ data_interval_start.in_timezone('America/New_York').isoformat() }}'",
-            "PJM_INTERVAL_END='{{ data_interval_end.in_timezone('America/New_York').isoformat() }}'",
-            "PJM_GENMIX_TOPIC='{{ var.value.get('aurum_pjm_genmix_topic', 'aurum.iso.pjm.genmix.v1') }}'",
-            "SCHEMA_REGISTRY_URL='{{ var.value.get('aurum_schema_registry', 'http://localhost:8081') }}'",
-        ],
-        mappings=["secret/data/aurum/pjm:token=PJM_API_KEY"],
-        pool="api_pjm",
-    )
+        pjm_load_task = build_seatunnel_task(
+            "pjm_load_to_kafka",
+            [
+                "PJM_LOAD_ENDPOINT='{{ var.value.get('aurum_pjm_load_endpoint', 'https://api.pjm.com/api/v1/inst_load') }}'",
+                "PJM_ROW_LIMIT='{{ var.value.get('aurum_pjm_row_limit', '10000') }}'",
+                "PJM_INTERVAL_START='{{ data_interval_start.in_timezone('America/New_York').isoformat() }}'",
+                "PJM_INTERVAL_END='{{ data_interval_end.in_timezone('America/New_York').isoformat() }}'",
+                "PJM_LOAD_TOPIC='{{ var.value.get('aurum_pjm_load_topic', 'aurum.iso.pjm.load.v1') }}'",
+                "SCHEMA_REGISTRY_URL='{{ var.value.get('aurum_schema_registry', 'http://localhost:8081') }}'",
+            ],
+            mappings=["secret/data/aurum/pjm:token=PJM_API_KEY"],
+            pool="api_pjm",
+        )
+
+        pjm_genmix_task = build_seatunnel_task(
+            "pjm_genmix_to_kafka",
+            [
+                "PJM_GENMIX_ENDPOINT='{{ var.value.get('aurum_pjm_genmix_endpoint', 'https://api.pjm.com/api/v1/gen_by_fuel') }}'",
+                "PJM_ROW_LIMIT='{{ var.value.get('aurum_pjm_row_limit', '10000') }}'",
+                "PJM_INTERVAL_START='{{ data_interval_start.in_timezone('America/New_York').isoformat() }}'",
+                "PJM_INTERVAL_END='{{ data_interval_end.in_timezone('America/New_York').isoformat() }}'",
+                "PJM_GENMIX_TOPIC='{{ var.value.get('aurum_pjm_genmix_topic', 'aurum.iso.pjm.genmix.v1') }}'",
+                "SCHEMA_REGISTRY_URL='{{ var.value.get('aurum_schema_registry', 'http://localhost:8081') }}'",
+            ],
+            mappings=["secret/data/aurum/pjm:token=PJM_API_KEY"],
+            pool="api_pjm",
+        )
 
     noaa_daily_watermark = PythonOperator(
         task_id="noaa_daily_watermark",
@@ -666,20 +685,21 @@ with DAG(
         python_callable=lambda **ctx: _update_watermark("fuel_co2_curve", ctx["logical_date"]),
     )
 
-    pjm_watermark = PythonOperator(
-        task_id="pjm_watermark",
-        python_callable=lambda **ctx: _update_watermark("pjm_lmp", ctx["logical_date"]),
-    )
+    if _enable_pjm:
+        pjm_watermark = PythonOperator(
+            task_id="pjm_watermark",
+            python_callable=lambda **ctx: _update_watermark("pjm_lmp", ctx["logical_date"]),
+        )
 
-    pjm_load_watermark = PythonOperator(
-        task_id="pjm_load_watermark",
-        python_callable=lambda **ctx: _update_watermark("pjm_load", ctx["logical_date"]),
-    )
+        pjm_load_watermark = PythonOperator(
+            task_id="pjm_load_watermark",
+            python_callable=lambda **ctx: _update_watermark("pjm_load", ctx["logical_date"]),
+        )
 
-    pjm_genmix_watermark = PythonOperator(
-        task_id="pjm_genmix_watermark",
-        python_callable=lambda **ctx: _update_watermark("pjm_genmix", ctx["logical_date"]),
-    )
+        pjm_genmix_watermark = PythonOperator(
+            task_id="pjm_genmix_watermark",
+            python_callable=lambda **ctx: _update_watermark("pjm_genmix", ctx["logical_date"]),
+        )
 
     end = EmptyOperator(task_id="end")
 
@@ -695,9 +715,10 @@ with DAG(
     register_sources >> cpi_task >> cpi_to_timescale >> cpi_lineage >> cpi_watermark
     register_sources >> fuel_natgas_task >> fuel_natgas_watermark
     register_sources >> fuel_co2_task >> fuel_co2_watermark
-    register_sources >> pjm_task >> pjm_watermark
-    register_sources >> pjm_load_task >> pjm_load_watermark
-    register_sources >> pjm_genmix_task >> pjm_genmix_watermark
+    if _enable_pjm:
+        register_sources >> pjm_task >> pjm_watermark
+        register_sources >> pjm_load_task >> pjm_load_watermark
+        register_sources >> pjm_genmix_task >> pjm_genmix_watermark
     [
         noaa_daily_watermark,
         noaa_hourly_watermark,
@@ -708,8 +729,7 @@ with DAG(
         fuel_natgas_watermark,
         fuel_co2_watermark,
         pjm_load_watermark,
-        pjm_genmix_watermark,
-        pjm_watermark,
+        *([pjm_genmix_watermark, pjm_watermark, pjm_load_watermark] if _enable_pjm else []),
     ] >> end
 
     dag.on_failure_callback = build_failure_callback(source="aurum.airflow.ingest_public_feeds")

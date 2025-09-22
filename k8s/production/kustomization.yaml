@@ -1,0 +1,40 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: aurum-prod
+
+# Base resources
+resources:
+  - ../base
+
+# Environment-specific patches
+patchesStrategicMerge:
+  - patches/replicas-production.yaml
+  - patches/resources-production.yaml
+  - patches/ingress-production.yaml
+
+# Environment-specific image tags
+images:
+  - name: ghcr.io/aurum/aurum-api
+    newTag: production
+  - name: ghcr.io/aurum/aurum-worker
+    newTag: production
+
+# Environment-specific secrets
+secretGenerator:
+  - name: aurum-secrets
+    namespace: aurum-prod
+    behavior: replace
+    envs:
+      - secrets.production.env
+
+# ConfigMap generator for environment-specific config
+configMapGenerator:
+  - name: aurum-env-config
+    namespace: aurum-prod
+    literals:
+      - ENVIRONMENT=production
+      - LOG_LEVEL=WARNING
+      - REPLICAS=5
+
+generatorOptions:
+  disableNameSuffixHash: true

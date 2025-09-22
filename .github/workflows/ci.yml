@@ -32,7 +32,7 @@ jobs:
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install -r requirements-dev.txt
+          pip install -e .[dev,test]
       - name: Ruff
         run: ruff check .
       - name: Mypy
@@ -76,7 +76,7 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           pip install "apache-airflow==2.8.1" --constraint "https://raw.githubusercontent.com/apache/airflow/constraints-2.8.1/constraints-3.11.txt"
-          pip install -r requirements-dev.txt
+          pip install -e .[dev,test]
       - name: Initialize Airflow metadata DB
         run: airflow db init
       - name: Validate DAG imports
@@ -147,6 +147,34 @@ jobs:
           # Check that all examples in the OpenAPI spec are valid
           python scripts/ci/validate_openapi_examples.py
 
+  openapi-diff:
+    name: OpenAPI Diff
+    needs: spectral-lint
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Fetch main branch
+        run: git fetch origin main
+
+      - name: Compare OpenAPI specifications
+        run: |
+          set -euo pipefail
+          mkdir -p .openapi-baseline
+          status=0
+          for file in $(find openapi -type f \( -name '*.yaml' -o -name '*.yml' \ )); do
+            base_name=$(basename "$file")
+            if git show origin/main:"$file" > ".openapi-baseline/$base_name"; then
+              echo "Comparing $file to origin/main";
+              docker run --rm -v "$PWD":/workspace openapitools/openapi-diff:latest \
+                /workspace/.openapi-baseline/$base_name /workspace/$file || status=$?
+            else
+              echo "Skipping $file; not present on main branch"
+            fi
+          done
+          exit $status
+
   security-scan:
     name: Container Security Scan
     needs: lint-test
@@ -182,6 +210,27 @@ jobs:
         run: |
           safety check --file constraints/dev.txt --json > security/safety.json
         continue-on-error: true
+
+      - name: pip-audit vulnerability scan
+        run: |
+          pip install pip-audit
+          pip-audit --format=json --output-file=security/pip-audit.json || true
+        continue-on-error: true
+
+      - name: Upload pip-audit results to Code Scanning
+        uses: github/codeql-action/upload-sarif@v3
+        if: always()
+        with:
+          sarif_file: security/pip-audit.json
+        continue-on-error: true
+
+      - name: Syft SBOM generation
+        uses: anchore/sbom-action@v0
+        with:
+          path: .
+          format: spdx-json
+          output-file: sbom/spdx-python.json
+          upload-artifact: true
       - name: Trivy filesystem scan
         uses: aquasecurity/trivy-action@0.13.0
         with:
@@ -193,11 +242,13 @@ jobs:
           format: sarif
           output: security/trivy.sarif
           exit-code: '1'
-      - name: Generate SBOM
+      - name: Generate SBOM with Syft
         uses: anchore/sbom-action@v0
         with:
           path: .
-          output-file: sbom/spdx.json
+          format: spdx-json
+          output-file: sbom/spdx-syft.json
+          upload-artifact: true
       - name: Upload Bandit SARIF to Code Scanning
         uses: github/codeql-action/upload-sarif@v3
         with:
@@ -215,7 +266,9 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: security-reports
-          path: security
+          path: |
+            security/
+            sbom/
 
   scenario-smoke:
     name: Scenario Smoke
@@ -268,7 +321,7 @@ jobs:
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install -r requirements-dev.txt
+          pip install -e .[dev,test]
 
       - name: Prepare dbt artifacts directory
         run: |
@@ -319,7 +372,7 @@ jobs:
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install -r requirements-dev.txt
+          pip install -e .[dev,test]
 
       - name: Run Great Expectations suites
         env:
@@ -355,7 +408,7 @@ jobs:
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install -r requirements-dev.txt
+          pip install -e .[dev,test]
 
       - name: Generate dbt documentation
         run: |

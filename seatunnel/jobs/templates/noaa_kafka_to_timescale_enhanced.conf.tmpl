@@ -1,0 +1,207 @@
+# NOAA Weather Data from Kafka → TimescaleDB with Enhanced Features
+#
+# Render with envsubst (see scripts/seatunnel/run_job.sh) before running via SeaTunnel.
+# Required environment variables:
+#   SCHEMA_REGISTRY_URL        - Confluent Schema Registry endpoint
+#   TIMESCALE_JDBC_URL         - JDBC URL for TimescaleDB
+#   NOAA_TABLE                 - Target table name in TimescaleDB
+#   DLQ_TOPIC                  - Dead letter queue topic for failed records
+#   AURUM_KAFKA_BOOTSTRAP_SERVERS - Comma separated brokers (host:port)
+#
+# Optional environment variables:
+#   NOAA_TOPIC                 - Source Kafka topic (default: aurum.ref.noaa.weather.v1)
+#   BACKFILL_ENABLED           - Enable backfill mode (default: 0)
+#   BACKFILL_START             - Backfill start date (YYYY-MM-DD)
+#   BACKFILL_END               - Backfill end date (YYYY-MM-DD)
+#   BATCH_SIZE                 - Batch size for processing (default: 1000)
+#   FLUSH_INTERVAL_MS          - Flush interval in milliseconds (default: 5000)
+#   ENABLE_UPSERT              - Enable upsert mode (default: true)
+#   CREATE_TABLE_IF_NOT_EXISTS - Auto-create table if missing (default: true)
+#   TIMESCALE_HYPERTABLE       - Enable hypertable creation (default: true)
+
+env {
+  job.mode = "STREAMING"
+  parallelism = 2
+  # Enable checkpointing for exactly-once processing
+  checkpoint.interval = 10000
+  checkpoint.mode = "EXACTLY_ONCE"
+  checkpoint.timeout = 60000
+}
+
+# TimescaleDB configuration
+timescale_config = {
+  hypertable_enabled = ${TIMESCALE_HYPERTABLE:-true}
+  chunk_time_interval = "1 day"
+  compression_enabled = true
+  compression_delay = "7 days"
+  retention_policy = "1 year"
+}
+
+source {
+  Kafka {
+    bootstrap.servers = "${AURUM_KAFKA_BOOTSTRAP_SERVERS}"
+    topic = "${NOAA_TOPIC:-aurum.ref.noaa.weather.v1}"
+    consumer.group = "noaa_timescale_consumer"
+    format = "avro"
+    avro {
+      use.schema.registry = true
+      schema.registry.url = "${SCHEMA_REGISTRY_URL}"
+    }
+    consumer {
+      auto.offset.reset = "earliest"
+      enable.auto.commit = false
+      # Start from specific timestamp if backfill is enabled
+      ${BACKFILL_ENABLED:-0} ? auto.offset.reset = "none" : null
+      ${BACKFILL_START:+start.timestamp = "${BACKFILL_START}"}
+    }
+    result_table_name = "noaa_kafka_stream"
+  }
+}
+
+transform {
+  # Transform for TimescaleDB insertion
+  Sql {
+    source_table_name = "noaa_kafka_stream"
+    result_table_name = "noaa_timescale_ready"
+    query = """
+      SELECT
+        station_id,
+        station_name,
+        latitude,
+        longitude,
+        elevation,
+        dataset_id,
+        element,
+        observation_date,
+        value,
+        raw_value,
+        units,
+        unit_code,
+        attributes,
+        observation_timestamp,
+        ingest_timestamp,
+        source,
+        dataset,
+        ingestion_start_date,
+        ingestion_end_date
+      FROM noaa_kafka_stream
+      WHERE data_quality_flag = 'VALID' OR data_quality_flag IS NULL
+    """
+  }
+
+  # Optional: Filter for backfill period
+  ${BACKFILL_ENABLED:-0} ? Sql {
+    source_table_name = "noaa_timescale_ready"
+    result_table_name = "noaa_backfill_filtered"
+    query = """
+      SELECT *
+      FROM noaa_timescale_ready
+      WHERE observation_date >= '${BACKFILL_START}'
+        AND observation_date <= '${BACKFILL_END}'
+    """
+  } : Sql {
+    source_table_name = "noaa_timescale_ready"
+    result_table_name = "noaa_backfill_filtered"
+    query = "SELECT * FROM noaa_timescale_ready"
+  }
+}
+
+sink {
+  Jdbc {
+    plugin_input = "noaa_backfill_filtered"
+    driver = "org.postgresql.Driver"
+    url = "${TIMESCALE_JDBC_URL}"
+    user = "${TIMESCALE_USER}"
+    password = "${TIMESCALE_PASSWORD}"
+    query = """
+      INSERT INTO ${NOAA_TABLE} (
+        station_id, station_name, latitude, longitude, elevation,
+        dataset_id, element, observation_date, value, raw_value,
+        units, unit_code, attributes, observation_timestamp,
+        ingest_timestamp, source, dataset, ingestion_start_date, ingestion_end_date
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT (station_id, observation_date, element, dataset_id)
+      DO UPDATE SET
+        value = EXCLUDED.value,
+        raw_value = EXCLUDED.raw_value,
+        units = EXCLUDED.units,
+        unit_code = EXCLUDED.unit_code,
+        attributes = EXCLUDED.attributes,
+        observation_timestamp = EXCLUDED.observation_timestamp,
+        ingest_timestamp = EXCLUDED.ingest_timestamp,
+        source = EXCLUDED.source,
+        dataset = EXCLUDED.dataset,
+        ingestion_start_date = EXCLUDED.ingestion_start_date,
+        ingestion_end_date = EXCLUDED.ingestion_end_date
+    """
+    batch_size = ${BATCH_SIZE:-1000}
+    flush_interval_ms = ${FLUSH_INTERVAL_MS:-5000}
+    max_retries = 3
+    retry_backoff_multiplier_ms = 2000
+    retry_backoff_max_ms = 30000
+  }
+
+  # Dead Letter Queue for failed records
+  Kafka {
+    plugin_input = "noaa_kafka_stream"
+    bootstrap.servers = "${AURUM_KAFKA_BOOTSTRAP_SERVERS}"
+    topic = "${DLQ_TOPIC}"
+    semantic = "AT_LEAST_ONCE"
+    format = "json"
+    filter = "data_quality_flag != 'VALID' AND data_quality_flag IS NOT NULL"
+    producer {
+      acks = "all"
+      enable.idempotence = true
+      max.in.flight.requests.per.connection = 5
+      linger.ms = 500
+      batch.size = 32768
+      retries = 3
+    }
+  }
+}
+
+# Optional: Create table if it doesn't exist
+${CREATE_TABLE_IF_NOT_EXISTS:-true} ? Sql {
+  query = """
+    CREATE TABLE IF NOT EXISTS ${NOAA_TABLE} (
+      station_id VARCHAR(20) NOT NULL,
+      station_name VARCHAR(255),
+      latitude DOUBLE PRECISION,
+      longitude DOUBLE PRECISION,
+      elevation DOUBLE PRECISION,
+      dataset_id VARCHAR(50) NOT NULL,
+      element VARCHAR(20) NOT NULL,
+      observation_date DATE NOT NULL,
+      value DOUBLE PRECISION,
+      raw_value VARCHAR(50),
+      units VARCHAR(20),
+      unit_code VARCHAR(20),
+      attributes TEXT,
+      observation_timestamp BIGINT,
+      ingest_timestamp BIGINT NOT NULL DEFAULT EXTRACT(EPOCH FROM NOW()) * 1000000,
+      source VARCHAR(50),
+      dataset VARCHAR(50),
+      ingestion_start_date DATE,
+      ingestion_end_date DATE,
+      data_quality_flag VARCHAR(20) DEFAULT 'VALID',
+      PRIMARY KEY (station_id, observation_date, element, dataset_id)
+    );
+
+    -- Create hypertable if TimescaleDB extension is available
+    DO $$
+    BEGIN
+      IF ${TIMESCALE_HYPERTABLE:-true} THEN
+        PERFORM create_hypertable('${NOAA_TABLE}', 'observation_date', if_not_exists => TRUE);
+      END IF;
+    EXCEPTION
+      WHEN OTHERS THEN
+        RAISE NOTICE 'Hypertable creation failed: %', SQLERRM;
+    END $$;
+
+    -- Create indexes for better query performance
+    CREATE INDEX IF NOT EXISTS idx_noaa_station_date ON ${NOAA_TABLE} (station_id, observation_date);
+    CREATE INDEX IF NOT EXISTS idx_noaa_element ON ${NOAA_TABLE} (element);
+    CREATE INDEX IF NOT EXISTS idx_noaa_dataset ON ${NOAA_TABLE} (dataset_id);
+    CREATE INDEX IF NOT EXISTS idx_noaa_timestamp ON ${NOAA_TABLE} (observation_timestamp DESC);
+  """
+} : null

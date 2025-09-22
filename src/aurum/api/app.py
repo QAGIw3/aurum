@@ -5,7 +5,7 @@ from __future__ import annotations
 import sys
 import types
 
-from fastapi import Depends, FastAPI
+from fastapi import Depends, FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.responses import JSONResponse
@@ -96,6 +96,15 @@ async def create_app(settings: AurumSettings | None = None) -> FastAPI:
     app.middleware("http")(access_log_middleware)
     if settings.api.metrics.enabled and METRICS_MIDDLEWARE is not None:
         app.middleware("http")(METRICS_MIDDLEWARE)
+
+    # Optional external audit middleware (logs to audit/compliance/security channels)
+    import os as _os
+    if _os.getenv("AURUM_API_EXTERNAL_AUDIT_ENABLED", "0").lower() in {"1", "true", "yes"}:
+        try:  # pragma: no cover - optional logging
+            from .external_audit_logging import audit_middleware as _audit_mw
+            app.middleware("http")(_audit_mw)
+        except Exception:
+            pass
 
     def _observability_admin_guard(
         principal=Depends(_routes._get_principal),
@@ -189,6 +198,26 @@ async def create_app(settings: AurumSettings | None = None) -> FastAPI:
             "improved_observability"
         ]
     )
+
+    # Initialize external dependencies on lifecycle events
+    from aurum.scenarios.storage import initialize_scenario_store, close_scenario_store
+
+    @app.on_event("startup")
+    async def _startup():  # pragma: no cover - integration wiring
+        # Prefer dedicated postgres_dsn, fallback to timescale_dsn if unset
+        dsn = settings.database.postgres_dsn or settings.database.timescale_dsn
+        try:
+            await initialize_scenario_store(dsn)
+        except Exception:
+            # Keep app starting even if store init fails; endpoints will raise clearly
+            pass
+
+    @app.on_event("shutdown")
+    async def _shutdown():  # pragma: no cover - integration wiring
+        try:
+            await close_scenario_store()
+        except Exception:
+            pass
 
     await version_manager.set_default_version("2.0")
 

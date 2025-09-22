@@ -134,7 +134,7 @@ class WebSocketConnection:
             await self.send_message(MessageType.SUBSCRIBE, {
                 "stream_id": stream_id,
                 "status": "subscribed",
-                "subscription": subscription.dict()
+                "subscription": subscription.model_dump()
             })
 
             return True

@@ -1,6 +1,19 @@
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
+  name: aurum-api-default-deny
+  labels:
+    app.kubernetes.io/name: aurum-api
+    app.kubernetes.io/component: api
+    app.kubernetes.io/part-of: aurum
+spec:
+  podSelector: {}
+  policyTypes:
+    - Ingress
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
   name: aurum-api-policy
   labels:
     app.kubernetes.io/name: aurum-api
@@ -14,6 +27,7 @@ spec:
     - Ingress
     - Egress
   ingress:
+    # Allow traffic from other services in the same namespace
     - from:
         - namespaceSelector:
             matchLabels:
@@ -21,29 +35,30 @@ spec:
       ports:
         - protocol: TCP
           port: 8080
+    # Allow traffic from Traefik ingress
     - from:
         - podSelector:
             matchLabels:
               app.kubernetes.io/name: traefik
-      ports:
-        - protocol: TCP
-          port: 8080
-  egress:
-    - to:
         - namespaceSelector:
             matchLabels:
               kubernetes.io/metadata.name: aurum-dev
       ports:
         - protocol: TCP
-          port: 5432
-        - protocol: TCP
-          port: 6379
+          port: 8080
+    # Allow traffic from scenario workers for internal communication
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: aurum-scenario-worker
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: aurum-dev
+      ports:
         - protocol: TCP
           port: 8080
-        - protocol: TCP
-          port: 8200
-        - protocol: TCP
-          port: 4317
+  egress:
+    # Allow DNS resolution
     - to:
         - namespaceSelector:
             matchLabels:
@@ -56,3 +71,58 @@ spec:
           port: 53
         - protocol: TCP
           port: 53
+    # Allow egress to database services
+    - to:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: postgres
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: aurum-dev
+      ports:
+        - protocol: TCP
+          port: 5432
+    # Allow egress to Redis
+    - to:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: redis
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: aurum-dev
+      ports:
+        - protocol: TCP
+          port: 6379
+    # Allow egress to Trino
+    - to:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: trino
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: aurum-dev
+      ports:
+        - protocol: TCP
+          port: 8080
+    # Allow egress to Vault
+    - to:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: vault
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: aurum-dev
+      ports:
+        - protocol: TCP
+          port: 8200
+    # Allow egress to Jaeger
+    - to:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: jaeger
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: aurum-dev
+      ports:
+        - protocol: TCP
+          port: 4317

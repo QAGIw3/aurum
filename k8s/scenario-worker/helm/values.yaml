@@ -1,5 +1,11 @@
 replicaCount: 1
 
+# Pod Disruption Budget
+podDisruptionBudget:
+  enabled: true
+  minAvailable: 1
+  maxUnavailable: 1
+
 autoscaling:
   enabled: false
   minReplicas: 1

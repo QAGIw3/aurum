@@ -1,0 +1,82 @@
+version: 2
+models:
+- name: int_eia_series_enriched
+  description: Intermediate model normalizing currency and unit metadata for EIA series.
+  tests:
+  - unique_combination:
+      combination_of_columns:
+      - tenant_id
+      - series_id
+      - period
+  columns:
+  - name: tenant_id
+    tests:
+    - not_null
+  - name: series_id
+    tests:
+    - not_null
+    - relationships:
+        to: ref('stg_eia_series')
+        field: series_id
+        to_field: series_id
+  - name: value_converted
+    description: Numeric value after applying any canonical conversion rules.
+  - name: currency_normalized
+    description: Currency resolved from canonical metadata or unit mappings.
+  - name: unit_normalized
+    description: Unit denominator resolved from canonical metadata or unit mappings.
+  - name: ingest_job_id
+  - name: ingest_run_id
+  - name: ingest_batch_id
+- name: int_fred_series_enriched
+  description: Intermediate model augmenting FRED series observations with derived
+    periods.
+  tests:
+  - unique_combination:
+      combination_of_columns:
+      - tenant_id
+      - series_id
+      - obs_date
+  columns:
+  - name: tenant_id
+    tests:
+    - not_null
+  - name: series_id
+    tests:
+    - not_null
+  - name: obs_date
+    tests:
+    - not_null
+  - name: obs_month
+  - name: value
+  - name: ingest_ts
+    tests:
+    - not_null
+  - name: ingest_job_id
+  - name: ingest_run_id
+  - name: ingest_batch_id
+- name: int_cpi_series_enriched
+  description: Intermediate model enriching CPI series with normalized period dates.
+  tests:
+  - unique_combination:
+      combination_of_columns:
+      - tenant_id
+      - series_id
+      - period
+  columns:
+  - name: tenant_id
+    tests:
+    - not_null
+  - name: series_id
+    tests:
+    - not_null
+  - name: period
+    tests:
+    - not_null
+  - name: period_date
+  - name: ingest_ts
+    tests:
+    - not_null
+  - name: ingest_job_id
+  - name: ingest_run_id
+  - name: ingest_batch_id

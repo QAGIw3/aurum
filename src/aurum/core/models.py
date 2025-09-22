@@ -57,10 +57,23 @@ class PaginationMeta(AurumBaseModel):
     prev_cursor: Optional[str] = None
 
 
+class Watermark(AurumBaseModel):
+    """Watermark model for tracking incremental data processing progress."""
+
+    source: str = Field(min_length=1, description="Data source identifier")
+    table: str = Field(min_length=1, description="Table/dataset identifier")
+    last_value: Optional[str] = Field(default=None, description="Last processed value (string-based)")
+    last_processed_at: Optional[datetime] = Field(default=None, description="Last processing timestamp")
+    metadata: Dict[str, Any] = Field(default_factory=dict, description="Additional metadata")
+    created_at: datetime = Field(default_factory=datetime.utcnow, description="Creation timestamp")
+    updated_at: datetime = Field(default_factory=datetime.utcnow, description="Last update timestamp")
+
+
 __all__ = [
     "AurumBaseModel",
     "UnitNormalization",
     "CurveKey",
     "PriceObservation",
     "PaginationMeta",
+    "Watermark",
 ]

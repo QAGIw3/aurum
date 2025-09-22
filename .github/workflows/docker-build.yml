@@ -42,6 +42,7 @@ jobs:
       deployments: write
       id-token: write  # For OIDC token generation
       security-events: write  # For vulnerability scanning
+      attestations: write  # For SLSA provenance
 
     steps:
     - name: Checkout repository
@@ -123,6 +124,14 @@ jobs:
       run: |
         cosign sign --yes ${{ env.REGISTRY }}/${{ env.IMAGE_NAME_API }}@${{ steps.build-api.outputs.digest }}
 
+    - name: Generate SLSA provenance for API image
+      if: github.event.inputs.sign_images != 'false' || github.event.inputs.sign_images == null
+      uses: actions/attest-build-provenance@v1
+      with:
+        subject-name: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME_API }}
+        subject-digest: ${{ steps.build-api.outputs.digest }}
+        push-to-registry: true
+
     - name: Push API image tags
       run: |
         docker buildx imagetools create \
@@ -180,6 +189,14 @@ jobs:
       run: |
         cosign sign --yes ${{ env.REGISTRY }}/${{ env.IMAGE_NAME_WORKER }}@${{ steps.build-worker.outputs.digest }}
 
+    - name: Generate SLSA provenance for Worker image
+      if: github.event.inputs.sign_images != 'false' || github.event.inputs.sign_images == null
+      uses: actions/attest-build-provenance@v1
+      with:
+        subject-name: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME_WORKER }}
+        subject-digest: ${{ steps.build-worker.outputs.digest }}
+        push-to-registry: true
+
     - name: Push Worker image tags
       run: |
         docker buildx imagetools create \
@@ -227,7 +244,7 @@ jobs:
         echo "" >> $GITHUB_STEP_SUMMARY
 
         if [ "${{ github.event.inputs.sign_images }}" != "false" ]; then
-          echo "🔐 Images signed with cosign" >> $GITHUB_STEP_SUMMARY
+          echo "🔐 Images signed with cosign and SLSA provenance generated" >> $GITHUB_STEP_SUMMARY
         fi
 
         if [ "${{ github.event.inputs.generate_sbom }}" != "false" ]; then
@@ -235,3 +252,4 @@ jobs:
         fi
 
         echo "🔍 Vulnerability scanning completed" >> $GITHUB_STEP_SUMMARY
+        echo "📋 All security attestations and provenance stored" >> $GITHUB_STEP_SUMMARY

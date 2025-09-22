@@ -15,13 +15,14 @@ from threading import Lock
 from typing import Any, Dict, List, Optional, Set
 
 from aurum.core import AurumSettings
-import httpx
 from fastapi import HTTPException
 from jose import jwt
 from jose.utils import base64url_decode
 from starlette.requests import Request
 from starlette.responses import JSONResponse
 from starlette.types import ASGIApp, Receive, Scope, Send
+
+from .http.clients import request as http_request
 
 
 class Permission(str, Enum):
@@ -238,10 +239,8 @@ class JWKSCache:
         self._cache_by_kid: dict[str, dict[str, Any]] = {}
 
     def _refresh_locked(self) -> None:
-        with httpx.Client(timeout=5.0) as client:
-            resp = client.get(self._url)
-            resp.raise_for_status()
-            data = resp.json()
+        resp = http_request("GET", self._url, timeout=5.0)
+        data = resp.json()
         self._cached = data
         keys = data.get("keys", []) if isinstance(data, dict) else []
         self._cache_by_kid = {}

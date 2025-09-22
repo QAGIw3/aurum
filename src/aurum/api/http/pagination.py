@@ -9,13 +9,17 @@ This module provides cursor-based pagination functionality including:
 from __future__ import annotations
 
 import base64
-import json
 import hashlib
-from typing import Dict, Optional, Tuple, List, Any
+import json
+from typing import Any, Dict, List, Optional, Tuple
 from enum import Enum
 from dataclasses import dataclass
 
 from fastapi import HTTPException
+
+DEFAULT_PAGE_SIZE = 100
+MAX_PAGE_SIZE = 500
+MAX_CURSOR_LENGTH = 1000
 
 
 class SortDirection(Enum):

@@ -85,6 +85,9 @@ spec:
         app: traefik
     spec:
       serviceAccountName: traefik
+      volumes:
+        - name: acme-data
+          emptyDir: {}
       containers:
         - name: traefik
           image: traefik:v2.10
@@ -101,6 +104,12 @@ spec:
             - --accesslog=true
             - --log.level=INFO
             - --ping=true
+            - --certificatesresolvers.letsencrypt.acme.tlschallenge=true
+            - --certificatesresolvers.letsencrypt.acme.email=admin@aurum.localtest.me
+            - --certificatesresolvers.letsencrypt.acme.storage=/data/acme.json
+          volumeMounts:
+            - name: acme-data
+              mountPath: /data
           ports:
             - name: web
               containerPort: 32080

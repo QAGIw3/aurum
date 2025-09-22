@@ -6,6 +6,76 @@
       "cleanup.policy": "delete",
       "min.insync.replicas": "2"
     },
+    {
+      "name": "aurum.iso.pjm.lmp.v1",
+      "partitions": 12,
+      "replication_factor": 3,
+      "config": {
+        "retention.ms": "2592000000"
+      },
+      "acls": [
+        {"principal": "User:aurum-ingest", "operations": ["WRITE","DESCRIBE","DESCRIBE_CONFIGS"]},
+        {"principal": "User:aurum-worker", "operations": ["READ","DESCRIBE"]},
+        {"principal": "User:aurum-api", "operations": ["READ","DESCRIBE"]},
+        {"principal": "User:aurum-dbt", "operations": ["READ","DESCRIBE"]}
+      ]
+    },
+    {
+      "name": "aurum.iso.pjm.load.v1",
+      "partitions": 12,
+      "replication_factor": 3,
+      "config": {
+        "retention.ms": "2592000000"
+      },
+      "acls": [
+        {"principal": "User:aurum-ingest", "operations": ["WRITE","DESCRIBE","DESCRIBE_CONFIGS"]},
+        {"principal": "User:aurum-worker", "operations": ["READ","DESCRIBE"]},
+        {"principal": "User:aurum-api", "operations": ["READ","DESCRIBE"]},
+        {"principal": "User:aurum-dbt", "operations": ["READ","DESCRIBE"]}
+      ]
+    },
+    {
+      "name": "aurum.iso.pjm.genmix.v1",
+      "partitions": 12,
+      "replication_factor": 3,
+      "config": {
+        "retention.ms": "2592000000"
+      },
+      "acls": [
+        {"principal": "User:aurum-ingest", "operations": ["WRITE","DESCRIBE","DESCRIBE_CONFIGS"]},
+        {"principal": "User:aurum-worker", "operations": ["READ","DESCRIBE"]},
+        {"principal": "User:aurum-api", "operations": ["READ","DESCRIBE"]},
+        {"principal": "User:aurum-dbt", "operations": ["READ","DESCRIBE"]}
+      ]
+    },
+    {
+      "name": "aurum.iso.ercot.lmp.v1",
+      "partitions": 12,
+      "replication_factor": 3,
+      "config": {
+        "retention.ms": "2592000000"
+      },
+      "acls": [
+        {"principal": "User:aurum-ingest", "operations": ["WRITE","DESCRIBE","DESCRIBE_CONFIGS"]},
+        {"principal": "User:aurum-worker", "operations": ["READ","DESCRIBE"]},
+        {"principal": "User:aurum-api", "operations": ["READ","DESCRIBE"]},
+        {"principal": "User:aurum-dbt", "operations": ["READ","DESCRIBE"]}
+      ]
+    },
+    {
+      "name": "aurum.iso.isone.lmp.v1",
+      "partitions": 12,
+      "replication_factor": 3,
+      "config": {
+        "retention.ms": "2592000000"
+      },
+      "acls": [
+        {"principal": "User:aurum-ingest", "operations": ["WRITE","DESCRIBE","DESCRIBE_CONFIGS"]},
+        {"principal": "User:aurum-worker", "operations": ["READ","DESCRIBE"]},
+        {"principal": "User:aurum-api", "operations": ["READ","DESCRIBE"]},
+        {"principal": "User:aurum-dbt", "operations": ["READ","DESCRIBE"]}
+      ]
+    },
     "acl": {
       "host": "*",
       "permission": "ALLOW",

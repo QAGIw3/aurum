@@ -8,6 +8,7 @@ import logging
 import os
 import threading
 import time
+import asyncio
 from calendar import monthrange
 from contextlib import contextmanager
 from datetime import date, datetime, timezone
@@ -19,8 +20,17 @@ except ModuleNotFoundError:  # pragma: no cover - allow stubbing in tests
     psycopg = None  # type: ignore[assignment]
 
 from aurum.core import AurumSettings
+from aurum.telemetry import get_tracer
 
 from .config import CacheConfig, TrinoConfig
+from .trino_client import get_trino_client
+from .query import (
+    DIFF_ORDER_COLUMNS,
+    build_curve_diff_query,
+    build_curve_query,
+    build_filter_clause,
+    build_keyset_clause,
+)
 from .state import configure as configure_state, get_settings
 
 LOGGER = logging.getLogger(__name__)
@@ -210,37 +220,6 @@ def _fetch_timescale_rows(sql: str, params: Mapping[str, object]) -> Tuple[List[
     elapsed_ms = (time.perf_counter() - start_time) * 1000.0
     return rows, elapsed_ms
 
-
-def _safe_literal(value: str) -> str:
-    # conservative escaping for SQL literal
-    return value.replace("'", "''")
-
-
-def _build_where(filters: Dict[str, Optional[str]]) -> str:
-    clauses: List[str] = []
-    for col, val in filters.items():
-        if val is None:
-            continue
-        clauses.append(f"{col} = '{_safe_literal(val)}'")
-    if not clauses:
-        return ""
-    return " WHERE " + " AND ".join(clauses)
-
-
-ORDER_COLUMNS = [
-    "curve_key",
-    "tenor_label",
-    "contract_month",
-    "asof_date",
-    "price_type",
-]
-
-DIFF_ORDER_COLUMNS = [
-    "curve_key",
-    "tenor_label",
-    "contract_month",
-]
-
 SCENARIO_OUTPUT_ORDER_COLUMNS = [
     "scenario_id",
     "curve_key",
@@ -263,32 +242,12 @@ EIA_SERIES_ORDER_COLUMNS = [
 ]
 
 
-def _order_expression(column: str, *, alias: str = "") -> str:
-    qualified = f"{alias}{column}" if alias else column
-    if column in {"contract_month", "asof_date"}:
-        return f"coalesce(cast({qualified} as date), DATE '0001-01-01')"
-    if column in {"period_start", "period_end", "ingest_ts"}:
-        return f"coalesce(cast({qualified} as timestamp), TIMESTAMP '0001-01-01 00:00:00')"
-    if column in {"tenor_label", "price_type"}:
-        return f"coalesce({qualified}, '')"
-    return qualified
+def _build_where(filters: Dict[str, Optional[str]]) -> str:
+    return build_filter_clause(filters)
 
 
-def _literal_for_column(column: str, value: Any) -> str:
-    if column in {"contract_month", "asof_date"}:
-        if value:
-            return f"DATE '{_safe_literal(str(value))}'"
-        return "DATE '0001-01-01'"
-    if column in {"period_start", "period_end", "ingest_ts"}:
-        if isinstance(value, datetime):
-            iso = value.isoformat(sep=" ", timespec="microseconds")
-        elif value:
-            iso = str(value)
-        else:
-            iso = "0001-01-01 00:00:00"
-        return f"TIMESTAMP '{_safe_literal(iso)}'"
-    safe_val = _safe_literal(str(value or ""))
-    return f"'{safe_val}'"
+def _safe_literal(value: str) -> str:
+    return value.replace("'", "''")
 
 
 def _build_keyset_clause(
@@ -298,37 +257,21 @@ def _build_keyset_clause(
     order_columns: Iterable[str],
     comparison: str = ">",
 ) -> str:
-    if not cursor:
-        return ""
+    return build_keyset_clause(
+        cursor,
+        alias=alias,
+        order_columns=order_columns,
+        comparison=comparison,
+    )
 
-    alias_prefix = alias
-    if alias_prefix and not alias_prefix.endswith("."):
-        alias_prefix = f"{alias_prefix}."
 
-    clauses: List[str] = []
-    columns = list(order_columns)
-
-    for idx, column in enumerate(columns):
-        if column not in cursor:
-            continue
-        literal = _literal_for_column(column, cursor.get(column))
-        expr = _order_expression(column, alias=alias_prefix)
-        base_condition = f"{expr} {comparison} {literal}"
-        if idx == 0:
-            clauses.append(base_condition)
-            continue
-        equals_chain: List[str] = []
-        for prev in columns[:idx]:
-            prev_literal = _literal_for_column(prev, cursor.get(prev))
-            prev_expr = _order_expression(prev, alias=alias_prefix)
-            equals_chain.append(f"{prev_expr} = {prev_literal}")
-        chain = " AND ".join(equals_chain + [base_condition])
-        clauses.append(f"({chain})")
-
-    if not clauses:
-        return ""
-
-    return " AND (" + " OR ".join(clauses) + ")"
+def _execute_trino_query(
+    trino_cfg: TrinoConfig,
+    query: str,
+    params: Optional[Dict[str, Any]] = None,
+) -> List[Dict[str, Any]]:
+    client = get_trino_client(trino_cfg)
+    return asyncio.run(client.execute_query(query, params=params))
 
 
 def _build_sql(
@@ -348,63 +291,21 @@ def _build_sql(
     cursor_before: Optional[Dict[str, Any]] = None,
     descending: bool = False,
 ) -> str:
-    base = "iceberg.market.curve_observation"
-    filters: Dict[str, Optional[str]] = {
-        "curve_key": curve_key,
-        "asset_class": asset_class,
-        "iso": iso,
-        "location": location,
-        "market": market,
-        "product": product,
-        "block": block,
-        "tenor_type": tenor_type,
-    }
-    where = _build_where(filters)
-    select_cols = (
-        "curve_key, tenor_label, tenor_type, cast(contract_month as date) as contract_month, "
-        "cast(asof_date as date) as asof_date, mid, bid, ask, price_type"
-    )
-
-    direction = "DESC" if descending else "ASC"
-    order_clause = " ORDER BY " + ", ".join(f"{col} {direction}" for col in ORDER_COLUMNS)
-    comparison_cursor = cursor_after
-    comparison = ">"
-    if cursor_before:
-        comparison_cursor = cursor_before
-        comparison = "<"
-        offset = 0
-
-    if asof:
-        asof_clause = f"asof_date = DATE '{asof.isoformat()}'"
-        where_final = where + (" AND " if where else " WHERE ") + asof_clause
-        where_final += _build_keyset_clause(
-            comparison_cursor,
-            alias="",
-            order_columns=ORDER_COLUMNS,
-            comparison=comparison,
-        )
-        effective_offset = 0 if comparison_cursor else offset
-        return (
-            f"SELECT {select_cols} FROM {base}{where_final}{order_clause} "
-            f"LIMIT {limit} OFFSET {effective_offset}"
-        )
-
-    inner = (
-        f"SELECT {select_cols}, "
-        f"row_number() OVER (PARTITION BY curve_key, tenor_label ORDER BY asof_date DESC, _ingest_ts DESC) rn "
-        f"FROM {base}{where}"
-    )
-    keyset_clause = _build_keyset_clause(
-        comparison_cursor,
-        alias="t",
-        order_columns=ORDER_COLUMNS,
-        comparison=comparison,
-    )
-    effective_offset = 0 if comparison_cursor else offset
-    return (
-        "SELECT curve_key, tenor_label, tenor_type, contract_month, asof_date, mid, bid, ask, price_type "
-        f"FROM ({inner}) t WHERE rn = 1{keyset_clause}{order_clause} "
-        f"LIMIT {limit} OFFSET {effective_offset}"
+    return build_curve_query(
+        asof=asof,
+        curve_key=curve_key,
+        asset_class=asset_class,
+        iso=iso,
+        location=location,
+        market=market,
+        product=product,
+        block=block,
+        tenor_type=tenor_type,
+        limit=limit,
+        offset=offset,
+        cursor_after=cursor_after,
+        cursor_before=cursor_before,
+        descending=descending,
     )
 
 
@@ -773,18 +674,16 @@ def query_curves(
             data = json.loads(cached)
             return data, 0.0
 
-    connect = _require_trino()
-    start = time.perf_counter()
-    rows: List[Dict[str, Any]] = []
-    with connect(host=trino_cfg.host, port=trino_cfg.port, user=trino_cfg.user, http_scheme=trino_cfg.http_scheme) as conn:  # type: ignore[arg-type]
-        cur = conn.cursor()
-        cur.execute(sql)
-        columns = [c[0] for c in cur.description]
-        for rec in cur.fetchall():
-            row = {col: val for col, val in zip(columns, rec)}
-            # normalize optional fields present in OpenAPI
-            rows.append(row)
-    elapsed = (time.perf_counter() - start) * 1000.0
+    tracer = get_tracer("aurum.api.service")
+    with tracer.start_as_current_span("query_curves.execute") as span:
+        span.set_attribute("aurum.curves.limit", effective_limit)
+        span.set_attribute("aurum.curves.offset", effective_offset)
+        span.set_attribute("aurum.curves.has_cursor", bool(cursor_after or cursor_before))
+        start = time.perf_counter()
+        rows = _execute_trino_query(trino_cfg, sql)
+        elapsed = (time.perf_counter() - start) * 1000.0
+        span.set_attribute("aurum.curves.elapsed_ms", elapsed)
+        span.set_attribute("aurum.curves.row_count", len(rows))
 
     if client is not None and cache_key is not None:
         try:  # pragma: no cover - integration path
@@ -811,48 +710,21 @@ def _build_sql_diff(
     offset: int,
     cursor_after: Optional[Dict[str, Any]],
 ) -> str:
-    base = "iceberg.market.curve_observation"
-    filters: Dict[str, Optional[str]] = {
-        "curve_key": curve_key,
-        "asset_class": asset_class,
-        "iso": iso,
-        "location": location,
-        "market": market,
-        "product": product,
-        "block": block,
-        "tenor_type": tenor_type,
-    }
-    where = _build_where(filters)
-    asof_in = (
-        f"(DATE '{asof_a.isoformat()}', DATE '{asof_b.isoformat()}')"
+    return build_curve_diff_query(
+        asof_a=asof_a,
+        asof_b=asof_b,
+        curve_key=curve_key,
+        asset_class=asset_class,
+        iso=iso,
+        location=location,
+        market=market,
+        product=product,
+        block=block,
+        tenor_type=tenor_type,
+        limit=limit,
+        offset=offset,
+        cursor_after=cursor_after,
     )
-    # base CTE for both dates
-    where_final = (
-        where + f" AND asof_date IN {asof_in}" if where else f" WHERE asof_date IN {asof_in}"
-    )
-    cte = (
-        "WITH base AS ("
-        " SELECT curve_key, tenor_label, tenor_type, cast(contract_month as date) as contract_month, "
-        "        cast(asof_date as date) as asof_date, mid"
-        f" FROM {base}{where_final}"
-        ")"
-    )
-    keyset_clause = _build_keyset_clause(cursor_after, alias="a", order_columns=DIFF_ORDER_COLUMNS)
-    effective_offset = 0 if cursor_after else offset
-    sql = (
-        f"{cte} "
-        "SELECT a.curve_key, a.tenor_label, a.tenor_type, a.contract_month, "
-        "a.asof_date as asof_a, a.mid as mid_a, "
-        "b.asof_date as asof_b, b.mid as mid_b, "
-        "(b.mid - a.mid) as diff_abs, "
-        "CASE WHEN a.mid IS NOT NULL AND a.mid <> 0 THEN (b.mid - a.mid) / a.mid ELSE NULL END as diff_pct "
-        "FROM base a JOIN base b ON a.curve_key = b.curve_key AND a.tenor_label = b.tenor_label "
-        f"WHERE a.asof_date = DATE '{asof_a.isoformat()}' AND b.asof_date = DATE '{asof_b.isoformat()}' "
-        f"{keyset_clause} "
-        "ORDER BY a.curve_key, a.tenor_label, a.contract_month "
-        f"LIMIT {limit} OFFSET {effective_offset}"
-    )
-    return sql
 
 
 def query_curves_diff(
@@ -1148,17 +1020,15 @@ def query_scenario_outputs(
             except Exception:
                 pass
 
-        connect = _require_trino()
+    tracer = get_tracer("aurum.api.service")
+    with tracer.start_as_current_span("query_curves_diff.execute") as span:
+        span.set_attribute("aurum.curves_diff.limit", limit)
+        span.set_attribute("aurum.curves_diff.has_cursor", bool(cursor_after))
         start = time.perf_counter()
-        rows: List[Dict[str, Any]] = []
-        with connect(host=trino_cfg.host, port=trino_cfg.port, user=trino_cfg.user, http_scheme=trino_cfg.http_scheme) as conn:  # type: ignore[arg-type]
-            cur = conn.cursor()
-            cur.execute(sql)
-            columns = [c[0] for c in cur.description]
-            for rec in cur.fetchall():
-                row = {col: val for col, val in zip(columns, rec)}
-                rows.append(row)
+        rows = _execute_trino_query(trino_cfg, sql)
         elapsed = (time.perf_counter() - start) * 1000.0
+        span.set_attribute("aurum.curves_diff.elapsed_ms", elapsed)
+        span.set_attribute("aurum.curves_diff.row_count", len(rows))
 
         if client is not None and cache_key is not None:
             try:  # pragma: no cover

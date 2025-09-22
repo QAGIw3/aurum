@@ -1,9 +1,27 @@
-"""Runtime stubs for Airflow preflight utilities."""
+"""Enhanced Airflow utilities with TaskFlow API support and comprehensive configuration."""
+
 from __future__ import annotations
 
 from typing import Iterable, Sequence
 
 from .alerting import build_failure_callback, emit_alert
+from .dag_factory import (
+    DAGFactory,
+    create_incremental_dag,
+    create_seatunnel_dag,
+    create_backfill_dag,
+    POOL_CONFIGS,
+    SLA_CONFIGS,
+)
+from .deferrable_operators import (
+    SeaTunnelJobOperator,
+    APICallOperator,
+    KafkaMessageSensor,
+    DatabaseOperationOperator,
+    create_seatunnel_job_task,
+    create_api_call_task,
+    create_kafka_sensor_task,
+)
 from . import metrics
 
 
@@ -37,4 +55,22 @@ def build_preflight_callable(
     return _preflight_stub
 
 
-__all__ = ["build_preflight_callable", "emit_alert", "build_failure_callback", "metrics"]
+__all__ = [
+    "build_preflight_callable",
+    "emit_alert",
+    "build_failure_callback",
+    "metrics",
+    "DAGFactory",
+    "create_incremental_dag",
+    "create_seatunnel_dag",
+    "create_backfill_dag",
+    "POOL_CONFIGS",
+    "SLA_CONFIGS",
+    "SeaTunnelJobOperator",
+    "APICallOperator",
+    "KafkaMessageSensor",
+    "DatabaseOperationOperator",
+    "create_seatunnel_job_task",
+    "create_api_call_task",
+    "create_kafka_sensor_task",
+]

@@ -222,6 +222,10 @@ docs-build: ## Build documentation
 	@python scripts/docs/build_docs.py 2>/dev/null || python3 scripts/docs/build_docs.py
 	@echo "Run 'make docs-serve' to preview static docs"
 
+noaa-register-schemas: ## Register NOAA Avro schemas for configured topics
+	@echo "Registering NOAA schemas to Schema Registry..."
+	@python scripts/noaa/register_schemas.py 2>/dev/null || python3 scripts/noaa/register_schemas.py
+
 # Canary & Chaos
 canary-api: ## Run basic API canary against local Compose or cluster
 	python scripts/canary/run_api_canary.py --base $${AURUM_API_BASE:-http://localhost:8095}

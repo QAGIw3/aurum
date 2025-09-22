@@ -9,9 +9,33 @@ metadata:
 spec:
   entryPoints:
     - web
+    - websecure
   routes:
+    # HTTP to HTTPS redirect
     - match: Host(`api.aurum.localtest.me`)
       kind: Rule
+      middlewares:
+        - name: https-redirect
+          namespace: aurum-dev
       services:
         - name: aurum-api
           port: 8080
+    # HTTPS route with middleware chain
+    - match: Host(`api.aurum.localtest.me`)
+      kind: Rule
+      middlewares:
+        - name: api-security-headers
+          namespace: aurum-dev
+        - name: api-cors
+          namespace: aurum-dev
+        - name: api-compression
+          namespace: aurum-dev
+        - name: api-rate-limit
+          namespace: aurum-dev
+        - name: oidc-forward-auth
+          namespace: aurum-dev
+      services:
+        - name: aurum-api
+          port: 8080
+  tls:
+    certResolver: letsencrypt

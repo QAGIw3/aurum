@@ -119,18 +119,24 @@ class RuntimeConfigService:
         request_id: str
     ) -> Dict[str, Any]:
         """Update feature flag configuration for a tenant."""
-        from aurum.scenarios.storage import ScenarioStore
+        from aurum.scenarios.storage import get_scenario_store
+        from aurum.telemetry.context import set_tenant_id, reset_tenant_id
 
-        store = ScenarioStore()
-        old_config = await store.get_feature_flag(tenant_id, feature_name)
+        store = get_scenario_store()
 
-        # Update feature flag
-        updated_config = await store.set_feature_flag(
-            tenant_id=tenant_id,
-            feature_name=feature_name,
-            enabled=config.enabled,
-            configuration=config.configuration
-        )
+        # Temporarily impersonate the target tenant for RLS-bound operations
+        token = set_tenant_id(tenant_id)
+        try:
+            old_config = await store.get_feature_flag(feature_name)
+
+            # Update feature flag
+            updated_config = await store.set_feature_flag(
+                feature_name=feature_name,
+                enabled=config.enabled,
+                configuration=config.configuration
+            )
+        finally:
+            reset_tenant_id(token)
 
         # Create audit log entry
         async with self._lock:
@@ -300,7 +306,7 @@ async def get_audit_log(
                     "limit": limit
                 }
             },
-            "data": [entry.dict() for entry in entries]
+            "data": [entry.model_dump() for entry in entries]
         }
     except Exception as e:
         log_structured(
@@ -324,8 +330,8 @@ async def get_tenant_feature_flags(
     request_id = get_request_id()
 
     try:
-        from aurum.scenarios.storage import ScenarioStore
-        store = ScenarioStore()
+        from aurum.scenarios.storage import get_scenario_store
+        store = get_scenario_store()
 
         # Get all feature flags for the tenant (this would need to be implemented in storage)
         # For now, return empty list

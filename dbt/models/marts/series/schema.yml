@@ -1,0 +1,117 @@
+version: 2
+models:
+- name: mart_eia_series_latest
+  description: Latest observation per series identifier with normalized units and
+    currency.
+  tests:
+  - unique_combination:
+      combination_of_columns:
+      - tenant_id
+      - series_id
+  columns:
+  - name: tenant_id
+    tests:
+    - not_null
+  - name: series_id
+    tests:
+    - relationships:
+        to: ref('int_eia_series_enriched')
+        field: series_id
+        to_field: series_id
+  - name: period_start
+    tests:
+    - not_null
+  - name: value
+    tests:
+    - not_null
+  - name: currency_normalized
+    tests:
+    - not_null
+  - name: unit_normalized
+    tests:
+    - not_null
+  - name: ingest_ts
+    tests:
+    - not_null
+  - name: ingest_job_id
+  - name: ingest_run_id
+  - name: ingest_batch_id
+  - name: period_date
+    tests:
+    - not_null
+- name: mart_eia_series_facets
+  description: Distinct facet values (dataset, frequency, area, sector, units) for
+    filtering APIs.
+  columns:
+  - name: tenant_id
+    tests:
+    - not_null
+  - name: dataset
+    tests:
+    - not_null
+  - name: frequency
+    tests:
+    - not_null
+    - accepted_values:
+        values:
+        - ANNUAL
+        - QUARTERLY
+        - MONTHLY
+        - WEEKLY
+        - DAILY
+        - HOURLY
+        - OTHER
+- name: mart_eia_series_units
+  description: Lookup of raw units to normalized currency and unit denominators.
+  tests:
+  - unique_combination:
+      combination_of_columns:
+      - tenant_id
+      - unit_raw
+  columns:
+  - name: tenant_id
+    tests:
+    - not_null
+  - name: unit_raw
+    tests:
+    - not_null
+- name: mart_fred_series_latest
+  description: Latest FRED observation per tenant and series identifier.
+  tests:
+  - unique_combination:
+      combination_of_columns:
+      - tenant_id
+      - series_id
+  columns:
+  - name: tenant_id
+    tests:
+    - not_null
+  - name: series_id
+    tests:
+    - not_null
+  - name: obs_date
+    tests:
+    - not_null
+  - name: ingest_ts
+    tests:
+    - not_null
+- name: mart_cpi_series_latest
+  description: Latest CPI observation per tenant and series identifier.
+  tests:
+  - unique_combination:
+      combination_of_columns:
+      - tenant_id
+      - series_id
+  columns:
+  - name: tenant_id
+    tests:
+    - not_null
+  - name: series_id
+    tests:
+    - not_null
+  - name: period
+    tests:
+    - not_null
+  - name: ingest_ts
+    tests:
+    - not_null

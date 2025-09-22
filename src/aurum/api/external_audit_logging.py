@@ -7,16 +7,15 @@ including API calls, data access, and administrative actions.
 
 import json
 import logging
+import os
+from pathlib import Path
 from datetime import datetime, timezone
-from typing import Dict, Any, Optional
+from typing import Dict, Any, Optional, List
 from uuid import uuid4
 
 from fastapi import Request, Response
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
-import structlog
-
-logger = structlog.get_logger(__name__)
 
 class AuditEvent(BaseModel):
     """Model for audit log events."""
@@ -43,39 +42,36 @@ class ExternalDataAuditLogger:
 
         # Add handler for audit logs if not already present
         if not self.audit_logger.handlers:
-            handler = logging.FileHandler("/var/log/aurum/external_data_audit.log")
-            handler.setFormatter(
-                logging.Formatter(
-                    '%(asctime)s - %(name)s - %(levelname)s - %(message)s'
-                )
-            )
-            self.audit_logger.addHandler(handler)
+            self.audit_logger.addHandler(self._build_handler("external_data_audit.log"))
 
         # Compliance logging
         self.compliance_logger = logging.getLogger("compliance.external_data")
         self.compliance_logger.setLevel(logging.INFO)
 
         if not self.compliance_logger.handlers:
-            compliance_handler = logging.FileHandler("/var/log/aurum/compliance_audit.log")
-            compliance_handler.setFormatter(
-                logging.Formatter(
-                    '%(asctime)s - %(name)s - %(levelname)s - %(message)s'
-                )
-            )
-            self.compliance_logger.addHandler(compliance_handler)
+            self.compliance_logger.addHandler(self._build_handler("compliance_audit.log"))
 
         # Security event logging
         self.security_logger = logging.getLogger("security.external_data")
         self.security_logger.setLevel(logging.WARNING)
 
         if not self.security_logger.handlers:
-            security_handler = logging.FileHandler("/var/log/aurum/security_events.log")
-            security_handler.setFormatter(
-                logging.Formatter(
-                    '%(asctime)s - %(name)s - %(levelname)s - %(message)s'
-                )
-            )
-            self.security_logger.addHandler(security_handler)
+            self.security_logger.addHandler(self._build_handler("security_events.log"))
+
+    def _build_handler(self, filename: str) -> logging.Handler:
+        """Create a log handler, preferring a writable directory.
+
+        Uses AURUM_AUDIT_LOG_DIR if set, else tries /var/log/aurum, else falls back to stdout.
+        """
+        log_dir = os.getenv("AURUM_AUDIT_LOG_DIR") or "/var/log/aurum"
+        try:
+            path = Path(log_dir)
+            path.mkdir(parents=True, exist_ok=True)
+            handler = logging.FileHandler(str(path / filename))
+        except Exception:
+            handler = logging.StreamHandler()
+        handler.setFormatter(logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s'))
+        return handler
 
     def log_event(self, event: AuditEvent):
         """Log an audit event."""
@@ -180,7 +176,7 @@ class ExternalDataAuditLogger:
         user_id: Optional[str] = None,
         correlation_id: Optional[str] = None
     ):
-        """Log a security event."""
+        """Log a security event (high-level API)."""
         event = AuditEvent(
             event_id=str(uuid4()),
             timestamp=datetime.now(timezone.utc),
@@ -192,9 +188,9 @@ class ExternalDataAuditLogger:
             details=details,
             correlation_id=correlation_id
         )
-        self.log_event(event)
+        self._emit_security_event(event)
 
-    def log_compliance_event(self, event: AuditEvent):
+    def _emit_compliance_event(self, event: AuditEvent):
         """Log a compliance-related audit event."""
         log_entry = {
             "event_id": event.event_id,
@@ -215,8 +211,17 @@ class ExternalDataAuditLogger:
 
         self.compliance_logger.info(json.dumps(log_entry))
 
-    def log_security_event(self, event: AuditEvent):
-        """Log a security-related audit event."""
+    # Public helper to log compliance events; used by callers expecting a public API
+    def log_compliance_event(self, event: AuditEvent):
+        """Public wrapper for emitting compliance events.
+
+        Some call sites reference `log_compliance_event`; provide a stable
+        public method that delegates to the internal emitter.
+        """
+        self._emit_compliance_event(event)
+
+    def _emit_security_event(self, event: AuditEvent):
+        """Log a security-related audit event (low-level)."""
         log_entry = {
             "event_id": event.event_id,
             "timestamp": event.timestamp.isoformat(),
@@ -262,7 +267,7 @@ class ExternalDataAuditLogger:
             },
             correlation_id=correlation_id
         )
-        self.log_security_event(event)
+        self._emit_security_event(event)
 
     def log_privilege_escalation_attempt(
         self,
@@ -290,7 +295,7 @@ class ExternalDataAuditLogger:
             },
             correlation_id=correlation_id
         )
-        self.log_security_event(event)
+        self._emit_security_event(event)
 
     def log_data_classification_access(
         self,
@@ -318,7 +323,7 @@ class ExternalDataAuditLogger:
             },
             correlation_id=correlation_id
         )
-        self.log_compliance_event(event)
+        self._emit_compliance_event(event)
 
     def log_admin_action_audit(
         self,
@@ -375,7 +380,7 @@ class ExternalDataAuditLogger:
         )
 
         if user_tenant_id != accessed_tenant_id:
-            self.log_security_event(event)
+            self._emit_security_event(event)
         else:
             self.log_event(event)
 
@@ -408,34 +413,42 @@ class ExternalDataAuditLogger:
 audit_logger = ExternalDataAuditLogger()
 
 async def audit_middleware(request: Request, call_next):
-    """FastAPI middleware for audit logging."""
-    # Generate correlation ID if not present
-    correlation_id = request.headers.get("x-correlation-id")
-    if not correlation_id:
-        correlation_id = str(uuid4())
-        # Add to response headers
-        response = await call_next(request)
-        response.headers["x-correlation-id"] = correlation_id
-        return response
+    """FastAPI middleware for audit logging.
+
+    Ensures every request receives a correlation ID and is logged regardless of
+    whether the incoming request provided one.
+    """
+    # Resolve or create correlation ID
+    correlation_id = request.headers.get("x-correlation-id") or str(uuid4())
 
     response = await call_next(request)
 
+    # Ensure correlation ID is present on the response
+    try:
+        response.headers["x-correlation-id"] = correlation_id
+    except Exception:
+        pass
+
     # Log the API call
-    audit_logger.log_api_call(
-        request=request,
-        response=response,
-        user_id=getattr(request.state, "user_id", None),
-        resource=f"{request.method} {request.url.path}",
-        operation=request.url.path,
-        details={
-            "method": request.method,
-            "path": request.url.path,
-            "query_params": dict(request.query_params),
-            "response_status": response.status_code,
-            "response_size": len(response.body) if hasattr(response, "body") else 0
-        },
-        correlation_id=correlation_id
-    )
+    try:
+        audit_logger.log_api_call(
+            request=request,
+            response=response,
+            user_id=getattr(request.state, "user_id", None),
+            resource=f"{request.method} {request.url.path}",
+            operation=request.url.path,
+            details={
+                "method": request.method,
+                "path": request.url.path,
+                "query_params": dict(request.query_params),
+                "response_status": response.status_code,
+                "response_size": len(response.body) if hasattr(response, "body") else 0
+            },
+            correlation_id=correlation_id
+        )
+    except Exception:
+        # Never break the request due to logging errors
+        pass
 
     return response
 

@@ -118,7 +118,7 @@ async def get_iso_location(
         query_time_ms = (time.perf_counter() - start_time) * 1000
 
         return IsoLocationOut(
-            **location[0].dict(),
+            **location[0].model_dump(),
             meta={
                 "request_id": get_request_id(),
                 "query_time_ms": round(query_time_ms, 2),

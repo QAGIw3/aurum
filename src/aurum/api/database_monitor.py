@@ -226,7 +226,7 @@ class DatabaseMonitor:
             # Cache slow query for analysis
             if self.cache_manager:
                 await self.cache_manager.cache_metadata(
-                    metrics.dict(),
+                    metrics.model_dump(),
                     "slow_query",
                     query_hash=query_hash,
                     timestamp=metrics.timestamp.isoformat()

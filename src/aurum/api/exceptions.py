@@ -133,7 +133,7 @@ def handle_api_exception(request: Request, exc: Exception) -> HTTPException:
             context=exc.context,
             request_id=request_id,
         )
-        return HTTPException(status_code=exc.status_code, detail=error_envelope.dict())
+        return HTTPException(status_code=exc.status_code, detail=error_envelope.model_dump())
 
     # Handle FastAPI's HTTPException
     if isinstance(exc, HTTPException):
@@ -143,7 +143,7 @@ def handle_api_exception(request: Request, exc: Exception) -> HTTPException:
             message=exc.detail,
             request_id=request_id,
         )
-        return HTTPException(status_code=exc.status_code, detail=error_envelope.dict())
+        return HTTPException(status_code=exc.status_code, detail=error_envelope.model_dump())
 
     # Handle Pydantic ValidationError
     if hasattr(exc, "model") and hasattr(exc, "errors"):
@@ -162,7 +162,7 @@ def handle_api_exception(request: Request, exc: Exception) -> HTTPException:
             field_errors=field_errors,
             request_id=request_id,
         )
-        return HTTPException(status_code=400, detail=validation_response.dict())
+        return HTTPException(status_code=400, detail=validation_response.model_dump())
 
     # Handle other ValueError exceptions
     if isinstance(exc, ValueError):
@@ -171,7 +171,7 @@ def handle_api_exception(request: Request, exc: Exception) -> HTTPException:
             message=str(exc),
             request_id=request_id,
         )
-        return HTTPException(status_code=400, detail=error_envelope.dict())
+        return HTTPException(status_code=400, detail=error_envelope.model_dump())
 
     # Handle all other exceptions as internal server errors
     error_envelope = ErrorEnvelope(
@@ -183,7 +183,7 @@ def handle_api_exception(request: Request, exc: Exception) -> HTTPException:
         },
         request_id=request_id,
     )
-    return HTTPException(status_code=500, detail=error_envelope.dict())
+    return HTTPException(status_code=500, detail=error_envelope.model_dump())
 
 
 # Common exception factories

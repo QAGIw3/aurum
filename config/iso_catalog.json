@@ -1,6 +1,6 @@
 {
-  "generated_at": "2025-01-21T03:13:49.967221+00:00",
-  "iso_count": 6,
+  "generated_at": "2025-09-22T00:00:00+00:00",
+  "iso_count": 8,
   "isos": [
     {
       "name": "nyiso",
@@ -108,6 +108,42 @@
         "requests_per_hour": 6000
       },
       "api_format": "json",
+      "authentication": "bearer_token",
+      "price_nodes_available": true,
+      "ancillary_services_available": false
+    },
+    {
+      "name": "isone",
+      "full_name": "ISO New England",
+      "region": "New England",
+      "base_url": "https://webservices.iso-ne.com",
+      "description": "ISO-NE market data via Web Services",
+      "data_types": ["lmp"],
+      "markets": ["DAM", "RTM"],
+      "zones": ["ISO-NE"],
+      "rate_limits": {
+        "requests_per_minute": 60,
+        "requests_per_hour": 3600
+      },
+      "api_format": "json",
+      "authentication": "basic_auth",
+      "price_nodes_available": true,
+      "ancillary_services_available": false
+    },
+    {
+      "name": "ercot",
+      "full_name": "Electric Reliability Council of Texas",
+      "region": "Texas",
+      "base_url": "https://mis.ercot.com",
+      "description": "ERCOT MIS market data",
+      "data_types": ["lmp"],
+      "markets": ["DAM", "RTM"],
+      "zones": ["ERCOT"],
+      "rate_limits": {
+        "requests_per_minute": 60,
+        "requests_per_hour": 3600
+      },
+      "api_format": "csv",
       "authentication": "bearer_token",
       "price_nodes_available": true,
       "ancillary_services_available": false

@@ -16,6 +16,8 @@ clean-targets:
 models:
   aurum:
     +materialized: view
+    +contract:
+      enforced: true
     stg:
       +schema: stg
     int:

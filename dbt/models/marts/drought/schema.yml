@@ -1,0 +1,79 @@
+version: 2
+models:
+- name: fct_drought_index
+  description: Latest drought index value per series_id and valid_date with geography
+    context.
+  tests:
+  - unique_combination:
+      combination_of_columns:
+      - series_id
+      - valid_date
+  columns:
+  - name: series_id
+    tests:
+    - relationships:
+        to: ref('stg_drought_index')
+        field: series_id
+        to_field: series_id
+  - name: value
+    tests:
+    - not_null
+  - name: region_type
+    tests:
+    - not_null
+    - relationships:
+        to: source('iceberg_ref', 'geographies')
+        field: region_type
+        to_field: region_type
+  - name: region_id
+    tests:
+    - not_null
+    - relationships:
+        to: source('iceberg_ref', 'geographies')
+        field: region_id
+        to_field: region_id
+- name: fct_usdm_area
+  description: Latest USDM severity fractions by geography.
+  tests:
+  - unique_combination:
+      combination_of_columns:
+      - region_type
+      - region_id
+      - valid_date
+  columns:
+  - name: d0_frac
+    tests:
+    - not_null
+  - name: d4_frac
+    description: Fraction of area under D4 severity (may be zero).
+  - name: region_type
+    tests:
+    - not_null
+  - name: region_id
+    tests:
+    - not_null
+    - relationships:
+        to: ref('stg_usdm_area')
+        field: region_id
+        to_field: region_id
+- name: fct_vector_event
+  description: Latest vector overlay per layer/event with geometry.
+  tests:
+  - unique_combination:
+      combination_of_columns:
+      - layer
+      - event_id
+  columns:
+  - name: layer
+    tests:
+    - not_null
+  - name: event_id
+    tests:
+    - not_null
+    - relationships:
+        to: ref('stg_vector_event')
+        field: event_id
+        to_field: event_id
+  - name: source_url
+    tests:
+    - not_null

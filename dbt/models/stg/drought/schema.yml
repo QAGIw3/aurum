@@ -1,0 +1,79 @@
+version: 2
+models:
+- name: stg_drought_index
+  description: Staging view exposing raw drought index records with JSON metadata.
+  tests:
+  - unique_combination:
+      combination_of_columns:
+      - series_id
+      - valid_date
+  columns:
+  - name: series_id
+    tests:
+    - not_null
+    - relationships:
+        to: source('iceberg_environment', 'drought_index')
+        field: series_id
+        to_field: series_id
+  - name: region_type
+    tests:
+    - not_null
+  - name: region_id
+    tests:
+    - not_null
+    - relationships:
+        to: source('iceberg_environment', 'usdm_area')
+        field: region_id
+        to_field: region_id
+  - name: index_id
+    tests:
+    - not_null
+  - name: valid_date
+    tests:
+    - not_null
+- name: stg_usdm_area
+  description: Staging view for USDM area fractions at the latest ingest.
+  tests:
+  - unique_combination:
+      combination_of_columns:
+      - region_type
+      - region_id
+      - valid_date
+  columns:
+  - name: region_type
+    tests:
+    - not_null
+  - name: region_id
+    tests:
+    - not_null
+  - name: valid_date
+    tests:
+    - not_null
+  - name: region_id
+    tests:
+    - relationships:
+        to: source('iceberg_environment', 'usdm_area')
+        field: region_id
+        to_field: region_id
+- name: stg_vector_event
+  description: Staging view for vector overlays with geometry serialized as WKT.
+  tests:
+  - unique_combination:
+      combination_of_columns:
+      - layer
+      - event_id
+      - ingest_ts
+  columns:
+  - name: layer
+    tests:
+    - not_null
+  - name: event_id
+    tests:
+    - not_null
+    - relationships:
+        to: source('iceberg_environment', 'vector_events')
+        field: event_id
+        to_field: event_id
+  - name: ingest_ts
+    tests:
+    - not_null

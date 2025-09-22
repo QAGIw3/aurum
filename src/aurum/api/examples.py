@@ -416,7 +416,10 @@ async def example_api_versioning():
 
     v15_version = await version_manager.get_version("1.5")
     print(f"v1.5: {v15_version.status.value}")
-    print(f"  Deprecation info: {v15_version.deprecation_info.dict() if v15_version.deprecation_info else 'None'}")
+    print(
+        "  Deprecation info: "
+        f"{v15_version.deprecation_info.model_dump() if v15_version.deprecation_info else 'None'}"
+    )
 
 
 async def example_version_migration():

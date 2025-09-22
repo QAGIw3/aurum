@@ -1,19 +1,189 @@
 {
+  "metadata": {
+    "description": "NOAA Weather Data Ingestion Configuration",
+    "version": "1.0.0",
+    "last_updated": "2024-09-22",
+    "source": "NOAA NCEI API v1",
+    "base_url": "https://www.ncei.noaa.gov/cdo-web/api/v2",
+    "api_documentation": "https://www.ncei.noaa.gov/access/services/data/v1"
+  },
   "datasets": [
     {
-      "dataset_id": "daily_summary",
+      "dataset_id": "ghcnd_daily",
       "dataset": "GHCND",
+      "name": "Global Historical Climatology Network - Daily",
+      "description": "Daily weather observations from global stations",
+      "frequency": "daily",
+      "schedule": "0 6 * * *",
       "stations": [
         "GHCND:USW00094728",
-        "GHCND:USW00023174"
+        "GHCND:USW00023174",
+        "GHCND:USW00012842",
+        "GHCND:USW00023188",
+        "GHCND:USW00013874",
+        "GHCND:USW00014898",
+        "GHCND:USW00014933",
+        "GHCND:USW00093230",
+        "GHCND:USW00003927",
+        "GHCND:USW00012960"
       ],
       "datatypes": [
-        "TMAX",
-        "TMIN",
-        "PRCP"
+        "TMAX", "TMIN", "PRCP", "SNOW", "SNWD",
+        "WSF2", "WSF5", "AWND", "TAVG"
       ],
-      "window_days": 7,
-      "page_limit": 500
+      "window_days": 1,
+      "page_limit": 1000,
+      "station_limit": 1000,
+      "rate_limit_sleep_ms": 250,
+      "timeout_seconds": 45,
+      "retry_attempts": 5,
+      "topic": "aurum.ref.noaa.weather.ghcnd.daily.v1",
+      "enabled": true,
+      "backfill_enabled": true,
+      "quality_checks": {
+        "null_value_threshold": 0.1,
+        "outlier_detection": true,
+        "range_validation": {
+          "temperature": [-50, 60],
+          "precipitation": [0, 500],
+          "wind_speed": [0, 100]
+        }
+      }
+    },
+    {
+      "dataset_id": "ghcnd_hourly",
+      "dataset": "GHCND",
+      "name": "Global Historical Climatology Network - Hourly",
+      "description": "Hourly weather observations from select stations",
+      "frequency": "hourly",
+      "schedule": "0 */6 * * *",
+      "stations": [
+        "GHCND:USW00094728",
+        "GHCND:USW00023174",
+        "GHCND:USW00012842"
+      ],
+      "datatypes": [
+        "TMAX", "TMIN", "PRCP"
+      ],
+      "window_hours": 1,
+      "window_days": 0,
+      "page_limit": 1000,
+      "station_limit": 1000,
+      "rate_limit_sleep_ms": 250,
+      "timeout_seconds": 45,
+      "retry_attempts": 5,
+      "topic": "aurum.ref.noaa.weather.ghcnd.hourly.v1",
+      "enabled": true,
+      "backfill_enabled": false,
+      "quality_checks": {
+        "null_value_threshold": 0.05,
+        "outlier_detection": true,
+        "range_validation": {
+          "temperature": [-50, 60],
+          "precipitation": [0, 200],
+          "wind_speed": [0, 50]
+        }
+      }
+    },
+    {
+      "dataset_id": "gsom_monthly",
+      "dataset": "GSOM",
+      "name": "Global Summary of the Month",
+      "description": "Monthly weather summaries and statistics",
+      "frequency": "monthly",
+      "schedule": "0 8 1 * *",
+      "stations": [
+        "GHCND:USW00094728",
+        "GHCND:USW00023174",
+        "GHCND:USW00012842",
+        "GHCND:USW00023188",
+        "GHCND:USW00013874",
+        "GHCND:USW00014898",
+        "GHCND:USW00014933",
+        "GHCND:USW00093230",
+        "GHCND:USW00003927",
+        "GHCND:USW00012960"
+      ],
+      "datatypes": [
+        "TAVG", "TMAX", "TMIN", "PRCP", "SNOW",
+        "WSF2", "WSF5", "AWND"
+      ],
+      "window_days": 30,
+      "page_limit": 1000,
+      "station_limit": 1000,
+      "rate_limit_sleep_ms": 500,
+      "timeout_seconds": 60,
+      "retry_attempts": 3,
+      "topic": "aurum.ref.noaa.weather.gsom.monthly.v1",
+      "enabled": true,
+      "backfill_enabled": true,
+      "quality_checks": {
+        "null_value_threshold": 0.15,
+        "outlier_detection": true,
+        "range_validation": {
+          "temperature": [-60, 70],
+          "precipitation": [0, 1000],
+          "wind_speed": [0, 150]
+        }
+      }
+    },
+    {
+      "dataset_id": "normals_daily",
+      "dataset": "NORMAL_DLY",
+      "name": "Normals - Daily",
+      "description": "30-year climate normals for daily observations",
+      "frequency": "daily",
+      "schedule": "0 2 * * *",
+      "stations": [
+        "GHCND:USW00094728",
+        "GHCND:USW00023174",
+        "GHCND:USW00012842",
+        "GHCND:USW00023188",
+        "GHCND:USW00013874"
+      ],
+      "datatypes": [
+        "DLY-TMAX-NORMAL", "DLY-TMIN-NORMAL", "DLY-PRCP-NORMAL"
+      ],
+      "window_days": 1,
+      "page_limit": 1000,
+      "station_limit": 1000,
+      "rate_limit_sleep_ms": 250,
+      "timeout_seconds": 45,
+      "retry_attempts": 5,
+      "topic": "aurum.ref.noaa.weather.normals.daily.v1",
+      "enabled": true,
+      "backfill_enabled": false,
+      "quality_checks": {
+        "null_value_threshold": 0.05,
+        "outlier_detection": false,
+        "range_validation": {
+          "temperature": [-40, 50],
+          "precipitation": [0, 300]
+        }
+      }
     }
-  ]
+  ],
+  "global_settings": {
+    "rate_limit_sleep_ms": 250,
+    "timeout_seconds": 45,
+    "retry_attempts": 5,
+    "retry_backoff_multiplier_ms": 2000,
+    "retry_backoff_max_ms": 120000,
+    "page_limit": 1000,
+    "station_limit": 1000,
+    "concurrent_requests": 5,
+    "max_active_runs": 3,
+    "pool": "api_noaa",
+    "schema_registry_url": "http://localhost:8081",
+    "kafka_bootstrap_servers": "localhost:9092",
+    "timescale_table": "noaa_weather_timeseries",
+    "dlq_topic": "aurum.ref.noaa.weather.dlq.v1"
+  },
+  "alerting": {
+    "slack_channels": ["#data-ingestion-alerts", "#weather-data"],
+    "email_recipients": ["data-team@aurum.com", "weather-team@aurum.com"],
+    "critical_staleness_hours": 24,
+    "warning_staleness_hours": 6,
+    "quality_threshold_percent": 95
+  }
 }

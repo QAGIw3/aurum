@@ -1,0 +1,102 @@
+version: 2
+models:
+- name: stg_eia_series
+  description: Staging model exposing raw EIA series observations from Timescale.
+  tests:
+  - unique_combination:
+      combination_of_columns:
+      - tenant_id
+      - series_id
+      - period
+  columns:
+  - name: tenant_id
+    tests:
+    - not_null
+    - relationships:
+        to: source('timescale_eia', 'eia_series_timeseries')
+        field: tenant_id
+        to_field: tenant_id
+  - name: series_id
+    tests:
+    - not_null
+    - relationships:
+        to: source('timescale_eia', 'eia_series_timeseries')
+        field: series_id
+        to_field: series_id
+  - name: period
+    tests:
+    - not_null
+  - name: frequency
+    tests:
+    - not_null
+    - accepted_values:
+        values:
+        - ANNUAL
+        - QUARTERLY
+        - MONTHLY
+        - WEEKLY
+        - DAILY
+        - HOURLY
+        - OTHER
+  - name: ingest_ts
+    tests:
+    - not_null
+  - name: ingest_job_id
+  - name: ingest_run_id
+  - name: ingest_batch_id
+- name: stg_fred_series
+  description: Staging model exposing FRED series observations with tenant context.
+  tests:
+  - unique_combination:
+      combination_of_columns:
+      - tenant_id
+      - series_id
+      - obs_date
+  columns:
+  - name: tenant_id
+    tests:
+    - not_null
+    - relationships:
+        to: source('timescale_fred', 'fred_series_timeseries')
+        field: tenant_id
+        to_field: tenant_id
+  - name: series_id
+    tests:
+    - not_null
+  - name: obs_date
+    tests:
+    - not_null
+  - name: ingest_ts
+    tests:
+    - not_null
+  - name: ingest_job_id
+  - name: ingest_run_id
+  - name: ingest_batch_id
+- name: stg_cpi_series
+  description: Staging model exposing CPI series observations with tenant context.
+  tests:
+  - unique_combination:
+      combination_of_columns:
+      - tenant_id
+      - series_id
+      - period
+  columns:
+  - name: tenant_id
+    tests:
+    - not_null
+    - relationships:
+        to: source('timescale_cpi', 'cpi_series_timeseries')
+        field: tenant_id
+        to_field: tenant_id
+  - name: series_id
+    tests:
+    - not_null
+  - name: period
+    tests:
+    - not_null
+  - name: ingest_ts
+    tests:
+    - not_null
+  - name: ingest_job_id
+  - name: ingest_run_id
+  - name: ingest_batch_id

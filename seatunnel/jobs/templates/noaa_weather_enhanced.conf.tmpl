@@ -1,0 +1,252 @@
+# Enhanced NOAA Weather Data → Kafka with Comprehensive Features
+#
+# Render with envsubst (see scripts/seatunnel/run_job.sh) before running via SeaTunnel.
+# Required environment variables:
+#   NOAA_API_TOKEN              - NOAA API token with dataset access
+#   NOAA_BASE_URL              - Base URL for the NOAA datasets API
+#   NOAA_DATASET               - Dataset id (GHCND, GSOM, NORMAL_DLY, etc.)
+#   NOAA_START_DATE            - Start date (YYYY-MM-DD)
+#   NOAA_END_DATE              - End date (YYYY-MM-DD)
+#   NOAA_LIMIT                 - Page size (default 1000, max per NOAA API)
+#   NOAA_OFFSET                - Offset for pagination (default 1)
+#   NOAA_STATION_LIMIT         - Number of station metadata rows to fetch
+#   NOAA_TOPIC                 - Kafka topic to write
+#   AURUM_KAFKA_BOOTSTRAP_SERVERS - Comma separated brokers (host:port)
+#   AURUM_SCHEMA_REGISTRY_URL     - Confluent Schema Registry endpoint
+#
+# Optional environment variables:
+#   NOAA_STATIONS              - Comma separated list of station IDs to filter
+#   NOAA_UNITS                 - Measurement units (metric/standard)
+#   NOAA_DATA_TYPES            - Comma separated list of data types to include
+#   NOAA_TIMEOUT               - Request timeout milliseconds (default 45000)
+#   NOAA_UNIT_CODE             - Unit string to store in the Avro payload
+#   NOAA_SUBJECT               - Schema Registry subject override
+#   NOAA_SCHEMA                - Avro schema JSON populated by run_job.sh
+#   NOAA_KEY_SERIALIZER        - Kafka key serializer (default: string)
+#   NOAA_KEY_FORMAT            - Kafka key format (default: json)
+#   NOAA_RATE_LIMIT_SLEEP_MS   - Sleep between requests (default: 250)
+#   NOAA_RETRY_ATTEMPTS        - Number of retry attempts (default: 5)
+#   NOAA_RETRY_BACKOFF_MS      - Retry backoff multiplier (default: 2000)
+#   NOAA_RETRY_BACKOFF_MAX_MS  - Maximum retry backoff (default: 120000)
+#   NOAA_ENABLE_QUALITY_CHECKS - Enable data quality validation (default: true)
+#   NOAA_NULL_THRESHOLD        - Maximum null value percentage (default: 0.1)
+#   NOAA_OUTLIER_DETECTION     - Enable outlier detection (default: true)
+
+env {
+  job.mode = "BATCH"
+  parallelism = 1
+  # Enable checkpointing for better fault tolerance
+  checkpoint.interval = 10000
+  checkpoint.mode = "AT_LEAST_ONCE"
+  checkpoint.timeout = 60000
+}
+
+# Data quality configuration
+quality_checks = {
+  enabled = ${NOAA_ENABLE_QUALITY_CHECKS:-true}
+  null_threshold = ${NOAA_NULL_THRESHOLD:-0.1}
+  outlier_detection = ${NOAA_OUTLIER_DETECTION:-true}
+  range_validation = {
+    temperature = ${NOAA_TEMP_RANGE:-"-50,60"}
+    precipitation = ${NOAA_PRECIP_RANGE:-"0,500"}
+    wind_speed = ${NOAA_WIND_RANGE:-"0,100"}
+  }
+}
+
+source {
+  # Main data source
+  Http {
+    url = "${NOAA_BASE_URL}/data"
+    method = "GET"
+    headers {
+      token = "${NOAA_API_TOKEN}"
+    }
+    params {
+      datasetid = "${NOAA_DATASET}"
+      startdate = "${NOAA_START_DATE}"
+      enddate = "${NOAA_END_DATE}"
+      limit = ${NOAA_LIMIT:-1000}
+      offset = ${NOAA_OFFSET:-1}
+      # Optional station filter
+      ${NOAA_STATIONS:+stationid = "${NOAA_STATIONS}"}
+      # Optional datatype filter
+      ${NOAA_DATA_TYPES:+datatypeid = "${NOAA_DATA_TYPES}"}
+    }
+
+    connection_timeout_ms = ${NOAA_TIMEOUT:-45000}
+    retry = ${NOAA_RETRY_ATTEMPTS:-5}
+    retry_backoff_multiplier_ms = ${NOAA_RETRY_BACKOFF_MS:-2000}
+    retry_backoff_max_ms = ${NOAA_RETRY_BACKOFF_MAX_MS:-120000}
+    format = "json"
+    rate_limit_sleep_ms = ${NOAA_RATE_LIMIT_SLEEP_MS:-250}
+
+    # Schema for NOAA data response
+    schema = {
+      fields {
+        station = string
+        datatype = string
+        attributes = string
+        date = string
+        value = string
+      }
+    }
+    jsonpath = "$$.results[*]"
+    result_table_name = "noaa_observations"
+  }
+
+  # Station metadata source
+  Http {
+    url = "${NOAA_BASE_URL}/stations"
+    method = "GET"
+    headers {
+      token = "${NOAA_API_TOKEN}"
+    }
+    params {
+      datasetid = "${NOAA_DATASET}"
+      startdate = "${NOAA_START_DATE}"
+      enddate = "${NOAA_END_DATE}"
+      limit = ${NOAA_STATION_LIMIT:-1000}
+      # Optional station filter for specific stations
+      ${NOAA_STATIONS:+stationid = "${NOAA_STATIONS}"}
+    }
+
+    connection_timeout_ms = ${NOAA_TIMEOUT:-45000}
+    retry = ${NOAA_RETRY_ATTEMPTS:-5}
+    retry_backoff_multiplier_ms = ${NOAA_RETRY_BACKOFF_MS:-2000}
+    retry_backoff_max_ms = ${NOAA_RETRY_BACKOFF_MAX_MS:-120000}
+    format = "json"
+    rate_limit_sleep_ms = ${NOAA_RATE_LIMIT_SLEEP_MS:-250}
+
+    schema = {
+      fields {
+        id = string
+        name = string
+        latitude = string
+        longitude = string
+        elevation = string
+        elevationUnit = string
+        datacoverage = string
+        mindate = string
+        maxdate = string
+      }
+    }
+    jsonpath = "$$.results[*]"
+    result_table_name = "noaa_stations"
+  }
+}
+
+transform {
+  # Join observations with station metadata
+  Sql {
+    source_table_name = "noaa_observations"
+    result_table_name = "noaa_enriched"
+    query = """
+      SELECT
+        obs.station                                                  AS station_id,
+        st.name                                                      AS station_name,
+        CAST(st.latitude AS DOUBLE)                                  AS latitude,
+        CAST(st.longitude AS DOUBLE)                                 AS longitude,
+        CAST(st.elevation AS DOUBLE)                                 AS elevation,
+        st.elevationUnit                                             AS elevation_unit,
+        CAST(st.datacoverage AS DOUBLE)                              AS data_coverage,
+        '${NOAA_DATASET}'                                            AS dataset_id,
+        obs.datatype                                                 AS element,
+        obs.date                                                     AS observation_date,
+        TRY_CAST(obs.value AS DOUBLE)                                AS value,
+        obs.value                                                    AS raw_value,
+        '${NOAA_UNITS:-metric}'                                      AS units,
+        '${NOAA_UNIT_CODE:-unknown}'                                 AS unit_code,
+        CASE
+          WHEN obs.attributes IS NULL OR obs.attributes = '' THEN NULL
+          ELSE obs.attributes
+        END                                                          AS attributes,
+        CASE
+          WHEN obs.date IS NOT NULL THEN
+            CAST(UNIX_TIMESTAMP(obs.date, "yyyy-MM-dd'T'HH:mm:ss") * 1000000 AS BIGINT)
+          ELSE NULL
+        END                                                          AS observation_timestamp,
+        CAST(UNIX_TIMESTAMP() * 1000000 AS BIGINT)                   AS ingest_timestamp,
+        'NOAA'                                                       AS source,
+        '${NOAA_DATASET}'                                            AS dataset,
+        '${NOAA_START_DATE}'                                         AS ingestion_start_date,
+        '${NOAA_END_DATE}'                                           AS ingestion_end_date
+      FROM noaa_observations AS obs
+      LEFT JOIN noaa_stations AS st
+      ON obs.station = st.id
+    """
+  }
+
+  # Data quality validation (optional)
+  ${NOAA_ENABLE_QUALITY_CHECKS:-true} ? Sql {
+    source_table_name = "noaa_enriched"
+    result_table_name = "noaa_validated"
+    query = """
+      SELECT *,
+        CASE
+          WHEN value IS NULL THEN 'NULL_VALUE'
+          WHEN element = 'TMAX' AND (value < ${NOAA_TEMP_RANGE:-"-50,60"}[0] OR value > ${NOAA_TEMP_RANGE:-"-50,60"}[1]) THEN 'OUTLIER'
+          WHEN element = 'TMIN' AND (value < ${NOAA_TEMP_RANGE:-"-50,60"}[0] OR value > ${NOAA_TEMP_RANGE:-"-50,60"}[1]) THEN 'OUTLIER'
+          WHEN element = 'PRCP' AND value < ${NOAA_PRECIP_RANGE:-"0,500"}[0] THEN 'OUTLIER'
+          WHEN element = 'PRCP' AND value > ${NOAA_PRECIP_RANGE:-"0,500"}[1] THEN 'OUTLIER'
+          WHEN element IN ('WSF2', 'WSF5', 'AWND') AND value < ${NOAA_WIND_RANGE:-"0,100"}[0] THEN 'OUTLIER'
+          WHEN element IN ('WSF2', 'WSF5', 'AWND') AND value > ${NOAA_WIND_RANGE:-"0,100"}[1] THEN 'OUTLIER'
+          ELSE 'VALID'
+        END AS data_quality_flag
+      FROM noaa_enriched
+    """
+  } : Sql {
+    source_table_name = "noaa_enriched"
+    result_table_name = "noaa_validated"
+    query = "SELECT *, 'VALID' AS data_quality_flag FROM noaa_enriched"
+  }
+}
+
+sink {
+  Kafka {
+    plugin_input = "noaa_validated"
+    bootstrap.servers = "${AURUM_KAFKA_BOOTSTRAP_SERVERS}"
+    topic = "${NOAA_TOPIC}"
+    semantic = "AT_LEAST_ONCE"
+    format = "avro"
+
+    avro {
+      use.schema.registry = true
+      schema.registry.url = "${AURUM_SCHEMA_REGISTRY_URL}"
+      value.schema.subject = "${NOAA_SUBJECT:-${NOAA_TOPIC}-value}"
+      value.schema = """${NOAA_SCHEMA}"""
+      key.serializer = "${NOAA_KEY_SERIALIZER:-string}"
+      key.format = "${NOAA_KEY_FORMAT:-json}"
+    }
+
+    producer {
+      acks = "all"
+      enable.idempotence = true
+      max.in.flight.requests.per.connection = 5
+      linger.ms = 500
+      batch.size = 32768
+      retries = ${NOAA_RETRY_ATTEMPTS:-5}
+      retry.backoff.ms = 100
+      retry.backoff.max.ms = 10000
+      delivery.timeout.ms = 120000
+      request.timeout.ms = ${NOAA_TIMEOUT:-45000}
+    }
+  }
+
+  # Optional: Write to DLQ for quality issues
+  ${NOAA_ENABLE_QUALITY_CHECKS:-true} ? Kafka {
+    plugin_input = "noaa_validated"
+    bootstrap.servers = "${AURUM_KAFKA_BOOTSTRAP_SERVERS}"
+    topic = "${NOAA_TOPIC}_dlq"
+    semantic = "AT_LEAST_ONCE"
+    format = "json"
+    filter = "data_quality_flag != 'VALID'"
+    producer {
+      acks = "all"
+      enable.idempotence = true
+      max.in.flight.requests.per.connection = 5
+      linger.ms = 500
+      batch.size = 32768
+      retries = 3
+    }
+  } : null
+}

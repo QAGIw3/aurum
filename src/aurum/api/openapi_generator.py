@@ -14,6 +14,8 @@ from fastapi import FastAPI
 from fastapi.openapi.utils import get_openapi
 from pydantic import BaseModel, Field
 
+from .http.pagination import DEFAULT_PAGE_SIZE, MAX_CURSOR_LENGTH, MAX_PAGE_SIZE
+
 
 class DocumentationFormat(Enum):
     """Supported documentation formats."""
@@ -104,6 +106,17 @@ class OpenAPIGenerator:
             "name": "MIT",
             "url": "https://opensource.org/licenses/MIT"
         }
+
+        pagination_doc = (
+            "\n\n**Pagination**\n"
+            f"- Collection endpoints default to {DEFAULT_PAGE_SIZE} items per page and cap at {MAX_PAGE_SIZE}.\n"
+            "- Cursor-based pagination returns `meta.next_cursor` and `meta.prev_cursor`; offsets are supported for legacy clients but deprecated.\n"
+            f"- Cursor tokens are opaque strings with a maximum length of {MAX_CURSOR_LENGTH} characters.\n"
+        )
+        info_block = openapi_schema.setdefault("info", {})
+        description = info_block.get("description") or ""
+        if pagination_doc.strip() not in description:
+            info_block["description"] = (description + pagination_doc).strip()
 
         # Add server information
         openapi_schema["servers"] = [

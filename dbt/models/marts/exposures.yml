@@ -1,0 +1,59 @@
+version: 2
+exposures:
+- name: scenario_outputs_mart
+  type: dashboard
+  maturity: medium
+  url: https://internal.aurum.local/dashboards/scenario
+  depends_on:
+  - ref('mart_scenario_output')
+  - ref('mart_scenario_metric_latest')
+  owner:
+    name: Scenario Analytics
+    email: analytics@aurum.local
+- name: iceberg_maintenance
+  type: application
+  maturity: low
+  url: https://airflow.aurum.local/dag/iceberg_maintenance
+  description: Scheduled job that expires Iceberg snapshots and compacts data files.
+  depends_on:
+  - source('iceberg_market', 'curve_observation')
+  - source('iceberg_market', 'scenario_output')
+  owner:
+    name: Platform Operations
+    email: platform@aurum.local
+- name: data_dictionary_publication
+  type: analysis
+  maturity: high
+  url: https://internal.aurum.local/catalog/data-dictionary
+  description: Markdown data dictionary generated from dbt documentation and exposures metadata.
+  depends_on:
+  - ref('dim_iso')
+  - ref('dim_market')
+  - ref('fct_curve_observation')
+  - ref('mart_scenario_output')
+  tags:
+  - documentation
+  - governance
+  owner:
+    name: Data Platform
+    email: data-platform@aurum.local
+  meta:
+    publish_path: docs/data_dictionary.md
+- name: metric_catalog_publication
+  type: analysis
+  maturity: medium
+  url: https://internal.aurum.local/catalog/metric-catalog
+  description: Published metric catalog enumerating scenario and market KPIs sourced from marts.
+  depends_on:
+  - ref('mart_scenario_metric_latest')
+  - ref('mart_cpi_series_latest')
+  - ref('mart_eia_series_latest')
+  - ref('mart_fred_series_latest')
+  tags:
+  - metrics
+  - governance
+  owner:
+    name: Data Platform
+    email: data-platform@aurum.local
+  meta:
+    publish_path: docs/metric_catalog.md

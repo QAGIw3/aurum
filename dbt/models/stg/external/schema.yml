@@ -1,0 +1,103 @@
+version: 2
+models:
+- name: stg_noaa_weather
+  description: Staging model for NOAA weather observations streamed into Timescale.
+  tests:
+  - unique_combination:
+      combination_of_columns:
+      - tenant_id
+      - station_id
+      - observation_date
+      - element
+  columns:
+  - name: tenant_id
+    tests:
+    - not_null
+    - relationships:
+        to: source('timescale_noaa', 'noaa_weather_timeseries')
+        field: tenant_id
+        to_field: tenant_id
+  - name: station_id
+    tests:
+    - not_null
+  - name: observation_date
+    tests:
+    - not_null
+  - name: element
+    tests:
+    - not_null
+  - name: ingest_ts
+    tests:
+    - not_null
+  - name: ingest_job_id
+  - name: ingest_run_id
+  - name: ingest_batch_id
+- name: stg_external__series_catalog
+  description: Staging model for external series catalog data with deduplication.
+  tests:
+  - unique_combination:
+      combination_of_columns:
+      - tenant_id
+      - provider
+      - series_id
+      - version
+  columns:
+  - name: tenant_id
+    tests:
+    - not_null
+    - relationships:
+        to: source('iceberg_external', 'series_catalog')
+        field: tenant_id
+        to_field: tenant_id
+  - name: provider
+    tests:
+    - not_null
+  - name: series_id
+    tests:
+    - not_null
+  - name: title
+    tests:
+    - not_null
+  - name: ingest_ts
+    tests:
+    - not_null
+  - name: ingest_job_id
+  - name: ingest_run_id
+  - name: ingest_batch_id
+  - name: version
+- name: stg_external__obs
+  description: Staging model for external timeseries observations with deduplication.
+  tests:
+  - unique_combination:
+      combination_of_columns:
+      - tenant_id
+      - provider
+      - series_id
+      - ts
+      - asof_date
+  columns:
+  - name: tenant_id
+    tests:
+    - not_null
+    - relationships:
+        to: source('iceberg_external', 'timeseries_observation')
+        field: tenant_id
+        to_field: tenant_id
+  - name: provider
+    tests:
+    - not_null
+  - name: series_id
+    tests:
+    - not_null
+  - name: ts
+    tests:
+    - not_null
+  - name: asof_date
+    tests:
+    - not_null
+  - name: ingest_ts
+    tests:
+    - not_null
+  - name: ingest_job_id
+  - name: ingest_run_id
+  - name: ingest_batch_id

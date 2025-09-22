@@ -24,7 +24,7 @@ from uuid import UUID
 from fastapi import APIRouter, HTTPException, Query, Request
 from fastapi.responses import StreamingResponse, Response
 
-from ..telemetry.context import get_request_id
+from ..telemetry.context import get_request_id, get_user_id, log_structured
 from .scenario_models import (
     CreateScenarioRequest,
     ScenarioResponse,
@@ -70,6 +70,7 @@ router = APIRouter()
 @router.get("/v1/scenarios", response_model=ScenarioListResponse)
 async def list_scenarios(
     request: Request,
+    response: Response,
     tenant_id: Optional[str] = Query(None, description="Filter by tenant"),
     status: Optional[str] = Query(None, description="Filter by status"),
     limit: int = Query(20, ge=1, le=100),
@@ -170,6 +171,7 @@ async def list_scenarios(
 @router.post("/v1/scenarios", response_model=ScenarioResponse, status_code=201)
 async def create_scenario(
     request: Request,
+    response: Response,
     scenario_data: CreateScenarioRequest,
 ) -> ScenarioResponse:
     """Create a new scenario.
@@ -204,7 +206,7 @@ async def create_scenario(
 
     try:
         service = get_service(AsyncScenarioService)
-        scenario = await service.create_scenario(scenario_data.dict())
+        scenario = await service.create_scenario(scenario_data.model_dump())
 
         query_time_ms = (time.perf_counter() - start_time) * 1000
 
@@ -230,6 +232,7 @@ async def create_scenario(
 @router.get("/v1/scenarios/{scenario_id}", response_model=ScenarioResponse)
 async def get_scenario(
     request: Request,
+    response: Response,
     scenario_id: str,
 ) -> ScenarioResponse:
     """Get scenario by ID.
@@ -351,6 +354,7 @@ async def delete_scenario(
 @router.get("/v1/scenarios/{scenario_id}/runs", response_model=ScenarioRunListResponse)
 async def list_scenario_runs(
     request: Request,
+    response: Response,
     scenario_id: str,
     limit: int = Query(20, ge=1, le=100),
     cursor: Optional[str] = Query(None, description="Opaque cursor for stable pagination"),
@@ -455,6 +459,7 @@ async def list_scenario_runs(
 @router.post("/v1/scenarios/{scenario_id}/run", response_model=ScenarioRunResponse, status_code=202)
 async def create_scenario_run(
     request: Request,
+    response: Response,
     scenario_id: str,
     run_options: ScenarioRunOptions,
 ) -> ScenarioRunResponse:
@@ -486,7 +491,7 @@ async def create_scenario_run(
         service = get_service(AsyncScenarioService)
         run = await service.create_scenario_run(
             scenario_id=scenario_id,
-            options=run_options.dict()
+            options=run_options.model_dump()
         )
 
         query_time_ms = (time.perf_counter() - start_time) * 1000
@@ -515,6 +520,7 @@ async def create_scenario_run(
 @router.get("/v1/scenarios/{scenario_id}/runs/{run_id}", response_model=ScenarioRunResponse)
 async def get_scenario_run(
     request: Request,
+    response: Response,
     scenario_id: str,
     run_id: str,
 ) -> ScenarioRunResponse:
@@ -580,6 +586,7 @@ async def get_scenario_run(
 @router.post("/v1/scenarios/runs/{run_id}/state", response_model=ScenarioRunResponse)
 async def update_scenario_run_state(
     request: Request,
+    response: Response,
     run_id: str,
     state_update: dict,
 ) -> ScenarioRunResponse:
@@ -652,6 +659,7 @@ async def update_scenario_run_state(
 @router.post("/v1/scenarios/runs/{run_id}/cancel", response_model=ScenarioRunResponse)
 async def cancel_scenario_run(
     request: Request,
+    response: Response,
     run_id: str,
 ) -> ScenarioRunResponse:
     """Cancel a running scenario run with idempotency and worker signaling."""
@@ -887,6 +895,7 @@ async def get_scenario_outputs(
 @router.get("/v1/scenarios/{scenario_id}/metrics/latest", response_model=ScenarioMetricLatestResponse)
 async def get_scenario_metrics_latest(
     request: Request,
+    response: Response,
     scenario_id: str,
 ) -> ScenarioMetricLatestResponse:
     """Get latest metrics for a scenario."""
@@ -951,6 +960,7 @@ async def get_scenario_metrics_latest(
 @require_scenario_output_feature(ScenarioOutputFeature.BULK_SCENARIO_RUNS)
 async def create_bulk_scenario_runs(
     request: Request,
+    response: Response,
     scenario_id: str,
     bulk_request: BulkScenarioRunRequest,
 ) -> BulkScenarioRunResponse:
@@ -1009,7 +1019,7 @@ async def create_bulk_scenario_runs(
         service = get_service(AsyncScenarioService)
         results, duplicates = await service.create_bulk_scenario_runs(
             scenario_id=scenario_id,
-            runs=[run.dict() for run in bulk_request.runs],
+            runs=[run.model_dump() for run in bulk_request.runs],
             bulk_idempotency_key=bulk_request.idempotency_key,
         )
 

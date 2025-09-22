@@ -6,19 +6,21 @@ from enum import Enum
 from typing import Any, Dict, List, Optional, Union
 from uuid import UUID
 
-from pydantic import BaseModel, Field, field_validator, root_validator, Extra
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+
+from .http.pagination import DEFAULT_PAGE_SIZE, MAX_CURSOR_LENGTH, MAX_PAGE_SIZE
 from aurum.scenarios.models import ScenarioAssumption
 
 
 class AurumBaseModel(BaseModel):
     """Base model for all Aurum API models with consistent configuration."""
 
-    class Config:
-        """Pydantic configuration for all models."""
-        extra = Extra.forbid  # Forbid extra fields by default
-        validate_assignment = True
-        use_enum_values = True
-        allow_population_by_field_name = True
+    model_config = ConfigDict(
+        extra="forbid",
+        validate_assignment=True,
+        use_enum_values=True,
+        populate_by_name=True,
+    )
 
 
 class Meta(AurumBaseModel):
@@ -98,14 +100,15 @@ class CurveQueryParams(AurumBaseModel):
     location: Optional[str] = Field(None, max_length=100, description="Location identifier")
     product: Optional[str] = Field(None, max_length=50, description="Product identifier")
     block: Optional[str] = Field(None, max_length=50, description="Block identifier")
-    limit: int = Field(100, ge=1, le=500, description="Maximum results")
+    limit: int = Field(DEFAULT_PAGE_SIZE, ge=1, le=MAX_PAGE_SIZE, description="Maximum results")
     offset: int = Field(0, ge=0, description="Pagination offset")
-    cursor: Optional[str] = Field(None, max_length=1000, description="Cursor for pagination")
-    since_cursor: Optional[str] = Field(None, max_length=1000, description="Since cursor")
-    prev_cursor: Optional[str] = Field(None, max_length=1000, description="Previous cursor")
+    cursor: Optional[str] = Field(None, max_length=MAX_CURSOR_LENGTH, description="Cursor for pagination")
+    since_cursor: Optional[str] = Field(None, max_length=MAX_CURSOR_LENGTH, description="Since cursor")
+    prev_cursor: Optional[str] = Field(None, max_length=MAX_CURSOR_LENGTH, description="Previous cursor")
 
-    @root_validator(pre=True)
-    def validate_pagination(cls, values):
+    @model_validator(mode="before")
+    @classmethod
+    def validate_pagination(cls, values: dict[str, Any]) -> dict[str, Any]:
         """Validate pagination parameters."""
         cursor = values.get("cursor")
         since_cursor = values.get("since_cursor")
@@ -158,7 +161,7 @@ class CurveDiffQueryParams(AurumBaseModel):
     product: Optional[str] = Field(None, max_length=50, description="Product identifier")
     block: Optional[str] = Field(None, max_length=50, description="Block identifier")
     tenor_type: Optional[str] = Field(None, max_length=50, description="Tenor type")
-    limit: int = Field(100, ge=1, le=500, description="Maximum results")
+    limit: int = Field(DEFAULT_PAGE_SIZE, ge=1, le=MAX_PAGE_SIZE, description="Maximum results")
     offset: int = Field(0, ge=0, description="Pagination offset")
 
     @field_validator("asof_a", "asof_b")
@@ -170,8 +173,9 @@ class CurveDiffQueryParams(AurumBaseModel):
             raise ValueError("Date must be in YYYY-MM-DD format")
         return v
 
-    @root_validator(pre=True)
-    def validate_date_comparison(cls, values):
+    @model_validator(mode="before")
+    @classmethod
+    def validate_date_comparison(cls, values: dict[str, Any]) -> dict[str, Any]:
         """Ensure asof_a and asof_b are different dates."""
         asof_a = values.get("asof_a")
         asof_b = values.get("asof_b")
@@ -190,8 +194,9 @@ class CurveDiffQueryParams(AurumBaseModel):
 
         return values
 
-    @root_validator(pre=True)
-    def validate_dimension_filters(cls, values):
+    @model_validator(mode="before")
+    @classmethod
+    def validate_dimension_filters(cls, values: dict[str, Any]) -> dict[str, Any]:
         """Ensure at least one dimension filter is provided."""
         dimension_count = sum([
             1 for field in ["iso", "market", "location", "product", "block", "tenor_type"]
@@ -203,8 +208,9 @@ class CurveDiffQueryParams(AurumBaseModel):
 
         return values
 
-    @root_validator(pre=True)
-    def validate_dimension_combinations(cls, values):
+    @model_validator(mode="before")
+    @classmethod
+    def validate_dimension_combinations(cls, values: dict[str, Any]) -> dict[str, Any]:
         """Validate dimension combinations to prevent expensive queries."""
         limit = values.get("limit", 100)
         dimension_count = sum([
@@ -282,8 +288,9 @@ class CurvePoint(AurumBaseModel):
     ask: Optional[float] = None
     price_type: Optional[str] = Field(None, max_length=50)
 
-    @root_validator(pre=True)
-    def validate_prices(cls, values):
+    @model_validator(mode="before")
+    @classmethod
+    def validate_prices(cls, values: dict[str, Any]) -> dict[str, Any]:
         """Ensure at least one price field is provided."""
         mid = values.get("mid")
         bid = values.get("bid")
@@ -346,8 +353,9 @@ class CurveDiffPoint(AurumBaseModel):
     diff_abs: Optional[float] = None
     diff_pct: Optional[float] = None
 
-    @root_validator(pre=True)
-    def validate_dates(cls, values):
+    @model_validator(mode="before")
+    @classmethod
+    def validate_dates(cls, values: dict[str, Any]) -> dict[str, Any]:
         """Ensure asof_a and asof_b are different dates."""
         asof_a = values.get("asof_a")
         asof_b = values.get("asof_b")
@@ -357,8 +365,9 @@ class CurveDiffPoint(AurumBaseModel):
 
         return values
 
-    @root_validator(pre=True)
-    def validate_prices(cls, values):
+    @model_validator(mode="before")
+    @classmethod
+    def validate_prices(cls, values: dict[str, Any]) -> dict[str, Any]:
         """Ensure at least one price comparison is available."""
         mid_a = values.get("mid_a")
         mid_b = values.get("mid_b")
@@ -981,7 +990,7 @@ class ExternalSeriesQueryParams(AurumBaseModel):
     provider: Optional[str] = Field(None, description="Filter by provider")
     frequency: Optional[str] = Field(None, description="Filter by frequency")
     asof: Optional[str] = Field(None, description="As-of date filter")
-    limit: int = Field(100, ge=1, le=1000, description="Maximum results")
+    limit: int = Field(DEFAULT_PAGE_SIZE, ge=1, le=MAX_PAGE_SIZE, description="Maximum results")
     offset: int = Field(0, ge=0, description="Pagination offset")
     cursor: Optional[str] = Field(None, description="Cursor for pagination")
 
@@ -1010,7 +1019,7 @@ class ExternalObservationsQueryParams(AurumBaseModel):
     end_date: Optional[str] = Field(None, description="End date for observations")
     frequency: Optional[str] = Field(None, description="Output frequency")
     asof: Optional[str] = Field(None, description="As-of date")
-    limit: int = Field(500, ge=1, le=10000, description="Maximum observations")
+    limit: int = Field(MAX_PAGE_SIZE, ge=1, le=MAX_PAGE_SIZE, description="Maximum observations")
     offset: int = Field(0, ge=0, description="Pagination offset")
     cursor: Optional[str] = Field(None, description="Cursor for pagination")
     format: str = Field("json", description="Response format")

@@ -99,7 +99,7 @@ async def get_curves_v2(
         curve_responses = []
         for curve in curves:
             curve_responses.append(CurveResponse(
-                **curve.dict(),
+                **curve.model_dump(),
                 meta={
                     "request_id": get_request_id(),
                     "processing_time_ms": round(duration_ms, 2),
@@ -171,7 +171,7 @@ async def get_curve_diff_v2(
 
         # Create response with metadata
         result = CurveResponse(
-            **curve_diff.dict(),
+            **curve_diff.model_dump(),
             meta={
                 "request_id": get_request_id(),
                 "from_timestamp": from_timestamp,

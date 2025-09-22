@@ -12,6 +12,8 @@ CREATE TABLE IF NOT EXISTS ops.logs (
 ) ENGINE = MergeTree
 PARTITION BY toYYYYMMDD(timestamp)
 ORDER BY (timestamp, service, level)
+SAMPLE BY cityHash64(trace_id, span_id)
+TTL timestamp + INTERVAL 30 DAY
 SETTINGS index_granularity = 8192;
 
 CREATE TABLE IF NOT EXISTS ops.events (
@@ -24,6 +26,8 @@ CREATE TABLE IF NOT EXISTS ops.events (
 ) ENGINE = MergeTree
 PARTITION BY toYYYYMMDD(timestamp)
 ORDER BY (timestamp, event_type)
+SAMPLE BY cityHash64(event_type, source, tenant)
+TTL timestamp + INTERVAL 90 DAY
 SETTINGS index_granularity = 8192;
 
 CREATE TABLE IF NOT EXISTS ops.query_metrics_raw (
@@ -44,12 +48,16 @@ CREATE TABLE IF NOT EXISTS ops.query_metrics_raw (
 ) ENGINE = MergeTree
 PARTITION BY toYYYYMMDD(recorded_at)
 ORDER BY (recorded_at, catalog, query_name, tenant)
+SAMPLE BY cityHash64(catalog, query_name, tenant)
+TTL recorded_at + INTERVAL 180 DAY
 SETTINGS index_granularity = 8192;
 
 CREATE MATERIALIZED VIEW IF NOT EXISTS ops.query_metrics_hourly
 ENGINE = SummingMergeTree
 PARTITION BY toYYYYMMDD(hour)
 ORDER BY (hour, catalog, query_name, tenant)
+SAMPLE BY cityHash64(catalog, query_name, tenant)
+TTL hour + INTERVAL 365 DAY
 AS
 SELECT
     date_trunc('hour', recorded_at) AS hour,
@@ -78,4 +86,6 @@ CREATE TABLE IF NOT EXISTS ops.ingest_activity (
 ) ENGINE = MergeTree
 PARTITION BY toYYYYMMDD(event_time)
 ORDER BY (event_time, pipeline, dataset)
+SAMPLE BY cityHash64(pipeline, dataset, tenant)
+TTL event_time + INTERVAL 120 DAY
 SETTINGS index_granularity = 8192;

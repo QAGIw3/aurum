@@ -3,9 +3,7 @@ from __future__ import annotations
 """FastAPI application exposing curve endpoints."""
 
 import base64
-import csv
 import hashlib
-import io
 import json
 import math
 import uuid
@@ -138,6 +136,15 @@ from .scenario_models import (
     ScenarioRunStatus,
     ScenarioStatus,
 )
+from .http import (
+    DEFAULT_CACHE_SECONDS,
+    build_cache_control_header,
+    compute_etag,
+    csv_response as http_csv_response,
+    prepare_csv_value,
+    respond_with_etag as http_respond_with_etag,
+)
+from .http.clients import request as http_request
 try:  # pragma: no cover - optional dependency
     from prometheus_client import Counter as _PromCounter
 except Exception:  # pragma: no cover - metrics optional
@@ -484,20 +491,15 @@ _CACHE = _SimpleCache(default_ttl=_INMEM_TTL)
 
 
 def _model_dump(value: Any) -> Dict[str, Any]:
-    if hasattr(value, "model_dump"):
-        return value.model_dump()  # type: ignore[attr-defined]
-    if hasattr(value, "dict"):
-        return value.dict()  # type: ignore[attr-defined]
+    dump_method = getattr(value, "model_dump", None)
+    if callable(dump_method):
+        return dump_method()
     if isinstance(value, dict):
         return value
-    raise TypeError(f"Unsupported payload type for ETag generation: {type(value)!r}")
-
-
-
-def _compute_etag(payload: Dict[str, Any]) -> str:
-    serialized = json.dumps(payload, sort_keys=True, default=str)
-    return hashlib.sha256(serialized.encode("utf-8")).hexdigest()
-
+    try:
+        return dict(value)
+    except TypeError as exc:  # pragma: no cover - defensive
+        raise TypeError(f"Unsupported payload type for ETag generation: {type(value)!r}") from exc
 
 
 def _metadata_cache_get_or_set(key_suffix: str, supplier):
@@ -548,51 +550,18 @@ def _respond_with_etag(
     response: Response,
     *,
     extra_headers: Optional[Dict[str, str]] = None,
+    cache_seconds: Optional[int] = None,
+    cache_control: Optional[str] = None,
 ):
-    payload = _model_dump(model)
-    etag_payload = {k: v for k, v in payload.items() if k != "meta"}
-    etag = _compute_etag(etag_payload)
-    incoming = request.headers.get("if-none-match")
-    if incoming and incoming == etag:
-        headers = {"ETag": etag}
-        if extra_headers:
-            headers.update(extra_headers)
-        return Response(status_code=304, headers=headers)
-    response.headers["ETag"] = etag
-    if extra_headers:
-        for key, value in extra_headers.items():
-            response.headers.setdefault(key, value)
-    return model
-
-
-def _prepare_csv_value(value: Any) -> str:
-    if value is None:
-        return ""
-    if isinstance(value, (datetime, date)):
-        return value.isoformat()
-    if isinstance(value, Decimal):
-        return format(value, "f")
-    if isinstance(value, (dict, list)):
-        try:
-            return json.dumps(value, default=str)
-        except TypeError:
-            return str(value)
-    return str(value)
-
-
-def _csv_stream(rows: Iterable[Mapping[str, Any]], fieldnames: Sequence[str]) -> Iterable[str]:
-    buffer = io.StringIO()
-    writer = csv.DictWriter(buffer, fieldnames=fieldnames, extrasaction="ignore")
-    writer.writeheader()
-    yield buffer.getvalue()
-    buffer.seek(0)
-    buffer.truncate(0)
-
-    for row in rows:
-        writer.writerow({field: _prepare_csv_value(row.get(field)) for field in fieldnames})
-        yield buffer.getvalue()
-        buffer.seek(0)
-        buffer.truncate(0)
+    ttl = cache_seconds if cache_seconds is not None else _cache_config().ttl_seconds
+    return http_respond_with_etag(
+        model,
+        request,
+        response,
+        extra_headers=extra_headers,
+        cache_seconds=ttl,
+        cache_control=cache_control,
+    )
 
 
 def _csv_response(
@@ -605,17 +574,19 @@ def _csv_response(
     next_cursor: Optional[str] = None,
     prev_cursor: Optional[str] = None,
 ) -> StreamingResponse:
-    stream = _csv_stream(rows, fieldnames)
-    response = StreamingResponse(stream, media_type="text/csv; charset=utf-8")
-    response.headers["X-Request-Id"] = request_id
-    if cache_control:
-        response.headers["Cache-Control"] = cache_control
-    if next_cursor:
-        response.headers["X-Next-Cursor"] = next_cursor
-    if prev_cursor:
-        response.headers["X-Prev-Cursor"] = prev_cursor
-    response.headers["Content-Disposition"] = f'attachment; filename="{filename}"'
-    return response
+    normalised_rows = (
+        {field: prepare_csv_value(row.get(field)) for field in fieldnames}
+        for row in rows
+    )
+    return http_csv_response(
+        request_id,
+        normalised_rows,
+        fieldnames,
+        filename,
+        cache_control=cache_control,
+        next_cursor=next_cursor,
+        prev_cursor=prev_cursor,
+    )
 
 # Prometheus metrics integration (shared with observability utilities)
 _METRICS_ENABLED = bool(PROMETHEUS_AVAILABLE and METRICS_MIDDLEWARE)
@@ -808,13 +779,15 @@ EIA_SERIES_DIMENSIONS_CACHE_TTL = 300
 
 # Import the hardened cursor functions
 from .http.pagination import (
-    encode_cursor,
-    decode_cursor,
-    extract_cursor_values,
-    validate_cursor_schema,
-    FROZEN_CURSOR_SCHEMAS,
     CursorPayload,
     SortDirection,
+    DEFAULT_PAGE_SIZE,
+    MAX_PAGE_SIZE,
+    FROZEN_CURSOR_SCHEMAS,
+    decode_cursor,
+    encode_cursor,
+    extract_cursor_values,
+    validate_cursor_schema,
 )
 
 # Legacy functions for backward compatibility - these will be deprecated
@@ -1194,7 +1167,7 @@ def list_curves(
     product: Optional[str] = Query(None),
     block: Optional[str] = Query(None),
     tenor_type: Optional[str] = Query(None, pattern="^(MONTHLY|CALENDAR|SEASON|QUARTER)$"),
-    limit: int = Query(200, ge=1, le=1000),
+    limit: int = Query(200, ge=1, le=MAX_PAGE_SIZE),
     cursor: Optional[str] = Query(None, description="Opaque cursor for stable pagination"),
     since_cursor: Optional[str] = Query(None, description="Alias for 'cursor' to resume iteration from a previous next_cursor value"),
     offset: Optional[int] = Query(None, ge=0, description="DEPRECATED: Use cursor for pagination instead"),
@@ -1372,7 +1345,8 @@ def list_curves(
                 prev_cursor_value = prev_cursor_obj.to_string()
 
     if format.lower() == "csv":
-        cache_header = f"public, max-age={CURVE_CACHE_TTL}"
+        cache_seconds = CURVE_CACHE_TTL
+        cache_header = build_cache_control_header(cache_seconds)
         fieldnames = [
             "curve_key",
             "tenor_label",
@@ -1384,15 +1358,35 @@ def list_curves(
             "ask",
             "price_type",
         ]
-        return _csv_response(
+        serialisable_rows = [
+            {field: prepare_csv_value(row.get(field)) for field in fieldnames}
+            for row in rows
+        ]
+        etag = compute_etag({"data": serialisable_rows, "cursor": next_cursor})
+        incoming = request.headers.get("if-none-match")
+        not_modified_headers = {
+            "ETag": etag,
+            "X-Request-Id": request_id,
+            "Cache-Control": cache_header,
+        }
+        if next_cursor:
+            not_modified_headers["X-Next-Cursor"] = next_cursor
+        if prev_cursor_value:
+            not_modified_headers["X-Prev-Cursor"] = prev_cursor_value
+        if incoming and incoming == etag:
+            return Response(status_code=304, headers=not_modified_headers)
+
+        csv_response = http_csv_response(
             request_id,
-            rows,
+            serialisable_rows,
             fieldnames,
             filename="curves.csv",
-            cache_control=cache_header,
+            cache_seconds=cache_seconds,
             next_cursor=next_cursor,
             prev_cursor=prev_cursor_value,
         )
+        csv_response.headers["ETag"] = etag
+        return csv_response
 
     model = CurveResponse(
         meta=Meta(
@@ -1408,7 +1402,7 @@ def list_curves(
         model,
         request,
         response,
-        extra_headers={"Cache-Control": f"public, max-age={CURVE_CACHE_TTL}"},
+        cache_seconds=CURVE_CACHE_TTL,
     )
 
 
@@ -1425,7 +1419,7 @@ def list_curves_diff(
     product: Optional[str] = Query(None),
     block: Optional[str] = Query(None),
     tenor_type: Optional[str] = Query(None, pattern="^(MONTHLY|CALENDAR|SEASON|QUARTER)$"),
-    limit: int = Query(200, ge=1, le=1000),
+    limit: int = Query(200, ge=1, le=MAX_PAGE_SIZE),
     cursor: Optional[str] = Query(None, description="Opaque cursor for stable pagination"),
     since_cursor: Optional[str] = Query(None, description="Alias for 'cursor' to resume iteration from a previous next_cursor value"),
     offset: Optional[int] = Query(None, ge=0, description="DEPRECATED: Use cursor for pagination instead"),
@@ -1567,7 +1561,7 @@ def list_curves_diff(
         model,
         request,
         response,
-        extra_headers={"Cache-Control": f"public, max-age={CURVE_DIFF_CACHE_TTL}"},
+        cache_seconds=CURVE_DIFF_CACHE_TTL,
     )
 
 
@@ -1581,7 +1575,7 @@ def list_dimensions(
     product: Optional[str] = Query(None),
     block: Optional[str] = Query(None),
     tenor_type: Optional[str] = Query(None, pattern="^(MONTHLY|CALENDAR|SEASON|QUARTER)$"),
-    per_dim_limit: int = Query(1000, ge=1, le=5000),
+    per_dim_limit: int = Query(MAX_PAGE_SIZE, ge=1, le=MAX_PAGE_SIZE),
     prefix: Optional[str] = Query(None, description="Optional case-insensitive startswith filter applied to each dimension list"),
     include_counts: bool = Query(False, description="Include per-dimension value counts when true"),
     *,
@@ -1696,7 +1690,7 @@ def list_locations(
         model,
         request,
         response,
-        extra_headers={"Cache-Control": f"public, max-age={METADATA_CACHE_TTL}"},
+        cache_seconds=METADATA_CACHE_TTL,
     )
 
 
@@ -1742,7 +1736,7 @@ def get_location(
         model,
         request,
         response,
-        extra_headers={"Cache-Control": f"public, max-age={METADATA_CACHE_TTL}"},
+        cache_seconds=METADATA_CACHE_TTL,
     )
 
 
@@ -1785,7 +1779,7 @@ def list_units(
         model,
         request,
         response,
-        extra_headers={"Cache-Control": f"public, max-age={METADATA_CACHE_TTL}"},
+        cache_seconds=METADATA_CACHE_TTL,
     )
 
 
@@ -1826,7 +1820,7 @@ def list_unit_mappings(
         model,
         request,
         response,
-        extra_headers={"Cache-Control": f"public, max-age={METADATA_CACHE_TTL}"},
+        cache_seconds=METADATA_CACHE_TTL,
     )
 
 
@@ -1858,7 +1852,7 @@ def list_calendars(request: Request, response: Response) -> CalendarsResponse:
         model,
         request,
         response,
-        extra_headers={"Cache-Control": f"public, max-age={METADATA_CACHE_TTL}"},
+        cache_seconds=METADATA_CACHE_TTL,
     )
 
 
@@ -1892,7 +1886,7 @@ def list_calendar_blocks(
         model,
         request,
         response,
-        extra_headers={"Cache-Control": f"public, max-age={METADATA_CACHE_TTL}"},
+        cache_seconds=METADATA_CACHE_TTL,
     )
 
 
@@ -1924,7 +1918,7 @@ def calendar_hours(
         model,
         request,
         response,
-        extra_headers={"Cache-Control": f"public, max-age={METADATA_CACHE_TTL}"},
+        cache_seconds=METADATA_CACHE_TTL,
     )
 
 
@@ -1959,7 +1953,7 @@ def calendar_expand(
         model,
         request,
         response,
-        extra_headers={"Cache-Control": f"public, max-age={METADATA_CACHE_TTL}"},
+        cache_seconds=METADATA_CACHE_TTL,
     )
 
 
@@ -1977,7 +1971,7 @@ def iso_lmp_last_24h(
     iso_code: Optional[str] = Query(None, description="Filter by ISO code"),
     market: Optional[str] = Query(None, description="Filter by market"),
     location_id: Optional[str] = Query(None, description="Filter by settlement location id"),
-    limit: int = Query(500, ge=1, le=2000),
+    limit: int = Query(500, ge=1, le=MAX_PAGE_SIZE),
     format: str = Query(
         "json",
         pattern="^(json|csv)$",
@@ -2020,19 +2014,29 @@ def iso_lmp_last_24h(
             "metadata",
         ]
         serialisable_rows = [
-            {field: _prepare_csv_value(row.get(field)) for field in fieldnames}
+            {field: prepare_csv_value(row.get(field)) for field in fieldnames}
             for row in rows
         ]
-        etag = _compute_etag({"data": serialisable_rows})
+        etag = compute_etag({"data": serialisable_rows})
+        cache_seconds = _cache_config().ttl_seconds
+        cache_header = build_cache_control_header(cache_seconds)
         incoming = request.headers.get("if-none-match")
         if incoming and incoming == etag:
-            return Response(status_code=304, headers={"ETag": etag, "X-Request-Id": request_id})
+            return Response(
+                status_code=304,
+                headers={
+                    "ETag": etag,
+                    "X-Request-Id": request_id,
+                    "Cache-Control": cache_header,
+                },
+            )
 
-        csv_response = _csv_response(
+        csv_response = http_csv_response(
             request_id,
-            rows,
+            serialisable_rows,
             fieldnames,
             filename="iso-lmp-last-24h.csv",
+            cache_seconds=cache_seconds,
         )
         csv_response.headers["ETag"] = etag
         return csv_response
@@ -2055,7 +2059,7 @@ def iso_lmp_hourly(
     location_id: Optional[str] = Query(None, description="Filter by settlement location id"),
     start: Optional[datetime] = Query(None, description="Earliest interval_start (ISO 8601)", examples={"default": {"value": "2024-01-01T00:00:00Z"}}),
     end: Optional[datetime] = Query(None, description="Latest interval_start (ISO 8601)", examples={"default": {"value": "2024-01-31T23:59:59Z"}}),
-    limit: int = Query(500, ge=1, le=2000),
+    limit: int = Query(500, ge=1, le=MAX_PAGE_SIZE),
     format: str = Query(
         "json",
         pattern="^(json|csv)$",
@@ -2093,19 +2097,29 @@ def iso_lmp_hourly(
             "sample_count",
         ]
         serialisable_rows = [
-            {field: _prepare_csv_value(row.get(field)) for field in fieldnames}
+            {field: prepare_csv_value(row.get(field)) for field in fieldnames}
             for row in rows
         ]
-        etag = _compute_etag({"data": serialisable_rows})
+        etag = compute_etag({"data": serialisable_rows})
+        cache_seconds = _cache_config().ttl_seconds
+        cache_header = build_cache_control_header(cache_seconds)
         incoming = request.headers.get("if-none-match")
         if incoming and incoming == etag:
-            return Response(status_code=304, headers={"ETag": etag, "X-Request-Id": request_id})
+            return Response(
+                status_code=304,
+                headers={
+                    "ETag": etag,
+                    "X-Request-Id": request_id,
+                    "Cache-Control": cache_header,
+                },
+            )
 
-        csv_response = _csv_response(
+        csv_response = http_csv_response(
             request_id,
-            rows,
+            serialisable_rows,
             fieldnames,
             filename="iso-lmp-hourly.csv",
+            cache_seconds=cache_seconds,
         )
         csv_response.headers["ETag"] = etag
         return csv_response
@@ -2128,7 +2142,7 @@ def iso_lmp_daily(
     location_id: Optional[str] = Query(None, description="Filter by settlement location id"),
     start: Optional[datetime] = Query(None, description="Earliest interval_start (ISO 8601)", examples={"default": {"value": "2023-01-01T00:00:00Z"}}),
     end: Optional[datetime] = Query(None, description="Latest interval_start (ISO 8601)", examples={"default": {"value": "2023-12-31T23:59:59Z"}}),
-    limit: int = Query(500, ge=1, le=2000),
+    limit: int = Query(500, ge=1, le=MAX_PAGE_SIZE),
     format: str = Query(
         "json",
         pattern="^(json|csv)$",
@@ -2166,19 +2180,29 @@ def iso_lmp_daily(
             "sample_count",
         ]
         serialisable_rows = [
-            {field: _prepare_csv_value(row.get(field)) for field in fieldnames}
+            {field: prepare_csv_value(row.get(field)) for field in fieldnames}
             for row in rows
         ]
-        etag = _compute_etag({"data": serialisable_rows})
+        etag = compute_etag({"data": serialisable_rows})
+        cache_seconds = _cache_config().ttl_seconds
+        cache_header = build_cache_control_header(cache_seconds)
         incoming = request.headers.get("if-none-match")
         if incoming and incoming == etag:
-            return Response(status_code=304, headers={"ETag": etag, "X-Request-Id": request_id})
+            return Response(
+                status_code=304,
+                headers={
+                    "ETag": etag,
+                    "X-Request-Id": request_id,
+                    "Cache-Control": cache_header,
+                },
+            )
 
-        csv_response = _csv_response(
+        csv_response = http_csv_response(
             request_id,
-            rows,
+            serialisable_rows,
             fieldnames,
             filename="iso-lmp-daily.csv",
+            cache_seconds=cache_seconds,
         )
         csv_response.headers["ETag"] = etag
         return csv_response
@@ -2198,7 +2222,7 @@ def iso_lmp_daily(
 def iso_lmp_negative(
     iso_code: Optional[str] = Query(None, description="Filter by ISO code"),
     market: Optional[str] = Query(None, description="Filter by market"),
-    limit: int = Query(200, ge=1, le=1000),
+    limit: int = Query(200, ge=1, le=MAX_PAGE_SIZE),
     format: str = Query(
         "json",
         pattern="^(json|csv)$",
@@ -2240,19 +2264,29 @@ def iso_lmp_negative(
             "metadata",
         ]
         serialisable_rows = [
-            {field: _prepare_csv_value(row.get(field)) for field in fieldnames}
+            {field: prepare_csv_value(row.get(field)) for field in fieldnames}
             for row in rows
         ]
-        etag = _compute_etag({"data": serialisable_rows})
+        etag = compute_etag({"data": serialisable_rows})
+        cache_seconds = _cache_config().ttl_seconds
+        cache_header = build_cache_control_header(cache_seconds)
         incoming = request.headers.get("if-none-match")
         if incoming and incoming == etag:
-            return Response(status_code=304, headers={"ETag": etag, "X-Request-Id": request_id})
+            return Response(
+                status_code=304,
+                headers={
+                    "ETag": etag,
+                    "X-Request-Id": request_id,
+                    "Cache-Control": cache_header,
+                },
+            )
 
-        csv_response = _csv_response(
+        csv_response = http_csv_response(
             request_id,
-            rows,
+            serialisable_rows,
             fieldnames,
             filename="iso-lmp-negative.csv",
+            cache_seconds=cache_seconds,
         )
         csv_response.headers["ETag"] = etag
         return csv_response
@@ -2301,7 +2335,12 @@ def list_eia_datasets(
         filtered = base
     items = [EiaDatasetBriefOut(**d) for d in filtered]
     model = EiaDatasetsResponse(meta=Meta(request_id=request_id, query_time_ms=0), data=items)
-    return _respond_with_etag(model, request, response, extra_headers={"Cache-Control": f"public, max-age={_INMEM_TTL}"})
+    return _respond_with_etag(
+        model,
+        request,
+        response,
+        cache_seconds=_INMEM_TTL,
+    )
 
 
 @router.get(
@@ -2338,7 +2377,12 @@ def get_eia_dataset(
         raise HTTPException(status_code=404, detail="Dataset not found") from exc
     item = EiaDatasetDetailOut(**data)
     model = EiaDatasetResponse(meta=Meta(request_id=request_id, query_time_ms=0), data=item)
-    return _respond_with_etag(model, request, response, extra_headers={"Cache-Control": f"public, max-age={_INMEM_TTL}"})
+    return _respond_with_etag(
+        model,
+        request,
+        response,
+        cache_seconds=_INMEM_TTL,
+    )
 
 
 # --- EIA Series data ---
@@ -2364,7 +2408,7 @@ def list_eia_series(
     source: Optional[str] = Query(None, description="Source attribution filter"),
     start: Optional[datetime] = Query(None, description="Filter observations with period_start >= this timestamp (ISO 8601)"),
     end: Optional[datetime] = Query(None, description="Filter observations with period_start <= this timestamp (ISO 8601)"),
-    limit: int = Query(200, ge=1, le=2000),
+    limit: int = Query(200, ge=1, le=MAX_PAGE_SIZE),
     offset: int = Query(0, ge=0, description="Offset for pagination (use 'cursor' when possible)"),
     cursor: Optional[str] = Query(None, description="Opaque cursor for forward pagination"),
     since_cursor: Optional[str] = Query(None, description="Alias for 'cursor' to resume from a previous next_cursor value"),
@@ -2590,8 +2634,12 @@ def list_eia_series(
         prev_cursor=prev_cursor_value,
     )
     model = EiaSeriesResponse(meta=meta, data=items)
-    headers = {"Cache-Control": f"public, max-age={EIA_SERIES_CACHE_TTL}"}
-    return _respond_with_etag(model, request, response, extra_headers=headers)
+    return _respond_with_etag(
+        model,
+        request,
+        response,
+        cache_seconds=EIA_SERIES_CACHE_TTL,
+    )
 
 
 @router.get(
@@ -2647,8 +2695,12 @@ def list_eia_series_dimensions(
     )
     meta = Meta(request_id=request_id, query_time_ms=int(round(elapsed_ms, 2)))
     model = EiaSeriesDimensionsResponse(meta=meta, data=data)
-    headers = {"Cache-Control": f"public, max-age={EIA_SERIES_DIMENSIONS_CACHE_TTL}"}
-    return _respond_with_etag(model, request, response, extra_headers=headers)
+    return _respond_with_etag(
+        model,
+        request,
+        response,
+        cache_seconds=EIA_SERIES_DIMENSIONS_CACHE_TTL,
+    )
 
 
 @router.get("/v1/curves/strips", response_model=CurveResponse)
@@ -2663,7 +2715,7 @@ def list_strips(
     market: Optional[str] = Query(None),
     product: Optional[str] = Query(None),
     block: Optional[str] = Query(None),
-    limit: int = Query(200, ge=1, le=1000),
+    limit: int = Query(200, ge=1, le=MAX_PAGE_SIZE),
     cursor: Optional[str] = Query(None, description="Opaque cursor for stable pagination"),
     since_cursor: Optional[str] = Query(None, description="Alias for 'cursor' to resume iteration from a previous next_cursor value"),
     offset: Optional[int] = Query(None, ge=0, description="DEPRECATED: Use cursor for pagination instead"),
@@ -2715,7 +2767,7 @@ def list_strips(
         model,
         request,
         response,
-        extra_headers={"Cache-Control": f"public, max-age={CURVE_STRIP_CACHE_TTL}"},
+        cache_seconds=CURVE_STRIP_CACHE_TTL,
     )
 
 
@@ -2738,7 +2790,7 @@ def _to_datetime(value: Any) -> Optional[datetime]:
 
 def _assumption_to_dict(assumption: Any) -> Dict[str, Any]:
     if hasattr(assumption, "dict"):
-        return assumption.dict()
+        return assumption.model_dump()
     if isinstance(assumption, dict):
         return dict(assumption)
     return {}
@@ -3257,7 +3309,7 @@ async def list_series_curve_mappings(
     response: Response,
     external_provider: Optional[str] = Query(None, description="Filter by external provider"),
     active_only: bool = Query(True, description="Show only active mappings"),
-    limit: int = Query(100, ge=1, le=1000),
+    limit: int = Query(100, ge=1, le=MAX_PAGE_SIZE),
     cursor: Optional[str] = Query(None, description="Opaque cursor for pagination"),
     principal: Dict[str, Any] = Depends(_get_principal),
 ) -> SeriesCurveMappingListResponse:
@@ -3502,7 +3554,7 @@ def list_ppa_contract_valuations(
     response: Response,
     scenario_id: Optional[str] = Query(None, description="Filter by scenario identifier"),
     metric: Optional[str] = Query(None, description="Filter by valuation metric name"),
-    limit: int = Query(200, ge=1, le=1000),
+    limit: int = Query(200, ge=1, le=MAX_PAGE_SIZE),
     cursor: Optional[str] = Query(None, description="Opaque cursor for stable pagination"),
     since_cursor: Optional[str] = Query(None, description="Alias for 'cursor' to resume iteration from a previous next_cursor value"),
     offset: Optional[int] = Query(None, ge=0, description="DEPRECATED: Use cursor for pagination instead"),
@@ -3651,7 +3703,7 @@ def list_scenario_outputs(
     metric: Optional[str] = Query(None),
     tenor_type: Optional[str] = Query(None),
     curve_key: Optional[str] = Query(None),
-    limit: int = Query(200, ge=1, le=1000),
+    limit: int = Query(200, ge=1, le=MAX_PAGE_SIZE),
     cursor: Optional[str] = Query(None),
     since_cursor: Optional[str] = Query(
         None,
@@ -3786,7 +3838,7 @@ def list_scenario_outputs(
         model,
         request,
         response,
-        extra_headers={"Cache-Control": f"public, max-age={SCENARIO_OUTPUT_CACHE_TTL}"},
+        cache_seconds=SCENARIO_OUTPUT_CACHE_TTL,
     )
 
 
@@ -3801,7 +3853,7 @@ def list_scenario_metrics_latest(
         description="Tenant identifier override; defaults to the authenticated tenant",
     ),
     metric: Optional[str] = Query(None, description="Filter by metric name (e.g., mid)"),
-    limit: int = Query(200, ge=1, le=1000),
+    limit: int = Query(200, ge=1, le=MAX_PAGE_SIZE),
     cursor: Optional[str] = Query(None, description="Opaque cursor for stable pagination"),
     since_cursor: Optional[str] = Query(
         None,
@@ -3901,7 +3953,7 @@ def list_scenario_metrics_latest(
         model,
         request,
         response,
-        extra_headers={"Cache-Control": f"public, max-age={SCENARIO_METRIC_CACHE_TTL}"},
+        cache_seconds=SCENARIO_METRIC_CACHE_TTL,
     )
 
 
@@ -3935,7 +3987,7 @@ def get_drought_indices(
     region_id: str | None = Query(None),
     start: date | None = Query(None, description="Inclusive start date (YYYY-MM-DD)."),
     end: date | None = Query(None, description="Inclusive end date (YYYY-MM-DD)."),
-    limit: int = Query(250, ge=1, le=5000),
+    limit: int = Query(250, ge=1, le=MAX_PAGE_SIZE),
 ) -> DroughtIndexResponse:
     parsed_region_type = region_type
     parsed_region_id = region_id
@@ -3991,7 +4043,7 @@ def get_drought_usdm(
     region_id: str | None = Query(None),
     start: date | None = Query(None),
     end: date | None = Query(None),
-    limit: int = Query(250, ge=1, le=5000),
+    limit: int = Query(250, ge=1, le=MAX_PAGE_SIZE),
 ) -> DroughtUsdmResponse:
     parsed_region_type = region_type
     parsed_region_id = region_id
@@ -4047,7 +4099,7 @@ def get_drought_layers(
     region_id: str | None = Query(None),
     start: datetime | None = Query(None),
     end: datetime | None = Query(None),
-    limit: int = Query(250, ge=1, le=5000),
+    limit: int = Query(250, ge=1, le=MAX_PAGE_SIZE),
 ) -> DroughtVectorResponse:
     parsed_region_type = region_type
     parsed_region_id = region_id
@@ -4135,17 +4187,15 @@ def proxy_drought_tile(
 
     start_fetch = time.perf_counter()
     try:
-        with httpx.Client(timeout=20.0) as client:
-            response = client.get(tile_url)
-    except httpx.HTTPError as exc:
+        response = http_request("GET", tile_url, timeout=20.0)
+    except httpx.HTTPStatusError as exc:
+        _observe_tile_fetch("tile", "error", time.perf_counter() - start_fetch)
+        raise HTTPException(status_code=exc.response.status_code, detail="tile_fetch_failed") from exc
+    except httpx.RequestError as exc:
         _observe_tile_fetch("tile", "error", time.perf_counter() - start_fetch)
         raise HTTPException(status_code=502, detail=f"tile_fetch_failed: {exc}") from exc
 
     duration = time.perf_counter() - start_fetch
-    if response.status_code != 200:
-        _observe_tile_fetch("tile", "error", duration)
-        raise HTTPException(status_code=response.status_code, detail="tile_fetch_failed")
-
     _observe_tile_fetch("tile", "success", duration)
 
     content = response.content
@@ -4199,17 +4249,15 @@ def get_drought_tile_metadata(
 
     start_fetch = time.perf_counter()
     try:
-        with httpx.Client(timeout=15.0) as client:
-            response = client.get(info_url)
-    except httpx.HTTPError as exc:
+        response = http_request("GET", info_url, timeout=15.0)
+    except httpx.HTTPStatusError as exc:
+        _observe_tile_fetch("info", "error", time.perf_counter() - start_fetch)
+        raise HTTPException(status_code=exc.response.status_code, detail="info_fetch_failed") from exc
+    except httpx.RequestError as exc:
         _observe_tile_fetch("info", "error", time.perf_counter() - start_fetch)
         raise HTTPException(status_code=502, detail=f"info_fetch_failed: {exc}") from exc
 
     duration = time.perf_counter() - start_fetch
-    if response.status_code != 200:
-        _observe_tile_fetch("info", "error", duration)
-        raise HTTPException(status_code=response.status_code, detail="info_fetch_failed")
-
     _observe_tile_fetch("info", "success", duration)
 
     payload = response.json()

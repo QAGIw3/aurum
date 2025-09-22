@@ -276,7 +276,7 @@ class VersionedRouter:
                 "version": version_str,
                 "status": api_version.status.value,
                 "supported_features": api_version.supported_features,
-                "deprecation_info": api_version.deprecation_info.dict() if api_version.deprecation_info else None,
+                "deprecation_info": api_version.deprecation_info.model_dump() if api_version.deprecation_info else None,
                 "request_id": get_request_id(),
             },
             headers=api_version.get_deprecation_headers()

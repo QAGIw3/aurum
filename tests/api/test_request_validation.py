@@ -98,7 +98,7 @@ class TestErrorEnvelope:
             request_id="req-123",
         )
 
-        data = envelope.dict()
+        data = envelope.model_dump()
         assert isinstance(data, dict)
         assert data["error"] == "ValidationError"
         assert data["message"] == "Field is required"
@@ -179,7 +179,7 @@ class TestValidationErrorResponse:
             field_errors=field_errors
         )
 
-        data = response.dict()
+        data = response.model_dump()
         assert data["error"] == "Validation Error"
         assert data["message"] == "Validation failed"
         assert len(data["field_errors"]) == 1

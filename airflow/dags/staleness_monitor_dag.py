@@ -117,10 +117,21 @@ def create_staleness_monitor_dag(
             ("cpi_energy", 30 * 24),           # Monthly
             ("cpi_food", 30 * 24),             # Monthly
 
-            # ISO datasets
-            ("iso_nyiso_lmp_dam", 1),          # Hourly
-            ("iso_nyiso_load", 1),             # Hourly
-            ("iso_pjm_lmp_rtm", 1),            # Hourly
+            # ISO datasets (expand to match dedicated DAG source names)
+            ("caiso_prc_lmp", 1),              # Hourly
+            ("ercot_mis_lmp", 1),              # Hourly
+            ("isone_ws_lmp", 1),               # Hourly
+            ("spp_da_lmp", 1),                 # Hourly
+            ("spp_rt_lmp", 1),                 # 5-min ingestion; monitor hourly
+            ("miso_da_lmp", 1),                # Hourly
+            ("miso_rt_lmp", 1),                # 5-min ingestion; monitor hourly
+            ("miso_load", 1),                  # Hourly
+            ("miso_genmix", 1),                # Hourly
+            ("caiso_load", 1),                 # Hourly
+            ("caiso_genmix", 1),               # Hourly
+            ("pjm_da_lmp", 1),                 # Hourly
+            ("pjm_load", 1),                   # Hourly
+            ("pjm_genmix", 1),                 # Hourly
 
             # NOAA datasets
             ("noaa_ghcnd_daily", 24),          # Daily
@@ -218,7 +229,7 @@ def create_staleness_monitor_dag(
                 # Process stale dataset
                 print(f"  📊 Dataset {staleness_info.dataset} is "
                       f"{staleness_info.staleness_level.value} "
-                      f"({staleness_info.hours_since_update".2f"}h old)")
+                      f"({staleness_info.hours_since_update:.2f}h old)")
 
                 processed_count += 1
 
@@ -366,7 +377,7 @@ def create_critical_staleness_monitor_dag(
         if critical_datasets:
             print(f"🚨 CRITICAL: {len(critical_datasets)} datasets are critically stale")
             for dataset in critical_datasets:
-                print(f"  - {dataset.dataset}: {dataset.hours_since_update".2f"}h old")
+                print(f"  - {dataset.dataset}: {dataset.hours_since_update:.2f}h old")
         else:
             print("✅ No critical staleness issues detected")
 

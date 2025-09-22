@@ -389,7 +389,14 @@ class TrinoClient:
         async with self._get_connection() as conn:
             def _execute():
                 with conn.cursor() as cur:
-                    cur.execute(query, params or {})
+                    # Prefix query with trace context for observability in Trino
+                    try:
+                        from ..telemetry.context import get_request_id
+                        rid = get_request_id() or "unknown"
+                    except Exception:
+                        rid = "unknown"
+                    annotated_query = f"/* aurum tenant={tenant_id or 'unknown'} rid={rid} */\n{query}"
+                    cur.execute(annotated_query, params or {})
                     columns = [col[0] for col in cur.description or []]
                     results = []
                     for row in cur.fetchall():

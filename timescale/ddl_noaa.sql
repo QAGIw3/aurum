@@ -45,3 +45,43 @@ ALTER TABLE IF EXISTS public.noaa_weather_timeseries
 -- Compress data older than 30 days; retain for 5 years
 SELECT add_compression_policy('public.noaa_weather_timeseries', INTERVAL '30 days', if_not_exists => TRUE);
 SELECT add_retention_policy('public.noaa_weather_timeseries', INTERVAL '1825 days', if_not_exists => TRUE);
+
+DO $$
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1 FROM pg_catalog.pg_class c
+        JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace
+        WHERE n.nspname = 'public' AND c.relname = 'noaa_weather_timeseries_wk'
+    ) THEN
+        EXECUTE $DDL$
+            CREATE MATERIALIZED VIEW public.noaa_weather_timeseries_wk
+            WITH (timescaledb.continuous) AS
+            SELECT
+                tenant_id,
+                station_id,
+                element,
+                time_bucket('7 days', observation_date) AS bucket_start,
+                AVG(value) AS value_avg,
+                MIN(value) AS value_min,
+                MAX(value) AS value_max,
+                COUNT(*) AS sample_count,
+                MAX(ingest_ts) AS latest_ingest_ts
+            FROM public.noaa_weather_timeseries
+            GROUP BY tenant_id, station_id, element, bucket_start
+            WITH NO DATA;
+        $DDL$;
+    END IF;
+END$$;
+
+CREATE INDEX IF NOT EXISTS idx_noaa_weather_timeseries_wk
+    ON public.noaa_weather_timeseries_wk (tenant_id, station_id, element, bucket_start DESC);
+
+SELECT add_continuous_aggregate_policy(
+    'public.noaa_weather_timeseries_wk',
+    start_offset => INTERVAL '2 years',
+    end_offset => INTERVAL '7 days',
+    schedule_interval => INTERVAL '1 day',
+    if_not_exists => TRUE
+);
+
+SELECT add_retention_policy('public.noaa_weather_timeseries_wk', INTERVAL '5 years', if_not_exists => TRUE);

@@ -1,0 +1,309 @@
+{
+  "metadata": {
+    "description": "NOAA Weather Data Ingestion Configuration - Comprehensive Coverage",
+    "version": "3.0.0",
+    "last_updated": "2025-09-21T22:09:26.205922",
+    "source": "NOAA Station Manager",
+    "total_stations": 19,
+    "regions_covered": [
+      "Pacific Northwest",
+      "South",
+      "Southeast",
+      "Northeast",
+      "Mountain",
+      "West",
+      "Southwest",
+      "Midwest",
+      "Mid-Atlantic"
+    ],
+    "data_types_available": [
+      "TSOIL",
+      "DP05",
+      "DX90",
+      "HTDD",
+      "EMNT",
+      "WSF2",
+      "DX32",
+      "DP01",
+      "DP10",
+      "RHAV",
+      "DX70",
+      "WSF5",
+      "TSUN",
+      "AWND",
+      "EVAP",
+      "SNOW",
+      "EMXT",
+      "TMAX",
+      "CLDD",
+      "SNWD",
+      "TAVG",
+      "PSUN",
+      "MNTM",
+      "MXTM",
+      "TMIN",
+      "PRCP",
+      "VISIB",
+      "EMXP"
+    ]
+  },
+  "datasets": [
+    {
+      "dataset": "GHCND",
+      "name": "Global Historical Climatology Network - Daily",
+      "description": "Daily weather observations - Comprehensive Coverage",
+      "frequency": "daily",
+      "schedule": "0 6 * * *",
+      "window_days": 1,
+      "topic": "aurum.ref.noaa.weather.ghcnd.daily.v1",
+      "quality_checks": {
+        "null_value_threshold": 0.1,
+        "outlier_detection": true,
+        "range_validation": {
+          "temperature": [
+            -50,
+            60
+          ],
+          "precipitation": [
+            0,
+            500
+          ],
+          "wind_speed": [
+            0,
+            100
+          ],
+          "humidity": [
+            0,
+            100
+          ],
+          "pressure": [
+            800,
+            1100
+          ],
+          "solar_radiation": [
+            0,
+            1000
+          ]
+        }
+      },
+      "dataset_id": "ghcnd_daily",
+      "stations": [
+        "GHCND:USW00094728",
+        "GHCND:USW00023174",
+        "GHCND:USW00014922",
+        "GHCND:USW00013874",
+        "GHCND:USW00023188",
+        "GHCND:USW00012842",
+        "GHCND:USW00014739",
+        "GHCND:USW00094846",
+        "GHCND:USW00012839",
+        "GHCND:USW00023183",
+        "GHCND:USW00023234",
+        "GHCND:USW00014898",
+        "GHCND:USW00003927",
+        "GHCND:USW00013781",
+        "GHCND:USW00013881",
+        "GHCND:USW00023044",
+        "GHCND:USW00014933",
+        "GHCND:USW00012960",
+        "GHCND:USW00093230"
+      ],
+      "datatypes": [
+        "AWND",
+        "CLDD",
+        "DP01",
+        "DP05",
+        "DP10",
+        "DX32",
+        "DX70",
+        "DX90",
+        "EMNT",
+        "EMXP",
+        "EMXT",
+        "EVAP",
+        "HTDD",
+        "MNTM",
+        "MXTM",
+        "PRCP",
+        "PSUN",
+        "RHAV",
+        "SNOW",
+        "SNWD",
+        "TAVG",
+        "TMAX",
+        "TMIN",
+        "TSOIL",
+        "TSUN",
+        "VISIB",
+        "WSF2",
+        "WSF5"
+      ],
+      "enabled": true,
+      "backfill_enabled": true,
+      "coverage_info": {
+        "total_available": 19,
+        "selected": 19,
+        "average_data_coverage": 0.9800000000000002,
+        "regions_covered": [
+          "Pacific Northwest",
+          "South",
+          "Southeast",
+          "Northeast",
+          "Mountain",
+          "West",
+          "Southwest",
+          "Midwest",
+          "Mid-Atlantic"
+        ],
+        "states_covered": [
+          "CA",
+          "MN",
+          "PA",
+          "WA",
+          "OR",
+          "CO",
+          "MD",
+          "NY",
+          "AZ",
+          "NV",
+          "UT",
+          "FL",
+          "TX",
+          "NC",
+          "MA",
+          "GA",
+          "MI"
+        ]
+      }
+    },
+    {
+      "dataset": "GHCND",
+      "name": "Global Historical Climatology Network - Hourly",
+      "description": "Hourly weather observations - Comprehensive Coverage",
+      "frequency": "hourly",
+      "schedule": "0 */6 * * *",
+      "window_hours": 1,
+      "window_days": 0,
+      "topic": "aurum.ref.noaa.weather.ghcnd.hourly.v1",
+      "quality_checks": {
+        "null_value_threshold": 0.05,
+        "outlier_detection": true,
+        "range_validation": {
+          "temperature": [
+            -50,
+            60
+          ],
+          "precipitation": [
+            0,
+            200
+          ],
+          "wind_speed": [
+            0,
+            50
+          ],
+          "humidity": [
+            0,
+            100
+          ],
+          "pressure": [
+            800,
+            1100
+          ],
+          "solar_radiation": [
+            0,
+            1000
+          ]
+        }
+      },
+      "dataset_id": "ghcnd_hourly",
+      "stations": [
+        "GHCND:USW00094728",
+        "GHCND:USW00023174",
+        "GHCND:USW00014922",
+        "GHCND:USW00013874",
+        "GHCND:USW00023188",
+        "GHCND:USW00012842",
+        "GHCND:USW00014739",
+        "GHCND:USW00094846",
+        "GHCND:USW00012839",
+        "GHCND:USW00023183",
+        "GHCND:USW00023234",
+        "GHCND:USW00014898",
+        "GHCND:USW00003927",
+        "GHCND:USW00013781",
+        "GHCND:USW00013881",
+        "GHCND:USW00023044",
+        "GHCND:USW00014933",
+        "GHCND:USW00012960",
+        "GHCND:USW00093230"
+      ],
+      "datatypes": [
+        "AWND",
+        "CLDD",
+        "DP01",
+        "DP05",
+        "DP10",
+        "DX32",
+        "DX70",
+        "DX90",
+        "EMNT",
+        "EMXP",
+        "EMXT",
+        "EVAP",
+        "HTDD",
+        "MNTM",
+        "MXTM",
+        "PRCP",
+        "PSUN",
+        "RHAV",
+        "SNOW",
+        "SNWD",
+        "TAVG",
+        "TMAX",
+        "TMIN",
+        "TSOIL",
+        "TSUN",
+        "VISIB",
+        "WSF2",
+        "WSF5"
+      ],
+      "enabled": true,
+      "backfill_enabled": false,
+      "coverage_info": {
+        "total_available": 19,
+        "selected": 19,
+        "average_data_coverage": 0.9800000000000002,
+        "regions_covered": [
+          "Pacific Northwest",
+          "South",
+          "Southeast",
+          "Northeast",
+          "Mountain",
+          "West",
+          "Southwest",
+          "Midwest",
+          "Mid-Atlantic"
+        ],
+        "states_covered": [
+          "CA",
+          "MN",
+          "PA",
+          "WA",
+          "OR",
+          "CO",
+          "MD",
+          "NY",
+          "AZ",
+          "NV",
+          "UT",
+          "FL",
+          "TX",
+          "NC",
+          "MA",
+          "GA",
+          "MI"
+        ]
+      }
+    }
+  ]
+}

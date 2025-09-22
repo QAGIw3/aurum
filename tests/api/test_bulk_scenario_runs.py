@@ -559,7 +559,7 @@ class TestBulkScenarioRunIntegration:
         assert len(request.runs) == 2
 
         # Convert to dict for API call
-        request_dict = request.dict()
+        request_dict = request.model_dump()
         assert "scenario_id" in request_dict
         assert "runs" in request_dict
 

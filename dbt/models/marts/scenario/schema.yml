@@ -1,0 +1,91 @@
+version: 2
+models:
+- name: mart_scenario_output
+  description: Latest scenario outputs materialized as a Trino view.
+  tests:
+  - unique_combination:
+      combination_of_columns:
+      - tenant_id
+      - scenario_id
+      - run_id
+      - metric
+      - tenor_label
+  columns:
+  - name: scenario_id
+    tests:
+    - not_null
+    - relationships:
+        to: ref('mart_scenario_output')
+        field: scenario_id
+        to_field: scenario_id
+    - relationships:
+        to: ref('mart_scenario_output')
+        field: scenario_id
+        to_field: scenario_id
+    - relationships:
+        to: source('iceberg_market', 'scenario_output')
+        field: scenario_id
+        to_field: scenario_id
+  - name: run_id
+    description: Identifier of the scenario run that produced the output.
+    tests:
+    - not_null
+  - name: tenant_id
+    tests:
+    - not_null
+    - relationships:
+        to: ref('tenant_catalog')
+        field: tenant_id
+        to_field: tenant_id
+  - name: value
+    tests:
+    - not_null
+  - name: metric_currency
+    description: Currency code parsed from the metric unit metadata.
+  - name: metric_unit_denominator
+    description: Unit denominator parsed from the metric unit metadata (e.g., MWh).
+- name: mart_scenario_metric_latest
+  description: Helper view exposing the latest value per scenario and metric.
+  tests:
+  - unique_combination:
+      combination_of_columns:
+      - tenant_id
+      - scenario_id
+      - metric
+  columns:
+  - name: scenario_id
+    tests:
+    - not_null
+  - name: run_id
+    description: Run identifier corresponding to the latest metric value.
+    tests:
+    - not_null
+  - name: tenant_id
+    tests:
+    - not_null
+  - name: metric
+    tests:
+    - not_null
+  - name: latest_value
+    description: Most recent value for the metric.
+  - name: latest_asof_date
+    description: As-of date associated with the latest metric value.
+- name: mart_ppa_valuation
+  description: Persisted PPA valuation cashflows and summary metrics.
+  tests:
+  - unique_combination:
+      combination_of_columns:
+      - ppa_contract_id
+      - scenario_id
+      - metric
+      - period_start
+  columns:
+  - name: ppa_contract_id
+    tests:
+    - not_null
+  - name: scenario_id
+    tests:
+    - not_null
+  - name: metric
+    tests:
+    - not_null

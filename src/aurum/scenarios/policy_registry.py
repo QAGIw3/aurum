@@ -10,7 +10,7 @@ from typing import Any, Dict, List, Optional, Tuple
 from uuid import UUID, uuid4
 
 import asyncpg
-from pydantic import BaseModel, Field, field_validator, root_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 from ..telemetry.context import get_correlation_id, get_tenant_id, get_user_id, log_structured
 from .models import DriverType
@@ -64,9 +64,9 @@ class PolicyDriverVersion(BaseModel):
             raise ValueError("Version must be in semantic version format (e.g., '1.0.0')")
         return v
 
-    @root_validator(pre=True, skip_on_failure=True)
+    @model_validator(mode="before")
     @classmethod
-    def validate_parameter_schema(cls, values) -> dict:
+    def validate_parameter_schema(cls, values: dict[str, Any]) -> dict[str, Any]:
         """Validate parameter schema consistency."""
         schema = values.get("parameter_schema")
         validation_rules = values.get("validation_rules")
@@ -131,9 +131,9 @@ class PolicyDriver(BaseModel):
             raise ValueError("Driver name must be a valid identifier")
         return v.strip()
 
-    @root_validator(pre=True, skip_on_failure=True)
+    @model_validator(mode="before")
     @classmethod
-    def validate_driver_consistency(cls, values) -> dict:
+    def validate_driver_consistency(cls, values: dict[str, Any]) -> dict[str, Any]:
         """Validate driver configuration consistency."""
         if values.get("driver_type") != DriverType.POLICY:
             raise ValueError("Only policy drivers are supported in the registry")

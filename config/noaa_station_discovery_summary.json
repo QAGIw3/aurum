@@ -1,0 +1,17 @@
+{
+  "total_stations": 0,
+  "by_dataset": {
+    "ghcnd_daily": 0,
+    "ghcnd_hourly": 0,
+    "gsom": 0,
+    "normals": 0
+  },
+  "by_region": {},
+  "data_types_coverage": {
+    "ghcnd_daily": [],
+    "ghcnd_hourly": [],
+    "gsom": [],
+    "normals": []
+  },
+  "quality_metrics": {}
+}

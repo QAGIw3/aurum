@@ -14,6 +14,7 @@ spec:
           port: 8080
       middlewares:
         - name: oidc-forward-auth
+        - name: api-rate-limit
     - match: Host(`superset.aurum.local`)
       kind: Rule
       services:

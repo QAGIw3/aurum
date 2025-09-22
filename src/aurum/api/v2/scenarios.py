@@ -160,7 +160,7 @@ async def create_scenario_v2(
 
         # Create response with metadata
         result = ScenarioResponse(
-            **created_scenario.dict(),
+            **created_scenario.model_dump(),
             meta={
                 "request_id": get_request_id(),
                 "created_at": created_scenario.created_at,
@@ -210,7 +210,7 @@ async def get_scenario_v2(
 
         # Create response with metadata
         result = ScenarioResponse(
-            **scenario.dict(),
+            **scenario.model_dump(),
             meta={
                 "request_id": get_request_id(),
                 "processing_time_ms": round(duration_ms, 2),
@@ -260,7 +260,7 @@ async def create_scenario_run_v2(
 
         # Create response with metadata
         result = ScenarioRunResponse(
-            **created_run.dict(),
+            **created_run.model_dump(),
             meta={
                 "request_id": get_request_id(),
                 "created_at": created_run.created_at,
