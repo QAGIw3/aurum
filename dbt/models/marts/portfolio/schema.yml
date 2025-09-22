@@ -1,0 +1,138 @@
+version: 2
+
+models:
+  - name: mart_portfolio_exposure_rollup
+    description: "Portfolio exposure rollup by hierarchical levels (node, hub, zone, BA, ISO)"
+    tests:
+      - dbt_utils.unique_combination_of_columns:
+          combination_of_columns:
+            - entity_id
+            - entity_type
+            - iso_code
+            - as_of_date
+    columns:
+      - name: exposure_sk
+        description: "Surrogate key for the exposure record"
+        tests:
+          - not_null
+          - unique
+      - name: entity_id
+        description: "Entity identifier (node, zone, BA, ISO, or TOTAL)"
+        tests:
+          - not_null
+      - name: entity_type
+        description: "Type of entity (node, zone, ba, iso, total)"
+        tests:
+          - not_null
+          - accepted_values:
+              values:
+                - node
+                - zone
+                - ba
+                - iso
+                - total
+      - name: iso_code
+        description: "ISO/RTO code"
+        tests:
+          - not_null
+      - name: exposure_amount
+        description: "Total exposure amount in USD"
+        tests:
+          - not_null
+      - name: exposure_currency
+        description: "Currency of the exposure"
+        tests:
+          - not_null
+      - name: delta
+        description: "First-order price sensitivity (delta)"
+      - name: gamma
+        description: "Second-order price sensitivity (gamma)"
+      - name: vega
+        description: "Volatility sensitivity (vega)"
+      - name: theta
+        description: "Time decay sensitivity (theta)"
+      - name: var_95
+        description: "95% Value at Risk"
+      - name: var_99
+        description: "99% Value at Risk"
+      - name: max_drawdown
+        description: "Maximum potential drawdown"
+      - name: position_ids
+        description: "Array of position IDs contributing to this exposure"
+      - name: num_positions
+        description: "Number of positions"
+        tests:
+          - not_null
+      - name: as_of_date
+        description: "As-of date for the exposure calculation"
+        tests:
+          - not_null
+      - name: created_at
+        description: "Record creation timestamp"
+        tests:
+          - not_null
+
+  - name: mart_scenario_exposure_analysis
+    description: "Scenario-based exposure analysis showing portfolio impact across different scenarios"
+    tests:
+      - dbt_utils.unique_combination_of_columns:
+          combination_of_columns:
+            - entity_id
+            - entity_type
+            - scenario_id
+            - as_of_date
+    columns:
+      - name: scenario_exposure_sk
+        description: "Surrogate key for the scenario exposure record"
+        tests:
+          - not_null
+          - unique
+      - name: entity_id
+        description: "Entity identifier (node, zone, total)"
+        tests:
+          - not_null
+      - name: entity_type
+        description: "Type of entity (node, zone, total)"
+        tests:
+          - not_null
+          - accepted_values:
+              values:
+                - node
+                - zone
+                - total
+      - name: iso_code
+        description: "ISO/RTO code"
+        tests:
+          - not_null
+      - name: scenario_id
+        description: "Scenario identifier"
+        tests:
+          - not_null
+      - name: scenario_name
+        description: "Human-readable scenario name"
+      - name: scenario_exposure
+        description: "Exposure under the scenario"
+        tests:
+          - not_null
+      - name: base_exposure
+        description: "Baseline exposure for comparison"
+        tests:
+          - not_null
+      - name: exposure_delta
+        description: "Change in exposure from baseline"
+        tests:
+          - not_null
+      - name: exposure_change_percent
+        description: "Percentage change in exposure"
+      - name: num_positions
+        description: "Number of positions"
+        tests:
+          - not_null
+      - name: as_of_date
+        description: "As-of date for the analysis"
+        tests:
+          - not_null
+      - name: created_at
+        description: "Record creation timestamp"
+        tests:
+          - not_null

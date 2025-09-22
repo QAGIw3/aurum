@@ -6,6 +6,11 @@ from copy import deepcopy
 from typing import Any, Dict, List, Optional
 
 from .external_dao import ExternalDAO
+from .iso_catalog import (
+    ISO_PROVIDER_DEFAULTS,
+    canonicalize_iso_observation_record,
+    canonicalize_iso_series_record,
+)
 
 
 class ExternalProviderAdapter:
@@ -83,11 +88,15 @@ class ExternalProviderAdapter:
         normalized["provider_id"] = self._provider
         if "id" not in normalized and "series_id" in normalized:
             normalized["id"] = normalized["series_id"]
+        if self._provider in ISO_PROVIDER_DEFAULTS:
+            normalized = canonicalize_iso_series_record(self._provider, normalized)
         return normalized
 
     def _normalize_observation(self, record: Dict[str, Any]) -> Dict[str, Any]:
         normalized = dict(record)
         normalized.setdefault("provider_id", self._provider)
+        if self._provider in ISO_PROVIDER_DEFAULTS:
+            normalized = canonicalize_iso_observation_record(self._provider, normalized)
         return normalized
 
 

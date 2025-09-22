@@ -1,0 +1,438 @@
+{
+  "metadata": {
+    "version": "1.0",
+    "description": "Comprehensive scenario analytics and attribution workbook",
+    "created_by": "aurum_system",
+    "created_at": "2025-01-01T00:00:00Z",
+    "tags": ["scenarios", "analytics", "attribution", "risk", "forecasting"]
+  },
+  "workbook": {
+    "title": "Scenario Analytics & Attribution",
+    "description": "Comprehensive analysis of scenario performance, risk metrics, and attribution across all scenario types",
+    "dashboard_filters": [
+      {
+        "name": "date_range",
+        "type": "daterange",
+        "default": {
+          "start": "30 days ago",
+          "end": "now"
+        },
+        "required": true
+      },
+      {
+        "name": "scenario_category",
+        "type": "select",
+        "options": ["all", "forecasting", "stress_test", "monte_carlo", "shock_outage"],
+        "default": "all",
+        "required": false
+      },
+      {
+        "name": "tenant_id",
+        "type": "select",
+        "default": "all",
+        "required": false
+      }
+    ],
+    "dashboards": [
+      {
+        "id": "scenario_overview",
+        "title": "Scenario Overview",
+        "description": "High-level overview of scenario performance and health",
+        "charts": [
+          {
+            "id": "scenario_health_score_trend",
+            "title": "Scenario Health Score Trend",
+            "chart_type": "line",
+            "datasource": "mart_scenario_analytics_summary",
+            "dimensions": ["scenario_created_at"],
+            "metrics": ["scenario_health_score"],
+            "filters": [
+              {
+                "column": "scenario_created_at",
+                "operator": "TEMPORAL_RANGE",
+                "value": "@date_range"
+              }
+            ],
+            "time_grain": "day",
+            "groupby": ["scenario_category"],
+            "limit": 1000,
+            "order_by": [["scenario_created_at", "ASC"]],
+            "row_limit": 10000,
+            "timeseries_limit": 0,
+            "include_time": true,
+            "x_axis_label": "Date",
+            "y_axis_label": "Health Score (0-100)",
+            "show_legend": true,
+            "show_markers": true,
+            "color_scheme": "supersetColors"
+          },
+          {
+            "id": "scenario_performance_distribution",
+            "title": "Scenario Performance Distribution",
+            "chart_type": "histogram",
+            "datasource": "mart_scenario_analytics_summary",
+            "dimensions": [],
+            "metrics": ["scenario_health_score"],
+            "filters": [
+              {
+                "column": "scenario_created_at",
+                "operator": "TEMPORAL_RANGE",
+                "value": "@date_range"
+              }
+            ],
+            "groupby": ["forecast_performance_class"],
+            "x_axis_label": "Performance Class",
+            "y_axis_label": "Count",
+            "color_scheme": "supersetColors"
+          },
+          {
+            "id": "scenario_category_breakdown",
+            "title": "Scenarios by Category",
+            "chart_type": "pie",
+            "datasource": "mart_scenario_analytics_summary",
+            "dimensions": ["scenario_category"],
+            "metrics": ["count"],
+            "filters": [
+              {
+                "column": "scenario_created_at",
+                "operator": "TEMPORAL_RANGE",
+                "value": "@date_range"
+              }
+            ],
+            "limit": 10,
+            "show_legend": true,
+            "label_type": "key_value_percent",
+            "color_scheme": "supersetColors"
+          },
+          {
+            "id": "top_risk_scenarios",
+            "title": "Top Risk Scenarios",
+            "chart_type": "table",
+            "datasource": "mart_scenario_analytics_summary",
+            "dimensions": ["scenario_name", "scenario_category", "risk_score"],
+            "metrics": ["avg_portfolio_impact", "avg_var_95", "scenario_health_score"],
+            "filters": [
+              {
+                "column": "scenario_created_at",
+                "operator": "TEMPORAL_RANGE",
+                "value": "@date_range"
+              }
+            ],
+            "orderby": [["risk_score", "DESC"]],
+            "limit": 20,
+            "include_search": true,
+            "column_config": {
+              "scenario_name": {"label": "Scenario Name"},
+              "scenario_category": {"label": "Category"},
+              "risk_score": {"label": "Risk Score"},
+              "avg_portfolio_impact": {"label": "Portfolio Impact", "format": "$,.0f"},
+              "avg_var_95": {"label": "VaR 95%", "format": "$,.0f"},
+              "scenario_health_score": {"label": "Health Score", "format": ".1f"}
+            }
+          }
+        ]
+      },
+      {
+        "id": "execution_performance",
+        "title": "Execution Performance",
+        "description": "Analysis of scenario execution times and success rates",
+        "charts": [
+          {
+            "id": "execution_time_trend",
+            "title": "Execution Time Trend",
+            "chart_type": "line",
+            "datasource": "mart_scenario_analytics_summary",
+            "dimensions": ["scenario_created_at"],
+            "metrics": ["avg_duration_seconds"],
+            "filters": [
+              {
+                "column": "scenario_created_at",
+                "operator": "TEMPORAL_RANGE",
+                "value": "@date_range"
+              }
+            ],
+            "time_grain": "day",
+            "groupby": ["scenario_category"],
+            "x_axis_label": "Date",
+            "y_axis_label": "Avg Execution Time (seconds)",
+            "show_legend": true,
+            "color_scheme": "supersetColors"
+          },
+          {
+            "id": "success_rate_by_category",
+            "title": "Success Rate by Category",
+            "chart_type": "bar",
+            "datasource": "mart_scenario_analytics_summary",
+            "dimensions": ["scenario_category"],
+            "metrics": ["success_rate_percent"],
+            "filters": [
+              {
+                "column": "scenario_created_at",
+                "operator": "TEMPORAL_RANGE",
+                "value": "@date_range"
+              }
+            ],
+            "x_axis_label": "Scenario Category",
+            "y_axis_label": "Success Rate (%)",
+            "color_scheme": "supersetColors"
+          },
+          {
+            "id": "scenario_complexity_vs_performance",
+            "title": "Complexity vs Performance",
+            "chart_type": "scatter",
+            "datasource": "mart_scenario_analytics_summary",
+            "dimensions": ["complexity_score"],
+            "metrics": ["scenario_health_score"],
+            "filters": [
+              {
+                "column": "scenario_created_at",
+                "operator": "TEMPORAL_RANGE",
+                "value": "@date_range"
+              }
+            ],
+            "x_axis_label": "Complexity Score",
+            "y_axis_label": "Health Score",
+            "groupby": ["scenario_category"],
+            "show_legend": true,
+            "color_scheme": "supersetColors"
+          }
+        ]
+      },
+      {
+        "id": "forecasting_analytics",
+        "title": "Forecasting Analytics",
+        "description": "Detailed analysis of forecasting scenario performance",
+        "charts": [
+          {
+            "id": "forecast_accuracy_metrics",
+            "title": "Forecast Accuracy Metrics",
+            "chart_type": "box_plot",
+            "datasource": "mart_scenario_analytics_summary",
+            "dimensions": ["scenario_category"],
+            "metrics": ["avg_mape", "avg_smape", "avg_rmse"],
+            "filters": [
+              {
+                "column": "scenario_created_at",
+                "operator": "TEMPORAL_RANGE",
+                "value": "@date_range"
+              },
+              {
+                "column": "scenario_category",
+                "operator": "IN",
+                "value": ["forecasting"]
+              }
+            ],
+            "x_axis_label": "Metric",
+            "y_axis_label": "Value",
+            "color_scheme": "supersetColors"
+          },
+          {
+            "id": "forecast_performance_heatmap",
+            "title": "Forecast Performance by Time",
+            "chart_type": "heatmap",
+            "datasource": "mart_scenario_analytics_summary",
+            "dimensions": ["created_month", "created_hour"],
+            "metrics": ["avg_mape"],
+            "filters": [
+              {
+                "column": "scenario_created_at",
+                "operator": "TEMPORAL_RANGE",
+                "value": "@date_range"
+              },
+              {
+                "column": "scenario_category",
+                "operator": "IN",
+                "value": ["forecasting"]
+              }
+            ],
+            "x_axis_label": "Hour of Day",
+            "y_axis_label": "Month",
+            "metric_label": "MAPE",
+            "color_scheme": "RdYlGn"
+          },
+          {
+            "id": "best_forecast_models",
+            "title": "Best Performing Forecast Models",
+            "chart_type": "table",
+            "datasource": "mart_scenario_analytics_summary",
+            "dimensions": ["scenario_name", "scenario_category"],
+            "metrics": ["best_r2_score", "avg_mape", "scenario_health_score"],
+            "filters": [
+              {
+                "column": "scenario_created_at",
+                "operator": "TEMPORAL_RANGE",
+                "value": "@date_range"
+              },
+              {
+                "column": "scenario_category",
+                "operator": "IN",
+                "value": ["forecasting"]
+              }
+            ],
+            "orderby": [["best_r2_score", "DESC"]],
+            "limit": 15,
+            "include_search": true
+          }
+        ]
+      },
+      {
+        "id": "risk_attribution",
+        "title": "Risk Attribution",
+        "description": "Portfolio risk attribution across scenarios",
+        "charts": [
+          {
+            "id": "portfolio_impact_distribution",
+            "title": "Portfolio Impact Distribution",
+            "chart_type": "histogram",
+            "datasource": "mart_scenario_analytics_summary",
+            "dimensions": [],
+            "metrics": ["avg_portfolio_impact"],
+            "filters": [
+              {
+                "column": "scenario_created_at",
+                "operator": "TEMPORAL_RANGE",
+                "value": "@date_range"
+              }
+            ],
+            "x_axis_label": "Portfolio Impact ($)",
+            "y_axis_label": "Frequency",
+            "color_scheme": "supersetColors"
+          },
+          {
+            "id": "risk_metrics_comparison",
+            "title": "Risk Metrics by Scenario Category",
+            "chart_type": "bar",
+            "datasource": "mart_scenario_analytics_summary",
+            "dimensions": ["scenario_category"],
+            "metrics": ["avg_var_95", "avg_var_99", "avg_max_drawdown"],
+            "filters": [
+              {
+                "column": "scenario_created_at",
+                "operator": "TEMPORAL_RANGE",
+                "value": "@date_range"
+              }
+            ],
+            "x_axis_label": "Scenario Category",
+            "y_axis_label": "Risk Amount ($)",
+            "color_scheme": "supersetColors"
+          },
+          {
+            "id": "expected_loss_analysis",
+            "title": "Expected Loss by Scenario",
+            "chart_type": "scatter",
+            "datasource": "mart_stress_test_results",
+            "dimensions": ["scenario_name"],
+            "metrics": ["expected_loss"],
+            "filters": [
+              {
+                "column": "scenario_created_at",
+                "operator": "TEMPORAL_RANGE",
+                "value": "@date_range"
+              }
+            ],
+            "x_axis_label": "Scenario",
+            "y_axis_label": "Expected Loss ($)",
+            "size_metric": "portfolio_impact",
+            "show_legend": true
+          }
+        ]
+      },
+      {
+        "id": "scenario_attribution",
+        "title": "Scenario Attribution",
+        "description": "Attribution analysis of scenario outcomes",
+        "charts": [
+          {
+            "id": "curve_impact_attribution",
+            "title": "Impact Attribution by Curve Type",
+            "chart_type": "treemap",
+            "datasource": "mart_stress_test_results",
+            "dimensions": ["affected_curve_key"],
+            "metrics": ["portfolio_impact"],
+            "filters": [
+              {
+                "column": "scenario_created_at",
+                "operator": "TEMPORAL_RANGE",
+                "value": "@date_range"
+              }
+            ],
+            "color_scheme": "RdYlGn"
+          },
+          {
+            "id": "scenario_timeline_impact",
+            "title": "Impact Timeline",
+            "chart_type": "line",
+            "datasource": "mart_scenario_output",
+            "dimensions": ["timestamp"],
+            "metrics": ["value"],
+            "filters": [
+              {
+                "column": "timestamp",
+                "operator": "TEMPORAL_RANGE",
+                "value": "@date_range"
+              },
+              {
+                "column": "metric_name",
+                "operator": "IN",
+                "value": ["portfolio_impact", "var_95", "var_99"]
+              }
+            ],
+            "time_grain": "hour",
+            "groupby": ["metric_name"],
+            "x_axis_label": "Time",
+            "y_axis_label": "Impact",
+            "show_legend": true,
+            "color_scheme": "supersetColors"
+          },
+          {
+            "id": "attribution_waterfall",
+            "title": "Attribution Waterfall",
+            "chart_type": "waterfall",
+            "datasource": "mart_stress_test_results",
+            "dimensions": ["scenario_name"],
+            "metrics": ["exposure_delta"],
+            "filters": [
+              {
+                "column": "scenario_created_at",
+                "operator": "TEMPORAL_RANGE",
+                "value": "@date_range"
+              }
+            ],
+            "x_axis_label": "Scenario",
+            "y_axis_label": "Exposure Change",
+            "increasing_color": "green",
+            "decreasing_color": "red"
+          }
+        ]
+      }
+    ]
+  },
+  "data_sources": [
+    {
+      "name": "mart_scenario_analytics_summary",
+      "description": "Comprehensive scenario analytics summary",
+      "type": "table",
+      "schema": "marts",
+      "table": "scenario_analytics_summary"
+    },
+    {
+      "name": "mart_stress_test_results",
+      "description": "Stress test results and scenario impacts",
+      "type": "table",
+      "schema": "marts",
+      "table": "stress_test_results"
+    },
+    {
+      "name": "mart_scenario_output",
+      "description": "Scenario outputs and metrics",
+      "type": "table",
+      "schema": "marts",
+      "table": "scenario_output"
+    }
+  ],
+  "permissions": {
+    "read": ["analyst", "manager", "executive"],
+    "write": ["admin"],
+    "admin": ["admin"]
+  }
+}

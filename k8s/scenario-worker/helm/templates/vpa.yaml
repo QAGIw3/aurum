@@ -1,0 +1,30 @@
+{{- if .Values.autoscaling.enabled }}
+apiVersion: autoscaling.k8s.io/v1
+kind: VerticalPodAutoscaler
+metadata:
+  name: {{ include "aurum-scenario-worker.fullname" . }}
+  labels:
+    {{- include "aurum-scenario-worker.labels" . | nindent 4 }}
+spec:
+  targetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: {{ include "aurum-scenario-worker.fullname" . }}
+  updatePolicy:
+    updateMode: "Auto"
+    evictionRequirements:
+      - resources: ["cpu", "memory"]
+        operators: ["In"]
+        values: ["0.8", "0.8"]
+  resourcePolicy:
+    containerPolicies:
+      - containerName: "*"
+        mode: "Auto"
+        minAllowed:
+          cpu: 100m
+          memory: 256Mi
+        maxAllowed:
+          cpu: "12"
+          memory: 16Gi
+        controlledResources: ["cpu", "memory"]
+{{- end }}

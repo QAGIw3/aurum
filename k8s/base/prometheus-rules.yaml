@@ -177,6 +177,49 @@ spec:
             runbook: "docs/runbooks/external-data.md#quality-degradation"
     - name: aurum-slo
       rules:
+        # Burn-rate alerts for 99.9% SLO over 30 days
+        - alert: AurumApiAvailabilityBurnRate1m
+          expr: |
+            sum(rate(aurum_api_requests_total{status=~"5.."}[1m]))
+            /
+            clamp_min(sum(rate(aurum_api_requests_total[1m])), 1)
+            > (1 - 0.999) * 60
+          labels:
+            severity: warning
+            slo: api_availability_99.9_burn_rate_1m
+            burn_rate: "60x"
+          annotations:
+            summary: "API availability burn rate high (1m window)"
+            description: "Error rate is 60x higher than SLO target over 1 minute"
+            runbook: "docs/runbooks/slo.md#api-availability-burn-rate"
+        - alert: AurumApiAvailabilityBurnRate5m
+          expr: |
+            sum(rate(aurum_api_requests_total{status=~"5.."}[5m]))
+            /
+            clamp_min(sum(rate(aurum_api_requests_total[5m])), 1)
+            > (1 - 0.999) * 12
+          labels:
+            severity: warning
+            slo: api_availability_99.9_burn_rate_5m
+            burn_rate: "12x"
+          annotations:
+            summary: "API availability burn rate high (5m window)"
+            description: "Error rate is 12x higher than SLO target over 5 minutes"
+            runbook: "docs/runbooks/slo.md#api-availability-burn-rate"
+        - alert: AurumApiAvailabilityBurnRate30m
+          expr: |
+            sum(rate(aurum_api_requests_total{status=~"5.."}[30m]))
+            /
+            clamp_min(sum(rate(aurum_api_requests_total[30m])), 1)
+            > (1 - 0.999) * 2
+          labels:
+            severity: critical
+            slo: api_availability_99.9_burn_rate_30m
+            burn_rate: "2x"
+          annotations:
+            summary: "API availability burn rate high (30m window)"
+            description: "Error rate is 2x higher than SLO target over 30 minutes"
+            runbook: "docs/runbooks/slo.md#api-availability-burn-rate"
         - alert: AurumApiAvailabilitySLOViolation
           expr: |
             1 - (sum(rate(aurum_api_requests_total{status=~"5.."}[15m]))
@@ -203,6 +246,49 @@ spec:
             summary: "API availability SLO warning (99.95%)"
             description: "API availability dropped below 99.95% for 5 minutes"
             runbook: "docs/runbooks/slo.md#api-availability"
+        # Burn-rate alerts for 99% SLO over 30 days
+        - alert: AurumWorkerSuccessRateBurnRate1m
+          expr: |
+            sum(rate(aurum_worker_errors_total[1m]))
+            /
+            clamp_min(sum(rate(aurum_worker_task_duration_seconds_count[1m])), 1)
+            > (1 - 0.99) * 60
+          labels:
+            severity: warning
+            slo: worker_success_rate_99_burn_rate_1m
+            burn_rate: "60x"
+          annotations:
+            summary: "Worker success rate burn rate high (1m window)"
+            description: "Error rate is 60x higher than SLO target over 1 minute"
+            runbook: "docs/runbooks/slo.md#worker-success-rate-burn-rate"
+        - alert: AurumWorkerSuccessRateBurnRate5m
+          expr: |
+            sum(rate(aurum_worker_errors_total[5m]))
+            /
+            clamp_min(sum(rate(aurum_worker_task_duration_seconds_count[5m])), 1)
+            > (1 - 0.99) * 12
+          labels:
+            severity: warning
+            slo: worker_success_rate_99_burn_rate_5m
+            burn_rate: "12x"
+          annotations:
+            summary: "Worker success rate burn rate high (5m window)"
+            description: "Error rate is 12x higher than SLO target over 5 minutes"
+            runbook: "docs/runbooks/slo.md#worker-success-rate-burn-rate"
+        - alert: AurumWorkerSuccessRateBurnRate30m
+          expr: |
+            sum(rate(aurum_worker_errors_total[30m]))
+            /
+            clamp_min(sum(rate(aurum_worker_task_duration_seconds_count[30m])), 1)
+            > (1 - 0.99) * 2
+          labels:
+            severity: critical
+            slo: worker_success_rate_99_burn_rate_30m
+            burn_rate: "2x"
+          annotations:
+            summary: "Worker success rate burn rate high (30m window)"
+            description: "Error rate is 2x higher than SLO target over 30 minutes"
+            runbook: "docs/runbooks/slo.md#worker-success-rate-burn-rate"
         - alert: AurumWorkerSuccessRateSLOViolation
           expr: |
             1 - (sum(rate(aurum_worker_errors_total[15m]))

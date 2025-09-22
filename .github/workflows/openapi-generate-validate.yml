@@ -48,7 +48,10 @@ jobs:
           print('✅ OpenAPI spec is valid')
           PY
 
+      - name: Enforce OpenAPI semantic versioning
+        run: |
+          python scripts/ci/check_openapi_diff.py --base-ref origin/main --spec-path aurum/docs/api/openapi-spec.yaml
+
       - name: Check for spec drift
         run: |
           git diff --quiet -- aurum/docs/api/openapi-spec.yaml aurum/docs/api/openapi-spec.json || (echo '❌ OpenAPI spec drift detected. Run: make docs-openapi and commit changes.' && exit 1)
-

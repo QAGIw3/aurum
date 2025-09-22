@@ -119,19 +119,26 @@ class ScenarioStore:
         return await self.get_scenario(scenario_id)
 
     async def get_scenario(self, scenario_id: str) -> Optional[ScenarioData]:
-        """Get scenario by ID."""
+        """Get scenario by ID with schema v2 features."""
         tenant_id = get_tenant_id()
 
         async with self.get_connection() as conn:
             row = await conn.fetchrow("""
                 SELECT id, tenant_id, name, description, status, assumptions,
-                       parameters, tags, version, created_by, created_at, updated_at
+                       parameters, tags, version, created_by, created_at, updated_at,
+                       schema_version, curve_families, constraints, provenance_enabled
                 FROM scenario
                 WHERE id = $1 AND tenant_id = $2
             """, scenario_id, tenant_id)
 
         if not row:
             return None
+
+        # Get associated curve families
+        curve_families = await self.list_scenario_curve_families(scenario_id)
+
+        # Get constraints
+        constraints = await self.list_scenario_constraints(scenario_id)
 
         return ScenarioData(
             id=row["id"],
@@ -146,6 +153,12 @@ class ScenarioStore:
             updated_at=row["updated_at"],
             created_by=row["created_by"],
             version=row["version"],
+            metadata={
+                "schema_version": row["schema_version"] or 2,
+                "curve_families": [cf["curve_family_name"] for cf in curve_families],
+                "constraints_count": len(constraints),
+                "provenance_enabled": row["provenance_enabled"] or False,
+            }
         )
 
     async def list_scenarios(
@@ -644,6 +657,418 @@ class ScenarioStore:
         )
 
         return await self.get_feature_flag(feature_name) or {}
+
+    # === SCHEMA V2 OPERATIONS ===
+
+    # Curve Family Operations
+
+    async def create_curve_family(self, family_data: Dict[str, Any]) -> Dict[str, Any]:
+        """Create a new curve family."""
+        family_id = str(uuid4())
+        user_id = get_user_id()
+
+        async with self.get_connection() as conn:
+            await conn.execute("""
+                INSERT INTO curve_family (
+                    id, name, description, family_type, curve_keys,
+                    default_parameters, validation_rules, is_active,
+                    created_by, created_at, updated_at
+                ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+            """,
+                family_id,
+                family_data["name"],
+                family_data.get("description"),
+                family_data["family_type"],
+                json.dumps(family_data.get("curve_keys", [])),
+                json.dumps(family_data.get("default_parameters", {})),
+                json.dumps(family_data.get("validation_rules", {})),
+                family_data.get("is_active", True),
+                user_id,
+                datetime.utcnow(),
+                datetime.utcnow(),
+            )
+
+        log_structured(
+            "info",
+            "curve_family_created",
+            family_id=family_id,
+            user_id=user_id,
+            family_name=family_data["name"],
+        )
+
+        return await self.get_curve_family(family_id)
+
+    async def get_curve_family(self, family_id: str) -> Optional[Dict[str, Any]]:
+        """Get curve family by ID."""
+        async with self.get_connection() as conn:
+            row = await conn.fetchrow("""
+                SELECT id, name, description, family_type, curve_keys,
+                       default_parameters, validation_rules, is_active,
+                       created_by, created_at, updated_by, updated_at
+                FROM curve_family
+                WHERE id = $1
+            """, family_id)
+
+        if not row:
+            return None
+
+        return {
+            "id": row["id"],
+            "name": row["name"],
+            "description": row["description"],
+            "family_type": row["family_type"],
+            "curve_keys": json.loads(row["curve_keys"]),
+            "default_parameters": json.loads(row["default_parameters"]),
+            "validation_rules": json.loads(row["validation_rules"]),
+            "is_active": row["is_active"],
+            "created_by": row["created_by"],
+            "created_at": row["created_at"],
+            "updated_by": row["updated_by"],
+            "updated_at": row["updated_at"],
+        }
+
+    async def list_curve_families(
+        self,
+        family_type: Optional[str] = None,
+        active_only: bool = True,
+        limit: int = 100,
+        offset: int = 0
+    ) -> List[Dict[str, Any]]:
+        """List curve families with optional filtering."""
+        query = """
+            SELECT id, name, description, family_type, curve_keys,
+                   default_parameters, validation_rules, is_active,
+                   created_by, created_at, updated_by, updated_at
+            FROM curve_family
+            WHERE 1=1
+        """
+        params = []
+
+        if family_type:
+            query += " AND family_type = $1"
+            params.append(family_type)
+
+        if active_only:
+            query += " AND is_active = TRUE"
+
+        query += " ORDER BY created_at DESC LIMIT $" + str(len(params) + 1) + " OFFSET $" + str(len(params) + 2)
+        params.extend([limit, offset])
+
+        async with self.get_connection() as conn:
+            rows = await conn.fetch(query, *params)
+
+        return [{
+            "id": row["id"],
+            "name": row["name"],
+            "description": row["description"],
+            "family_type": row["family_type"],
+            "curve_keys": json.loads(row["curve_keys"]),
+            "default_parameters": json.loads(row["default_parameters"]),
+            "validation_rules": json.loads(row["validation_rules"]),
+            "is_active": row["is_active"],
+            "created_by": row["created_by"],
+            "created_at": row["created_at"],
+            "updated_by": row["updated_by"],
+            "updated_at": row["updated_at"],
+        } for row in rows]
+
+    # Scenario Constraint Operations
+
+    async def create_scenario_constraint(
+        self,
+        scenario_id: str,
+        constraint_data: Dict[str, Any]
+    ) -> Dict[str, Any]:
+        """Create a constraint for a scenario."""
+        constraint_id = str(uuid4())
+        user_id = get_user_id()
+        tenant_id = get_tenant_id()
+
+        # Verify scenario exists and belongs to tenant
+        scenario = await self.get_scenario(scenario_id)
+        if not scenario or str(scenario.tenant_id) != tenant_id:
+            raise ValueError(f"Scenario {scenario_id} not found or not accessible")
+
+        async with self.get_connection() as conn:
+            await conn.execute("""
+                INSERT INTO scenario_constraint (
+                    id, scenario_id, constraint_type, constraint_key, constraint_value,
+                    operator, severity, is_enforced, violation_message,
+                    created_by, created_at
+                ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+            """,
+                constraint_id,
+                scenario_id,
+                constraint_data["constraint_type"],
+                constraint_data["constraint_key"],
+                json.dumps(constraint_data["constraint_value"]),
+                constraint_data["operator"],
+                constraint_data.get("severity", "warning"),
+                constraint_data.get("is_enforced", False),
+                constraint_data.get("violation_message"),
+                user_id,
+                datetime.utcnow(),
+            )
+
+        log_structured(
+            "info",
+            "scenario_constraint_created",
+            constraint_id=constraint_id,
+            scenario_id=scenario_id,
+            user_id=user_id,
+        )
+
+        return await self.get_scenario_constraint(constraint_id)
+
+    async def get_scenario_constraint(self, constraint_id: str) -> Optional[Dict[str, Any]]:
+        """Get scenario constraint by ID."""
+        async with self.get_connection() as conn:
+            row = await conn.fetchrow("""
+                SELECT id, scenario_id, constraint_type, constraint_key, constraint_value,
+                       operator, severity, is_enforced, violation_message,
+                       created_by, created_at
+                FROM scenario_constraint
+                WHERE id = $1
+            """, constraint_id)
+
+        if not row:
+            return None
+
+        return {
+            "id": row["id"],
+            "scenario_id": row["scenario_id"],
+            "constraint_type": row["constraint_type"],
+            "constraint_key": row["constraint_key"],
+            "constraint_value": json.loads(row["constraint_value"]),
+            "operator": row["operator"],
+            "severity": row["severity"],
+            "is_enforced": row["is_enforced"],
+            "violation_message": row["violation_message"],
+            "created_by": row["created_by"],
+            "created_at": row["created_at"],
+        }
+
+    async def list_scenario_constraints(self, scenario_id: str) -> List[Dict[str, Any]]:
+        """List constraints for a scenario."""
+        tenant_id = get_tenant_id()
+
+        async with self.get_connection() as conn:
+            rows = await conn.fetch("""
+                SELECT id, scenario_id, constraint_type, constraint_key, constraint_value,
+                       operator, severity, is_enforced, violation_message,
+                       created_by, created_at
+                FROM scenario_constraint
+                WHERE scenario_id = $1
+                ORDER BY created_at DESC
+            """, scenario_id)
+
+        return [{
+            "id": row["id"],
+            "scenario_id": row["scenario_id"],
+            "constraint_type": row["constraint_type"],
+            "constraint_key": row["constraint_key"],
+            "constraint_value": json.loads(row["constraint_value"]),
+            "operator": row["operator"],
+            "severity": row["severity"],
+            "is_enforced": row["is_enforced"],
+            "violation_message": row["violation_message"],
+            "created_by": row["created_by"],
+            "created_at": row["created_at"],
+        } for row in rows]
+
+    # Scenario Provenance Operations
+
+    async def create_scenario_provenance(
+        self,
+        scenario_id: str,
+        provenance_data: Dict[str, Any]
+    ) -> Dict[str, Any]:
+        """Create provenance record for a scenario."""
+        provenance_id = str(uuid4())
+        tenant_id = get_tenant_id()
+
+        # Verify scenario exists and belongs to tenant
+        scenario = await self.get_scenario(scenario_id)
+        if not scenario or str(scenario.tenant_id) != tenant_id:
+            raise ValueError(f"Scenario {scenario_id} not found or not accessible")
+
+        async with self.get_connection() as conn:
+            await conn.execute("""
+                INSERT INTO scenario_provenance (
+                    id, scenario_id, data_source, source_version, data_timestamp,
+                    transformation_hash, input_parameters, quality_metrics,
+                    lineage_metadata, created_at
+                ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+            """,
+                provenance_id,
+                scenario_id,
+                provenance_data["data_source"],
+                provenance_data.get("source_version"),
+                provenance_data["data_timestamp"],
+                provenance_data["transformation_hash"],
+                json.dumps(provenance_data.get("input_parameters", {})),
+                json.dumps(provenance_data.get("quality_metrics", {})),
+                json.dumps(provenance_data.get("lineage_metadata", {})),
+                datetime.utcnow(),
+            )
+
+        log_structured(
+            "info",
+            "scenario_provenance_created",
+            provenance_id=provenance_id,
+            scenario_id=scenario_id,
+        )
+
+        return await self.get_scenario_provenance(provenance_id)
+
+    async def get_scenario_provenance(self, provenance_id: str) -> Optional[Dict[str, Any]]:
+        """Get scenario provenance by ID."""
+        async with self.get_connection() as conn:
+            row = await conn.fetchrow("""
+                SELECT id, scenario_id, data_source, source_version, data_timestamp,
+                       transformation_hash, input_parameters, quality_metrics,
+                       lineage_metadata, created_at
+                FROM scenario_provenance
+                WHERE id = $1
+            """, provenance_id)
+
+        if not row:
+            return None
+
+        return {
+            "id": row["id"],
+            "scenario_id": row["scenario_id"],
+            "data_source": row["data_source"],
+            "source_version": row["source_version"],
+            "data_timestamp": row["data_timestamp"],
+            "transformation_hash": row["transformation_hash"],
+            "input_parameters": json.loads(row["input_parameters"]),
+            "quality_metrics": json.loads(row["quality_metrics"]),
+            "lineage_metadata": json.loads(row["lineage_metadata"]),
+            "created_at": row["created_at"],
+        }
+
+    async def list_scenario_provenance(self, scenario_id: str) -> List[Dict[str, Any]]:
+        """List provenance records for a scenario."""
+        async with self.get_connection() as conn:
+            rows = await conn.fetch("""
+                SELECT id, scenario_id, data_source, source_version, data_timestamp,
+                       transformation_hash, input_parameters, quality_metrics,
+                       lineage_metadata, created_at
+                FROM scenario_provenance
+                WHERE scenario_id = $1
+                ORDER BY created_at DESC
+            """, scenario_id)
+
+        return [{
+            "id": row["id"],
+            "scenario_id": row["scenario_id"],
+            "data_source": row["data_source"],
+            "source_version": row["source_version"],
+            "data_timestamp": row["data_timestamp"],
+            "transformation_hash": row["transformation_hash"],
+            "input_parameters": json.loads(row["input_parameters"]),
+            "quality_metrics": json.loads(row["quality_metrics"]),
+            "lineage_metadata": json.loads(row["lineage_metadata"]),
+            "created_at": row["created_at"],
+        } for row in rows]
+
+    # Scenario Curve Family Association Operations
+
+    async def associate_scenario_curve_family(
+        self,
+        scenario_id: str,
+        curve_family_id: str,
+        weight: float = 1.0,
+        is_primary: bool = False,
+        parameters: Optional[Dict[str, Any]] = None
+    ) -> Dict[str, Any]:
+        """Associate a curve family with a scenario."""
+        association_id = str(uuid4())
+        tenant_id = get_tenant_id()
+
+        # Verify scenario exists and belongs to tenant
+        scenario = await self.get_scenario(scenario_id)
+        if not scenario or str(scenario.tenant_id) != tenant_id:
+            raise ValueError(f"Scenario {scenario_id} not found or not accessible")
+
+        # Verify curve family exists
+        curve_family = await self.get_curve_family(curve_family_id)
+        if not curve_family:
+            raise ValueError(f"Curve family {curve_family_id} not found")
+
+        async with self.get_connection() as conn:
+            await conn.execute("""
+                INSERT INTO scenario_curve_family (
+                    scenario_id, curve_family_id, weight, is_primary, parameters, created_at
+                ) VALUES ($1, $2, $3, $4, $5, $6)
+            """,
+                scenario_id,
+                curve_family_id,
+                weight,
+                is_primary,
+                json.dumps(parameters or {}),
+                datetime.utcnow(),
+            )
+
+        log_structured(
+            "info",
+            "scenario_curve_family_associated",
+            scenario_id=scenario_id,
+            curve_family_id=curve_family_id,
+            weight=weight,
+            is_primary=is_primary,
+        )
+
+        return await self.get_scenario_curve_family_association(scenario_id, curve_family_id)
+
+    async def get_scenario_curve_family_association(
+        self,
+        scenario_id: str,
+        curve_family_id: str
+    ) -> Optional[Dict[str, Any]]:
+        """Get scenario-curve family association."""
+        async with self.get_connection() as conn:
+            row = await conn.fetchrow("""
+                SELECT scenario_id, curve_family_id, weight, is_primary, parameters, created_at
+                FROM scenario_curve_family
+                WHERE scenario_id = $1 AND curve_family_id = $2
+            """, scenario_id, curve_family_id)
+
+        if not row:
+            return None
+
+        return {
+            "scenario_id": row["scenario_id"],
+            "curve_family_id": row["curve_family_id"],
+            "weight": row["weight"],
+            "is_primary": row["is_primary"],
+            "parameters": json.loads(row["parameters"]),
+            "created_at": row["created_at"],
+        }
+
+    async def list_scenario_curve_families(self, scenario_id: str) -> List[Dict[str, Any]]:
+        """List curve families associated with a scenario."""
+        async with self.get_connection() as conn:
+            rows = await conn.fetch("""
+                SELECT scf.scenario_id, scf.curve_family_id, scf.weight, scf.is_primary,
+                       scf.parameters, scf.created_at, cf.name, cf.family_type
+                FROM scenario_curve_family scf
+                JOIN curve_family cf ON scf.curve_family_id = cf.id
+                WHERE scf.scenario_id = $1
+                ORDER BY scf.is_primary DESC, scf.weight DESC
+            """, scenario_id)
+
+        return [{
+            "scenario_id": row["scenario_id"],
+            "curve_family_id": row["curve_family_id"],
+            "curve_family_name": row["name"],
+            "family_type": row["family_type"],
+            "weight": row["weight"],
+            "is_primary": row["is_primary"],
+            "parameters": json.loads(row["parameters"]),
+            "created_at": row["created_at"],
+        } for row in rows]
 
 
 # Global scenario store instance

@@ -17,6 +17,7 @@ from .base import IsoAdapter, IsoAdapterConfig, IsoRequestChunk
 from ..collect import HttpRequest
 from ...common.circuit_breaker import CircuitBreaker
 from ...observability.metrics import get_metrics_client
+from ...data.iso_catalog import canonicalize_iso_observation_record
 
 logger = logging.getLogger(__name__)
 
@@ -46,6 +47,7 @@ class IsoneAdapter(IsoAdapter):
         )
         super().__init__(config, series_id=series_id)
         self._cfg = IsoneConfig()
+        self._market_hint = self._infer_market_hint(series_id)
 
         # Enhanced resilience features
         self.circuit_breaker = CircuitBreaker(
@@ -91,6 +93,33 @@ class IsoneAdapter(IsoAdapter):
                 try:
                     rec: dict[str, Any] = dict(it)
                     rec.setdefault("ingest_ts", int(datetime.now(tz=timezone.utc).timestamp() * 1_000_000))
+                    if self.series_id:
+                        rec.setdefault("series_id", self.series_id)
+                    metadata = dict(rec.get("metadata") or {})
+                    metadata.setdefault("market", rec.get("market") or self._market_hint)
+                    metadata.setdefault("product", metadata.get("product") or "LMP")
+                    metadata.setdefault(
+                        "location_id",
+                        rec.get("location_id")
+                        or rec.get("LocationID")
+                        or rec.get("locationId")
+                        or metadata.get("location_id"),
+                    )
+                    metadata.setdefault(
+                        "location_type",
+                        rec.get("location_type")
+                        or rec.get("locationType")
+                        or rec.get("LocationType")
+                        or metadata.get("location_type")
+                        or "NODE",
+                    )
+                    metadata.setdefault("unit", rec.get("uom") or metadata.get("unit") or "USD/MWh")
+                    metadata.setdefault(
+                        "interval_minutes",
+                        metadata.get("interval_minutes") or 60,
+                    )
+                    rec["metadata"] = metadata
+                    rec = canonicalize_iso_observation_record("iso.isone", rec)
 
                     # Validate record structure
                     if self._validate_record(rec):
@@ -108,6 +137,16 @@ class IsoneAdapter(IsoAdapter):
             logger.error("Error parsing response: %s", e)
             self.metrics.increment_counter("isone.response_parse_errors")
             raise
+
+    def _infer_market_hint(self, series_id: Optional[str]) -> str:
+        candidates = [series_id or "", self._cfg.endpoint]
+        for value in candidates:
+            lowered = value.lower()
+            if any(token in lowered for token in ("rt", "real-time", "real_time")):
+                return "RTM"
+            if any(token in lowered for token in ("da", "day-ahead", "day_ahead")):
+                return "DAM"
+        return "UNKNOWN"
 
     def _validate_request_params(self, params: dict) -> None:
         """Validate request parameters."""
@@ -248,4 +287,3 @@ class IsoneAdapter(IsoAdapter):
                 "circuit_breaker_timeout": self._cfg.circuit_breaker_timeout
             }
         }
-

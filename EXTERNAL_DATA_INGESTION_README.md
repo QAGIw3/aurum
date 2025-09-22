@@ -43,6 +43,24 @@ All requested tasks have been completed with a robust, production-ready architec
    - Secure credential management
    - Automatic environment patching
 
+## 📦 Canonical ISO Contract Fields
+
+The ingestion pipeline now emits a unified ISO contract across catalog and observation records. Key fields surfaced end-to-end:
+
+| Field | Description |
+| --- | --- |
+| `iso_code` | ISO identifier (PJM, ISO-NE, ERCOT, etc.) |
+| `iso_market` | Market designation (DA, RT, DAM, RTM) |
+| `iso_product` | Subject classification (LMP, LOAD, GENERATION, ...) |
+| `iso_location_type` / `iso_location_id` / `iso_location_name` | Normalized location metadata |
+| `iso_timezone` | Canonical timezone (IANA) |
+| `iso_interval_minutes` | Observation cadence in minutes |
+| `iso_unit` | Canonical unit (typically `USD/MWh`) |
+| `iso_subject` | High-level subject for aggregation |
+| `iso_curve_role` | Downstream consumption role (pricing, load, etc.) |
+
+Use `scripts/dbt/refresh_iso_contracts.py` to materialize these columns into Iceberg/Trino and validate with dbt + Great Expectations when new ISO feeds are onboarded.
+
 ## 🏗️ **Architecture Overview**
 
 ```

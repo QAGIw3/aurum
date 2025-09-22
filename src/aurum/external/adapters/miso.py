@@ -19,6 +19,7 @@ from .base import IsoAdapter, IsoAdapterConfig, IsoRequestChunk
 from ..collect import HttpRequest
 from ...common.circuit_breaker import CircuitBreaker
 from ...observability.metrics import get_metrics_client
+from ...data.iso_catalog import canonicalize_iso_observation_record
 
 logger = logging.getLogger(__name__)
 
@@ -129,6 +130,27 @@ class MisoAdapter(IsoAdapter):
 
                     # Ensure required fields exist
                     rec.setdefault("ingest_ts", int(datetime.now(tz=timezone.utc).timestamp() * 1_000_000))
+                    if self.series_id:
+                        rec.setdefault("series_id", self.series_id)
+                    metadata = dict(rec.get("metadata") or {})
+                    metadata.setdefault("market", rec.get("marketType") or self._miso.market)
+                    metadata.setdefault("product", metadata.get("product") or rec.get("data_type") or "LMP")
+                    metadata.setdefault(
+                        "location_id",
+                        rec.get("pnode")
+                        or rec.get("location")
+                        or rec.get("node")
+                        or metadata.get("location_id"),
+                    )
+                    metadata.setdefault("location_type", metadata.get("location_type") or "NODE")
+                    metadata.setdefault(
+                        "interval_minutes",
+                        metadata.get("interval_minutes")
+                        or (5 if (metadata.get("market") or "").upper() == "RTM" else 60),
+                    )
+                    metadata.setdefault("unit", rec.get("uom") or metadata.get("unit") or "USD/MWh")
+                    rec["metadata"] = metadata
+                    rec = canonicalize_iso_observation_record("iso.miso", rec)
 
                     # Validate record structure
                     if self._validate_record(rec):
@@ -302,4 +324,3 @@ class MisoAdapter(IsoAdapter):
                 "circuit_breaker_timeout": self._miso.circuit_breaker_timeout
             }
         }
-

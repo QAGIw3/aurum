@@ -96,39 +96,171 @@ SCHEMA_UPGRADE_STATEMENTS = [
     $$ LANGUAGE plpgsql;
     """,
 
-    # Create function to find potential mappings for unmapped series
+    # Create function to find potential mappings for unmapped series using ML-based similarity
     """
     CREATE OR REPLACE FUNCTION find_potential_series_mappings(
         p_provider TEXT,
         p_series_id TEXT,
+        p_series_name TEXT DEFAULT NULL,
+        p_description TEXT DEFAULT NULL,
+        p_units TEXT DEFAULT NULL,
         p_limit INTEGER DEFAULT 10
     )
     RETURNS TABLE (
         curve_key TEXT,
         similarity_score DECIMAL,
-        matching_criteria JSONB
+        confidence_score DECIMAL,
+        reasoning JSONB
     ) AS $$
+    DECLARE
+        series_metadata JSONB;
+        curve_record RECORD;
+        text_similarity DECIMAL;
+        pattern_similarity DECIMAL;
+        overall_score DECIMAL;
+        reasoning_data JSONB;
     BEGIN
-        RETURN QUERY
-        SELECT
-            c.curve_key,
-            0.5::DECIMAL as similarity_score,  -- Placeholder for actual similarity logic
-            jsonb_build_object(
-                'provider_match', FALSE,
-                'series_id_pattern', FALSE,
-                'metadata_similarity', FALSE
-            ) as matching_criteria
-        FROM instrument c
-        WHERE c.curve_key LIKE '%' || substring(p_series_id from '\d+') || '%'  -- Simple numeric pattern matching
-        ORDER BY similarity_score DESC
-        LIMIT p_limit;
+        -- Build series metadata
+        series_metadata := jsonb_build_object(
+            'provider', p_provider,
+            'series_id', p_series_id,
+            'name', COALESCE(p_series_name, ''),
+            'description', COALESCE(p_description, ''),
+            'units', COALESCE(p_units, ''),
+            'frequency', 'hourly',  -- Default assumption
+            'category', CASE
+                WHEN p_series_name ~* 'generation|gen|supply' THEN 'generation'
+                WHEN p_series_name ~* 'demand|load|consumption' THEN 'demand'
+                WHEN p_series_name ~* 'price|lmp|cost' THEN 'price'
+                ELSE 'other'
+            END,
+            'tags', CASE
+                WHEN p_series_name ~* 'solar|wind|renewable' THEN jsonb_build_array('renewable')
+                WHEN p_series_name ~* 'coal|gas|nuclear' THEN jsonb_build_array('conventional')
+                ELSE jsonb_build_array('general')
+            END
+        );
+
+        -- For each available curve, calculate similarity
+        FOR curve_record IN
+            SELECT
+                curve_key,
+                name,
+                description,
+                curve_family,
+                units,
+                geography,
+                category
+            FROM instrument
+            WHERE curve_key IS NOT NULL AND curve_key != ''
+            ORDER BY curve_key
+        LOOP
+            -- Calculate text similarity (simplified TF-IDF style)
+            text_similarity := 0.0;
+            reasoning_data := jsonb_build_object();
+
+            IF series_metadata->>'name' != '' AND curve_record.name IS NOT NULL THEN
+                IF similarity(series_metadata->>'name', curve_record.name) > 0.3 THEN
+                    text_similarity := text_similarity + 0.4;
+                    reasoning_data := reasoning_data || jsonb_build_object('name_match', true);
+                END IF;
+            END IF;
+
+            IF series_metadata->>'description' != '' AND curve_record.description IS NOT NULL THEN
+                IF similarity(series_metadata->>'description', curve_record.description) > 0.3 THEN
+                    text_similarity := text_similarity + 0.3;
+                    reasoning_data := reasoning_data || jsonb_build_object('description_match', true);
+                END IF;
+            END IF;
+
+            -- Unit compatibility
+            IF series_metadata->>'units' = curve_record.units THEN
+                text_similarity := text_similarity + 0.2;
+                reasoning_data := reasoning_data || jsonb_build_object('unit_match', true);
+            ELSIF series_metadata->>'units' IN ('MWh', 'MW') AND curve_record.units IN ('MWh', 'MW') THEN
+                text_similarity := text_similarity + 0.15;
+                reasoning_data := reasoning_data || jsonb_build_object('unit_compatible', true);
+            END IF;
+
+            -- Category match
+            IF series_metadata->>'category' = curve_record.category THEN
+                text_similarity := text_similarity + 0.1;
+                reasoning_data := reasoning_data || jsonb_build_object('category_match', true);
+            END IF;
+
+            -- Pattern-based similarity (simplified)
+            pattern_similarity := CASE
+                WHEN series_metadata->>'category' = 'generation' AND curve_record.curve_family = 'supply' THEN 0.8
+                WHEN series_metadata->>'category' = 'demand' AND curve_record.curve_family = 'demand' THEN 0.8
+                WHEN series_metadata->>'category' = 'price' AND curve_record.curve_family = 'price' THEN 0.8
+                ELSE 0.5
+            END;
+
+            -- Combine similarities
+            overall_score := 0.6 * text_similarity + 0.4 * pattern_similarity;
+
+            -- Confidence score
+            confidence_score := CASE
+                WHEN overall_score > 0.7 THEN 0.9
+                WHEN overall_score > 0.5 THEN 0.7
+                WHEN overall_score > 0.3 THEN 0.5
+                ELSE 0.3
+            END;
+
+            -- Add reasoning for high-confidence matches
+            IF confidence_score > 0.6 THEN
+                reasoning_data := reasoning_data || jsonb_build_object(
+                    'method', 'heuristic_similarity',
+                    'score_breakdown', jsonb_build_object(
+                        'text_similarity', text_similarity,
+                        'pattern_similarity', pattern_similarity
+                    )
+                );
+
+                RETURN QUERY SELECT
+                    curve_record.curve_key::TEXT,
+                    overall_score::DECIMAL(3,2),
+                    confidence_score::DECIMAL(3,2),
+                    reasoning_data;
+            END IF;
+        END LOOP;
+
+        -- If no high-confidence matches, return top matches by pattern similarity
+        IF NOT FOUND THEN
+            FOR curve_record IN
+                SELECT
+                    curve_key,
+                    name,
+                    description,
+                    curve_family,
+                    units
+                FROM instrument
+                WHERE curve_key IS NOT NULL
+                ORDER BY
+                    CASE
+                        WHEN curve_family = series_metadata->>'category' THEN 1
+                        ELSE 2
+                    END,
+                    curve_key
+                LIMIT p_limit
+            LOOP
+                RETURN QUERY SELECT
+                    curve_record.curve_key::TEXT,
+                    0.5::DECIMAL(3,2),
+                    0.3::DECIMAL(3,2),
+                    jsonb_build_object(
+                        'method', 'pattern_fallback',
+                        'reason', 'Basic pattern matching'
+                    );
+            END LOOP;
+        END IF;
     END;
     $$ LANGUAGE plpgsql;
     """,
 ]
 
 SCHEMA_DOWNGRADE_STATEMENTS = [
-    "DROP FUNCTION IF EXISTS find_potential_series_mappings(TEXT, TEXT, INTEGER);",
+    "DROP FUNCTION IF EXISTS find_potential_series_mappings(TEXT, TEXT, TEXT, TEXT, TEXT, INTEGER);",
     "DROP FUNCTION IF EXISTS get_active_series_curve_mappings(TEXT, DECIMAL);",
     "DROP TRIGGER IF EXISTS update_series_curve_map_updated_at ON series_curve_map;",
     "DROP POLICY IF EXISTS tenant_isolation_series_curve_map ON series_curve_map;",

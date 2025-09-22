@@ -744,6 +744,137 @@
           ]
         }
       ]
+    },
+    {
+      "name": "aurum.scenario.request.v1",
+      "partitions": 12,
+      "replication_factor": 3,
+      "config": {
+        "retention.ms": "604800000",
+        "max.message.bytes": "10485760"
+      },
+      "acls": [
+        {
+          "principal": "User:aurum-api",
+          "operations": [
+            "WRITE",
+            "DESCRIBE",
+            "DESCRIBE_CONFIGS"
+          ]
+        },
+        {
+          "principal": "User:aurum-worker",
+          "operations": [
+            "READ",
+            "DESCRIBE"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "aurum.scenario.request.retry.v1",
+      "partitions": 6,
+      "replication_factor": 3,
+      "config": {
+        "retention.ms": "1209600000",
+        "max.message.bytes": "10485760"
+      },
+      "acls": [
+        {
+          "principal": "User:aurum-worker",
+          "operations": [
+            "WRITE",
+            "READ",
+            "DESCRIBE",
+            "DESCRIBE_CONFIGS"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "aurum.scenario.request.dlq.v1",
+      "partitions": 3,
+      "replication_factor": 3,
+      "config": {
+        "retention.ms": "2592000000",
+        "max.message.bytes": "10485760"
+      },
+      "acls": [
+        {
+          "principal": "User:aurum-worker",
+          "operations": [
+            "WRITE",
+            "DESCRIBE",
+            "DESCRIBE_CONFIGS"
+          ]
+        },
+        {
+          "principal": "User:aurum-ops",
+          "operations": [
+            "READ",
+            "DESCRIBE"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "aurum.scenario.output.v1",
+      "partitions": 12,
+      "replication_factor": 3,
+      "config": {
+        "retention.ms": "1209600000",
+        "max.message.bytes": "52428800"
+      },
+      "acls": [
+        {
+          "principal": "User:aurum-worker",
+          "operations": [
+            "WRITE",
+            "DESCRIBE",
+            "DESCRIBE_CONFIGS"
+          ]
+        },
+        {
+          "principal": "User:aurum-api",
+          "operations": [
+            "READ",
+            "DESCRIBE"
+          ]
+        },
+        {
+          "principal": "User:aurum-dbt",
+          "operations": [
+            "READ",
+            "DESCRIBE"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "aurum.scenario.output.dlq.v1",
+      "partitions": 3,
+      "replication_factor": 3,
+      "config": {
+        "retention.ms": "2592000000",
+        "max.message.bytes": "52428800"
+      },
+      "acls": [
+        {
+          "principal": "User:aurum-worker",
+          "operations": [
+            "WRITE",
+            "DESCRIBE",
+            "DESCRIBE_CONFIGS"
+          ]
+        },
+        {
+          "principal": "User:aurum-ops",
+          "operations": [
+            "READ",
+            "DESCRIBE"
+          ]
+        }
+      ]
     }
   ]
 }

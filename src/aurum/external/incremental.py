@@ -80,6 +80,7 @@ class ProviderIncrementalConfig:
     rate_limit_rps: float
     daily_quota: Optional[int]
     batch_size: int
+    window_hours: int = DEFAULT_INCREMENTAL_WINDOW_HOURS
 
     @property
     def slug(self) -> str:
@@ -125,6 +126,7 @@ def load_incremental_settings(path: Path | None = None) -> IncrementalSettings:
                 rate_limit_rps=float(entry.get("rate_limit_rps", 1.0)),
                 daily_quota=entry.get("daily_quota"),
                 batch_size=int(entry.get("batch_size", 1000)),
+                window_hours=int(entry.get("window_hours", DEFAULT_INCREMENTAL_WINDOW_HOURS)),
             )
         )
 
@@ -219,7 +221,7 @@ class IncrementalRunner:
         async with _with_semaphore(semaphore):
             incremental_config = IncrementalConfig(
                 provider=cfg.slug,
-                window_hours=DEFAULT_INCREMENTAL_WINDOW_HOURS,
+                window_hours=cfg.window_hours,
                 update_frequency_minutes=cfg.update_frequency_minutes,
                 max_records_per_batch=cfg.batch_size,
                 datasets=cfg.datasets,

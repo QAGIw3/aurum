@@ -2,7 +2,7 @@ openapi: 3.1.0
 info:
   title: Aurum API
   description: Aurum Market Intelligence Platform API
-  version: 1.0.0
+  version: 2.0.0
 paths:
   /health:
     get:
@@ -32,6 +32,14 @@ paths:
   /v1/curves:
     get:
       summary: List Curves
+      description: 'List curve observations with cursor pagination and optional CSV.
+
+
+        Supports forward (`cursor`/`since_cursor`) and backward (`prev_cursor`)
+
+        iteration using opaque tokens produced in `meta`. When `format=csv`, the
+
+        endpoint streams a CSV response with appropriate Cache-Control headers.'
       operationId: list_curves_v1_curves_get
       parameters:
       - name: asof
@@ -1622,6 +1630,15 @@ paths:
   /v1/scenarios:
     get:
       summary: List Scenarios
+      description: 'List scenarios for the authenticated tenant with offset/cursor
+        support.
+
+
+        Accepts optional filters (status, name, tag, created_{after,before}). When
+
+        the number of results equals `limit`, a `meta.next_cursor` is returned that
+
+        can be supplied via `cursor` on subsequent requests.'
       operationId: list_scenarios_v1_scenarios_get
       parameters:
       - name: status
@@ -1734,6 +1751,7 @@ paths:
                 $ref: '#/components/schemas/HTTPValidationError'
     post:
       summary: Create Scenario
+      description: Create a new scenario for the resolved tenant and return its definition.
       operationId: create_scenario_v1_scenarios_post
       requestBody:
         required: true
@@ -1757,6 +1775,7 @@ paths:
   /v1/scenarios/{scenario_id}:
     get:
       summary: Get Scenario
+      description: Fetch a scenario by id with ETag support for conditional responses.
       operationId: get_scenario_v1_scenarios__scenario_id__get
       parameters:
       - name: scenario_id
@@ -1780,6 +1799,7 @@ paths:
                 $ref: '#/components/schemas/HTTPValidationError'
     delete:
       summary: Delete Scenario
+      description: Delete a scenario by id. Returns 204 when deletion succeeds.
       operationId: delete_scenario_v1_scenarios__scenario_id__delete
       parameters:
       - name: scenario_id
@@ -1800,6 +1820,8 @@ paths:
   /v1/scenarios/{scenario_id}/runs:
     get:
       summary: List Scenario Runs
+      description: List runs for a scenario with cursor/offset pagination and time
+        filters.
       operationId: list_scenario_runs_v1_scenarios__scenario_id__runs_get
       parameters:
       - name: scenario_id
@@ -1897,6 +1919,7 @@ paths:
   /v1/scenarios/{scenario_id}/run:
     post:
       summary: Run Scenario
+      description: Create or reuse a scenario run (idempotent by input fingerprint).
       operationId: run_scenario_v1_scenarios__scenario_id__run_post
       parameters:
       - name: scenario_id
@@ -1929,6 +1952,7 @@ paths:
   /v1/scenarios/{scenario_id}/runs/{run_id}:
     get:
       summary: Get Scenario Run
+      description: Fetch a specific run for a scenario; responds with ETag headers.
       operationId: get_scenario_run_v1_scenarios__scenario_id__runs__run_id__get
       parameters:
       - name: scenario_id
@@ -1959,6 +1983,8 @@ paths:
   /v1/scenarios/runs/{run_id}/state:
     post:
       summary: Update Scenario Run State
+      description: Update the state of an existing run (e.g., RUNNING, SUCCEEDED,
+        FAILED).
       operationId: update_scenario_run_state_v1_scenarios_runs__run_id__state_post
       parameters:
       - name: run_id
@@ -1990,6 +2016,7 @@ paths:
   /v1/scenarios/runs/{run_id}/cancel:
     post:
       summary: Cancel Scenario Run
+      description: Cancel a run by id and return its updated state.
       operationId: cancel_scenario_run_v1_scenarios_runs__run_id__cancel_post
       parameters:
       - name: run_id
@@ -2528,6 +2555,15 @@ paths:
   /v1/scenarios/{scenario_id}/outputs:
     get:
       summary: List Scenario Outputs
+      description: 'List scenario outputs with hardened cursor pagination and CSV
+        option.
+
+
+        Uses `cursor`/`since_cursor` for forward iteration and `prev_cursor` to
+
+        fetch the previous page. When `format=csv`, streams a CSV with `next_cursor`
+
+        and `prev_cursor` included in headers.'
       operationId: list_scenario_outputs_v1_scenarios__scenario_id__outputs_get
       parameters:
       - name: scenario_id
@@ -2635,6 +2671,12 @@ paths:
   /v1/scenarios/{scenario_id}/metrics/latest:
     get:
       summary: List Scenario Metrics Latest
+      description: 'Return the latest metrics for a scenario with stable pagination.
+
+
+        Designed to fetch most recent metric points per curve/metric, with
+
+        `cursor` tokens enabling resumable iteration.'
       operationId: list_scenario_metrics_latest_v1_scenarios__scenario_id__metrics_latest_get
       parameters:
       - name: scenario_id

@@ -178,6 +178,7 @@ class IsoAdapter:
             if collector_factory
             else ExternalCollector(self.collector_config, context=self.context)
         )
+        self.series_id = series_id
         self.metrics = IsoIngestMetrics(self.collector.metrics)
         self.circuit = _CircuitBreaker(config.circuit_breaker)
         self.pager = IdempotentPager(
@@ -268,4 +269,3 @@ class IsoAdapter:
             nxt = min(end, cur + timedelta(days=step_days))
             yield IsoRequestChunk(start=cur, end=nxt)
             cur = nxt
-

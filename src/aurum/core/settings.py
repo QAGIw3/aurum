@@ -412,7 +412,7 @@ class MetricsSettings(AurumBaseModel):
 
 class ApiSettings(AurumBaseModel):
     title: str = Field(default="Aurum API")
-    version: str = Field(default="0.1.0")
+    version: str = Field(default="2.0.0")
     cors_allow_origins: tuple[str, ...] = Field(default_factory=tuple, validation_alias=AliasChoices("API_CORS_ORIGINS"))
     cors_allow_credentials: bool = Field(default=False, validation_alias=AliasChoices("API_CORS_ALLOW_CREDENTIALS"))
     gzip_min_bytes: int = Field(default=500, ge=0, validation_alias=AliasChoices("API_GZIP_MIN_BYTES"))

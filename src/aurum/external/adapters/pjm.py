@@ -17,6 +17,7 @@ from .base import IsoAdapter, IsoAdapterConfig, IsoRequestChunk
 from ..collect import HttpRequest
 from ...common.circuit_breaker import CircuitBreaker
 from ...observability.metrics import get_metrics_client
+from ...data.iso_catalog import canonicalize_iso_observation_record
 
 logger = logging.getLogger(__name__)
 
@@ -211,7 +212,18 @@ class PjmAdapter(IsoAdapter):
         rec.setdefault("currency", "USD")
         rec.setdefault("uom", "MWh")
 
-        return rec
+        metadata = dict(rec.get("metadata") or {})
+        metadata.setdefault("market", rec.get("market") or rec.get("market_type"))
+        metadata.setdefault("location_type", rec.get("location_type") or rec.get("type"))
+        metadata.setdefault("location_id", rec.get("location_id"))
+        metadata.setdefault("interval_minutes", metadata.get("interval_minutes") or 60)
+        metadata.setdefault("unit", rec.get("uom") or "USD/MWh")
+        rec["metadata"] = metadata
+        if self.series_id:
+            rec.setdefault("series_id", self.series_id)
+
+        return canonicalize_iso_observation_record("iso.pjm", rec)
+
 
     def _validate_request_params(self, params: dict) -> None:
         """Validate request parameters for PJM API."""

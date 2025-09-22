@@ -107,3 +107,51 @@ models:
         - MAPPED
         - UNMAPPED
         - PARTIAL
+  - name: iso_code
+    description: Canonical ISO code (e.g., PJM, ISO-NE)
+    tests:
+    - not_null
+  - name: iso_market
+    description: Market designation (DA, RT, etc.) with UNKNOWN fallback when unmapped
+    tests:
+    - accepted_values:
+        values:
+        - DA
+        - RT
+        - DAM
+        - RTM
+        - UNKNOWN
+  - name: iso_product
+    description: Canonical product identifier (LMP, LOAD, GENERATION, etc.)
+    tests:
+    - not_null
+  - name: iso_location_type
+    description: Normalized ISO location type (NODE, ZONE, HUB, etc.)
+    tests:
+    - not_null
+  - name: iso_location_name
+    description: Human-readable ISO location name
+  - name: iso_location_id
+    description: Primary ISO location identifier aligned with provider geo id
+    tests:
+    - not_null
+  - name: iso_timezone
+    description: Canonical timezone for the series (IANA identifier)
+    tests:
+    - not_null
+  - name: iso_interval_minutes
+    description: Cadence of observations expressed in minutes
+    tests:
+    - not_null
+  - name: iso_unit
+    description: Canonical measurement unit (normalized to uppercase)
+    tests:
+    - not_null
+  - name: iso_subject
+    description: Subject classification used for aggregation and contracts
+    tests:
+    - not_null
+  - name: iso_curve_role
+    description: Contract role describing how the series is consumed (pricing, load, etc.)
+    tests:
+    - not_null

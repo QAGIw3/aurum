@@ -2,6 +2,7 @@ apiVersion: traefik.io/v1alpha1
 kind: IngressRoute
 metadata:
   name: aurum-api
+  namespace: aurum-dev
   labels:
     app.kubernetes.io/name: aurum-api
     app.kubernetes.io/component: api
@@ -31,8 +32,6 @@ spec:
         - name: api-compression
           namespace: aurum-dev
         - name: api-rate-limit
-          namespace: aurum-dev
-        - name: oidc-forward-auth
           namespace: aurum-dev
       services:
         - name: aurum-api

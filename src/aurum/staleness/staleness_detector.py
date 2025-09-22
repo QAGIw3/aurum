@@ -8,6 +8,7 @@ from datetime import datetime, timedelta
 from typing import Dict, List, Optional, Any, Callable
 
 from .staleness_monitor import StalenessMonitor, StalenessConfig, StalenessLevel
+from .auto_remediation import get_auto_remediation_manager
 from ..logging import StructuredLogger, LogLevel, create_logger
 
 
@@ -53,6 +54,9 @@ class StalenessDetector:
         self.last_check_times: Dict[str, datetime] = {}
         self.consecutive_failures: Dict[str, int] = {}
 
+        # Auto-remediation
+        self.auto_remediation_manager = None
+
     def add_staleness_check(self, check: StalenessCheck) -> None:
         """Add a staleness check configuration.
 
@@ -73,6 +77,16 @@ class StalenessDetector:
             check_interval_minutes=check.check_interval_minutes
         )
 
+    async def initialize_auto_remediation(self):
+        """Initialize the auto-remediation system."""
+        if self.auto_remediation_manager is None:
+            self.auto_remediation_manager = await get_auto_remediation_manager()
+            self.logger.log(
+                LogLevel.INFO,
+                "Auto-remediation system initialized",
+                "auto_remediation_initialized"
+            )
+
     def run_staleness_checks(self) -> Dict[str, Any]:
         """Run staleness checks for all configured datasets.
 
@@ -87,6 +101,7 @@ class StalenessDetector:
             "stale_datasets": 0,
             "critical_datasets": 0,
             "alerts_sent": 0,
+            "remediations_triggered": 0,
             "results": {}
         }
 
@@ -109,12 +124,12 @@ class StalenessDetector:
                 if staleness_info.is_stale():
                     results["stale_datasets"] += 1
                     if check.alert_on_stale:
-                        self._handle_stale_dataset(dataset, staleness_info, check)
+                        self._handle_stale_dataset(dataset, staleness_info, check, results)
 
                 if staleness_info.is_critical():
                     results["critical_datasets"] += 1
                     if check.alert_on_critical:
-                        self._handle_critical_dataset(dataset, staleness_info, check)
+                        self._handle_critical_dataset(dataset, staleness_info, check, results)
 
                 if staleness_info.is_fresh() and check.on_fresh_callback:
                     try:
@@ -177,7 +192,8 @@ class StalenessDetector:
         self,
         dataset: str,
         staleness_info: Any,
-        check: StalenessCheck
+        check: StalenessCheck,
+        results: Dict[str, Any]
     ) -> None:
         """Handle a stale dataset.
 
@@ -211,11 +227,30 @@ class StalenessDetector:
                     error=str(e)
                 )
 
+        # Trigger auto-remediation if configured
+        if self.auto_remediation_manager:
+            try:
+                await self.auto_remediation_manager.record_collector_failure(
+                    collector_name="staleness_detector",  # Using detector as collector name
+                    dataset=dataset,
+                    error_type="staleness"
+                )
+                results["remediations_triggered"] += 1
+            except Exception as e:
+                self.logger.log(
+                    LogLevel.ERROR,
+                    f"Error triggering auto-remediation for {dataset}: {e}",
+                    "auto_remediation_error",
+                    dataset=dataset,
+                    error=str(e)
+                )
+
     def _handle_critical_dataset(
         self,
         dataset: str,
         staleness_info: Any,
-        check: StalenessCheck
+        check: StalenessCheck,
+        results: Dict[str, Any]
     ) -> None:
         """Handle a critically stale dataset.
 
@@ -245,6 +280,31 @@ class StalenessDetector:
                     LogLevel.ERROR,
                     f"Error in critical callback for {dataset}: {e}",
                     "critical_callback_error",
+                    dataset=dataset,
+                    error=str(e)
+                )
+
+        # Trigger auto-remediation for critical staleness (more aggressive)
+        if self.auto_remediation_manager:
+            try:
+                # Register collector if not already registered
+                await self.auto_remediation_manager.register_collector(
+                    collector_name="staleness_detector",
+                    dataset=dataset
+                )
+
+                # Record critical failure
+                await self.auto_remediation_manager.record_collector_failure(
+                    collector_name="staleness_detector",
+                    dataset=dataset,
+                    error_type="critical_staleness"
+                )
+                results["remediations_triggered"] += 1
+            except Exception as e:
+                self.logger.log(
+                    LogLevel.ERROR,
+                    f"Error triggering auto-remediation for critical {dataset}: {e}",
+                    "auto_remediation_error",
                     dataset=dataset,
                     error=str(e)
                 )

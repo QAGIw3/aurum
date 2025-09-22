@@ -100,7 +100,7 @@ class VersionManager:
 
     def __init__(self):
         self._versions: Dict[str, APIVersion] = {}
-        self._default_version = "1.0"
+        self._default_version = "1.0.0"
         self._version_aliases: Dict[str, str] = {}
         self._lock = asyncio.Lock()
         self._usage_stats: Dict[str, Dict[str, int]] = {}

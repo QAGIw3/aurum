@@ -26,7 +26,7 @@ from pydantic import BaseModel, Field
 from ..http import respond_with_etag
 from ...telemetry.context import get_request_id
 
-router = APIRouter()
+router = APIRouter(prefix="/v2", tags=["iso"])
 
 
 class IsoLmpPoint(BaseModel):

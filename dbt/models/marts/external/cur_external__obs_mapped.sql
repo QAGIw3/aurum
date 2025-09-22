@@ -36,6 +36,17 @@ WITH external_mapped_observations AS (
         obs.provider_geo_code,
         obs.quality_status,
         obs.conformed_at,
+        obs.iso_code,
+        obs.iso_market,
+        obs.iso_product,
+        obs.iso_location_type,
+        obs.iso_location_id,
+        obs.iso_location_name,
+        obs.iso_timezone,
+        obs.iso_interval_minutes,
+        obs.iso_unit,
+        obs.iso_subject,
+        obs.iso_curve_role,
 
         -- Map external series to curve keys using series_curve_map
         scm.curve_key,
@@ -80,25 +91,21 @@ curve_formatted_observations AS (
         END as asset_class,
 
         canonical_region_name as region,
-        'EXTERNAL' as iso,  -- Mark as external data
+        COALESCE(iso_code, provider, 'EXTERNAL') as iso,
         provider_geo_code as location,
 
         -- Map to market/product structure
         CASE
-            WHEN dataset_code LIKE '%electric%' THEN 'DAY_AHEAD'
-            WHEN dataset_code LIKE '%gas%' THEN 'DAY_AHEAD'
-            ELSE 'DAY_AHEAD'
+            WHEN upper(COALESCE(iso_market, '')) IN ('DA', 'DAM', 'DAY_AHEAD') THEN 'DAY_AHEAD'
+            WHEN upper(COALESCE(iso_market, '')) IN ('RT', 'RTM', 'REAL_TIME') THEN 'REAL_TIME'
+            WHEN upper(COALESCE(iso_market, '')) IN ('BALANCING', 'BAL') THEN 'BALANCING'
+            ELSE 'UNKNOWN'
         END as market,
 
-        CASE
-            WHEN dataset_code LIKE '%price%' THEN 'LMP'
-            WHEN dataset_code LIKE '%load%' THEN 'LOAD'
-            WHEN dataset_code LIKE '%generation%' THEN 'GENERATION'
-            ELSE 'CUSTOM'
-        END as product,
+        UPPER(COALESCE(iso_product, dataset_code, 'CUSTOM')) as product,
 
         'DAILY' as block,  -- External data typically daily
-        provider_geo_code as spark_location,
+        COALESCE(iso_location_id, provider_geo_code) as spark_location,
 
         'MID' as price_type,  -- External data typically midpoint
         unit_code_original as units_raw,
@@ -138,7 +145,7 @@ curve_formatted_observations AS (
         ingest_ts as _ingest_ts,
 
         -- Lineage tracking
-        'source=iceberg.external.timeseries_observation|provider=' || provider || '|series=' || series_id || '|table=iceberg.market.curve_observation' as lineage_tags
+        'source=iceberg.external.timeseries_observation|provider=' || provider || '|series=' || series_id || '|iso=' || COALESCE(iso_code, 'UNKNOWN') || '|table=iceberg.market.curve_observation' as lineage_tags
 
     FROM external_mapped_observations
     WHERE value IS NOT NULL  -- Only include observations with valid values

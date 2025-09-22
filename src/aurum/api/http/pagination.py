@@ -332,9 +332,13 @@ def normalize_cursor_input(payload: Dict[str, Any]) -> Tuple[Optional[int], Opti
     """
     if "offset" in payload:
         try:
-            return int(payload.get("offset", 0)), None
+            offset = int(payload.get("offset", 0))
         except (TypeError, ValueError) as exc:
             raise HTTPException(status_code=400, detail="Invalid offset cursor") from exc
+
+        # Preserve any supplemental payload data (filters, limits, etc.)
+        extra = {key: value for key, value in payload.items() if key != "offset"}
+        return offset, extra or None
 
     # For future cursor-based pagination extensions
     return None, payload

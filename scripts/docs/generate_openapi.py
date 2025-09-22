@@ -67,11 +67,41 @@ def main() -> int:
     from fastapi import FastAPI
     from fastapi.openapi.utils import get_openapi
 
-    # Import the v1 router (comprehensive surface)
+    # Import routers
     from aurum.api import routes as v1_routes
+    try:
+        from aurum.api.v2 import (
+            scenarios as v2_scenarios,
+            curves as v2_curves,
+            metadata as v2_metadata,
+            iso as v2_iso,
+            eia as v2_eia,
+            ppa as v2_ppa,
+            drought as v2_drought,
+            admin as v2_admin,
+        )
+    except Exception:
+        v2_scenarios = v2_curves = v2_metadata = v2_iso = v2_eia = v2_ppa = v2_drought = v2_admin = None  # type: ignore
 
-    app = FastAPI(title="Aurum API", version="1.0.0", description="Aurum Market Intelligence Platform API")
+    app = FastAPI(title="Aurum API", version="2.0.0", description="Aurum Market Intelligence Platform API")
     app.include_router(v1_routes.router)
+
+    if v2_scenarios is not None:
+        app.include_router(v2_scenarios.router)
+    if v2_curves is not None:
+        app.include_router(v2_curves.router)
+    if v2_metadata is not None:
+        app.include_router(v2_metadata.router)
+    if v2_iso is not None:
+        app.include_router(v2_iso.router)
+    if v2_eia is not None:
+        app.include_router(v2_eia.router)
+    if v2_ppa is not None:
+        app.include_router(v2_ppa.router)
+    if v2_drought is not None:
+        app.include_router(v2_drought.router)
+    if v2_admin is not None:
+        app.include_router(v2_admin.router)
 
     # Generate OpenAPI schema
     schema = get_openapi(

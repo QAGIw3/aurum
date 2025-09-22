@@ -127,6 +127,7 @@ else:
         RedisFeatureFlagStore,
     )
     from .feature_management import router as feature_management_router
+    from .guardrails import enforce_basic_query_guardrails
 
     create_app = app_module.create_app
     app = app_module
@@ -230,4 +231,5 @@ else:
         "InMemoryFeatureFlagStore",
         "RedisFeatureFlagStore",
         "feature_management_router",
+        "enforce_basic_query_guardrails",
     ]

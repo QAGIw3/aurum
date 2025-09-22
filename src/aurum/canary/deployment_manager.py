@@ -44,6 +44,21 @@ class HealthCheckStatus(Enum):
     UNKNOWN = "unknown"
 
 
+class CircuitBreakerState(Enum):
+    """Circuit breaker states."""
+    CLOSED = "closed"        # Normal operation
+    OPEN = "open"           # Failing, rejecting calls
+    HALF_OPEN = "half_open" # Testing recovery
+
+
+class RolloutGateStatus(Enum):
+    """Rollout gate evaluation status."""
+    PASS = "pass"
+    FAIL = "fail"
+    PENDING = "pending"
+    TIMEOUT = "timeout"
+
+
 @dataclass
 class CanaryConfig:
     """Configuration for a canary deployment."""
@@ -73,6 +88,18 @@ class CanaryConfig:
     latency_threshold_ms: float = 1000.0
     error_rate_threshold_percent: float = 1.0
 
+    # Rollout health gates
+    enable_health_gates: bool = True
+    health_gate_timeout_minutes: int = 30
+    health_gate_required_success_rate: float = 99.0
+    health_gate_max_latency_ms: float = 500.0
+    health_gate_min_throughput_rps: float = 10.0
+
+    # Circuit breaker configuration
+    circuit_breaker_failure_threshold: int = 5
+    circuit_breaker_recovery_timeout_minutes: int = 5
+    circuit_breaker_half_open_max_calls: int = 3
+
     # Rollback configuration
     auto_rollback_enabled: bool = True
     rollback_on_failure: bool = True
@@ -101,6 +128,166 @@ class HealthCheck:
     last_status: HealthCheckStatus = HealthCheckStatus.UNKNOWN
     consecutive_failures: int = 0
     consecutive_successes: int = 0
+
+
+@dataclass
+class CircuitBreaker:
+    """Circuit breaker for canary deployments."""
+
+    name: str
+    failure_threshold: int = 5
+    recovery_timeout_minutes: int = 5
+    half_open_max_calls: int = 3
+
+    # State management
+    state: CircuitBreakerState = CircuitBreakerState.CLOSED
+    failure_count: int = 0
+    success_count: int = 0
+    last_failure_time: Optional[datetime] = None
+    last_state_change: datetime = field(default_factory=lambda: datetime.now())
+
+    def record_success(self):
+        """Record a successful call."""
+        if self.state == CircuitBreakerState.HALF_OPEN:
+            self.success_count += 1
+            if self.success_count >= self.half_open_max_calls:
+                self._transition_to_closed()
+
+    def record_failure(self):
+        """Record a failed call."""
+        self.failure_count += 1
+        self.last_failure_time = datetime.now()
+
+        if self.state == CircuitBreakerState.CLOSED and self.failure_count >= self.failure_threshold:
+            self._transition_to_open()
+        elif self.state == CircuitBreakerState.HALF_OPEN:
+            self._transition_to_open()
+
+    def can_execute(self) -> bool:
+        """Check if the circuit breaker allows execution."""
+        if self.state == CircuitBreakerState.CLOSED:
+            return True
+        elif self.state == CircuitBreakerState.OPEN:
+            if self._should_attempt_reset():
+                self._transition_to_half_open()
+                return True
+            return False
+        elif self.state == CircuitBreakerState.HALF_OPEN:
+            return True
+        return False
+
+    def _transition_to_open(self):
+        """Transition to open state."""
+        self.state = CircuitBreakerState.OPEN
+        self.last_state_change = datetime.now()
+        logger.warning(f"Circuit breaker '{self.name}' opened after {self.failure_count} failures")
+
+    def _transition_to_half_open(self):
+        """Transition to half-open state."""
+        self.state = CircuitBreakerState.HALF_OPEN
+        self.failure_count = 0
+        self.success_count = 0
+        self.last_state_change = datetime.now()
+        logger.info(f"Circuit breaker '{self.name}' half-open for recovery testing")
+
+    def _transition_to_closed(self):
+        """Transition to closed state."""
+        self.state = CircuitBreakerState.CLOSED
+        self.failure_count = 0
+        self.success_count = 0
+        self.last_state_change = datetime.now()
+        logger.info(f"Circuit breaker '{self.name}' closed after successful recovery")
+
+    def _should_attempt_reset(self) -> bool:
+        """Check if we should attempt to reset the circuit breaker."""
+        if self.last_failure_time is None:
+            return True
+
+        recovery_time = datetime.now() - self.last_failure_time
+        return recovery_time.total_seconds() >= (self.recovery_timeout_minutes * 60)
+
+
+@dataclass
+class RolloutGate:
+    """Rollout gate for deployment validation."""
+
+    name: str
+    description: str = ""
+    gate_type: str = "health_check"  # health_check, performance, integration
+
+    # Gate configuration
+    timeout_minutes: int = 30
+    required_success_rate: float = 99.0
+    max_latency_ms: float = 500.0
+    min_throughput_rps: float = 10.0
+
+    # Gate state
+    status: RolloutGateStatus = RolloutGateStatus.PENDING
+    started_at: Optional[datetime] = None
+    completed_at: Optional[datetime] = None
+    evaluation_time_seconds: float = 0.0
+
+    # Results
+    success_count: int = 0
+    failure_count: int = 0
+    total_requests: int = 0
+    avg_latency_ms: float = 0.0
+    max_latency_ms: float = 0.0
+
+    def start_evaluation(self):
+        """Start gate evaluation."""
+        self.status = RolloutGateStatus.PENDING
+        self.started_at = datetime.now()
+        self.completed_at = None
+        logger.info(f"Starting rollout gate evaluation: {self.name}")
+
+    def record_request(self, success: bool, latency_ms: float):
+        """Record a request result for gate evaluation."""
+        self.total_requests += 1
+
+        if success:
+            self.success_count += 1
+        else:
+            self.failure_count += 1
+
+        self.avg_latency_ms = ((self.avg_latency_ms * (self.total_requests - 1)) + latency_ms) / self.total_requests
+        self.max_latency_ms = max(self.max_latency_ms, latency_ms)
+
+    def evaluate(self) -> RolloutGateStatus:
+        """Evaluate the gate based on collected metrics."""
+        if self.started_at is None:
+            return RolloutGateStatus.PENDING
+
+        elapsed = datetime.now() - self.started_at
+        self.evaluation_time_seconds = elapsed.total_seconds()
+
+        # Check timeout
+        if elapsed.total_seconds() > (self.timeout_minutes * 60):
+            self.status = RolloutGateStatus.TIMEOUT
+            self.completed_at = datetime.now()
+            return self.status
+
+        # Check if we have enough data
+        if self.total_requests < 10:
+            return RolloutGateStatus.PENDING
+
+        # Calculate success rate
+        success_rate = (self.success_count / self.total_requests) * 100
+
+        # Evaluate gate conditions
+        if (success_rate >= self.required_success_rate and
+            self.avg_latency_ms <= self.max_latency_ms and
+            self.total_requests / self.evaluation_time_seconds >= self.min_throughput_rps):
+
+            self.status = RolloutGateStatus.PASS
+            self.completed_at = datetime.now()
+            logger.info(f"Rollout gate '{self.name}' PASSED (success_rate={success_rate:.1f}%)")
+            return self.status
+        else:
+            self.status = RolloutGateStatus.FAIL
+            self.completed_at = datetime.now()
+            logger.warning(f"Rollout gate '{self.name}' FAILED (success_rate={success_rate:.1f}%)")
+            return self.status
 
 
 @dataclass
@@ -207,9 +394,22 @@ class CanaryDeployment:
             "kafka": KafkaHealthCheckProvider()
         }
 
+        # Circuit breaker
+        self.circuit_breaker = CircuitBreaker(
+            name=f"{config.name}_circuit_breaker",
+            failure_threshold=config.circuit_breaker_failure_threshold,
+            recovery_timeout_minutes=config.circuit_breaker_recovery_timeout_minutes,
+            half_open_max_calls=config.circuit_breaker_half_open_max_calls
+        )
+
+        # Rollout gates
+        self.rollout_gates: Dict[str, RolloutGate] = {}
+        self._active_gate: Optional[RolloutGate] = None
+
         # Callbacks
         self.on_status_change: Optional[Callable[[CanaryStatus], Awaitable[None]]] = None
         self.on_traffic_change: Optional[Callable[[float], Awaitable[None]]] = None
+        self.on_gate_evaluation: Optional[Callable[[RolloutGate], Awaitable[None]]] = None
 
         # Internal state
         self._start_time = datetime.now()
@@ -220,6 +420,87 @@ class CanaryDeployment:
         """Add a health check to the deployment."""
         self.health_checks[check.name] = check
         logger.info(f"Added health check '{check.name}' to canary '{self.config.name}'")
+
+    async def add_rollout_gate(self, gate: RolloutGate):
+        """Add a rollout gate to the deployment."""
+        self.rollout_gates[gate.name] = gate
+        logger.info(f"Added rollout gate '{gate.name}' to canary '{self.config.name}'")
+
+    async def start_rollout_gate(self, gate_name: str) -> bool:
+        """Start evaluation of a rollout gate."""
+        if gate_name not in self.rollout_gates:
+            logger.error(f"Rollout gate '{gate_name}' not found")
+            return False
+
+        gate = self.rollout_gates[gate_name]
+        if self._active_gate is not None:
+            logger.warning(f"Another gate '{self._active_gate.name}' is already active")
+            return False
+
+        # Check circuit breaker
+        if not self.circuit_breaker.can_execute():
+            logger.warning(f"Circuit breaker is {self.circuit_breaker.state.value}, cannot start gate")
+            return False
+
+        gate.start_evaluation()
+        self._active_gate = gate
+
+        logger.info(f"Started rollout gate evaluation: {gate_name}")
+        return True
+
+    async def record_gate_request(self, gate_name: str, success: bool, latency_ms: float):
+        """Record a request result for gate evaluation."""
+        if self._active_gate is None or self._active_gate.name != gate_name:
+            logger.warning(f"No active gate '{gate_name}' for request recording")
+            return
+
+        self._active_gate.record_request(success, latency_ms)
+
+        # Check circuit breaker
+        if success:
+            self.circuit_breaker.record_success()
+        else:
+            self.circuit_breaker.record_failure()
+
+    async def evaluate_rollout_gate(self, gate_name: str) -> Optional[RolloutGateStatus]:
+        """Evaluate the current rollout gate."""
+        if self._active_gate is None or self._active_gate.name != gate_name:
+            return None
+
+        status = self._active_gate.evaluate()
+
+        if status in [RolloutGateStatus.PASS, RolloutGateStatus.FAIL, RolloutGateStatus.TIMEOUT]:
+            if self.on_gate_evaluation:
+                await self.on_gate_evaluation(self._active_gate)
+            self._active_gate = None
+
+            if status == RolloutGateStatus.FAIL:
+                logger.warning(f"Rollout gate '{gate_name}' failed - deployment may need rollback")
+            elif status == RolloutGateStatus.TIMEOUT:
+                logger.warning(f"Rollout gate '{gate_name}' timed out")
+
+        return status
+
+    async def _evaluate_rollout_gates(self) -> bool:
+        """Evaluate all rollout gates and return overall status."""
+        if not self.rollout_gates:
+            return True  # No gates configured
+
+        # Check active gate
+        if self._active_gate:
+            status = await self.evaluate_rollout_gate(self._active_gate.name)
+            if status == RolloutGateStatus.FAIL:
+                return False
+            elif status == RolloutGateStatus.TIMEOUT:
+                return False
+            elif status == RolloutGateStatus.PENDING:
+                return True  # Still evaluating
+            elif status == RolloutGateStatus.PASS:
+                logger.info(f"Rollout gate '{self._active_gate.name}' passed, continuing deployment")
+                return True
+
+        # All gates passed
+        return True
 
     async def start(self):
         """Start the canary deployment."""
@@ -269,14 +550,32 @@ class CanaryDeployment:
         await self._start_traffic_progression()
 
     async def _start_traffic_progression(self):
-        """Progressively increase traffic to canary."""
+        """Progressively increase traffic to canary with health gates."""
         current_percent = self.config.initial_traffic_percent
 
         while current_percent < self.config.max_traffic_percent and self.status == CanaryStatus.RUNNING:
+            # Check circuit breaker before proceeding
+            if not self.circuit_breaker.can_execute():
+                logger.warning(f"Circuit breaker is {self.circuit_breaker.state.value}, pausing traffic progression")
+                await asyncio.sleep(30)  # Wait before retry
+                continue
+
             # Evaluate current state
             evaluation_passed = await self._evaluate_deployment()
 
             if evaluation_passed:
+                # Check rollout gates if enabled
+                if self.config.enable_health_gates:
+                    gate_passed = await self._evaluate_rollout_gates()
+                    if not gate_passed:
+                        logger.warning("Rollout gates failed, considering rollback")
+                        if self.config.rollback_on_failure:
+                            await self._initiate_rollback()
+                            return
+                        else:
+                            await asyncio.sleep(self.config.evaluation_duration_minutes * 60)
+                            continue
+
                 # Increase traffic
                 new_percent = min(
                     current_percent + self.config.traffic_increment_percent,
@@ -695,6 +994,28 @@ async def deploy_caiso_pipeline_with_canary(
         expected_status_codes=[200],
         timeout_seconds=5
     ))
+
+    # Add rollout gates for CAISO
+    if config.enable_health_gates:
+        await deployment.add_rollout_gate(RolloutGate(
+            name="caiso_api_performance_gate",
+            description="CAISO API performance validation gate",
+            gate_type="performance",
+            timeout_minutes=config.health_gate_timeout_minutes,
+            required_success_rate=config.health_gate_required_success_rate,
+            max_latency_ms=config.health_gate_max_latency_ms,
+            min_throughput_rps=config.health_gate_min_throughput_rps
+        ))
+
+        await deployment.add_rollout_gate(RolloutGate(
+            name="caiso_data_quality_gate",
+            description="CAISO data quality validation gate",
+            gate_type="health_check",
+            timeout_minutes=config.health_gate_timeout_minutes,
+            required_success_rate=98.0,  # Slightly lower for data quality
+            max_latency_ms=config.health_gate_max_latency_ms,
+            min_throughput_rps=config.health_gate_min_throughput_rps
+        ))
 
     return deployment_name
 

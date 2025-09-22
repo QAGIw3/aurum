@@ -203,7 +203,7 @@ class TimescaleMaintenanceJob:
             "FROM show_chunks($1::regclass, older_than => $2) AS chunk"
         )
         async with self._pool.acquire() as conn:
-        rows = await conn.fetch(query, table_cfg.name, table_cfg.compress_after)
+            rows = await conn.fetch(query, table_cfg.name, table_cfg.compress_after)
             compressed = len(rows)
             self._metrics.timescale_chunks_compressed += compressed
             if compressed:

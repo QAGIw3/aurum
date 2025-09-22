@@ -15,36 +15,48 @@ Notes:
 from __future__ import annotations
 
 import time
-from typing import List, Optional
-from uuid import uuid4
+from typing import Dict, List, Optional
 
 from fastapi import APIRouter, HTTPException, Query, Request, Response
 from pydantic import BaseModel, Field
 
 from ..http import respond_with_etag
+from ..container import get_service
+from ..async_service import AsyncScenarioService
 from ..scenario_models import (
     ScenarioCreateRequest,
+    ScenarioData,
     ScenarioResponse,
     ScenarioRunCreateRequest,
+    ScenarioRunData,
     ScenarioRunResponse,
     ScenarioRunStatus,
 )
-from ..scenarios import get_scenario_service
 from ...telemetry.context import get_request_id
+from .pagination import (
+    build_next_cursor,
+    build_pagination_envelope,
+    resolve_pagination,
+)
 
-router = APIRouter()
+
+async def get_scenario_service() -> AsyncScenarioService:
+    """Provide AsyncScenarioService compatible with existing awaited usage."""
+    return get_service(AsyncScenarioService)
+
+router = APIRouter(prefix="/v2", tags=["scenarios"])
 
 
 class ScenarioListResponse(BaseModel):
     """Response for listing scenarios with v2 enhancements."""
-    data: List[ScenarioResponse] = Field(..., description="List of scenarios")
+    data: List[ScenarioData] = Field(..., description="List of scenarios")
     meta: dict = Field(..., description="Pagination and metadata")
     links: dict = Field(..., description="Pagination links")
 
 
 class ScenarioRunListResponse(BaseModel):
     """Response for listing scenario runs with v2 enhancements."""
-    data: List[ScenarioRunResponse] = Field(..., description="List of scenario runs")
+    data: List[ScenarioRunData] = Field(..., description="List of scenario runs")
     meta: dict = Field(..., description="Pagination and metadata")
     links: dict = Field(..., description="Pagination links")
 
@@ -62,66 +74,59 @@ async def list_scenarios_v2(
     start_time = time.perf_counter()
 
     try:
-        # Get scenario service
-        service = await get_scenario_service()
-
-        # Parse cursor if provided
-        offset = 0
-        if cursor:
-            try:
-                import base64
-                import json
-                cursor_data = json.loads(base64.urlsafe_b64decode(cursor.encode()).decode())
-                offset = cursor_data.get("offset", 0)
-            except Exception:
-                raise HTTPException(
-                    status_code=400,
-                    detail={
-                        "type": "invalid_cursor",
-                        "title": "Invalid cursor format",
-                        "detail": "The provided cursor is not valid",
-                        "instance": "/v2/scenarios"
-                    }
-                )
-
-        # List scenarios
-        scenarios = await service.list_scenarios(
-            tenant_id=tenant_id,
-            offset=offset,
+        offset, effective_limit = resolve_pagination(
+            cursor=cursor,
             limit=limit,
-            name_filter=name_filter
+            default_limit=10,
+            filters={
+                "tenant_id": tenant_id,
+                "name_filter": name_filter,
+            },
         )
 
-        # Create next cursor
-        next_cursor = None
-        if len(scenarios) == limit:
-            next_offset = offset + limit
-            cursor_data = {"offset": next_offset}
-            import base64
-            import json
-            next_cursor = base64.urlsafe_b64encode(
-                json.dumps(cursor_data).encode()
-            ).decode()
+        service = get_service(AsyncScenarioService)
+        scenarios, total, _meta = await service.list_scenarios(
+            tenant_id=tenant_id,
+            limit=effective_limit,
+            offset=offset,
+            name_contains=name_filter,
+        )
+
+        total_count = total if total is not None else offset + len(scenarios)
+        has_more = (offset + len(scenarios)) < total_count
+        next_cursor = build_next_cursor(
+            offset=offset,
+            limit=effective_limit,
+            has_more=has_more,
+            filters={
+                "tenant_id": tenant_id,
+                "name_filter": name_filter,
+            },
+        )
+
+        base_meta, links = build_pagination_envelope(
+            request_url=request.url,
+            offset=offset,
+            limit=effective_limit,
+            total=total,
+            next_cursor=next_cursor,
+        )
 
         duration_ms = (time.perf_counter() - start_time) * 1000
 
-        # Create response with enhanced metadata
+        meta: Dict[str, object] = {
+            **base_meta,
+            "request_id": get_request_id(),
+            "tenant_id": tenant_id,
+            "returned_count": len(scenarios),
+            "has_more": has_more,
+            "processing_time_ms": round(duration_ms, 2),
+        }
+
         result = ScenarioListResponse(
             data=scenarios,
-            meta={
-                "request_id": get_request_id(),
-                "tenant_id": tenant_id,
-                "total_count": len(scenarios) + (1 if next_cursor else 0),  # Estimate
-                "returned_count": len(scenarios),
-                "has_more": next_cursor is not None,
-                "cursor": cursor,
-                "next_cursor": next_cursor,
-                "processing_time_ms": round(duration_ms, 2),
-            },
-            links={
-                "self": str(request.url),
-                "next": f"{request.url}&cursor={next_cursor}" if next_cursor else None,
-            }
+            meta=meta,
+            links=links,
         )
 
         # Add ETag for caching with Link headers
@@ -130,7 +135,7 @@ async def list_scenarios_v2(
             request,
             response,
             next_cursor=next_cursor,
-            canonical_url=str(request.url)
+            canonical_url=str(request.url.remove_query_params("cursor"))
         )
 
     except HTTPException:

@@ -70,22 +70,221 @@ models:
     description: Most recent value for the metric.
   - name: latest_asof_date
     description: As-of date associated with the latest metric value.
-- name: mart_ppa_valuation
-  description: Persisted PPA valuation cashflows and summary metrics.
-  tests:
-  - unique_combination:
-      combination_of_columns:
-      - ppa_contract_id
-      - scenario_id
-      - metric
-      - period_start
-  columns:
-  - name: ppa_contract_id
+  - name: mart_ppa_valuation
+    description: Persisted PPA valuation cashflows and summary metrics.
     tests:
-    - not_null
-  - name: scenario_id
+      - unique_combination:
+          combination_of_columns:
+            - ppa_contract_id
+            - scenario_id
+            - metric
+            - period_start
+    columns:
+      - name: ppa_contract_id
+        tests:
+          - not_null
+      - name: scenario_id
+        tests:
+          - not_null
+      - name: metric
+        tests:
+          - not_null
+
+  - name: mart_stress_test_results
+    description: Comprehensive stress test results and scenario impact analysis.
     tests:
-    - not_null
-  - name: metric
+      - unique_combination:
+          combination_of_columns:
+            - scenario_id
+            - affected_curve_key
+            - scenario_created_at
+    columns:
+      - name: stress_test_result_sk
+        description: "Surrogate key for the stress test result"
+        tests:
+          - not_null
+          - unique
+      - name: scenario_id
+        description: "Unique scenario identifier"
+        tests:
+          - not_null
+      - name: template_id
+        description: "Stress test template identifier"
+        tests:
+          - not_null
+      - name: scenario_name
+        description: "Human-readable scenario name"
+      - name: scenario_type
+        description: "Type of stress test scenario"
+        tests:
+          - not_null
+      - name: scenario_category_name
+        description: "Categorized scenario type name"
+      - name: severity
+        description: "Severity level of the scenario"
+        tests:
+          - not_null
+      - name: duration_hours
+        description: "Duration of the stress event in hours"
+        tests:
+          - not_null
+      - name: duration_category
+        description: "Categorized duration (Short-term, Medium-term, Long-term)"
+      - name: probability
+        description: "Probability of scenario occurrence"
+        tests:
+          - not_null
+      - name: impact_multiplier
+        description: "Impact multiplier for the scenario"
+        tests:
+          - not_null
+      - name: affected_regions
+        description: "Geographic regions affected by the scenario"
+      - name: affected_curve_key
+        description: "Specific curve affected (NULL for overall scenario impact)"
+      - name: price_impact_multiplier
+        description: "Price impact multiplier for affected curves"
+      - name: volume_impact_multiplier
+        description: "Volume impact multiplier for affected curves"
+      - name: confidence_level
+        description: "Confidence level for impact calculations"
+      - name: var_95
+        description: "95% Value at Risk"
+      - name: var_99
+        description: "99% Value at Risk"
+      - name: max_drawdown
+        description: "Maximum potential drawdown"
+      - name: portfolio_impact
+        description: "Total portfolio impact"
+      - name: expected_loss
+        description: "Expected loss (probability × impact)"
+      - name: affected_positions_count
+        description: "Number of positions affected"
+      - name: risk_level
+        description: "Risk classification (Critical, High, Medium, Low)"
+      - name: scenario_created_at
+        description: "When the scenario was created"
+        tests:
+          - not_null
+      - name: impact_calculated_at
+        description: "When the impact was calculated"
+      - name: created_at
+        description: "Record creation timestamp"
+        tests:
+          - not_null
+
+  - name: mart_scenario_analytics_summary
+    description: "Comprehensive scenario analytics summary with performance, risk, and attribution metrics."
     tests:
-    - not_null
+      - unique_combination:
+          combination_of_columns:
+            - scenario_id
+            - scenario_created_at
+    columns:
+      - name: scenario_analytics_sk
+        description: "Surrogate key for the scenario analytics record"
+        tests:
+          - not_null
+          - unique
+      - name: scenario_id
+        description: "Unique scenario identifier"
+        tests:
+          - not_null
+      - name: scenario_name
+        description: "Human-readable scenario name"
+      - name: scenario_description
+        description: "Scenario description"
+      - name: scenario_category
+        description: "Categorized scenario type"
+        tests:
+          - not_null
+      - name: scenario_status
+        description: "Current status of the scenario"
+        tests:
+          - not_null
+      - name: tenant_id
+        description: "Tenant identifier"
+        tests:
+          - not_null
+      - name: scenario_created_at
+        description: "When the scenario was created"
+        tests:
+          - not_null
+      - name: created_hour
+        description: "Hour of day when scenario was created"
+      - name: created_day_of_week
+        description: "Day of week when scenario was created"
+      - name: created_month
+        description: "Month when scenario was created"
+      - name: created_quarter
+        description: "Quarter when scenario was created"
+      - name: created_year
+        description: "Year when scenario was created"
+      - name: total_runs
+        description: "Total number of scenario runs"
+        tests:
+          - not_null
+      - name: successful_runs
+        description: "Number of successful runs"
+        tests:
+          - not_null
+      - name: failed_runs
+        description: "Number of failed runs"
+        tests:
+          - not_null
+      - name: success_rate_percent
+        description: "Success rate percentage"
+      - name: avg_duration_seconds
+        description: "Average execution time in seconds"
+      - name: first_run_at
+        description: "Timestamp of first run"
+      - name: last_run_at
+        description: "Timestamp of last run"
+      - name: unique_metrics
+        description: "Number of unique metrics generated"
+        tests:
+          - not_null
+      - name: total_outputs
+        description: "Total number of outputs generated"
+        tests:
+          - not_null
+      - name: price_metrics_count
+        description: "Number of price-related metrics"
+      - name: load_metrics_count
+        description: "Number of load/demand metrics"
+      - name: generation_metrics_count
+        description: "Number of generation metrics"
+      - name: forecast_metrics_count
+        description: "Number of forecast metrics"
+      - name: error_metrics_count
+        description: "Number of error/performance metrics"
+      - name: risk_metrics_count
+        description: "Number of risk metrics"
+      - name: avg_mape
+        description: "Average Mean Absolute Percentage Error"
+      - name: avg_smape
+        description: "Average Symmetric Mean Absolute Percentage Error"
+      - name: avg_rmse
+        description: "Average Root Mean Square Error"
+      - name: best_r2_score
+        description: "Best R-squared score achieved"
+      - name: forecast_performance_class
+        description: "Forecast performance classification"
+      - name: avg_portfolio_impact
+        description: "Average portfolio impact"
+      - name: avg_var_95
+        description: "Average 95% Value at Risk"
+      - name: avg_var_99
+        description: "Average 99% Value at Risk"
+      - name: avg_max_drawdown
+        description: "Average maximum drawdown"
+      - name: complexity_score
+        description: "Scenario complexity score"
+      - name: risk_score
+        description: "Risk score (1-10)"
+      - name: scenario_health_score
+        description: "Overall scenario health score (0-100)"
+      - name: analytics_generated_at
+        description: "When analytics were generated"
+        tests:
+          - not_null

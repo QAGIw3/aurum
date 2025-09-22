@@ -56,26 +56,26 @@ from .versioning import (
     VersionStatus,
     DeprecationInfo
 )
-    try:  # optional at import time for tooling
-        from .v2 import (
-            scenarios as v2_scenarios,
-            curves as v2_curves,
-            metadata as v2_metadata,
-            iso as v2_iso,
-            eia as v2_eia,
-            ppa as v2_ppa,
-            drought as v2_drought,
-            admin as v2_admin
-        )
-    except Exception:  # pragma: no cover
-        v2_scenarios = None  # type: ignore
-        v2_curves = None  # type: ignore
-        v2_metadata = None  # type: ignore
-        v2_iso = None  # type: ignore
-        v2_eia = None  # type: ignore
-        v2_ppa = None  # type: ignore
-        v2_drought = None  # type: ignore
-        v2_admin = None  # type: ignore
+try:  # optional at import time for tooling
+    from .v2 import (
+        scenarios as v2_scenarios,
+        curves as v2_curves,
+        metadata as v2_metadata,
+        iso as v2_iso,
+        eia as v2_eia,
+        ppa as v2_ppa,
+        drought as v2_drought,
+        admin as v2_admin
+    )
+except Exception:  # pragma: no cover
+    v2_scenarios = None  # type: ignore
+    v2_curves = None  # type: ignore
+    v2_metadata = None  # type: ignore
+    v2_iso = None  # type: ignore
+    v2_eia = None  # type: ignore
+    v2_ppa = None  # type: ignore
+    v2_drought = None  # type: ignore
+    v2_admin = None  # type: ignore
 
 
 async def create_app(settings: AurumSettings | None = None) -> FastAPI:
@@ -244,7 +244,7 @@ async def create_app(settings: AurumSettings | None = None) -> FastAPI:
 
     # Set up versioning with feature freeze
     await version_manager.register_version(
-        "1.0",
+        "1.0.0",
         status=VersionStatus.DEPRECATED,
         deprecation_info=DeprecationInfo(
             deprecated_in="2024-01-01",
@@ -256,7 +256,7 @@ async def create_app(settings: AurumSettings | None = None) -> FastAPI:
     )
 
     await version_manager.register_version(
-        "2.0",
+        "2.0.0",
         status=VersionStatus.ACTIVE,
         supported_features=[
             "cursor_pagination",
@@ -336,12 +336,12 @@ async def create_app(settings: AurumSettings | None = None) -> FastAPI:
         app.state.cache_service = None
         app.state.cache_manager = None
 
-    await version_manager.set_default_version("2.0")
+    await version_manager.set_default_version("2.0.0")
 
     # Add version aliases
-    await version_manager.add_version_alias("v1", "1.0")
-    await version_manager.add_version_alias("v2", "2.0")
-    await version_manager.add_version_alias("latest", "2.0")
+    await version_manager.add_version_alias("v1", "1.0.0")
+    await version_manager.add_version_alias("v2", "2.0.0")
+    await version_manager.add_version_alias("latest", "2.0.0")
 
     if observability_router is not None:
         app.include_router(

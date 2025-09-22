@@ -36,6 +36,57 @@
       }
     },
     {
+      "expectation_type": "expect_column_values_to_not_be_null",
+      "kwargs": {"column": "iso_code"}
+    },
+    {
+      "expectation_type": "expect_column_values_to_be_in_set",
+      "kwargs": {
+        "column": "iso_market",
+        "value_set": ["DA", "RT", "DAM", "RTM", "UNKNOWN"]
+      }
+    },
+    {
+      "expectation_type": "expect_column_values_to_not_be_null",
+      "kwargs": {"column": "iso_product"}
+    },
+    {
+      "expectation_type": "expect_column_values_to_not_be_null",
+      "kwargs": {"column": "iso_location_type"}
+    },
+    {
+      "expectation_type": "expect_column_values_to_not_be_null",
+      "kwargs": {"column": "iso_location_name"}
+    },
+    {
+      "expectation_type": "expect_column_values_to_not_be_null",
+      "kwargs": {"column": "iso_location_id"}
+    },
+    {
+      "expectation_type": "expect_column_values_to_not_be_null",
+      "kwargs": {"column": "iso_timezone"}
+    },
+    {
+      "expectation_type": "expect_column_values_to_be_between",
+      "kwargs": {
+        "column": "iso_interval_minutes",
+        "min_value": 0,
+        "max_value": 1440
+      }
+    },
+    {
+      "expectation_type": "expect_column_values_to_not_be_null",
+      "kwargs": {"column": "iso_unit"}
+    },
+    {
+      "expectation_type": "expect_column_values_to_not_be_null",
+      "kwargs": {"column": "iso_subject"}
+    },
+    {
+      "expectation_type": "expect_column_values_to_not_be_null",
+      "kwargs": {"column": "iso_curve_role"}
+    },
+    {
       "expectation_type": "expect_multicolumn_values_to_be_unique",
       "kwargs": {
         "column_list": ["provider", "series_id"]

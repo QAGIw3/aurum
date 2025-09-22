@@ -18,6 +18,9 @@ from .config import TrinoConfig
 from .models import CurvePoint, CurveDiffPoint, Meta
 from .scenario_models import ScenarioRunData, ScenarioRunStatus
 from ..scenarios.storage import get_scenario_store
+from ..scenarios.monte_carlo import get_monte_carlo_engine, MonteCarloConfig
+from ..scenarios.forecasting import get_forecasting_engine, ForecastConfig
+from ..scenarios.feature_store import get_feature_store
 
 
 class AsyncTrinoClient:
@@ -479,9 +482,410 @@ class AsyncScenarioService:
         return runs, total, meta
 
     async def create_scenario_run(self, scenario_id: str, options: Dict[str, Any]) -> Any:
-        """Create a new scenario run."""
+        """Create a new scenario run using Monte Carlo or forecasting models."""
         store = get_scenario_store()
-        return await store.create_run(scenario_id, options)
+        mc_engine = get_monte_carlo_engine()
+        forecast_engine = get_forecasting_engine()
+
+        # Get the scenario first to validate it exists
+        scenario = await store.get_scenario(scenario_id)
+        if not scenario:
+            raise ValueError(f"Scenario {scenario_id} not found")
+
+        run_id = str(uuid4())
+
+        # Check scenario type
+        scenario_type = options.get("scenario_type", "monte_carlo")
+        is_forecasting = scenario_type in ["forecasting", "backtest"]
+        is_cross_asset = scenario_type == "cross_asset"
+
+        # Create run record
+        run_data = {
+            "id": run_id,
+            "scenario_id": scenario_id,
+            "status": "running",
+            "priority": options.get("priority", "normal"),
+            "parameters": options.get("parameters", {}),
+            "environment": options.get("environment", {}),
+            "created_at": datetime.utcnow(),
+            "started_at": datetime.utcnow(),
+        }
+
+        run = await store.create_run_from_dict(run_data)
+
+        try:
+            if is_cross_asset:
+                # Run cross-asset scenario
+                await self._run_cross_asset_scenario(run_id, scenario, options)
+            elif is_forecasting:
+                # Run forecasting scenario
+                await self._run_forecasting_scenario(run_id, scenario, options)
+            else:
+                # Run Monte Carlo scenario
+                await self._run_monte_carlo_scenario(run_id, scenario, options, mc_engine)
+
+            # Update run status to completed
+            await store.update_run_state(run_id, {
+                "status": "succeeded",
+                "completed_at": datetime.utcnow(),
+                "duration_seconds": (datetime.utcnow() - run_data["created_at"]).total_seconds(),
+            })
+
+        except Exception as exc:
+            # Update run status to failed
+            await store.update_run_state(run_id, {
+                "status": "failed",
+                "error_message": str(exc),
+                "completed_at": datetime.utcnow(),
+            })
+            raise
+
+        return run
+
+    async def _run_monte_carlo_scenario(self, run_id: str, scenario: Any, options: Dict[str, Any], engine: Any) -> None:
+        """Run Monte Carlo simulation scenario."""
+        # Extract Monte Carlo configuration from options
+        mc_config = MonteCarloConfig(
+            num_simulations=options.get("num_simulations", 1000),
+            random_seed=options.get("seed"),
+            confidence_level=options.get("confidence_level", 0.95),
+        )
+
+        # Define model parameters based on scenario type
+        model_configs = self._get_model_configs_for_scenario(scenario, options)
+
+        # Run simulations
+        results = await engine.run_multi_model_simulation(
+            model_configs=model_configs,
+            global_config=mc_config,
+            seed=options.get("seed"),
+        )
+
+        # Store results
+        await self._store_simulation_results(run_id, results)
+
+    async def _run_forecasting_scenario(self, run_id: str, scenario: Any, options: Dict[str, Any]) -> None:
+        """Run forecasting scenario with backtesting."""
+        forecast_engine = get_forecasting_engine()
+
+        # Get historical data for forecasting
+        historical_data = await self._get_historical_data_for_scenario(scenario, options)
+
+        if historical_data is None:
+            raise ValueError("No historical data available for forecasting scenario")
+
+        # Extract forecasting configuration
+        forecast_config = ForecastConfig(
+            model_type=options.get("forecast_model", "ARIMA"),
+            forecast_horizon=options.get("forecast_horizon", 24),
+            seasonality_periods=options.get("seasonality_periods"),
+            confidence_level=options.get("confidence_level", 0.95),
+            cross_validation_folds=options.get("cv_folds", 5),
+        )
+
+        # Check if this is a backtest request
+        if options.get("run_backtest", False):
+            # Run backtesting
+            backtest_result = await forecast_engine.backtest(
+                historical_data,
+                forecast_config.model_type,
+                forecast_config,
+                test_size=options.get("test_size", 0.2),
+            )
+
+            # Store backtest results
+            await self._store_backtest_results(run_id, backtest_result)
+        else:
+            # Run forecasting
+            forecast_result = await forecast_engine.forecast(
+                historical_data,
+                forecast_config.model_type,
+                forecast_config,
+                include_intervals=True,
+            )
+
+            # Store forecast results
+            await self._store_forecast_results(run_id, forecast_result)
+
+    async def _run_cross_asset_scenario(self, run_id: str, scenario: Any, options: Dict[str, Any]) -> None:
+        """Run cross-asset scenario using feature store."""
+        feature_store = get_feature_store()
+
+        # Get scenario parameters
+        start_date = options.get("start_date", datetime.now() - timedelta(days=30))
+        end_date = options.get("end_date", datetime.now())
+        geography = options.get("geography", "US")
+        curve_families = scenario.metadata.get("curve_families", ["weather", "load", "price"])
+
+        # Get cross-asset features
+        features = await feature_store.get_features_for_scenario(
+            scenario_id=scenario.id,
+            curve_families=curve_families,
+            start_date=start_date,
+            end_date=end_date,
+        )
+
+        # Get target variable for modeling
+        target_variable = options.get("target_variable", "lmp_price")
+
+        # Select features for modeling
+        feature_list = options.get("feature_list", [
+            'temperature', 'humidity', 'wind_speed',
+            'load_mw', 'load_change_1h', 'load_change_24h',
+            'price_change_1h', 'price_volatility_24h',
+            'temp_load_correlation_24h', 'load_price_correlation_24h',
+            'is_peak_hour', 'is_weekend'
+        ])
+
+        # Get features and target for modeling
+        X, y = await feature_store.iceberg_store.get_features_for_modeling(
+            start_date=start_date,
+            end_date=end_date,
+            geography=geography,
+            target_variable=target_variable,
+            feature_list=feature_list,
+        )
+
+        # Store feature analysis results
+        await self._store_cross_asset_results(run_id, features, X, y, target_variable)
+
+    async def _store_cross_asset_results(
+        self,
+        run_id: str,
+        features: pd.DataFrame,
+        X: pd.DataFrame,
+        y: pd.Series,
+        target_variable: str
+    ) -> None:
+        """Store cross-asset analysis results."""
+        store = get_scenario_store()
+
+        # Store feature statistics
+        await store.create_run_output({
+            "scenario_run_id": run_id,
+            "metric_name": "feature_count",
+            "value": len(X.columns),
+            "unit": "count",
+            "created_at": datetime.utcnow(),
+        })
+
+        await store.create_run_output({
+            "scenario_run_id": run_id,
+            "metric_name": "data_points",
+            "value": len(X),
+            "unit": "count",
+            "created_at": datetime.utcnow(),
+        })
+
+        # Store target variable statistics
+        await store.create_run_output({
+            "scenario_run_id": run_id,
+            "metric_name": f"{target_variable}_mean",
+            "value": float(y.mean()),
+            "unit": "$/MWh" if target_variable == "lmp_price" else "MWh",
+            "created_at": datetime.utcnow(),
+        })
+
+        await store.create_run_output({
+            "scenario_run_id": run_id,
+            "metric_name": f"{target_variable}_std",
+            "value": float(y.std()),
+            "unit": "$/MWh" if target_variable == "lmp_price" else "MWh",
+            "created_at": datetime.utcnow(),
+        })
+
+        # Store correlation matrix summary
+        correlation_matrix = X.corr()
+        avg_correlation = correlation_matrix.values[np.triu_indices_from(correlation_matrix.values, k=1)].mean()
+
+        await store.create_run_output({
+            "scenario_run_id": run_id,
+            "metric_name": "avg_feature_correlation",
+            "value": float(avg_correlation),
+            "unit": "ratio",
+            "created_at": datetime.utcnow(),
+        })
+
+    async def _get_historical_data_for_scenario(self, scenario: Any, options: Dict[str, Any]) -> Optional[pd.Series]:
+        """Get historical data for forecasting scenario."""
+        # This is a placeholder - in a real implementation,
+        # this would query the data warehouse for historical time series data
+        # based on the scenario's curve families and time range
+
+        # For now, generate synthetic data
+        import pandas as pd
+        import numpy as np
+
+        curve_families = scenario.metadata.get("curve_families", [])
+        days_back = options.get("historical_days", 365)
+
+        if "demand" in curve_families or any("load" in cf.lower() for cf in curve_families):
+            # Generate synthetic demand data
+            dates = pd.date_range(
+                start=datetime.now() - timedelta(days=days_back),
+                periods=days_back * 24,
+                freq='H'
+            )
+
+            # Base demand pattern
+            base_demand = options.get("base_demand", 1000.0)
+
+            # Generate realistic demand pattern
+            demand_data = []
+            for i, date in enumerate(dates):
+                hour = date.hour
+
+                # Daily pattern
+                daily_factor = 0.7 + 0.6 * np.sin(2 * np.pi * hour / 24)
+
+                # Weekly pattern
+                weekday = date.weekday()
+                weekly_factor = 1.2 if weekday < 5 else 0.8
+
+                # Random variation
+                random_factor = np.random.normal(1.0, 0.1)
+
+                demand = base_demand * daily_factor * weekly_factor * random_factor
+                demand_data.append(demand)
+
+            return pd.Series(demand_data, index=dates)
+
+        return None
+
+    async def _store_backtest_results(self, run_id: str, backtest_result: Any) -> None:
+        """Store backtesting results."""
+        store = get_scenario_store()
+
+        # Store summary metrics
+        await store.create_run_output({
+            "scenario_run_id": run_id,
+            "metric_name": "mape",
+            "value": backtest_result.mape,
+            "unit": "percent",
+            "created_at": datetime.utcnow(),
+        })
+
+        await store.create_run_output({
+            "scenario_run_id": run_id,
+            "metric_name": "smape",
+            "value": backtest_result.smape,
+            "unit": "percent",
+            "created_at": datetime.utcnow(),
+        })
+
+        await store.create_run_output({
+            "scenario_run_id": run_id,
+            "metric_name": "rmse",
+            "value": backtest_result.rmse,
+            "unit": "MWh",
+            "created_at": datetime.utcnow(),
+        })
+
+        await store.create_run_output({
+            "scenario_run_id": run_id,
+            "metric_name": "r2_score",
+            "value": backtest_result.r2_score,
+            "unit": "ratio",
+            "created_at": datetime.utcnow(),
+        })
+
+    async def _store_forecast_results(self, run_id: str, forecast_result: Any) -> None:
+        """Store forecasting results."""
+        store = get_scenario_store()
+
+        # Store forecast statistics
+        await store.create_run_output({
+            "scenario_run_id": run_id,
+            "metric_name": f"{forecast_result.model_type.lower()}_forecast_mean",
+            "value": np.mean(forecast_result.predictions),
+            "unit": "MWh",
+            "created_at": datetime.utcnow(),
+        })
+
+        await store.create_run_output({
+            "scenario_run_id": run_id,
+            "metric_name": f"{forecast_result.model_type.lower()}_forecast_std",
+            "value": np.std(forecast_result.predictions),
+            "unit": "MWh",
+            "created_at": datetime.utcnow(),
+        })
+
+    def _get_model_configs_for_scenario(self, scenario: Any, options: Dict[str, Any]) -> Dict[str, Dict[str, Any]]:
+        """Get model configurations based on scenario parameters."""
+
+        # Default configurations for different curve families
+        model_configs = {}
+
+        # Check curve families in scenario metadata
+        curve_families = scenario.metadata.get("curve_families", [])
+
+        if "demand" in curve_families or any("load" in cf.lower() for cf in curve_families):
+            model_configs["demand"] = {
+                "base_demand": options.get("base_demand", 1000.0),
+                "trend_coefficient": options.get("trend_coefficient", 0.02),
+                "seasonal_volatility": options.get("seasonal_volatility", 0.1),
+                "weather_sensitivity": options.get("weather_sensitivity", 5.0),
+                "economic_factor": options.get("economic_factor", 1.0),
+            }
+
+        if "renewable" in curve_families or any("solar" in cf.lower() or "wind" in cf.lower() for cf in curve_families):
+            model_configs["renewable"] = {
+                "capacity_mw": options.get("capacity_mw", 500.0),
+                "capacity_factor": options.get("capacity_factor", 0.35),
+                "intermittency_factor": options.get("intermittency_factor", 0.2),
+                "curtailment_rate": options.get("curtailment_rate", 0.05),
+                "forecast_error": options.get("forecast_error", 0.1),
+            }
+
+        if "price" in curve_families or any("lmp" in cf.lower() for cf in curve_families):
+            model_configs["price"] = {
+                "base_price": options.get("base_price", 50.0),
+                "demand_elasticity": options.get("demand_elasticity", 0.3),
+                "supply_shock_probability": options.get("supply_shock_probability", 0.1),
+                "volatility": options.get("volatility", 0.15),
+                "price_cap": options.get("price_cap", 1000.0),
+                "price_floor": options.get("price_floor", -100.0),
+            }
+
+        return model_configs
+
+    async def _store_simulation_results(self, run_id: str, results: Dict[str, Any]) -> None:
+        """Store Monte Carlo simulation results."""
+        store = get_scenario_store()
+
+        for model_type, result in results.items():
+            # Store summary statistics as scenario outputs
+            await store.create_run_output({
+                "scenario_run_id": run_id,
+                "metric_name": f"{model_type}_mean",
+                "value": result.mean,
+                "unit": "MWh" if model_type in ["demand", "renewable"] else "$/MWh",
+                "created_at": datetime.utcnow(),
+            })
+
+            await store.create_run_output({
+                "scenario_run_id": run_id,
+                "metric_name": f"{model_type}_std_dev",
+                "value": result.std_dev,
+                "unit": "MWh" if model_type in ["demand", "renewable"] else "$/MWh",
+                "created_at": datetime.utcnow(),
+            })
+
+            await store.create_run_output({
+                "scenario_run_id": run_id,
+                "metric_name": f"{model_type}_ci_lower",
+                "value": result.confidence_interval[0],
+                "unit": "MWh" if model_type in ["demand", "renewable"] else "$/MWh",
+                "created_at": datetime.utcnow(),
+            })
+
+            await store.create_run_output({
+                "scenario_run_id": run_id,
+                "metric_name": f"{model_type}_ci_upper",
+                "value": result.confidence_interval[1],
+                "unit": "MWh" if model_type in ["demand", "renewable"] else "$/MWh",
+                "created_at": datetime.utcnow(),
+            })
 
     async def get_scenario_run(self, scenario_id: str, run_id: str) -> Any:
         """Get scenario run by ID."""

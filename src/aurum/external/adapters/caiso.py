@@ -13,6 +13,7 @@ from typing import Any, Mapping, Optional, Sequence, Tuple, List
 
 from .base import IsoAdapter, IsoAdapterConfig, IsoRequestChunk
 from ..collect import HttpRequest
+from ...data.iso_catalog import canonicalize_iso_observation_record
 
 
 DEFAULT_BASE = os.getenv("AURUM_CAISO_BASE", "https://oasis.caiso.com/oasisapi")
@@ -75,6 +76,32 @@ class CaisoAdapter(IsoAdapter):
         for it in items:
             rec: dict[str, Any] = dict(it)
             rec.setdefault("ingest_ts", int(datetime.now(tz=timezone.utc).timestamp() * 1_000_000))
-            out.append(rec)
+            metadata = dict(rec.get("metadata") or {})
+            metadata.setdefault("market", self._cfg.market_run_id)
+            metadata.setdefault("product", metadata.get("product") or "LMP")
+            node_id = (
+                rec.get("node")
+                or rec.get("NODE")
+                or rec.get("NODE_ID")
+                or rec.get("node_id")
+                or rec.get("pnode")
+            )
+            metadata.setdefault("location_id", node_id)
+            metadata.setdefault(
+                "location_type",
+                rec.get("node_type")
+                or rec.get("NODE_TYPE")
+                or metadata.get("location_type")
+                or "NODE",
+            )
+            metadata.setdefault(
+                "interval_minutes",
+                metadata.get("interval_minutes")
+                or (5 if self._cfg.market_run_id.upper() == "RTM" else 60),
+            )
+            metadata.setdefault("unit", rec.get("uom") or metadata.get("unit") or "USD/MWh")
+            rec["metadata"] = metadata
+            if self.series_id:
+                rec.setdefault("series_id", self.series_id)
+            out.append(canonicalize_iso_observation_record("iso.caiso", rec))
         return (out, None)
-

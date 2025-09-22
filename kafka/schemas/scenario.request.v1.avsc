@@ -2,7 +2,7 @@
   "type": "record",
   "name": "ScenarioRequest",
   "namespace": "aurum.scenario",
-  "doc": "Request to compute a what-if scenario.",
+  "doc": "Request to compute a what-if scenario with retry and backpressure support.",
   "fields": [
     {"name": "scenario_id", "type": "string"},
     {"name": "tenant_id", "type": "string"},
@@ -25,6 +25,27 @@
         }
       }
     },
-    {"name": "submitted_ts", "type": {"type": "long", "logicalType": "timestamp-micros"}}
+    {"name": "submitted_ts", "type": {"type": "long", "logicalType": "timestamp-micros"}},
+    {"name": "priority", "type": "string", "default": "normal"},
+    {"name": "timeout_minutes", "type": "int", "default": 60},
+    {"name": "max_retries", "type": "int", "default": 3},
+    {"name": "retry_count", "type": "int", "default": 0},
+    {"name": "idempotency_key", "type": ["null", "string"], "default": null},
+    {"name": "parent_request_id", "type": ["null", "string"], "default": null},
+    {"name": "retry_delay_seconds", "type": ["null", "int"], "default": null},
+    {"name": "backpressure_strategy", "type": "string", "default": "exponential_backoff"},
+    {"name": "worker_requirements", "type": ["null", {
+      "type": "record",
+      "name": "WorkerRequirements",
+      "fields": [
+        {"name": "min_memory_mb", "type": "int", "default": 1024},
+        {"name": "min_cores", "type": "int", "default": 1},
+        {"name": "required_capabilities", "type": {"type": "array", "items": "string"}, "default": []}
+      ]
+    }], "default": null},
+    {"name": "metadata", "type": ["null", {
+      "type": "map",
+      "values": "string"
+    }], "default": null}
   ]
 }

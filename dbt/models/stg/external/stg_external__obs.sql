@@ -19,6 +19,17 @@ WITH raw_timeseries_observations AS (
         ingest_batch_id,
         source_event_id,
         metadata,
+        iso_code,
+        iso_market,
+        iso_product,
+        iso_location_type,
+        iso_location_id,
+        iso_location_name,
+        iso_timezone,
+        iso_interval_minutes,
+        iso_unit,
+        iso_subject,
+        iso_curve_role,
         -- Add row number to handle duplicates based on natural key
         ROW_NUMBER() OVER (
             PARTITION BY tenant_id, provider, series_id, ts, asof_date
@@ -46,6 +57,17 @@ SELECT
     ingest_run_id,
     ingest_batch_id,
     source_event_id,
-    metadata
+    metadata,
+    iso_code,
+    iso_market,
+    iso_product,
+    iso_location_type,
+    iso_location_id,
+    iso_location_name,
+    iso_timezone,
+    iso_interval_minutes,
+    iso_unit,
+    iso_subject,
+    iso_curve_role
 FROM raw_timeseries_observations
 WHERE rn = 1

@@ -25,6 +25,17 @@ WITH raw_series_catalog AS (
         ingest_batch_id,
         tags,
         metadata,
+        iso_code,
+        iso_market,
+        iso_product,
+        iso_location_type,
+        iso_location_id,
+        iso_location_name,
+        iso_timezone,
+        iso_interval_minutes,
+        iso_unit,
+        iso_subject,
+        iso_curve_role,
         version,
         -- Add row number to handle duplicates based on natural key + version
         ROW_NUMBER() OVER (
@@ -60,6 +71,17 @@ SELECT
     ingest_batch_id,
     tags,
     metadata,
+    iso_code,
+    iso_market,
+    iso_product,
+    iso_location_type,
+    iso_location_id,
+    iso_location_name,
+    iso_timezone,
+    iso_interval_minutes,
+    iso_unit,
+    iso_subject,
+    iso_curve_role,
     version
 FROM raw_series_catalog
 WHERE rn = 1

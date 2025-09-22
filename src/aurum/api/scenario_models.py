@@ -129,6 +129,11 @@ class ScenarioRunOptions(AurumBaseModel):
         return trimmed
 
 
+# Backward compatibility aliases for legacy imports
+ScenarioCreateRequest = CreateScenarioRequest
+ScenarioRunCreateRequest = ScenarioRunOptions
+
+
 class ScenarioRunData(AurumBaseModel):
     """Scenario run data model."""
 
@@ -295,6 +300,169 @@ class ScenarioRunBulkResponse(AurumBaseModel):
 
     meta: Dict[str, Any] = Field(..., description="Response metadata")
     data: List[ScenarioRunData] = Field(..., description="Created or existing runs")
+
+
+# Schema v2 models
+
+class CurveFamilyType(str, Enum):
+    """Types of curve families for scenario modeling."""
+    DEMAND = "demand"
+    SUPPLY = "supply"
+    PRICE = "price"
+    RENEWABLE = "renewable"
+    LOAD = "load"
+    WEATHER = "weather"
+    ECONOMIC = "economic"
+
+
+class ConstraintType(str, Enum):
+    """Types of constraints for scenario validation."""
+    BUDGET = "budget"
+    CAPACITY = "capacity"
+    POLICY = "policy"
+    TECHNICAL = "technical"
+    REGULATORY = "regulatory"
+
+
+class ConstraintSeverity(str, Enum):
+    """Severity levels for constraint violations."""
+    INFO = "info"
+    WARNING = "warning"
+    ERROR = "error"
+    CRITICAL = "critical"
+
+
+class ConstraintOperator(str, Enum):
+    """Operators for constraint validation."""
+    EQUALS = "="
+    NOT_EQUALS = "!="
+    LESS_THAN = "<"
+    LESS_THAN_OR_EQUAL = "<="
+    GREATER_THAN = ">"
+    GREATER_THAN_OR_EQUAL = ">="
+    IN = "in"
+    NOT_IN = "not_in"
+    BETWEEN = "between"
+
+
+class CurveFamily(AurumBaseModel):
+    """Curve family configuration for scenario modeling."""
+
+    id: str = Field(..., description="Curve family ID")
+    name: str = Field(..., description="Curve family name")
+    description: Optional[str] = Field(None, description="Curve family description")
+    family_type: CurveFamilyType = Field(..., description="Type of curve family")
+    curve_keys: List[str] = Field(default_factory=list, description="Curve keys in this family")
+    default_parameters: Dict[str, Any] = Field(default_factory=dict, description="Default parameters for the family")
+    validation_rules: Dict[str, Any] = Field(default_factory=dict, description="Validation rules for the family")
+    is_active: bool = Field(default=True, description="Whether the curve family is active")
+    created_by: str = Field(..., description="User who created the curve family")
+    created_at: datetime = Field(..., description="Creation timestamp")
+    updated_by: Optional[str] = Field(None, description="User who last updated the curve family")
+    updated_at: Optional[datetime] = Field(None, description="Last update timestamp")
+
+
+class ScenarioConstraint(AurumBaseModel):
+    """Constraint definition for scenario validation."""
+
+    id: str = Field(..., description="Constraint ID")
+    scenario_id: str = Field(..., description="Parent scenario ID")
+    constraint_type: ConstraintType = Field(..., description="Type of constraint")
+    constraint_key: str = Field(..., description="Key in scenario parameters to validate")
+    constraint_value: Any = Field(..., description="Expected value or range for constraint")
+    operator: ConstraintOperator = Field(..., description="Validation operator")
+    severity: ConstraintSeverity = Field(default=ConstraintSeverity.WARNING, description="Severity of constraint violation")
+    is_enforced: bool = Field(default=False, description="Whether constraint is enforced")
+    violation_message: Optional[str] = Field(None, description="Message to show on violation")
+    created_by: str = Field(..., description="User who created the constraint")
+    created_at: datetime = Field(..., description="Creation timestamp")
+
+
+class ScenarioProvenance(AurumBaseModel):
+    """Provenance tracking for scenario data sources."""
+
+    id: str = Field(..., description="Provenance ID")
+    scenario_id: str = Field(..., description="Parent scenario ID")
+    data_source: str = Field(..., description="Source of the data")
+    source_version: Optional[str] = Field(None, description="Version of the data source")
+    data_timestamp: datetime = Field(..., description="Timestamp when data was sourced")
+    transformation_hash: str = Field(..., description="Hash of the transformation applied")
+    input_parameters: Dict[str, Any] = Field(default_factory=dict, description="Parameters used in transformation")
+    quality_metrics: Dict[str, Any] = Field(default_factory=dict, description="Quality metrics of the data")
+    lineage_metadata: Dict[str, Any] = Field(default_factory=dict, description="Data lineage information")
+    created_at: datetime = Field(..., description="Creation timestamp")
+
+
+class ScenarioCurveFamily(AurumBaseModel):
+    """Association between scenario and curve family with configuration."""
+
+    scenario_id: str = Field(..., description="Scenario ID")
+    curve_family_id: str = Field(..., description="Curve family ID")
+    weight: float = Field(default=1.0, ge=0.0, le=1.0, description="Weight of this family in the scenario")
+    is_primary: bool = Field(default=False, description="Whether this is the primary curve family")
+    parameters: Dict[str, Any] = Field(default_factory=dict, description="Family-specific parameters")
+    created_at: datetime = Field(..., description="Creation timestamp")
+
+
+class CreateCurveFamilyRequest(AurumBaseModel):
+    """Request model for creating a curve family."""
+
+    name: str = Field(..., description="Curve family name")
+    description: Optional[str] = Field(None, description="Curve family description")
+    family_type: CurveFamilyType = Field(..., description="Type of curve family")
+    curve_keys: List[str] = Field(default_factory=list, description="Curve keys in this family")
+    default_parameters: Dict[str, Any] = Field(default_factory=dict, description="Default parameters")
+    validation_rules: Dict[str, Any] = Field(default_factory=dict, description="Validation rules")
+
+
+class CreateScenarioConstraintRequest(AurumBaseModel):
+    """Request model for creating a scenario constraint."""
+
+    constraint_type: ConstraintType = Field(..., description="Type of constraint")
+    constraint_key: str = Field(..., description="Key in scenario parameters to validate")
+    constraint_value: Any = Field(..., description="Expected value or range")
+    operator: ConstraintOperator = Field(..., description="Validation operator")
+    severity: ConstraintSeverity = Field(default=ConstraintSeverity.WARNING, description="Severity level")
+    is_enforced: bool = Field(default=False, description="Whether to enforce the constraint")
+    violation_message: Optional[str] = Field(None, description="Violation message")
+
+
+class CreateScenarioProvenanceRequest(AurumBaseModel):
+    """Request model for creating scenario provenance."""
+
+    data_source: str = Field(..., description="Source of the data")
+    source_version: Optional[str] = Field(None, description="Version of data source")
+    data_timestamp: datetime = Field(..., description="When data was sourced")
+    transformation_hash: str = Field(..., description="Hash of transformation")
+    input_parameters: Dict[str, Any] = Field(default_factory=dict, description="Transformation parameters")
+    quality_metrics: Dict[str, Any] = Field(default_factory=dict, description="Quality metrics")
+    lineage_metadata: Dict[str, Any] = Field(default_factory=dict, description="Lineage metadata")
+
+
+class ScenarioSchemaV2(AurumBaseModel):
+    """Extended scenario model with schema v2 features."""
+
+    # Inherit from ScenarioData
+    id: str = Field(..., description="Scenario ID")
+    tenant_id: str = Field(..., description="Tenant identifier")
+    name: str = Field(..., description="Scenario name")
+    description: Optional[str] = Field(None, description="Scenario description")
+    status: ScenarioStatus = Field(..., description="Scenario status")
+    unique_key: str = Field(..., description="Deterministic scenario key")
+    assumptions: List[Dict[str, Any]] = Field(default_factory=list, description="Scenario assumptions")
+    parameters: Dict[str, Any] = Field(default_factory=dict, description="Scenario parameters")
+    tags: List[str] = Field(default_factory=list, description="Scenario tags")
+    created_at: datetime = Field(..., description="Creation timestamp")
+    updated_at: Optional[datetime] = Field(None, description="Last update timestamp")
+    created_by: Optional[str] = Field(None, description="Creator identifier")
+    version: int = Field(default=1, description="Scenario version")
+    metadata: Dict[str, Any] = Field(default_factory=dict, description="Scenario metadata")
+
+    # Schema v2 additions
+    schema_version: int = Field(default=2, description="Schema version")
+    curve_families: List[str] = Field(default_factory=list, description="Associated curve family names")
+    constraints: List[ScenarioConstraint] = Field(default_factory=list, description="Scenario constraints")
+    provenance_enabled: bool = Field(default=False, description="Whether provenance tracking is enabled")
 
 
 # Legacy models for backward compatibility

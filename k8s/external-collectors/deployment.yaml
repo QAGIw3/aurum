@@ -21,7 +21,7 @@ spec:
       serviceAccountName: aurum-external-collectors
       containers:
         - name: collectors
-          image: ghcr.io/aurum/aurum-external-collectors:latest
+          image: aurum-external-collectors:latest
           imagePullPolicy: IfNotPresent
           command: ["aurum-external-collector", "--loop"]
           envFrom:

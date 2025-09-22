@@ -61,6 +61,7 @@ Write a short situation note in #data-platform with:
 | Inspect latest logs | `kubectl logs -l app=external-collector --since=30m` |
 | Validate credentials | Ensure secrets in `kubernetes secrets external-provider-*` are not rotated/expired |
 | Apply workarounds | Reduce batch size via `runtime_config` (`external_ingest.batch_size=500`) |
+| Check ISO contracts | `dbt run -m mart_external_series_catalog` then inspect `iso_*` columns to confirm markets/locations align |
 
 If only a subset of endpoints is broken, update the allowlist in
 `config/external_providers.yml` to temporarily disable affected feeds and reload
@@ -84,6 +85,9 @@ Airflow vars: `airflow variables set external_provider_config @config/external_p
    run the GE suite:
    ```bash
    great_expectations --v3-api checkpoint run external_dbt_outputs
+   great_expectations --v3-api checkpoint run mart_external_series_catalog
+   # Helper wrapper to refresh the ISO catalog and run validations
+   scripts/dbt/refresh_iso_contracts.py --target prod
    ```
 5. **Re-enable caching overrides** (if disabled):
    ```bash

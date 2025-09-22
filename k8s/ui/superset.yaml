@@ -20,7 +20,7 @@ spec:
           image: apache/superset:3.0.0
           command: ["/bin/sh", "-c"]
           args:
-            - superset db upgrade && superset init && python /bootstrap/add_timescale.py && python /import/import_iso_dashboard.py && superset run -h 0.0.0.0 -p 8088
+            - superset db upgrade && superset init && python /bootstrap/add_timescale.py && superset run -h 0.0.0.0 -p 8088
           envFrom:
             - configMapRef:
                 name: aurum-config

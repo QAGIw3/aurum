@@ -18,6 +18,17 @@
     {"name": "quality_flag", "type": ["null", "string"], "default": null, "doc": "Optional quality annotation supplied by provider."},
     {"name": "ingest_ts", "type": {"type": "long", "logicalType": "timestamp-micros"}, "doc": "Timestamp the record was ingested."},
     {"name": "source_event_id", "type": ["null", "string"], "default": null, "doc": "Optional upstream message identifier."},
+    {"name": "iso_code", "type": ["null", "string"], "default": null, "doc": "ISO code (e.g., PJM, ISO-NE)."},
+    {"name": "iso_market", "type": ["null", "string"], "default": null, "doc": "Market designation (DA, RT, etc.)."},
+    {"name": "iso_product", "type": ["null", "string"], "default": null, "doc": "ISO product identifier (LMP, LOAD, etc.)."},
+    {"name": "iso_location_type", "type": ["null", "string"], "default": null, "doc": "ISO location classification (NODE, ZONE, HUB, etc.)."},
+    {"name": "iso_location_id", "type": ["null", "string"], "default": null, "doc": "Primary ISO location identifier."},
+    {"name": "iso_location_name", "type": ["null", "string"], "default": null, "doc": "Human-readable ISO location name."},
+    {"name": "iso_timezone", "type": ["null", "string"], "default": null, "doc": "Canonical timezone (IANA)."},
+    {"name": "iso_interval_minutes", "type": ["null", "int"], "default": null, "doc": "Observation cadence in minutes."},
+    {"name": "iso_unit", "type": ["null", "string"], "default": null, "doc": "Canonical ISO unit."},
+    {"name": "iso_subject", "type": ["null", "string"], "default": null, "doc": "Subject classification for ISO data."},
+    {"name": "iso_curve_role", "type": ["null", "string"], "default": null, "doc": "Role describing how the observation is consumed (pricing, load, etc.)."},
     {"name": "metadata", "type": ["null", {"type": "map", "values": "string"}], "default": null, "doc": "Additional provider-specific metadata."}
   ]
 }

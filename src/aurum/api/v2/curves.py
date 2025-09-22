@@ -25,7 +25,7 @@ from ..http import respond_with_etag, deprecation_warning_headers
 from ..curves import get_curve_service
 from ...telemetry.context import get_request_id
 
-router = APIRouter()
+router = APIRouter(prefix="/v2", tags=["curves"])
 
 
 class CurveResponse(BaseModel):

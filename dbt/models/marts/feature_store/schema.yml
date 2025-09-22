@@ -1,0 +1,97 @@
+version: 2
+
+models:
+  - name: mart_cross_asset_features
+    description: "Cross-asset feature store combining weather, load, and price data for ML modeling"
+    tests:
+      - dbt_utils.unique_combination_of_columns:
+          combination_of_columns:
+            - timestamp
+            - geography
+    columns:
+      - name: timestamp
+        description: "Observation timestamp"
+        tests:
+          - not_null
+      - name: geography
+        description: "Geographic region"
+        tests:
+          - not_null
+      - name: temperature
+        description: "Temperature in Celsius"
+        tests:
+          - not_null
+      - name: humidity
+        description: "Relative humidity percentage"
+        tests:
+          - not_null
+      - name: wind_speed
+        description: "Wind speed in m/s"
+        tests:
+          - not_null
+      - name: solar_irradiance
+        description: "Solar irradiance in W/m²"
+        tests:
+          - not_null
+      - name: load_mw
+        description: "Electricity load in MW"
+        tests:
+          - not_null
+      - name: load_forecast_mw
+        description: "Forecasted load in MW"
+      - name: load_forecast_error
+        description: "Load forecast error (actual - forecast)"
+      - name: lmp_price
+        description: "Locational marginal price in $/MWh"
+        tests:
+          - not_null
+      - name: congestion_price
+        description: "Congestion component of LMP"
+      - name: loss_price
+        description: "Loss component of LMP"
+      - name: hour_of_day
+        description: "Hour of the day (0-23)"
+        tests:
+          - not_null
+      - name: day_of_week
+        description: "Day of the week (0=Monday, 6=Sunday)"
+        tests:
+          - not_null
+      - name: month_of_year
+        description: "Month of the year (1-12)"
+        tests:
+          - not_null
+      - name: is_weekend
+        description: "Weekend indicator (1=weekend, 0=weekday)"
+        tests:
+          - not_null
+      - name: is_peak_hour
+        description: "Peak hour indicator (1=peak, 0=off-peak)"
+        tests:
+          - not_null
+      - name: temp_squared
+        description: "Temperature squared for non-linear relationships"
+      - name: temp_cubed
+        description: "Temperature cubed for non-linear relationships"
+      - name: is_hot
+        description: "Hot temperature indicator (>25°C)"
+      - name: is_cold
+        description: "Cold temperature indicator (<5°C)"
+      - name: high_humidity
+        description: "High humidity indicator (>70%)"
+      - name: load_change_1h
+        description: "Load change from 1 hour ago"
+      - name: load_change_24h
+        description: "Load change from 24 hours ago"
+      - name: price_change_1h
+        description: "Price change from 1 hour ago"
+      - name: price_change_24h
+        description: "Price change from 24 hours ago"
+      - name: temp_load_correlation_24h
+        description: "24-hour rolling correlation between temperature and load"
+      - name: load_price_correlation_24h
+        description: "24-hour rolling correlation between load and price"
+      - name: weather_sensitivity_index
+        description: "Index of weather sensitivity to load"
+      - name: price_elasticity_index
+        description: "Index of price elasticity to load"
