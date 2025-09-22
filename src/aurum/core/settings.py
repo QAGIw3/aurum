@@ -91,7 +91,7 @@ class TrinoSettings(AurumBaseModel):
     user: str = Field(default="aurum", validation_alias=AliasChoices("API_TRINO_USER"))
     http_scheme: str = Field(default="http", validation_alias=AliasChoices("API_TRINO_SCHEME"))
     catalog: str = Field(default="iceberg", validation_alias=AliasChoices("API_TRINO_CATALOG"))
-    schema: str = Field(default="market", validation_alias=AliasChoices("API_TRINO_SCHEMA"))
+    database_schema: str = Field(default="market", validation_alias=AliasChoices("API_TRINO_SCHEMA"))
     password: str | None = Field(default=None, validation_alias=AliasChoices("API_TRINO_PASSWORD"))
 
 
