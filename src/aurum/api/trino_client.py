@@ -591,7 +591,7 @@ def get_trino_client(
             port=settings.trino.port,
             user=settings.trino.user,
             catalog=settings.trino.catalog,
-            schema=settings.trino.schema,
+            schema=settings.trino.database_schema,
             http_scheme=settings.trino.http_scheme,
         )
 
