@@ -231,6 +231,15 @@ async def create_app(settings: AurumSettings | None = None) -> FastAPI:
             observability_router,
             dependencies=[Depends(_observability_admin_guard)],
         )
+    # Optional Trino admin router
+    try:  # pragma: no cover - optional import
+        from .trino_admin import router as trino_admin_router
+        app.include_router(
+            trino_admin_router,
+            dependencies=[Depends(_observability_admin_guard)],
+        )
+    except Exception:
+        pass
     app.include_router(
         ratelimit_admin_router,
         dependencies=[Depends(_observability_admin_guard)],
