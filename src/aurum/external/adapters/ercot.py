@@ -54,8 +54,13 @@ class ErcotAdapter(IsoAdapter):
     """Adapter for ERCOT market data APIs.
 
     Supports SPP (Settlement Point Prices), load, generation,
-    and other ERCOT market data endpoints.
-    """
+and other ERCOT market data endpoints.
+
+Canonicalization:
+- Normalized records are passed through `canonicalize_iso_observation_record('iso.ercot', rec)`
+  so all downstream tables and APIs see consistent `iso_*` attributes. Metadata
+  remains a map of strings for Avro compatibility.
+"""
 
     def __init__(self, *, series_id: str, kafka_topic: str, schema_registry_url: Optional[str] = None) -> None:
         config = IsoAdapterConfig(

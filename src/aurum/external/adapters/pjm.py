@@ -2,6 +2,12 @@
 
 PJM provides electricity to 65 million people across 13 states and the District of Columbia.
 This adapter handles PJM's API endpoints for LMP, load, generation, and other market data.
+
+Canonicalization:
+- After mapping PJM-specific fields, the adapter enriches each record with
+  canonical ISO fields (`iso_*`) and stringified metadata by calling
+  `canonicalize_iso_observation_record('iso.pjm', rec)`. This ensures uniform
+  downstream behavior across providers.
 """
 from __future__ import annotations
 

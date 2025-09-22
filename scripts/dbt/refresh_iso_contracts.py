@@ -1,5 +1,13 @@
 #!/usr/bin/env python3
-"""Refresh ISO catalog contract metadata and execute validation suites."""
+"""Refresh ISO catalog contract metadata and execute validation suites.
+
+Runs:
+- dbt run: materialize `mart_external_series_catalog`
+- dbt test: validate the mart + dependents (unless skipped)
+- Great Expectations: execute the `mart_external_series_catalog` checkpoint (unless skipped)
+
+See docs/external/iso_canonical_contract.md for details.
+"""
 from __future__ import annotations
 
 import argparse

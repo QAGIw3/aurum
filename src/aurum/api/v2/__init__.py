@@ -14,6 +14,11 @@ This module contains the v2 API implementations with:
 
 from __future__ import annotations
 
-from . import scenarios, curves, metadata, iso, eia, ppa, drought, admin
+import os as _os
 
-__all__ = ["scenarios", "curves", "metadata", "iso", "eia", "ppa", "drought", "admin"]
+if _os.getenv("AURUM_API_V2_LIGHT_INIT", "0") == "1":
+    __all__: list[str] = []
+else:
+    from . import scenarios, curves, metadata, iso, eia, ppa, drought, admin
+
+    __all__ = ["scenarios", "curves", "metadata", "iso", "eia", "ppa", "drought", "admin"]

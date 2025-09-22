@@ -8,6 +8,12 @@
     )
 }}
 
+--
+-- External series catalog mart
+-- Enriches staging with canonical geography joins and promotes canonical ISO
+-- contract fields (`iso_*`). When top-level columns are missing (historical),
+-- falls back to metadata hints and provider defaults.
+--
 WITH catalog AS (
     SELECT
         tenant_id,

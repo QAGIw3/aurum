@@ -15,9 +15,11 @@
     tags=['external', 'observations', 'iceberg', 'timeseries']
 ) }}
 
--- Curated model for external observations mapped to curve format
--- This model transforms external timeseries observations into curve_observation format
--- for integration with the main curve data pipeline
+-- Curated model for external observations mapped to curve_observation format.
+--
+-- Notes:
+-- - Uses canonical ISO fields to set iso/market/product and spark_location.
+-- - Keeps lineage explicit, including iso_code, for auditability.
 
 WITH external_mapped_observations AS (
     SELECT

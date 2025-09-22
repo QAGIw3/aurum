@@ -1,3 +1,9 @@
+--
+-- Staging layer for external series catalog.
+-- Deduplicates by (tenant_id, provider, series_id, version) and surfaces
+-- canonical ISO fields produced by ingestion (`iso_*`). Metadata is a
+-- string map; complex values are JSON-stringified upstream for Avro safety.
+--
 WITH raw_series_catalog AS (
     SELECT
         tenant_id,

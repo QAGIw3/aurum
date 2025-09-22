@@ -1,7 +1,7 @@
 {
   "expectation_suite_name": "mart_external_series_catalog",
   "meta": {
-    "notes": "Data quality checks for the external series catalog mart."
+    "notes": "Data quality checks for the external series catalog mart. Validates canonical ISO fields (iso_code/market/product/location/timezone/interval/unit/subject/curve_role) are present or have UNKNOWN fallback; mapping_status is constrained."
   },
   "expectations": [
     {

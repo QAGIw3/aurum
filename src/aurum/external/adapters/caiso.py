@@ -3,6 +3,12 @@
 Notes:
 - CAISO "ALL" nodes queries must be limited in hours; enforce chunking <= 24h
 - Timestamps are provided in GMT; normalize to UTC
+
+Canonicalization:
+- Each emitted record is enriched with ISO canonical metadata (`iso_*` fields)
+  via `canonicalize_iso_observation_record('iso.caiso', rec)`. This ensures
+  consistent market/product/location semantics across providers and keeps
+  Avro metadata a map of strings by stringifying complex values.
 """
 from __future__ import annotations
 

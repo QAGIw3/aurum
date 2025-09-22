@@ -1,6 +1,33 @@
 from __future__ import annotations
 
-"""Canonical ISO catalog utilities."""
+"""Canonical ISO catalog utilities.
+
+Purpose
+-------
+Provide a single source of truth for canonical ISO contract attributes across
+ingestion, storage, and analytics. These helpers:
+
+- Derive and stamp `iso_*` fields (iso_code, iso_market, iso_product, etc.) onto
+  both series- and observation-level records using a consistent fallback order:
+  explicit field → metadata hint → provider defaults → heuristic → UNKNOWN.
+- Maintain an `iso_contract` object inside metadata for downstream consumers.
+- Normalize metadata to an Avro-compatible map[str,string] (values stringified),
+  preserving rich objects via JSON serialization when needed.
+
+Why string-only metadata?
+-------------------------
+Kafka contracts model metadata as `map<string,string>` to keep schemas stable
+and language-friendly. To remain compliant we stringify non-string values via
+`json.dumps` so consumers can parse complex objects as needed while keeping
+Avro types unchanged.
+
+Usage
+-----
+- Adapters call `canonicalize_iso_observation_record` before emitting events.
+- Series/catalog upserts go through `canonicalize_iso_series_record`.
+- dbt models prefer top-level `iso_*` columns when present and fall back to
+  metadata hints or provider defaults for historical rows.
+"""
 
 import json
 from typing import Any, Dict, Mapping, MutableMapping, Optional

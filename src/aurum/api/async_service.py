@@ -900,7 +900,7 @@ class AsyncScenarioService:
     async def cancel_scenario_run(self, run_id: str) -> Any:
         """Cancel a scenario run with idempotency and worker signaling."""
         import asyncio
-        from .scenario_service import ScenarioStore
+        from .scenarios.scenario_service import ScenarioStore
         from .auth import require_permission, Permission
 
         # Get the run first to validate it exists and get tenant info

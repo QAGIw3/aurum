@@ -29,7 +29,7 @@ from fastapi.responses import StreamingResponse
 from .config import CacheConfig, TrinoConfig
 from . import service
 from .container import get_service
-from .cache import CacheManager, AsyncCache, CacheBackend
+from .cache.cache import CacheManager, AsyncCache, CacheBackend
 from .exceptions import (
     AurumAPIException,
     ValidationException,
@@ -119,7 +119,7 @@ from .models import (
     ExternalSeriesQueryParams,
     ExternalObservationsQueryParams,
 )
-from .scenario_models import (
+from .scenarios.scenario_models import (
     CreateScenarioRequest,
     ScenarioResponse,
     ScenarioData,
@@ -185,7 +185,7 @@ from aurum.observability.metrics import (
     generate_latest,
 )
 from .auth import AuthMiddleware, OIDCConfig
-from .scenario_service import STORE as ScenarioStore
+from .scenarios.scenario_service import STORE as ScenarioStore
 from aurum.reference import iso_locations as ref_iso
 from aurum.core import AurumSettings
 from .state import get_settings

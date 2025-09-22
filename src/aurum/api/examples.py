@@ -6,7 +6,7 @@ from typing import Any, Dict, List, Optional
 import asyncio
 
 from .container import configure_services, get_service
-from .cache import AsyncCache, CacheManager, CacheBackend
+from .cache.cache import AsyncCache, CacheManager, CacheBackend
 from .exceptions import AurumAPIException, ValidationException
 from .testing import TestDataFactory
 
@@ -224,8 +224,8 @@ async def example_advanced_caching():
     """Example of using the advanced caching system."""
     print("\n=== Advanced Caching Example ===")
 
-    from .advanced_cache import get_advanced_cache_manager, get_cache_warming_service
-    from .cache import CacheBackend
+    from .cache.advanced_cache import get_advanced_cache_manager, get_cache_warming_service
+    from .cache.cache import CacheBackend
 
     # Get advanced cache manager
     cache_manager = get_advanced_cache_manager()
@@ -820,7 +820,7 @@ async def example_database_monitoring():
     """Example of database performance monitoring."""
     print("\n=== Database Performance Monitoring Example ===")
 
-    from .database_monitor import DatabaseMonitor, QueryMetrics, QueryPerformanceLevel
+    from .database.database_monitor import DatabaseMonitor, QueryMetrics, QueryPerformanceLevel
 
     print("Database Monitoring Features:")
     print("  - Real-time query performance tracking")
@@ -865,7 +865,7 @@ async def example_query_optimization():
     """Example of query optimization suggestions."""
     print("\n=== Query Optimization Example ===")
 
-    from .database_monitor import OptimizationType
+    from .database.database_monitor import OptimizationType
 
     print("Optimization Suggestion Types:")
     for opt_type in OptimizationType:

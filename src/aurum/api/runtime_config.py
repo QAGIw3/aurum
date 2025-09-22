@@ -23,7 +23,7 @@ from pydantic import BaseModel, Field
 
 from ..telemetry.context import get_request_id, get_user_id, log_structured
 from .routes import _get_principal, _require_admin
-from .ratelimit import RateLimitConfig
+from .rate_limiting.ratelimit import RateLimitConfig
 from aurum.core import AurumSettings
 
 

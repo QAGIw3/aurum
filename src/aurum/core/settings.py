@@ -759,8 +759,27 @@ class AurumSettings(BaseSettings):
         return self.model_copy(update=updates, deep=True)
 
 
+# Global settings instance
+_settings_instance: AurumSettings | None = None
+
+
+def get_settings() -> AurumSettings:
+    """Return the configured settings instance, raising if unavailable."""
+    if _settings_instance is None:  # pragma: no cover - defensive guard
+        raise RuntimeError("AurumSettings have not been configured")
+    return _settings_instance
+
+
+def configure_settings(settings: AurumSettings) -> None:
+    """Configure the global settings instance."""
+    global _settings_instance
+    _settings_instance = settings
+
+
 __all__ = [
     "AurumSettings",
+    "get_settings",
+    "configure_settings",
     "TrinoSettings",
     "RedisSettings",
     "RateLimitSettings",

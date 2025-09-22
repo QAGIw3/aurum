@@ -2698,7 +2698,7 @@ async def invalidate_curve_cache(
     location: Optional[str] = None,
 ) -> None:
     """Invalidate curve cache using CacheManager."""
-    from .cache import CacheManager
+    from .cache.cache import CacheManager
     from .container import get_service
 
     cache_manager = get_service(CacheManager)

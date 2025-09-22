@@ -9,7 +9,7 @@ from uuid import UUID
 
 from pydantic import BaseModel, Field, field_validator
 
-from .models import AurumBaseModel
+from aurum.core.models import AurumBaseModel
 
 
 class ScenarioStatus(str, Enum):
@@ -130,8 +130,8 @@ class ScenarioRunOptions(AurumBaseModel):
 
 
 # Backward compatibility aliases for legacy imports
-ScenarioCreateRequest = CreateScenarioRequest
-ScenarioRunCreateRequest = ScenarioRunOptions
+ScenarioCreateRequest = CreateScenarioRequest  # backwards compatibility for v1 imports
+ScenarioRunCreateRequest = ScenarioRunOptions  # backwards compatibility for v1 imports
 
 
 class ScenarioRunData(AurumBaseModel):

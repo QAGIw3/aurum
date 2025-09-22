@@ -4,6 +4,11 @@ Implements headers per product subscriptions (via env-provided headers) and
 JSON paging if present. Datasets use Avro subjects declared in contracts.yml.
 
 Enhanced with circuit breaker patterns, exponential backoff, and comprehensive error handling.
+
+Canonicalization:
+- The adapter stamps `series_id` and enriches output with canonical ISO contract
+  attributes by delegating to `canonicalize_iso_observation_record('iso.miso', rec)`.
+  Metadata is kept Avro-compatible (map of strings) by stringifying values.
 """
 from __future__ import annotations
 

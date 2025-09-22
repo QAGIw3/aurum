@@ -5,21 +5,28 @@ from __future__ import annotations
 import time
 from typing import Dict, Optional, Tuple
 
+import base64
+import json
+
 from fastapi import HTTPException
 from starlette.datastructures import URL
 
 from ..http import (
     MAX_PAGE_SIZE,
     create_pagination_metadata,
-    decode_cursor,
     encode_cursor,
     normalize_cursor_input,
 )
 
 
 def _normalize_filters(filters: Optional[Dict[str, object]]) -> Dict[str, object]:
+    """Return only the concrete filter values so cursors mirror active constraints."""
+
     if not filters:
         return {}
+    # ``None`` usually indicates an omitted filter. Dropping it keeps the cursor
+    # payload compact and ensures equality checks against replayed requests stay
+    # stable when optional parameters are left out by the client.
     return {key: value for key, value in filters.items() if value is not None}
 
 
@@ -43,7 +50,20 @@ def resolve_pagination(
     if not cursor:
         return 0, effective_limit
 
-    payload = decode_cursor(cursor)
+    try:
+        decoded = base64.urlsafe_b64decode(cursor.encode("ascii"))
+        payload = json.loads(decoded.decode("utf-8"))
+    except Exception as exc:  # pragma: no cover - input validation
+        # Surface the same error that the API emits for any malformed cursor so
+        # client behaviour remains deterministic across endpoints.
+        raise HTTPException(status_code=400, detail="Invalid cursor") from exc
+
+    if not isinstance(payload, dict):
+        raise HTTPException(status_code=400, detail="Invalid cursor")
+
+    # ``normalize_cursor_input`` understands the historical offset payload we
+    # still emit (``{"offset": .., "limit": ..}``), so we let it compute the
+    # numeric pointer and return any supplemental metadata alongside it.
     offset, extras = normalize_cursor_input(payload)
 
     if offset is None:
@@ -120,4 +140,3 @@ __all__ = [
     "build_next_cursor",
     "build_pagination_envelope",
 ]
-

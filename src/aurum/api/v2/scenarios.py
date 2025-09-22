@@ -45,6 +45,8 @@ async def get_scenario_service() -> AsyncScenarioService:
     return get_service(AsyncScenarioService)
 
 router = APIRouter(prefix="/v2", tags=["scenarios"])
+# NOTE: the prefix keeps paths aligned with the app wiring so tests can mount
+# this router in isolation without replicating the entire application factory.
 
 
 class ScenarioListResponse(BaseModel):

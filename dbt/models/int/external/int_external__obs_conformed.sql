@@ -1,6 +1,11 @@
 -- Conformance layer for external observations
--- This model standardizes values across providers through unit conversions,
--- frequency normalization, timezone alignment, and value validation
+--
+-- Responsibilities:
+-- - Convert values to canonical USD/MWh and validate ranges
+-- - Normalize timestamps to UTC
+-- - Attach canonical geography (provider → canonical region mapping)
+-- - Prefer top-level `iso_*` columns when available (from ingestion contracts)
+--   with fallback to metadata hints; retain sensible defaults to avoid nulls
 
 WITH raw_observations AS (
     SELECT

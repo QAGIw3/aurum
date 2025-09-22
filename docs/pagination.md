@@ -35,5 +35,10 @@ List endpoints return `meta` with:
 - Large filter payloads and unicode content are supported and preserved.
 - Prefer cursor-based pagination for long-running exports to avoid duplicates as data evolves.
 
-Quick examples are in `README.md:Curve API`. For programmatic iteration, propagate `next_cursor` until it is absent (end of stream).
+## V2 Implementation Notes
 
+- The v2 endpoints share a lightweight helper (`src/aurum/api/v2/pagination.py`) that encodes only the offset, limit, and concrete filters. This keeps cursors stable and the surface easy to test.
+- Cursors are Base64-encoded JSON. If decoding fails the API responds with a generic `Invalid cursor` error so clients can drop the token and restart safely.
+- Link headers include a fully qualified `next` URL with an URL-encoded cursor. Parse the query parameters rather than performing direct string comparisons.
+
+Quick examples are in `README.md:Curve API`. For programmatic iteration, propagate `next_cursor` until it is absent (end of stream).

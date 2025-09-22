@@ -121,6 +121,7 @@ Templates live in `docs/runbooks/templates/incident-updates.md`.
 - **Contacts**: External escalation doc `docs/runbooks/external-provider-contacts.md`.
 - **Tooling**: `make perf-k6` (confirm API headroom post-outage), runtime-config
   admin API for temporary overrides, `dbt run/test` for marts.
+ - **ISO contract**: See `docs/external/iso_canonical_contract.md` for canonical fields and validation steps.
 
 Keep this runbook in sync with the Airflow DAG ownership map and provider
 contracts. Update contact info and automation references at least quarterly.

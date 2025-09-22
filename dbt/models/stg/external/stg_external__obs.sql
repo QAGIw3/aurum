@@ -1,3 +1,9 @@
+--
+-- Staging layer for external observations.
+-- Deduplicates by natural key (tenant, provider, series, ts, asof) and passes
+-- through canonical ISO fields (`iso_*`) when available from ingestion.
+-- Metadata is a string map (JSON for complex structures).
+--
 WITH raw_timeseries_observations AS (
     SELECT
         tenant_id,

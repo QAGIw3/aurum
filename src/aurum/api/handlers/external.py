@@ -14,7 +14,7 @@ from fastapi.responses import StreamingResponse
 from pydantic import ValidationError
 
 from ..config import CacheConfig, TrinoConfig
-from ..cache import CacheManager, AsyncCache, CacheBackend
+from ..cache.cache import CacheManager, AsyncCache, CacheBackend
 from ..exceptions import (
     AurumAPIException,
     ValidationException,

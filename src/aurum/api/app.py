@@ -29,14 +29,14 @@ from aurum.core import AurumSettings
 from aurum.telemetry import configure_telemetry
 
 from aurum.performance.warehouse import WarehouseMaintenanceCoordinator
-from .cache import AsyncCache, CacheBackend, CacheManager
-from .golden_query_cache import initialize_golden_query_cache
+from .cache.cache import AsyncCache, CacheBackend, CacheManager
+from .cache.golden_query_cache import initialize_golden_query_cache
 
 from . import routes as _routes
 
 from .auth import AuthMiddleware, OIDCConfig
 from .config import CacheConfig
-from .ratelimit import RateLimitConfig, RateLimitMiddleware, ratelimit_admin_router
+from .rate_limiting.ratelimit import RateLimitConfig, RateLimitMiddleware, ratelimit_admin_router
 from .runtime_config import router as runtime_config_router
 from .routes import METRICS_MIDDLEWARE, access_log_middleware, configure_routes, router
 from .state import configure as configure_state

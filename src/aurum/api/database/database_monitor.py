@@ -12,7 +12,7 @@ from enum import Enum
 from collections import defaultdict, deque
 
 from ..telemetry.context import get_request_id
-from .cache import AsyncCache, CacheManager
+from ..cache.cache import AsyncCache, CacheManager
 
 
 class QueryPerformanceLevel(Enum):

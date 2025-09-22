@@ -1,6 +1,12 @@
 """SPP (Southwest Power Pool) adapter for electricity market data.
 
 SPP manages the electric grid across 17 states, serving over 18 million people.
+
+Canonicalization:
+- Output records are enriched with canonical ISO attributes (`iso_*`) by
+  calling `canonicalize_iso_observation_record('iso.spp', rec)` so downstream
+  datasets and APIs see consistent market/product/location semantics across ISOs.
+  Metadata remains Avro-safe (map of strings) by stringifying values.
 """
 from __future__ import annotations
 

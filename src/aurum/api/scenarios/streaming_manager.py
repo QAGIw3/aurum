@@ -10,7 +10,7 @@ from dataclasses import dataclass
 
 from ..telemetry.context import get_request_id
 from .websocket_manager import WebSocketManager
-from .cache import AsyncCache, CacheManager
+from ..cache.cache import AsyncCache, CacheManager
 
 
 @dataclass

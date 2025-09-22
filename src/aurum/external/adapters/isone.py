@@ -2,6 +2,11 @@
 
 For ingestion we stick to JSON responses (not XML) and normalize to Avro.
 Enhanced with circuit breaker patterns, exponential backoff, and comprehensive error handling.
+
+Canonicalization:
+- Before validation/emission, records are normalized and augmented with
+  canonical ISO attributes using `canonicalize_iso_observation_record('iso.isone', rec)`.
+  These attributes propagate into Kafka, staging, and curated marts.
 """
 from __future__ import annotations
 

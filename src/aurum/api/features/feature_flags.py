@@ -12,7 +12,7 @@ from enum import Enum
 from abc import ABC, abstractmethod
 
 from ..telemetry.context import get_request_id
-from .cache import AsyncCache, CacheManager
+from ..cache.cache import AsyncCache, CacheManager
 
 
 class FeatureFlagStatus(Enum):
