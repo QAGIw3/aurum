@@ -6,7 +6,7 @@ import os
 from enum import Enum
 from typing import Any, Dict, Iterable, List
 
-from pydantic import AliasChoices, Field, field_validator
+from pydantic import AliasChoices, ConfigDict, Field, field_validator
 
 try:  # pragma: no cover - fallback when pydantic-settings is unavailable
     from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -85,7 +85,7 @@ class DataBackendSettings(AurumBaseModel):
         return v
 
 
-class TrinoSettings(AurumBaseModel):
+class TrinoSettings(BaseSettings):
     host: str = Field(default="localhost", validation_alias=AliasChoices("API_TRINO_HOST"))
     port: int = Field(default=8080, ge=0, validation_alias=AliasChoices("API_TRINO_PORT"))
     user: str = Field(default="aurum", validation_alias=AliasChoices("API_TRINO_USER"))
@@ -93,6 +93,10 @@ class TrinoSettings(AurumBaseModel):
     catalog: str = Field(default="iceberg", validation_alias=AliasChoices("API_TRINO_CATALOG"))
     database_schema: str = Field(default="market", validation_alias=AliasChoices("API_TRINO_SCHEMA"))
     password: str | None = Field(default=None, validation_alias=AliasChoices("API_TRINO_PASSWORD"))
+
+    model_config = SettingsConfigDict(
+        ignored_types=(str, int, float, bool, list, dict, type(None)),
+    )
 
 
 class RedisSettings(AurumBaseModel):
