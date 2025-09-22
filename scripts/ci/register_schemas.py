@@ -31,6 +31,7 @@ from aurum.schema_registry import (
     SubjectRegistrationError,
     SchemaCompatibilityError
 )
+from aurum.schema_registry.contracts import ContractError, SubjectContracts
 from aurum.logging import StructuredLogger, LogLevel, create_logger
 
 
@@ -50,6 +51,7 @@ class SchemaRegistrationScript:
         """
         self.registry_manager = SchemaRegistryManager(config)
         self.compatibility_checker = CompatibilityChecker()
+        self.contracts: Optional[SubjectContracts] = None
 
         self.logger = create_logger(
             source_name="schema_registration_ci",
@@ -57,6 +59,44 @@ class SchemaRegistrationScript:
             kafka_topic="aurum.schema_registry.ci",
             dataset="schema_registration"
         )
+
+    def _load_contracts(self, schema_dir: Path) -> Optional[SubjectContracts]:
+        """Load the subject contract catalog if available."""
+        config = self.registry_manager.config
+        if not config.enforce_contracts:
+            return None
+
+        if self.contracts is not None:
+            return self.contracts
+
+        contracts_path = Path(config.contracts_path or (schema_dir / "contracts.yml"))
+        if not contracts_path.exists():
+            return None
+
+        try:
+            self.contracts = SubjectContracts(
+                contracts_path,
+                schema_search_paths=[schema_dir],
+            )
+            self.logger.log(
+                LogLevel.INFO,
+                "Loaded contract catalog",
+                "schema_contract_catalog_loaded",
+                contracts_path=str(contracts_path),
+                subject_count=len(self.contracts.list_subjects()),
+            )
+            return self.contracts
+        except ContractError as exc:
+            self.logger.log(
+                LogLevel.ERROR,
+                f"Failed to load contracts catalog: {exc}",
+                "schema_contract_catalog_error",
+                contracts_path=str(contracts_path),
+                error=str(exc),
+            )
+            if config.fail_on_missing_contract:
+                raise SchemaRegistrationError(f"Contract catalog failed to load: {exc}") from exc
+            return None
 
     def register_schemas_from_directory(
         self,
@@ -80,6 +120,8 @@ class SchemaRegistrationScript:
         if not schema_dir.exists():
             raise SchemaRegistrationError(f"Schema directory not found: {schema_dir}")
 
+        contracts = self._load_contracts(schema_dir)
+
         results = {
             "total_schemas": 0,
             "registered_schemas": 0,
@@ -89,47 +131,98 @@ class SchemaRegistrationScript:
             "errors": []
         }
 
-        # Find all .avsc files
-        schema_files = list(schema_dir.rglob("*.avsc"))
-        results["total_schemas"] = len(schema_files)
+        if contracts:
+            contract_subjects = contracts.list_subjects()
+            results["total_schemas"] = len(contract_subjects)
 
-        self.logger.log(
-            LogLevel.INFO,
-            f"Found {len(schema_files)} schema files in {schema_dir}",
-            "schema_discovery",
-            schema_dir=str(schema_dir),
-            schema_count=len(schema_files)
-        )
+            self.logger.log(
+                LogLevel.INFO,
+                f"Processing {len(contract_subjects)} contract-defined subjects",
+                "schema_contract_discovery",
+                schema_dir=str(schema_dir),
+                subject_count=len(contract_subjects),
+            )
 
-        for schema_file in schema_files:
-            try:
-                result = self.register_single_schema(
-                    schema_file,
-                    compatibility_mode,
-                    dry_run
-                )
-                results["schema_details"].append(result)
+            for contract in contract_subjects:
+                schema_path = contract.schema_path([schema_dir])
+                try:
+                    contract_mode = SchemaCompatibilityMode(contract.compatibility)
+                except ValueError as exc:
+                    raise SchemaRegistrationError(
+                        f"Unsupported compatibility '{contract.compatibility}' for subject {contract.subject}"
+                    ) from exc
+                try:
+                    result = self.register_single_schema(
+                        schema_path,
+                        contract_mode,
+                        dry_run,
+                        subject=contract.subject,
+                    )
+                    results["schema_details"].append(result)
 
-                if result["registered"]:
-                    results["registered_schemas"] += 1
-                elif result["failed"]:
-                    results["failed_registrations"] += 1
+                    if result["registered"]:
+                        results["registered_schemas"] += 1
+                    elif result["failed"]:
+                        results["failed_registrations"] += 1
 
-                if result["compatibility_issues"]:
-                    results["compatibility_issues"] += 1
+                    if result["compatibility_issues"]:
+                        results["compatibility_issues"] += 1
 
-            except Exception as e:
-                results["errors"].append({
-                    "schema_file": str(schema_file),
-                    "error": str(e)
-                })
-                self.logger.log(
-                    LogLevel.ERROR,
-                    f"Failed to process schema {schema_file}: {e}",
-                    "schema_processing_error",
-                    schema_file=str(schema_file),
-                    error=str(e)
-                )
+                except Exception as e:  # noqa: BLE001 - log all failures
+                    results["errors"].append({
+                        "schema_file": str(schema_path),
+                        "error": str(e)
+                    })
+                    self.logger.log(
+                        LogLevel.ERROR,
+                        f"Failed to process contract subject {contract.subject}: {e}",
+                        "schema_processing_error",
+                        schema_file=str(schema_path),
+                        subject=contract.subject,
+                        error=str(e)
+                    )
+        else:
+            # Find all .avsc files
+            schema_files = list(schema_dir.rglob("*.avsc"))
+            results["total_schemas"] = len(schema_files)
+
+            self.logger.log(
+                LogLevel.INFO,
+                f"Found {len(schema_files)} schema files in {schema_dir}",
+                "schema_discovery",
+                schema_dir=str(schema_dir),
+                schema_count=len(schema_files)
+            )
+
+            for schema_file in schema_files:
+                try:
+                    result = self.register_single_schema(
+                        schema_file,
+                        compatibility_mode,
+                        dry_run
+                    )
+                    results["schema_details"].append(result)
+
+                    if result["registered"]:
+                        results["registered_schemas"] += 1
+                    elif result["failed"]:
+                        results["failed_registrations"] += 1
+
+                    if result["compatibility_issues"]:
+                        results["compatibility_issues"] += 1
+
+                except Exception as e:  # noqa: BLE001 - log all failures
+                    results["errors"].append({
+                        "schema_file": str(schema_file),
+                        "error": str(e)
+                    })
+                    self.logger.log(
+                        LogLevel.ERROR,
+                        f"Failed to process schema {schema_file}: {e}",
+                        "schema_processing_error",
+                        schema_file=str(schema_file),
+                        error=str(e)
+                    )
 
         # Log summary
         self.logger.log(
@@ -145,7 +238,9 @@ class SchemaRegistrationScript:
         self,
         schema_file: Path,
         compatibility_mode: SchemaCompatibilityMode,
-        dry_run: bool = False
+        dry_run: bool = False,
+        *,
+        subject: Optional[str] = None
     ) -> Dict[str, Any]:
         """Register a single schema file.
 
@@ -153,28 +248,30 @@ class SchemaRegistrationScript:
             schema_file: Path to schema file
             compatibility_mode: Compatibility mode
             dry_run: If True, only validate without registering
+            subject: Optional subject override from contract catalog
 
         Returns:
             Registration result details
         """
         result = {
             "schema_file": str(schema_file),
-            "subject": "",
+            "subject": subject or "",
             "registered": False,
             "failed": False,
             "compatibility_issues": False,
             "schema_id": None,
             "version": None,
             "errors": [],
-            "warnings": []
+            "warnings": [],
+            "contract_subject": subject is not None,
         }
 
         try:
             # Load schema
             schema = json.loads(schema_file.read_text())
-            subject = self._extract_subject_from_schema(schema, schema_file)
+            resolved_subject = subject or self._extract_subject_from_schema(schema, schema_file)
 
-            result["subject"] = subject
+            result["subject"] = resolved_subject
 
             # Validate schema
             validation_errors = self._validate_schema_file(schema, schema_file)
@@ -184,7 +281,7 @@ class SchemaRegistrationScript:
                 return result
 
             # Check compatibility
-            compatibility_result = self.registry_manager.check_compatibility(subject, schema)
+            compatibility_result = self.registry_manager.check_compatibility(resolved_subject, schema)
 
             if not compatibility_result.is_compatible:
                 result["compatibility_issues"] = True
@@ -199,7 +296,7 @@ class SchemaRegistrationScript:
             if not dry_run:
                 try:
                     schema_info = self.registry_manager.register_subject(
-                        subject,
+                        resolved_subject,
                         schema,
                         compatibility_mode
                     )
@@ -210,9 +307,9 @@ class SchemaRegistrationScript:
 
                     self.logger.log(
                         LogLevel.INFO,
-                        f"Successfully registered schema {subject} version {schema_info.version}",
+                        f"Successfully registered schema {resolved_subject} version {schema_info.version}",
                         "schema_registered",
-                        subject=subject,
+                        subject=resolved_subject,
                         schema_id=schema_info.schema_id,
                         version=schema_info.version
                     )
@@ -223,9 +320,9 @@ class SchemaRegistrationScript:
 
                     self.logger.log(
                         LogLevel.ERROR,
-                        f"Failed to register schema {subject}: {e}",
+                        f"Failed to register schema {resolved_subject}: {e}",
                         "schema_registration_failed",
-                        subject=subject,
+                        subject=resolved_subject,
                         error=str(e)
                     )
             else:
@@ -421,6 +518,12 @@ def main(argv: Optional[List[str]] = None) -> int:
     )
 
     parser.add_argument(
+        "--contracts",
+        type=Path,
+        help="Path to contracts catalog (defaults to <schema_dir>/contracts.yml or package defaults)"
+    )
+
+    parser.add_argument(
         "--registry-url",
         default="http://localhost:8081",
         help="Schema Registry base URL"
@@ -465,7 +568,9 @@ def main(argv: Optional[List[str]] = None) -> int:
             base_url=args.registry_url,
             default_compatibility_mode=SchemaCompatibilityMode(args.compatibility),
             enforce_compatibility=not args.dry_run,
-            fail_on_incompatible=args.fail_on_error
+            fail_on_incompatible=args.fail_on_error,
+            contracts_path=str(args.contracts) if args.contracts else None,
+            fail_on_missing_contract=args.fail_on_error,
         )
 
         # Create registration script

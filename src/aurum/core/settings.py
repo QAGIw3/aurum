@@ -87,6 +87,7 @@ class RateLimitSettings(AurumBaseModel):
     burst: int = Field(default=20, ge=0, validation_alias=AliasChoices("API_RATE_LIMIT_BURST"))
     identifier_header: str | None = Field(default=None, validation_alias=AliasChoices("API_RATE_LIMIT_HEADER"))
     overrides: dict[str, tuple[int, int]] = Field(default_factory=dict, validation_alias=AliasChoices("API_RATE_LIMIT_OVERRIDES"))
+    tenant_overrides: dict[str, dict[str, tuple[int, int]]] = Field(default_factory=dict, validation_alias=AliasChoices("API_RATE_LIMIT_TENANT_OVERRIDES"))
     whitelist: tuple[str, ...] = Field(default_factory=tuple, validation_alias=AliasChoices("API_RATE_LIMIT_WHITELIST"))
 
     @field_validator("overrides", mode="before")
@@ -133,6 +134,53 @@ class RateLimitSettings(AurumBaseModel):
             return tuple(str(item).strip() for item in value if str(item).strip())
         raise TypeError("Invalid rate limit whitelist definition")
 
+    @field_validator("tenant_overrides", mode="before")
+    @classmethod
+    def _parse_tenant_overrides(cls, value: Any) -> dict[str, dict[str, tuple[int, int]]]:
+        if value in (None, "", {}):
+            return {}
+        if isinstance(value, str):
+            tenant_overrides: dict[str, dict[str, tuple[int, int]]] = {}
+            for item in value.split(","):
+                item = item.strip()
+                if not item:
+                    continue
+                if "=" not in item:
+                    continue
+                tenant_path_part, limits_part = item.split("=", 1)
+
+                # Parse tenant:path=rps:burst format
+                if ":" not in tenant_path_part:
+                    continue
+                tenant_part, path_part = tenant_path_part.split(":", 1)
+
+                limit_tokens = limits_part.split(":")
+                if len(limit_tokens) != 2:
+                    continue
+
+                try:
+                    if tenant_part not in tenant_overrides:
+                        tenant_overrides[tenant_part] = {}
+                    tenant_overrides[tenant_part][path_part.strip()] = (int(limit_tokens[0]), int(limit_tokens[1]))
+                except ValueError:
+                    continue
+            return tenant_overrides
+        if isinstance(value, Mapping):
+            parsed: dict[str, dict[str, tuple[int, int]]] = {}
+            for tenant_key, tenant_limits in value.items():
+                if isinstance(tenant_limits, Mapping):
+                    tenant_parsed: dict[str, tuple[int, int]] = {}
+                    for path_key, limits in tenant_limits.items():
+                        if isinstance(limits, (tuple, list)) and len(limits) == 2:
+                            try:
+                                tenant_parsed[str(path_key)] = (int(limits[0]), int(limits[1]))
+                            except (TypeError, ValueError):
+                                continue
+                    if tenant_parsed:
+                        parsed[str(tenant_key)] = tenant_parsed
+            return parsed
+        raise TypeError("Invalid rate limit tenant overrides definition")
+
 
 class AuthSettings(AurumBaseModel):
     disabled: bool = Field(default=False, validation_alias=AliasChoices("API_AUTH_DISABLED"))
@@ -144,6 +192,8 @@ class AuthSettings(AurumBaseModel):
     client_secret: str | None = Field(default=None, validation_alias=AliasChoices("API_OIDC_CLIENT_SECRET"))
     jwt_secret: str | None = Field(default=None, validation_alias=AliasChoices("API_JWT_SECRET"))
     jwt_leeway_seconds: int = Field(default=60, ge=0, validation_alias=AliasChoices("API_JWT_LEEWAY"))
+    forward_auth_header: str | None = Field(default=None, validation_alias=AliasChoices("API_FORWARD_AUTH_HEADER"))
+    forward_auth_claims_header: str | None = Field(default=None, validation_alias=AliasChoices("API_FORWARD_AUTH_CLAIMS_HEADER"))
 
     @field_validator("admin_groups", mode="before")
     @classmethod
@@ -224,6 +274,9 @@ class ApiSettings(AurumBaseModel):
     cors_allow_credentials: bool = Field(default=False, validation_alias=AliasChoices("API_CORS_ALLOW_CREDENTIALS"))
     gzip_min_bytes: int = Field(default=500, ge=0, validation_alias=AliasChoices("API_GZIP_MIN_BYTES"))
     request_timeout_seconds: float = Field(default=30.0, gt=0.0, validation_alias=AliasChoices("API_REQUEST_TIMEOUT"))
+    max_request_body_size: int = Field(default=10485760, ge=1024, validation_alias=AliasChoices("API_MAX_REQUEST_BODY_SIZE"))  # 10MB default
+    max_response_body_size: int = Field(default=104857600, ge=1024, validation_alias=AliasChoices("API_MAX_RESPONSE_BODY_SIZE"))  # 100MB default
+    max_concurrent_requests: int = Field(default=1000, ge=10, validation_alias=AliasChoices("API_MAX_CONCURRENT_REQUESTS"))
     scenario_outputs_enabled: bool = Field(default=True, validation_alias=AliasChoices("API_SCENARIO_OUTPUTS_ENABLED"))
     ppa_write_enabled: bool = Field(default=True, validation_alias=AliasChoices("API_PPA_WRITE_ENABLED"))
     rate_limit: RateLimitSettings = Field(default_factory=RateLimitSettings)
@@ -388,6 +441,12 @@ class AurumSettings(BaseSettings):
             update_api(gzip_min_bytes=int(value))
         if (value := env.get("AURUM_API_REQUEST_TIMEOUT")) is not None:
             update_api(request_timeout_seconds=float(value))
+        if (value := env.get("AURUM_API_MAX_REQUEST_BODY_SIZE")) is not None:
+            update_api(max_request_body_size=int(value))
+        if (value := env.get("AURUM_API_MAX_RESPONSE_BODY_SIZE")) is not None:
+            update_api(max_response_body_size=int(value))
+        if (value := env.get("AURUM_API_MAX_CONCURRENT_REQUESTS")) is not None:
+            update_api(max_concurrent_requests=int(value))
         if (value := env.get("AURUM_API_SCENARIO_OUTPUTS_ENABLED")) is not None:
             update_api(scenario_outputs_enabled=cls._truthy(value))
         if (value := env.get("AURUM_API_PPA_WRITE_ENABLED")) is not None:
@@ -417,6 +476,32 @@ class AurumSettings(BaseSettings):
                     continue
             if overrides:
                 update_rate_limit(overrides=overrides)
+
+        if (value := env.get("AURUM_API_RATE_LIMIT_TENANT_OVERRIDES")) is not None:
+            tenant_overrides: dict[str, dict[str, tuple[int, int]]] = {}
+            for entry in value.split(","):
+                entry = entry.strip()
+                if not entry or "=" not in entry:
+                    continue
+                tenant_path_part, limits_part = entry.split("=", 1)
+
+                # Parse tenant:path=rps:burst format
+                if ":" not in tenant_path_part:
+                    continue
+                tenant_part, path_part = tenant_path_part.split(":", 1)
+
+                limit_tokens = limits_part.split(":")
+                if len(limit_tokens) != 2:
+                    continue
+
+                try:
+                    if tenant_part not in tenant_overrides:
+                        tenant_overrides[tenant_part] = {}
+                    tenant_overrides[tenant_part][path_part.strip()] = (int(limit_tokens[0]), int(limit_tokens[1]))
+                except ValueError:
+                    continue
+            if tenant_overrides:
+                update_rate_limit(tenant_overrides=tenant_overrides)
 
         if (value := env.get("AURUM_API_METRICS_ENABLED")) is not None:
             update_metrics(enabled=cls._truthy(value))

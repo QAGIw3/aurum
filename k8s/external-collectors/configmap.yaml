@@ -1,0 +1,14 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: aurum-external-collectors-config
+  labels:
+    app.kubernetes.io/name: aurum-external-collectors
+    app.kubernetes.io/component: collectors
+    app.kubernetes.io/part-of: aurum
+data:
+  AURUM_COLLECTORS_PROVIDERS: "eia,fred,noaa,worldbank"
+  AURUM_COLLECTORS_INTERVAL_SECONDS: "21600"
+  AURUM_COLLECTOR_CHECKPOINT_DSN: "postgresql://aurum:aurum@postgres.aurum-dev.svc.cluster.local:5432/aurum"
+  NOAA_RATE_LIMIT_RPS: "5"
+  WORLD_BANK_API_BASE_URL: "https://api.worldbank.org/v2"

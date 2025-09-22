@@ -3,13 +3,23 @@
 from __future__ import annotations
 
 import json
+from datetime import datetime
+from pathlib import Path
+from typing import Any, Dict, List, Optional, Union
+from urllib.parse import urljoin
+
 import requests
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Dict, List, Optional, Any, Union
-from urllib.parse import urljoin
 
 from ..logging import StructuredLogger, LogLevel, create_logger
+from .contracts import (
+    ContractError,
+    SchemaNotFoundError,
+    SubjectContracts,
+    SubjectNotDefinedError,
+    SubjectPatternError,
+)
 
 
 class SchemaCompatibilityMode(str, Enum):
@@ -59,6 +69,10 @@ class SchemaRegistryConfig:
     # Subject naming configuration
     subject_prefix: str = "aurum"
     subject_suffix: str = "v1"
+    contracts_path: Optional[str] = None
+    enforce_contracts: bool = True
+    fail_on_missing_contract: bool = True
+    validate_contract_schema: bool = True
 
     # Compatibility enforcement
     enforce_compatibility: bool = True
@@ -115,6 +129,41 @@ class SchemaRegistryManager:
 
         # Cache for registered schemas
         self._schema_cache: Dict[str, SchemaInfo] = {}
+        self._contracts: Optional[SubjectContracts] = None
+
+        if config.enforce_contracts:
+            default_contract_path = Path(__file__).resolve().parents[3] / "kafka" / "schemas" / "contracts.yml"
+            contracts_path = Path(config.contracts_path or default_contract_path)
+
+            if contracts_path.exists():
+                try:
+                    self._contracts = SubjectContracts(contracts_path)
+                    self.logger.log(
+                        LogLevel.INFO,
+                        "Loaded Avro subject contracts",
+                        "schema_contracts_loaded",
+                        contracts_path=str(contracts_path),
+                        subject_count=len(self._contracts.list_subjects()),
+                    )
+                except ContractError as exc:
+                    if config.fail_on_missing_contract:
+                        raise SchemaRegistryError(f"Failed to load contract catalog: {exc}") from exc
+                    self.logger.log(
+                        LogLevel.WARNING,
+                        f"Contract catalog could not be loaded: {exc}",
+                        "schema_contracts_load_failed",
+                        contracts_path=str(contracts_path),
+                        error=str(exc),
+                    )
+            elif config.fail_on_missing_contract:
+                raise SchemaRegistryError(f"Contract catalog not found at {contracts_path}")
+            else:
+                self.logger.log(
+                    LogLevel.WARNING,
+                    "Contract catalog missing but enforcement disabled",
+                    "schema_contracts_missing",
+                    contracts_path=str(contracts_path),
+                )
 
         self.logger.log(
             LogLevel.INFO,
@@ -147,7 +196,59 @@ class SchemaRegistryManager:
         if compatibility_mode is None:
             compatibility_mode = self.config.default_compatibility_mode
 
-        # Validate schema
+        # Enforce subject contracts if configured
+        contract = None
+        if self._contracts and self.config.enforce_contracts:
+            try:
+                contract = self._contracts.get(subject)
+                self._contracts.validate_subject_name(subject)
+            except SubjectNotDefinedError as exc:
+                if self.config.fail_on_missing_contract:
+                    raise SubjectRegistrationError(
+                        f"Subject '{subject}' is not defined in the contract catalog"
+                    ) from exc
+                self.logger.log(
+                    LogLevel.WARNING,
+                    f"Skipping contract enforcement for undefined subject {subject}",
+                    "schema_contract_missing",
+                    subject=subject,
+                )
+            except SubjectPatternError as exc:
+                raise SubjectRegistrationError(str(exc)) from exc
+
+            if contract:
+                try:
+                    contract_mode = SchemaCompatibilityMode(contract.compatibility)
+                except ValueError as exc:
+                    raise SchemaCompatibilityError(
+                        f"Unsupported compatibility '{contract.compatibility}' for subject {subject}"
+                    ) from exc
+
+                if compatibility_mode != contract_mode:
+                    raise SchemaCompatibilityError(
+                        f"Requested compatibility {compatibility_mode.value} does not match contract {contract_mode.value}"
+                    )
+
+                if self.config.validate_contract_schema:
+                    try:
+                        frozen_schema = self._contracts.load_schema(subject)
+                    except SchemaNotFoundError as exc:
+                        if self.config.fail_on_missing_contract:
+                            raise SubjectRegistrationError(str(exc)) from exc
+                        self.logger.log(
+                            LogLevel.WARNING,
+                            f"Frozen schema missing for subject {subject}: {exc}",
+                            "schema_contract_schema_missing",
+                            subject=subject,
+                            error=str(exc),
+                        )
+                    else:
+                        if frozen_schema != schema:
+                            raise SubjectRegistrationError(
+                                f"Provided schema for subject {subject} does not match frozen contract"
+                            )
+
+        # Validate schema structure
         if self.config.validate_schema:
             self._validate_schema(schema)
 

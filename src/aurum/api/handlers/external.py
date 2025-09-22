@@ -18,6 +18,8 @@ from ..cache import CacheManager, AsyncCache, CacheBackend
 from ..exceptions import (
     AurumAPIException,
     ValidationException,
+)
+from ..routes import _respond_with_etag
     NotFoundException,
     ServiceUnavailableException,
     DataProcessingException,
@@ -298,8 +300,9 @@ def create_external_meta(request_id: str, query_time_ms: int) -> Meta:
 async def list_external_providers(
     request: Request,
     limit: int = Query(100, ge=1, le=1000, description="Maximum number of providers to return"),
-    offset: int = Query(0, ge=0, description="Offset for pagination"),
     cursor: Optional[str] = Query(None, description="Opaque cursor for stable pagination"),
+    since_cursor: Optional[str] = Query(None, description="Alias for 'cursor' to resume iteration from a previous next_cursor value"),
+    offset: Optional[int] = Query(None, ge=0, description="DEPRECATED: Use cursor for pagination instead"),
     *,
     response: Response,
     # Dependencies
@@ -361,7 +364,8 @@ async def list_external_providers(
                 EXTERNAL_CACHE_HIT_COUNTER.labels(endpoint="/v1/external/providers").inc()
             query_time_ms = int((time.time() - start_time) * 1000)
             meta = create_external_meta(request_id, query_time_ms)
-            return ExternalProvidersResponse(data=cached_result, meta=meta)
+            model = ExternalProvidersResponse(data=cached_result, meta=meta)
+            return _respond_with_etag(model, request, response)
 
         if EXTERNAL_CACHE_MISS_COUNTER:
             EXTERNAL_CACHE_MISS_COUNTER.labels(endpoint="/v1/external/providers").inc()
@@ -387,7 +391,8 @@ async def list_external_providers(
         query_time_ms = int((time.time() - start_time) * 1000)
         meta = create_external_meta(request_id, query_time_ms)
 
-        return ExternalProvidersResponse(data=providers, meta=meta)
+        model = ExternalProvidersResponse(data=providers, meta=meta)
+        return _respond_with_etag(model, request, response)
 
     except ValidationError as exc:
         raise HTTPException(
@@ -480,7 +485,8 @@ async def list_external_series(
         if cached_result is not None:
             query_time_ms = int((time.time() - start_time) * 1000)
             meta = create_external_meta(request_id, query_time_ms)
-            return ExternalSeriesResponse(data=cached_result, meta=meta)
+            model = ExternalSeriesResponse(data=cached_result, meta=meta)
+            return _respond_with_etag(model, request, response)
 
         # Query series
         series = await dao.get_series(
@@ -502,7 +508,8 @@ async def list_external_series(
         query_time_ms = int((time.time() - start_time) * 1000)
         meta = create_external_meta(request_id, query_time_ms)
 
-        return ExternalSeriesResponse(data=series, meta=meta)
+        model = ExternalSeriesResponse(data=series, meta=meta)
+        return _respond_with_etag(model, request, response)
 
     except ValidationError as exc:
         raise HTTPException(

@@ -99,6 +99,7 @@ database = [
 "Source" = "https://github.com/aurum/platform"
 
 [project.scripts]
+aurum-external-collector = "aurum.external.runner:main"
 aurum-unknown-units = "aurum.parsers.unknown_units_cli:main"
 aurum-scenario = "aurum.cli.scenario:main"
 aurum-drought-worker = "aurum.drought.worker:main"

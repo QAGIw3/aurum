@@ -1,0 +1,19 @@
+{
+  "datasets": [
+    {
+      "dataset_id": "daily_summary",
+      "dataset": "GHCND",
+      "stations": [
+        "GHCND:USW00094728",
+        "GHCND:USW00023174"
+      ],
+      "datatypes": [
+        "TMAX",
+        "TMIN",
+        "PRCP"
+      ],
+      "window_days": 7,
+      "page_limit": 500
+    }
+  ]
+}

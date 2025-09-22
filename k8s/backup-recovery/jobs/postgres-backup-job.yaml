@@ -53,6 +53,18 @@ spec:
           rm -rf /backup/$BACKUP_NAME
 
           echo "✅ PostgreSQL backup completed successfully: $BACKUP_NAME"
+
+          # Trigger restore validation job
+          echo "🧪 Triggering restore validation for backup: $BACKUP_NAME"
+          kubectl create job postgres-restore-validation-$(date +%s) \
+            --from=cronjob/postgres-restore-validation \
+            -n aurum-dev
+
+          echo "📊 Backup metadata:"
+          echo "  Type: Full database backup"
+          echo "  Size: $(du -sh /backup/$BACKUP_NAME | cut -f1)"
+          echo "  Method: pg_basebackup"
+          echo "  Status: Completed"
         env:
         - name: PGPASSWORD
           valueFrom:

@@ -21,11 +21,10 @@ from typing import List, Optional
 from uuid import UUID
 
 from fastapi import APIRouter, HTTPException, Query, Request
-from fastapi.responses import StreamingResponse
+from fastapi.responses import StreamingResponse, Response
 
 from ..telemetry.context import get_request_id
-from .scenario_models import ScenarioOutputListResponse
-from .models import (
+from .scenario_models import (
     CreateScenarioRequest,
     ScenarioResponse,
     ScenarioData,
@@ -39,6 +38,7 @@ from .models import (
     ScenarioOutputFilter,
     ScenarioMetricLatestResponse,
     ScenarioMetricLatest,
+    ScenarioOutputListResponse,
     BulkScenarioRunRequest,
     BulkScenarioRunResponse,
     BulkScenarioRunResult,
@@ -48,6 +48,7 @@ from .models import (
 from .exceptions import ValidationException, NotFoundException, ForbiddenException
 from .container import get_service
 from .async_service import AsyncScenarioService
+from .routes import _resolve_tenant, _resolve_tenant_optional
 from ..scenarios.feature_flags import (
     ScenarioOutputFeature,
     require_scenario_output_feature,
@@ -65,41 +66,81 @@ async def list_scenarios(
     tenant_id: Optional[str] = Query(None, description="Filter by tenant"),
     status: Optional[str] = Query(None, description="Filter by status"),
     limit: int = Query(20, ge=1, le=100),
-    offset: int = Query(0, ge=0),
+    cursor: Optional[str] = Query(None, description="Opaque cursor for stable pagination"),
+    since_cursor: Optional[str] = Query(None, description="Alias for 'cursor' to resume iteration"),
+    offset: Optional[int] = Query(None, ge=0, description="DEPRECATED: Use cursor for pagination instead"),
 ) -> ScenarioListResponse:
-    """List scenarios with optional filtering."""
+    """List scenarios with optional filtering.
+
+    Examples:
+        GET /v1/scenarios?limit=10
+        GET /v1/scenarios?status=active&limit=5
+        GET /v1/scenarios?cursor=eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9...
+    """
     from .auth import require_permission, Permission
 
     # Get principal from request state
     principal = getattr(request.state, "principal", None)
 
+    # Resolve tenant for authorization check
+    resolved_tenant = _resolve_tenant_optional(request, tenant_id)
+
     # Require scenarios read permission
-    require_permission(principal, Permission.SCENARIOS_READ, tenant_id)
+    require_permission(principal, Permission.SCENARIOS_READ, resolved_tenant)
 
     start_time = time.perf_counter()
 
     try:
+        from .routes import _decode_cursor, _encode_cursor, _normalise_cursor_input
+
+        # Handle cursor-based pagination (offset is deprecated)
+        effective_offset = offset or 0
+        cursor_token = cursor or since_cursor
+        if cursor_token:
+            payload = _decode_cursor(cursor_token)
+            effective_offset, _cursor_after = _normalise_cursor_input(payload)
+        elif offset is not None:
+            # Log deprecation warning for offset usage
+            log_structured(
+                "warning",
+                "deprecated_offset_pagination_used",
+                tenant_id=tenant_id,
+                status=status,
+                offset=offset,
+                user_id=get_user_id(),
+                request_id=get_request_id()
+            )
+
         service = get_service(AsyncScenarioService)
         scenarios, total, meta = await service.list_scenarios(
             tenant_id=tenant_id,
             status=status,
             limit=limit,
-            offset=offset,
+            offset=effective_offset,
         )
 
         query_time_ms = (time.perf_counter() - start_time) * 1000
 
-        return ScenarioListResponse(
+        # Generate next cursor if there are more results
+        next_cursor = None
+        if len(scenarios) == limit:
+            next_cursor = _encode_cursor({"offset": effective_offset + limit})
+
+        model = ScenarioListResponse(
             meta={
                 "request_id": get_request_id(),
                 "query_time_ms": round(query_time_ms, 2),
                 "count": len(scenarios),
                 "total": total,
-                "offset": offset,
+                "offset": effective_offset,
                 "limit": limit,
+                "next_cursor": next_cursor,
             },
             data=scenarios,
         )
+
+        # Handle ETag and If-None-Match
+        return _respond_with_etag(model, request, response)
 
     except Exception as exc:
         query_time_ms = (time.perf_counter() - start_time) * 1000
@@ -114,39 +155,43 @@ async def create_scenario(
     request: Request,
     scenario_data: CreateScenarioRequest,
 ) -> ScenarioResponse:
-    """Create a new scenario."""
+    """Create a new scenario.
+
+    Example:
+        POST /v1/scenarios
+        {
+            "tenant_id": "acme-corp",
+            "name": "Revenue Forecast Q4",
+            "description": "Quarterly revenue forecasting scenario",
+            "assumptions": [
+                {"type": "market_growth", "value": 0.05}
+            ],
+            "parameters": {
+                "forecast_period_months": 12,
+                "confidence_interval": 0.95
+            }
+        }
+    """
     from .auth import require_permission, Permission
 
     # Get principal from request state
     principal = getattr(request.state, "principal", None)
 
+    # Resolve tenant for authorization check
+    resolved_tenant = _resolve_tenant(request, scenario_data.tenant_id)
+
     # Require scenarios write permission
-    require_permission(principal, Permission.SCENARIOS_WRITE, scenario_data.tenant_id)
+    require_permission(principal, Permission.SCENARIOS_WRITE, resolved_tenant)
 
     start_time = time.perf_counter()
 
     try:
-        # Validate request
-        if not scenario_data.tenant_id:
-            raise ValidationException(
-                field="tenant_id",
-                message="tenant_id is required",
-                request_id=get_request_id()
-            )
-
-        if not scenario_data.name or not scenario_data.name.strip():
-            raise ValidationException(
-                field="name",
-                message="scenario name is required",
-                request_id=get_request_id()
-            )
-
         service = get_service(AsyncScenarioService)
         scenario = await service.create_scenario(scenario_data.dict())
 
         query_time_ms = (time.perf_counter() - start_time) * 1000
 
-        return ScenarioResponse(
+        model = ScenarioResponse(
             meta={
                 "request_id": get_request_id(),
                 "query_time_ms": round(query_time_ms, 2),
@@ -154,8 +199,9 @@ async def create_scenario(
             data=scenario,
         )
 
-    except ValidationException:
-        raise
+        # Handle ETag and If-None-Match
+        return _respond_with_etag(model, request, response)
+
     except Exception as exc:
         query_time_ms = (time.perf_counter() - start_time) * 1000
         raise HTTPException(
@@ -169,7 +215,22 @@ async def get_scenario(
     request: Request,
     scenario_id: str,
 ) -> ScenarioResponse:
-    """Get scenario by ID."""
+    """Get scenario by ID.
+
+    Example:
+        GET /v1/scenarios/scn_12345
+    """
+    from .auth import require_permission, Permission
+
+    # Get principal from request state
+    principal = getattr(request.state, "principal", None)
+
+    # Resolve tenant for authorization check
+    resolved_tenant = _resolve_tenant_optional(request, None)
+
+    # Require scenarios read permission
+    require_permission(principal, Permission.SCENARIOS_READ, resolved_tenant)
+
     start_time = time.perf_counter()
 
     try:
@@ -195,13 +256,16 @@ async def get_scenario(
 
         query_time_ms = (time.perf_counter() - start_time) * 1000
 
-        return ScenarioResponse(
+        model = ScenarioResponse(
             meta={
                 "request_id": get_request_id(),
                 "query_time_ms": round(query_time_ms, 2),
             },
             data=scenario,
         )
+
+        # Handle ETag and If-None-Match
+        return _respond_with_etag(model, request, response)
 
     except (ValidationException, NotFoundException):
         raise
@@ -219,6 +283,17 @@ async def delete_scenario(
     scenario_id: str,
 ) -> None:
     """Delete scenario by ID."""
+    from .auth import require_permission, Permission
+
+    # Get principal from request state
+    principal = getattr(request.state, "principal", None)
+
+    # Resolve tenant for authorization check
+    resolved_tenant = _resolve_tenant_optional(request, None)
+
+    # Require scenarios delete permission
+    require_permission(principal, Permission.SCENARIOS_DELETE, resolved_tenant)
+
     start_time = time.perf_counter()
 
     try:
@@ -261,9 +336,22 @@ async def list_scenario_runs(
     request: Request,
     scenario_id: str,
     limit: int = Query(20, ge=1, le=100),
-    offset: int = Query(0, ge=0),
+    cursor: Optional[str] = Query(None, description="Opaque cursor for stable pagination"),
+    since_cursor: Optional[str] = Query(None, description="Alias for 'cursor' to resume iteration"),
+    offset: Optional[int] = Query(None, ge=0, description="DEPRECATED: Use cursor for pagination instead"),
 ) -> ScenarioRunListResponse:
     """List runs for a specific scenario."""
+    from .auth import require_permission, Permission
+
+    # Get principal from request state
+    principal = getattr(request.state, "principal", None)
+
+    # Resolve tenant for authorization check
+    resolved_tenant = _resolve_tenant_optional(request, None)
+
+    # Require scenarios read permission
+    require_permission(principal, Permission.SCENARIOS_READ, resolved_tenant)
+
     start_time = time.perf_counter()
 
     try:
@@ -277,26 +365,52 @@ async def list_scenario_runs(
                 request_id=get_request_id()
             )
 
+        # Handle cursor-based pagination (offset is deprecated)
+        effective_offset = offset or 0
+        cursor_token = cursor or since_cursor
+        if cursor_token:
+            payload = _decode_cursor(cursor_token)
+            effective_offset, _cursor_after = _normalise_cursor_input(payload)
+        elif offset is not None:
+            # Log deprecation warning for offset usage
+            log_structured(
+                "warning",
+                "deprecated_offset_pagination_used",
+                scenario_id=scenario_id,
+                offset=offset,
+                user_id=get_user_id(),
+                request_id=get_request_id()
+            )
+
         service = get_service(AsyncScenarioService)
         runs, total, meta = await service.list_scenario_runs(
             scenario_id=scenario_id,
             limit=limit,
-            offset=offset,
+            offset=effective_offset,
         )
 
         query_time_ms = (time.perf_counter() - start_time) * 1000
 
-        return ScenarioRunListResponse(
+        # Generate next cursor if there are more results
+        next_cursor = None
+        if len(runs) == limit:
+            next_cursor = _encode_cursor({"offset": effective_offset + limit})
+
+        model = ScenarioRunListResponse(
             meta={
                 "request_id": get_request_id(),
                 "query_time_ms": round(query_time_ms, 2),
                 "count": len(runs),
                 "total": total,
-                "offset": offset,
+                "offset": effective_offset,
                 "limit": limit,
+                "next_cursor": next_cursor,
             },
             data=runs,
         )
+
+        # Handle ETag and If-None-Match
+        return _respond_with_etag(model, request, response)
 
     except ValidationException:
         raise
@@ -315,6 +429,17 @@ async def create_scenario_run(
     run_options: ScenarioRunOptions,
 ) -> ScenarioRunResponse:
     """Create and start a new scenario run."""
+    from .auth import require_permission, Permission
+
+    # Get principal from request state
+    principal = getattr(request.state, "principal", None)
+
+    # Resolve tenant for authorization check
+    resolved_tenant = _resolve_tenant_optional(request, None)
+
+    # Require scenarios run permission
+    require_permission(principal, Permission.SCENARIOS_RUN, resolved_tenant)
+
     start_time = time.perf_counter()
 
     try:
@@ -336,13 +461,16 @@ async def create_scenario_run(
 
         query_time_ms = (time.perf_counter() - start_time) * 1000
 
-        return ScenarioRunResponse(
+        model = ScenarioRunResponse(
             meta={
                 "request_id": get_request_id(),
                 "query_time_ms": round(query_time_ms, 2),
             },
             data=run,
         )
+
+        # Handle ETag and If-None-Match
+        return _respond_with_etag(model, request, response)
 
     except ValidationException:
         raise
@@ -361,6 +489,17 @@ async def get_scenario_run(
     run_id: str,
 ) -> ScenarioRunResponse:
     """Get scenario run by ID."""
+    from .auth import require_permission, Permission
+
+    # Get principal from request state
+    principal = getattr(request.state, "principal", None)
+
+    # Resolve tenant for authorization check
+    resolved_tenant = _resolve_tenant_optional(request, None)
+
+    # Require scenarios read permission
+    require_permission(principal, Permission.SCENARIOS_READ, resolved_tenant)
+
     start_time = time.perf_counter()
 
     try:
@@ -387,13 +526,16 @@ async def get_scenario_run(
 
         query_time_ms = (time.perf_counter() - start_time) * 1000
 
-        return ScenarioRunResponse(
+        model = ScenarioRunResponse(
             meta={
                 "request_id": get_request_id(),
                 "query_time_ms": round(query_time_ms, 2),
             },
             data=run,
         )
+
+        # Handle ETag and If-None-Match
+        return _respond_with_etag(model, request, response)
 
     except (ValidationException, NotFoundException):
         raise
@@ -412,6 +554,17 @@ async def update_scenario_run_state(
     state_update: dict,
 ) -> ScenarioRunResponse:
     """Update scenario run state."""
+    from .auth import require_permission, Permission
+
+    # Get principal from request state
+    principal = getattr(request.state, "principal", None)
+
+    # Resolve tenant for authorization check
+    resolved_tenant = _resolve_tenant_optional(request, None)
+
+    # Require scenarios write permission
+    require_permission(principal, Permission.SCENARIOS_WRITE, resolved_tenant)
+
     start_time = time.perf_counter()
 
     try:
@@ -445,13 +598,16 @@ async def update_scenario_run_state(
 
         query_time_ms = (time.perf_counter() - start_time) * 1000
 
-        return ScenarioRunResponse(
+        model = ScenarioRunResponse(
             meta={
                 "request_id": get_request_id(),
                 "query_time_ms": round(query_time_ms, 2),
             },
             data=run,
         )
+
+        # Handle ETag and If-None-Match
+        return _respond_with_etag(model, request, response)
 
     except (ValidationException, NotFoundException):
         raise
@@ -474,8 +630,11 @@ async def cancel_scenario_run(
     # Get principal from request state
     principal = getattr(request.state, "principal", None)
 
-    # Require scenarios delete permission
-    require_permission(principal, Permission.SCENARIOS_DELETE)
+    # Resolve tenant for authorization check
+    resolved_tenant = _resolve_tenant_optional(request, None)
+
+    # Require scenarios delete permission (admin operation, so tenant check is optional)
+    require_permission(principal, Permission.SCENARIOS_DELETE, resolved_tenant)
 
     start_time = time.perf_counter()
 
@@ -502,13 +661,16 @@ async def cancel_scenario_run(
 
         query_time_ms = (time.perf_counter() - start_time) * 1000
 
-        return ScenarioRunResponse(
+        model = ScenarioRunResponse(
             meta={
                 "request_id": get_request_id(),
                 "query_time_ms": round(query_time_ms, 2),
             },
             data=run,
         )
+
+        # Handle ETag and If-None-Match
+        return _respond_with_etag(model, request, response)
 
     except (ValidationException, NotFoundException):
         raise
@@ -526,7 +688,9 @@ async def get_scenario_outputs(
     request: Request,
     scenario_id: str,
     limit: int = Query(100, ge=1, le=500),
-    offset: int = Query(0, ge=0),
+    cursor: Optional[str] = Query(None, description="Opaque cursor for stable pagination"),
+    since_cursor: Optional[str] = Query(None, description="Alias for 'cursor' to resume iteration"),
+    offset: Optional[int] = Query(None, ge=0, description="DEPRECATED: Use cursor for pagination instead"),
     start_time: Optional[str] = Query(None, description="Start time filter (ISO 8601 format)"),
     end_time: Optional[str] = Query(None, description="End time filter (ISO 8601 format)"),
     metric_name: Optional[str] = Query(None, description="Filter by metric name"),
@@ -541,8 +705,11 @@ async def get_scenario_outputs(
     # Get principal from request state
     principal = getattr(request.state, "principal", None)
 
+    # Resolve tenant for authorization check
+    resolved_tenant = _resolve_tenant_optional(request, None)
+
     # Require scenarios read permission
-    require_permission(principal, Permission.SCENARIOS_READ)
+    require_permission(principal, Permission.SCENARIOS_READ, resolved_tenant)
 
     start_time_perf = time.perf_counter()
 
@@ -624,11 +791,18 @@ async def get_scenario_outputs(
                 request_id=get_request_id()
             )
 
+        # Handle cursor-based pagination
+        effective_offset = offset
+        cursor_token = cursor or since_cursor
+        if cursor_token:
+            payload = _decode_cursor(cursor_token)
+            effective_offset, _cursor_after = _normalise_cursor_input(payload)
+
         service = get_service(AsyncScenarioService)
         outputs, total, meta = await service.get_scenario_outputs(
             scenario_id=scenario_id,
             limit=limit,
-            offset=offset,
+            offset=effective_offset,
             start_time=start_time,
             end_time=end_time,
             metric_name=metric_name,
@@ -638,6 +812,11 @@ async def get_scenario_outputs(
         )
 
         query_time_ms = (time.perf_counter() - start_time_perf) * 1000
+
+        # Generate next cursor if there are more results
+        next_cursor = None
+        if len(outputs) == limit:
+            next_cursor = _encode_cursor({"offset": effective_offset + limit})
 
         # Build applied filter for response
         applied_filter = ScenarioOutputFilter(
@@ -649,19 +828,21 @@ async def get_scenario_outputs(
             tags=tags_filter,
         )
 
-        return ScenarioOutputListResponse(
+        model = ScenarioOutputListResponse(
             meta={
                 "request_id": get_request_id(),
                 "query_time_ms": round(query_time_ms, 2),
                 "count": len(outputs),
                 "total": total,
-                "offset": offset,
+                "offset": effective_offset,
                 "limit": limit,
-                "has_more": (offset + limit) < total,
+                "next_cursor": next_cursor,
             },
             data=outputs,
             filter=applied_filter,
         )
+
+        return model
 
     except (ValidationException, NotFoundException):
         raise
@@ -679,6 +860,17 @@ async def get_scenario_metrics_latest(
     scenario_id: str,
 ) -> ScenarioMetricLatestResponse:
     """Get latest metrics for a scenario."""
+    from .auth import require_permission, Permission
+
+    # Get principal from request state
+    principal = getattr(request.state, "principal", None)
+
+    # Resolve tenant for authorization check
+    resolved_tenant = _resolve_tenant_optional(request, None)
+
+    # Require scenarios read permission
+    require_permission(principal, Permission.SCENARIOS_READ, resolved_tenant)
+
     start_time = time.perf_counter()
 
     try:
@@ -704,13 +896,16 @@ async def get_scenario_metrics_latest(
 
         query_time_ms = (time.perf_counter() - start_time) * 1000
 
-        return ScenarioMetricLatestResponse(
+        model = ScenarioMetricLatestResponse(
             meta={
                 "request_id": get_request_id(),
                 "query_time_ms": round(query_time_ms, 2),
             },
             data=metrics,
         )
+
+        # Handle ETag and If-None-Match
+        return _respond_with_etag(model, request, response)
 
     except (ValidationException, NotFoundException):
         raise
@@ -735,8 +930,11 @@ async def create_bulk_scenario_runs(
     # Get principal from request state
     principal = getattr(request.state, "principal", None)
 
+    # Resolve tenant for authorization check
+    resolved_tenant = _resolve_tenant_optional(request, None)
+
     # Require scenarios write permission
-    require_permission(principal, Permission.SCENARIOS_WRITE)
+    require_permission(principal, Permission.SCENARIOS_WRITE, resolved_tenant)
 
     start_time = time.perf_counter()
 
@@ -811,7 +1009,7 @@ async def create_bulk_scenario_runs(
             )
             response_duplicates.append(duplicate_item)
 
-        return BulkScenarioRunResponse(
+        model = BulkScenarioRunResponse(
             meta={
                 "request_id": get_request_id(),
                 "query_time_ms": round(query_time_ms, 2),
@@ -823,6 +1021,9 @@ async def create_bulk_scenario_runs(
             data=response_data,
             duplicates=response_duplicates,
         )
+
+        # Handle ETag and If-None-Match
+        return _respond_with_etag(model, request, response)
 
     except ValidationException:
         raise

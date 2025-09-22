@@ -182,12 +182,12 @@ class CompatibilityChecker:
             )
 
         # Add recommendations for backward compatibility
-        if mode.is_backward_compatible() and result.has_breaking_changes():
+        if result.is_backward_compatible() and result.has_breaking_changes():
             result.add_recommendation(
                 "Consider adding default values for new fields to maintain backward compatibility"
             )
 
-        if mode.is_forward_compatible() and result.has_breaking_changes():
+        if result.is_forward_compatible() and result.has_breaking_changes():
             result.add_recommendation(
                 "Consider making new fields optional to maintain forward compatibility"
             )

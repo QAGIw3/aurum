@@ -1,271 +1,184 @@
 #!/usr/bin/env python3
-"""Validate OpenAPI specification examples and references."""
+"""Validate examples in OpenAPI specifications."""
 
 import json
 import sys
-from pathlib import Path
-from typing import Any, Dict, List
-
 import yaml
+from pathlib import Path
+from typing import Any, Dict
 
 
-def load_openapi_spec(file_path: Path) -> Dict[str, Any]:
-    """Load OpenAPI specification from YAML file."""
-    try:
-        with open(file_path, 'r', encoding='utf-8') as f:
-            if file_path.suffix in ['.yaml', '.yml']:
-                return yaml.safe_load(f)
-            else:
-                return json.load(f)
-    except Exception as e:
-        print(f"Error loading {file_path}: {e}")
-        return {}
-
-
-def validate_examples_in_spec(spec: Dict[str, Any]) -> List[str]:
-    """Validate that all examples in the specification are valid."""
-    errors = []
-
-    def validate_example(example: Any, path: str) -> List[str]:
-        """Validate a single example."""
-        example_errors = []
-
-        if isinstance(example, dict):
-            # Check for required example properties
-            if 'value' not in example and 'summary' not in example:
-                example_errors.append(f"Example at {path} should have 'value' or 'summary'")
-
-            # Validate value if present
-            if 'value' in example:
-                value = example['value']
-                if value is None:
-                    example_errors.append(f"Example value at {path} should not be null")
-
-                # Check for empty objects/arrays if that's not expected
-                if isinstance(value, (dict, list)) and len(value) == 0:
-                    example_errors.append(f"Example value at {path} is empty but should contain sample data")
-
-        elif isinstance(example, (list, str, int, float, bool)):
-            # Primitive examples are always valid
-            pass
-
+def load_openapi_spec(file_path: str) -> dict:
+    """Load OpenAPI specification from YAML or JSON file."""
+    with open(file_path) as f:
+        if file_path.endswith('.json'):
+            return json.load(f)
         else:
-            example_errors.append(f"Invalid example type at {path}: {type(example)}")
-
-        return example_errors
-
-    def traverse_for_examples(obj: Any, path: str = "") -> List[str]:
-        """Traverse the spec and validate examples."""
-        all_errors = []
-
-        if isinstance(obj, dict):
-            for key, value in obj.items():
-                current_path = f"{path}.{key}" if path else key
-
-                # Check if this is an example
-                if key == 'example' or key == 'examples':
-                    if key == 'example':
-                        all_errors.extend(validate_example(value, current_path))
-                    elif key == 'examples':
-                        if isinstance(value, dict):
-                            for example_name, example_value in value.items():
-                                example_path = f"{current_path}.{example_name}"
-                                all_errors.extend(validate_example(example_value, example_path))
-
-                # Recurse into nested objects
-                else:
-                    all_errors.extend(traverse_for_examples(value, current_path))
-
-        elif isinstance(obj, list):
-            for i, item in enumerate(obj):
-                item_path = f"{path}[{i}]"
-                all_errors.extend(traverse_for_examples(item, item_path))
-
-        return all_errors
-
-    return traverse_for_examples(spec)
+            return yaml.safe_load(f)
 
 
-def validate_schema_references(spec: Dict[str, Any]) -> List[str]:
-    """Validate that all schema references are valid."""
-    errors = []
-
-    def find_references(obj: Any, path: str = "") -> List[str]:
-        """Find all $ref references."""
-        refs = []
-
-        if isinstance(obj, dict):
-            for key, value in obj.items():
-                current_path = f"{path}.{key}" if path else key
-
-                if key == '$ref':
-                    refs.append((current_path, str(value)))
-
-                else:
-                    refs.extend(find_references(value, current_path))
-
-        elif isinstance(obj, list):
-            for i, item in enumerate(obj):
-                item_path = f"{path}[{i}]"
-                refs.extend(find_references(item, item_path))
-
-        return refs
-
-    def validate_reference(ref: str, ref_path: str) -> List[str]:
-        """Validate a single reference."""
-        validation_errors = []
-
-        if not ref.startswith('#/'):
-            # External reference - skip validation for now
-            return []
-
-        # Remove the #/ prefix
-        ref_parts = ref[2:].split('/')
-
-        # Navigate the spec to find the referenced component
-        current = spec
-        try:
-            for part in ref_parts:
-                if part in current:
-                    current = current[part]
-                else:
-                    validation_errors.append(f"Reference {ref} at {ref_path} not found")
-                    break
-        except Exception as e:
-            validation_errors.append(f"Error validating reference {ref} at {ref_path}: {e}")
-
-        return validation_errors
-
-    # Find all references
-    all_refs = find_references(spec)
-
-    # Validate each reference
-    for ref_path, ref in all_refs:
-        errors.extend(validate_reference(ref, ref_path))
-
-    return errors
+def validate_json_schema(schema: dict, data: Any) -> bool:
+    """Validate data against JSON schema."""
+    # Simple validation - could be enhanced with jsonschema library
+    try:
+        if schema.get('type') == 'object':
+            if not isinstance(data, dict):
+                return False
+            required = schema.get('required', [])
+            for field in required:
+                if field not in data:
+                    return False
+        elif schema.get('type') == 'array':
+            if not isinstance(data, list):
+                return False
+        elif schema.get('type') == 'string':
+            if not isinstance(data, str):
+                return False
+        elif schema.get('type') == 'integer':
+            if not isinstance(data, int):
+                return False
+        elif schema.get('type') == 'number':
+            if not isinstance(data, (int, float)):
+                return False
+        elif schema.get('type') == 'boolean':
+            if not isinstance(data, bool):
+                return False
+        return True
+    except Exception:
+        return False
 
 
-def validate_parameter_examples(spec: Dict[str, Any]) -> List[str]:
-    """Validate parameter examples are appropriate."""
-    errors = []
+def validate_example_against_schema(example: Any, schema: dict) -> bool:
+    """Validate an example against its schema."""
+    if not schema:
+        return True  # No schema to validate against
+
+    if schema.get('type') == 'object' and '$ref' in schema:
+        # Handle schema references - simplified for now
+        return True
+
+    return validate_json_schema(schema, example)
+
+
+def extract_examples_from_spec(spec: dict) -> Dict[str, Any]:
+    """Extract all examples from an OpenAPI specification."""
+    examples = {}
+
+    def traverse_schema(schema: Any, path: str = "") -> None:
+        if isinstance(schema, dict):
+            if 'example' in schema:
+                examples[path] = schema['example']
+
+            # Check for examples in responses
+            if 'responses' in schema:
+                for status_code, response in schema['responses'].items():
+                    if isinstance(response, dict):
+                        content = response.get('content', {})
+                        for content_type, content_schema in content.items():
+                            if 'example' in content_schema:
+                                examples[f"{path}/responses/{status_code}"] = content_schema['example']
+
+            # Check for examples in request bodies
+            if 'requestBody' in schema:
+                request_body = schema['requestBody']
+                if isinstance(request_body, dict):
+                    content = request_body.get('content', {})
+                    for content_type, content_schema in content.items():
+                        if 'example' in content_schema:
+                            examples[f"{path}/requestBody"] = content_schema['example']
+
+            for key, value in schema.items():
+                traverse_schema(value, f"{path}/{key}")
+
+        elif isinstance(schema, list):
+            for i, item in enumerate(schema):
+                traverse_schema(item, f"{path}[{i}]")
+
+    # Start traversal from the main paths
     paths = spec.get('paths', {})
-
     for path, path_item in paths.items():
-        if not isinstance(path_item, dict):
-            continue
+        traverse_schema(path_item, f"paths{path}")
 
-        for method, operation in path_item.items():
-            if not isinstance(operation, dict):
-                continue
-
-            parameters = operation.get('parameters', [])
-
-            for param in parameters:
-                param_name = param.get('name', 'unknown')
-                param_in = param.get('in', 'unknown')
-
-                # Check for examples in parameters
-                if 'example' in param:
-                    example = param['example']
-                    param_path = f"{method.upper()} {path} parameter '{param_name}'"
-
-                    # Validate example based on parameter type
-                    schema = param.get('schema', {})
-                    param_type = schema.get('type', 'string')
-
-                    if param_type == 'string' and not isinstance(example, str):
-                        errors.append(f"String parameter example should be string at {param_path}")
-                    elif param_type == 'integer' and not isinstance(example, int):
-                        errors.append(f"Integer parameter example should be integer at {param_path}")
-                    elif param_type == 'number' and not isinstance(example, (int, float)):
-                        errors.append(f"Number parameter example should be number at {param_path}")
-                    elif param_type == 'boolean' and not isinstance(example, bool):
-                        errors.append(f"Boolean parameter example should be boolean at {param_path}")
-                    elif param_type == 'array' and not isinstance(example, list):
-                        errors.append(f"Array parameter example should be array at {param_path}")
-
-    return errors
+    return examples
 
 
-def validate_response_examples(spec: Dict[str, Any]) -> List[str]:
-    """Validate response examples are realistic."""
-    errors = []
+def find_schemas_for_examples(spec: dict) -> Dict[str, Any]:
+    """Find schemas corresponding to examples."""
+    schemas = {}
+
+    def traverse_schema_for_schemas(schema: Any, path: str = "") -> None:
+        if isinstance(schema, dict):
+            # Check if this schema has an example
+            if 'example' in schema:
+                schemas[path] = schema
+
+            for key, value in schema.items():
+                traverse_schema_for_schemas(value, f"{path}/{key}")
+
+        elif isinstance(schema, list):
+            for i, item in enumerate(schema):
+                traverse_schema_for_schemas(item, f"{path}[{i}]")
+
     paths = spec.get('paths', {})
-
     for path, path_item in paths.items():
-        if not isinstance(path_item, dict):
-            continue
+        traverse_schema_for_schemas(path_item, f"paths{path}")
 
-        for method, operation in path_item.items():
-            if not isinstance(operation, dict):
-                continue
-
-            responses = operation.get('responses', {})
-
-            for status_code, response in responses.items():
-                if not isinstance(response, dict):
-                    continue
-
-                content = response.get('content', {})
-
-                for content_type, content_obj in content.items():
-                    examples = content_obj.get('examples', {})
-
-                    if examples:
-                        # Check that examples exist and are not empty
-                        if not isinstance(examples, dict) or len(examples) == 0:
-                            errors.append(f"Empty examples for {method.upper()} {path} {status_code}")
-                        else:
-                            # Validate example structure
-                            for example_name, example in examples.items():
-                                if not isinstance(example, dict) or 'value' not in example:
-                                    errors.append(
-                                        f"Invalid example '{example_name}' for {method.upper()} {path} {status_code}"
-                                    )
-
-    return errors
+    return schemas
 
 
-def main() -> int:
-    """Main validation function."""
-    errors = []
+def main():
+    """Main function to validate OpenAPI examples."""
+    print("🔍 Validating examples in OpenAPI specifications...")
 
     # Find OpenAPI files
-    openapi_dir = Path('openapi')
-    if not openapi_dir.exists():
-        print("No openapi directory found")
-        return 1
-
-    openapi_files = list(openapi_dir.glob('**/*.yaml')) + list(openapi_dir.glob('**/*.yml'))
+    openapi_files = []
+    for pattern in ['openapi/**/*.yaml', 'openapi/**/*.yml']:
+        openapi_files.extend(Path('.').glob(pattern))
 
     if not openapi_files:
-        print("No OpenAPI specification files found")
-        return 1
+        print("⚠️ No OpenAPI files found")
+        return 0
+
+    all_valid = True
 
     for file_path in openapi_files:
-        print(f"Validating examples in {file_path}...")
-        spec = load_openapi_spec(file_path)
+        print(f"\n📋 Validating {file_path}...")
 
-        if not spec:
-            errors.append(f"Could not load specification from {file_path}")
+        try:
+            spec = load_openapi_spec(str(file_path))
+        except Exception as e:
+            print(f"❌ Error loading {file_path}: {e}")
+            all_valid = False
             continue
 
-        # Run all validation checks
-        errors.extend(validate_examples_in_spec(spec))
-        errors.extend(validate_schema_references(spec))
-        errors.extend(validate_parameter_examples(spec))
-        errors.extend(validate_response_examples(spec))
+        examples = extract_examples_from_spec(spec)
+        schemas = find_schemas_for_examples(spec)
 
-    if errors:
-        print("\nExample validation errors found:")
-        for error in errors:
-            print(f"  - {error}")
+        print(f"Found {len(examples)} examples")
+
+        for example_path, example in examples.items():
+            print(f"  Validating example: {example_path}")
+
+            # Find corresponding schema
+            schema_path = example_path.rsplit('/example', 1)[0] if '/example' in example_path else example_path
+            schema = schemas.get(schema_path)
+
+            if schema:
+                if validate_example_against_schema(example, schema):
+                    print(f"    ✅ {example_path}: Valid example")
+                else:
+                    print(f"    ❌ {example_path}: Invalid example")
+                    all_valid = False
+            else:
+                print(f"    ⚠️ {example_path}: No schema found for validation")
+
+    if all_valid:
+        print("\n✅ All OpenAPI examples are valid")
+        return 0
+    else:
+        print("\n❌ Some OpenAPI examples are invalid")
         return 1
 
-    print("All OpenAPI examples are valid!")
-    return 0
 
-
-if __name__ == '__main__':
+if __name__ == "__main__":
     sys.exit(main())

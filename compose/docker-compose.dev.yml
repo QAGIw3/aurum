@@ -206,6 +206,34 @@ services:
     networks:
       - aurum
 
+  external-collectors:
+    profiles: ["collectors", "pipeline"]
+    build:
+      context: ..
+      dockerfile: Dockerfile.collectors
+    env_file: *env_file
+    depends_on:
+      kafka:
+        condition: service_healthy
+      schema-registry:
+        condition: service_healthy
+      postgres:
+        condition: service_healthy
+    environment:
+      AURUM_COLLECTORS_PROVIDERS: ${AURUM_COLLECTORS_PROVIDERS:-eia,fred,noaa,worldbank}
+      AURUM_COLLECTOR_CHECKPOINT_DSN: ${AURUM_COLLECTOR_CHECKPOINT_DSN:-postgresql://aurum:aurum@postgres:5432/aurum}
+      EIA_API_KEY: ${EIA_API_KEY}
+      FRED_API_KEY: ${FRED_API_KEY}
+      NOAA_GHCND_TOKEN: ${NOAA_GHCND_TOKEN}
+      NOAA_DAILY_QUOTA: ${NOAA_DAILY_QUOTA:-0}
+      NOAA_RATE_LIMIT_RPS: ${NOAA_RATE_LIMIT_RPS:-5}
+      WORLD_BANK_API_BASE_URL: ${WORLD_BANK_API_BASE_URL:-https://api.worldbank.org/v2}
+      AURUM_COLLECTORS_INTERVAL_SECONDS: ${AURUM_COLLECTORS_INTERVAL_SECONDS:-21600}
+    command: ["aurum-external-collector", "--loop"]
+    networks:
+      - aurum
+
+
   clickhouse:
     profiles: ["core"]
     image: clickhouse/clickhouse-server:23.8

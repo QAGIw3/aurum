@@ -116,6 +116,23 @@ from .models import (
     ExternalSeriesQueryParams,
     ExternalObservationsQueryParams,
 )
+from .scenario_models import (
+    CreateScenarioRequest,
+    ScenarioResponse,
+    ScenarioData,
+    ScenarioListResponse,
+    ScenarioRunOptions,
+    ScenarioRunResponse,
+    ScenarioRunData,
+    ScenarioRunListResponse,
+    ScenarioOutputResponse,
+    ScenarioOutputPoint,
+    ScenarioMetricLatestResponse,
+    ScenarioMetricLatest,
+    ScenarioRunPriority,
+    ScenarioRunStatus,
+    ScenarioStatus,
+)
 import aurum.observability.metrics as observability_metrics
 from aurum.observability.metrics import (
     CONTENT_TYPE_LATEST,
@@ -787,24 +804,42 @@ def _decode_cursor(token: str) -> dict:
 
 
 def _resolve_tenant(request: Request, explicit: Optional[str]) -> str:
+    # First priority: check request.state.tenant (set by auth middleware)
+    if tenant := getattr(request.state, "tenant", None):
+        return tenant
+
+    # Second priority: check principal from auth middleware
     principal = getattr(request.state, "principal", {}) or {}
     if tenant := principal.get("tenant"):
         return tenant
+
+    # Third priority: check X-Aurum-Tenant header
     header_tenant = request.headers.get("X-Aurum-Tenant")
     if header_tenant:
         return header_tenant
+
+    # Last priority: explicit parameter
     if explicit:
         return explicit
+
     raise HTTPException(status_code=400, detail="tenant_id is required")
 
 
 def _resolve_tenant_optional(request: Request, explicit: Optional[str]) -> Optional[str]:
+    # First priority: check request.state.tenant (set by auth middleware)
+    if tenant := getattr(request.state, "tenant", None):
+        return tenant
+
+    # Second priority: check principal from auth middleware
     principal = getattr(request.state, "principal", {}) or {}
     if tenant := principal.get("tenant"):
         return tenant
+
+    # Third priority: check X-Aurum-Tenant header
     header_tenant = request.headers.get("X-Aurum-Tenant")
     if header_tenant:
         return header_tenant
+
     return explicit
 
 
@@ -996,7 +1031,9 @@ def list_curves(
     block: Optional[str] = Query(None),
     tenor_type: Optional[str] = Query(None, pattern="^(MONTHLY|CALENDAR|SEASON|QUARTER)$"),
     limit: int = Query(200, ge=1, le=1000),
-    offset: int = Query(0, ge=0, description="Offset for pagination (use 'cursor' for stability)"),
+    cursor: Optional[str] = Query(None, description="Opaque cursor for stable pagination"),
+    since_cursor: Optional[str] = Query(None, description="Alias for 'cursor' to resume iteration from a previous next_cursor value"),
+    offset: Optional[int] = Query(None, ge=0, description="DEPRECATED: Use cursor for pagination instead"),
     cursor: Optional[str] = Query(None, description="Opaque cursor for stable pagination"),
     since_cursor: Optional[str] = Query(
         None,
@@ -1230,7 +1267,9 @@ def list_curves_diff(
     block: Optional[str] = Query(None),
     tenor_type: Optional[str] = Query(None, pattern="^(MONTHLY|CALENDAR|SEASON|QUARTER)$"),
     limit: int = Query(200, ge=1, le=1000),
-    offset: int = Query(0, ge=0, description="Offset for pagination (use 'cursor' for stability)"),
+    cursor: Optional[str] = Query(None, description="Opaque cursor for stable pagination"),
+    since_cursor: Optional[str] = Query(None, description="Alias for 'cursor' to resume iteration from a previous next_cursor value"),
+    offset: Optional[int] = Query(None, ge=0, description="DEPRECATED: Use cursor for pagination instead"),
     cursor: Optional[str] = Query(None, description="Opaque cursor for stable pagination"),
     since_cursor: Optional[str] = Query(
         None,
@@ -2471,7 +2510,9 @@ def list_strips(
     product: Optional[str] = Query(None),
     block: Optional[str] = Query(None),
     limit: int = Query(200, ge=1, le=1000),
-    offset: int = Query(0, ge=0),
+    cursor: Optional[str] = Query(None, description="Opaque cursor for stable pagination"),
+    since_cursor: Optional[str] = Query(None, description="Alias for 'cursor' to resume iteration from a previous next_cursor value"),
+    offset: Optional[int] = Query(None, ge=0, description="DEPRECATED: Use cursor for pagination instead"),
     cursor: Optional[str] = Query(None),
     since_cursor: Optional[str] = Query(
         None,
@@ -2535,29 +2576,95 @@ __all__ = ["router", "configure_routes", "access_log_middleware", "METRICS_MIDDL
 # --- Scenario endpoints (stubbed service behavior for now) ---
 
 
+def _to_datetime(value: Any) -> Optional[datetime]:
+    if isinstance(value, datetime):
+        return value
+    if isinstance(value, str):
+        try:
+            return datetime.fromisoformat(value)
+        except ValueError:
+            return None
+    return None
+
+
+def _assumption_to_dict(assumption: Any) -> Dict[str, Any]:
+    if hasattr(assumption, "dict"):
+        return assumption.dict()
+    if isinstance(assumption, dict):
+        return dict(assumption)
+    return {}
+
+
 def _scenario_record_to_data(record) -> ScenarioData:
+    status_value = getattr(record, "status", ScenarioStatus.CREATED)
+    if isinstance(status_value, str):
+        try:
+            status_value = ScenarioStatus(status_value.lower())
+        except ValueError:
+            status_value = ScenarioStatus.CREATED
+
+    assumptions = [_assumption_to_dict(item) for item in getattr(record, "assumptions", [])]
+    created_at = _to_datetime(getattr(record, "created_at", None)) or datetime.utcnow()
+    updated_at = _to_datetime(getattr(record, "updated_at", None))
+
     return ScenarioData(
-        scenario_id=record.id,
-        tenant_id=record.tenant_id,
-        name=record.name,
-        description=record.description,
-        status=record.status,
-        assumptions=record.assumptions,
-        created_at=record.created_at.isoformat() if record.created_at else None,
+        id=getattr(record, "id", None),
+        tenant_id=getattr(record, "tenant_id", ""),
+        name=getattr(record, "name", ""),
+        description=getattr(record, "description", None),
+        status=status_value,
+        unique_key=getattr(record, "unique_key", ""),
+        assumptions=assumptions,
+        parameters=dict(getattr(record, "parameters", {}) or {}),
+        tags=list(getattr(record, "tags", []) or []),
+        created_at=created_at,
+        updated_at=updated_at,
+        created_by=getattr(record, "created_by", None),
+        version=getattr(record, "version", 1),
+        metadata=dict(getattr(record, "metadata", {}) or {}),
     )
 
 
 def _scenario_run_to_data(run) -> ScenarioRunData:
-    created_at = None
-    if isinstance(run.created_at, datetime):
-        created_at = run.created_at.isoformat()
+    status_value = getattr(run, "state", ScenarioRunStatus.QUEUED)
+    if isinstance(status_value, str):
+        try:
+            status_value = ScenarioRunStatus(status_value.lower())
+        except ValueError:
+            status_value = ScenarioRunStatus.QUEUED
+
+    priority_value = getattr(run, "priority", ScenarioRunPriority.NORMAL)
+    if isinstance(priority_value, str):
+        try:
+            priority_value = ScenarioRunPriority(priority_value.lower())
+        except ValueError:
+            priority_value = ScenarioRunPriority.NORMAL
+
+    created_at = _to_datetime(getattr(run, "created_at", None)) or datetime.utcnow()
+    started_at = _to_datetime(getattr(run, "started_at", None))
+    completed_at = _to_datetime(getattr(run, "completed_at", None))
+    queued_at = _to_datetime(getattr(run, "queued_at", None)) or created_at
+    cancelled_at = _to_datetime(getattr(run, "cancelled_at", None))
+
     return ScenarioRunData(
-        run_id=run.run_id,
-        scenario_id=run.scenario_id,
-        state=run.state,
-        code_version=run.code_version,
-        seed=run.seed,
+        id=getattr(run, "run_id", getattr(run, "id", "")),
+        scenario_id=getattr(run, "scenario_id", ""),
+        status=status_value,
+        priority=priority_value,
+        run_key=getattr(run, "run_key", None),
+        input_hash=getattr(run, "input_hash", None),
+        started_at=started_at,
+        completed_at=completed_at,
+        duration_seconds=getattr(run, "duration_seconds", None),
+        error_message=getattr(run, "error_message", None),
+        retry_count=getattr(run, "retry_count", 0),
+        max_retries=getattr(run, "max_retries", 3),
+        progress_percent=getattr(run, "progress_percent", None),
+        parameters=dict(getattr(run, "parameters", {}) or {}),
+        environment=dict(getattr(run, "environment", {}) or {}),
         created_at=created_at,
+        queued_at=queued_at,
+        cancelled_at=cancelled_at,
     )
 
 
@@ -2581,7 +2688,9 @@ def list_scenarios(
     response: Response,
     status: Optional[str] = Query(None, pattern="^[A-Z_]+$", description="Optional scenario status filter"),
     limit: int = Query(50, ge=1, le=200),
-    offset: int = Query(0, ge=0),
+    cursor: Optional[str] = Query(None, description="Opaque cursor for stable pagination"),
+    since_cursor: Optional[str] = Query(None, description="Alias for 'cursor' to resume iteration from a previous next_cursor value"),
+    offset: Optional[int] = Query(None, ge=0, description="DEPRECATED: Use cursor for pagination instead"),
     cursor: Optional[str] = Query(None),
     since_cursor: Optional[str] = Query(None),
 ) -> ScenarioListResponse:
@@ -2658,7 +2767,9 @@ def list_scenario_runs(
     response: Response,
     state: Optional[str] = Query(None, pattern="^(QUEUED|RUNNING|SUCCEEDED|FAILED|CANCELLED)$"),
     limit: int = Query(50, ge=1, le=200),
-    offset: int = Query(0, ge=0),
+    cursor: Optional[str] = Query(None, description="Opaque cursor for stable pagination"),
+    since_cursor: Optional[str] = Query(None, description="Alias for 'cursor' to resume iteration from a previous next_cursor value"),
+    offset: Optional[int] = Query(None, ge=0, description="DEPRECATED: Use cursor for pagination instead"),
     cursor: Optional[str] = Query(None),
     since_cursor: Optional[str] = Query(None),
 ) -> ScenarioRunListResponse:
@@ -2707,6 +2818,11 @@ def run_scenario(
         tenant_id=effective_tenant,
         code_version=options.code_version if options else None,
         seed=options.seed if options else None,
+        parameters=options.parameters if options else None,
+        environment=options.environment if options else None,
+        priority=options.priority if options else ScenarioRunPriority.NORMAL,
+        max_retries=getattr(options, "max_retries", 3) if options else 3,
+        idempotency_key=getattr(options, "idempotency_key", None) if options else None,
     )
     return ScenarioRunResponse(
         meta=Meta(request_id=request_id, query_time_ms=0),
@@ -2928,7 +3044,9 @@ def list_ppa_contracts(
     request: Request,
     response: Response,
     limit: int = Query(50, ge=1, le=200),
-    offset: int = Query(0, ge=0),
+    cursor: Optional[str] = Query(None, description="Opaque cursor for stable pagination"),
+    since_cursor: Optional[str] = Query(None, description="Alias for 'cursor' to resume iteration from a previous next_cursor value"),
+    offset: Optional[int] = Query(None, ge=0, description="DEPRECATED: Use cursor for pagination instead"),
     cursor: Optional[str] = Query(None),
     since_cursor: Optional[str] = Query(None),
 ) -> PpaContractListResponse:
@@ -3053,7 +3171,9 @@ def list_ppa_contract_valuations(
     scenario_id: Optional[str] = Query(None, description="Filter by scenario identifier"),
     metric: Optional[str] = Query(None, description="Filter by valuation metric name"),
     limit: int = Query(200, ge=1, le=1000),
-    offset: int = Query(0, ge=0),
+    cursor: Optional[str] = Query(None, description="Opaque cursor for stable pagination"),
+    since_cursor: Optional[str] = Query(None, description="Alias for 'cursor' to resume iteration from a previous next_cursor value"),
+    offset: Optional[int] = Query(None, ge=0, description="DEPRECATED: Use cursor for pagination instead"),
     cursor: Optional[str] = Query(None),
     since_cursor: Optional[str] = Query(None),
     prev_cursor: Optional[str] = Query(None),

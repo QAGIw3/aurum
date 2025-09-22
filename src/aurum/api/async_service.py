@@ -15,6 +15,7 @@ except ImportError:
 from ..telemetry.context import get_request_id
 from .config import TrinoConfig
 from .models import CurvePoint, CurveDiffPoint, Meta
+from .scenario_models import ScenarioRunData, ScenarioRunStatus
 from ..scenarios.storage import get_scenario_store
 
 

@@ -1,0 +1,38 @@
+{{- if .Values.vault.enabled -}}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "aurum-api.fullname" . }}-vault-config
+  labels:
+    {{- include "aurum-api.labels" . | nindent 4 }}
+data:
+  vault-agent-config.hcl: |
+    exit_after_auth = false
+    pid_file = "/home/vault/pidfile"
+
+    auto_auth {
+      method "kubernetes" {
+        mount_path = "auth/kubernetes"
+        config = {
+          role = "{{ .Values.vault.role }}"
+        }
+      }
+
+      sink "file" {
+        config = {
+          path = "/home/vault/.vault-token"
+        }
+      }
+    }
+
+    template {
+      source = "/tmp/templates/config.ctmpl"
+      destination = "/etc/secrets/config.env"
+      command = "envdir /etc/secrets /usr/local/bin/docker-entrypoint.sh"
+    }
+
+  config.ctmpl: |
+    {{- range .Values.vault.secrets }}
+    {{ .template }}
+    {{- end }}
+{{- end }}

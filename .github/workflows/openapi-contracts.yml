@@ -1,0 +1,280 @@
+name: OpenAPI and API Contracts
+
+on:
+  push:
+    branches: [main, develop]
+    paths:
+      - 'openapi/**'
+      - 'src/aurum/api/**'
+      - 'tests/api/**'
+  pull_request:
+    branches: [main, develop]
+    paths:
+      - 'openapi/**'
+      - 'src/aurum/api/**'
+      - 'tests/api/**'
+  workflow_dispatch:
+
+jobs:
+  openapi-lint:
+    runs-on: ubuntu-latest
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v4
+      with:
+        fetch-depth: 0
+
+    - name: Install Spectral
+      run: |
+        npm install -g @stoplight/spectral-cli
+
+    - name: Lint OpenAPI specifications
+      run: |
+        spectral lint openapi/**/*.yaml openapi/**/*.yml \
+          --ruleset .spectral.yml \
+          --format text \
+          --fail-severity error \
+          --output-format text \
+          --verbose
+
+    - name: Validate OpenAPI schema compliance
+      run: |
+        for file in openapi/**/*.yaml openapi/**/*.yml; do
+          echo "Validating $file..."
+
+          # Check for required OpenAPI 3.0 fields
+          if ! grep -q "openapi:" "$file"; then
+            echo "❌ ERROR: Missing 'openapi' field in $file"
+            exit 1
+          fi
+
+          if ! grep -q "info:" "$file"; then
+            echo "❌ ERROR: Missing 'info' section in $file"
+            exit 1
+          fi
+
+          if ! grep -q "title:" "$file"; then
+            echo "❌ ERROR: Missing 'title' in info section of $file"
+            exit 1
+          fi
+
+          if ! grep -q "version:" "$file"; then
+            echo "❌ ERROR: Missing 'version' in info section of $file"
+            exit 1
+          fi
+
+          if ! grep -q "paths:" "$file"; then
+            echo "❌ ERROR: Missing 'paths' section in $file"
+            exit 1
+          fi
+
+          echo "✅ $file is valid"
+        done
+
+    - name: Check API consistency
+      run: |
+        python scripts/ci/validate_openapi_consistency.py
+
+    - name: Validate examples in OpenAPI
+      run: |
+        python scripts/ci/validate_openapi_examples.py
+
+  openapi-diff:
+    runs-on: ubuntu-latest
+    if: github.event_name == 'pull_request'
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v4
+      with:
+        fetch-depth: 0
+
+    - name: Get base branch OpenAPI
+      run: |
+        git checkout ${{ github.event.pull_request.base.sha }}
+        mkdir -p openapi-base
+        cp -r openapi/* openapi-base/ 2>/dev/null || true
+
+    - name: Get head branch OpenAPI
+      run: |
+        git checkout ${{ github.event.pull_request.head.sha }}
+        mkdir -p openapi-head
+        cp -r openapi/* openapi-head/ 2>/dev/null || true
+
+    - name: Install OpenAPI diff tools
+      run: |
+        npm install -g openapi-diff
+
+    - name: Check OpenAPI diffs
+      run: |
+        echo "Checking for breaking changes in OpenAPI specifications..."
+
+        # Find all OpenAPI files in both branches
+        base_files=$(find openapi-base -name "*.yaml" -o -name "*.yml" | head -10)
+        head_files=$(find openapi-head -name "*.yaml" -o -name "*.yml" | head -10)
+
+        if [ -z "$base_files" ] && [ -z "$head_files" ]; then
+          echo "No OpenAPI files found to compare"
+          exit 0
+        fi
+
+        # Compare each file
+        for file in $head_files; do
+          filename=$(basename "$file")
+          base_file="openapi-base/$filename"
+
+          if [ -f "$base_file" ]; then
+            echo "Comparing $filename..."
+
+            # Check for breaking changes
+            if openapi-diff "$base_file" "$file" --fail-on-breaking; then
+              echo "✅ $filename: No breaking changes detected"
+            else
+              echo "❌ $filename: Breaking changes detected!"
+              echo "Please review the changes and update consumers if needed."
+              exit 1
+            fi
+          else
+            echo "✅ $filename: New file (not a breaking change)"
+          fi
+        done
+
+        echo "✅ All OpenAPI changes are backward compatible"
+
+  avro-compatibility:
+    runs-on: ubuntu-latest
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v4
+      with:
+        fetch-depth: 0
+
+    - name: Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.11'
+
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install -r requirements-dev.txt
+        pip install avro-python3
+
+    - name: Check Avro schema compatibility
+      run: |
+        python scripts/ci/check_avro_compatibility.py
+
+    - name: Validate Avro schemas
+      run: |
+        # Find all Avro schema files
+        schema_files=$(find . -name "*.avsc" -not -path "./.*" | head -20)
+
+        if [ -z "$schema_files" ]; then
+          echo "No Avro schema files found"
+          exit 0
+        fi
+
+        echo "Validating Avro schemas..."
+        for file in $schema_files; do
+          echo "Validating $file..."
+
+          # Validate schema syntax
+          if python -c "
+          import json
+          import avro.schema
+          with open('$file') as f:
+              schema_dict = json.load(f)
+          try:
+              avro.schema.SchemaFromJSONData(schema_dict)
+              print(f'✅ $file: Valid Avro schema')
+          except Exception as e:
+              print(f'❌ $file: Invalid Avro schema - {e}')
+              exit(1)
+          "; then
+            echo "✅ $file: Valid Avro schema"
+          else
+            echo "❌ $file: Invalid Avro schema"
+            exit 1
+          fi
+        done
+
+        echo "✅ All Avro schemas are valid"
+
+  api-contract-tests:
+    runs-on: ubuntu-latest
+    needs: [openapi-lint, avro-compatibility]
+    if: github.event_name == 'pull_request'
+
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v4
+
+    - name: Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.11'
+
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install -r requirements-dev.txt
+        pip install pytest pytest-asyncio httpx
+
+    - name: Run API contract tests
+      run: |
+        # Run tests that validate API contracts
+        python -m pytest tests/api/test_contracts.py -v
+
+    - name: Validate API response schemas
+      run: |
+        # Test that API responses match OpenAPI schemas
+        python scripts/ci/validate_api_responses.py
+
+  api-backward-compatibility:
+    runs-on: ubuntu-latest
+    if: github.event_name == 'pull_request'
+    needs: openapi-diff
+
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v4
+      with:
+        fetch-depth: 0
+
+    - name: Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.11'
+
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install -r requirements-dev.txt
+
+    - name: Check API backward compatibility
+      run: |
+        # Run tests to ensure API changes are backward compatible
+        python -m pytest tests/api/test_backward_compatibility.py -v
+
+        # Check that new endpoints don't break existing functionality
+        python scripts/ci/check_api_compatibility.py
+
+  notify-on-contract-changes:
+    runs-on: ubuntu-latest
+    needs: [openapi-diff, avro-compatibility]
+    if: github.event_name == 'pull_request' && failure()
+
+    steps:
+    - name: Notify team of contract changes
+      run: |
+        echo "Contract validation failed. Please review:"
+        echo "- OpenAPI breaking changes"
+        echo "- Avro schema compatibility issues"
+        echo "- API contract violations"
+
+        # This would integrate with Slack, Teams, or other notification systems
+        # Example Slack notification (if webhook configured)
+        if [ -n "$SLACK_WEBHOOK_URL" ]; then
+          curl -X POST -H 'Content-type: application/json' \
+            --data '{"text":"⚠️ API Contract Validation Failed - Manual review required"}' \
+            $SLACK_WEBHOOK_URL
+        fi

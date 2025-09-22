@@ -1,4 +1,5 @@
 CREATE TABLE IF NOT EXISTS iceberg.external.timeseries_observation (
+    tenant_id VARCHAR,
     provider VARCHAR,
     series_id VARCHAR,
     ts TIMESTAMP(6),
@@ -12,8 +13,12 @@ CREATE TABLE IF NOT EXISTS iceberg.external.timeseries_observation (
     status VARCHAR,
     quality_flag VARCHAR,
     ingest_ts TIMESTAMP(6),
+    ingest_job_id VARCHAR,
+    ingest_run_id VARCHAR,
+    ingest_batch_id VARCHAR,
     source_event_id VARCHAR,
     metadata JSON,
+    created_at TIMESTAMP(6),
     updated_at TIMESTAMP(6)
 )
 WITH (
@@ -25,6 +30,6 @@ WITH (
     optimize_rewrite_delete_file_threshold = 250,
     vacuum_min_snapshots_to_keep = 12,
     vacuum_max_snapshot_age_retention = '90d',
-    partitioning = ARRAY['provider', 'series_id', 'days(ts)'],
-    write_sort_order = ARRAY['provider', 'series_id', 'ts', 'asof_date']
+    partitioning = ARRAY['tenant_id', 'provider', 'days(ts)'],
+    write_sort_order = ARRAY['tenant_id', 'provider', 'series_id', 'ts', 'asof_date']
 );

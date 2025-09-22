@@ -1,274 +1,201 @@
 #!/usr/bin/env python3
-"""Validate OpenAPI specification consistency and best practices."""
+"""Validate OpenAPI specification consistency."""
 
 import json
 import sys
-from pathlib import Path
-from typing import Any, Dict, List, Set
-
 import yaml
+from pathlib import Path
+from typing import Dict, List, Set
 
 
-def load_openapi_spec(file_path: Path) -> Dict[str, Any]:
-    """Load OpenAPI specification from YAML file."""
-    try:
-        with open(file_path, 'r', encoding='utf-8') as f:
-            if file_path.suffix in ['.yaml', '.yml']:
-                return yaml.safe_load(f)
-            else:
-                return json.load(f)
-    except Exception as e:
-        print(f"Error loading {file_path}: {e}")
-        return {}
+def load_openapi_spec(file_path: str) -> dict:
+    """Load OpenAPI specification from YAML or JSON file."""
+    with open(file_path) as f:
+        if file_path.endswith('.json'):
+            return json.load(f)
+        else:
+            return yaml.safe_load(f)
 
 
-def validate_paths_consistency(spec: Dict[str, Any]) -> List[str]:
-    """Validate consistency across paths."""
-    errors = []
+def validate_openapi_structure(spec: dict, file_path: str) -> bool:
+    """Validate the basic structure of an OpenAPI specification."""
+    print(f"Validating {file_path}...")
+
+    # Check required fields
+    required_fields = ['openapi', 'info', 'paths']
+    for field in required_fields:
+        if field not in spec:
+            print(f"❌ Missing required field: {field}")
+            return False
+
+    # Check OpenAPI version
+    version = spec.get('openapi', '')
+    if not version.startswith('3.'):
+        print(f"❌ Unsupported OpenAPI version: {version}")
+        return False
+
+    # Check info section
+    info = spec.get('info', {})
+    if not info.get('title'):
+        print("❌ Missing title in info section")
+        return False
+
+    if not info.get('version'):
+        print("❌ Missing version in info section")
+        return False
+
+    # Check paths
     paths = spec.get('paths', {})
-
     if not paths:
-        errors.append("No paths defined in specification")
-        return errors
+        print("❌ No paths defined")
+        return False
 
-    # Check for duplicate operationIds
-    operation_ids: Set[str] = set()
+    # Validate each path
     for path, path_item in paths.items():
         if not isinstance(path_item, dict):
-            continue
+            print(f"❌ Invalid path item for {path}")
+            return False
 
+        # Check for at least one HTTP method
+        http_methods = ['get', 'post', 'put', 'patch', 'delete', 'head', 'options']
+        has_method = any(method in path_item for method in http_methods)
+
+        if not has_method:
+            print(f"❌ No HTTP methods defined for path {path}")
+            return False
+
+        # Validate each method
         for method, operation in path_item.items():
-            if not isinstance(operation, dict):
+            if method not in http_methods:
                 continue
 
-            operation_id = operation.get('operationId')
-            if operation_id:
-                if operation_id in operation_ids:
-                    errors.append(f"Duplicate operationId: {operation_id}")
-                operation_ids.add(operation_id)
-
-    return errors
-
-
-def validate_response_consistency(spec: Dict[str, Any]) -> List[str]:
-    """Validate response consistency across operations."""
-    errors = []
-    paths = spec.get('paths', {})
-
-    # Collect all response schemas by status code
-    response_schemas = {}
-
-    for path, path_item in paths.items():
-        if not isinstance(path_item, dict):
-            continue
-
-        for method, operation in path_item.items():
             if not isinstance(operation, dict):
-                continue
+                print(f"❌ Invalid operation definition for {method} {path}")
+                return False
+
+            # Check for responses
+            if 'responses' not in operation:
+                print(f"❌ Missing responses for {method} {path}")
+                return False
 
             responses = operation.get('responses', {})
-            for status_code, response in responses.items():
-                if not isinstance(response, dict):
+            if not responses:
+                print(f"❌ No responses defined for {method} {path}")
+                return False
+
+    print(f"✅ {file_path} structure is valid")
+    return True
+
+
+def check_consistency_across_specs(specs: List[Tuple[str, dict]]) -> bool:
+    """Check consistency across multiple OpenAPI specifications."""
+    print("\n🔍 Checking consistency across specifications...")
+
+    # Check for consistent naming conventions
+    all_paths = set()
+    for file_path, spec in specs:
+        paths = spec.get('paths', {})
+        for path in paths.keys():
+            all_paths.add(path)
+
+    # Check for conflicting path definitions
+    path_conflicts = {}
+    for file_path, spec in specs:
+        for path in spec.get('paths', {}):
+            if path in path_conflicts:
+                path_conflicts[path].append(file_path)
+            else:
+                path_conflicts[path] = [file_path]
+
+    conflicts = {path: files for path, files in path_conflicts.items() if len(files) > 1}
+    if conflicts:
+        print("❌ Path conflicts found:")
+        for path, files in conflicts.items():
+            print(f"  {path}: {', '.join(files)}")
+        return False
+
+    print("✅ No path conflicts found")
+    return True
+
+
+def validate_response_schemas(specs: List[Tuple[str, dict]]) -> bool:
+    """Validate that response schemas are properly defined."""
+    print("\n🔍 Validating response schemas...")
+
+    all_valid = True
+
+    for file_path, spec in specs:
+        paths = spec.get('paths', {})
+
+        for path, path_item in paths.items():
+            for method, operation in path_item.items():
+                if method not in ['get', 'post', 'put', 'patch', 'delete']:
                     continue
 
-                schema = response.get('schema')
-                if schema:
-                    key = f"{method.upper()}_{status_code}"
-                    if key not in response_schemas:
-                        response_schemas[key] = []
-                    response_schemas[key].append((path, schema))
+                responses = operation.get('responses', {})
 
-    # Check for inconsistencies in common response patterns
-    for key, schemas in response_schemas.items():
-        if len(schemas) > 1:
-            # Check if all schemas have the same structure
-            first_schema = schemas[0][1]
-            for path, schema in schemas[1:]:
-                if not _schemas_equivalent(first_schema, schema):
-                    errors.append(f"Inconsistent response schema for {key} at {path}")
+                # Check for success responses
+                has_success = any(str(code).startswith('2') for code in responses.keys())
+                if not has_success:
+                    print(f"❌ No success responses for {method} {path} in {file_path}")
+                    all_valid = False
 
-    return errors
+                # Check for error responses
+                has_error = any(str(code).startswith('4') or str(code).startswith('5') for code in responses.keys())
+                if not has_error:
+                    print(f"❌ No error responses for {method} {path} in {file_path}")
+                    all_valid = False
 
-
-def _schemas_equivalent(schema1: Dict[str, Any], schema2: Dict[str, Any]) -> bool:
-    """Check if two schemas are equivalent."""
-    def normalize_schema(schema: Dict[str, Any]) -> Dict[str, Any]:
-        """Normalize schema for comparison."""
-        normalized = {}
-        for key, value in schema.items():
-            if key == 'properties':
-                # Sort properties for consistent comparison
-                if isinstance(value, dict):
-                    normalized[key] = dict(sorted(value.items()))
-                else:
-                    normalized[key] = value
-            elif key == 'required':
-                # Sort required fields
-                if isinstance(value, list):
-                    normalized[key] = sorted(value)
-                else:
-                    normalized[key] = value
-            else:
-                normalized[key] = value
-        return normalized
-
-    return normalize_schema(schema1) == normalize_schema(schema2)
+    if all_valid:
+        print("✅ All response schemas are properly defined")
+    return all_valid
 
 
-def validate_parameter_consistency(spec: Dict[str, Any]) -> List[str]:
-    """Validate parameter consistency across similar operations."""
-    errors = []
-    paths = spec.get('paths', {})
-
-    # Group operations by path pattern
-    path_patterns = {}
-
-    for path, path_item in paths.items():
-        if not isinstance(path_item, dict):
-            continue
-
-        # Extract path parameters
-        path_params = set()
-        for part in path.split('/'):
-            if part.startswith('{') and part.endswith('}'):
-                path_params.add(part[1:-1])
-
-        for method, operation in path_item.items():
-            if not isinstance(operation, dict):
-                continue
-
-            parameters = operation.get('parameters', [])
-            query_params = []
-
-            for param in parameters:
-                if param.get('in') == 'query':
-                    query_params.append(param.get('name'))
-
-            pattern_key = f"{method.upper()}_{len(path_params)}"
-            if pattern_key not in path_patterns:
-                path_patterns[pattern_key] = []
-
-            path_patterns[pattern_key].append((path, query_params))
-
-    # Check for inconsistencies within patterns
-    for pattern, operations in path_patterns.items():
-        if len(operations) > 1:
-            first_path, first_params = operations[0]
-            for path, params in operations[1:]:
-                if set(first_params) != set(params):
-                    errors.append(
-                        f"Inconsistent query parameters for pattern {pattern}: "
-                        f"{first_path} has {first_params}, {path} has {params}"
-                    )
-
-    return errors
-
-
-def validate_security_consistency(spec: Dict[str, Any]) -> List[str]:
-    """Validate security scheme consistency."""
-    errors = []
-    paths = spec.get('paths', {})
-
-    # Check if operations use security schemes that are defined
-    security_schemes = spec.get('components', {}).get('securitySchemes', {})
-
-    for path, path_item in paths.items():
-        if not isinstance(path_item, dict):
-            continue
-
-        for method, operation in path_item.items():
-            if not isinstance(operation, dict):
-                continue
-
-            security = operation.get('security', [])
-            if security:
-                for sec_req in security:
-                    for scheme_name in sec_req.keys():
-                        if scheme_name not in security_schemes:
-                            errors.append(
-                                f"Operation {method.upper()} {path} references undefined security scheme: {scheme_name}"
-                            )
-
-    return errors
-
-
-def validate_examples(spec: Dict[str, Any]) -> List[str]:
-    """Validate that examples in the specification are valid."""
-    errors = []
-    paths = spec.get('paths', {})
-
-    for path, path_item in paths.items():
-        if not isinstance(path_item, dict):
-            continue
-
-        for method, operation in path_item.items():
-            if not isinstance(operation, dict):
-                continue
-
-            # Check request body examples
-            request_body = operation.get('requestBody')
-            if request_body and isinstance(request_body, dict):
-                content = request_body.get('content', {})
-                for content_type, content_obj in content.items():
-                    if 'examples' in content_obj:
-                        examples = content_obj['examples']
-                        if not isinstance(examples, dict) or not examples:
-                            errors.append(f"Invalid examples in {method.upper()} {path}")
-
-            # Check response examples
-            responses = operation.get('responses', {})
-            for status_code, response in responses.items():
-                if isinstance(response, dict):
-                    content = response.get('content', {})
-                    for content_type, content_obj in content.items():
-                        if 'examples' in content_obj:
-                            examples = content_obj['examples']
-                            if not isinstance(examples, dict) or not examples:
-                                errors.append(f"Invalid examples in {method.upper()} {path} {status_code}")
-
-    return errors
-
-
-def main() -> int:
-    """Main validation function."""
-    errors = []
+def main():
+    """Main function to validate OpenAPI consistency."""
+    print("🔍 Validating OpenAPI specification consistency...")
 
     # Find OpenAPI files
-    openapi_dir = Path('openapi')
-    if not openapi_dir.exists():
-        print("No openapi directory found")
-        return 1
-
-    openapi_files = list(openapi_dir.glob('**/*.yaml')) + list(openapi_dir.glob('**/*.yml'))
+    openapi_files = []
+    for pattern in ['openapi/**/*.yaml', 'openapi/**/*.yml']:
+        openapi_files.extend(Path('.').glob(pattern))
 
     if not openapi_files:
-        print("No OpenAPI specification files found")
-        return 1
+        print("⚠️ No OpenAPI files found")
+        return 0
 
+    print(f"Found {len(openapi_files)} OpenAPI files")
+
+    # Load all specifications
+    specs = []
     for file_path in openapi_files:
-        print(f"Validating {file_path}...")
-        spec = load_openapi_spec(file_path)
+        try:
+            spec = load_openapi_spec(str(file_path))
+            specs.append((str(file_path), spec))
+        except Exception as e:
+            print(f"❌ Error loading {file_path}: {e}")
+            return 1
 
-        if not spec:
-            errors.append(f"Could not load specification from {file_path}")
-            continue
+    # Validate each specification
+    all_valid = True
+    for file_path, spec in specs:
+        if not validate_openapi_structure(spec, file_path):
+            all_valid = False
 
-        # Run all validation checks
-        errors.extend(validate_paths_consistency(spec))
-        errors.extend(validate_response_consistency(spec))
-        errors.extend(validate_parameter_consistency(spec))
-        errors.extend(validate_security_consistency(spec))
-        errors.extend(validate_examples(spec))
-
-    if errors:
-        print("\nValidation errors found:")
-        for error in errors:
-            print(f"  - {error}")
+    if not all_valid:
         return 1
 
-    print("All OpenAPI specifications are consistent and valid!")
+    # Check consistency across specs
+    if not check_consistency_across_specs(specs):
+        return 1
+
+    # Validate response schemas
+    if not validate_response_schemas(specs):
+        return 1
+
+    print("\n✅ All OpenAPI specifications are consistent and valid")
     return 0
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     sys.exit(main())

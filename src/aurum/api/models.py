@@ -749,93 +749,29 @@ __all__ = [
 
 # Scenario models
 
+from . import scenario_models as _scenario_models
 
-class CreateScenarioRequest(BaseModel):
-    tenant_id: str
-    name: str
-    description: Optional[str] = None
-    assumptions: list[ScenarioAssumption]
-
-
-class ScenarioData(BaseModel):
-    scenario_id: str
-    tenant_id: str
-    name: str
-    description: Optional[str] = None
-    status: str
-    assumptions: list[ScenarioAssumption]
-    created_at: Optional[str] = None
-
-
-class ScenarioResponse(BaseModel):
-    meta: Meta
-    data: ScenarioData
-
-
-class ScenarioListResponse(BaseModel):
-    meta: Meta
-    data: List[ScenarioData]
-
-
-class ScenarioRunOptions(BaseModel):
-    code_version: Optional[str] = None
-    seed: Optional[int] = None
-
-
-class ScenarioRunData(BaseModel):
-    run_id: str
-    scenario_id: str
-    state: str
-    code_version: Optional[str] = None
-    seed: Optional[int] = None
-    created_at: Optional[str] = None
-
-
-class ScenarioRunResponse(BaseModel):
-    meta: Meta
-    data: ScenarioRunData
-
-
-class ScenarioRunListResponse(BaseModel):
-    meta: Meta
-    data: List[ScenarioRunData]
-
-
-class ScenarioOutputPoint(BaseModel):
-    scenario_id: str
-    run_id: Optional[str] = None
-    asof_date: Optional[date] = None
-    curve_key: str
-    tenor_type: Optional[str] = None
-    contract_month: Optional[date] = None
-    tenor_label: Optional[str] = None
-    metric: str
-    value: Optional[float] = None
-    band_lower: Optional[float] = None
-    band_upper: Optional[float] = None
-    attribution: Optional[dict[str, float]] = None
-    version_hash: Optional[str] = None
-
-
-class ScenarioOutputResponse(BaseModel):
-    meta: Meta
-    data: list[ScenarioOutputPoint]
-
-
-class ScenarioMetricLatest(BaseModel):
-    scenario_id: str
-    metric: str
-    curve_key: Optional[str] = None
-    tenor_label: Optional[str] = None
-    latest_value: Optional[float] = None
-    latest_band_lower: Optional[float] = None
-    latest_band_upper: Optional[float] = None
-    latest_asof_date: Optional[date] = None
-
-
-class ScenarioMetricLatestResponse(BaseModel):
-    meta: Meta
-    data: list[ScenarioMetricLatest]
+ScenarioData = _scenario_models.ScenarioData
+ScenarioResponse = _scenario_models.ScenarioResponse
+ScenarioListResponse = _scenario_models.ScenarioListResponse
+ScenarioRunOptions = _scenario_models.ScenarioRunOptions
+ScenarioRunData = _scenario_models.ScenarioRunData
+ScenarioRunResponse = _scenario_models.ScenarioRunResponse
+ScenarioRunListResponse = _scenario_models.ScenarioRunListResponse
+ScenarioOutputPoint = _scenario_models.ScenarioOutputPoint
+ScenarioOutputResponse = _scenario_models.ScenarioOutputResponse
+ScenarioMetricLatest = _scenario_models.ScenarioMetricLatest
+ScenarioMetricLatestResponse = _scenario_models.ScenarioMetricLatestResponse
+ScenarioOutputListResponse = _scenario_models.ScenarioOutputListResponse
+CreateScenarioRequest = _scenario_models.CreateScenarioRequest
+ScenarioStatus = _scenario_models.ScenarioStatus
+ScenarioRunStatus = _scenario_models.ScenarioRunStatus
+ScenarioRunPriority = _scenario_models.ScenarioRunPriority
+BulkScenarioRunRequest = _scenario_models.BulkScenarioRunRequest
+BulkScenarioRunResponse = _scenario_models.BulkScenarioRunResponse
+BulkScenarioRunResult = _scenario_models.BulkScenarioRunResult
+BulkScenarioRunDuplicate = _scenario_models.BulkScenarioRunDuplicate
+ScenarioRunBulkResponse = _scenario_models.ScenarioRunBulkResponse
 
 
 # PPA valuation models
@@ -1057,13 +993,24 @@ __all__ += [
     "CreateScenarioRequest",
     "ScenarioData",
     "ScenarioResponse",
+    "ScenarioListResponse",
     "ScenarioRunOptions",
     "ScenarioRunData",
     "ScenarioRunResponse",
+    "ScenarioRunListResponse",
     "ScenarioOutputPoint",
     "ScenarioOutputResponse",
+    "ScenarioOutputListResponse",
     "ScenarioMetricLatest",
     "ScenarioMetricLatestResponse",
+    "ScenarioStatus",
+    "ScenarioRunStatus",
+    "ScenarioRunPriority",
+    "BulkScenarioRunRequest",
+    "BulkScenarioRunResponse",
+    "BulkScenarioRunResult",
+    "BulkScenarioRunDuplicate",
+    "ScenarioRunBulkResponse",
     "PpaValuationRequest",
     "PpaMetric",
     "PpaValuationResponse",

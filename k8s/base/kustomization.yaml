@@ -35,3 +35,4 @@ resources:
 #  - prometheus-rules.yaml
   - ../api
   - ../scenario-worker
+  - ../external-collectors

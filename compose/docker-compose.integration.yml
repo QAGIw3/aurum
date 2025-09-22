@@ -1,0 +1,236 @@
+version: '3.8'
+
+x-env-file: &env_file ../.env
+
+x-integration-defaults: &integration_defaults
+  # Integration test specific environment variables
+  INTEGRATION_TEST: "true"
+  AURUM_ENVIRONMENT: "integration"
+  LOG_LEVEL: "INFO"
+  # Disable telemetry for integration tests by default
+  AURUM_OTEL_EXPORTER_ENDPOINT: ""
+  # Enable debug logging for integration tests
+  PYTHONPATH: "/app/src:/app"
+
+services:
+  # Core services for integration testing
+  postgres:
+    image: postgres:15
+    env_file: *env_file
+    environment:
+      POSTGRES_DB: aurum_test
+      POSTGRES_USER: aurum_test
+      POSTGRES_PASSWORD: aurum_test
+    ports:
+      - "5433:5432"  # Use different port for tests
+    volumes:
+      - postgres-test-data:/var/lib/postgresql/data
+      - ../tests/integration/fixtures/postgres:/docker-entrypoint-initdb.d
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U aurum_test -d aurum_test"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - aurum-integration
+
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6380:6379"  # Use different port for tests
+    command: redis-server --appendonly yes
+    volumes:
+      - redis-test-data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 3
+    networks:
+      - aurum-integration
+
+  clickhouse:
+    image: clickhouse/clickhouse-server:23.8
+    ports:
+      - "8124:8123"  # Use different port for tests
+      - "9001:9000"
+    volumes:
+      - clickhouse-test-data:/var/lib/clickhouse
+      - ../tests/integration/fixtures/clickhouse:/docker-entrypoint-initdb.d
+    environment:
+      CLICKHOUSE_DB: aurum_test
+      CLICKHOUSE_USER: aurum_test
+      CLICKHOUSE_PASSWORD: aurum_test
+    healthcheck:
+      test: ["CMD", "clickhouse-client", "--user=aurum_test", "--password=aurum_test", "--query=SELECT 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - aurum-integration
+
+  minio:
+    image: minio/minio:RELEASE.2024-01-18T22-51-28Z
+    ports:
+      - "9002:9000"  # Use different port for tests
+      - "9003:9001"
+    environment:
+      MINIO_ROOT_USER: aurum_test
+      MINIO_ROOT_PASSWORD: aurum_test
+    command: server /data --console-address ":9003"
+    volumes:
+      - minio-test-data:/data
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9002/minio/health/ready"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - aurum-integration
+
+  # Test data fixtures
+  test-fixtures:
+    build:
+      context: ..
+      dockerfile: tests/integration/Dockerfile.fixtures
+    volumes:
+      - ../tests/integration/fixtures:/fixtures
+      - ../tests/integration/data:/data
+    command: ["python", "-m", "pytest", "tests/integration/fixtures/setup.py"]
+    depends_on:
+      postgres:
+        condition: service_healthy
+      clickhouse:
+        condition: service_healthy
+      minio:
+        condition: service_healthy
+    networks:
+      - aurum-integration
+
+  # Main API service for integration tests
+  api:
+    build:
+      context: ..
+      dockerfile: Dockerfile.api
+    env_file: *env_file
+    environment:
+      <<: *integration_defaults
+      AURUM_APP_DB_DSN: "postgresql://aurum_test:aurum_test@postgres:5432/aurum_test"
+      REDIS_URL: "redis://redis:6379"
+      CLICKHOUSE_URL: "http://clickhouse:8123"
+      AURUM_S3_ENDPOINT: "http://minio:9002"
+      AURUM_S3_ACCESS_KEY: "aurum_test"
+      AURUM_S3_SECRET_KEY: "aurum_test"
+      AURUM_S3_BUCKET: "aurum-test"
+    ports:
+      - "8002:8000"  # Use different port for tests
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      clickhouse:
+        condition: service_healthy
+      minio:
+        condition: service_healthy
+      test-fixtures:
+        condition: service_completed_successfully
+    volumes:
+      - ../tests/integration:/app/tests/integration:ro
+    command: ["uvicorn", "aurum.api.app:app", "--host", "0.0.0.0", "--port", "8000", "--reload"]
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+    networks:
+      - aurum-integration
+
+  # Worker service for integration tests
+  worker:
+    build:
+      context: ..
+      dockerfile: Dockerfile.worker
+    env_file: *env_file
+    environment:
+      <<: *integration_defaults
+      AURUM_APP_DB_DSN: "postgresql://aurum_test:aurum_test@postgres:5432/aurum_test"
+      REDIS_URL: "redis://redis:6379"
+      CLICKHOUSE_URL: "http://clickhouse:8123"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      api:
+        condition: service_healthy
+    volumes:
+      - ../tests/integration:/app/tests/integration:ro
+    command: ["python", "-m", "aurum.scenarios.worker"]
+    networks:
+      - aurum-integration
+
+  # Prometheus for metrics collection during tests
+  prometheus:
+    image: prom/prometheus:latest
+    ports:
+      - "9091:9090"  # Use different port for tests
+    volumes:
+      - ../tests/integration/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+    command: ["--config.file=/etc/prometheus/prometheus.yml", "--web.listen-address=0.0.0.0:9090"]
+    networks:
+      - aurum-integration
+
+  # Grafana for visualization during tests
+  grafana:
+    image: grafana/grafana:latest
+    ports:
+      - "3002:3000"  # Use different port for tests
+    environment:
+      GF_SECURITY_ADMIN_USER: admin
+      GF_SECURITY_ADMIN_PASSWORD: admin
+      GF_USERS_ALLOW_SIGN_UP: "false"
+    volumes:
+      - grafana-test-data:/var/lib/grafana
+      - ../tests/integration/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ../tests/integration/grafana/dashboards:/var/lib/grafana/dashboards:ro
+    networks:
+      - aurum-integration
+
+  # Integration test runner
+  integration-tests:
+    build:
+      context: ..
+      dockerfile: tests/integration/Dockerfile.test-runner
+    env_file: *env_file
+    environment:
+      <<: *integration_defaults
+      AURUM_API_URL: "http://api:8000"
+      PROMETHEUS_URL: "http://prometheus:9090"
+      GRAFANA_URL: "http://grafana:3000"
+    depends_on:
+      api:
+        condition: service_healthy
+      worker:
+        condition: service_started
+      prometheus:
+        condition: service_started
+      grafana:
+        condition: service_started
+    volumes:
+      - ../tests/integration:/app/tests/integration
+      - ../tests:/app/tests:ro
+    command: ["python", "-m", "pytest", "tests/integration/", "-v", "--tb=short", "--cov=aurum", "--cov-report=html"]
+    networks:
+      - aurum-integration
+
+volumes:
+  postgres-test-data:
+  redis-test-data:
+  clickhouse-test-data:
+  minio-test-data:
+  grafana-test-data:
+
+networks:
+  aurum-integration:
+    driver: bridge

@@ -1,4 +1,5 @@
 CREATE TABLE IF NOT EXISTS iceberg.external.series_catalog (
+    tenant_id VARCHAR,
     provider VARCHAR,
     series_id VARCHAR,
     dataset_code VARCHAR,
@@ -18,9 +19,12 @@ CREATE TABLE IF NOT EXISTS iceberg.external.series_catalog (
     tags ARRAY(VARCHAR),
     metadata JSON,
     version BIGINT,
-    updated_at TIMESTAMP(6),
     created_at TIMESTAMP(6),
-    ingest_ts TIMESTAMP(6)
+    updated_at TIMESTAMP(6),
+    ingest_ts TIMESTAMP(6),
+    ingest_job_id VARCHAR,
+    ingest_run_id VARCHAR,
+    ingest_batch_id VARCHAR
 )
 WITH (
     format = 'PARQUET',
@@ -30,5 +34,7 @@ WITH (
     optimize_rewrite_data_file_threshold = 8,
     optimize_rewrite_delete_file_threshold = 100,
     vacuum_min_snapshots_to_keep = 4,
-    vacuum_max_snapshot_age_retention = '30d'
+    vacuum_max_snapshot_age_retention = '30d',
+    partitioning = ARRAY['tenant_id', 'provider'],
+    write_sort_order = ARRAY['tenant_id', 'provider', 'series_id']
 );

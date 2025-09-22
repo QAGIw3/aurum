@@ -33,7 +33,9 @@ async def get_curves(
     product: Optional[str] = None,
     block: Optional[str] = None,
     limit: int = Query(100, ge=1, le=500),
-    offset: int = Query(0, ge=0),
+    cursor: Optional[str] = Query(None, description="Opaque cursor for stable pagination"),
+    since_cursor: Optional[str] = Query(None, description="Alias for 'cursor' to resume iteration from a previous next_cursor value"),
+    offset: Optional[int] = Query(None, ge=0, description="DEPRECATED: Use cursor for pagination instead"),
     cursor: Optional[str] = None,
     since_cursor: Optional[str] = None,
     prev_cursor: Optional[str] = None,
@@ -171,7 +173,9 @@ async def get_curve_diff(
     product: Optional[str] = None,
     block: Optional[str] = None,
     limit: int = Query(100, ge=1, le=500),
-    offset: int = Query(0, ge=0),
+    cursor: Optional[str] = Query(None, description="Opaque cursor for stable pagination"),
+    since_cursor: Optional[str] = Query(None, description="Alias for 'cursor' to resume iteration from a previous next_cursor value"),
+    offset: Optional[int] = Query(None, ge=0, description="DEPRECATED: Use cursor for pagination instead"),
 ) -> CurveDiffResponse:
     """Compare curve values between two as-of dates."""
     start_time = time.perf_counter()
@@ -225,7 +229,9 @@ async def get_curve_strips(
     product: Optional[str] = None,
     block: Optional[str] = None,
     limit: int = Query(100, ge=1, le=500),
-    offset: int = Query(0, ge=0),
+    cursor: Optional[str] = Query(None, description="Opaque cursor for stable pagination"),
+    since_cursor: Optional[str] = Query(None, description="Alias for 'cursor' to resume iteration from a previous next_cursor value"),
+    offset: Optional[int] = Query(None, ge=0, description="DEPRECATED: Use cursor for pagination instead"),
 ) -> CurveResponse:
     """Retrieve curve strips aggregated by time periods."""
     start_time = time.perf_counter()

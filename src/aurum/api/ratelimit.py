@@ -14,29 +14,72 @@ from aurum.core import AurumSettings
 from starlette.requests import Request
 from starlette.responses import JSONResponse, Response
 from starlette.types import ASGIApp, Receive, Scope, Send
+from fastapi import APIRouter, Query
 
 from .config import CacheConfig
+from ..telemetry.context import get_request_id
 
 try:  # pragma: no cover - optional metric dependency
-    from prometheus_client import Counter  # type: ignore
+    from prometheus_client import Counter, Gauge, Histogram  # type: ignore
 except Exception:  # pragma: no cover
-    Counter = None  # type: ignore
+    Counter, Gauge, Histogram = None, None, None  # type: ignore
 
 if Counter is not None:  # pragma: no cover - metrics optional in tests
     RATE_LIMIT_EVENTS = Counter(
         "aurum_api_ratelimit_total",
         "Rate limit decisions",
-        ["result"],
+        ["result", "path", "tenant_id"],
+    )
+
+    RATE_LIMIT_ACTIVE_WINDOWS = Gauge(
+        "aurum_api_ratelimit_active_windows",
+        "Number of active rate limit windows",
+        ["path", "tenant_id"],
+    )
+
+    RATE_LIMIT_REQUESTS_PER_WINDOW = Histogram(
+        "aurum_api_ratelimit_requests_per_window",
+        "Number of requests in current window",
+        ["path", "tenant_id"],
+        buckets=[0, 1, 2, 5, 10, 20, 50, 100, 200, 500],
+    )
+
+    RATE_LIMIT_BLOCK_DURATION = Histogram(
+        "aurum_api_ratelimit_block_duration_seconds",
+        "Duration of rate limit blocks",
+        buckets=[0.1, 1, 5, 10, 30, 60, 300, 600],
     )
 else:  # pragma: no cover
     RATE_LIMIT_EVENTS = None
+    RATE_LIMIT_ACTIVE_WINDOWS = None
+    RATE_LIMIT_REQUESTS_PER_WINDOW = None
+    RATE_LIMIT_BLOCK_DURATION = None
 
 
-def _record_metric(result: str) -> None:
+def _record_metric(result: str, path: str = "", tenant_id: str = "", request_count: int = 0) -> None:
     if RATE_LIMIT_EVENTS is None:
         return
     try:
-        RATE_LIMIT_EVENTS.labels(result=result).inc()
+        RATE_LIMIT_EVENTS.labels(result=result, path=path, tenant_id=tenant_id).inc()
+
+        # Update gauge for active windows
+        if RATE_LIMIT_ACTIVE_WINDOWS is not None:
+            window_key = f"{path}:{tenant_id}"
+            # This is a simplified approach - in production would track actual window state
+            # For now, we just record when we have rate limit activity
+            if result == "blocked":
+                RATE_LIMIT_ACTIVE_WINDOWS.labels(path=path, tenant_id=tenant_id).set(1)
+
+        # Record request count per window
+        if RATE_LIMIT_REQUESTS_PER_WINDOW is not None and request_count > 0:
+            RATE_LIMIT_REQUESTS_PER_WINDOW.labels(path=path, tenant_id=tenant_id).observe(request_count)
+
+        # Record block duration
+        if result == "blocked" and RATE_LIMIT_BLOCK_DURATION is not None:
+            # This would need to be called when the block is lifted
+            # For now, we'll observe a default duration
+            RATE_LIMIT_BLOCK_DURATION.observe(1.0)  # 1 second default
+
     except Exception:
         pass
 
@@ -46,6 +89,7 @@ class RateLimitConfig:
     rps: int = 10
     burst: int = 20
     overrides: Dict[str, Tuple[int, int]] = field(default_factory=dict)
+    tenant_overrides: Dict[str, Dict[str, Tuple[int, int]]] = field(default_factory=dict)
     identifier_header: str | None = None
     whitelist: Tuple[str, ...] = field(default_factory=tuple)
 
@@ -92,15 +136,29 @@ class RateLimitConfig:
     def from_settings(cls, settings: AurumSettings) -> "RateLimitConfig":
         rl = settings.api.rate_limit
         overrides = dict(rl.overrides)
+        tenant_overrides = dict(rl.tenant_overrides)
         return cls(
             rps=rl.requests_per_second,
             burst=rl.burst,
             overrides=overrides,
+            tenant_overrides=tenant_overrides,
             identifier_header=rl.identifier_header,
             whitelist=tuple(rl.whitelist),
         )
 
-    def limits_for_path(self, path: str) -> Tuple[int, int]:
+    def limits_for_path(self, path: str, tenant: Optional[str] = None) -> Tuple[int, int]:
+        # First check tenant-specific overrides
+        if tenant and tenant in self.tenant_overrides:
+            tenant_overrides = self.tenant_overrides[tenant]
+            match_prefix = ""
+            selected = (self.rps, self.burst)
+            for prefix, values in tenant_overrides.items():
+                if path.startswith(prefix) and len(prefix) > len(match_prefix):
+                    match_prefix = prefix
+                    selected = values
+            return selected
+
+        # Fall back to path-based overrides
         match_prefix = ""
         selected = (self.rps, self.burst)
         for prefix, values in self.overrides.items():
@@ -154,8 +212,8 @@ class RateLimitMiddleware:
             await self.app(scope, receive, send)
             return
         path = request.url.path
-        rps, burst = self.rl_cfg.limits_for_path(path)
         identifier, tenant_id, header_identifier, client_ip = self._resolve_identity(request)
+        rps, burst = self.rl_cfg.limits_for_path(path, tenant_id)
 
         if self.rl_cfg.is_whitelisted(identifier, tenant_id, header_identifier, client_ip):
             await self.app(scope, receive, send)
@@ -212,7 +270,12 @@ class RateLimitMiddleware:
                 if oldest_score is not None:
                     reset_window = ((oldest_score + window_ms) - now_ms) / 1000.0
                     reset_seconds = max(0, math.ceil(reset_window))
-                _record_metric("allowed" if allowed else "blocked")
+                _record_metric(
+                    "allowed" if allowed else "blocked",
+                    path=path,
+                    tenant_id=tenant,
+                    request_count=current
+                )
                 return allowed, remaining, reset_seconds
             except Exception:
                 _record_metric("error")
@@ -226,7 +289,12 @@ class RateLimitMiddleware:
         current = len(bucket)
         remaining = max(0, limit_total - current)
         allowed = current <= limit_total
-        _record_metric("allowed" if allowed else "blocked")
+        _record_metric(
+            "allowed" if allowed else "blocked",
+            path=path,
+            tenant_id=tenant,
+            request_count=current
+        )
         reset_seconds = 1
         if bucket:
             reset_window = self._window_seconds - (now - bucket[0])
@@ -246,31 +314,140 @@ class RateLimitMiddleware:
     def _resolve_identity(
         self, request: Request
     ) -> tuple[str, Optional[str], Optional[str], str]:
+        # First priority: check request.state.tenant (set by auth middleware)
+        tenant = getattr(request.state, "tenant", None)
+
+        # Second priority: check principal from auth middleware
         principal = getattr(request.state, "principal", {}) or {}
-        tenant = principal.get("tenant")
+        if tenant is None:
+            tenant = principal.get("tenant")
+
+        # Third priority: check X-Aurum-Tenant header
+        if tenant is None:
+            raw_tenant = request.headers.get("X-Aurum-Tenant")
+            if raw_tenant:
+                stripped_tenant = raw_tenant.strip()
+                tenant = stripped_tenant or None
+
         header_identifier: Optional[str] = None
         if self.rl_cfg.identifier_header:
             raw_header = request.headers.get(self.rl_cfg.identifier_header)
             if raw_header:
                 stripped = raw_header.strip()
                 header_identifier = stripped or None
-        if tenant is None:
-            raw_tenant = request.headers.get("X-Aurum-Tenant")
-            if raw_tenant:
-                stripped_tenant = raw_tenant.strip()
-                tenant = stripped_tenant or None
+
         client_ip = self._client_ip(request)
 
+        # Construct identifier with priority: tenant+header -> tenant -> header -> client_ip
         if tenant and header_identifier:
-            identifier = f"{tenant}:{header_identifier}"
+            identifier = f"tenant:{tenant}:header:{header_identifier}"
         elif tenant:
-            identifier = tenant
+            identifier = f"tenant:{tenant}"
         elif header_identifier:
-            identifier = header_identifier
+            identifier = f"header:{header_identifier}"
         else:
-            identifier = client_ip
+            identifier = f"ip:{client_ip}"
 
         return identifier, tenant, header_identifier, client_ip
+
+
+# Admin endpoints for rate limit inspection
+ratelimit_admin_router = APIRouter()
+
+
+@ratelimit_admin_router.get("/v1/admin/ratelimit/config")
+async def get_ratelimit_config() -> Dict[str, Any]:
+    """Get current rate limiting configuration."""
+    from ..core.settings import AurumSettings
+
+    settings = AurumSettings.from_env()
+    rl = settings.api.rate_limit
+
+    return {
+        "meta": {
+            "request_id": get_request_id(),
+        },
+        "data": {
+            "enabled": rl.enabled,
+            "requests_per_second": rl.requests_per_second,
+            "burst": rl.burst,
+            "overrides": rl.overrides,
+            "tenant_overrides": rl.tenant_overrides,
+            "window_seconds": rl.window_seconds,
+        }
+    }
+
+
+@ratelimit_admin_router.get("/v1/admin/ratelimit/status")
+async def get_ratelimit_status(
+    tenant_id: Optional[str] = Query(None, description="Filter by tenant ID"),
+    path: Optional[str] = Query(None, description="Filter by path prefix"),
+) -> Dict[str, Any]:
+    """Get current rate limiting status and active windows."""
+    # This would integrate with actual rate limit state tracking
+    # For now, return basic information
+    return {
+        "meta": {
+            "request_id": get_request_id(),
+        },
+        "data": {
+            "active_windows": 0,  # Would be populated from actual state
+            "blocked_requests": 0,  # Would be populated from metrics
+            "allowed_requests": 0,  # Would be populated from metrics
+            "filters": {
+                "tenant_id": tenant_id,
+                "path": path,
+            }
+        }
+    }
+
+
+@ratelimit_admin_router.get("/v1/admin/ratelimit/metrics")
+async def get_ratelimit_metrics(
+    tenant_id: Optional[str] = Query(None, description="Filter by tenant ID"),
+) -> Dict[str, Any]:
+    """Get rate limiting metrics."""
+    # In a real implementation, this would expose Prometheus metrics
+    # or provide a structured view of rate limiting statistics
+    return {
+        "meta": {
+            "request_id": get_request_id(),
+        },
+        "data": {
+            "tenant_id": tenant_id,
+            "metrics": {
+                "requests_blocked": 0,
+                "requests_allowed": 0,
+                "active_rate_limits": 0,
+                "average_window_utilization": 0.0,
+            }
+        }
+    }
+
+
+@ratelimit_admin_router.post("/v1/admin/ratelimit/test")
+async def test_ratelimit(
+    path: str = Query(..., description="Path to test rate limiting for"),
+    tenant_id: str = Query(..., description="Tenant ID to test"),
+    requests_per_second: int = Query(10, description="RPS to test with"),
+) -> Dict[str, Any]:
+    """Test rate limiting for a specific path and tenant."""
+    # This would simulate rate limit behavior for testing
+    return {
+        "meta": {
+            "request_id": get_request_id(),
+        },
+        "data": {
+            "test_config": {
+                "path": path,
+                "tenant_id": tenant_id,
+                "requests_per_second": requests_per_second,
+            },
+            "simulated_result": "allowed",  # Would be actual simulation result
+            "remaining_requests": requests_per_second - 1,
+            "reset_seconds": 1
+        }
+    }
 
     async def _reject(self, scope: Scope, receive: Receive, send: Send, *, remaining: int, reset: int) -> None:
         headers = {"Retry-After": str(reset), "X-RateLimit-Limit": str(self.rl_cfg.rps + self.rl_cfg.burst), "X-RateLimit-Remaining": str(remaining), "X-RateLimit-Reset": str(reset)}

@@ -1,0 +1,307 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: vault-backup-restore-test
+  namespace: aurum-dev
+  labels:
+    app: vault
+    component: backup-restore-test
+spec:
+  template:
+    metadata:
+      labels:
+        app: vault
+        component: backup-restore-test
+    spec:
+      serviceAccountName: vault
+      containers:
+      - name: vault-backup-restore-test
+        image: hashicorp/vault:1.15.5
+        command: ["/bin/sh", "-c"]
+        args:
+        - |
+          set -euo pipefail
+
+          # Colors for output
+          RED='\033[0;31m'
+          GREEN='\033[0;32m'
+          YELLOW='\033[1;33m'
+          NC='\033[0m' # No Color
+
+          echo -e "${GREEN}🔒 Starting Vault backup and restore testing...${NC}"
+
+          # Set Vault address
+          export VAULT_ADDR=http://vault.aurum-dev.svc.cluster.local:8200
+          export VAULT_TOKEN=$(cat /vault/secrets/token)
+
+          TEST_TIMESTAMP=$(date -u +'%Y%m%d_%H%M%S')
+          TEST_NAME="vault_backup_restore_test_${TEST_TIMESTAMP}"
+
+          echo -e "${YELLOW}Test ID: $TEST_NAME${NC}"
+
+          # Function to create test secrets
+          create_test_secrets() {
+            echo -e "${YELLOW}Creating test secrets...${NC}"
+
+            # Create test application secrets
+            vault kv put secret/aurum/test/api-keys \
+              api_key_1="test-key-$(openssl rand -hex 16)" \
+              api_key_2="test-key-$(openssl rand -hex 16)" \
+              created_for_test="$TEST_NAME"
+
+            # Create test database credentials
+            vault kv put secret/aurum/test/database-credentials \
+              username="test-user-$(openssl rand -hex 8)" \
+              password="test-pass-$(openssl rand -hex 16)" \
+              database="test-db" \
+              created_for_test="$TEST_NAME"
+
+            # Create test encryption key
+            vault write -f transit/keys/test-encryption-key
+
+            # Create test policy
+            cat > /tmp/test-policy.hcl << EOF
+          path "secret/data/aurum/test/*" {
+            capabilities = ["create", "read", "update", "delete", "list"]
+          }
+          EOF
+
+            vault policy write test-policy /tmp/test-policy.hcl
+
+            echo -e "${GREEN}✅ Test secrets created${NC}"
+          }
+
+          # Function to backup secrets
+          backup_secrets() {
+            echo -e "${YELLOW}Creating backup...${NC}"
+
+            BACKUP_FILE="/backup/vault-backup-${TEST_TIMESTAMP}.json"
+
+            # Create a snapshot
+            vault operator raft snapshot save $BACKUP_FILE
+
+            # Verify backup integrity
+            if [ -f "$BACKUP_FILE" ]; then
+              BACKUP_SIZE=$(stat -f%z "$BACKUP_FILE" 2>/dev/null || stat -c%s "$BACKUP_FILE")
+              echo -e "${GREEN}✅ Backup created: $BACKUP_FILE (${BACKUP_SIZE} bytes)${NC}"
+              return 0
+            else
+              echo -e "${RED}❌ Backup creation failed${NC}"
+              return 1
+            fi
+          }
+
+          # Function to verify test secrets exist
+          verify_secrets_exist() {
+            echo -e "${YELLOW}Verifying test secrets exist...${NC}"
+
+            # Check application secrets
+            if vault kv get secret/aurum/test/api-keys >/dev/null 2>&1; then
+              echo "  ✅ Application secrets exist"
+            else
+              echo -e "${RED}❌ Application secrets missing${NC}"
+              return 1
+            fi
+
+            # Check database credentials
+            if vault kv get secret/aurum/test/database-credentials >/dev/null 2>&1; then
+              echo "  ✅ Database credentials exist"
+            else
+              echo -e "${RED}❌ Database credentials missing${NC}"
+              return 1
+            fi
+
+            # Check encryption key
+            if vault read transit/keys/test-encryption-key >/dev/null 2>&1; then
+              echo "  ✅ Encryption key exists"
+            else
+              echo -e "${RED}❌ Encryption key missing${NC}"
+              return 1
+            fi
+
+            echo -e "${GREEN}✅ All test secrets verified${NC}"
+            return 0
+          }
+
+          # Function to simulate disaster scenario
+          simulate_disaster() {
+            echo -e "${YELLOW}Simulating disaster scenario...${NC}"
+
+            # Delete test secrets (simulating data loss)
+            vault kv delete secret/aurum/test/api-keys || true
+            vault kv delete secret/aurum/test/database-credentials || true
+            vault kv delete secret/aurum/test || true
+
+            # Delete encryption key (simulating key loss)
+            vault delete transit/keys/test-encryption-key || true
+
+            # Delete test policy
+            vault policy delete test-policy || true
+
+            echo -e "${GREEN}✅ Disaster simulation completed${NC}"
+          }
+
+          # Function to restore from backup
+          restore_from_backup() {
+            echo -e "${YELLOW}Restoring from backup...${NC}"
+
+            BACKUP_FILE="/backup/vault-backup-${TEST_TIMESTAMP}.json"
+
+            # Restore from snapshot
+            vault operator raft snapshot restore -force $BACKUP_FILE
+
+            echo -e "${GREEN}✅ Restore completed${NC}"
+          }
+
+          # Function to verify restore success
+          verify_restore_success() {
+            echo -e "${YELLOW}Verifying restore success...${NC}"
+
+            # Wait a moment for Vault to be ready after restore
+            sleep 10
+
+            # Re-verify test secrets
+            if verify_secrets_exist; then
+              echo -e "${GREEN}✅ Restore verification successful${NC}"
+              return 0
+            else
+              echo -e "${RED}❌ Restore verification failed${NC}"
+              return 1
+            fi
+          }
+
+          # Function to cleanup test resources
+          cleanup_test_resources() {
+            echo -e "${YELLOW}Cleaning up test resources...${NC}"
+
+            # Delete test secrets
+            vault kv delete secret/aurum/test/api-keys || true
+            vault kv delete secret/aurum/test/database-credentials || true
+            vault kv delete secret/aurum/test || true
+
+            # Delete encryption key
+            vault delete transit/keys/test-encryption-key || true
+
+            # Delete test policy
+            vault policy delete test-policy || true
+
+            # Remove backup file
+            rm -f /backup/vault-backup-${TEST_TIMESTAMP}.json
+
+            echo -e "${GREEN}✅ Test cleanup completed${NC}"
+          }
+
+          # Main test execution
+          echo -e "${GREEN}🚀 Starting backup/restore test: $TEST_NAME${NC}"
+
+          # Phase 1: Setup
+          echo -e "${GREEN}📋 Phase 1: Setup${NC}"
+          create_test_secrets
+
+          # Phase 2: Pre-backup verification
+          echo -e "${GREEN}🔍 Phase 2: Pre-backup verification${NC}"
+          verify_secrets_exist
+
+          # Phase 3: Backup
+          echo -e "${GREEN}💾 Phase 3: Backup${NC}"
+          backup_secrets
+
+          # Phase 4: Disaster simulation
+          echo -e "${GREEN}💥 Phase 4: Disaster simulation${NC}"
+          simulate_disaster
+
+          # Phase 5: Restore
+          echo -e "${GREEN}🔄 Phase 5: Restore${NC}"
+          restore_from_backup
+
+          # Phase 6: Post-restore verification
+          echo -e "${GREEN}✅ Phase 6: Post-restore verification${NC}"
+          verify_restore_success
+
+          # Phase 7: Cleanup
+          echo -e "${GREEN}🧹 Phase 7: Cleanup${NC}"
+          cleanup_test_resources
+
+          # Generate test report
+          echo -e "${GREEN}📊 Generating test report...${NC}"
+          cat > /tmp/backup-restore-test-report.json << EOF
+          {
+            "test_id": "$TEST_NAME",
+            "test_timestamp": "$(date -u +'%Y-%m-%dT%H:%M:%SZ')",
+            "phases": [
+              {"name": "setup", "status": "passed"},
+              {"name": "pre_backup_verification", "status": "passed"},
+              {"name": "backup", "status": "passed"},
+              {"name": "disaster_simulation", "status": "passed"},
+              {"name": "restore", "status": "passed"},
+              {"name": "post_restore_verification", "status": "passed"},
+              {"name": "cleanup", "status": "passed"}
+            ],
+            "overall_status": "PASSED",
+            "backup_file_size": "$(stat -f%z /backup/vault-backup-${TEST_TIMESTAMP}.json 2>/dev/null || stat -c%s /backup/vault-backup-${TEST_TIMESTAMP}.json 2>/dev/null || echo 'unknown')",
+            "test_duration_seconds": "$SECONDS"
+          }
+          EOF
+
+          # Store test report
+          vault kv put secret/backup-restore-tests/$TEST_NAME report=@/tmp/backup-restore-test-report.json
+
+          echo -e "${GREEN}✅ Backup/restore test completed successfully: $TEST_NAME${NC}"
+          echo -e "${GREEN}📈 Test duration: ${SECONDS}s${NC}"
+
+          exit 0
+        env:
+        - name: VAULT_ADDR
+          value: "http://vault.aurum-dev.svc.cluster.local:8200"
+        - name: VAULT_TOKEN
+          valueFrom:
+            secretKeyRef:
+              name: vault-root-token
+              key: token
+        volumeMounts:
+        - name: vault-token
+          mountPath: /vault/secrets
+        - name: backup-storage
+          mountPath: /backup
+      volumes:
+      - name: vault-token
+        secret:
+          secretName: vault-root-token
+      - name: backup-storage
+        persistentVolumeClaim:
+          claimName: vault-backup-storage
+      restartPolicy: OnFailure
+  backoffLimit: 2
+---
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: vault-backup-restore-test-schedule
+  namespace: aurum-dev
+  labels:
+    app: vault
+    component: backup-restore-test
+spec:
+  schedule: "0 3 * * 1"  # Weekly on Monday at 3 AM
+  jobTemplate:
+    spec:
+      template:
+        metadata:
+          labels:
+            app: vault
+            component: backup-restore-test
+        spec:
+          serviceAccountName: vault
+          containers:
+          - name: backup-restore-test-scheduled
+            image: hashicorp/vault:1.15.5
+            command: ["/bin/bash", "-c"]
+            args:
+            - |
+              echo "Starting scheduled backup/restore test..."
+              kubectl create job vault-backup-restore-test-$(date +%s) --from=cronjob/vault-backup-restore-test-schedule -n aurum-dev
+            volumeMounts: []
+          volumes: []
+          restartPolicy: OnFailure
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 5

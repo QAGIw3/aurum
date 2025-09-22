@@ -288,6 +288,15 @@ class AuthMiddleware:
             return
         path = scope.get("path", "")
         if self.config.disabled or path in self._exempt:
+            # Set default principal for disabled auth or exempt paths
+            scope.setdefault("state", {})
+            scope["state"]["principal"] = {
+                "sub": "anonymous",
+                "email": None,
+                "groups": [],
+                "tenant": None,
+                "claims": {},
+            }
             await self.app(scope, receive, send)
             return
 
@@ -300,7 +309,17 @@ class AuthMiddleware:
                 # Attach principal to request.state for downstream use
                 scope.setdefault("state", {})
                 scope["state"]["principal"] = principal
+
+                # Also set tenant_id in request state for easy access
+                if principal.get("tenant"):
+                    scope["state"]["tenant"] = principal["tenant"]
+
                 await self.app(scope, receive, send)
+                return
+            else:
+                # Forward-auth was configured but failed, return 401 immediately
+                response = _unauthorized("Forward-auth failed")
+                await response(scope, receive, send)
                 return
 
         # Fall back to OIDC JWT verification
@@ -317,19 +336,34 @@ class AuthMiddleware:
             response = _unauthorized(exc.detail)
             await response(scope, receive, send)
             return
+        # Extract tenant from claims
+        tenant = claims.get("tenant") or claims.get("org") or None
+
+        # If no direct tenant claim, try to extract from email domain
+        if not tenant:
+            email = claims.get("email") or claims.get("preferred_username")
+            if email and "@" in email:
+                domain = email.split("@")[1]
+                if "." in domain:
+                    tenant = domain.split(".")[0]
+
         # Attach principal to request.state for downstream use
         scope.setdefault("state", {})
         scope["state"]["principal"] = {
             "sub": claims.get("sub"),
             "email": claims.get("email") or claims.get("preferred_username"),
             "groups": claims.get("groups") or claims.get("roles") or [],
-            "tenant": claims.get("tenant") or claims.get("org") or None,
+            "tenant": tenant,
             "claims": claims,
         }
+
+        # Also set tenant_id in request state for easy access
+        if tenant:
+            scope["state"]["tenant"] = tenant
         await self.app(scope, receive, send)
 
     def _extract_forward_auth_principal(self, request: Request) -> Dict[str, Any] | None:
-        """Extract principal from Traefik forward-auth headers."""
+        """Extract principal from Traefik forward-auth headers with tenant_id verification."""
         if not self.config.forward_auth_header:
             return None
 
@@ -356,29 +390,52 @@ class AuthMiddleware:
                     # Map common claim names
                     principal["email"] = claims.get("email") or claims.get("preferred_username")
                     principal["groups"] = claims.get("groups") or claims.get("roles") or []
-                    principal["tenant"] = claims.get("tenant") or claims.get("org") or claims.get("organization")
                     principal["claims"] = claims
 
                     # Extract tenant from various possible sources
+                    # Priority: direct tenant claim -> org -> organization -> domain extraction -> groups
+                    principal["tenant"] = (
+                        claims.get("tenant") or
+                        claims.get("org") or
+                        claims.get("organization")
+                    )
+
+                    # If no direct tenant claim, try to extract from domain/email
                     if not principal["tenant"]:
-                        # Try to extract from domain/email
                         if principal["email"] and "@" in principal["email"]:
                             domain = principal["email"].split("@")[1]
                             if "." in domain:
                                 principal["tenant"] = domain.split(".")[0]
 
-                        # Try to extract from groups
+                    # If still no tenant, try to extract from groups
+                    if not principal["tenant"]:
                         if principal["groups"]:
                             for group in principal["groups"]:
-                                if "tenant:" in str(group).lower():
-                                    tenant_part = str(group).split("tenant:")[-1].strip()
+                                group_str = str(group).lower()
+                                if "tenant:" in group_str:
+                                    tenant_part = group_str.split("tenant:")[-1].strip()
                                     if tenant_part:
                                         principal["tenant"] = tenant_part
                                         break
+                                elif "org:" in group_str:
+                                    org_part = group_str.split("org:")[-1].strip()
+                                    if org_part:
+                                        principal["tenant"] = org_part
+                                        break
 
-                except (json.JSONDecodeError, KeyError):
-                    # If claims parsing fails, continue with basic info
-                    pass
+                    # Validate tenant_id is present and not empty
+                    if not principal["tenant"]:
+                        raise HTTPException(
+                            status_code=401,
+                            detail="Missing tenant_id claim in forward-auth headers"
+                        )
+
+                except (json.JSONDecodeError, KeyError, HTTPException):
+                    # If claims parsing fails or tenant validation fails, return None to trigger 401
+                    return None
+            else:
+                # If forward auth claims header is configured but not present, fail
+                return None
 
         return principal
 

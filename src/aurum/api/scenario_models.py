@@ -63,6 +63,7 @@ class ScenarioData(AurumBaseModel):
     name: str = Field(..., description="Scenario name")
     description: Optional[str] = Field(None, description="Scenario description")
     status: ScenarioStatus = Field(..., description="Scenario status")
+    unique_key: str = Field(..., description="Deterministic scenario key")
     assumptions: List[Dict[str, Any]] = Field(
         default_factory=list,
         description="List of scenario assumptions"
@@ -73,9 +74,10 @@ class ScenarioData(AurumBaseModel):
     )
     tags: List[str] = Field(default_factory=list, description="Scenario tags")
     created_at: datetime = Field(..., description="Creation timestamp")
-    updated_at: datetime = Field(..., description="Last update timestamp")
+    updated_at: Optional[datetime] = Field(None, description="Last update timestamp")
     created_by: Optional[str] = Field(None, description="Creator identifier")
     version: int = Field(default=1, description="Scenario version")
+    metadata: Dict[str, Any] = Field(default_factory=dict, description="Scenario metadata")
 
 
 class ScenarioResponse(AurumBaseModel):
@@ -95,6 +97,8 @@ class ScenarioListResponse(AurumBaseModel):
 class ScenarioRunOptions(AurumBaseModel):
     """Options for running a scenario."""
 
+    code_version: Optional[str] = Field(None, description="Scenario engine code version")
+    seed: Optional[int] = Field(None, description="Random seed for deterministic runs")
     priority: ScenarioRunPriority = Field(default=ScenarioRunPriority.NORMAL, description="Run priority")
     timeout_minutes: int = Field(default=60, description="Timeout in minutes", ge=1, le=1440)  # Max 24 hours
     max_memory_mb: int = Field(default=1024, description="Max memory in MB", ge=256, le=16384)  # 256MB to 16GB
@@ -106,6 +110,23 @@ class ScenarioRunOptions(AurumBaseModel):
         default_factory=dict,
         description="Runtime parameters"
     )
+    max_retries: int = Field(default=3, description="Maximum retry attempts", ge=0, le=10)
+    idempotency_key: Optional[str] = Field(None, description="Idempotency key for deduplication")
+
+    @field_validator("idempotency_key")
+    def _validate_idempotency_key(cls, value: Optional[str]) -> Optional[str]:
+        if value is None:
+            return value
+        trimmed = value.strip()
+        if not trimmed:
+            raise ValueError("idempotency_key cannot be empty")
+        if len(trimmed) > 255:
+            raise ValueError("idempotency_key cannot exceed 255 characters")
+        if not all(ch.isalnum() or ch in "_-.:/" for ch in trimmed):
+            raise ValueError(
+                "idempotency_key can only contain alphanumeric characters, underscore, hyphen, dot, colon, or slash"
+            )
+        return trimmed
 
 
 class ScenarioRunData(AurumBaseModel):
@@ -115,6 +136,8 @@ class ScenarioRunData(AurumBaseModel):
     scenario_id: str = Field(..., description="Parent scenario ID")
     status: ScenarioRunStatus = Field(..., description="Run status")
     priority: ScenarioRunPriority = Field(..., description="Run priority")
+    run_key: Optional[str] = Field(None, description="Deterministic run key")
+    input_hash: Optional[str] = Field(None, description="Fingerprint of scenario inputs")
     started_at: Optional[datetime] = Field(None, description="Start timestamp")
     completed_at: Optional[datetime] = Field(None, description="Completion timestamp")
     duration_seconds: Optional[float] = Field(None, description="Duration in seconds", ge=0)

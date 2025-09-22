@@ -8,7 +8,7 @@ import threading
 import time
 from dataclasses import dataclass, field
 from datetime import date, datetime, timedelta, timezone
-from typing import Dict, Iterable, Optional, Sequence
+from typing import Dict, Iterable, List, Optional, Sequence
 
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
@@ -16,6 +16,7 @@ import pandas as pd
 from opentelemetry import propagate
 
 from aurum.api.config import CacheConfig
+from aurum.api.scenario_models import ScenarioRunPriority, ScenarioRunStatus
 from aurum.api.scenario_service import STORE as ScenarioStore
 from aurum.api.service import invalidate_scenario_outputs_cache
 from aurum.parsers.iceberg_writer import write_scenario_output
@@ -887,6 +888,7 @@ def _build_outputs(
     request: ScenarioRequest,
     *,
     run_id: Optional[str] = None,
+    run_record: Optional[object] = None,
     settings: Optional[WorkerSettings] = None,
 ) -> list[dict[str, object]]:
     settings = settings or WorkerSettings.from_env()
@@ -900,6 +902,10 @@ def _build_outputs(
 
     outputs: list[dict[str, object]] = []
     tenor_map = {key.upper(): value for key, value in settings.tenor_multipliers.items()}
+    input_hash = None
+    if run_record is not None:
+        input_hash = getattr(run_record, "input_hash", None)
+
     for tenor_type in _ordered_tenor_keys(tenor_map):
         multiplier = tenor_map.get(tenor_type)
         if multiplier is None:
@@ -908,8 +914,11 @@ def _build_outputs(
         value = round(base_value * multiplier, 4)
         band_lower = round(value * 0.98, 4)
         band_upper = round(value * 1.02, 4)
-        version_seed = f"{scenario.id}:{curve_key}:{tenor_type}:{tenor_label}:{value:.4f}:{run_id or ''}"
-        version_hash = hashlib.sha256(version_seed.encode("utf-8")).hexdigest()[:16]
+        if input_hash:
+            version_hash = input_hash
+        else:
+            version_seed = f"{scenario.id}:{curve_key}:{tenor_type}:{tenor_label}:{value:.4f}:{run_id or ''}"
+            version_hash = hashlib.sha256(version_seed.encode("utf-8")).hexdigest()[:16]
         outputs.append(
             {
                 "asof_date": asof,
@@ -926,6 +935,8 @@ def _build_outputs(
                 "band_upper": band_upper,
                 "attribution": attribution,
                 "version_hash": version_hash,
+                "input_hash": input_hash,
+                "run_key": getattr(run_record, "run_key", None) if run_record is not None else None,
                 "computed_ts": computed_ts,
                 "_ingest_ts": computed_ts,
             }
@@ -934,16 +945,28 @@ def _build_outputs(
     return outputs
 
 
-def _append_to_iceberg(records: Iterable[dict[str, object]]) -> None:
+def _append_to_iceberg(records: Iterable[dict[str, object]]) -> list[dict[str, object]]:
     payload = list(records)
     if not payload:
-        return
+        return []
     frame = pd.DataFrame(payload)
+    subset_cols = [
+        "scenario_id",
+        "run_id",
+        "tenor_type",
+        "tenor_label",
+        "metric",
+        "asof_date",
+    ]
+    existing_cols = [col for col in subset_cols if col in frame.columns]
+    if existing_cols:
+        frame = frame.drop_duplicates(subset=existing_cols, keep="last")
+    deduped_payload = frame.to_dict(orient="records")
     try:
         write_scenario_output(frame)
     except Exception as exc:  # pragma: no cover - integration error path
         LOGGER.warning("Failed to append scenario outputs to Iceberg: %s", exc)
-        return
+        return deduped_payload
     try:
         cache_cfg = CacheConfig.from_env()
         keys = {
@@ -958,6 +981,7 @@ def _append_to_iceberg(records: Iterable[dict[str, object]]) -> None:
             invalidate_scenario_outputs_cache(cache_cfg, tenant_id, scenario_id)
     except Exception:  # pragma: no cover - cache invalidation best effort
         LOGGER.debug("Cache invalidation skipped", exc_info=True)
+    return deduped_payload
 
 
 def _publish_outputs(
@@ -982,10 +1006,12 @@ def _publish_outputs(
         )
         return False
 
-    _append_to_iceberg(outputs)
+    deduped_outputs = _append_to_iceberg(outputs)
+    if not deduped_outputs:
+        deduped_outputs = outputs
 
     headers_out = _build_produce_headers(run_id, request_id)
-    for output in outputs:
+    for output in deduped_outputs:
         avro_payload = _to_avro_payload(output)
         producer.produce(
             topic=output_topic,
@@ -1049,6 +1075,28 @@ def _fetch_run_record(
         return None
 
 
+def _normalize_run_state(state: object) -> Optional[ScenarioRunStatus]:
+    if isinstance(state, ScenarioRunStatus):
+        return state
+    if isinstance(state, str):
+        try:
+            return ScenarioRunStatus(state.lower())
+        except ValueError:
+            return None
+    return None
+
+
+def _normalize_run_priority(priority: object) -> Optional[ScenarioRunPriority]:
+    if isinstance(priority, ScenarioRunPriority):
+        return priority
+    if isinstance(priority, str):
+        try:
+            return ScenarioRunPriority(priority.lower())
+        except ValueError:
+            return None
+    return None
+
+
 def _run_is_cancelled(
     *,
     scenario_id: Optional[str],
@@ -1060,20 +1108,49 @@ def _run_is_cancelled(
         run_id=run_id,
         tenant_id=tenant_id,
     )
-    return bool(record and getattr(record, "state", "") == "CANCELLED")
+    if not record:
+        return False
+    state = _normalize_run_state(getattr(record, "state", None))
+    return state == ScenarioRunStatus.CANCELLED
+
+
+def _run_is_terminal(
+    *,
+    scenario_id: Optional[str],
+    run_id: Optional[str],
+    tenant_id: Optional[str],
+) -> bool:
+    record = _fetch_run_record(
+        scenario_id=scenario_id,
+        run_id=run_id,
+        tenant_id=tenant_id,
+    )
+    if not record:
+        return False
+    state = _normalize_run_state(getattr(record, "state", None))
+    return state in {
+        ScenarioRunStatus.SUCCEEDED,
+        ScenarioRunStatus.FAILED,
+        ScenarioRunStatus.CANCELLED,
+        ScenarioRunStatus.TIMEOUT,
+    }
 
 
 def _maybe_update_run_state(
     run_id: Optional[str],
     tenant_id: Optional[str],
-    state: str,
+    state: ScenarioRunStatus | str,
     *,
     scenario_id: Optional[str] = None,
 ) -> None:
     if not run_id or not tenant_id:
         return
+    if isinstance(state, ScenarioRunStatus):
+        state_value = state.value
+    else:
+        state_value = str(state)
     try:  # pragma: no cover - integration path
-        if state != "CANCELLED" and _run_is_cancelled(
+        if state_value.upper() != ScenarioRunStatus.CANCELLED.value.upper() and _run_is_cancelled(
             scenario_id=scenario_id,
             run_id=run_id,
             tenant_id=tenant_id,
@@ -1081,12 +1158,12 @@ def _maybe_update_run_state(
             LOGGER.debug(
                 "Skipping state transition for cancelled run %s -> %s",
                 run_id,
-                state,
+                state_value,
             )
             return
-        ScenarioStore.update_run_state(run_id, state=state, tenant_id=tenant_id)
+        ScenarioStore.update_run_state(run_id, state=state_value, tenant_id=tenant_id)
     except Exception as exc:
-        LOGGER.debug("Failed to update run %s to %s: %s", run_id, state, exc)
+        LOGGER.debug("Failed to update run %s to %s: %s", run_id, state_value, exc)
 
 
 def run_worker():  # pragma: no cover - integration entrypoint
@@ -1124,9 +1201,9 @@ def run_worker():  # pragma: no cover - integration entrypoint
 
     settings = WorkerSettings.from_env()
     try:
-        max_attempts = max(1, int(os.getenv("AURUM_SCENARIO_MAX_ATTEMPTS", "3")))
+        default_max_attempts = max(1, int(os.getenv("AURUM_SCENARIO_MAX_ATTEMPTS", "3")))
     except ValueError:
-        max_attempts = 3
+        default_max_attempts = 3
     try:
         backoff_seconds = max(0.1, float(os.getenv("AURUM_SCENARIO_RETRY_BACKOFF_SEC", "0.5")))
     except ValueError:
@@ -1257,11 +1334,27 @@ def run_worker():  # pragma: no cover - integration entrypoint
                         except Exception:
                             SCENARIO_TYPE_COUNTER.inc()
 
-                    if _run_is_cancelled(
+                    run_record = _fetch_run_record(
                         scenario_id=scenario_req.scenario_id,
                         run_id=run_id,
                         tenant_id=scenario_req.tenant_id,
-                    ):
+                    )
+                    run_state = _normalize_run_state(getattr(run_record, "state", None) if run_record else None)
+                    run_priority = _normalize_run_priority(getattr(run_record, "priority", None) if run_record else None)
+                    attempt_limit = default_max_attempts
+                    if run_record is not None:
+                        max_retries = getattr(run_record, "max_retries", None)
+                        if max_retries is not None:
+                            try:
+                                attempt_limit = max(1, 1 + int(max_retries))
+                            except (TypeError, ValueError):
+                                attempt_limit = default_max_attempts
+                    if run_priority == ScenarioRunPriority.LOW:
+                        attempt_limit = max(1, attempt_limit - 1)
+                    elif run_priority == ScenarioRunPriority.CRITICAL:
+                        attempt_limit = max(attempt_limit, default_max_attempts + 1)
+
+                    if run_state == ScenarioRunStatus.CANCELLED:
                         log_structured(
                             "info",
                             "scenario_run_cancelled",
@@ -1275,10 +1368,27 @@ def run_worker():  # pragma: no cover - integration entrypoint
                         cons.commit(msg)
                         continue
 
+                    if run_state in {
+                        ScenarioRunStatus.SUCCEEDED,
+                        ScenarioRunStatus.FAILED,
+                        ScenarioRunStatus.TIMEOUT,
+                    }:
+                        log_structured(
+                            "info",
+                            "scenario_run_already_terminal",
+                            scenario_id=scenario_req.scenario_id,
+                            run_id=run_id,
+                            tenant_id=scenario_req.tenant_id,
+                            state=run_state.value if run_state else None,
+                            service_name=os.getenv("AURUM_OTEL_SERVICE_NAME", "aurum-scenario-worker"),
+                        )
+                        cons.commit(msg)
+                        continue
+
                     _maybe_update_run_state(
                         run_id,
                         scenario_req.tenant_id,
-                        "RUNNING",
+                        ScenarioRunStatus.RUNNING,
                         scenario_id=scenario_req.scenario_id,
                     )
 
@@ -1288,6 +1398,7 @@ def run_worker():  # pragma: no cover - integration entrypoint
                         scenario_id=scenario_req.scenario_id,
                         run_id=run_id,
                         tenant_id=scenario_req.tenant_id,
+                        priority=run_priority.value if run_priority else None,
                         service_name=os.getenv("AURUM_OTEL_SERVICE_NAME", "aurum-scenario-worker"),
                     )
 
@@ -1306,11 +1417,13 @@ def run_worker():  # pragma: no cover - integration entrypoint
                             span.set_attribute("aurum.tenant_id", scenario_req.tenant_id)
                             if run_id:
                                 span.set_attribute("aurum.run_id", run_id)
+                            if run_priority:
+                                span.set_attribute("aurum.run_priority", run_priority.value)
                         delay = float(os.getenv("AURUM_SCENARIO_SIM_DELAY_SEC", "0.1"))
                         if delay:
                             time.sleep(delay)
 
-                    while attempts < max_attempts and not success:
+                    while attempts < attempt_limit and not success:
                         if SHUTDOWN_EVENT.is_set():
                             LOGGER.info(
                                 "Shutdown requested; cancelling scenario %s",
@@ -1345,6 +1458,7 @@ def run_worker():  # pragma: no cover - integration entrypoint
                                 scenario,
                                 scenario_req,
                                 run_id=run_id,
+                                run_record=run_record,
                                 settings=settings,
                             )
                             if not _publish_outputs(
@@ -1362,7 +1476,7 @@ def run_worker():  # pragma: no cover - integration entrypoint
                             _maybe_update_run_state(
                                 run_id,
                                 scenario_req.tenant_id,
-                                "SUCCEEDED",
+                                ScenarioRunStatus.SUCCEEDED,
                                 scenario_id=scenario_req.scenario_id,
                             )
                             if REQUEST_SUCCESS:
@@ -1384,7 +1498,7 @@ def run_worker():  # pragma: no cover - integration entrypoint
                                 _maybe_update_run_state(
                                     run_id,
                                     scenario_req.tenant_id,
-                                    "FAILED",
+                                    ScenarioRunStatus.FAILED,
                                     scenario_id=scenario_req.scenario_id,
                                 )
                                 _maybe_emit_dlq(
@@ -1403,14 +1517,14 @@ def run_worker():  # pragma: no cover - integration entrypoint
                             LOGGER.error(
                                 "Scenario worker attempt %s/%s failed for scenario %s: %s",
                                 attempts,
-                                max_attempts,
+                                attempt_limit,
                                 scenario_req.scenario_id,
                                 exc,
                             )
                             if span.is_recording():
                                 span.record_exception(exc)
 
-                            if attempts >= max_attempts:
+                            if attempts >= attempt_limit:
                                 # Check if this is a poison pill
                                 message_key = f"{scenario_req.scenario_id}:{scenario_req.tenant_id}"
                                 if _is_poison_pill(message_key, error_type):
@@ -1423,7 +1537,7 @@ def run_worker():  # pragma: no cover - integration entrypoint
                                     _maybe_update_run_state(
                                         run_id,
                                         scenario_req.tenant_id,
-                                        "FAILED",
+                                        ScenarioRunStatus.FAILED,
                                         scenario_id=scenario_req.scenario_id,
                                     )
                                     _maybe_emit_dlq(
@@ -1443,7 +1557,7 @@ def run_worker():  # pragma: no cover - integration entrypoint
                                     _maybe_update_run_state(
                                         run_id,
                                         scenario_req.tenant_id,
-                                        "FAILED",
+                                        ScenarioRunStatus.FAILED,
                                         scenario_id=scenario_req.scenario_id,
                                     )
                                     _maybe_emit_dlq(
@@ -1454,7 +1568,7 @@ def run_worker():  # pragma: no cover - integration entrypoint
                                     )
                                     if REQUEST_FAILURE:
                                         REQUEST_FAILURE.inc()
-                                    if attempts >= max_attempts:
+                                    if attempts >= attempt_limit:
                                         if RETRY_EXHAUSTED:
                                             RETRY_EXHAUSTED.inc()
                                     break
@@ -1469,14 +1583,20 @@ def run_worker():  # pragma: no cover - integration entrypoint
                             break
 
                     if cancelled:
-                    LOGGER.info(
-                        "Scenario run %s for scenario %s cancelled after %s attempt(s)",
-                        run_id,
-                        scenario_req.scenario_id,
-                        attempts,
-                    )
-                    if CANCELLED_RUNS:
-                        CANCELLED_RUNS.inc()
+                        _maybe_update_run_state(
+                            run_id,
+                            scenario_req.tenant_id,
+                            ScenarioRunStatus.CANCELLED,
+                            scenario_id=scenario_req.scenario_id,
+                        )
+                        LOGGER.info(
+                            "Scenario run %s for scenario %s cancelled after %s attempt(s)",
+                            run_id,
+                            scenario_req.scenario_id,
+                            attempts,
+                        )
+                        if CANCELLED_RUNS:
+                            CANCELLED_RUNS.inc()
                 if not success and not cancelled and last_exc is not None:
                     LOGGER.error(
                         "Scenario worker exhausted retries for scenario %s: %s",

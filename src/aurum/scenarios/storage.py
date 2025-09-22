@@ -58,6 +58,10 @@ class ScenarioStore:
             raise RuntimeError("ScenarioStore not initialized")
 
         async with self.pool.acquire() as conn:
+            # Set tenant context for RLS policies
+            tenant_id = get_tenant_id()
+            if tenant_id:
+                await conn.execute("SET LOCAL app.current_tenant = $1", tenant_id)
             yield conn
 
     # === SCENARIO OPERATIONS ===

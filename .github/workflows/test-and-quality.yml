@@ -127,14 +127,44 @@ jobs:
     needs: unit-tests
     if: github.event_name == 'pull_request'
 
+    services:
+      postgres:
+        image: postgres:14
+        env:
+          POSTGRES_DB: aurum_integration
+          POSTGRES_USER: aurum
+          POSTGRES_PASSWORD: aurum
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+        ports:
+          - 5432:5432
+
     steps:
     - name: Checkout repository
       uses: actions/checkout@v4
+      with:
+        fetch-depth: 0  # Fetch full history for diff checking
+
+    - name: Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.11'
+
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install -r requirements-dev.txt
+        pip install pytest pytest-asyncio httpx pytest-mock
 
     - name: Run integration tests
+      env:
+        AURUM_APP_DB_DSN: postgresql://aurum:aurum@localhost:5432/aurum_integration
       run: |
-        echo "Running integration tests..."
-        # Integration tests would go here
+        # Run the integration tests we created
+        python -m pytest tests/integration/ -v
         echo "✅ Integration tests completed"
 
   performance-tests:

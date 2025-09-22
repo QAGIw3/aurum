@@ -1,0 +1,66 @@
+# syntax=docker/dockerfile:1.7
+ARG PYTHON_IMAGE=python:3.11-slim@sha256:a0939570b38cddeb861b8e75d20b1c8218b21562b18f301171904b544e8cf228
+
+FROM ${PYTHON_IMAGE} AS base
+
+SHELL ["/bin/bash", "-o", "pipefail", "-c"]
+
+ENV PIP_DISABLE_PIP_VERSION_CHECK=1 \
+    PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    DEBIAN_FRONTEND=noninteractive
+
+FROM base AS builder
+
+ENV VIRTUAL_ENV=/opt/venv
+
+RUN apt-get update \
+    && apt-get install --no-install-recommends -y build-essential curl \
+    && rm -rf /var/lib/apt/lists/*
+
+RUN python -m venv "$VIRTUAL_ENV"
+ENV PATH="$VIRTUAL_ENV/bin:$PATH"
+
+WORKDIR /build
+COPY pyproject.toml README.md ./
+COPY src ./src
+
+RUN --mount=type=cache,target=/root/.cache/pip \
+    pip install --upgrade pip setuptools wheel \
+    && pip install .[ingest,api]
+
+FROM base AS runtime
+
+ARG BUILD_DATE
+ARG VCS_REF
+
+ENV PATH="/opt/venv/bin:$PATH" \
+    PYTHONPATH=/app/src \
+    AURUM_SCHEMA_DIR=/app/kafka/schemas
+
+RUN apt-get update \
+    && apt-get install --no-install-recommends -y curl \
+    && rm -rf /var/lib/apt/lists/*
+
+RUN groupadd --system aurum \
+    && useradd --system --gid aurum --home /home/aurum --create-home aurum
+
+WORKDIR /app
+
+COPY --from=builder --chown=aurum:aurum /opt/venv /opt/venv
+COPY --chown=aurum:aurum src /app/src
+COPY --chown=aurum:aurum config /app/config
+COPY --chown=aurum:aurum kafka /app/kafka
+
+LABEL org.opencontainers.image.title="aurum-external-collectors" \
+      org.opencontainers.image.description="External provider collectors for Aurum" \
+      org.opencontainers.image.source="https://github.com/QAGIw3/aurum" \
+      org.opencontainers.image.revision="${VCS_REF}" \
+      org.opencontainers.image.created="${BUILD_DATE}" \
+      org.opencontainers.image.licenses="MIT"
+
+USER aurum
+
+ENV AURUM_COLLECTORS_INTERVAL_SECONDS=3600
+
+CMD ["aurum-external-collector", "--loop"]

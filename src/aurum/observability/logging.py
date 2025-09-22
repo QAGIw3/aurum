@@ -8,7 +8,7 @@ import sys
 import traceback
 from typing import Any, Dict, Optional
 
-from ..telemetry.context import get_request_id
+from ..telemetry.context import get_request_id, get_tenant_id, get_user_id, get_correlation_id, get_session_id
 
 
 class JsonFormatter(logging.Formatter):
@@ -27,6 +27,10 @@ class JsonFormatter(logging.Formatter):
             "request_id": getattr(record, "request_id", None),
             "trace_id": getattr(record, "trace_id", None),
             "span_id": getattr(record, "span_id", None),
+            "tenant_id": getattr(record, "tenant_id", None),
+            "user_id": getattr(record, "user_id", None),
+            "correlation_id": getattr(record, "correlation_id", None),
+            "session_id": getattr(record, "session_id", None),
         }
 
         # Add exception info if present
@@ -73,6 +77,25 @@ class ContextFilter(logging.Filter):
 
             except Exception:
                 pass  # Ignore tracing errors in logging
+
+            # Add tenant and user context
+            try:
+                tenant_id = get_tenant_id()
+                user_id = get_user_id()
+                correlation_id = get_correlation_id()
+                session_id = get_session_id()
+
+                if tenant_id is not None:
+                    record.tenant_id = tenant_id
+                if user_id is not None:
+                    record.user_id = user_id
+                if correlation_id is not None:
+                    record.correlation_id = correlation_id
+                if session_id is not None:
+                    record.session_id = session_id
+
+            except Exception:
+                pass  # Ignore context errors in logging
 
         except Exception:
             pass  # Ignore context errors in logging
@@ -129,7 +152,8 @@ class ObservabilityLogger:
 
         # Extract known fields
         for key in ["request_id", "trace_id", "span_id", "user_id", "tenant_id",
-                   "component", "operation", "duration", "error_code", "metadata"]:
+                   "correlation_id", "session_id", "component", "operation",
+                   "duration", "error_code", "metadata"]:
             if key in kwargs:
                 extra[key] = kwargs[key]
 
@@ -137,7 +161,8 @@ class ObservabilityLogger:
         metadata = kwargs.get("metadata", {})
         for key, value in kwargs.items():
             if key not in ["request_id", "trace_id", "span_id", "user_id", "tenant_id",
-                          "component", "operation", "duration", "error_code", "metadata"]:
+                          "correlation_id", "session_id", "component", "operation",
+                          "duration", "error_code", "metadata"]:
                 metadata[key] = value
 
         if metadata:

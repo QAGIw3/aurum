@@ -49,11 +49,12 @@ CREATE TABLE IF NOT EXISTS scenario (
 
 CREATE TABLE IF NOT EXISTS scenario_driver (
     id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    tenant_id UUID REFERENCES tenant(id) ON DELETE RESTRICT,
     name TEXT NOT NULL,
     type TEXT NOT NULL,
     description TEXT,
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    UNIQUE (name, type)
+    UNIQUE (tenant_id, name, type)
 );
 
 CREATE TABLE IF NOT EXISTS scenario_assumption_value (
@@ -78,6 +79,7 @@ CREATE TABLE IF NOT EXISTS assumption (
 CREATE TABLE IF NOT EXISTS model_run (
     id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
     scenario_id UUID NOT NULL REFERENCES scenario(id) ON DELETE CASCADE,
+    tenant_id UUID NOT NULL,
     curve_def_id UUID REFERENCES curve_def(id) ON DELETE CASCADE,
     code_version TEXT NOT NULL,
     seed BIGINT,
@@ -100,6 +102,7 @@ CREATE TABLE IF NOT EXISTS ppa_contract (
 
 CREATE TABLE IF NOT EXISTS file_ingest_log (
     id BIGSERIAL PRIMARY KEY,
+    tenant_id UUID NOT NULL,
     asof DATE NOT NULL,
     path TEXT NOT NULL,
     sheet TEXT,
@@ -138,23 +141,157 @@ CREATE POLICY tenant_isolation_model_run ON model_run
 CREATE POLICY tenant_isolation_ppa ON ppa_contract
     USING (tenant_id = current_setting('app.current_tenant')::UUID);
 
-CREATE TABLE IF NOT EXISTS ingest_source (
-    name CITEXT PRIMARY KEY,
-    description TEXT,
-    schedule TEXT,
-    target TEXT,
-    active BOOLEAN NOT NULL DEFAULT TRUE,
+-- RLS policies for scenario-related tables
+ALTER TABLE scenario_driver ENABLE ROW LEVEL SECURITY;
+ALTER TABLE scenario_assumption_value ENABLE ROW LEVEL SECURITY;
+ALTER TABLE assumption ENABLE ROW LEVEL SECURITY;
+ALTER TABLE model_run ENABLE ROW LEVEL SECURITY;
+ALTER TABLE file_ingest_log ENABLE ROW LEVEL SECURITY;
+ALTER TABLE ingest_source ENABLE ROW LEVEL SECURITY;
+ALTER TABLE ingest_watermark ENABLE ROW LEVEL SECURITY;
+ALTER TABLE ingest_slice ENABLE ROW LEVEL SECURITY;
+
+CREATE POLICY tenant_isolation_scenario_driver ON scenario_driver
+    USING (tenant_id = current_setting('app.current_tenant')::UUID);
+
+CREATE POLICY tenant_isolation_scenario_assumption_value ON scenario_assumption_value
+    USING (scenario_id IN (
+        SELECT id FROM scenario WHERE tenant_id = current_setting('app.current_tenant')::UUID
+    ));
+
+CREATE POLICY tenant_isolation_assumption ON assumption
+    USING (scenario_id IN (
+        SELECT id FROM scenario WHERE tenant_id = current_setting('app.current_tenant')::UUID
+    ));
+
+CREATE POLICY tenant_isolation_model_run ON model_run
+    USING (tenant_id = current_setting('app.current_tenant')::UUID);
+
+CREATE POLICY tenant_isolation_file_ingest_log ON file_ingest_log
+    USING (tenant_id = current_setting('app.current_tenant')::UUID);
+
+CREATE POLICY tenant_isolation_ingest_source ON ingest_source
+    USING (tenant_id = current_setting('app.current_tenant')::UUID);
+
+CREATE POLICY tenant_isolation_ingest_watermark ON ingest_watermark
+    USING (source_name IN (
+        SELECT name FROM ingest_source WHERE tenant_id = current_setting('app.current_tenant')::UUID
+    ));
+
+CREATE POLICY tenant_isolation_ingest_slice ON ingest_slice
+    USING (source_name IN (
+        SELECT name FROM ingest_source WHERE tenant_id = current_setting('app.current_tenant')::UUID
+    ));
+
+-- Additional scenario-related tables from migrations
+CREATE TABLE IF NOT EXISTS scenario_run (
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    scenario_id UUID NOT NULL REFERENCES scenario(id) ON DELETE CASCADE,
+    tenant_id UUID NOT NULL REFERENCES tenant(id) ON DELETE RESTRICT,
+    status TEXT NOT NULL DEFAULT 'queued',
+    priority TEXT NOT NULL DEFAULT 'normal',
+    started_at TIMESTAMPTZ,
+    completed_at TIMESTAMPTZ,
+    duration_seconds REAL,
+    error_message TEXT,
+    retry_count INTEGER NOT NULL DEFAULT 0,
+    max_retries INTEGER NOT NULL DEFAULT 3,
+    progress_percent REAL,
+    parameters JSONB DEFAULT '{}'::JSONB,
+    environment JSONB DEFAULT '{}'::JSONB,
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    queued_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    cancelled_at TIMESTAMPTZ,
+    UNIQUE (scenario_id, id)
 );
 
+CREATE TABLE IF NOT EXISTS scenario_output (
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    scenario_run_id UUID NOT NULL REFERENCES scenario_run(id) ON DELETE CASCADE,
+    tenant_id UUID NOT NULL REFERENCES tenant(id) ON DELETE RESTRICT,
+    timestamp TIMESTAMPTZ NOT NULL,
+    metric_name TEXT NOT NULL,
+    value REAL NOT NULL,
+    unit TEXT NOT NULL,
+    tags JSONB DEFAULT '{}'::JSONB,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS scenario_run_output_pointer (
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    scenario_run_id UUID NOT NULL REFERENCES scenario_run(id) ON DELETE CASCADE,
+    output_type TEXT NOT NULL,  -- 'file', 'database', 'api', etc.
+    output_location TEXT NOT NULL,  -- S3 path, table name, API endpoint, etc.
+    metadata JSONB DEFAULT '{}'::JSONB,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    UNIQUE (scenario_run_id, output_type)
+);
+
+CREATE TABLE IF NOT EXISTS scenario_run_event (
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    scenario_run_id UUID NOT NULL REFERENCES scenario_run(id) ON DELETE CASCADE,
+    event_type TEXT NOT NULL,  -- 'queued', 'started', 'completed', 'failed', 'cancelled', 'retry'
+    event_data JSONB DEFAULT '{}'::JSONB,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS scenario_feature_flag (
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    tenant_id UUID NOT NULL REFERENCES tenant(id) ON DELETE CASCADE,
+    feature_name TEXT NOT NULL,  -- 'scenario_outputs', 'bulk_operations', etc.
+    enabled BOOLEAN NOT NULL DEFAULT FALSE,
+    configuration JSONB DEFAULT '{}'::JSONB,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    UNIQUE (tenant_id, feature_name)
+);
+
+-- Enable RLS on additional tables
+ALTER TABLE scenario_run ENABLE ROW LEVEL SECURITY;
+ALTER TABLE scenario_output ENABLE ROW LEVEL SECURITY;
+ALTER TABLE scenario_run_output_pointer ENABLE ROW LEVEL SECURITY;
+ALTER TABLE scenario_run_event ENABLE ROW LEVEL SECURITY;
+ALTER TABLE scenario_feature_flag ENABLE ROW LEVEL SECURITY;
+
+-- RLS policies for additional scenario tables
+CREATE POLICY tenant_isolation_scenario_run ON scenario_run
+    USING (tenant_id = current_setting('app.current_tenant')::UUID);
+
+CREATE POLICY tenant_isolation_scenario_output ON scenario_output
+    USING (tenant_id = current_setting('app.current_tenant')::UUID);
+
+CREATE POLICY tenant_isolation_scenario_run_output_pointer ON scenario_run_output_pointer
+    USING (scenario_run_id IN (
+        SELECT id FROM scenario_run WHERE tenant_id = current_setting('app.current_tenant')::UUID
+    ));
+
+CREATE POLICY tenant_isolation_scenario_run_event ON scenario_run_event
+    USING (scenario_run_id IN (
+        SELECT id FROM scenario_run WHERE tenant_id = current_setting('app.current_tenant')::UUID
+    ));
+
+CREATE POLICY tenant_isolation_scenario_feature_flag ON scenario_feature_flag
+    USING (tenant_id = current_setting('app.current_tenant')::UUID);
+
+-- Indexes for performance
+CREATE INDEX IF NOT EXISTS idx_scenario_run_scenario_id ON scenario_run(scenario_id);
+CREATE INDEX IF NOT EXISTS idx_scenario_run_tenant_id ON scenario_run(tenant_id);
+CREATE INDEX IF NOT EXISTS idx_scenario_run_status ON scenario_run(status);
+CREATE INDEX IF NOT EXISTS idx_scenario_run_queued_at ON scenario_run(queued_at);
+CREATE INDEX IF NOT EXISTS idx_scenario_run_started_at ON scenario_run(started_at);
+CREATE INDEX IF NOT EXISTS idx_scenario_output_scenario_run ON scenario_output(scenario_run_id);
+CREATE INDEX IF NOT EXISTS idx_scenario_output_metric_timestamp ON scenario_output(metric_name, timestamp);
+CREATE INDEX IF NOT EXISTS idx_scenario_run_event_created_at ON scenario_run_event(created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_scenario_feature_flag_tenant ON scenario_feature_flag(tenant_id);
+
 CREATE TABLE IF NOT EXISTS ingest_watermark (
-    source_name CITEXT NOT NULL REFERENCES ingest_source(name) ON DELETE CASCADE,
+    source_name CITEXT NOT NULL,
     watermark_key TEXT NOT NULL DEFAULT 'default',
     watermark TIMESTAMPTZ,
     watermark_policy TEXT NOT NULL DEFAULT 'exact',
     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    PRIMARY KEY (source_name, watermark_key)
+    PRIMARY KEY (source_name, watermark_key),
+    FOREIGN KEY (source_name) REFERENCES ingest_source(name) ON DELETE CASCADE
 );
 
 CREATE INDEX IF NOT EXISTS idx_ingest_source_active ON ingest_source(active);
@@ -245,7 +382,7 @@ $$ LANGUAGE plpgsql;
 -- Slice ledger for tracking individual work slices that can be resumed
 CREATE TABLE IF NOT EXISTS ingest_slice (
     id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
-    source_name CITEXT NOT NULL REFERENCES ingest_source(name) ON DELETE CASCADE,
+    source_name CITEXT NOT NULL,
     slice_key TEXT NOT NULL,  -- e.g., "2024-12-31_14:00" or "dataset_ELEC.PRICE"
     slice_type TEXT NOT NULL,  -- time_window, dataset, failed_records, incremental
     slice_data JSONB NOT NULL,  -- Additional data for the slice (time range, dataset names, etc.)
@@ -267,7 +404,8 @@ CREATE TABLE IF NOT EXISTS ingest_slice (
     metadata JSONB DEFAULT '{}'::JSONB,
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    UNIQUE (source_name, slice_key, slice_type)
+    UNIQUE (source_name, slice_key, slice_type),
+    FOREIGN KEY (source_name) REFERENCES ingest_source(name) ON DELETE CASCADE
 );
 
 CREATE INDEX IF NOT EXISTS idx_ingest_slice_source_status ON ingest_slice(source_name, status);

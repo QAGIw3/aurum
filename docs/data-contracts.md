@@ -52,6 +52,13 @@ This guide captures the structured interfaces that external consumers rely on. E
 | `aurum.iso.*.load.v1` | `iso.load.v1.avsc` | Load payloads use same enum + field names as LMP | 
 | `aurum.iso.*.genmix.v1` | `iso.genmix.v1.avsc` | Generation mix payloads harmonized with `IsoCode`. |
 
+### Contract Catalog
+
+- Contracts are centralized in `kafka/schemas/contracts.yml`; every subject entry pins the schema file, logical Kafka topic, and the enforced compatibility mode.
+- Subject names must match `^aurum\.[a-z0-9_.]+\.v[0-9]+(-key|-value)?$` (see `exceptions` inside the catalog for the narrow set of grandfathered subjects).
+- Default compatibility is `BACKWARD`; individual subjects may override via the `compatibility` key.
+- CI uses `scripts/ci/register_schemas.py --contracts kafka/schemas/contracts.yml kafka/schemas` to validate + register subjects. Contract mismatches now fail the job before hitting Schema Registry.
+
 ### Schema Evolution Policy
 - **Semantic versioning**: MAJOR change = incompatible (field removal/rename, enum removal); MINOR = backwards-compatible addition (nullable field, enum append); PATCH = documentation/metadata update.
 - Avro schemas pinned via `kafka/schemas/subjects.json`. Update process:

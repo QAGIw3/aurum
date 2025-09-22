@@ -6,11 +6,25 @@ import json
 import pytest
 from unittest.mock import MagicMock, patch, mock_open
 from pathlib import Path
+import types
 
 # Ensure src is in path for aurum imports
 REPO_ROOT = Path(__file__).resolve().parents[3]
 import sys
 sys.path.insert(0, str(REPO_ROOT / "src"))
+
+# Stub optional Kafka dependencies so schema registry imports succeed without the extras
+sys.modules.setdefault("confluent_kafka", MagicMock())
+sys.modules.setdefault("confluent_kafka.avro", MagicMock())
+sys.modules.setdefault("confluent_kafka.schema_registry", MagicMock())
+sys.modules.setdefault("confluent_kafka.schema_registry.avro", MagicMock())
+
+# Provide a lightweight logging module to avoid importing heavy dependencies
+logging_stub = types.ModuleType("aurum.logging")
+logging_stub.StructuredLogger = MagicMock()
+logging_stub.LogLevel = MagicMock()
+logging_stub.create_logger = MagicMock(return_value=MagicMock())
+sys.modules.setdefault("aurum.logging", logging_stub)
 
 from aurum.schema_registry import (
     SchemaRegistryManager,
@@ -23,6 +37,11 @@ from aurum.schema_registry import (
     SchemaRegistryConnectionError,
     SubjectRegistrationError,
     SchemaCompatibilityError
+)
+from aurum.schema_registry.contracts import (
+    SubjectContracts,
+    SubjectNotDefinedError,
+    SubjectPatternError,
 )
 
 
@@ -44,6 +63,8 @@ class TestSchemaRegistryConfig:
         assert config.password == "pass"
         assert config.enforce_compatibility is True
         assert config.fail_on_incompatible is True
+        assert config.enforce_contracts is True
+        assert config.fail_on_missing_contract is True
 
     def test_config_defaults(self) -> None:
         """Test configuration defaults."""
@@ -54,6 +75,7 @@ class TestSchemaRegistryConfig:
         assert config.username is None
         assert config.password is None
         assert config.enforce_compatibility is True
+        assert config.enforce_contracts is True
 
 
 class TestCompatibilityChecker:
@@ -589,6 +611,43 @@ class TestSchemaRegistryIntegration:
 
             with pytest.raises(SubjectRegistrationError):
                 manager.register_subject("test.subject", schema)
+
+
+class TestSubjectContracts:
+    """Validates the frozen subject contract catalog."""
+
+    @pytest.fixture(scope="class")
+    def contracts(self) -> SubjectContracts:
+        contracts_path = REPO_ROOT / "kafka" / "schemas" / "contracts.yml"
+        return SubjectContracts(contracts_path)
+
+    def test_contract_catalog_loaded(self, contracts: SubjectContracts) -> None:
+        subjects = contracts.list_subjects()
+        assert subjects, "Expected at least one subject contract"
+
+    def test_subject_lookup(self, contracts: SubjectContracts) -> None:
+        contract = contracts.get("aurum.ref.fred.series.v1-value")
+        assert contract.schema == "fred.series.v1.avsc"
+        assert contract.topic == "aurum.ref.fred.series.v1"
+        assert contract.compatibility == "BACKWARD"
+
+    def test_subject_pattern_enforcement(self, contracts: SubjectContracts) -> None:
+        contracts.validate_subject_name("aurum.ref.eia.series.v1-value")
+        with pytest.raises(SubjectPatternError):
+            contracts.validate_subject_name("aurum.invalidSubject")
+
+        with pytest.raises(SubjectNotDefinedError):
+            contracts.get("aurum.missing.subject.v1-value")
+
+    def test_schema_indexing(self, contracts: SubjectContracts) -> None:
+        subjects = contracts.subjects_for_schema("iso.lmp.v1.avsc")
+        assert any(s.subject.endswith(".lmp.v1-value") for s in subjects)
+        assert len(subjects) >= 3
+
+    def test_schema_payload_consistency(self, contracts: SubjectContracts) -> None:
+        schema = contracts.load_schema("aurum.ref.fred.series.v1-value")
+        assert schema["name"] == "FredSeriesPoint"
+        assert schema["type"] == "record"
 
 
 class TestSchemaRegistryCI:

@@ -175,3 +175,149 @@ spec:
             summary: "External data quality degraded"
             description: "Overall external data quality score below 0.9 for 30 minutes"
             runbook: "docs/runbooks/external-data.md#quality-degradation"
+    - name: aurum-slo
+      rules:
+        - alert: AurumApiAvailabilitySLOViolation
+          expr: |
+            1 - (sum(rate(aurum_api_requests_total{status=~"5.."}[15m]))
+                 /
+                 clamp_min(sum(rate(aurum_api_requests_total[15m])), 1)) < 0.999
+          for: 15m
+          labels:
+            severity: critical
+            slo: api_availability_99.9
+          annotations:
+            summary: "API availability SLO violation (99.9%)"
+            description: "API availability dropped below 99.9% for 15 minutes"
+            runbook: "docs/runbooks/slo.md#api-availability"
+        - alert: AurumApiAvailabilitySLOWarning
+          expr: |
+            1 - (sum(rate(aurum_api_requests_total{status=~"5.."}[5m]))
+                 /
+                 clamp_min(sum(rate(aurum_api_requests_total[5m])), 1)) < 0.9995
+          for: 5m
+          labels:
+            severity: warning
+            slo: api_availability_99.95
+          annotations:
+            summary: "API availability SLO warning (99.95%)"
+            description: "API availability dropped below 99.95% for 5 minutes"
+            runbook: "docs/runbooks/slo.md#api-availability"
+        - alert: AurumWorkerSuccessRateSLOViolation
+          expr: |
+            1 - (sum(rate(aurum_worker_errors_total[15m]))
+                 /
+                 clamp_min(sum(rate(aurum_worker_task_duration_seconds_count[15m])), 1)) < 0.99
+          for: 15m
+          labels:
+            severity: critical
+            slo: worker_success_rate_99
+          annotations:
+            summary: "Worker success rate SLO violation (99%)"
+            description: "Worker success rate dropped below 99% for 15 minutes"
+            runbook: "docs/runbooks/slo.md#worker-success-rate"
+        - alert: AurumWorkerSuccessRateSLOWarning
+          expr: |
+            1 - (sum(rate(aurum_worker_errors_total[5m]))
+                 /
+                 clamp_min(sum(rate(aurum_worker_task_duration_seconds_count[5m])), 1)) < 0.995
+          for: 5m
+          labels:
+            severity: warning
+            slo: worker_success_rate_99.5
+          annotations:
+            summary: "Worker success rate SLO warning (99.5%)"
+            description: "Worker success rate dropped below 99.5% for 5 minutes"
+            runbook: "docs/runbooks/slo.md#worker-success-rate"
+        - alert: AurumCacheHitRateSLOViolation
+          expr: |
+            sum(rate(aurum_cache_hits_total[15m]))
+            /
+            clamp_min(sum(rate(aurum_cache_operations_total[15m])), 1) < 0.8
+          for: 15m
+          labels:
+            severity: critical
+            slo: cache_hit_rate_80
+          annotations:
+            summary: "Cache hit rate SLO violation (80%)"
+            description: "Cache hit rate dropped below 80% for 15 minutes"
+            runbook: "docs/runbooks/slo.md#cache-hit-rate"
+        - alert: AurumCacheHitRateSLOWarning
+          expr: |
+            sum(rate(aurum_cache_hits_total[5m]))
+            /
+            clamp_min(sum(rate(aurum_cache_operations_total[5m])), 1) < 0.9
+          for: 5m
+          labels:
+            severity: warning
+            slo: cache_hit_rate_90
+          annotations:
+            summary: "Cache hit rate SLO warning (90%)"
+            description: "Cache hit rate dropped below 90% for 5 minutes"
+            runbook: "docs/runbooks/slo.md#cache-hit-rate"
+        - alert: AurumIngestionBacklogSLOViolation
+          expr: |
+            sum(aurum_ingestion_backlog) > 10000
+          for: 30m
+          labels:
+            severity: critical
+            slo: ingestion_backlog_10000
+          annotations:
+            summary: "Ingestion backlog SLO violation (>10k records)"
+            description: "Ingestion backlog exceeded 10,000 records for 30 minutes"
+            runbook: "docs/runbooks/slo.md#ingestion-backlog"
+        - alert: AurumIngestionBacklogSLOWarning
+          expr: |
+            sum(aurum_ingestion_backlog) > 5000
+          for: 15m
+          labels:
+            severity: warning
+            slo: ingestion_backlog_5000
+          annotations:
+            summary: "Ingestion backlog SLO warning (>5k records)"
+            description: "Ingestion backlog exceeded 5,000 records for 15 minutes"
+            runbook: "docs/runbooks/slo.md#ingestion-backlog"
+        - alert: AurumRateLimitViolationsSLOViolation
+          expr: |
+            sum(rate(aurum_rate_limit_rejected_total[15m])) > 1.0
+          for: 10m
+          labels:
+            severity: critical
+            slo: rate_limit_violations_1_per_sec
+          annotations:
+            summary: "Rate limit violations SLO violation (>1/sec)"
+            description: "Rate limit violations exceeded 1 per second for 10 minutes"
+            runbook: "docs/runbooks/slo.md#rate-limit-violations"
+        - alert: AurumRateLimitViolationsSLOWarning
+          expr: |
+            sum(rate(aurum_rate_limit_rejected_total[5m])) > 0.1
+          for: 5m
+          labels:
+            severity: warning
+            slo: rate_limit_violations_0.1_per_sec
+          annotations:
+            summary: "Rate limit violations SLO warning (>0.1/sec)"
+            description: "Rate limit violations exceeded 0.1 per second for 5 minutes"
+            runbook: "docs/runbooks/slo.md#rate-limit-violations"
+        - alert: AurumDatabaseConnectionPoolExhaustion
+          expr: |
+            sum(aurum_db_connections_active) / sum(aurum_db_connections_total) > 0.9
+          for: 10m
+          labels:
+            severity: critical
+            slo: db_connection_pool_90
+          annotations:
+            summary: "Database connection pool near exhaustion (>90%)"
+            description: "Database connection pool utilization exceeded 90% for 10 minutes"
+            runbook: "docs/runbooks/slo.md#db-connection-pool"
+        - alert: AurumDatabaseConnectionPoolWarning
+          expr: |
+            sum(aurum_db_connections_active) / sum(aurum_db_connections_total) > 0.8
+          for: 15m
+          labels:
+            severity: warning
+            slo: db_connection_pool_80
+          annotations:
+            summary: "Database connection pool high utilization (>80%)"
+            description: "Database connection pool utilization exceeded 80% for 15 minutes"
+            runbook: "docs/runbooks/slo.md#db-connection-pool"

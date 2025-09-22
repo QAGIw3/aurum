@@ -1,4 +1,4 @@
-name: Docker Build and Push
+name: Docker Build, Sign, SBOM, and Push
 
 on:
   push:
@@ -15,11 +15,23 @@ on:
       - 'Dockerfile.*'
       - 'requirements*.txt'
       - 'pyproject.toml'
+  workflow_dispatch:
+    inputs:
+      sign_images:
+        description: 'Sign images with cosign'
+        required: false
+        default: true
+        type: boolean
+      generate_sbom:
+        description: 'Generate SBOM for images'
+        required: false
+        default: true
+        type: boolean
 
 env:
   REGISTRY: ghcr.io
-  IMAGE_NAME_API: ${{ github.repository }}/api
-  IMAGE_NAME_WORKER: ${{ github.repository }}/aurum-api
+  IMAGE_NAME_API: ${{ github.repository }}/aurum-api
+  IMAGE_NAME_WORKER: ${{ github.repository }}/aurum-worker
 
 jobs:
   build-and-push:
@@ -28,10 +40,15 @@ jobs:
       contents: read
       packages: write
       deployments: write
+      id-token: write  # For OIDC token generation
+      security-events: write  # For vulnerability scanning
 
     steps:
     - name: Checkout repository
       uses: actions/checkout@v4
+
+    - name: Set up QEMU
+      uses: docker/setup-qemu-action@v3
 
     - name: Set up Docker Buildx
       uses: docker/setup-buildx-action@v3
@@ -43,6 +60,19 @@ jobs:
         username: ${{ github.actor }}
         password: ${{ secrets.GITHUB_TOKEN }}
 
+    - name: Install cosign
+      if: github.event.inputs.sign_images != 'false' || github.event.inputs.sign_images == null
+      uses: sigstore/cosign-installer@v3
+      with:
+        cosign-release: 'v2.2.0'
+
+    - name: Install Syft for SBOM generation
+      if: github.event.inputs.generate_sbom != 'false' || github.event.inputs.generate_sbom == null
+      uses: anchore/sbom-action/download-syft@v0
+
+    - name: Install Trivy for vulnerability scanning
+      uses: aquasecurity/trivy-action/setup@v0
+
     - name: Extract metadata for API
       id: meta-api
       uses: docker/metadata-action@v5
@@ -53,17 +83,52 @@ jobs:
           type=ref,event=pr
           type=sha,prefix={{branch}}-
           type=raw,value=latest,enable={{is_default_branch}}
+        labels: |
+          org.opencontainers.image.title=Aurum API
+          org.opencontainers.image.description=Aurum energy trading platform API service
+          org.opencontainers.image.vendor=Supernova Corp
+          org.opencontainers.image.source=https://github.com/${{ github.repository }}
+          org.opencontainers.image.revision=${{ github.sha }}
 
-    - name: Build and push API image
+    - name: Build API image
+      id: build-api
       uses: docker/build-push-action@v5
       with:
         context: .
         file: Dockerfile.api
-        push: true
+        push: false
         tags: ${{ steps.meta-api.outputs.tags }}
         labels: ${{ steps.meta-api.outputs.labels }}
         cache-from: type=gha
         cache-to: type=gha,mode=max
+        outputs: type=image,name=${{ env.REGISTRY }}/${{ env.IMAGE_NAME_API }},push-by-digest=true,name-canonical=true,push=true
+
+    - name: Scan API image for vulnerabilities
+      uses: aquasecurity/trivy-action@0.13.0
+      with:
+        image-ref: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME_API }}@${{ steps.build-api.outputs.digest }}
+        format: sarif
+        output: trivy-results-api.sarif
+        severity: HIGH,CRITICAL
+
+    - name: Generate SBOM for API image
+      if: github.event.inputs.generate_sbom != 'false' || github.event.inputs.generate_sbom == null
+      uses: anchore/sbom-action@v0
+      with:
+        image: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME_API }}@${{ steps.build-api.outputs.digest }}
+        output-file: sbom-api.spdx.json
+
+    - name: Sign API image
+      if: github.event.inputs.sign_images != 'false' || github.event.inputs.sign_images == null
+      run: |
+        cosign sign --yes ${{ env.REGISTRY }}/${{ env.IMAGE_NAME_API }}@${{ steps.build-api.outputs.digest }}
+
+    - name: Push API image tags
+      run: |
+        docker buildx imagetools create \
+          --tag ${{ env.REGISTRY }}/${{ env.IMAGE_NAME_API }}:latest \
+          --tag ${{ env.REGISTRY }}/${{ env.IMAGE_NAME_API }}:${{ github.sha }} \
+          ${{ env.REGISTRY }}/${{ env.IMAGE_NAME_API }}@${{ steps.build-api.outputs.digest }}
 
     - name: Extract metadata for Worker
       id: meta-worker
@@ -75,14 +140,98 @@ jobs:
           type=ref,event=pr
           type=sha,prefix={{branch}}-
           type=raw,value=latest,enable={{is_default_branch}}
+        labels: |
+          org.opencontainers.image.title=Aurum Worker
+          org.opencontainers.image.description=Aurum energy trading platform worker service
+          org.opencontainers.image.vendor=Supernova Corp
+          org.opencontainers.image.source=https://github.com/${{ github.repository }}
+          org.opencontainers.image.revision=${{ github.sha }}
 
-    - name: Build and push Worker image
+    - name: Build Worker image
+      id: build-worker
       uses: docker/build-push-action@v5
       with:
         context: .
         file: Dockerfile.worker
-        push: true
+        push: false
         tags: ${{ steps.meta-worker.outputs.tags }}
         labels: ${{ steps.meta-worker.outputs.labels }}
         cache-from: type=gha
         cache-to: type=gha,mode=max
+        outputs: type=image,name=${{ env.REGISTRY }}/${{ env.IMAGE_NAME_WORKER }},push-by-digest=true,name-canonical=true,push=true
+
+    - name: Scan Worker image for vulnerabilities
+      uses: aquasecurity/trivy-action@0.13.0
+      with:
+        image-ref: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME_WORKER }}@${{ steps.build-worker.outputs.digest }}
+        format: sarif
+        output: trivy-results-worker.sarif
+        severity: HIGH,CRITICAL
+
+    - name: Generate SBOM for Worker image
+      if: github.event.inputs.generate_sbom != 'false' || github.event.inputs.generate_sbom == null
+      uses: anchore/sbom-action@v0
+      with:
+        image: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME_WORKER }}@${{ steps.build-worker.outputs.digest }}
+        output-file: sbom-worker.spdx.json
+
+    - name: Sign Worker image
+      if: github.event.inputs.sign_images != 'false' || github.event.inputs.sign_images == null
+      run: |
+        cosign sign --yes ${{ env.REGISTRY }}/${{ env.IMAGE_NAME_WORKER }}@${{ steps.build-worker.outputs.digest }}
+
+    - name: Push Worker image tags
+      run: |
+        docker buildx imagetools create \
+          --tag ${{ env.REGISTRY }}/${{ env.IMAGE_NAME_WORKER }}:latest \
+          --tag ${{ env.REGISTRY }}/${{ env.IMAGE_NAME_WORKER }}:${{ github.sha }} \
+          ${{ env.REGISTRY }}/${{ env.IMAGE_NAME_WORKER }}@${{ steps.build-worker.outputs.digest }}
+
+    - name: Upload SBOM artifacts
+      if: github.event.inputs.generate_sbom != 'false' || github.event.inputs.generate_sbom == null
+      uses: actions/upload-artifact@v4
+      with:
+        name: sboms
+        path: |
+          sbom-*.spdx.json
+        retention-days: 30
+
+    - name: Upload vulnerability scan results
+      uses: actions/upload-artifact@v4
+      with:
+        name: vulnerability-scans
+        path: |
+          trivy-results-*.sarif
+        retention-days: 30
+
+    - name: Upload scan results to GitHub Security tab
+      uses: github/codeql-action/upload-sarif@v3
+      with:
+        sarif_file: trivy-results-api.sarif
+      if: always()
+
+    - name: Upload scan results to GitHub Security tab (Worker)
+      uses: github/codeql-action/upload-sarif@v3
+      with:
+        sarif_file: trivy-results-worker.sarif
+      if: always()
+
+    - name: Summary
+      run: |
+        echo "## 📋 Build Summary" >> $GITHUB_STEP_SUMMARY
+        echo "" >> $GITHUB_STEP_SUMMARY
+        echo "| Component | Status | Digest |" >> $GITHUB_STEP_SUMMARY
+        echo "|-----------|--------|--------|" >> $GITHUB_STEP_SUMMARY
+        echo "| API | ✅ Built | ${{ steps.build-api.outputs.digest }} |" >> $GITHUB_STEP_SUMMARY
+        echo "| Worker | ✅ Built | ${{ steps.build-worker.outputs.digest }} |" >> $GITHUB_STEP_SUMMARY
+        echo "" >> $GITHUB_STEP_SUMMARY
+
+        if [ "${{ github.event.inputs.sign_images }}" != "false" ]; then
+          echo "🔐 Images signed with cosign" >> $GITHUB_STEP_SUMMARY
+        fi
+
+        if [ "${{ github.event.inputs.generate_sbom }}" != "false" ]; then
+          echo "📦 SBOM generated for both images" >> $GITHUB_STEP_SUMMARY
+        fi
+
+        echo "🔍 Vulnerability scanning completed" >> $GITHUB_STEP_SUMMARY

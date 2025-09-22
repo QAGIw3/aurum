@@ -8,18 +8,32 @@ from collections import defaultdict
 from contextlib import contextmanager
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
-from typing import Any, Dict, Iterable, List, Optional
+from typing import Any, Dict, Iterable, List, Optional, Tuple
 
+import hashlib
 import json
+import re
 
 try:
     from opentelemetry import propagate
 except ImportError:  # pragma: no cover - optional dependency
     propagate = None  # type: ignore[assignment]
 
+try:  # Runtime optional dependency for code-generated models
+    from aurum.schema_registry.codegen import ContractModelError, get_model
+except Exception:  # pragma: no cover - validation is optional in some runtimes
+    ContractModelError = RuntimeError  # type: ignore[assignment]
+    get_model = None  # type: ignore[assignment]
+
 from aurum.scenarios import DriverType, ScenarioAssumption
 from aurum.telemetry import get_tracer
 from aurum.telemetry.context import get_request_id
+
+from .scenario_models import (
+    ScenarioRunPriority,
+    ScenarioRunStatus,
+    ScenarioStatus,
+)
 
 
 def _now() -> datetime:
@@ -29,25 +43,181 @@ def _now() -> datetime:
 TRACER = get_tracer("aurum.api.scenario")
 
 
+if get_model:
+    try:
+        _SCENARIO_REQUEST_MODEL = get_model("aurum.scenario.request.v1-value")
+    except Exception:  # pragma: no cover - fallback when contracts are unavailable
+        _SCENARIO_REQUEST_MODEL = None
+else:  # pragma: no cover - happens if pydantic/contracts are unavailable
+    _SCENARIO_REQUEST_MODEL = None
+
+
 @dataclass
 class ScenarioRecord:
     id: str
     tenant_id: str
     name: str
     description: Optional[str]
-    assumptions: List[ScenarioAssumption]
-    status: str
-    created_at: datetime
+    assumptions: List[ScenarioAssumption] = field(default_factory=list)
+    status: ScenarioStatus = ScenarioStatus.CREATED
+    created_at: datetime = field(default_factory=_now)
+    updated_at: Optional[datetime] = None
+    unique_key: str = ""
+    version: int = 1
+    tags: List[str] = field(default_factory=list)
+    parameters: Dict[str, Any] = field(default_factory=dict)
+    metadata: Dict[str, Any] = field(default_factory=dict)
+
+    def as_dict(self) -> Dict[str, Any]:
+        status_value = self.status.value if isinstance(self.status, ScenarioStatus) else str(self.status)
+        return {
+            "id": self.id,
+            "tenant_id": self.tenant_id,
+            "name": self.name,
+            "description": self.description,
+            "assumptions": [_assumption_to_payload(assumption) for assumption in self.assumptions],
+            "status": status_value,
+            "created_at": self.created_at,
+            "updated_at": self.updated_at,
+            "unique_key": self.unique_key,
+            "version": self.version,
+            "tags": list(self.tags),
+            "parameters": dict(self.parameters),
+            "metadata": dict(self.metadata),
+        }
 
 
 @dataclass
 class ScenarioRunRecord:
     run_id: str
     scenario_id: str
-    state: str
-    created_at: datetime
+    state: ScenarioRunStatus = ScenarioRunStatus.QUEUED
+    created_at: datetime = field(default_factory=_now)
     code_version: Optional[str] = None
     seed: Optional[int] = None
+    run_key: Optional[str] = None
+    input_hash: Optional[str] = None
+    priority: ScenarioRunPriority = ScenarioRunPriority.NORMAL
+    retry_count: int = 0
+    max_retries: int = 3
+    started_at: Optional[datetime] = None
+    completed_at: Optional[datetime] = None
+    duration_seconds: Optional[float] = None
+    error_message: Optional[str] = None
+    queued_at: Optional[datetime] = None
+    cancelled_at: Optional[datetime] = None
+    environment: Dict[str, str] = field(default_factory=dict)
+    parameters: Dict[str, Any] = field(default_factory=dict)
+
+    @property
+    def is_terminal(self) -> bool:
+        return self.state in {
+            ScenarioRunStatus.SUCCEEDED,
+            ScenarioRunStatus.FAILED,
+            ScenarioRunStatus.CANCELLED,
+            ScenarioRunStatus.TIMEOUT,
+        }
+
+    def as_dict(self) -> Dict[str, Any]:
+        state_value = self.state.value if isinstance(self.state, ScenarioRunStatus) else str(self.state)
+        priority_value = self.priority.value if isinstance(self.priority, ScenarioRunPriority) else str(self.priority)
+        return {
+            "run_id": self.run_id,
+            "scenario_id": self.scenario_id,
+            "state": state_value,
+            "created_at": self.created_at,
+            "code_version": self.code_version,
+            "seed": self.seed,
+            "run_key": self.run_key,
+            "input_hash": self.input_hash,
+            "priority": priority_value,
+            "retry_count": self.retry_count,
+            "max_retries": self.max_retries,
+            "started_at": self.started_at,
+            "completed_at": self.completed_at,
+            "duration_seconds": self.duration_seconds,
+            "error_message": self.error_message,
+            "queued_at": self.queued_at,
+            "cancelled_at": self.cancelled_at,
+            "environment": dict(self.environment),
+            "parameters": dict(self.parameters),
+        }
+
+
+_SCENARIO_SLUG_RE = re.compile(r"[^a-z0-9]+")
+
+
+def _slugify(value: str) -> str:
+    slug = _SCENARIO_SLUG_RE.sub("-", value.lower()).strip("-")
+    return slug or "scenario"
+
+
+def _compute_scenario_unique_key(tenant_id: str, name: str) -> str:
+    return f"{tenant_id}:{_slugify(name)}"
+
+
+def _stable_dumps(payload: Dict[str, Any]) -> str:
+    return json.dumps(payload, sort_keys=True, separators=(",", ":"))
+
+
+def _assumption_to_payload(assumption: ScenarioAssumption) -> Dict[str, Any]:
+    try:
+        return assumption.dict()
+    except AttributeError:  # pragma: no cover - defensive path for non-pydantic
+        return dict(assumption)  # type: ignore[arg-type]
+
+
+def _compute_run_fingerprint(
+    scenario: ScenarioRecord,
+    *,
+    parameters: Optional[Dict[str, Any]] = None,
+    environment: Optional[Dict[str, str]] = None,
+    code_version: Optional[str] = None,
+    seed: Optional[int] = None,
+) -> Tuple[str, str]:
+    """Return (input_hash, run_key) for a scenario execution."""
+
+    payload = {
+        "tenant_id": scenario.tenant_id,
+        "scenario_id": scenario.id,
+        "unique_key": scenario.unique_key or _compute_scenario_unique_key(scenario.tenant_id, scenario.name),
+        "assumptions": [_assumption_to_payload(assumption) for assumption in scenario.assumptions],
+        "parameters": parameters or {},
+        "environment": environment or {},
+        "code_version": code_version,
+        "seed": seed,
+        "scenario_version": scenario.version,
+    }
+    canonical = _stable_dumps(payload)
+    input_hash = hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+    run_key = f"{scenario.id}:{input_hash}"
+    return input_hash, run_key
+
+
+def _ensure_dict(value: Any) -> Dict[str, Any]:
+    if isinstance(value, dict):
+        return dict(value)
+    if isinstance(value, str):
+        try:
+            parsed = json.loads(value)
+        except json.JSONDecodeError:
+            return {}
+        if isinstance(parsed, dict):
+            return parsed
+    return {}
+
+
+def _ensure_list(value: Any) -> List[Any]:
+    if isinstance(value, list):
+        return list(value)
+    if isinstance(value, str):
+        try:
+            parsed = json.loads(value)
+        except json.JSONDecodeError:
+            return []
+        if isinstance(parsed, list):
+            return parsed
+    return []
 
 
 @dataclass
@@ -90,6 +260,11 @@ class BaseScenarioStore:
         tenant_id: Optional[str] = None,
         code_version: Optional[str],
         seed: Optional[int],
+        parameters: Optional[Dict[str, Any]] = None,
+        environment: Optional[Dict[str, str]] = None,
+        priority: ScenarioRunPriority = ScenarioRunPriority.NORMAL,
+        max_retries: int = 3,
+        idempotency_key: Optional[str] = None,
     ) -> ScenarioRunRecord:
         raise NotImplementedError
 
@@ -184,6 +359,8 @@ class InMemoryScenarioStore(BaseScenarioStore):
     def __init__(self) -> None:
         self._scenarios: Dict[str, ScenarioRecord] = {}
         self._runs: Dict[str, ScenarioRunRecord] = {}
+        self._runs_by_key: Dict[str, str] = {}
+        self._runs_by_idempotency: Dict[str, str] = {}
         self._ppa_contracts: Dict[str, PpaContractRecord] = {}
 
     def create_scenario(
@@ -194,14 +371,21 @@ class InMemoryScenarioStore(BaseScenarioStore):
         assumptions: List[ScenarioAssumption],
     ) -> ScenarioRecord:
         scenario_id = str(uuid.uuid4())
+        unique_key = _compute_scenario_unique_key(tenant_id, name)
+        for record in self._scenarios.values():
+            if record.tenant_id == tenant_id and record.unique_key == unique_key:
+                raise ValueError("Scenario with the same name already exists for tenant")
+        now = _now()
         record = ScenarioRecord(
             id=scenario_id,
             tenant_id=tenant_id,
             name=name,
             description=description,
-            assumptions=assumptions,
-            status="CREATED",
-            created_at=_now(),
+            assumptions=list(assumptions),
+            status=ScenarioStatus.CREATED,
+            created_at=now,
+            updated_at=now,
+            unique_key=unique_key,
         )
         self._scenarios[scenario_id] = record
         return record
@@ -226,7 +410,16 @@ class InMemoryScenarioStore(BaseScenarioStore):
         if tenant_id:
             matches = [record for record in matches if record.tenant_id == tenant_id]
         if status:
-            matches = [record for record in matches if record.status == status]
+            status_enum: Optional[ScenarioStatus]
+            if isinstance(status, ScenarioStatus):
+                status_enum = status
+            else:
+                try:
+                    status_enum = ScenarioStatus(str(status).lower())
+                except ValueError:
+                    status_enum = None
+            if status_enum is not None:
+                matches = [record for record in matches if record.status == status_enum]
         matches.sort(key=lambda rec: rec.created_at, reverse=True)
         return matches[offset : offset + limit]
 
@@ -237,21 +430,59 @@ class InMemoryScenarioStore(BaseScenarioStore):
         tenant_id: Optional[str] = None,
         code_version: Optional[str],
         seed: Optional[int],
+        parameters: Optional[Dict[str, Any]] = None,
+        environment: Optional[Dict[str, str]] = None,
+        priority: ScenarioRunPriority = ScenarioRunPriority.NORMAL,
+        max_retries: int = 3,
+        idempotency_key: Optional[str] = None,
     ) -> ScenarioRunRecord:
-        run_id = str(uuid.uuid4())
-        record = ScenarioRunRecord(
-            run_id=run_id,
-            scenario_id=scenario_id,
-            state="QUEUED",
-            created_at=_now(),
+        scenario = self.get_scenario(scenario_id, tenant_id=tenant_id)
+        if scenario is None:
+            raise ValueError("Scenario not found")
+
+        fingerprint, run_key = _compute_run_fingerprint(
+            scenario,
+            parameters=parameters,
+            environment=environment,
             code_version=code_version,
             seed=seed,
         )
+
+        if idempotency_key and idempotency_key in self._runs_by_idempotency:
+            existing_id = self._runs_by_idempotency[idempotency_key]
+            existing_run = self._runs.get(existing_id)
+            if existing_run is not None:
+                return existing_run
+
+        if run_key in self._runs_by_key:
+            existing_id = self._runs_by_key[run_key]
+            existing_run = self._runs.get(existing_id)
+            if existing_run is not None:
+                return existing_run
+
+        run_id = str(uuid.uuid4())
+        now = _now()
+        record = ScenarioRunRecord(
+            run_id=run_id,
+            scenario_id=scenario_id,
+            state=ScenarioRunStatus.QUEUED,
+            created_at=now,
+            queued_at=now,
+            code_version=code_version,
+            seed=seed,
+            input_hash=fingerprint,
+            run_key=run_key,
+            priority=priority,
+            max_retries=max_retries,
+            parameters=dict(parameters or {}),
+            environment=dict(environment or {}),
+        )
         self._runs[run_id] = record
+        self._runs_by_key[run_key] = run_id
+        if idempotency_key:
+            self._runs_by_idempotency[idempotency_key] = run_id
         try:
-            scenario = self.get_scenario(scenario_id, tenant_id=tenant_id)
-            if scenario is not None:
-                _maybe_emit_scenario_request(scenario, record)
+            _maybe_emit_scenario_request(scenario, record)
         except Exception:
             pass
         return record
@@ -335,6 +566,8 @@ class InMemoryScenarioStore(BaseScenarioStore):
     def reset(self) -> None:  # pragma: no cover - test helper
         self._scenarios.clear()
         self._runs.clear()
+        self._runs_by_key.clear()
+        self._runs_by_idempotency.clear()
         self._ppa_contracts.clear()
 
     def get_run_for_scenario(
@@ -349,6 +582,11 @@ class InMemoryScenarioStore(BaseScenarioStore):
             scenario = self._scenarios.get(scenario_id)
             if tenant_id and scenario and scenario.tenant_id != tenant_id:
                 return None
+            if isinstance(record.state, str):
+                try:
+                    record.state = ScenarioRunStatus(record.state.lower())
+                except ValueError:
+                    record.state = ScenarioRunStatus.QUEUED
             return record
         return None
 
@@ -361,23 +599,39 @@ class InMemoryScenarioStore(BaseScenarioStore):
         limit: int = 100,
         offset: int = 0,
     ) -> List[ScenarioRunRecord]:
-        runs = [
-            run
-            for run in self._runs.values()
-            if (scenario_id is None or run.scenario_id == scenario_id)
-            and (state is None or run.state == state)
-            and (self._scenarios.get(run.scenario_id) is not None)
-            and (
+        if isinstance(state, ScenarioRunStatus):
+            state_enum: Optional[ScenarioRunStatus] = state
+        elif state is None:
+            state_enum = None
+        else:
+            try:
+                state_enum = ScenarioRunStatus(str(state).lower())
+            except ValueError:
+                state_enum = None
+
+        runs: List[ScenarioRunRecord] = []
+        for run in self._runs.values():
+            run_state = run.state
+            if isinstance(run_state, str):
+                try:
+                    run_state = ScenarioRunStatus(run_state.lower())
+                except ValueError:
+                    run_state = ScenarioRunStatus.QUEUED
+                    run.state = run_state
+            scenario_match = scenario_id is None or run.scenario_id == scenario_id
+            state_match = state_enum is None or run_state == state_enum
+            scenario_exists = self._scenarios.get(run.scenario_id) is not None
+            tenant_match = (
                 not tenant_id
-                or self._scenarios[run.scenario_id].tenant_id == tenant_id
+                or (
+                    scenario_exists
+                    and self._scenarios[run.scenario_id].tenant_id == tenant_id
+                )
             )
-        ]
+            if scenario_match and state_match and scenario_exists and tenant_match:
+                runs.append(run)
         runs.sort(key=lambda rec: rec.created_at, reverse=True)
         return runs[offset : offset + limit]
-
-    def reset(self) -> None:
-        self._scenarios.clear()
-        self._runs.clear()
 
     def update_run_state(
         self,
@@ -392,7 +646,30 @@ class InMemoryScenarioStore(BaseScenarioStore):
         scenario = self._scenarios.get(run.scenario_id)
         if tenant_id and scenario and scenario.tenant_id != tenant_id:
             return None
-        run.state = state
+        if isinstance(state, ScenarioRunStatus):
+            new_state = state
+        else:
+            try:
+                new_state = ScenarioRunStatus(state.lower())
+            except ValueError:
+                raise ValueError(f"Unsupported scenario run state: {state}")
+
+        now = _now()
+        if new_state == ScenarioRunStatus.RUNNING and run.started_at is None:
+            run.started_at = now
+        if new_state in {
+            ScenarioRunStatus.SUCCEEDED,
+            ScenarioRunStatus.FAILED,
+            ScenarioRunStatus.TIMEOUT,
+            ScenarioRunStatus.CANCELLED,
+        }:
+            if run.completed_at is None:
+                run.completed_at = now
+            if run.started_at and run.duration_seconds is None:
+                run.duration_seconds = (run.completed_at - run.started_at).total_seconds()
+            if new_state == ScenarioRunStatus.CANCELLED:
+                run.cancelled_at = now
+        run.state = new_state
         self._runs[run_id] = run
         return run
 
@@ -408,7 +685,20 @@ class InMemoryScenarioStore(BaseScenarioStore):
         if tenant_id and record.tenant_id != tenant_id:
             return False
         self._scenarios.pop(scenario_id, None)
-        self._runs = {run_id: run for run_id, run in self._runs.items() if run.scenario_id != scenario_id}
+        self._runs = {
+            run_id: run
+            for run_id, run in self._runs.items()
+            if run.scenario_id != scenario_id
+        }
+        valid_ids = set(self._runs.keys())
+        self._runs_by_key = {
+            key: run_id for key, run_id in self._runs_by_key.items() if run_id in valid_ids
+        }
+        self._runs_by_idempotency = {
+            key: run_id
+            for key, run_id in self._runs_by_idempotency.items()
+            if run_id in valid_ids
+        }
         return True
 
 
@@ -463,19 +753,28 @@ class PostgresScenarioStore(BaseScenarioStore):
         assumptions: List[ScenarioAssumption],
     ) -> ScenarioRecord:
         scenario_id = str(uuid.uuid4())
+        unique_key = _compute_scenario_unique_key(tenant_id, name)
+        status_value = ScenarioStatus.CREATED.value
         with self._connect() as conn:
             with conn.cursor() as cur:
                 self._set_tenant(cur, tenant_id)
                 cur.execute(
-                    """
-                    INSERT INTO scenario (id, tenant_id, name, description, created_by)
-                    VALUES (%s, %s, %s, %s, %s)
-                    RETURNING created_at
-                    """,
-                    (scenario_id, tenant_id, name, description, "aurum-api"),
+                    "SELECT 1 FROM scenario WHERE tenant_id = %s AND lower(name) = lower(%s) LIMIT 1",
+                    (tenant_id, name),
                 )
-                created_at_row = cur.fetchone()
-                created_at = created_at_row["created_at"] if created_at_row else _now()
+                if cur.fetchone():
+                    raise ValueError("Scenario with the same name already exists for tenant")
+                cur.execute(
+                    """
+                    INSERT INTO scenario (id, tenant_id, name, description, status, created_by)
+                    VALUES (%s, %s, %s, %s, %s, %s)
+                    RETURNING created_at, updated_at, status
+                    """,
+                    (scenario_id, tenant_id, name, description, status_value, "aurum-api"),
+                )
+                created_row = cur.fetchone() or {}
+                created_at = created_row.get("created_at", _now())
+                updated_at = created_row.get("updated_at", created_at)
 
                 for assumption in assumptions:
                     driver_name = assumption.driver_type.value
@@ -517,8 +816,10 @@ class PostgresScenarioStore(BaseScenarioStore):
             name=name,
             description=description,
             assumptions=assumptions,
-            status="CREATED",
+            status=ScenarioStatus.CREATED,
             created_at=created_at,
+            updated_at=updated_at,
+            unique_key=unique_key,
         )
 
     def get_scenario(self, scenario_id: str, *, tenant_id: Optional[str] = None) -> Optional[ScenarioRecord]:
@@ -526,7 +827,21 @@ class PostgresScenarioStore(BaseScenarioStore):
             with conn.cursor() as cur:
                 self._set_tenant(cur, tenant_id)
                 cur.execute(
-                    """SELECT id, tenant_id, name, description, created_at FROM scenario WHERE id = %s""",
+                    """
+                    SELECT
+                        id,
+                        tenant_id,
+                        name,
+                        description,
+                        status,
+                        created_at,
+                        updated_at,
+                        COALESCE(parameters, '{}'::JSONB) AS parameters,
+                        COALESCE(tags, '[]'::JSONB) AS tags,
+                        COALESCE(version, 1) AS version
+                    FROM scenario
+                    WHERE id = %s
+                    """,
                     (scenario_id,),
                 )
                 row = cur.fetchone()
@@ -557,14 +872,25 @@ class PostgresScenarioStore(BaseScenarioStore):
                         )
                     )
 
+        status_value = str(row.get("status", "created")).lower()
+        try:
+            status_enum = ScenarioStatus(status_value)
+        except ValueError:
+            status_enum = ScenarioStatus.CREATED
+
         return ScenarioRecord(
             id=row["id"],
             tenant_id=row["tenant_id"],
             name=row["name"],
             description=row["description"],
             assumptions=assumptions,
-            status="CREATED",
+            status=status_enum,
             created_at=row["created_at"],
+            updated_at=row.get("updated_at"),
+            unique_key=_compute_scenario_unique_key(row["tenant_id"], row["name"]),
+            parameters=_ensure_dict(row.get("parameters")),
+            tags=_ensure_list(row.get("tags")),
+            version=row.get("version", 1),
         )
 
     def list_scenarios(
@@ -583,21 +909,34 @@ class PostgresScenarioStore(BaseScenarioStore):
                 if tenant_id:
                     clauses.append("tenant_id = %s")
                     params.append(tenant_id)
+                status_value: Optional[str] = None
                 if status:
-                    clauses.append("status = %s")
-                    params.append(status)
+                    if isinstance(status, ScenarioStatus):
+                        status_value = status.value
+                    else:
+                        try:
+                            status_value = ScenarioStatus(str(status).lower()).value
+                        except ValueError:
+                            status_value = None
+                    if status_value:
+                        clauses.append("status = %s")
+                        params.append(status_value)
                 where_clause = f"WHERE {' AND '.join(clauses)}" if clauses else ""
                 params.extend([limit, offset])
-                cur.execute(
-                    f"""
-                    SELECT id, tenant_id, name, description, status, created_at
+                base_query = """
+                    SELECT id, tenant_id, name, description, status, created_at, updated_at,
+                           COALESCE(parameters, '{}'::JSONB) AS parameters,
+                           COALESCE(tags, '[]'::JSONB) AS tags,
+                           COALESCE(version, 1) AS version
                     FROM scenario
-                    {where_clause}
+                """
+                if where_clause:
+                    base_query += f"\n{where_clause}"
+                base_query += """
                     ORDER BY created_at DESC
                     LIMIT %s OFFSET %s
-                    """,
-                    tuple(params),
-                )
+                """
+                cur.execute(base_query, tuple(params))
                 scenario_rows = cur.fetchall()
                 if not scenario_rows:
                     return []
@@ -629,6 +968,11 @@ class PostgresScenarioStore(BaseScenarioStore):
 
         records: List[ScenarioRecord] = []
         for row in scenario_rows:
+            status_value = str(row.get("status", "created")).lower()
+            try:
+                status_enum = ScenarioStatus(status_value)
+            except ValueError:
+                status_enum = ScenarioStatus.CREATED
             records.append(
                 ScenarioRecord(
                     id=row["id"],
@@ -636,8 +980,13 @@ class PostgresScenarioStore(BaseScenarioStore):
                     name=row["name"],
                     description=row["description"],
                     assumptions=assumptions_map.get(row["id"], []),
-                     status=row.get("status", "CREATED"),
+                    status=status_enum,
                     created_at=row["created_at"],
+                    updated_at=row.get("updated_at"),
+                    unique_key=_compute_scenario_unique_key(row["tenant_id"], row["name"]),
+                    parameters=_ensure_dict(row.get("parameters")),
+                    tags=_ensure_list(row.get("tags")),
+                    version=row.get("version", 1),
                 )
             )
         return records
@@ -649,34 +998,108 @@ class PostgresScenarioStore(BaseScenarioStore):
         tenant_id: Optional[str] = None,
         code_version: Optional[str],
         seed: Optional[int],
+        parameters: Optional[Dict[str, Any]] = None,
+        environment: Optional[Dict[str, str]] = None,
+        priority: ScenarioRunPriority = ScenarioRunPriority.NORMAL,
+        max_retries: int = 3,
+        idempotency_key: Optional[str] = None,
     ) -> ScenarioRunRecord:
-        run_id = str(uuid.uuid4())
-        version_hash = str(uuid.uuid4())
-        state = "QUEUED"
+        scenario = self.get_scenario(scenario_id, tenant_id=tenant_id)
+        if scenario is None:
+            raise ValueError("Scenario not found")
+
+        version_hash, run_key = _compute_run_fingerprint(
+            scenario,
+            parameters=parameters,
+            environment=environment,
+            code_version=code_version,
+            seed=seed,
+        )
+
         with self._connect() as conn:
             with conn.cursor() as cur:
                 self._set_tenant(cur, tenant_id)
+                cur.execute(
+                    """
+                    SELECT id, scenario_id, state, code_version, seed, submitted_at, started_at, completed_at, error
+                    FROM model_run
+                    WHERE scenario_id = %s AND version_hash = %s
+                    ORDER BY submitted_at DESC
+                    LIMIT 1
+                    """,
+                    (scenario_id, version_hash),
+                )
+                existing = cur.fetchone()
+                if existing:
+                    existing_state = str(existing.get("state", "queued")).lower()
+                    try:
+                        state_enum = ScenarioRunStatus(existing_state)
+                    except ValueError:
+                        state_enum = ScenarioRunStatus.QUEUED
+                    record = ScenarioRunRecord(
+                        run_id=existing["id"],
+                        scenario_id=existing.get("scenario_id", scenario_id),
+                        state=state_enum,
+                        created_at=existing.get("submitted_at", _now()),
+                        code_version=existing.get("code_version"),
+                        seed=existing.get("seed"),
+                        run_key=run_key,
+                        input_hash=version_hash,
+                        priority=priority,
+                        max_retries=max_retries,
+                        started_at=existing.get("started_at"),
+                        completed_at=existing.get("completed_at"),
+                        error_message=existing.get("error"),
+                        parameters=dict(parameters or {}),
+                        environment=dict(environment or {}),
+                    )
+                    if (
+                        record.started_at
+                        and record.completed_at
+                        and record.duration_seconds is None
+                    ):
+                        record.duration_seconds = (
+                            record.completed_at - record.started_at
+                        ).total_seconds()
+                    record.queued_at = record.created_at
+                    return record
+
+                run_id = str(uuid.uuid4())
                 cur.execute(
                     """
                     INSERT INTO model_run (id, scenario_id, curve_def_id, code_version, seed, state, version_hash)
                     VALUES (%s, %s, NULL, %s, %s, %s, %s)
                     RETURNING submitted_at
                     """,
-                    (run_id, scenario_id, code_version, seed, state, version_hash),
+                    (
+                        run_id,
+                        scenario_id,
+                        code_version,
+                        seed,
+                        ScenarioRunStatus.QUEUED.value,
+                        version_hash,
+                    ),
                 )
-                submitted_at = cur.fetchone()["submitted_at"]
+                submitted_row = cur.fetchone() or {}
+                submitted_at = submitted_row.get("submitted_at", _now())
             conn.commit()
 
         run = ScenarioRunRecord(
             run_id=run_id,
             scenario_id=scenario_id,
-            state=state,
+            state=ScenarioRunStatus.QUEUED,
             created_at=submitted_at,
             code_version=code_version,
             seed=seed,
+            run_key=run_key,
+            input_hash=version_hash,
+            priority=priority,
+            max_retries=max_retries,
+            queued_at=submitted_at,
+            parameters=dict(parameters or {}),
+            environment=dict(environment or {}),
         )
         try:
-            scenario = self.get_scenario(scenario_id, tenant_id=tenant_id)
             if scenario is not None:
                 _maybe_emit_scenario_request(scenario, run)
         except Exception:
@@ -710,7 +1133,8 @@ class PostgresScenarioStore(BaseScenarioStore):
                 self._set_tenant(cur, tenant_id)
                 cur.execute(
                     """
-                    SELECT id, scenario_id, state, code_version, seed, submitted_at
+                    SELECT id, scenario_id, state, code_version, seed, version_hash,
+                           submitted_at, started_at, completed_at, error
                     FROM model_run
                     WHERE id = %s AND scenario_id = %s
                     """,
@@ -720,14 +1144,35 @@ class PostgresScenarioStore(BaseScenarioStore):
                 if row is None:
                     return None
 
-        return ScenarioRunRecord(
+        state_value = str(row.get("state", "queued")).lower()
+        try:
+            state_enum = ScenarioRunStatus(state_value)
+        except ValueError:
+            state_enum = ScenarioRunStatus.QUEUED
+
+        record = ScenarioRunRecord(
             run_id=row["id"],
             scenario_id=row["scenario_id"],
-            state=row["state"],
-            created_at=row["submitted_at"],
+            state=state_enum,
+            created_at=row.get("submitted_at", _now()),
             code_version=row.get("code_version"),
             seed=row.get("seed"),
+            input_hash=row.get("version_hash"),
+            run_key=f"{row['scenario_id']}:{row.get('version_hash')}" if row.get("version_hash") else None,
+            started_at=row.get("started_at"),
+            completed_at=row.get("completed_at"),
+            error_message=row.get("error"),
         )
+        record.queued_at = record.created_at
+        if (
+            record.started_at
+            and record.completed_at
+            and record.duration_seconds is None
+        ):
+            record.duration_seconds = (
+                record.completed_at - record.started_at
+            ).total_seconds()
+        return record
 
     def list_runs(
         self,
@@ -743,7 +1188,8 @@ class PostgresScenarioStore(BaseScenarioStore):
                 self._set_tenant(cur, tenant_id)
                 params: List[object] = []
                 query = [
-                    "SELECT mr.id, mr.scenario_id, mr.state, mr.code_version, mr.seed, mr.submitted_at",
+                    "SELECT mr.id, mr.scenario_id, mr.state, mr.code_version, mr.seed,",
+                    "       mr.version_hash, mr.submitted_at, mr.started_at, mr.completed_at, mr.error",
                     "FROM model_run mr",
                     "JOIN scenario s ON s.id = mr.scenario_id",
                     "WHERE 1 = 1",
@@ -753,26 +1199,56 @@ class PostgresScenarioStore(BaseScenarioStore):
                 if scenario_id:
                     query.append("AND mr.scenario_id = %s")
                     params.append(scenario_id)
+                state_value: Optional[str] = None
                 if state:
-                    query.append("AND mr.state = %s")
-                    params.append(state)
+                    if isinstance(state, ScenarioRunStatus):
+                        state_value = state.value
+                    else:
+                        try:
+                            state_value = ScenarioRunStatus(str(state).lower()).value
+                        except ValueError:
+                            state_value = None
+                    if state_value:
+                        query.append("AND mr.state = %s")
+                        params.append(state_value)
                 query.append("ORDER BY mr.submitted_at DESC")
                 query.append("LIMIT %s OFFSET %s")
                 params.extend([limit, offset])
                 cur.execute("\n".join(query), tuple(params))
                 rows = cur.fetchall()
 
-        return [
-            ScenarioRunRecord(
+        records: List[ScenarioRunRecord] = []
+        for row in rows:
+            state_value = str(row.get("state", "queued")).lower()
+            try:
+                state_enum = ScenarioRunStatus(state_value)
+            except ValueError:
+                state_enum = ScenarioRunStatus.QUEUED
+            record = ScenarioRunRecord(
                 run_id=row["id"],
                 scenario_id=row["scenario_id"],
-                state=row["state"],
-                created_at=row["submitted_at"],
+                state=state_enum,
+                created_at=row.get("submitted_at", _now()),
                 code_version=row.get("code_version"),
                 seed=row.get("seed"),
+                input_hash=row.get("version_hash"),
+                run_key=f"{row['scenario_id']}:{row.get('version_hash')}" if row.get("version_hash") else None,
+                started_at=row.get("started_at"),
+                completed_at=row.get("completed_at"),
+                error_message=row.get("error"),
             )
-            for row in rows
-        ]
+            record.queued_at = record.created_at
+            if (
+                record.started_at
+                and record.completed_at
+                and record.duration_seconds is None
+            ):
+                record.duration_seconds = (
+                    record.completed_at - record.started_at
+                ).total_seconds()
+            records.append(record)
+
+        return records
 
     def update_run_state(
         self,
@@ -781,14 +1257,22 @@ class PostgresScenarioStore(BaseScenarioStore):
         state: str,
         tenant_id: Optional[str] = None,
     ) -> Optional[ScenarioRunRecord]:
+        if isinstance(state, ScenarioRunStatus):
+            new_state = state
+        else:
+            try:
+                new_state = ScenarioRunStatus(str(state).lower())
+            except ValueError:
+                raise ValueError(f"Unsupported scenario run state: {state}")
+
         now = _now()
         with self._connect() as conn:
             with conn.cursor() as cur:
                 self._set_tenant(cur, tenant_id)
-                # fetch current run and scenario tenant
                 cur.execute(
                     """
-                    SELECT mr.id, mr.scenario_id, mr.code_version, mr.seed, mr.submitted_at, mr.state, s.tenant_id
+                    SELECT mr.id, mr.scenario_id, mr.code_version, mr.seed, mr.submitted_at, mr.state,
+                           mr.version_hash, mr.started_at, mr.completed_at, mr.error, s.tenant_id
                     FROM model_run mr
                     JOIN scenario s ON s.id = mr.scenario_id
                     WHERE mr.id = %s
@@ -798,41 +1282,81 @@ class PostgresScenarioStore(BaseScenarioStore):
                 row = cur.fetchone()
                 if row is None:
                     return None
+
                 scenario_id = row["scenario_id"]
                 row_tenant = row["tenant_id"]
+                started_at_value = row.get("started_at")
+                completed_at_value = row.get("completed_at")
 
-                # update state with timestamps
-                if state == "RUNNING":
-                    cur.execute(
-                        "UPDATE model_run SET state=%s, started_at=COALESCE(started_at, %s) WHERE id=%s",
-                        (state, now, run_id),
-                    )
-                elif state in ("SUCCEEDED", "FAILED", "CANCELLED"):
-                    cur.execute(
-                        "UPDATE model_run SET state=%s, completed_at=COALESCE(completed_at, %s) WHERE id=%s",
-                        (state, now, run_id),
-                    )
-                else:
-                    cur.execute("UPDATE model_run SET state=%s WHERE id=%s", (state, run_id))
+                if new_state == ScenarioRunStatus.RUNNING and started_at_value is None:
+                    started_at_value = now
+                if new_state in {
+                    ScenarioRunStatus.SUCCEEDED,
+                    ScenarioRunStatus.FAILED,
+                    ScenarioRunStatus.CANCELLED,
+                    ScenarioRunStatus.TIMEOUT,
+                } and completed_at_value is None:
+                    completed_at_value = now
 
-                conn.commit()
-
-                updated = ScenarioRunRecord(
-                    run_id=row["id"],
-                    scenario_id=scenario_id,
-                    state=state,
-                    created_at=row["submitted_at"],
-                    code_version=row.get("code_version"),
-                    seed=row.get("seed"),
+                cur.execute(
+                    """
+                    UPDATE model_run
+                    SET state = %s,
+                        started_at = %s,
+                        completed_at = %s
+                    WHERE id = %s
+                    RETURNING scenario_id, state, code_version, seed, version_hash,
+                              submitted_at, started_at, completed_at, error
+                    """,
+                    (
+                        new_state.value,
+                        started_at_value,
+                        completed_at_value,
+                        run_id,
+                    ),
                 )
+                updated_row = cur.fetchone()
+            conn.commit()
+
+        if updated_row is None:
+            return None
+
+        updated_state_value = str(updated_row.get("state", "queued")).lower()
+        try:
+            updated_state = ScenarioRunStatus(updated_state_value)
+        except ValueError:
+            updated_state = ScenarioRunStatus.QUEUED
+
+        record = ScenarioRunRecord(
+            run_id=run_id,
+            scenario_id=scenario_id,
+            state=updated_state,
+            created_at=updated_row.get("submitted_at", _now()),
+            code_version=updated_row.get("code_version"),
+            seed=updated_row.get("seed"),
+            input_hash=updated_row.get("version_hash"),
+            run_key=f"{scenario_id}:{updated_row.get('version_hash')}" if updated_row.get("version_hash") else None,
+            started_at=updated_row.get("started_at"),
+            completed_at=updated_row.get("completed_at"),
+            error_message=updated_row.get("error"),
+        )
+        record.queued_at = record.created_at
+        if (
+            record.started_at
+            and record.completed_at
+            and record.duration_seconds is None
+        ):
+            record.duration_seconds = (
+                record.completed_at - record.started_at
+            ).total_seconds()
 
         _maybe_emit_status_alert(
             tenant_id=str(row_tenant) if row_tenant else None,
             scenario_id=scenario_id,
             run_id=run_id,
-            state=state,
+            state=updated_state.value,
         )
-        return updated
+        return record
 
     def create_ppa_contract(
         self,
@@ -1027,6 +1551,43 @@ def _schema_path(filename: str) -> str:
     return os.path.join(base, "kafka", "schemas", filename)
 
 
+def _scenario_request_payload(scenario: ScenarioRecord, run: ScenarioRunRecord) -> Dict[str, Any]:
+    assumptions_payload = [
+        {
+            "assumption_id": assumption.version or str(uuid.uuid4()),
+            "type": assumption.driver_type.value,
+            "payload": json.dumps(assumption.payload or {}),
+            "version": assumption.version,
+        }
+        for assumption in scenario.assumptions
+    ]
+
+    payload_data: Dict[str, Any] = {
+        "scenario_id": scenario.id,
+        "tenant_id": scenario.tenant_id,
+        "requested_by": os.getenv("AURUM_REQUESTED_BY", "api"),
+        "asof_date": None,
+        "curve_def_ids": [],
+        "assumptions": assumptions_payload,
+        "submitted_ts": _now(),
+    }
+
+    model = _SCENARIO_REQUEST_MODEL
+    if model is not None:
+        try:
+            payload_obj = model(**payload_data)
+            payload_data = payload_obj.model_dump(mode="python")
+        except Exception as exc:  # pragma: no cover - fall back to raw payload
+            if isinstance(exc, ContractModelError):
+                pass
+
+    submitted_ts = payload_data.get("submitted_ts")
+    if isinstance(submitted_ts, datetime):
+        payload_data["submitted_ts"] = int(submitted_ts.timestamp() * 1_000_000)
+
+    return payload_data
+
+
 def _maybe_emit_scenario_request(scenario: ScenarioRecord, run: ScenarioRunRecord) -> None:
     # Default to enabled unless explicitly disabled
     if os.getenv("AURUM_SCENARIO_REQUESTS_ENABLED", "1").lower() in {"0", "false", "no"}:
@@ -1045,24 +1606,7 @@ def _maybe_emit_scenario_request(scenario: ScenarioRecord, run: ScenarioRunRecor
             {"bootstrap.servers": bootstrap, "schema.registry.url": schema_registry_url},
             default_value_schema=value_schema,
         )
-        assumptions_payload = [
-            {
-                "assumption_id": a.version or str(uuid.uuid4()),
-                "type": a.driver_type.value,
-                "payload": json.dumps(a.payload or {}),
-                "version": a.version,
-            }
-            for a in scenario.assumptions
-        ]
-        payload = {
-            "scenario_id": scenario.id,
-            "tenant_id": scenario.tenant_id,
-            "requested_by": os.getenv("AURUM_REQUESTED_BY", "api"),
-            "asof_date": None,
-            "curve_def_ids": [],
-            "assumptions": assumptions_payload,
-            "submitted_ts": int(_now().timestamp() * 1_000_000),
-        }
+        payload = _scenario_request_payload(scenario, run)
         with TRACER.start_as_current_span("scenario.request.produce") as span:
             if span.is_recording():  # pragma: no branch
                 span.set_attribute("messaging.system", "kafka")

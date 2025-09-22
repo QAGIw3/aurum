@@ -8,6 +8,7 @@ import types
 from fastapi import Depends, FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.gzip import GZipMiddleware
+from fastapi.responses import JSONResponse
 
 from aurum.core import AurumSettings
 from aurum.telemetry import configure_telemetry
@@ -16,7 +17,8 @@ from . import routes as _routes
 
 from .auth import AuthMiddleware, OIDCConfig
 from .config import CacheConfig
-from .ratelimit import RateLimitConfig, RateLimitMiddleware
+from .ratelimit import RateLimitConfig, RateLimitMiddleware, ratelimit_admin_router
+from .runtime_config import router as runtime_config_router
 from .routes import METRICS_MIDDLEWARE, access_log_middleware, configure_routes, router
 from .state import configure as configure_state
 from aurum.observability.api import router as observability_router
@@ -29,7 +31,12 @@ def create_app(settings: AurumSettings | None = None) -> FastAPI:
     configure_state(settings)
     configure_routes(settings)
 
-    app = FastAPI(title=settings.api.title, version=settings.api.version)
+    app = FastAPI(
+        title=settings.api.title,
+        version=settings.api.version,
+        default_response_class=JSONResponse,
+        timeout=settings.api.request_timeout_seconds
+    )
     app.state.settings = settings
 
     configure_telemetry(settings.telemetry.service_name, fastapi_app=app, enable_psycopg=True)
@@ -69,8 +76,40 @@ def create_app(settings: AurumSettings | None = None) -> FastAPI:
 
         _routes._require_admin(principal)
 
+    # Register global exception handler for RFC 7807 compliance
+    from .exceptions import handle_api_exception
+    app.add_exception_handler(Exception, handle_api_exception)
+
+    # Add custom OpenAPI endpoint
+    from .openapi_generator import OpenAPIGenerator
+
+    @app.get("/openapi.json", include_in_schema=False)
+    async def get_openapi_json():
+        """Get OpenAPI specification in JSON format."""
+        generator = OpenAPIGenerator(app)
+        return generator.generate_schema()
+
+    @app.get("/openapi.yaml", include_in_schema=False)
+    async def get_openapi_yaml():
+        """Get OpenAPI specification in YAML format."""
+        from .openapi_generator import DocumentationFormat
+        import yaml
+
+        generator = OpenAPIGenerator(app)
+        schema = generator.generate_schema()
+
+        return yaml.dump(schema, default_flow_style=False, sort_keys=False)
+
     app.include_router(
         observability_router,
+        dependencies=[Depends(_observability_admin_guard)],
+    )
+    app.include_router(
+        ratelimit_admin_router,
+        dependencies=[Depends(_observability_admin_guard)],
+    )
+    app.include_router(
+        runtime_config_router,
         dependencies=[Depends(_observability_admin_guard)],
     )
     app.include_router(router)

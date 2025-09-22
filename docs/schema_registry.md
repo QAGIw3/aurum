@@ -52,6 +52,7 @@ The Schema Registry system provides:
 - Manages schema subject naming conventions
 - Handles subject registration and updates
 - Tracks subject versions and history
+- Subject metadata, topics, and compatibility requirements are frozen in `kafka/schemas/contracts.yml`
 
 ## Configuration
 
@@ -65,7 +66,10 @@ config = SchemaRegistryConfig(
     default_compatibility_mode=SchemaCompatibilityMode.BACKWARD,
     timeout_seconds=30,
     enforce_compatibility=True,
+    enforce_contracts=True,
     fail_on_incompatible=True,
+    fail_on_missing_contract=True,
+    contracts_path="kafka/schemas/contracts.yml",
     validate_schema=True,
     validate_references=True
 )
@@ -88,9 +92,12 @@ config = SchemaRegistryConfig(
 ### Basic Schema Registration
 
 ```python
-from aurum.schema_registry import SchemaRegistryManager
+from aurum.schema_registry import SchemaCompatibilityMode, SchemaRegistryConfig, SchemaRegistryManager
 
-config = SchemaRegistryConfig(base_url="http://localhost:8081")
+config = SchemaRegistryConfig(
+    base_url="http://localhost:8081",
+    contracts_path="kafka/schemas/contracts.yml",
+)
 manager = SchemaRegistryManager(config)
 
 schema = {
@@ -102,9 +109,9 @@ schema = {
     ]
 }
 
-# Register schema
+# Register schema (subject must be enumerated in contracts.yml beforehand)
 schema_info = manager.register_subject(
-    "aurum.my_record",
+    "aurum.example.my_record.v1-value",
     schema,
     SchemaCompatibilityMode.BACKWARD
 )
@@ -527,6 +534,29 @@ report = script.generate_schema_report(results, output_file)
 - Single schema: ~100ms
 - Batch (10 schemas): ~500ms
 - Large batch (100 schemas): ~2s
+
+### Code-Generated Models
+
+```python
+from datetime import datetime
+
+from aurum.schema_registry.codegen import get_model
+
+ScenarioRequest = get_model("aurum.scenario.request.v1-value")
+payload = ScenarioRequest(
+    scenario_id="scenario-123",
+    tenant_id="tenant-abc",
+    requested_by="api",
+    asof_date=None,
+    curve_def_ids=[],
+    assumptions=[],
+    submitted_ts=datetime.utcnow(),
+)
+
+avro_ready = payload.model_dump(mode="python")
+```
+
+Generated models enforce the frozen contract locally (Pydantic validators) and return dictionaries ready for Avro serialization. Use `payload_from_contract(subject, payload_dict)` to coerce existing payloads.
 
 ### Compatibility Checking
 - Simple schema: ~10ms

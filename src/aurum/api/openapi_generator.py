@@ -139,6 +139,180 @@ class OpenAPIGenerator:
             }
         }
 
+        # Add error response schemas (RFC 7807)
+        openapi_schema["components"]["schemas"] = openapi_schema.get("components", {}).get("schemas", {})
+
+        openapi_schema["components"]["schemas"]["ErrorEnvelope"] = {
+            "type": "object",
+            "description": "Standard error response envelope following RFC 7807",
+            "properties": {
+                "error": {
+                    "type": "string",
+                    "description": "Error type identifier"
+                },
+                "message": {
+                    "type": "string",
+                    "description": "Human-readable error message"
+                },
+                "code": {
+                    "type": "string",
+                    "description": "Application-specific error code"
+                },
+                "field": {
+                    "type": "string",
+                    "description": "Field name that caused the error (for validation errors)"
+                },
+                "value": {
+                    "description": "Invalid value that caused the error"
+                },
+                "context": {
+                    "type": "object",
+                    "description": "Additional error context"
+                },
+                "request_id": {
+                    "type": "string",
+                    "description": "Request identifier for debugging"
+                },
+                "timestamp": {
+                    "type": "string",
+                    "format": "date-time",
+                    "description": "Error timestamp"
+                }
+            },
+            "required": ["error", "timestamp"]
+        }
+
+        openapi_schema["components"]["schemas"]["ValidationErrorDetail"] = {
+            "type": "object",
+            "description": "Detailed validation error information",
+            "properties": {
+                "field": {
+                    "type": "string",
+                    "description": "Field path that failed validation"
+                },
+                "message": {
+                    "type": "string",
+                    "description": "Validation error message"
+                },
+                "value": {
+                    "description": "Invalid value"
+                },
+                "code": {
+                    "type": "string",
+                    "description": "Validation error code"
+                },
+                "constraint": {
+                    "type": "string",
+                    "enum": ["required", "type", "format", "min", "max", "length", "pattern", "enum", "unique", "custom"],
+                    "description": "Constraint type that failed"
+                }
+            },
+            "required": ["field", "message"]
+        }
+
+        openapi_schema["components"]["schemas"]["ValidationErrorResponse"] = {
+            "type": "object",
+            "description": "Validation error response",
+            "properties": {
+                "error": {
+                    "type": "string",
+                    "description": "Error type",
+                    "default": "Validation Error"
+                },
+                "message": {
+                    "type": "string",
+                    "description": "Error message"
+                },
+                "field_errors": {
+                    "type": "array",
+                    "items": {"$ref": "#/components/schemas/ValidationErrorDetail"},
+                    "description": "List of field validation errors"
+                },
+                "request_id": {
+                    "type": "string",
+                    "description": "Request identifier"
+                },
+                "timestamp": {
+                    "type": "string",
+                    "format": "date-time",
+                    "description": "Error timestamp"
+                }
+            },
+            "required": ["error", "message", "timestamp"]
+        }
+
+        # Add common error responses to all operations
+        for path_data in openapi_schema.get("paths", {}).values():
+            for operation in path_data.values():
+                if not isinstance(operation, dict):
+                    continue
+
+                # Add standard error responses if not present
+                if "responses" not in operation:
+                    operation["responses"] = {}
+
+                responses = operation["responses"]
+
+                # Add common error responses
+                responses["400"] = {
+                    "description": "Bad Request",
+                    "content": {
+                        "application/json": {
+                            "schema": {
+                                "oneOf": [
+                                    {"$ref": "#/components/schemas/ErrorEnvelope"},
+                                    {"$ref": "#/components/schemas/ValidationErrorResponse"}
+                                ]
+                            }
+                        }
+                    }
+                }
+
+                responses["401"] = {
+                    "description": "Unauthorized",
+                    "content": {
+                        "application/json": {
+                            "schema": {"$ref": "#/components/schemas/ErrorEnvelope"}
+                        }
+                    }
+                }
+
+                responses["403"] = {
+                    "description": "Forbidden",
+                    "content": {
+                        "application/json": {
+                            "schema": {"$ref": "#/components/schemas/ErrorEnvelope"}
+                        }
+                    }
+                }
+
+                responses["404"] = {
+                    "description": "Not Found",
+                    "content": {
+                        "application/json": {
+                            "schema": {"$ref": "#/components/schemas/ErrorEnvelope"}
+                        }
+                    }
+                }
+
+                responses["429"] = {
+                    "description": "Too Many Requests",
+                    "content": {
+                        "application/json": {
+                            "schema": {"$ref": "#/components/schemas/ErrorEnvelope"}
+                        }
+                    }
+                }
+
+                responses["500"] = {
+                    "description": "Internal Server Error",
+                    "content": {
+                        "application/json": {
+                            "schema": {"$ref": "#/components/schemas/ErrorEnvelope"}
+                        }
+                    }
+                }
+
         return openapi_schema
 
     def save_schema(self, output_path: str, format_type: DocumentationFormat = DocumentationFormat.JSON) -> None:

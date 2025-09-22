@@ -12,6 +12,11 @@ from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional, Union
 
 from ..telemetry.context import get_request_id
+from ..telemetry import get_tracer, OTEL_AVAILABLE
+
+if OTEL_AVAILABLE:
+    from opentelemetry import trace
+    from opentelemetry.trace.status import Status, StatusCode
 
 
 # Context variables for tracing
@@ -39,6 +44,7 @@ class Span:
     _span_token: Token | None = field(default=None, init=False, repr=False, compare=False)
     _trace_token: Token | None = field(default=None, init=False, repr=False, compare=False)
     _attributes_token: Token | None = field(default=None, init=False, repr=False, compare=False)
+    _otel_span: Optional[Any] = field(default=None, init=False, repr=False, compare=False)  # OpenTelemetry span
 
     def finish(self, end_time: Optional[float] = None) -> None:
         """Mark span as finished and calculate duration."""
@@ -46,6 +52,37 @@ class Span:
             end_time = time.time()
         self.end_time = end_time
         self.duration = self.end_time - self.start_time
+
+        # Finish OpenTelemetry span if present
+        if OTEL_AVAILABLE and self._otel_span is not None:
+            try:
+                # Set span attributes
+                for key, value in self.attributes.items():
+                    self._otel_span.set_attribute(key, str(value))
+
+                # Set span tags
+                for key, value in self.tags.items():
+                    self._otel_span.set_attribute(f"tag.{key}", value)
+
+                # Set span status based on our status
+                if self.status == "error":
+                    self._otel_span.set_status(Status(StatusCode.ERROR, self.error_message or "Unknown error"))
+                elif self.status == "cancelled":
+                    self._otel_span.set_status(Status(StatusCode.CANCELLED))
+                else:
+                    self._otel_span.set_status(Status(StatusCode.OK))
+
+                # Add events
+                for event in self.events:
+                    self._otel_span.add_event(
+                        event["name"],
+                        attributes=event.get("attributes", {})
+                    )
+
+                self._otel_span.end()
+            except Exception as e:
+                # Silently handle OpenTelemetry errors to avoid breaking application
+                pass
 
     def add_event(self, name: str, attributes: Optional[Dict[str, Any]] = None) -> None:
         """Add an event to the span."""
@@ -116,6 +153,23 @@ class TraceCollector:
             "trace_id": trace_id,
             "span_id": span_id,
         })
+
+        # Create OpenTelemetry span if available
+        if OTEL_AVAILABLE:
+            try:
+                tracer = get_tracer("aurum")
+                otel_span = tracer.start_span(
+                    name=span.name,
+                    attributes={
+                        **span.attributes,
+                        **span.tags,
+                        "span.type": span.span_type,
+                    }
+                )
+                span._otel_span = otel_span
+            except Exception:
+                # Silently handle OpenTelemetry errors
+                pass
 
         # Track context tokens for restoration
         span._trace_token = trace_token
