@@ -1,0 +1,71 @@
+{
+  "metadata": {
+    "iso_code": "CAISO",
+    "data_type": "load",
+    "generated_at": "2024-01-15T10:00:00Z",
+    "record_count": 50,
+    "description": "Golden test data for CAISO Load validation"
+  },
+  "schema": {
+    "type": "array",
+    "items": {
+      "type": "object",
+      "properties": {
+        "interval_start": {"type": "string", "format": "date-time"},
+        "interval_end": {"type": "string", "format": "date-time"},
+        "area": {"type": "string"},
+        "mw": {"type": "number"},
+        "ingest_ts": {"type": "number"},
+        "metadata": {"type": "object"}
+      },
+      "required": ["interval_start", "area", "mw"]
+    }
+  },
+  "data": [
+    {
+      "interval_start": "2024-01-15T07:00:00Z",
+      "interval_end": "2024-01-15T08:00:00Z",
+      "area": "CAISO",
+      "mw": 28456.78,
+      "ingest_ts": 1705309200000000,
+      "metadata": {
+        "market_run_id": "DAM",
+        "forecast": true
+      }
+    },
+    {
+      "interval_start": "2024-01-15T08:00:00Z",
+      "interval_end": "2024-01-15T09:00:00Z",
+      "area": "CAISO",
+      "mw": 29123.45,
+      "ingest_ts": 1705312800000000,
+      "metadata": {
+        "market_run_id": "DAM",
+        "forecast": true
+      }
+    },
+    {
+      "interval_start": "2024-01-15T07:00:00Z",
+      "interval_end": "2024-01-15T08:00:00Z",
+      "area": "SP15",
+      "mw": 12456.32,
+      "ingest_ts": 1705309200000000,
+      "metadata": {
+        "market_run_id": "DAM",
+        "forecast": false
+      }
+    }
+  ],
+  "validation_rules": {
+    "load_ranges": {
+      "min_load_mw": 0,
+      "max_load_mw": 50000,
+      "reasonable_daily_variation_percent": 20
+    },
+    "required_fields": [
+      "interval_start",
+      "area",
+      "mw"
+    ]
+  }
+}

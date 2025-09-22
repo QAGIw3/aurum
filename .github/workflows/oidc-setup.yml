@@ -1,0 +1,231 @@
+name: Setup GitHub OIDC
+
+on:
+  push:
+    branches: [ main ]
+    paths:
+      - '.github/workflows/oidc-setup.yml'
+      - 'k8s/base/vault-policy-external-data.hcl'
+      - 'k8s/base/vault-secrets-lifecycle.hcl'
+
+permissions:
+  contents: read
+  id-token: write
+  actions: read
+
+jobs:
+  setup-aws-oidc:
+    name: Setup AWS OIDC Provider
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: arn:aws:iam::123456789012:role/GitHubOIDCSetupRole
+          aws-region: us-east-1
+
+      - name: Setup GitHub OIDC provider for AWS
+        run: |
+          # Check if OIDC provider already exists
+          if ! aws iam get-open-id-connect-provider --open-id-connect-provider-arn arn:aws:iam::123456789012:oidc-provider/token.actions.githubusercontent.com > /dev/null 2>&1; then
+            echo "Creating GitHub OIDC provider..."
+
+            # Create OIDC provider
+            aws iam create-open-id-connect-provider \
+              --url https://token.actions.githubusercontent.com \
+              --thumbprint-list "$(openssl s_client -servername token.actions.githubusercontent.com -showcerts -connect token.actions.githubusercontent.com:443 2>/dev/null | openssl x509 -fingerprint -noout | cut -d'=' -f2 | tr -d ':')" \
+              --client-id-list sts.amazonaws.com
+
+            echo "✅ GitHub OIDC provider created"
+          else
+            echo "✅ GitHub OIDC provider already exists"
+          fi
+
+      - name: Create IAM role for GitHub Actions
+        run: |
+          # Create trust policy for GitHub Actions
+          cat > trust-policy.json << EOF
+          {
+            "Version": "2012-10-17",
+            "Statement": [
+              {
+                "Effect": "Allow",
+                "Principal": {
+                  "Federated": "arn:aws:iam::123456789012:oidc-provider/token.actions.githubusercontent.com"
+                },
+                "Action": "sts:AssumeRoleWithWebIdentity",
+                "Condition": {
+                  "StringEquals": {
+                    "token.actions.githubusercontent.com:aud": "sts.amazonaws.com"
+                  },
+                  "StringLike": {
+                    "token.actions.githubusercontent.com:sub": "repo:aurum/aurum:*"
+                  }
+                }
+              }
+            ]
+          }
+          EOF
+
+          # Create IAM role if it doesn't exist
+          if ! aws iam get-role --role-name GitHubActionsRole > /dev/null 2>&1; then
+            aws iam create-role \
+              --role-name GitHubActionsRole \
+              --assume-role-policy-document file://trust-policy.json
+
+            # Attach necessary policies
+            aws iam attach-role-policy \
+              --role-name GitHubActionsRole \
+              --policy-arn arn:aws:iam::aws:policy/AmazonS3ReadOnlyAccess
+
+            aws iam attach-role-policy \
+              --role-name GitHubActionsRole \
+              --policy-arn arn:aws:iam::aws:policy/AmazonEC2ReadOnlyAccess
+
+            echo "✅ GitHub Actions IAM role created"
+          else
+            echo "✅ GitHub Actions IAM role already exists"
+          fi
+
+  setup-gcp-oidc:
+    name: Setup GCP OIDC Provider
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Authenticate to Google Cloud
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: 'projects/123456789/locations/global/workloadIdentityPools/github-pool/providers/github-provider'
+          service_account: 'aurum-admin@aurum-project.iam.gserviceaccount.com'
+
+      - name: Setup GCP Workload Identity
+        run: |
+          # Create workload identity pool if it doesn't exist
+          if ! gcloud iam workload-identity-pools describe github-pool --location=global > /dev/null 2>&1; then
+            gcloud iam workload-identity-pools create github-pool \
+              --location=global \
+              --display-name="GitHub Actions Pool" \
+              --description="Workload identity pool for GitHub Actions"
+
+            # Create workload identity provider
+            gcloud iam workload-identity-pools providers create-oidc github-provider \
+              --location=global \
+              --workload-identity-pool=github-pool \
+              --display-name="GitHub Provider" \
+              --description="OIDC provider for GitHub Actions" \
+              --issuer-uri=https://token.actions.githubusercontent.com \
+              --attribute-mapping=google.subject=assertion.sub,attribute.repository=assertion.repository \
+              --attribute-condition=assertion.repository_owner=='aurum'
+
+            echo "✅ GCP Workload Identity pool and provider created"
+          else
+            echo "✅ GCP Workload Identity pool already exists"
+          fi
+
+      - name: Create service account for GitHub Actions
+        run: |
+          # Create service account if it doesn't exist
+          if ! gcloud iam service-accounts describe aurum-github-actions@aurum-project.iam.gserviceaccount.com > /dev/null 2>&1; then
+            gcloud iam service-accounts create aurum-github-actions \
+              --display-name="GitHub Actions Service Account" \
+              --description="Service account for GitHub Actions OIDC authentication"
+
+            # Grant necessary permissions
+            gcloud projects add-iam-policy-binding aurum-project \
+              --member="serviceAccount:aurum-github-actions@aurum-project.iam.gserviceaccount.com" \
+              --role="roles/storage.objectViewer"
+
+            gcloud projects add-iam-policy-binding aurum-project \
+              --member="serviceAccount:aurum-github-actions@aurum-project.iam.gserviceaccount.com" \
+              --role="roles/container.viewer"
+
+            echo "✅ GitHub Actions service account created"
+          else
+            echo "✅ GitHub Actions service account already exists"
+          fi
+
+  setup-azure-oidc:
+    name: Setup Azure OIDC Provider
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Azure Login
+        uses: azure/login@v2
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Setup Azure OIDC
+        run: |
+          # Create federated identity credential if it doesn't exist
+          if ! az ad app federated-credential list --id $(az ad app list --display-name "GitHubActionsApp" --query '[0].appId' -o tsv) | grep -q "GitHubOIDC"; then
+            # Get the app ID
+            APP_ID=$(az ad app list --display-name "GitHubActionsApp" --query '[0].appId' -o tsv)
+
+            if [ -z "$APP_ID" ]; then
+              echo "Creating Azure AD application..."
+
+              # Create Azure AD application
+              az ad app create --display-name "GitHubActionsApp"
+
+              # Get the newly created app ID
+              APP_ID=$(az ad app list --display-name "GitHubActionsApp" --query '[0].appId' -o tsv)
+            fi
+
+            # Create federated identity credential
+            az ad app federated-credential create \
+              --id $APP_ID \
+              --parameters '{
+                "name": "GitHubOIDC",
+                "issuer": "https://token.actions.githubusercontent.com",
+                "subject": "repo:aurum/aurum:pull_request",
+                "audiences": ["api://AzureADTokenExchange"]
+              }'
+
+            echo "✅ Azure federated identity credential created"
+          else
+            echo "✅ Azure federated identity credential already exists"
+          fi
+
+  validate-oidc-setup:
+    name: Validate OIDC Setup
+    runs-on: ubuntu-latest
+    needs: [setup-aws-oidc, setup-gcp-oidc, setup-azure-oidc]
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Validate OIDC configurations
+        run: |
+          echo "🔍 Validating OIDC setup..."
+
+          # Validate AWS OIDC
+          if aws iam get-open-id-connect-provider --open-id-connect-provider-arn arn:aws:iam::123456789012:oidc-provider/token.actions.githubusercontent.com > /dev/null 2>&1; then
+            echo "✅ AWS OIDC provider: CONFIGURED"
+          else
+            echo "❌ AWS OIDC provider: NOT CONFIGURED"
+          fi
+
+          # Validate GCP OIDC
+          if gcloud iam workload-identity-pools describe github-pool --location=global > /dev/null 2>&1; then
+            echo "✅ GCP Workload Identity: CONFIGURED"
+          else
+            echo "❌ GCP Workload Identity: NOT CONFIGURED"
+          fi
+
+          # Validate Azure OIDC
+          if az ad app federated-credential list --id $(az ad app list --display-name "GitHubActionsApp" --query '[0].appId' -o tsv) | grep -q "GitHubOIDC"; then
+            echo "✅ Azure OIDC: CONFIGURED"
+          else
+            echo "❌ Azure OIDC: NOT CONFIGURED"
+          fi
+
+          echo "🎉 OIDC setup validation completed"

@@ -29,7 +29,7 @@ import threading
 from contextlib import asynccontextmanager
 from datetime import datetime, timedelta
 from enum import Enum
-from typing import Any, Dict, List, Optional, Tuple, Union
+from typing import Any, Dict, List, Optional, Tuple, Union, AsyncIterator
 from concurrent.futures import ThreadPoolExecutor
 
 try:
@@ -41,6 +41,7 @@ except ImportError:
     trino = None  # type: ignore
 
 from ..telemetry.context import log_structured
+from ..telemetry.context import get_tenant_id
 from .config import TrinoConfig
 from .exceptions import ServiceUnavailableException
 
@@ -300,8 +301,14 @@ class TrinoClient:
         query: str,
         params: Optional[Dict[str, Any]] = None,
         tenant_id: Optional[str] = None,
+        *,
+        use_cache: bool = False,
+        cache_ttl_seconds: Optional[int] = None,
+        force_refresh: bool = False,
     ) -> List[Dict[str, Any]]:
-        """Execute a Trino query with retry logic and circuit breaker."""
+        """Execute a Trino query with retry logic, caching, and observability."""
+
+        tenant_id = tenant_id or get_tenant_id()
 
         # Check circuit breaker
         if self.circuit_breaker.is_open():
@@ -314,8 +321,24 @@ class TrinoClient:
 
         for attempt in range(self.retry_config.max_retries + 1):
             try:
-                # Execute the query
-                result = await self._execute_query_with_timeout(query, params, tenant_id)
+                if use_cache:
+                    result = await self._execute_with_cache(
+                        query,
+                        params=params,
+                        tenant_id=tenant_id,
+                        cache_ttl_seconds=cache_ttl_seconds,
+                        force_refresh=force_refresh,
+                    )
+                else:
+                    results, stats = await self._execute_query_with_timeout(query, params, tenant_id)
+                    await self._record_query_observability(
+                        query,
+                        stats,
+                        len(results),
+                        tenant_id,
+                        cached=False,
+                    )
+                    result = results
 
                 # Record success
                 self.circuit_breaker.record_success()
@@ -372,7 +395,7 @@ class TrinoClient:
         query: str,
         params: Optional[Dict[str, Any]] = None,
         tenant_id: Optional[str] = None,
-    ) -> List[Dict[str, Any]]:
+    ) -> Tuple[List[Dict[str, Any]], Dict[str, Any]]:
         """Execute query with timeout controls."""
 
         async with self._get_connection() as conn:
@@ -405,7 +428,168 @@ class TrinoClient:
         if stats:
             self._log_query_metrics(stats, tenant_id)
 
-        return results
+        return results, stats
+
+    async def _execute_with_cache(
+        self,
+        query: str,
+        *,
+        params: Optional[Dict[str, Any]] = None,
+        tenant_id: Optional[str] = None,
+        cache_ttl_seconds: Optional[int] = None,
+        force_refresh: bool = False,
+    ) -> List[Dict[str, Any]]:
+        try:
+            from .golden_query_cache import get_golden_query_cache
+        except RuntimeError:
+            # Cache not initialised; execute normally
+            results, stats = await self._execute_query_with_timeout(query, params, tenant_id)
+            await self._record_query_observability(query, stats, len(results), tenant_id, cached=False)
+            return results
+
+        cache = get_golden_query_cache()
+        cache_state = {"hit": True}
+        stats_holder: Dict[str, Any] = {}
+
+        async def compute() -> List[Dict[str, Any]]:
+            cache_state["hit"] = False
+            results, stats = await self._execute_query_with_timeout(query, params, tenant_id)
+            stats_holder["stats"] = stats
+            await self._record_query_observability(query, stats, len(results), tenant_id, cached=False)
+            return results
+
+        result = await cache.get_or_compute(
+            query=query,
+            compute_func=compute,
+            ttl_seconds=cache_ttl_seconds,
+            force_refresh=force_refresh,
+        )
+
+        if cache_state["hit"]:
+            await self._record_query_observability(
+                query,
+                stats_holder.get("stats"),
+                len(result) if isinstance(result, list) else 0,
+                tenant_id,
+                cached=True,
+            )
+
+        return result
+
+    async def _record_query_observability(
+        self,
+        query: str,
+        stats: Optional[Dict[str, Any]],
+        result_count: int,
+        tenant_id: Optional[str],
+        *,
+        cached: bool,
+    ) -> None:
+        fingerprint = self._fingerprint_query(query)
+        wall_time_ms = None
+        if stats:
+            wall_time_ms = stats.get("wall_time_ms")
+        execution_seconds = None
+        if wall_time_ms is not None:
+            try:
+                execution_seconds = float(wall_time_ms) / 1000.0
+            except (TypeError, ValueError):
+                execution_seconds = None
+
+        payload = {
+            "query_fingerprint": fingerprint,
+            "cached": cached,
+            "result_count": result_count,
+        }
+        if execution_seconds is not None:
+            payload["execution_seconds"] = execution_seconds
+        if tenant_id:
+            payload["tenant_id"] = tenant_id
+
+        log_structured(
+            "info" if not cached else "debug",
+            "trino_query_profile",
+            **payload,
+        )
+
+        try:
+            from .performance import get_performance_monitor
+
+            monitor = get_performance_monitor()
+            await monitor.record_query(
+                fingerprint,
+                execution_time=execution_seconds or 0.0,
+                result_count=result_count,
+                cached=cached,
+                metadata={
+                    "tenant_id": tenant_id,
+                },
+            )
+        except Exception:
+            # Observability should not interfere with query results
+            pass
+
+    async def stream_query(
+        self,
+        query: str,
+        params: Optional[Dict[str, Any]] = None,
+        tenant_id: Optional[str] = None,
+        *,
+        chunk_size: int = 1000,
+    ) -> AsyncIterator[List[Dict[str, Any]]]:
+        """Stream a Trino query in chunks of dictionaries."""
+
+        tenant_id = tenant_id or get_tenant_id()
+        conn_context = self._get_connection()
+        conn = await conn_context.__aenter__()
+        loop = asyncio.get_event_loop()
+        cursor_holder: Dict[str, Any] = {}
+        columns_holder: Dict[str, List[str]] = {}
+        row_count = 0
+        start_time = time.perf_counter()
+
+        try:
+            def _prepare_cursor() -> None:
+                cursor = conn.cursor()
+                cursor.execute(query, params or {})
+                columns = [col[0] for col in cursor.description or []]
+                cursor_holder["cursor"] = cursor
+                columns_holder["columns"] = columns
+
+            await loop.run_in_executor(self._executor, _prepare_cursor)
+
+            while True:
+                cursor = cursor_holder["cursor"]
+                rows = await loop.run_in_executor(
+                    self._executor,
+                    cursor.fetchmany,
+                    chunk_size,
+                )
+                if not rows:
+                    break
+
+                columns = columns_holder["columns"]
+                chunk = [dict(zip(columns, row)) for row in rows]
+                row_count += len(chunk)
+                yield chunk
+        finally:
+            cursor = cursor_holder.get("cursor")
+            if cursor is not None:
+                await loop.run_in_executor(self._executor, cursor.close)
+            await conn_context.__aexit__(None, None, None)
+
+        duration = time.perf_counter() - start_time
+        pseudo_stats = {
+            "wall_time_ms": duration * 1000,
+            "result_row_count": row_count,
+        }
+        await self._record_query_observability(
+            query,
+            pseudo_stats,
+            row_count,
+            tenant_id,
+            cached=False,
+        )
 
     @asynccontextmanager
     async def _get_connection(self):

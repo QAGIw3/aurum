@@ -1,3 +1,18 @@
+{{ iceberg_config_dimension(
+    sort_columns=['provider', 'provider_geo_code'],
+    target_file_size_mb=64,
+    write_compression='ZSTD'
+) }}
+{{ config(
+    materialized='incremental',
+    schema='mart',
+    alias='external_geo',
+    unique_key=['provider', 'provider_geo_code'],
+    incremental_strategy='merge',
+    on_schema_change='sync',
+    tags=['external', 'dimension', 'iceberg', 'reference']
+) }}
+
 -- External geography dimension table
 -- Canonical geography mappings for external data providers
 
@@ -45,3 +60,7 @@ SELECT
 
 FROM distinct_geo_mappings
 WHERE rn = 1
+{% if is_incremental() %}
+  -- Only process records newer than the latest processed record
+  AND created_at > (select coalesce(max(created_at), '1970-01-01T00:00:00Z') from {{ this }})
+{% endif %}

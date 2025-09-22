@@ -201,3 +201,30 @@ models:
     description: Currency associated with the curve mid price.
   - name: per_unit
     description: Unit denominator associated with the curve mid price.
+- name: mart_series_curve_mapping
+  description: Active external series to curve mapping dimension with enriched metadata.
+  tests:
+  - unique:
+      column_name: mapping_sk
+  columns:
+  - name: external_provider
+    tests:
+    - not_null
+  - name: external_series_id
+    tests:
+    - not_null
+  - name: curve_key
+    tests:
+    - not_null
+  - name: mapping_confidence
+    description: Confidence score for the mapping between external series and curve
+    tests:
+    - not_null
+  - name: is_active
+    tests:
+    - not_null
+  - name: mapping_sk
+    description: Deterministic key for provider/series/curve triple
+    tests:
+    - not_null
+    - unique

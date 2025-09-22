@@ -35,5 +35,93 @@
       "table": ".*",
       "allow": "all"
     }
+  ],
+  "sessionProperties": [
+    {
+      "catalog": "iceberg",
+      "sessionProperty": "query_max_memory",
+      "allow": "all",
+      "defaultValue": "8GB"
+    },
+    {
+      "catalog": "iceberg",
+      "sessionProperty": "query_max_execution_time",
+      "allow": "all",
+      "defaultValue": "30m"
+    },
+    {
+      "catalog": "iceberg",
+      "sessionProperty": "query_max_memory_per_node",
+      "allow": "all",
+      "defaultValue": "2GB"
+    }
+  ],
+  "userRoles": [
+    {
+      "user": "admin.*",
+      "roles": ["admin"],
+      "sessionProperties": {
+        "catalog": "iceberg",
+        "properties": {
+          "query_max_memory": "32GB",
+          "query_max_memory_per_node": "8GB",
+          "query_max_execution_time": "2h",
+          "query_max_run_time": "2h",
+          "query_max_cpu_time": "90m"
+        }
+      }
+    },
+    {
+      "user": "analyst.*",
+      "roles": ["analyst"],
+      "sessionProperties": {
+        "catalog": "iceberg",
+        "properties": {
+          "query_max_memory": "16GB",
+          "query_max_memory_per_node": "4GB",
+          "query_max_execution_time": "1h",
+          "query_max_run_time": "1h",
+          "query_max_cpu_time": "45m"
+        }
+      }
+    },
+    {
+      "user": "readonly.*|dashboard.*",
+      "roles": ["readonly"],
+      "sessionProperties": {
+        "catalog": "iceberg",
+        "properties": {
+          "query_max_memory": "4GB",
+          "query_max_memory_per_node": "1GB",
+          "query_max_execution_time": "10m",
+          "query_max_run_time": "10m",
+          "query_max_cpu_time": "5m"
+        }
+      }
+    },
+    {
+      "user": "batch.*|etl.*",
+      "roles": ["batch"],
+      "sessionProperties": {
+        "catalog": "iceberg",
+        "properties": {
+          "query_max_memory": "64GB",
+          "query_max_memory_per_node": "16GB",
+          "query_max_execution_time": "4h",
+          "query_max_run_time": "4h",
+          "query_max_cpu_time": "3h"
+        }
+      }
+    }
+  ],
+  "roleGrants": [
+    {
+      "role": "admin",
+      "grantedRoles": ["analyst", "readonly", "batch"]
+    },
+    {
+      "role": "analyst",
+      "grantedRoles": ["readonly"]
+    }
   ]
 }

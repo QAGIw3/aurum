@@ -341,19 +341,19 @@ class AuthSettings(AurumBaseModel):
 
 class ConcurrencyControlSettings(AurumBaseModel):
     """Settings for API concurrency controls and timeouts."""
-    max_concurrent_trino_connections: int = Field(default=10, ge=1, validation_alias=AliasChoices("API_TRINO_MAX_CONNECTIONS"))
-    trino_connection_timeout_seconds: float = Field(default=5.0, gt=0.0, validation_alias=AliasChoices("API_TRINO_CONNECT_TIMEOUT"))
-    trino_query_timeout_seconds: float = Field(default=30.0, gt=0.0, validation_alias=AliasChoices("API_TRINO_QUERY_TIMEOUT"))
-    trino_max_retries: int = Field(default=3, ge=0, validation_alias=AliasChoices("API_TRINO_MAX_RETRIES"))
-    trino_retry_delay_seconds: float = Field(default=1.0, gt=0.0, validation_alias=AliasChoices("API_TRINO_RETRY_DELAY"))
-    trino_max_retry_delay_seconds: float = Field(default=10.0, gt=0.0, validation_alias=AliasChoices("API_TRINO_MAX_RETRY_DELAY"))
-    trino_circuit_breaker_failure_threshold: int = Field(default=5, ge=1, validation_alias=AliasChoices("API_TRINO_CIRCUIT_BREAKER_THRESHOLD"))
-    trino_circuit_breaker_timeout_seconds: float = Field(default=60.0, gt=0.0, validation_alias=AliasChoices("API_TRINO_CIRCUIT_BREAKER_TIMEOUT"))
-    trino_connection_pool_min_size: int = Field(default=2, ge=0, validation_alias=AliasChoices("API_TRINO_POOL_MIN_SIZE"))
-    trino_connection_pool_max_size: int = Field(default=10, ge=1, validation_alias=AliasChoices("API_TRINO_POOL_MAX_SIZE"))
-    trino_connection_pool_max_idle: int = Field(default=5, ge=0, validation_alias=AliasChoices("API_TRINO_POOL_MAX_IDLE"))
-    trino_connection_pool_idle_timeout_seconds: float = Field(default=300.0, gt=0.0, validation_alias=AliasChoices("API_TRINO_POOL_IDLE_TIMEOUT"))
-    trino_connection_pool_wait_timeout_seconds: float = Field(default=10.0, gt=0.0, validation_alias=AliasChoices("API_TRINO_POOL_WAIT_TIMEOUT"))
+    max_concurrent_trino_connections: int = Field(default=24, ge=1, validation_alias=AliasChoices("API_TRINO_MAX_CONNECTIONS"))
+    trino_connection_timeout_seconds: float = Field(default=4.0, gt=0.0, validation_alias=AliasChoices("API_TRINO_CONNECT_TIMEOUT"))
+    trino_query_timeout_seconds: float = Field(default=45.0, gt=0.0, validation_alias=AliasChoices("API_TRINO_QUERY_TIMEOUT"))
+    trino_max_retries: int = Field(default=2, ge=0, validation_alias=AliasChoices("API_TRINO_MAX_RETRIES"))
+    trino_retry_delay_seconds: float = Field(default=0.75, gt=0.0, validation_alias=AliasChoices("API_TRINO_RETRY_DELAY"))
+    trino_max_retry_delay_seconds: float = Field(default=5.0, gt=0.0, validation_alias=AliasChoices("API_TRINO_MAX_RETRY_DELAY"))
+    trino_circuit_breaker_failure_threshold: int = Field(default=4, ge=1, validation_alias=AliasChoices("API_TRINO_CIRCUIT_BREAKER_THRESHOLD"))
+    trino_circuit_breaker_timeout_seconds: float = Field(default=45.0, gt=0.0, validation_alias=AliasChoices("API_TRINO_CIRCUIT_BREAKER_TIMEOUT"))
+    trino_connection_pool_min_size: int = Field(default=4, ge=0, validation_alias=AliasChoices("API_TRINO_POOL_MIN_SIZE"))
+    trino_connection_pool_max_size: int = Field(default=32, ge=1, validation_alias=AliasChoices("API_TRINO_POOL_MAX_SIZE"))
+    trino_connection_pool_max_idle: int = Field(default=16, ge=0, validation_alias=AliasChoices("API_TRINO_POOL_MAX_IDLE"))
+    trino_connection_pool_idle_timeout_seconds: float = Field(default=180.0, gt=0.0, validation_alias=AliasChoices("API_TRINO_POOL_IDLE_TIMEOUT"))
+    trino_connection_pool_wait_timeout_seconds: float = Field(default=5.0, gt=0.0, validation_alias=AliasChoices("API_TRINO_POOL_WAIT_TIMEOUT"))
 
     @field_validator("trino_connection_pool_max_size")
     @classmethod

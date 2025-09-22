@@ -129,8 +129,14 @@ async def get_curves_v2(
             }
         )
 
-        # Add ETag for caching
-        return respond_with_etag(result, request, response)
+        # Add ETag for caching with Link headers
+        return respond_with_etag(
+            result,
+            request,
+            response,
+            next_cursor=next_cursor,
+            canonical_url=str(request.url)
+        )
 
     except HTTPException:
         raise
@@ -185,8 +191,14 @@ async def get_curve_diff_v2(
             }
         )
 
-        # Add ETag for caching
-        return respond_with_etag(result, request, response)
+        # Add ETag for caching with Link headers
+        return respond_with_etag(
+            result,
+            request,
+            response,
+            next_cursor=next_cursor,
+            canonical_url=str(request.url)
+        )
 
     except HTTPException:
         raise

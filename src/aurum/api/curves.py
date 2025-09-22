@@ -2,8 +2,11 @@
 
 from __future__ import annotations
 
+import asyncio
+import csv
 import json
 import time
+from io import StringIO
 from typing import Any, Dict, List, Optional
 
 from fastapi import APIRouter, HTTPException, Query, Request
@@ -18,7 +21,9 @@ from .service import (
     fetch_curve_strips_data,
     invalidate_curve_cache,
 )
-from .http import respond_with_etag
+from .http import respond_with_etag, prepare_csv_value
+from .trino_client import get_trino_client
+from .query import build_curve_export_query
 
 router = APIRouter()
 
@@ -274,3 +279,74 @@ async def get_curve_strips(
             status_code=500,
             detail=f"Failed to fetch curve strips data: {str(exc)}"
         ) from exc
+
+
+@router.get(
+    "/v2/curves/export",
+    response_class=StreamingResponse,
+    summary="Stream curve observations as CSV",
+)
+async def export_curves(
+    request: Request,
+    asof: Optional[str] = Query(None, description="Filter by as-of date (YYYY-MM-DD)"),
+    iso: Optional[str] = None,
+    market: Optional[str] = None,
+    location: Optional[str] = None,
+    product: Optional[str] = None,
+    block: Optional[str] = None,
+    chunk_size: int = Query(1000, ge=100, le=5000, description="Number of rows per streamed chunk"),
+) -> StreamingResponse:
+    """Stream curve observations with CSV backpressure-friendly streaming."""
+    from .auth import require_permission, Permission
+
+    principal = getattr(request.state, "principal", None)
+    require_permission(principal, Permission.CURVES_READ)
+
+    query = build_curve_export_query(
+        asof=asof,
+        iso=iso,
+        market=market,
+        location=location,
+        product=product,
+        block=block,
+    )
+
+    client = get_trino_client()
+    fieldnames = [
+        "curve_key",
+        "tenor_label",
+        "tenor_type",
+        "contract_month",
+        "asof_date",
+        "mid",
+        "bid",
+        "ask",
+        "price_type",
+    ]
+
+    async def csv_stream():
+        buffer = StringIO()
+        writer = csv.DictWriter(buffer, fieldnames=fieldnames)
+        writer.writeheader()
+        payload = buffer.getvalue()
+        if payload:
+            yield payload
+        buffer.seek(0)
+        buffer.truncate(0)
+
+        async for chunk in client.stream_query(query, chunk_size=chunk_size):
+            for row in chunk:
+                formatted = {field: prepare_csv_value(row.get(field)) for field in fieldnames}
+                writer.writerow(formatted)
+
+            payload = buffer.getvalue()
+            if payload:
+                yield payload
+            buffer.seek(0)
+            buffer.truncate(0)
+            await asyncio.sleep(0)
+
+    filename = f"curve_export_{asof or 'all'}.csv"
+    response = StreamingResponse(csv_stream(), media_type="text/csv; charset=utf-8")
+    response.headers["Content-Disposition"] = f"attachment; filename=\"{filename}\""
+    return response

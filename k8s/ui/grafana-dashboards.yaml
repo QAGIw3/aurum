@@ -48,3 +48,321 @@ data:
         }
       ]
     }
+
+  aurum-api-comprehensive.json: |
+    {
+      "id": null,
+      "uid": "aurum-api-comprehensive",
+      "title": "Aurum API Comprehensive Dashboard",
+      "timezone": "browser",
+      "schemaVersion": 39,
+      "version": 1,
+      "panels": [
+        {
+          "type": "stat",
+          "title": "API Requests (15m)",
+          "datasource": {"type": "prometheus", "uid": "prometheus"},
+          "targets": [{"refId": "A", "expr": "sum(rate(aurum_api_requests_total[15m]))"}],
+          "fieldConfig": {"defaults": {"unit": "reqps"}},
+          "gridPos": {"h": 4, "w": 6, "x": 0, "y": 0}
+        },
+        {
+          "type": "stat",
+          "title": "Error Rate (15m)",
+          "datasource": {"type": "prometheus", "uid": "prometheus"},
+          "targets": [{"refId": "A", "expr": "sum(rate(aurum_api_requests_total{status=~\"5..\"}[15m])) / sum(rate(aurum_api_requests_total[15m])) * 100"}],
+          "fieldConfig": {"defaults": {"unit": "percent", "decimals": 2}},
+          "gridPos": {"h": 4, "w": 6, "x": 6, "y": 0}
+        },
+        {
+          "type": "stat",
+          "title": "P95 Latency",
+          "datasource": {"type": "prometheus", "uid": "prometheus"},
+          "targets": [{"refId": "A", "expr": "histogram_quantile(0.95, sum(rate(aurum_api_request_duration_seconds_bucket[5m])) by (le))"}],
+          "fieldConfig": {"defaults": {"unit": "s", "decimals": 3}},
+          "gridPos": {"h": 4, "w": 6, "x": 12, "y": 0}
+        },
+        {
+          "type": "stat",
+          "title": "Active Connections",
+          "datasource": {"type": "prometheus", "uid": "prometheus"},
+          "targets": [{"refId": "A", "expr": "sum(aurum_api_active_connections)"}],
+          "fieldConfig": {"defaults": {"unit": "none"}},
+          "gridPos": {"h": 4, "w": 6, "x": 18, "y": 0}
+        },
+        {
+          "type": "graph",
+          "title": "Request Rate by Method",
+          "datasource": {"type": "prometheus", "uid": "prometheus"},
+          "targets": [
+            {"refId": "A", "expr": "sum(rate(aurum_api_requests_total{method=\"GET\"}[5m])) by (method)", "legendFormat": "GET"},
+            {"refId": "B", "expr": "sum(rate(aurum_api_requests_total{method=\"POST\"}[5m])) by (method)", "legendFormat": "POST"},
+            {"refId": "C", "expr": "sum(rate(aurum_api_requests_total{method=\"PUT\"}[5m])) by (method)", "legendFormat": "PUT"},
+            {"refId": "D", "expr": "sum(rate(aurum_api_requests_total{method=\"DELETE\"}[5m])) by (method)", "legendFormat": "DELETE"}
+          ],
+          "gridPos": {"h": 8, "w": 12, "x": 0, "y": 4}
+        },
+        {
+          "type": "graph",
+          "title": "Error Rate by Status Code",
+          "datasource": {"type": "prometheus", "uid": "prometheus"},
+          "targets": [
+            {"refId": "A", "expr": "sum(rate(aurum_api_requests_total{status=~\"4..\"}[5m])) by (status)", "legendFormat": "4xx"},
+            {"refId": "B", "expr": "sum(rate(aurum_api_requests_total{status=~\"5..\"}[5m])) by (status)", "legendFormat": "5xx"}
+          ],
+          "gridPos": {"h": 8, "w": 12, "x": 12, "y": 4}
+        },
+        {
+          "type": "graph",
+          "title": "Request Duration Percentiles",
+          "datasource": {"type": "prometheus", "uid": "prometheus"},
+          "targets": [
+            {"refId": "A", "expr": "histogram_quantile(0.50, sum(rate(aurum_api_request_duration_seconds_bucket[5m])) by (le))", "legendFormat": "P50"},
+            {"refId": "B", "expr": "histogram_quantile(0.95, sum(rate(aurum_api_request_duration_seconds_bucket[5m])) by (le))", "legendFormat": "P95"},
+            {"refId": "C", "expr": "histogram_quantile(0.99, sum(rate(aurum_api_request_duration_seconds_bucket[5m])) by (le))", "legendFormat": "P99"}
+          ],
+          "gridPos": {"h": 8, "w": 12, "x": 0, "y": 12}
+        },
+        {
+          "type": "graph",
+          "title": "Rate Limiting",
+          "datasource": {"type": "prometheus", "uid": "prometheus"},
+          "targets": [
+            {"refId": "A", "expr": "sum(rate(aurum_api_rate_limited_total[5m]))", "legendFormat": "Rate Limited Requests"},
+            {"refId": "B", "expr": "sum(aurum_api_rate_limit_current)", "legendFormat": "Current Rate Limit"}
+          ],
+          "gridPos": {"h": 8, "w": 12, "x": 12, "y": 12}
+        },
+        {
+          "type": "graph",
+          "title": "Cache Performance",
+          "datasource": {"type": "prometheus", "uid": "prometheus"},
+          "targets": [
+            {"refId": "A", "expr": "sum(rate(aurum_api_cache_hits_total[5m]))", "legendFormat": "Cache Hits"},
+            {"refId": "B", "expr": "sum(rate(aurum_api_cache_misses_total[5m]))", "legendFormat": "Cache Misses"}
+          ],
+          "gridPos": {"h": 8, "w": 12, "x": 0, "y": 20}
+        },
+        {
+          "type": "graph",
+          "title": "Database Connection Pool",
+          "datasource": {"type": "prometheus", "uid": "prometheus"},
+          "targets": [
+            {"refId": "A", "expr": "sum(aurum_api_db_connections_active)", "legendFormat": "Active Connections"},
+            {"refId": "B", "expr": "sum(aurum_api_db_connections_idle)", "legendFormat": "Idle Connections"}
+          ],
+          "gridPos": {"h": 8, "w": 12, "x": 12, "y": 20}
+        }
+      ]
+    }
+
+  aurum-trino-comprehensive.json: |
+    {
+      "id": null,
+      "uid": "aurum-trino-comprehensive",
+      "title": "Aurum Trino Comprehensive Dashboard",
+      "timezone": "browser",
+      "schemaVersion": 39,
+      "version": 1,
+      "panels": [
+        {
+          "type": "stat",
+          "title": "Trino Query Rate",
+          "datasource": {"type": "prometheus", "uid": "prometheus"},
+          "targets": [{"refId": "A", "expr": "sum(rate(trino_query_completed_total[5m]))"}],
+          "fieldConfig": {"defaults": {"unit": "qps"}},
+          "gridPos": {"h": 4, "w": 6, "x": 0, "y": 0}
+        },
+        {
+          "type": "stat",
+          "title": "Failed Queries (5m)",
+          "datasource": {"type": "prometheus", "uid": "prometheus"},
+          "targets": [{"refId": "A", "expr": "sum(rate(trino_query_failed_total[5m]))"}],
+          "fieldConfig": {"defaults": {"unit": "none"}},
+          "gridPos": {"h": 4, "w": 6, "x": 6, "y": 0}
+        },
+        {
+          "type": "stat",
+          "title": "Running Queries",
+          "datasource": {"type": "prometheus", "uid": "prometheus"},
+          "targets": [{"refId": "A", "expr": "sum(trino_query_running)"}],
+          "fieldConfig": {"defaults": {"unit": "none"}},
+          "gridPos": {"h": 4, "w": 6, "x": 12, "y": 0}
+        },
+        {
+          "type": "stat",
+          "title": "Queued Queries",
+          "datasource": {"type": "prometheus", "uid": "prometheus"},
+          "targets": [{"refId": "A", "expr": "sum(trino_query_queued)"}],
+          "fieldConfig": {"defaults": {"unit": "none"}},
+          "gridPos": {"h": 4, "w": 6, "x": 18, "y": 0}
+        },
+        {
+          "type": "graph",
+          "title": "Query Performance",
+          "datasource": {"type": "prometheus", "uid": "prometheus"},
+          "targets": [
+            {"refId": "A", "expr": "histogram_quantile(0.95, sum(rate(trino_query_duration_seconds_bucket[5m])) by (le))", "legendFormat": "P95 Query Duration"},
+            {"refId": "B", "expr": "histogram_quantile(0.99, sum(rate(trino_query_duration_seconds_bucket[5m])) by (le))", "legendFormat": "P99 Query Duration"}
+          ],
+          "gridPos": {"h": 8, "w": 12, "x": 0, "y": 4}
+        },
+        {
+          "type": "graph",
+          "title": "Query Types",
+          "datasource": {"type": "prometheus", "uid": "prometheus"},
+          "targets": [
+            {"refId": "A", "expr": "sum(rate(trino_query_select_total[5m]))", "legendFormat": "SELECT"},
+            {"refId": "B", "expr": "sum(rate(trino_query_insert_total[5m]))", "legendFormat": "INSERT"},
+            {"refId": "C", "expr": "sum(rate(trino_query_update_total[5m]))", "legendFormat": "UPDATE"},
+            {"refId": "D", "expr": "sum(rate(trino_query_delete_total[5m]))", "legendFormat": "DELETE"}
+          ],
+          "gridPos": {"h": 8, "w": 12, "x": 12, "y": 4}
+        },
+        {
+          "type": "graph",
+          "title": "Resource Utilization",
+          "datasource": {"type": "prometheus", "uid": "prometheus"},
+          "targets": [
+            {"refId": "A", "expr": "sum(rate(trino_cpu_time_seconds_total[5m]))", "legendFormat": "CPU Time"},
+            {"refId": "B", "expr": "sum(trino_memory_reservation)", "legendFormat": "Memory Reservation"}
+          ],
+          "gridPos": {"h": 8, "w": 12, "x": 0, "y": 12}
+        },
+        {
+          "type": "graph",
+          "title": "Catalog Performance",
+          "datasource": {"type": "prometheus", "uid": "prometheus"},
+          "targets": [
+            {"refId": "A", "expr": "histogram_quantile(0.95, sum(rate(trino_catalog_metadata_fetch_seconds_bucket[5m])) by (le))", "legendFormat": "P95 Metadata Fetch"},
+            {"refId": "B", "expr": "histogram_quantile(0.95, sum(rate(trino_catalog_data_fetch_seconds_bucket[5m])) by (le))", "legendFormat": "P95 Data Fetch"}
+          ],
+          "gridPos": {"h": 8, "w": 12, "x": 12, "y": 12}
+        },
+        {
+          "type": "graph",
+          "title": "Partition Statistics",
+          "datasource": {"type": "prometheus", "uid": "prometheus"},
+          "targets": [
+            {"refId": "A", "expr": "sum(trino_partition_count)", "legendFormat": "Total Partitions"},
+            {"refId": "B", "expr": "sum(rate(trino_partition_pruned_total[5m]))", "legendFormat": "Pruned Partitions"}
+          ],
+          "gridPos": {"h": 8, "w": 12, "x": 0, "y": 20}
+        },
+        {
+          "type": "graph",
+          "title": "Worker Performance",
+          "datasource": {"type": "prometheus", "uid": "prometheus"},
+          "targets": [
+            {"refId": "A", "expr": "sum(trino_worker_running_queries)", "legendFormat": "Running Queries"},
+            {"refId": "B", "expr": "sum(trino_worker_blocked_queries)", "legendFormat": "Blocked Queries"}
+          ],
+          "gridPos": {"h": 8, "w": 12, "x": 12, "y": 20}
+        }
+      ]
+    }
+
+  aurum-dao-comprehensive.json: |
+    {
+      "id": null,
+      "uid": "aurum-dao-comprehensive",
+      "title": "Aurum DAO Comprehensive Dashboard",
+      "timezone": "browser",
+      "schemaVersion": 39,
+      "version": 1,
+      "panels": [
+        {
+          "type": "stat",
+          "title": "Database Connections",
+          "datasource": {"type": "prometheus", "uid": "prometheus"},
+          "targets": [{"refId": "A", "expr": "sum(postgres_connections_active)"}],
+          "fieldConfig": {"defaults": {"unit": "none"}},
+          "gridPos": {"h": 4, "w": 6, "x": 0, "y": 0}
+        },
+        {
+          "type": "stat",
+          "title": "Transaction Rate",
+          "datasource": {"type": "prometheus", "uid": "prometheus"},
+          "targets": [{"refId": "A", "expr": "sum(rate(postgres_transactions_total[5m]))"}],
+          "fieldConfig": {"defaults": {"unit": "tps"}},
+          "gridPos": {"h": 4, "w": 6, "x": 6, "y": 0}
+        },
+        {
+          "type": "stat",
+          "title": "Deadlocks (5m)",
+          "datasource": {"type": "prometheus", "uid": "prometheus"},
+          "targets": [{"refId": "A", "expr": "sum(rate(postgres_deadlocks_total[5m]))"}],
+          "fieldConfig": {"defaults": {"unit": "none"}},
+          "gridPos": {"h": 4, "w": 6, "x": 12, "y": 0}
+        },
+        {
+          "type": "stat",
+          "title": "Cache Hit Rate",
+          "datasource": {"type": "prometheus", "uid": "prometheus"},
+          "targets": [{"refId": "A", "expr": "sum(rate(postgres_cache_hits_total[5m])) / (sum(rate(postgres_cache_hits_total[5m])) + sum(rate(postgres_cache_misses_total[5m]))) * 100"}],
+          "fieldConfig": {"defaults": {"unit": "percent", "decimals": 2}},
+          "gridPos": {"h": 4, "w": 6, "x": 18, "y": 0}
+        },
+        {
+          "type": "graph",
+          "title": "Connection Pool Usage",
+          "datasource": {"type": "prometheus", "uid": "prometheus"},
+          "targets": [
+            {"refId": "A", "expr": "sum(postgres_connections_active)", "legendFormat": "Active"},
+            {"refId": "B", "expr": "sum(postgres_connections_idle)", "legendFormat": "Idle"},
+            {"refId": "C", "expr": "sum(postgres_connections_max)", "legendFormat": "Max"}
+          ],
+          "gridPos": {"h": 8, "w": 12, "x": 0, "y": 4}
+        },
+        {
+          "type": "graph",
+          "title": "Query Performance",
+          "datasource": {"type": "prometheus", "uid": "prometheus"},
+          "targets": [
+            {"refId": "A", "expr": "histogram_quantile(0.95, sum(rate(postgres_query_duration_seconds_bucket[5m])) by (le))", "legendFormat": "P95 Query Duration"},
+            {"refId": "B", "expr": "histogram_quantile(0.99, sum(rate(postgres_query_duration_seconds_bucket[5m])) by (le))", "legendFormat": "P99 Query Duration"}
+          ],
+          "gridPos": {"h": 8, "w": 12, "x": 12, "y": 4}
+        },
+        {
+          "type": "graph",
+          "title": "Lock Statistics",
+          "datasource": {"type": "prometheus", "uid": "prometheus"},
+          "targets": [
+            {"refId": "A", "expr": "sum(postgres_locks_held)", "legendFormat": "Locks Held"},
+            {"refId": "B", "expr": "sum(postgres_locks_waiting)", "legendFormat": "Locks Waiting"}
+          ],
+          "gridPos": {"h": 8, "w": 12, "x": 0, "y": 12}
+        },
+        {
+          "type": "graph",
+          "title": "WAL Activity",
+          "datasource": {"type": "prometheus", "uid": "prometheus"},
+          "targets": [
+            {"refId": "A", "expr": "sum(rate(postgres_wal_bytes_total[5m]))", "legendFormat": "WAL Generation Rate"},
+            {"refId": "B", "expr": "sum(postgres_wal_files)", "legendFormat": "WAL Files"}
+          ],
+          "gridPos": {"h": 8, "w": 12, "x": 12, "y": 12}
+        },
+        {
+          "type": "graph",
+          "title": "Checkpoint Activity",
+          "datasource": {"type": "prometheus", "uid": "prometheus"},
+          "targets": [
+            {"refId": "A", "expr": "sum(rate(postgres_checkpoints_timed_total[5m]))", "legendFormat": "Timed Checkpoints"},
+            {"refId": "B", "expr": "sum(rate(postgres_checkpoints_req_total[5m]))", "legendFormat": "Requested Checkpoints"}
+          ],
+          "gridPos": {"h": 8, "w": 12, "x": 0, "y": 20}
+        },
+        {
+          "type": "graph",
+          "title": "Replication Status",
+          "datasource": {"type": "prometheus", "uid": "prometheus"},
+          "targets": [
+            {"refId": "A", "expr": "sum(postgres_replication_delay_seconds)", "legendFormat": "Replication Delay"},
+            {"refId": "B", "expr": "sum(rate(postgres_replication_bytes_total[5m]))", "legendFormat": "Replication Throughput"}
+          ],
+          "gridPos": {"h": 8, "w": 12, "x": 12, "y": 20}
+        }
+      ]
+    }

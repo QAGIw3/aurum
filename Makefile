@@ -1,7 +1,7 @@
 .PHONY: help build test deploy lint clean docker-build docker-push k8s-deploy db-migrate security-scan trino-harness trino-harness-metrics reconcile-kafka-lake iceberg-maintenance \
 	kind-create kind-apply kind-bootstrap kind-up kind-down kind-apply-ui kind-delete-ui \
 	kafka-bootstrap kafka-register-schemas kafka-set-compat kafka-apply-topics kafka-apply-topics-kind kafka-apply-topics-dry-run \
-	compose-bootstrap
+	compose-bootstrap perf-k6
 
 TRINO_SERVER ?= http://localhost:8080
 TRINO_USER ?= aurum
@@ -39,6 +39,9 @@ clean: ## Clean up build artifacts
 	find . -type f -name "*.pyc" -delete
 	find . -type d -name "__pycache__" -delete
 	docker system prune -f
+
+perf-k6: ## Run k6 smoke tests against v2 endpoints
+	k6 run perf/k6/curves.js
 
 compose-bootstrap: ## Run one-shot bootstrap against local Compose stack
 	COMPOSE_PROFILES=core,bootstrap docker compose -f compose/docker-compose.dev.yml up bootstrap --exit-code-from bootstrap

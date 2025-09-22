@@ -1,6 +1,13 @@
 {% if target.name == 'duckdb' %}
 {{ config(materialized='table', schema='market', alias='curve_observation') }}
 {% else %}
+{{ iceberg_config_timeseries(
+    partition_fields=['asof_date', 'iso', 'product'],
+    partition_granularity='day',
+    target_file_size_mb=128,
+    write_compression='ZSTD',
+    sort_order=['asof_date', 'iso', 'product', 'curve_key']
+) }}
 {{ config(
     materialized='incremental',
     schema='market',
@@ -8,12 +15,7 @@
     unique_key=['curve_key', 'tenor_label', 'asof_date'],
     incremental_strategy='merge',
     on_schema_change='sync',
-    tags=['publish'],
-    table_properties={
-        'format': 'ICEBERG',
-        'partitioning': "ARRAY['days(asof_date)', 'iso', 'product']",
-        'write_compression': 'ZSTD'
-    }
+    tags=['publish', 'iceberg', 'timeseries']
 ) }}
 {% endif %}
 

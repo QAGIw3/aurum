@@ -15,7 +15,7 @@ try:
 except ImportError:
     trino = None
 
-from ..telemetry.context import get_request_id
+from ..telemetry.context import get_request_id, log_structured
 from .config import TrinoConfig
 
 
@@ -198,42 +198,76 @@ class PerformanceMonitor:
     """Monitor performance metrics for queries."""
 
     def __init__(self):
-        self.query_stats: Dict[str, Dict[str, float]] = defaultdict(dict)
+        self.query_stats: Dict[str, Dict[str, Any]] = defaultdict(dict)
         self.cache_hits = 0
         self.cache_misses = 0
         self.total_queries = 0
+        self._lock = asyncio.Lock()
 
     async def record_query(
         self,
         query_type: str,
         execution_time: float,
         result_count: int,
-        cached: bool = False
+        cached: bool = False,
+        metadata: Optional[Dict[str, Any]] = None,
     ):
         """Record query performance metrics."""
-        if cached:
-            self.cache_hits += 1
-        else:
-            self.cache_misses += 1
+        async with self._lock:
+            if cached:
+                self.cache_hits += 1
+            else:
+                self.cache_misses += 1
 
-        self.total_queries += 1
+            self.total_queries += 1
 
-        stats = self.query_stats[query_type]
-        stats["total_time"] = stats.get("total_time", 0) + execution_time
-        stats["count"] = stats.get("count", 0) + 1
-        stats["avg_time"] = stats["total_time"] / stats["count"]
-        stats["max_time"] = max(stats.get("max_time", 0), execution_time)
-        stats["min_time"] = min(stats.get("min_time", float('inf')), execution_time)
+            stats = self.query_stats[query_type]
+            prev_avg = stats.get("avg_time", execution_time)
+            stats["total_time"] = stats.get("total_time", 0.0) + execution_time
+            stats["count"] = stats.get("count", 0) + 1
+            stats["avg_time"] = stats["total_time"] / stats["count"] if stats["count"] else execution_time
+            stats["max_time"] = max(stats.get("max_time", execution_time), execution_time)
+            stats["min_time"] = min(stats.get("min_time", execution_time), execution_time)
+            stats["last_latency"] = execution_time
+            stats["last_cached"] = cached
+            stats["result_count"] = result_count
+            stats["metadata"] = metadata or {}
+            stats["last_seen"] = time.time()
+
+            regression_threshold = prev_avg * 2 if prev_avg else None
+            if (
+                not cached
+                and regression_threshold is not None
+                and execution_time > regression_threshold
+                and execution_time - prev_avg > 0.2
+            ):
+                log_structured(
+                    "warning",
+                    "trino_query_regression_detected",
+                    query_fingerprint=query_type,
+                    previous_avg_seconds=prev_avg,
+                    current_seconds=execution_time,
+                    result_count=result_count,
+                )
 
     async def get_stats(self) -> Dict[str, Any]:
         """Get performance statistics."""
-        return {
-            "query_stats": dict(self.query_stats),
-            "cache_hit_rate": self.cache_hits / max(self.total_queries, 1),
-            "cache_miss_rate": self.cache_misses / max(self.total_queries, 1),
-            "total_queries": self.total_queries,
-            "request_id": get_request_id(),
-        }
+        async with self._lock:
+            query_stats = dict(self.query_stats)
+            top_queries = sorted(
+                query_stats.values(),
+                key=lambda item: item.get("avg_time", 0.0),
+                reverse=True,
+            )[:10]
+
+            return {
+                "query_stats": query_stats,
+                "top_queries": top_queries,
+                "cache_hit_rate": self.cache_hits / max(self.total_queries, 1),
+                "cache_miss_rate": self.cache_misses / max(self.total_queries, 1),
+                "total_queries": self.total_queries,
+                "request_id": get_request_id(),
+            }
 
 
 # Global instances

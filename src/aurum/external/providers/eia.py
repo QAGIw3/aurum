@@ -16,7 +16,9 @@ from ..collect import (
     HttpResponse,
 )
 
-DEFAULT_CONFIG_PATH = Path(__file__).resolve().parents[3] / "config" / "eia_ingest_datasets.generated.json"
+PROJECT_ROOT = Path(__file__).resolve().parents[4]
+DEFAULT_CONFIG_PATH = PROJECT_ROOT / "config" / "eia_ingest_datasets.generated.json"
+FALLBACK_CONFIG_PATH = PROJECT_ROOT / "config" / "eia_ingest_datasets.json"
 
 
 def _is_simple_identifier(value: str | None) -> Optional[str]:
@@ -94,6 +96,10 @@ class EiaDatasetConfig:
 
 def load_eia_dataset_configs(path: Path | None = None) -> List[EiaDatasetConfig]:
     config_path = path or DEFAULT_CONFIG_PATH
+    if not config_path.exists():
+        # Generated dataset manifest is optional in local dev; fall back to the
+        # checked-in specification so callers (tests, utilities) still work.
+        config_path = FALLBACK_CONFIG_PATH
     payload = json.loads(config_path.read_text(encoding="utf-8"))
     return [EiaDatasetConfig.from_dict(entry) for entry in payload.get("datasets", [])]
 

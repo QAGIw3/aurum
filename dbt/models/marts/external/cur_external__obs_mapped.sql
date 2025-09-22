@@ -1,3 +1,20 @@
+{{ iceberg_config_external_observations(
+    partition_fields=['asof_date', 'provider'],
+    partition_granularity='day',
+    sort_columns=['provider', 'series_id', 'asof_date'],
+    target_file_size_mb=96,
+    write_compression='ZSTD'
+) }}
+{{ config(
+    materialized='incremental',
+    schema='mart',
+    alias='external_obs_mapped',
+    unique_key=['curve_key', 'tenor_label', 'asof_date'],
+    incremental_strategy='merge',
+    on_schema_change='sync',
+    tags=['external', 'observations', 'iceberg', 'timeseries']
+) }}
+
 -- Curated model for external observations mapped to curve format
 -- This model transforms external timeseries observations into curve_observation format
 -- for integration with the main curve data pipeline
@@ -127,6 +144,10 @@ curve_formatted_observations AS (
     WHERE value IS NOT NULL  -- Only include observations with valid values
       AND asof_date IS NOT NULL
       AND observation_ts IS NOT NULL
+{% if is_incremental() %}
+  -- Only process records newer than the latest processed record
+  AND ingest_ts > (select coalesce(max(ingest_ts), '1970-01-01T00:00:00Z') from {{ this }})
+{% endif %}
 )
 
 SELECT * FROM curve_formatted_observations

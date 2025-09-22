@@ -1,0 +1,81 @@
+{{- if .Values.autoscaling.enabled }}
+apiVersion: keda.sh/v1alpha1
+kind: ScaledObject
+metadata:
+  name: {{ include "aurum-worker.fullname" . }}-keda
+  labels:
+    {{- include "aurum-worker.labels" . | nindent 4 }}
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: {{ include "aurum-worker.fullname" . }}
+  minReplicaCount: {{ .Values.autoscaling.minReplicas }}
+  maxReplicaCount: {{ .Values.autoscaling.maxReplicas }}
+  cooldownPeriod: 300  # 5 minutes cooldown
+  pollingInterval: 30   # Check every 30 seconds
+  triggers:
+    # Scale based on Kafka queue depth (multiple topics)
+    - type: kafka
+      metadata:
+        topic: aurum-scenarios
+        bootstrapServers: kafka.aurum-dev.svc.cluster.local:9092
+        consumerGroup: aurum-worker-scalers
+        lagThreshold: "5"  # Scale up if lag > 5 messages
+        offsetResetPolicy: latest
+        allowIdleConsumers: "false"
+      authenticationRef:
+        name: kafka-auth
+
+    - type: kafka
+      metadata:
+        topic: aurum-data-processing
+        bootstrapServers: kafka.aurum-dev.svc.cluster.local:9092
+        consumerGroup: aurum-worker-scalers
+        lagThreshold: "10"  # Scale up if lag > 10 messages
+        offsetResetPolicy: latest
+        allowIdleConsumers: "false"
+      authenticationRef:
+        name: kafka-auth
+
+    # Scale based on worker processing rate
+    - type: prometheus
+      metadata:
+        serverAddress: http://prometheus.aurum-dev.svc.cluster.local:9090
+        metricName: aurum_worker_processing_rate
+        query: |
+          sum(rate(aurum_worker_tasks_processed_total[5m]))
+        threshold: "50"  # Scale up if processing rate > 50 tasks/s
+        activationThreshold: "20"  # Scale down if processing rate < 20 tasks/s
+
+    # Scale based on error rate
+    - type: prometheus
+      metadata:
+        serverAddress: http://prometheus.aurum-dev.svc.cluster.local:9090
+        metricName: aurum_worker_error_rate
+        query: |
+          sum(rate(aurum_worker_errors_total[5m])) / sum(rate(aurum_worker_tasks_processed_total[5m]))
+        threshold: "0.1"  # Scale down if error rate < 10%
+
+    # Scale based on CPU utilization (fallback)
+    - type: cpu
+      metricType: Utilization
+      metadata:
+        value: "{{ .Values.autoscaling.targetCPUUtilizationPercentage }}"
+
+    # Scale based on memory utilization (fallback)
+    - type: memory
+      metricType: Utilization
+      metadata:
+        value: "{{ .Values.autoscaling.targetMemoryUtilizationPercentage }}"
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: kafka-auth
+  namespace: {{ .Release.Namespace }}
+type: Opaque
+data:
+  sasl: "disabled"  # In production, use proper SASL authentication
+  tls: "disabled"
+{{- end }}

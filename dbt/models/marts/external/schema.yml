@@ -77,3 +77,33 @@ models:
     - not_null
   - name: lineage_tags
     description: Data lineage tracking information
+  
+- name: mart_external_series_catalog
+  description: Enriched external series catalog with canonical geography metadata.
+  tests:
+  - unique:
+      column_name: series_catalog_sk
+  columns:
+  - name: tenant_id
+    tests:
+    - not_null
+  - name: provider
+    tests:
+    - not_null
+  - name: series_id
+    tests:
+    - not_null
+  - name: series_catalog_sk
+    description: Deterministic hash key for provider+series combination
+    tests:
+    - not_null
+    - unique
+  - name: canonical_region_id
+    description: Reference to canonical geography when mapped
+  - name: mapping_status
+    tests:
+    - accepted_values:
+        values:
+        - MAPPED
+        - UNMAPPED
+        - PARTIAL

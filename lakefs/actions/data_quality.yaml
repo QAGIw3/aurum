@@ -38,7 +38,7 @@ actions:
         description: Validate curated curve observation table before merge.
         properties:
           executable: hooks/run_ge_for_lakefs_event.py
-          args:
+        args:
             - --prefix
             - market/curve_observation
             - --suite
@@ -46,3 +46,92 @@ actions:
             - --suite-name
             - curve_observation_premerge
             - --allow-empty
+
+  # Branch protection policies
+  protect_main_branch:
+    on:
+      - pre-commit
+      - pre-merge
+    hooks:
+      - id: branch-protection
+        type: executable
+        description: Enforce branch protection policies for main branch.
+        properties:
+          executable: hooks/enforce_branch_policies.py
+          args:
+            - --branch
+            - main
+            - --require-approvals
+            - --require-tests
+            - --require-quality-gates
+
+  # Data lifecycle management
+  lifecycle_raw_data:
+    on:
+      - post-commit
+    hooks:
+      - id: lifecycle-raw
+        type: executable
+        description: Apply lifecycle policies to raw data after commit.
+        properties:
+          executable: hooks/apply_lifecycle_policies.py
+          args:
+            - --path
+            - raw/*
+            - --retention-days
+            - "90"
+            - --transition-to-cold
+            - --archive-after-days
+            - "365"
+
+  lifecycle_curated_data:
+    on:
+      - post-commit
+    hooks:
+      - id: lifecycle-curated
+        type: executable
+        description: Apply lifecycle policies to curated data after commit.
+        properties:
+          executable: hooks/apply_lifecycle_policies.py
+          args:
+            - --path
+            - market/*
+            - --retention-days
+            - "730"
+            - --transition-to-cold
+            - --archive-after-days
+            - "1825"
+
+  # Automatic cleanup of temporary branches
+  cleanup_temp_branches:
+    on:
+      - post-commit
+    hooks:
+      - id: cleanup-temp
+        type: executable
+        description: Clean up temporary branches older than specified days.
+        properties:
+          executable: hooks/cleanup_temp_branches.py
+          args:
+            - --older-than-days
+            - "7"
+            - --exclude-patterns
+            - "release/*,hotfix/*"
+            - --dry-run
+
+  # Schema validation on external data
+  validate_external_schemas:
+    on:
+      - pre-commit
+    hooks:
+      - id: validate-external-schema
+        type: executable
+        description: Validate external data against expected schemas.
+        properties:
+          executable: hooks/validate_external_schemas.py
+          args:
+            - --path
+            - external/*
+            - --schema-registry-url
+            - http://schema-registry:8081
+            - --validate-compatibility

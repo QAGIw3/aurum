@@ -1,0 +1,45 @@
+{
+  "expectation_suite_name": "mart_external_series_catalog",
+  "meta": {
+    "notes": "Data quality checks for the external series catalog mart."
+  },
+  "expectations": [
+    {
+      "expectation_type": "expect_column_values_to_not_be_null",
+      "kwargs": {"column": "tenant_id"}
+    },
+    {
+      "expectation_type": "expect_column_values_to_not_be_null",
+      "kwargs": {"column": "provider"}
+    },
+    {
+      "expectation_type": "expect_column_values_to_not_be_null",
+      "kwargs": {"column": "series_id"}
+    },
+    {
+      "expectation_type": "expect_column_values_to_not_be_null",
+      "kwargs": {"column": "title"}
+    },
+    {
+      "expectation_type": "expect_column_values_to_be_in_set",
+      "kwargs": {
+        "column": "status",
+        "value_set": ["ACTIVE", "INACTIVE", "DEPRECATED"],
+        "mostly": 0.95
+      }
+    },
+    {
+      "expectation_type": "expect_column_values_to_be_in_set",
+      "kwargs": {
+        "column": "mapping_status",
+        "value_set": ["MAPPED", "UNMAPPED", "PARTIAL"]
+      }
+    },
+    {
+      "expectation_type": "expect_multicolumn_values_to_be_unique",
+      "kwargs": {
+        "column_list": ["provider", "series_id"]
+      }
+    }
+  ]
+}

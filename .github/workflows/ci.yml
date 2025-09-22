@@ -50,6 +50,36 @@ jobs:
         env:
           PYTHONPATH: src
         run: python3 scripts/kafka/register_schemas.py --validate-only --include-eia
+
+      - name: Avro schema compatibility check
+        if: matrix.python-version == '3.11'
+        env:
+          PYTHONPATH: src
+        run: |
+          # Enhanced schema validation
+          python3 -c "
+          from scripts.kafka.register_schemas import validate_contracts, load_subject_mapping, load_eia_subjects
+          from pathlib import Path
+          import json
+
+          schema_root = Path('kafka/schemas')
+          subjects_file = schema_root / 'subjects.json'
+
+          # Load subjects
+          subjects = load_subject_mapping(subjects_file)
+          subjects.update(load_eia_subjects(Path('config/eia_ingest_datasets.json')))
+
+          # Validate contracts with strict compatibility
+          validated = validate_contracts(subjects, schema_root, 'BACKWARD')
+
+          print(f'✅ Validated {len(validated)} schema contracts with BACKWARD compatibility')
+
+          # Check for potential breaking changes in recent commits
+          import subprocess
+          result = subprocess.run(['git', 'log', '--oneline', '-n', '10'], capture_output=True, text=True)
+          if 'BREAKING' in result.stdout.upper():
+              print('⚠️  Recent commits contain BREAKING changes - review schema evolution')
+          "
       - name: Schema Registry dry-run
         if: matrix.python-version == '3.11'
         env:
@@ -235,12 +265,32 @@ jobs:
         uses: aquasecurity/trivy-action@0.13.0
         with:
           scan-type: fs
-          security-checks: vuln,config
-          ignore-unfixed: true
+          security-checks: vuln,config,secret
+          ignore-unfixed: false
           severity: HIGH,CRITICAL
           hide-progress: true
           format: sarif
           output: security/trivy.sarif
+          exit-code: '1'
+
+      - name: Trivy config scan
+        uses: aquasecurity/trivy-action@0.13.0
+        with:
+          scan-type: config
+          security-checks: config
+          severity: HIGH,CRITICAL
+          format: sarif
+          output: security/trivy-config.sarif
+          exit-code: '1'
+
+      - name: Trivy secrets scan
+        uses: aquasecurity/trivy-action@0.13.0
+        with:
+          scan-type: fs
+          security-checks: secret
+          severity: HIGH,CRITICAL
+          format: sarif
+          output: security/trivy-secrets.sarif
           exit-code: '1'
       - name: Generate SBOM with Syft
         uses: anchore/sbom-action@v0
@@ -257,18 +307,198 @@ jobs:
         uses: github/codeql-action/upload-sarif@v3
         with:
           sarif_file: security/trivy.sarif
+      - name: Validate SBOM completeness
+        run: |
+          # Check if SBOM files exist and are valid
+          if [ ! -f "sbom/spdx-python.json" ]; then
+            echo "❌ SBOM file missing: sbom/spdx-python.json"
+            exit 1
+          fi
+
+          # Validate SBOM format
+          if ! python3 -c "
+          import json
+          with open('sbom/spdx-python.json', 'r') as f:
+              sbom = json.load(f)
+
+          # Check required SPDX fields
+          required_fields = ['SPDXID', 'spdxVersion', 'creationInfo', 'name', 'documentNamespace']
+          for field in required_fields:
+              if field not in sbom:
+                  print(f'Missing required field: {field}')
+                  exit(1)
+
+          # Check for packages
+          if 'packages' not in sbom or len(sbom['packages']) == 0:
+              print('No packages found in SBOM')
+              exit(1)
+
+          print('✅ SBOM validation passed')
+          "; then
+            echo "❌ SBOM validation failed"
+            exit 1
+          fi
+
+      - name: SBOM dependency check
+        run: |
+          # Ensure SBOM contains expected packages
+          python3 -c "
+          import json
+          with open('sbom/spdx-python.json', 'r') as f:
+              sbom = json.load(f)
+
+          # Check for critical dependencies
+          critical_packages = ['python', 'pip', 'setuptools']
+          found_packages = [pkg['name'] for pkg in sbom.get('packages', [])]
+
+          missing_packages = []
+          for pkg in critical_packages:
+              if not any(pkg.lower() in name.lower() for name in found_packages):
+                  missing_packages.append(pkg)
+
+          if missing_packages:
+              print(f'⚠️ Critical packages may be missing from SBOM: {missing_packages}')
+              # Don't fail build for this, just warn
+
+          print(f'📦 Found {len(found_packages)} packages in SBOM')
+          "
+
+      - name: Check security exceptions
+        run: |
+          # Check if found vulnerabilities are in the exceptions list
+          if [ -f ".security-exceptions.yml" ] && [ -f "security/trivy.sarif" ]; then
+            python3 -c "
+            import json
+            import yaml
+            from datetime import datetime
+
+            # Load security exceptions
+            with open('.security-exceptions.yml', 'r') as f:
+                exceptions = yaml.safe_load(f)
+
+            # Load Trivy results
+            with open('security/trivy.sarif', 'r') as f:
+                trivy_results = json.load(f)
+
+            # Check if we have vulnerabilities
+            vulnerabilities = []
+            for run in trivy_results.get('runs', []):
+                for result in run.get('results', []):
+                    if result.get('kind') == 'fail':
+                        for rule in run.get('tool', {}).get('driver', {}).get('rules', []):
+                            if rule.get('id') == result.get('ruleId'):
+                                vulnerabilities.append({
+                                    'id': result.get('ruleId', 'unknown'),
+                                    'severity': rule.get('properties', {}).get('security-severity', 'unknown'),
+                                    'message': result.get('message', {}).get('text', ''),
+                                    'locations': result.get('locations', [])
+                                })
+
+            # Check each vulnerability against exceptions
+            allowed_vulnerabilities = []
+            blocked_vulnerabilities = []
+
+            for vuln in vulnerabilities:
+                vuln_id = vuln['id']
+                severity = vuln['severity']
+
+                # Check if vulnerability is in exceptions
+                if vuln_id in exceptions.get('exceptions', {}):
+                    exception = exceptions['exceptions'][vuln_id]
+                    exception_severity = exception.get('severity', 'unknown')
+
+                    # Check if exception is still valid
+                    expires_str = exception.get('expires', '')
+                    if expires_str:
+                        try:
+                            expires_date = datetime.strptime(expires_str, '%Y-%m-%d')
+                            if datetime.now() > expires_date:
+                                blocked_vulnerabilities.append(vuln)
+                                continue
+                        except ValueError:
+                            pass  # Invalid date format, treat as expired
+
+                    # Check severity match
+                    if severity == exception_severity:
+                        allowed_vulnerabilities.append(vuln)
+                        print(f'✅ {vuln_id} ({severity}) - allowed by exception')
+                    else:
+                        blocked_vulnerabilities.append(vuln)
+                else:
+                    blocked_vulnerabilities.append(vuln)
+
+            # Report results
+            print(f'📊 Exception Check Results:')
+            print(f'  - Total vulnerabilities: {len(vulnerabilities)}')
+            print(f'  - Allowed by exceptions: {len(allowed_vulnerabilities)}')
+            print(f'  - Blocked: {len(blocked_vulnerabilities)}')
+
+            if blocked_vulnerabilities:
+                print(f'\\n❌ Blocked vulnerabilities:')
+                for vuln in blocked_vulnerabilities:
+                    print(f'  - {vuln[\"id\"]} ({vuln[\"severity\"]}): {vuln[\"message\"][:100]}...')
+
+                # Check policy limits
+                high_blocked = [v for v in blocked_vulnerabilities if v['severity'] == 'HIGH']
+                critical_blocked = [v for v in blocked_vulnerabilities if v['severity'] == 'CRITICAL']
+
+                policy = exceptions.get('policy', {})
+                max_high = policy.get('max_high_exceptions', 5)
+                max_critical = policy.get('max_critical_exceptions', 0)
+
+                if len(critical_blocked) > max_critical:
+                    print(f'❌ Policy violation: {len(critical_blocked)} CRITICAL vulnerabilities exceed limit of {max_critical}')
+                    exit(1)
+
+                if len(high_blocked) > max_high:
+                    print(f'⚠️ Policy warning: {len(high_blocked)} HIGH vulnerabilities exceed recommended limit of {max_high}')
+
+            if not blocked_vulnerabilities:
+                print('✅ All vulnerabilities are properly excepted or none found')
+            "
+          fi
+
+      - name: Security vulnerability summary
+        run: |
+          # Generate security summary
+          echo "🔒 Security Scan Summary"
+          echo "========================"
+
+          # Count vulnerabilities by severity
+          if [ -f "security/trivy.sarif" ]; then
+            HIGH_COUNT=$(grep -o '"HIGH"' security/trivy.sarif | wc -l)
+            CRITICAL_COUNT=$(grep -o '"CRITICAL"' security/trivy.sarif | wc -l)
+
+            echo "High severity vulnerabilities: $HIGH_COUNT"
+            echo "Critical severity vulnerabilities: $CRITICAL_COUNT"
+
+            if [ "$CRITICAL_COUNT" -gt 0 ]; then
+              echo "❌ CRITICAL vulnerabilities found - blocking build"
+              echo "📋 See security/trivy.sarif for details"
+              exit 1
+            elif [ "$HIGH_COUNT" -gt 10 ]; then
+              echo "⚠️ High number of HIGH vulnerabilities found"
+              echo "Consider addressing these before deployment"
+            fi
+          fi
+
+          echo "✅ Security scan completed"
+
       - name: Upload SBOM artifact
         uses: actions/upload-artifact@v4
         with:
-          name: sbom
-          path: sbom/spdx.json
+          name: sbom-${{ github.sha }}
+          path: sbom/
+          retention-days: 90
+
       - name: Upload security reports
         uses: actions/upload-artifact@v4
         with:
-          name: security-reports
+          name: security-reports-${{ github.sha }}
           path: |
             security/
             sbom/
+          retention-days: 90
 
   scenario-smoke:
     name: Scenario Smoke

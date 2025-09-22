@@ -11,6 +11,12 @@ data:
       smtp_auth_username: 'alerts@aurum.com'
       smtp_auth_password: 'your-app-password'
 
+      # Slack webhook integration
+      slack_api_url: 'YOUR_SLACK_WEBHOOK_URL'
+
+      # PagerDuty integration
+      pagerduty_url: 'https://events.pagerduty.com/v2/enqueue'
+
     route:
       group_by: ['alertname']
       group_wait: 10s
@@ -44,6 +50,14 @@ data:
           receiver: 'team-infra'
           group_by: ['alertname', 'instance']
           continue: true
+
+        # Daily summary route
+        - match:
+            alertname: 'DailyAlertSummary'
+          receiver: 'team-platform'
+          group_by: ['alertname']
+          group_interval: 24h
+          repeat_interval: 24h
 
     receivers:
     - name: 'team-platform'
@@ -111,10 +125,15 @@ data:
           Severity: {{ .Labels.severity }}
 
           Time: {{ .StartsAt.Format "2006-01-02 15:04:05 UTC" }}
+
+          **ALERT HISTORY:**
+          First seen: {{ .StartsAt.Format "2006-01-02 15:04:05 UTC" }}
+          Last updated: {{ .EndsAt.Format "2006-01-02 15:04:05 UTC" }}
+          Duration: {{ .ActiveAt.Format "2006-01-02 15:04:05 UTC" }}
           {{ end }}
 
       slack_configs:
-      - api_url: 'YOUR_SLACK_WEBHOOK_URL'
+      - api_url: '${SLACK_WEBHOOK_URL}'
         channel: '#platform-alerts'
         title: '🚨 CRITICAL Platform Alert'
         text: |
@@ -133,6 +152,19 @@ data:
           *Time*: {{ .StartsAt.Format "15:04:05 UTC" }}
           {{ end }}
 
+      pagerduty_configs:
+      - service_key: '${PAGERDUTY_INTEGRATION_KEY}'
+        description: '{{ .GroupLabels.alertname }} - {{ .Annotations.summary }}'
+        component: '{{ .Labels.service }}'
+        group: '{{ .Labels.category }}'
+        class: '{{ .Labels.severity }}'
+        details:
+          service: '{{ .Labels.service }}'
+          category: '{{ .Labels.category }}'
+          instance: '{{ .Labels.instance }}'
+          runbook: '{{ .Annotations.runbook_url }}'
+          troubleshooting: '{{ .Annotations.troubleshooting }}'
+
     # Inhibition rules to reduce alert noise
     inhibit_rules:
       - source_match:
@@ -147,6 +179,173 @@ data:
           alertname: 'AurumServiceErrorRate'
         equal: ['instance']
 
+---
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: alert-history-collector
+  namespace: aurum-dev
+spec:
+  schedule: "0 */6 * * *"  # Every 6 hours
+  jobTemplate:
+    spec:
+      template:
+        spec:
+          containers:
+          - name: alert-history-collector
+            image: curlimages/curl:latest
+            command: ["/bin/bash", "-c"]
+            args:
+            - |
+              set -euo pipefail
+
+              # Create alert history directory if it doesn't exist
+              mkdir -p /alert-history
+
+              # Current timestamp
+              TIMESTAMP=$(date -u +'%Y%m%d_%H%M%S')
+
+              # Collect current alerts from AlertManager
+              curl -s http://alertmanager:9093/api/v2/alerts | jq '.' > /alert-history/alerts_${TIMESTAMP}.json
+
+              # Collect alert metrics from Prometheus
+              curl -s http://prometheus:9090/api/v1/query?query=ALERTS | jq '.' > /alert-history/alert_metrics_${TIMESTAMP}.json
+
+              # Clean up old history files (keep last 7 days)
+              find /alert-history -name "*.json" -type f -mtime +7 -delete
+
+              echo "Alert history collected at ${TIMESTAMP}"
+            volumeMounts:
+            - name: alert-history-storage
+              mountPath: /alert-history
+          volumes:
+          - name: alert-history-storage
+            persistentVolumeClaim:
+              claimName: alert-history-pvc
+          restartPolicy: OnFailure
+          serviceAccountName: alert-history-collector
+---
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: daily-alert-summary-generator
+  namespace: aurum-dev
+spec:
+  schedule: "0 8 * * *"  # Daily at 8 AM
+  jobTemplate:
+    spec:
+      template:
+        spec:
+          containers:
+          - name: daily-alert-summary
+            image: python:3.11-slim
+            command: ["/bin/bash", "-c"]
+            args:
+            - |
+              set -euo pipefail
+
+              # Generate daily summary
+              python3 -c "
+              import json
+              import os
+              from datetime import datetime, timedelta
+
+              # Get yesterday's date
+              yesterday = datetime.now() - timedelta(days=1)
+              yesterday_str = yesterday.strftime('%Y%m%d')
+
+              # Find yesterday's alert files
+              alert_files = [f for f in os.listdir('/alert-history') if f.startswith(f'alerts_{yesterday_str}')]
+
+              if alert_files:
+                  # Load and analyze alerts
+                  all_alerts = []
+                  for file in alert_files:
+                      with open(f'/alert-history/{file}', 'r') as f:
+                          alerts = json.load(f)
+                          all_alerts.extend(alerts)
+
+                  # Generate summary
+                  summary = {
+                      'date': yesterday_str,
+                      'total_alerts': len(all_alerts),
+                      'critical_alerts': len([a for a in all_alerts if a.get('labels', {}).get('severity') == 'critical']),
+                      'warning_alerts': len([a for a in all_alerts if a.get('labels', {}).get('severity') == 'warning']),
+                      'info_alerts': len([a for a in all_alerts if a.get('labels', {}).get('severity') == 'info']),
+                      'top_alerts': {},
+                      'alert_timeline': []
+                  }
+
+                  # Count top alerts
+                  for alert in all_alerts:
+                      name = alert.get('labels', {}).get('alertname', 'unknown')
+                      summary['top_alerts'][name] = summary['top_alerts'].get(name, 0) + 1
+
+                  # Sort top alerts
+                  summary['top_alerts'] = dict(sorted(summary['top_alerts'].items(), key=lambda x: x[1], reverse=True))
+
+                  # Save summary
+                  with open(f'/alert-history/daily_summary_{yesterday_str}.json', 'w') as f:
+                      json.dump(summary, f, indent=2)
+
+                  print(f'Daily alert summary generated for {yesterday_str}')
+              else:
+                  print(f'No alert data found for {yesterday_str}')
+              "
+            volumeMounts:
+            - name: alert-history-storage
+              mountPath: /alert-history
+          volumes:
+          - name: alert-history-storage
+            persistentVolumeClaim:
+              claimName: alert-history-pvc
+          restartPolicy: OnFailure
+          serviceAccountName: alert-history-collector
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: alert-history-pvc
+  namespace: aurum-dev
+spec:
+  accessModes:
+    - ReadWriteOnce
+  storageClassName: standard
+  resources:
+    requests:
+      storage: 10Gi
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: alert-history-collector
+  namespace: aurum-dev
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: alert-history-collector
+  namespace: aurum-dev
+rules:
+- apiGroups: [""]
+  resources: ["pods"]
+  verbs: ["get", "list"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: alert-history-collector
+  namespace: aurum-dev
+type: Role
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: alert-history-collector
+subjects:
+- kind: ServiceAccount
+  name: alert-history-collector
+  namespace: aurum-dev
 ---
 apiVersion: monitoring.coreos.com/v1
 kind: PrometheusRule
@@ -304,6 +503,21 @@ spec:
         description: "Unusual patterns detected in Vault access logs"
         runbook_url: "docs/runbooks/secrets-lifecycle-runbook.md#access-anomalies"
         troubleshooting: "Review Vault audit logs and access patterns"
+
+  - name: aurum_daily_summaries
+    rules:
+    - alert: DailyAlertSummary
+      expr: |
+        sum(increase(ALERTS{alertstate="firing"}[24h])) > 0
+      for: 24h
+      labels:
+        severity: info
+        service: alertmanager
+        category: monitoring
+      annotations:
+        summary: "Daily alert summary report"
+        description: "Summary of alerts fired in the last 24 hours"
+        runbook_url: "docs/runbooks/alert-history-runbook.md"
 
   - name: aurum_slo_monitoring
     rules:

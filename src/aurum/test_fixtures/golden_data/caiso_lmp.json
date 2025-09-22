@@ -1,0 +1,124 @@
+{
+  "metadata": {
+    "iso_code": "CAISO",
+    "data_type": "lmp",
+    "market": "DAY_AHEAD",
+    "generated_at": "2024-01-15T10:00:00Z",
+    "record_count": 100,
+    "description": "Golden test data for CAISO LMP (Locational Marginal Pricing) validation"
+  },
+  "schema": {
+    "type": "array",
+    "items": {
+      "type": "object",
+      "properties": {
+        "interval_start": {"type": "string", "format": "date-time"},
+        "interval_end": {"type": "string", "format": "date-time"},
+        "location_id": {"type": "string"},
+        "location_name": {"type": "string"},
+        "location_type": {"type": "string", "enum": ["NODE", "HUB", "ZONE"]},
+        "zone": {"type": "string"},
+        "price_total": {"type": "number"},
+        "price_energy": {"type": "number"},
+        "price_congestion": {"type": "number"},
+        "price_loss": {"type": "number"},
+        "currency": {"type": "string"},
+        "uom": {"type": "string"},
+        "ingest_ts": {"type": "number"},
+        "record_hash": {"type": "string"}
+      },
+      "required": ["interval_start", "location_id", "price_total", "currency", "uom"]
+    }
+  },
+  "data": [
+    {
+      "interval_start": "2024-01-15T07:00:00Z",
+      "interval_end": "2024-01-15T08:00:00Z",
+      "location_id": "TH_NP15_GEN-APND",
+      "location_name": "TH_NP15_GEN-APND",
+      "location_type": "NODE",
+      "zone": "NP15",
+      "price_total": 45.67,
+      "price_energy": 42.15,
+      "price_congestion": 2.34,
+      "price_loss": 1.18,
+      "currency": "USD",
+      "uom": "MWh",
+      "ingest_ts": 1705309200000000,
+      "record_hash": "abc123def456"
+    },
+    {
+      "interval_start": "2024-01-15T07:00:00Z",
+      "interval_end": "2024-01-15T08:00:00Z",
+      "location_id": "TH_SP15_GEN-APND",
+      "location_name": "TH_SP15_GEN-APND",
+      "location_type": "NODE",
+      "zone": "SP15",
+      "price_total": 48.92,
+      "price_energy": 45.23,
+      "price_congestion": 3.12,
+      "price_loss": 0.57,
+      "currency": "USD",
+      "uom": "MWh",
+      "ingest_ts": 1705309200000000,
+      "record_hash": "def789ghi012"
+    },
+    {
+      "interval_start": "2024-01-15T08:00:00Z",
+      "interval_end": "2024-01-15T09:00:00Z",
+      "location_id": "TH_NP15_GEN-APND",
+      "location_name": "TH_NP15_GEN-APND",
+      "location_type": "NODE",
+      "zone": "NP15",
+      "price_total": 52.14,
+      "price_energy": 48.67,
+      "price_congestion": 2.89,
+      "price_loss": 0.58,
+      "currency": "USD",
+      "uom": "MWh",
+      "ingest_ts": 1705312800000000,
+      "record_hash": "ghi345jkl678"
+    },
+    {
+      "interval_start": "2024-01-15T08:00:00Z",
+      "interval_end": "2024-01-15T09:00:00Z",
+      "location_id": "TH_SP15_GEN-APND",
+      "location_name": "TH_SP15_GEN-APND",
+      "location_type": "NODE",
+      "zone": "SP15",
+      "price_total": 55.78,
+      "price_energy": 51.92,
+      "price_congestion": 3.45,
+      "price_loss": 0.41,
+      "currency": "USD",
+      "uom": "MWh",
+      "ingest_ts": 1705312800000000,
+      "record_hash": "jkl901mno234"
+    }
+  ],
+  "validation_rules": {
+    "price_ranges": {
+      "min_price_total": -1000,
+      "max_price_total": 10000,
+      "min_price_energy": -1000,
+      "max_price_energy": 10000,
+      "min_price_congestion": -5000,
+      "max_price_congestion": 5000,
+      "min_price_loss": -1000,
+      "max_price_loss": 1000
+    },
+    "required_fields": [
+      "interval_start",
+      "location_id",
+      "price_total",
+      "currency",
+      "uom"
+    ],
+    "data_quality_checks": {
+      "null_checks": true,
+      "range_checks": true,
+      "type_checks": true,
+      "format_checks": true
+    }
+  }
+}

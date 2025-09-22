@@ -7,10 +7,13 @@ This module contains the v2 API implementations with:
 - Improved observability
 - Better error handling
 - Consistent response formats
+- Tenant context enforcement
+- Link headers for navigation
+- Rate limiting headers
 """
 
 from __future__ import annotations
 
-from . import scenarios, curves
+from . import scenarios, curves, metadata, iso, eia, ppa, drought, admin
 
-__all__ = ["scenarios", "curves"]
+__all__ = ["scenarios", "curves", "metadata", "iso", "eia", "ppa", "drought", "admin"]

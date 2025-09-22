@@ -43,6 +43,22 @@ spec:
             "/v1/tenants"
           )
 
+          # External endpoints to monitor
+          EXTERNAL_ENDPOINTS=(
+            "https://api.github.com"
+            "https://www.google.com"
+            "https://httpstat.us/200"
+            "https://httpstat.us/503"
+          )
+
+          # Expected response codes for external endpoints
+          EXTERNAL_ENDPOINT_EXPECTED=(
+            "200"
+            "200"
+            "200"
+            "503"
+          )
+
           # Function to test API endpoint
           test_api_endpoint() {
             local endpoint=$1
@@ -59,6 +75,41 @@ spec:
 
             # Perform the request
             response=$(curl -s -w "%{http_code}" -o /tmp/response_body "$API_BASE_URL$endpoint")
+            http_status=$response
+
+            local end_time=$(date +%s%N)
+            local duration=$(( (end_time - start_time) / 1000000 ))  # Convert to milliseconds
+
+            if [ "$http_status" -eq "$expected_status" ]; then
+              echo -e "${GREEN}  ✅ Status: $http_status (Expected: $expected_status)${NC}"
+              echo "  ⏱️  Duration: ${duration}ms"
+              return 0
+            else
+              echo -e "${RED}  ❌ Status: $http_status (Expected: $expected_status)${NC}"
+              echo "  ⏱️  Duration: ${duration}ms"
+              if [ -f /tmp/response_body ] && [ -s /tmp/response_body ]; then
+                echo "  📄 Response: $(cat /tmp/response_body)"
+              fi
+              return 1
+            fi
+          }
+
+          # Function to test external endpoint
+          test_external_endpoint() {
+            local endpoint=$1
+            local expected_status=${2:-200}
+            local description=${3:-"External endpoint test"}
+
+            echo -e "${YELLOW}Testing: $description${NC}"
+            echo "  Endpoint: $endpoint"
+            echo "  Expected status: $expected_status"
+
+            local start_time=$(date +%s%N)
+            local response
+            local http_status
+
+            # Perform the request with timeout
+            response=$(curl -s --max-time 10 -w "%{http_code}" -o /tmp/response_body "$endpoint")
             http_status=$response
 
             local end_time=$(date +%s%N)
@@ -269,6 +320,7 @@ spec:
               "timestamp": "$(date -u +'%Y-%m-%dT%H:%M:%SZ')",
               "tests_performed": {
                 "api_endpoints": $(echo ${#MONITORING_ENDPOINTS[@]}),
+                "external_endpoints": $(echo ${#EXTERNAL_ENDPOINTS[@]}),
                 "database_connectivity": 1,
                 "kafka_message_flow": 1,
                 "cache_functionality": 1,
@@ -362,8 +414,26 @@ spec:
             echo -e "${RED}  ❌ Cross-region replication test failed${NC}"
           fi
 
-          # Phase 4: SLO validation
-          echo -e "${BLUE}📊 Phase 4: SLO validation${NC}"
+          # Phase 4: External endpoint testing
+          echo -e "${BLUE}🌐 Phase 4: External endpoint testing${NC}"
+
+          # Test external endpoints
+          for i in "${!EXTERNAL_ENDPOINTS[@]}"; do
+            total_tests=$((total_tests + 1))
+            endpoint="${EXTERNAL_ENDPOINTS[$i]}"
+            expected_status="${EXTERNAL_ENDPOINT_EXPECTED[$i]}"
+            description="External endpoint: $(basename "$endpoint")"
+
+            if test_external_endpoint "$endpoint" "$expected_status" "$description"; then
+              echo -e "${GREEN}  ✅ External endpoint test passed${NC}"
+            else
+              test_failures=$((test_failures + 1))
+              echo -e "${RED}  ❌ External endpoint test failed${NC}"
+            fi
+          done
+
+          # Phase 5: SLO validation
+          echo -e "${BLUE}📊 Phase 5: SLO validation${NC}"
 
           total_tests=$((total_tests + 1))
           if validate_slo_compliance; then

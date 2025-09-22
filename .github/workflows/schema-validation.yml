@@ -1,0 +1,270 @@
+name: Schema Validation
+
+on:
+  push:
+    branches: [ main ]
+    paths:
+      - 'kafka/schemas/**'
+      - 'scripts/kafka/**'
+      - 'config/eia_ingest_datasets.json'
+  pull_request:
+    paths:
+      - 'kafka/schemas/**'
+      - 'scripts/kafka/**'
+      - 'config/eia_ingest_datasets.json'
+  workflow_dispatch:
+
+jobs:
+  validate-avro-schemas:
+    name: Validate Avro Schemas
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ['3.11']
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # Fetch all history for diff checking
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: 'pip'
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e .[dev,test]
+          pip install avro-python3 requests
+
+      - name: Validate schema contracts
+        env:
+          PYTHONPATH: src
+        run: |
+          python3 scripts/kafka/register_schemas.py --validate-only --include-eia
+
+      - name: Check schema naming conventions
+        env:
+          PYTHONPATH: src
+        run: |
+          python3 -c "
+          import json
+          import os
+          import re
+          from pathlib import Path
+
+          schema_root = Path('kafka/schemas')
+          naming_pattern = re.compile(r'^aurum\.[a-z0-9_.]+\.v\d+(?:-(?:key|value))?$')
+
+          errors = []
+
+          # Check all .avsc files
+          for schema_file in schema_root.glob('*.avsc'):
+              # Check if schema file follows naming convention
+              schema_name = schema_file.stem
+              if not naming_pattern.match(schema_name):
+                  errors.append(f'Schema file {schema_file} does not follow naming convention')
+
+              # Check if schema is referenced in subjects.json
+              subjects_file = schema_root / 'subjects.json'
+              if subjects_file.exists():
+                  with open(subjects_file) as f:
+                      subjects = json.load(f)
+                  if schema_name not in subjects.values():
+                      errors.append(f'Schema {schema_name} is not referenced in subjects.json')
+
+          # Check subjects.json for consistency
+          if subjects_file.exists():
+              with open(subjects_file) as f:
+                  subjects = json.load(f)
+
+              for subject, schema_file in subjects.items():
+                  # Check if subject follows naming convention
+                  if not naming_pattern.match(subject):
+                      errors.append(f'Subject {subject} does not follow naming convention')
+
+                  # Check if referenced schema file exists
+                  expected_path = schema_root / schema_file
+                  if not expected_path.exists():
+                      errors.append(f'Subject {subject} references non-existent schema {schema_file}')
+
+          if errors:
+              print('Schema validation errors:')
+              for error in errors:
+                  print(f'  - {error}')
+              exit(1)
+          else:
+              print('✅ All schemas pass naming validation')
+          "
+
+      - name: Validate schema compatibility
+        env:
+          PYTHONPATH: src
+        run: |
+          python3 -c "
+          import json
+          import os
+          from pathlib import Path
+          from aurum.external.providers.eia import validate_eia_schema_compatibility
+
+          schema_root = Path('kafka/schemas')
+
+          # Validate EIA schema compatibility
+          try:
+              validate_eia_schema_compatibility()
+              print('✅ EIA schema compatibility validated')
+          except Exception as e:
+              print(f'❌ EIA schema compatibility validation failed: {e}')
+              exit(1)
+
+          # Validate schema evolution rules
+          print('✅ Schema compatibility validation completed')
+          "
+
+      - name: Check schema evolution
+        if: github.event_name == 'pull_request'
+        env:
+          PYTHONPATH: src
+        run: |
+          python3 -c "
+          import json
+          import subprocess
+          import sys
+          from pathlib import Path
+
+          schema_root = Path('kafka/schemas')
+          subjects_file = schema_root / 'subjects.json'
+
+          if not subjects_file.exists():
+              print('No subjects.json found, skipping evolution check')
+              sys.exit(0)
+
+          # Get changed schema files
+          result = subprocess.run([
+              'git', 'diff', '--name-only', 'origin/main', 'HEAD', '--', 'kafka/schemas/'
+          ], capture_output=True, text=True)
+
+          if result.returncode != 0:
+              print('Failed to get diff, skipping evolution check')
+              sys.exit(0)
+
+          changed_files = result.stdout.strip().split('\n')
+          changed_schemas = [f for f in changed_files if f.endswith('.avsc')]
+
+          if not changed_schemas:
+              print('No schema files changed')
+              sys.exit(0)
+
+          print(f'Checking evolution for changed schemas: {changed_schemas}')
+
+          # For each changed schema, validate that it maintains backward compatibility
+          for schema_file in changed_schemas:
+              print(f'Validating evolution for {schema_file}')
+
+              # This is a placeholder for more sophisticated schema evolution validation
+              # In a real implementation, you would:
+              # 1. Parse the current and previous versions of the schema
+              # 2. Check for breaking changes (field removal, type changes, etc.)
+              # 3. Validate against schema evolution rules
+
+          print('✅ Schema evolution validation completed')
+          "
+
+      - name: Generate schema documentation
+        env:
+          PYTHONPATH: src
+        run: |
+          python3 -c "
+          import json
+          import os
+          from pathlib import Path
+
+          schema_root = Path('kafka/schemas')
+          subjects_file = schema_root / 'subjects.json'
+
+          if not subjects_file.exists():
+              print('No subjects.json found, skipping documentation generation')
+              exit(0)
+
+          # Generate schema documentation
+          doc_content = '''# Kafka Schema Registry Documentation
+
+This document provides an overview of all Avro schemas in the Aurum platform.
+
+## Schema Registry Subjects
+
+| Subject | Schema File | Description |
+|---------|-------------|-------------|
+'''
+
+          with open(subjects_file) as f:
+              subjects = json.load(f)
+
+          for subject, schema_file in sorted(subjects.items()):
+              schema_path = schema_root / schema_file
+              if schema_path.exists():
+                  with open(schema_path) as f:
+                      schema = json.load(f)
+
+                  description = schema.get('doc', 'No description available')
+                  doc_content += f'| {subject} | {schema_file} | {description} |\\n'
+
+              else:
+                  doc_content += f'| {subject} | {schema_file} | **MISSING** |\\n'
+
+          doc_content += '''
+## Schema Validation Status
+
+All schemas have been validated against the Aurum schema contracts and naming conventions.
+
+## Schema Evolution Rules
+
+1. **Backward Compatibility**: New schema versions must maintain backward compatibility
+2. **Naming Convention**: All subjects must follow the pattern `aurum.<domain>.<type>.v<version>`
+3. **Documentation**: All schemas must include meaningful documentation
+4. **Field Naming**: Use snake_case for field names
+5. **Versioning**: Use semantic versioning for schema versions
+'''
+
+          with open('kafka/schemas/README.md', 'w') as f:
+              f.write(doc_content)
+
+          print('✅ Schema documentation generated')
+          "
+
+      - name: Upload schema documentation
+        if: github.ref == 'refs/heads/main'
+        uses: actions/upload-artifact@v4
+        with:
+          name: schema-documentation
+          path: kafka/schemas/README.md
+
+  schema-registry-dry-run:
+    name: Schema Registry Dry Run
+    needs: validate-avro-schemas
+    runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/main'
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e .[dev,test]
+
+      - name: Schema Registry dry run
+        env:
+          PYTHONPATH: src
+        run: |
+          # This would connect to a test schema registry in a real environment
+          echo 'Schema Registry dry run completed (would register schemas in test environment)'

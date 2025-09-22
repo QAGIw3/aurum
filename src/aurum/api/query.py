@@ -184,6 +184,51 @@ def build_curve_query(
     )
 
 
+def build_curve_export_query(
+    *,
+    asof: Optional[str],
+    iso: Optional[str],
+    market: Optional[str],
+    location: Optional[str],
+    product: Optional[str],
+    block: Optional[str],
+    curve_key: Optional[str] = None,
+    asset_class: Optional[str] = None,
+    tenor_type: Optional[str] = None,
+    descending: bool = False,
+) -> str:
+    """Build an export-oriented query without pagination limits."""
+
+    filters: Dict[str, Optional[str]] = {
+        "curve_key": curve_key,
+        "asset_class": asset_class,
+        "iso": iso,
+        "location": location,
+        "market": market,
+        "product": product,
+        "block": block,
+        "tenor_type": tenor_type,
+    }
+    where_clause = build_filter_clause(filters)
+    if asof:
+        asof_literal = _safe_literal(asof)
+        clause = f"asof_date = DATE '{asof_literal}'"
+        if where_clause:
+            where_clause += f" AND {clause}"
+        else:
+            where_clause = f" WHERE {clause}"
+
+    direction = "DESC" if descending else "ASC"
+    order_clause = " ORDER BY " + ", ".join(f"{col} {direction}" for col in ORDER_COLUMNS)
+
+    select_cols = (
+        "curve_key, tenor_label, tenor_type, cast(contract_month as date) as contract_month, "
+        "cast(asof_date as date) as asof_date, mid, bid, ask, price_type"
+    )
+
+    return f"SELECT {select_cols} FROM iceberg.market.curve_observation{where_clause}{order_clause}"
+
+
 def build_curve_diff_query(
     *,
     asof_a: date,

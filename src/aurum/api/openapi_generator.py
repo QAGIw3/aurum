@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional, Union
 from dataclasses import dataclass, field
 from enum import Enum
+import json as json_module
 
 from fastapi import FastAPI
 from fastapi.openapi.utils import get_openapi
@@ -152,7 +153,7 @@ class OpenAPIGenerator:
             }
         }
 
-        # Add error response schemas (RFC 7807)
+        # Add comprehensive error response schemas (RFC 7807)
         openapi_schema["components"]["schemas"] = openapi_schema.get("components", {}).get("schemas", {})
 
         openapi_schema["components"]["schemas"]["ErrorEnvelope"] = {
@@ -192,7 +193,180 @@ class OpenAPIGenerator:
                     "description": "Error timestamp"
                 }
             },
-            "required": ["error", "timestamp"]
+            "required": ["error", "timestamp"],
+            "example": {
+                "error": "ValidationError",
+                "message": "Invalid request parameters",
+                "code": "INVALID_CURSOR",
+                "field": "cursor",
+                "value": "invalid-cursor-token",
+                "context": {"parameter": "cursor"},
+                "request_id": "req-12345",
+                "timestamp": "2025-01-15T10:30:00Z"
+            }
+        }
+
+
+        openapi_schema["components"]["schemas"]["ValidationErrorResponse"] = {
+            "type": "object",
+            "description": "Validation error response",
+            "properties": {
+                "error": {
+                    "type": "string",
+                    "description": "Error type",
+                    "default": "Validation Error"
+                },
+                "message": {
+                    "type": "string",
+                    "description": "Error message"
+                },
+                "field_errors": {
+                    "type": "array",
+                    "items": {"$ref": "#/components/schemas/ValidationErrorDetail"},
+                    "description": "List of field validation errors"
+                },
+                "request_id": {
+                    "type": "string",
+                    "description": "Request identifier"
+                },
+                "timestamp": {
+                    "type": "string",
+                    "format": "date-time",
+                    "description": "Error timestamp"
+                }
+            },
+            "required": ["error", "message", "timestamp"],
+            "example": {
+                "error": "ValidationError",
+                "message": "Request validation failed",
+                "field_errors": [
+                    {
+                        "field": "tenant_id",
+                        "message": "tenant_id is required",
+                        "code": "missing",
+                        "constraint": "required"
+                    },
+                    {
+                        "field": "cursor",
+                        "message": "Invalid cursor format",
+                        "code": "invalid_format",
+                        "constraint": "format"
+                    }
+                ],
+                "request_id": "req-12345",
+                "timestamp": "2025-01-15T10:30:00Z"
+            }
+        }
+
+        # Add pagination metadata schema
+        openapi_schema["components"]["schemas"]["PaginationMeta"] = {
+            "type": "object",
+            "description": "Pagination metadata for cursor-based pagination",
+            "properties": {
+                "request_id": {
+                    "type": "string",
+                    "description": "Request identifier for debugging"
+                },
+                "tenant_id": {
+                    "type": "string",
+                    "description": "Tenant identifier"
+                },
+                "total_count": {
+                    "type": "integer",
+                    "description": "Total number of items"
+                },
+                "returned_count": {
+                    "type": "integer",
+                    "description": "Number of items returned in this response"
+                },
+                "has_more": {
+                    "type": "boolean",
+                    "description": "Whether there are more items available"
+                },
+                "cursor": {
+                    "type": "string",
+                    "description": "Current cursor value"
+                },
+                "next_cursor": {
+                    "type": "string",
+                    "description": "Cursor for next page"
+                },
+                "prev_cursor": {
+                    "type": "string",
+                    "description": "Cursor for previous page"
+                },
+                "processing_time_ms": {
+                    "type": "number",
+                    "description": "Processing time in milliseconds"
+                }
+            },
+            "example": {
+                "request_id": "req-12345",
+                "tenant_id": "tenant-001",
+                "total_count": 1000,
+                "returned_count": 100,
+                "has_more": true,
+                "cursor": "eyJvZmZzZXQiOiAwfQ==",
+                "next_cursor": "eyJvZmZzZXQiOiAxMDB9",
+                "processing_time_ms": 45.2
+            }
+        }
+
+        # Add Link headers schema
+        openapi_schema["components"]["schemas"]["Links"] = {
+            "type": "object",
+            "description": "Navigation links for paginated resources",
+            "properties": {
+                "self": {
+                    "type": "string",
+                    "description": "Self-referencing link"
+                },
+                "next": {
+                    "type": "string",
+                    "description": "Link to next page"
+                },
+                "prev": {
+                    "type": "string",
+                    "description": "Link to previous page"
+                },
+                "canonical": {
+                    "type": "string",
+                    "description": "Canonical URL"
+                }
+            },
+            "example": {
+                "self": "https://api.aurum-platform.com/v2/scenarios?limit=100&cursor=eyJvZmZzZXQiOiAwfQ==",
+                "next": "https://api.aurum-platform.com/v2/scenarios?limit=100&cursor=eyJvZmZzZXQiOiAxMDB9",
+                "canonical": "https://api.aurum-platform.com/v2/scenarios"
+            }
+        }
+
+        # Add tenant context schema
+        openapi_schema["components"]["schemas"]["TenantContext"] = {
+            "type": "object",
+            "description": "Tenant context information",
+            "properties": {
+                "tenant_id": {
+                    "type": "string",
+                    "description": "Tenant identifier",
+                    "pattern": "^[a-zA-Z0-9-_]+$"
+                },
+                "organization": {
+                    "type": "string",
+                    "description": "Organization name"
+                },
+                "permissions": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": "User permissions for this tenant"
+                }
+            },
+            "required": ["tenant_id"],
+            "example": {
+                "tenant_id": "tenant-001",
+                "organization": "Acme Corp",
+                "permissions": ["curves:read", "scenarios:read", "scenarios:run"]
+            }
         }
 
         openapi_schema["components"]["schemas"]["ValidationErrorDetail"] = {
@@ -345,7 +519,7 @@ class OpenAPIGenerator:
             raise ValueError(f"Unsupported format: {format_type}")
 
     def generate_markdown_docs(self, output_path: str) -> None:
-        """Generate Markdown documentation."""
+        """Generate comprehensive Markdown documentation with examples."""
         schema = self.generate_schema()
 
         markdown_content = f"""# {schema['info']['title']}
@@ -353,6 +527,79 @@ class OpenAPIGenerator:
 {schema['info']['description']}
 
 ## Version: {schema['info']['version']}
+
+## Authentication
+
+This API uses multiple authentication methods:
+
+- **API Key**: `X-API-Key` header
+- **Bearer Token**: `Authorization: Bearer <token>` header
+- **Basic Auth**: For admin endpoints
+
+## Tenant Context
+
+All v2 endpoints require a `tenant_id` query parameter to specify the tenant context.
+This ensures proper data isolation and security.
+
+**Example:**
+```
+GET /v2/scenarios?tenant_id=your-tenant-id
+```
+
+## Pagination
+
+The API uses cursor-based pagination for all collection endpoints:
+
+- Use `limit` parameter to control page size (default: 10, max: 100)
+- Use `cursor` parameter for pagination
+- Response includes `meta.next_cursor` and `meta.prev_cursor`
+- Link headers provide navigation URLs
+
+**Example Response:**
+```json
+{{
+  "data": [...],
+  "meta": {{
+    "request_id": "req-12345",
+    "tenant_id": "tenant-001",
+    "total_count": 1000,
+    "returned_count": 100,
+    "has_more": true,
+    "cursor": "eyJvZmZzZXQiOiAwfQ==",
+    "next_cursor": "eyJvZmZzZXQiOiAxMDB9",
+    "processing_time_ms": 45.2
+  }},
+  "links": {{
+    "self": "https://api.aurum-platform.com/v2/scenarios",
+    "next": "https://api.aurum-platform.com/v2/scenarios?cursor=eyJvZmZzZXQiOiAxMDB9"
+  }}
+}}
+```
+
+## Error Handling
+
+The API follows RFC 7807 for error responses:
+
+```json
+{{
+  "error": "ValidationError",
+  "message": "Invalid request parameters",
+  "code": "INVALID_CURSOR",
+  "field": "cursor",
+  "value": "invalid-cursor-token",
+  "context": {{}},
+  "request_id": "req-12345",
+  "timestamp": "2025-01-15T10:30:00Z"
+}}
+```
+
+## Rate Limiting
+
+Rate limits are enforced per tenant:
+
+- Headers: `X-RateLimit-Limit`, `X-RateLimit-Remaining`, `X-RateLimit-Reset`
+- 429 responses include `Retry-After` header
+- Rate limits can be configured per endpoint
 
 """
 
@@ -376,6 +623,7 @@ class OpenAPIGenerator:
             for method, operation in path_item.items():
                 if method.upper() in ['GET', 'POST', 'PUT', 'DELETE', 'PATCH']:
                     markdown_content += f"#### {method.upper()} {path}\n\n"
+
                     if 'summary' in operation:
                         markdown_content += f"**Summary:** {operation['summary']}\n\n"
                     if 'description' in operation:
@@ -386,7 +634,8 @@ class OpenAPIGenerator:
                         markdown_content += "**Parameters:**\n\n"
                         for param in operation['parameters']:
                             required = param.get('required', False)
-                            markdown_content += f"- `{param['name']}` ({param['in']}) {'*' if required else ''}: {param.get('description', '')}\n"
+                            param_type = param.get('schema', {}).get('type', 'string')
+                            markdown_content += f"- `{param['name']}` ({param['in']}, {param_type}) {'*' if required else ''}: {param.get('description', '')}\n"
                         markdown_content += "\n"
 
                     # Request body
@@ -395,6 +644,9 @@ class OpenAPIGenerator:
                         content = operation['requestBody'].get('content', {})
                         for content_type, schema_info in content.items():
                             markdown_content += f"- Content-Type: `{content_type}`\n"
+                            if 'example' in schema_info.get('schema', {}):
+                                markdown_content += "**Example:**\n"
+                                markdown_content += f"```json\n{json_module.dumps(schema_info['schema']['example'], indent=2)}\n```\n"
                         markdown_content += "\n"
 
                     # Responses
@@ -403,6 +655,12 @@ class OpenAPIGenerator:
                         for status_code, response in operation['responses'].items():
                             description = response.get('description', '')
                             markdown_content += f"- `{status_code}`: {description}\n"
+                            if 'content' in response:
+                                for content_type, content_info in response.get('content', {}).items():
+                                    if 'example' in content_info.get('schema', {}):
+                                        markdown_content += f"  - Content-Type: `{content_type}`\n"
+                                        markdown_content += "**Example:**\n"
+                                        markdown_content += f"```json\n{json_module.dumps(content_info['schema']['example'], indent=2)}\n```\n"
                         markdown_content += "\n"
 
         # Add schemas section
@@ -419,8 +677,46 @@ class OpenAPIGenerator:
                     for prop_name, prop_def in schema_def['properties'].items():
                         prop_type = prop_def.get('type', 'any')
                         required = prop_name in schema_def.get('required', [])
-                        markdown_content += f"- `{prop_name}` ({prop_type}) {'*' if required else ''}: {prop_def.get('description', '')}\n"
+                        description = prop_def.get('description', '')
+                        if 'example' in prop_def:
+                            description += f" (Example: `{prop_def['example']}`)"
+                        markdown_content += f"- `{prop_name}` ({prop_type}) {'*' if required else ''}: {description}\n"
                     markdown_content += "\n"
+
+                if 'example' in schema_def:
+                    markdown_content += "**Example:**\n"
+                    markdown_content += f"```json\n{json_module.dumps(schema_def['example'], indent=2)}\n```\n\n"
+
+        # Add Spectral rules section
+        markdown_content += """
+## Spectral Rules
+
+The API specification follows these custom Spectral rules:
+
+### Tenant Context Rules
+- All endpoints must require `tenant_id` parameter
+- Tenant context must be enforced for data isolation
+- Cross-tenant access must be explicitly prevented
+
+### Pagination Rules
+- Collection endpoints must support cursor-based pagination
+- Response must include `meta` with pagination information
+- Link headers must be provided for navigation
+- Default and maximum page sizes must be documented
+
+### Error Handling Rules
+- All operations must define appropriate error responses
+- Error responses must follow RFC 7807 format
+- Validation errors must provide field-level details
+- Request IDs must be included in error responses
+
+### Security Rules
+- Authentication methods must be clearly documented
+- Rate limiting headers must be specified
+- Sensitive data must not be exposed in examples
+- CORS configuration must be documented
+
+"""
 
         # Write to file
         output_file = Path(output_path)
@@ -440,52 +736,136 @@ class SDKGenerator:
         self.components = schema.get('components', {})
 
     def generate_python_sdk(self, output_path: str) -> None:
-        """Generate Python client SDK with full type hints and response models."""
-        sdk_content = f'''"""
+        """Generate comprehensive Python client SDK with full type hints and response models."""
+        # Generate models from OpenAPI schema
+        models_content = self._generate_python_models()
+        client_content = self._generate_python_client()
+
+        # Write models file
+        models_file = Path(output_path) / "models.py"
+        models_file.parent.mkdir(parents=True, exist_ok=True)
+        with open(models_file, 'w') as f:
+            f.write(models_content)
+
+        # Write client file
+        client_file = Path(output_path) / "client.py"
+        with open(client_file, 'w') as f:
+            f.write(client_content)
+
+        # Write __init__.py
+        init_content = f'''"""
 {self.info.get('title', 'API')} Python Client SDK
 
 Generated on: {datetime.utcnow().isoformat()}
 
 This SDK provides convenient access to the {self.info.get('title', 'API')} API.
+
+Example usage:
+    from aurum_client import AurumClient
+
+    client = AurumClient(api_key="your-api-key")
+    response = client.list_scenarios(tenant_id="your-tenant")
+"""
+
+from .client import AurumClient
+from .models import *
+
+__version__ = "0.2.0"
+__all__ = ["AurumClient"]
+'''
+        init_file = Path(output_path) / "__init__.py"
+        with open(init_file, 'w') as f:
+            f.write(init_content)
+
+        # Generate smoke tests
+        self._generate_python_smoke_tests(output_path)
+
+    def _generate_python_models(self) -> str:
+        """Generate Python models from OpenAPI schema."""
+        models_content = f'''"""
+{self.info.get('title', 'API')} Python Models
+
+Generated from OpenAPI specification.
 """
 
 from __future__ import annotations
 
-import json
 from datetime import date, datetime
 from typing import Any, Dict, List, Optional, Union
 from dataclasses import dataclass
 from enum import Enum
 
 try:
-    import requests
     from pydantic import BaseModel, Field
 except ImportError as e:
-    raise ImportError("Required dependencies not installed. Install with: pip install requests pydantic") from e
+    raise ImportError("Required dependencies not installed. Install with: pip install pydantic") from e
 
 
-# Type definitions
-class RequestFormat(str, Enum):
-    """Supported request/response formats."""
-    JSON = "json"
-    CSV = "csv"
-
-
-class PaginationMeta(BaseModel):
-    """Pagination metadata."""
+# Base response models
+class Meta(BaseModel):
+    """Base metadata for all responses."""
     request_id: str
-    query_time_ms: int = Field(ge=0)
+    tenant_id: str
+    processing_time_ms: float
+
+
+class ErrorEnvelope(BaseModel):
+    """Standard error response envelope following RFC 7807."""
+    error: str
+    message: str
+    code: Optional[str] = None
+    field: Optional[str] = None
+    value: Optional[Any] = None
+    context: Optional[Dict[str, Any]] = None
+    request_id: str
+    timestamp: datetime
+
+
+class PaginationMeta(Meta):
+    """Pagination metadata for cursor-based pagination."""
+    total_count: Optional[int] = None
+    returned_count: Optional[int] = None
+    has_more: bool
+    cursor: Optional[str] = None
     next_cursor: Optional[str] = None
     prev_cursor: Optional[str] = None
-    count: Optional[int] = None
-    total: Optional[int] = None
-    offset: Optional[int] = None
-    limit: Optional[int] = None
 
 
-# Response models
-@dataclass
-class CurvePoint:
+class Links(BaseModel):
+    """Navigation links for paginated resources."""
+    self: str
+    next: Optional[str] = None
+    prev: Optional[str] = None
+    canonical: Optional[str] = None
+
+
+# Request/Response models
+class ScenarioCreateRequest(BaseModel):
+    """Request model for creating scenarios."""
+    name: str = Field(..., description="Scenario name")
+    description: Optional[str] = Field(None, description="Scenario description")
+    parameters: Dict[str, Any] = Field(..., description="Scenario parameters")
+
+
+class ScenarioResponse(BaseModel):
+    """Response model for scenario data."""
+    id: str
+    name: str
+    description: Optional[str]
+    status: str
+    created_at: datetime
+    updated_at: datetime
+    meta: Meta
+
+
+class ScenarioListResponse(BaseModel):
+    """Response model for listing scenarios."""
+    data: List[ScenarioResponse]
+    meta: PaginationMeta
+    links: Links
+
+
+class CurvePoint(BaseModel):
     """Curve data point."""
     curve_key: str
     tenor_label: str
@@ -498,57 +878,182 @@ class CurvePoint:
     price_type: Optional[str] = None
 
 
-@dataclass
-class CurveResponse:
-    """Curve data response."""
+class CurveResponse(BaseModel):
+    """Response model for curve data."""
+    id: str
+    name: str
+    description: Optional[str]
+    data_points: int
+    created_at: datetime
+    meta: Meta
+
+
+class CurveListResponse(BaseModel):
+    """Response model for listing curves."""
+    data: List[CurveResponse]
     meta: PaginationMeta
-    data: List[CurvePoint]
+    links: Links
 
 
-class APIError(Exception):
+# Error models
+class ValidationErrorDetail(BaseModel):
+    """Detailed validation error information."""
+    field: str
+    message: str
+    value: Optional[Any] = None
+    code: Optional[str] = None
+    constraint: Optional[str] = None
+
+
+class ValidationErrorResponse(BaseModel):
+    """Validation error response."""
+    error: str = "Validation Error"
+    message: str
+    field_errors: List[ValidationErrorDetail]
+    request_id: str
+    timestamp: datetime
+
+
+# Tenant context model
+class TenantContext(BaseModel):
+    """Tenant context information."""
+    tenant_id: str = Field(..., pattern=r"^[a-zA-Z0-9-_]+$")
+    organization: Optional[str] = None
+    permissions: List[str] = []
+
+
+__all__ = [
+    "Meta", "ErrorEnvelope", "PaginationMeta", "Links",
+    "ScenarioCreateRequest", "ScenarioResponse", "ScenarioListResponse",
+    "CurvePoint", "CurveResponse", "CurveListResponse",
+    "ValidationErrorDetail", "ValidationErrorResponse",
+    "TenantContext"
+]
+'''
+
+        return models_content
+
+    def _generate_python_client(self) -> str:
+        """Generate Python client with comprehensive functionality."""
+        client_content = f'''"""
+{self.info.get('title', 'API')} Python Client SDK
+
+Generated on: {datetime.utcnow().isoformat()}
+
+This SDK provides convenient access to the {self.info.get('title', 'API')} API.
+"""
+
+from __future__ import annotations
+
+import json
+from datetime import date, datetime
+from typing import Any, Dict, List, Optional, Union
+from urllib.parse import urlencode, urljoin
+
+try:
+    import requests
+    from pydantic import BaseModel, Field
+except ImportError as e:
+    raise ImportError("Required dependencies not installed. Install with: pip install requests pydantic") from e
+
+from .models import (
+    ScenarioCreateRequest, ScenarioResponse, ScenarioListResponse,
+    CurveResponse, CurveListResponse,
+    ErrorEnvelope, ValidationErrorResponse
+)
+
+
+class AurumAPIError(Exception):
     """Exception raised for API errors."""
-    pass
+    def __init__(self, status_code: int, error: ErrorEnvelope):
+        self.status_code = status_code
+        self.error = error
+        super().__init__(f"API Error {{status_code}}: {{error.message}}")
 
 
-class {self.info.get('title', 'API').replace(' ', '').replace('-', '')}Client:
+class AurumClient:
     """Client for the {self.info.get('title', 'API')} API."""
 
     def __init__(
         self,
         base_url: str = "{self.servers[0]['url'] if self.servers else 'https://api.example.com'}",
         api_key: Optional[str] = None,
-        timeout: int = 30
+        timeout: int = 30,
+        tenant_id: Optional[str] = None
     ):
         self.base_url = base_url.rstrip("/")
         self.api_key = api_key
+        self.tenant_id = tenant_id
         self.timeout = timeout
         self.session = requests.Session()
 
         if api_key:
             self.session.headers.update({{"X-API-Key": api_key}})
 
-    def _make_request(self, method: str, path: str, **kwargs) -> Dict[str, Any]:
+        if tenant_id:
+            self.session.headers.update({{"X-Aurum-Tenant": tenant_id}})
+
+    def _make_request(
+        self,
+        method: str,
+        path: str,
+        params: Optional[Dict[str, Any]] = None,
+        data: Optional[Dict[str, Any]] = None,
+        headers: Optional[Dict[str, str]] = None,
+        **kwargs
+    ) -> Dict[str, Any]:
         """Make an HTTP request to the API."""
-        url = f"{{self.base_url}}{{path}}"
+        url = urljoin(self.base_url, path)
 
         # Set default timeout if not specified
         if 'timeout' not in kwargs:
             kwargs['timeout'] = self.timeout
 
-        response = self.session.request(method, url, **kwargs)
+        # Prepare request parameters
+        request_params = params.copy() if params else {{}}
 
+        # Add tenant_id to all requests if available
+        if self.tenant_id and 'tenant_id' not in request_params:
+            request_params['tenant_id'] = self.tenant_id
+
+        response = self.session.request(
+            method,
+            url,
+            params=request_params,
+            json=data,
+            headers=headers,
+            **kwargs
+        )
+
+        # Handle API errors
         if response.status_code >= 400:
-            error_detail = response.text
             try:
-                error_json = response.json()
-                if 'detail' in error_json:
-                    error_detail = error_json['detail']
-            except:
+                error_data = response.json()
+                if 'error' in error_data:
+                    error = ErrorEnvelope(**error_data)
+                    raise AurumAPIError(response.status_code, error)
+                elif 'field_errors' in error_data:
+                    error = ValidationErrorResponse(**error_data)
+                    raise AurumAPIError(response.status_code, ErrorEnvelope(
+                        error="ValidationError",
+                        message=error.message,
+                        context={{"field_errors": [e.model_dump() for e in error.field_errors]}},
+                        request_id=error.request_id,
+                        timestamp=error.timestamp
+                    ))
+            except json.JSONDecodeError:
                 pass
-            raise APIError(f"API request failed: {{response.status_code}} - {{error_detail}}")
+
+            raise AurumAPIError(response.status_code, ErrorEnvelope(
+                error=f"HTTP{{response.status_code}}",
+                message=response.text[:200],
+                request_id="unknown",
+                timestamp=datetime.utcnow()
+            ))
 
         return response.json()
 
+    # Health endpoints
     def get_health(self) -> Dict[str, Any]:
         """Get API health status."""
         return self._make_request("GET", "/health")
@@ -557,36 +1062,210 @@ class {self.info.get('title', 'API').replace(' ', '').replace('-', '')}Client:
         """Get API readiness status."""
         return self._make_request("GET", "/ready")
 
+    # Scenario endpoints
+    def list_scenarios(
+        self,
+        cursor: Optional[str] = None,
+        limit: int = 10,
+        name_filter: Optional[str] = None,
+        **kwargs
+    ) -> ScenarioListResponse:
+        """List scenarios with pagination."""
+        params = {{
+            "cursor": cursor,
+            "limit": limit,
+            "name_filter": name_filter,
+            **kwargs
+        }}
+        data = self._make_request("GET", "/v2/scenarios", params=params)
+        return ScenarioListResponse(**data)
+
+    def create_scenario(self, scenario: ScenarioCreateRequest) -> ScenarioResponse:
+        """Create a new scenario."""
+        data = self._make_request("POST", "/v2/scenarios", data=scenario.model_dump())
+        return ScenarioResponse(**data)
+
+    def get_scenario(self, scenario_id: str) -> ScenarioResponse:
+        """Get a scenario by ID."""
+        data = self._make_request("GET", f"/v2/scenarios/{{scenario_id}}")
+        return ScenarioResponse(**data)
+
+    # Curve endpoints
+    def list_curves(
+        self,
+        cursor: Optional[str] = None,
+        limit: int = 10,
+        name_filter: Optional[str] = None,
+        **kwargs
+    ) -> CurveListResponse:
+        """List curves with pagination."""
+        params = {{
+            "cursor": cursor,
+            "limit": limit,
+            "name_filter": name_filter,
+            **kwargs
+        }}
+        data = self._make_request("GET", "/v2/curves", params=params)
+        return CurveListResponse(**data)
+
+    def get_curve_diff(
+        self,
+        curve_id: str,
+        from_timestamp: str,
+        to_timestamp: str
+    ) -> CurveResponse:
+        """Get curve diff between timestamps."""
+        params = {{
+            "from_timestamp": from_timestamp,
+            "to_timestamp": to_timestamp
+        }}
+        data = self._make_request("GET", f"/v2/curves/{{curve_id}}/diff", params=params)
+        return CurveResponse(**data)
+
+
+__all__ = ["AurumClient", "AurumAPIError"]
 '''
 
-        # Add methods for each endpoint
-        for path, path_item in self.paths.items():
-            for method, operation in path_item.items():
-                if method.upper() in ['GET', 'POST', 'PUT', 'DELETE', 'PATCH']:
-                    method_name = self._python_method_name(path, method)
-                    sdk_content += f'''
-    def {method_name}(self, **kwargs) -> Dict[str, Any]:
-        """{operation.get('summary', f'{method.upper()} {path}')}"""
-        return self._make_request("{method.upper()}", "{path}", **kwargs)
+        return client_content
+
+    def _generate_python_smoke_tests(self, output_path: str) -> None:
+        """Generate smoke tests for the Python SDK."""
+        test_content = f'''"""
+Smoke tests for {self.info.get('title', 'API')} Python SDK
+
+These tests verify basic functionality without requiring actual API access.
+"""
+
+import pytest
+from unittest.mock import Mock, patch
+from datetime import datetime
+
+try:
+    from .client import AurumClient, AurumAPIError
+    from .models import (
+        ScenarioCreateRequest, ScenarioResponse, ScenarioListResponse,
+        CurveResponse, CurveListResponse, ErrorEnvelope
+    )
+except ImportError:
+    pytest.skip("SDK not generated", allow_module_level=True)
+
+
+class TestAurumClient:
+    """Test cases for AurumClient."""
+
+    @pytest.fixture
+    def client(self):
+        """Create a test client with mocked requests."""
+        with patch('requests.Session') as mock_session:
+            mock_session_instance = Mock()
+            mock_session.return_value = mock_session_instance
+
+            # Mock successful response
+            mock_response = Mock()
+            mock_response.status_code = 200
+            mock_response.json.return_value = {{
+                "data": [],
+                "meta": {{
+                    "request_id": "test-123",
+                    "tenant_id": "test-tenant",
+                    "total_count": 0,
+                    "returned_count": 0,
+                    "has_more": False,
+                    "processing_time_ms": 10.5
+                }},
+                "links": {{
+                    "self": "https://api.example.com/v2/scenarios",
+                    "canonical": "https://api.example.com/v2/scenarios"
+                }}
+            }}
+            mock_session_instance.request.return_value = mock_response
+
+            client = AurumClient(base_url="https://api.example.com")
+            client.session = mock_session_instance
+            yield client
+
+    def test_client_initialization(self):
+        """Test client initialization."""
+        client = AurumClient(api_key="test-key", tenant_id="test-tenant")
+        assert client.api_key == "test-key"
+        assert client.tenant_id == "test-tenant"
+        assert client.base_url == "https://api.example.com"
+
+    def test_list_scenarios(self, client):
+        """Test list_scenarios method."""
+        response = client.list_scenarios(limit=10)
+        assert isinstance(response, ScenarioListResponse)
+        assert response.meta.request_id == "test-123"
+
+    def test_create_scenario(self, client):
+        """Test create_scenario method."""
+        scenario_req = ScenarioCreateRequest(
+            name="test-scenario",
+            description="Test scenario",
+            parameters={{}}
+        )
+
+        response = client.create_scenario(scenario_req)
+        assert isinstance(response, ScenarioResponse)
+        assert response.meta.request_id == "test-123"
+
+    def test_list_curves(self, client):
+        """Test list_curves method."""
+        response = client.list_curves(limit=5)
+        assert isinstance(response, CurveListResponse)
+        assert response.meta.request_id == "test-123"
+
+    def test_error_handling(self, client):
+        """Test error handling."""
+        # Mock error response
+        error_response = Mock()
+        error_response.status_code = 400
+        error_response.json.return_value = {{
+            "error": "ValidationError",
+            "message": "Invalid request",
+            "request_id": "test-123",
+            "timestamp": datetime.utcnow().isoformat()
+        }}
+        client.session.request.return_value = error_response
+
+        with pytest.raises(AurumAPIError) as exc_info:
+            client.list_scenarios()
+
+        assert exc_info.value.status_code == 400
+        assert exc_info.value.error.error == "ValidationError"
+
+
+class TestModels:
+    """Test cases for data models."""
+
+    def test_scenario_create_request(self):
+        """Test ScenarioCreateRequest model."""
+        request = ScenarioCreateRequest(
+            name="test-scenario",
+            description="Test description",
+            parameters={{"key": "value"}}
+        )
+        assert request.name == "test-scenario"
+        assert request.description == "Test description"
+
+    def test_error_envelope(self):
+        """Test ErrorEnvelope model."""
+        error = ErrorEnvelope(
+            error="TestError",
+            message="Test message",
+            request_id="test-123",
+            timestamp=datetime.utcnow()
+        )
+        assert error.error == "TestError"
+        assert error.message == "Test message"
+
+
+if __name__ == "__main__":
+    pytest.main([__file__, "-v"])
 '''
-
-        sdk_content += '''
-class APIError(Exception):
-    """Exception raised for API errors."""
-    pass
-
-
-# Convenience function
-def create_client(api_key: Optional[str] = None) -> {self.info.get('title', 'API').replace(' ', '').replace('-', '')}Client:
-    """Create a new API client instance."""
-    return {self.info.get('title', 'API').replace(' ', '').replace('-', '')}Client(api_key=api_key)
-'''
-
-        # Write to file
-        output_file = Path(output_path) / "client.py"
-        output_file.parent.mkdir(parents=True, exist_ok=True)
-        with open(output_file, 'w') as f:
-            f.write(sdk_content)
+        test_file = Path(output_path) / "test_smoke.py"
+        with open(test_file, 'w') as f:
+            f.write(test_content)
 
     def generate_typescript_sdk(self, output_path: str) -> None:
         """Generate TypeScript client SDK with comprehensive type definitions."""

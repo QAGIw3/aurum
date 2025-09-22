@@ -124,8 +124,14 @@ async def list_scenarios_v2(
             }
         )
 
-        # Add ETag for caching
-        return respond_with_etag(result, request, response)
+        # Add ETag for caching with Link headers
+        return respond_with_etag(
+            result,
+            request,
+            response,
+            next_cursor=next_cursor,
+            canonical_url=str(request.url)
+        )
 
     except HTTPException:
         raise
@@ -173,8 +179,14 @@ async def create_scenario_v2(
             }
         )
 
-        # Add ETag for caching
-        return respond_with_etag(result, request, response)
+        # Add ETag for caching with Link headers
+        return respond_with_etag(
+            result,
+            request,
+            response,
+            next_cursor=next_cursor,
+            canonical_url=str(request.url)
+        )
 
     except HTTPException:
         raise
@@ -222,8 +234,14 @@ async def get_scenario_v2(
             }
         )
 
-        # Add ETag for caching
-        return respond_with_etag(result, request, response)
+        # Add ETag for caching with Link headers
+        return respond_with_etag(
+            result,
+            request,
+            response,
+            next_cursor=next_cursor,
+            canonical_url=str(request.url)
+        )
 
     except HTTPException:
         raise
@@ -273,8 +291,14 @@ async def create_scenario_run_v2(
             }
         )
 
-        # Add ETag for caching
-        return respond_with_etag(result, request, response)
+        # Add ETag for caching with Link headers
+        return respond_with_etag(
+            result,
+            request,
+            response,
+            next_cursor=next_cursor,
+            canonical_url=str(request.url)
+        )
 
     except HTTPException:
         raise
@@ -371,8 +395,14 @@ async def list_scenario_runs_v2(
             }
         )
 
-        # Add ETag for caching
-        return respond_with_etag(result, request, response)
+        # Add ETag for caching with Link headers
+        return respond_with_etag(
+            result,
+            request,
+            response,
+            next_cursor=next_cursor,
+            canonical_url=str(request.url)
+        )
 
     except HTTPException:
         raise

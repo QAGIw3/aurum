@@ -1,0 +1,109 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+namespace: preview
+
+commonLabels:
+  app.kubernetes.io/instance: aurum-preview
+  app.kubernetes.io/name: aurum-preview
+  app.kubernetes.io/component: preview-environment
+
+resources:
+  - ../base/namespace.yaml
+  - ../base/postgres.yaml
+  - ../base/redis.yaml
+  - ../base/kafka.yaml
+  - ../base/trino.yaml
+  - ../base/lakefs.yaml
+  - ../base/minio.yaml
+  - ../base/clickhouse.yaml
+  - ../base/timescale.yaml
+  - ../base/jaeger.yaml
+  - ../base/prometheus-rules.yaml
+  - ../base/vector.yaml
+  - ../base/otel-collector.yaml
+  - ../base/vault.yaml
+  - ../base/vault-bootstrap.yaml
+  - ../base/vault-agent-injector.yaml
+  - ../base/vault-agent-sidecar.yaml
+  - ../base/vault-secrets-lifecycle.hcl
+  - ../base/vault-policy-external-data.hcl
+  - ../base/secret-env.yaml
+  - ../base/configmap-env.yaml
+  - ../base/postgres-init-configmap.yaml
+  - ../base/trino-configmap.yaml
+  - ../base/trino-catalog-configmap.yaml
+  - ../base/timescale-init-configmap.yaml
+  - ../base/clickhouse-init-configmap.yaml
+  - ../base/schema-registry.yaml
+  - ../base/schema-registry-runner-configmap.yaml
+  - ../base/keda.yaml
+  - preview-configmap.yaml
+  - preview-secret.yaml
+  - preview-ingress.yaml
+
+images:
+  - name: ghcr.io/aurum/aurum-api
+    newTag: preview
+  - name: ghcr.io/aurum/aurum-worker
+    newTag: preview
+
+configMapGenerator:
+  - name: preview-config
+    literals:
+      - PREVIEW_MODE=true
+      - DEBUG_MODE=true
+      - LOG_LEVEL=DEBUG
+
+secretGenerator:
+  - name: preview-secrets
+    literals:
+      - preview-secret-key=changeme-for-preview
+
+patchesStrategicMerge:
+  - preview-patches.yaml
+
+# Resource limits for preview environment
+patchesJson6902:
+  - target:
+      version: v1
+      kind: Deployment
+      name: aurum-api
+    patch: |-
+      - op: replace
+        path: /spec/template/spec/containers/0/resources
+        value:
+          requests:
+            cpu: 100m
+            memory: 256Mi
+          limits:
+            cpu: 500m
+            memory: 512Mi
+  - target:
+      version: v1
+      kind: Deployment
+      name: aurum-worker
+    patch: |-
+      - op: replace
+        path: /spec/template/spec/containers/0/resources
+        value:
+          requests:
+            cpu: 50m
+            memory: 128Mi
+          limits:
+            cpu: 200m
+            memory: 256Mi
+
+replicas:
+  - name: aurum-api
+    count: 1
+  - name: aurum-worker
+    count: 1
+  - name: postgres
+    count: 1
+  - name: redis
+    count: 1
+  - name: kafka
+    count: 1
+  - name: trino
+    count: 1

@@ -16,7 +16,8 @@ from ..collect import (
 )
 
 DEFAULT_BASE_URL = "https://www.ncdc.noaa.gov/cdo-web/api/v2"
-DEFAULT_CONFIG_PATH = Path(__file__).resolve().parents[3] / "config" / "noaa_ingest_datasets.json"
+PROJECT_ROOT = Path(__file__).resolve().parents[4]
+DEFAULT_CONFIG_PATH = PROJECT_ROOT / "config" / "noaa_ingest_datasets.json"
 
 
 def _clean(value: Any) -> Optional[str]:

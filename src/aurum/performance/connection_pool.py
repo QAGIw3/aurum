@@ -111,8 +111,13 @@ class ConnectionPool(ABC, Generic[T]):
                 # Check if connection is still healthy
                 if await self._is_connection_healthy(conn):
                     try:
-                        self._pool.put_nowait(conn)
-                        span.set_attribute("pool.result", "returned")
+                        if self._pool.qsize() >= self.max_idle:
+                            await self._destroy_connection(conn)
+                            self._metrics.connections_destroyed += 1
+                            span.set_attribute("pool.result", "idle_trim")
+                        else:
+                            self._pool.put_nowait(conn)
+                            span.set_attribute("pool.result", "returned")
                     except asyncio.QueueFull:
                         # Pool is full, destroy the connection
                         await self._destroy_connection(conn)

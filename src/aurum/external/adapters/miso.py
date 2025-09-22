@@ -2,16 +2,25 @@
 
 Implements headers per product subscriptions (via env-provided headers) and
 JSON paging if present. Datasets use Avro subjects declared in contracts.yml.
+
+Enhanced with circuit breaker patterns, exponential backoff, and comprehensive error handling.
 """
 from __future__ import annotations
 
+import asyncio
+import logging
 import os
-from dataclasses import dataclass
+import time
+from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Any, Mapping, Optional, Sequence, Tuple, List
 
 from .base import IsoAdapter, IsoAdapterConfig, IsoRequestChunk
 from ..collect import HttpRequest
+from ...common.circuit_breaker import CircuitBreaker
+from ...observability.metrics import get_metrics_client
+
+logger = logging.getLogger(__name__)
 
 
 DEFAULT_BASE = os.getenv("AURUM_MISO_RTDB_BASE", "https://api.misoenergy.org")
@@ -36,10 +45,20 @@ class MisoConfig:
     endpoint: str = DEFAULT_ENDPOINT
     region: str = os.getenv("AURUM_MISO_RTDB_REGION", "ALL")
     market: str = os.getenv("AURUM_MISO_RTDB_MARKET", "RTM")
+    max_retries: int = int(os.getenv("AURUM_MISO_MAX_RETRIES", "5"))
+    base_backoff_seconds: float = float(os.getenv("AURUM_MISO_BASE_BACKOFF", "2.0"))
+    max_backoff_seconds: float = float(os.getenv("AURUM_MISO_MAX_BACKOFF", "120.0"))
+    circuit_breaker_threshold: int = int(os.getenv("AURUM_MISO_CB_THRESHOLD", "5"))
+    circuit_breaker_timeout: int = int(os.getenv("AURUM_MISO_CB_TIMEOUT", "300"))
+    timeout_seconds: int = int(os.getenv("AURUM_MISO_TIMEOUT", "45"))
+    max_page_size: int = int(os.getenv("AURUM_MISO_MAX_PAGE_SIZE", "10000"))
 
 
 class MisoAdapter(IsoAdapter):
-    """Adapter for MISO RT Data Broker LMP/Load/Genmix, JSON responses only."""
+    """Adapter for MISO RT Data Broker LMP/Load/Genmix, JSON responses only.
+
+    Enhanced with circuit breaker patterns, exponential backoff, and comprehensive error handling.
+    """
 
     def __init__(self, *, series_id: str, kafka_topic: str, schema_registry_url: Optional[str] = None) -> None:
         headers = _parse_kv_headers(DEFAULT_HEADERS)
@@ -53,29 +72,234 @@ class MisoAdapter(IsoAdapter):
         super().__init__(config, series_id=series_id)
         self._miso = MisoConfig()
 
+        # Enhanced resilience features
+        self.circuit_breaker = CircuitBreaker(
+            failure_threshold=self._miso.circuit_breaker_threshold,
+            recovery_timeout=self._miso.circuit_breaker_timeout
+        )
+        self.metrics = get_metrics_client()
+
+        # Performance tracking
+        self._request_count = 0
+        self._error_count = 0
+        self._last_request_time = 0.0
+        self._total_records_processed = 0
+
     def build_request(self, chunk: IsoRequestChunk) -> HttpRequest:
+        """Build request with enhanced error handling and validation."""
         params = {
             "marketType": self._miso.market,
             "region": self._miso.region,
             "startDateTime": chunk.start.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
             "endDateTime": chunk.end.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
         }
+
         if chunk.cursor:
             params["next"] = chunk.cursor
-        return HttpRequest(method="GET", path=self._miso.endpoint, params=params)
+
+        # Validate request parameters
+        self._validate_request_params(params)
+
+        return HttpRequest(
+            method="GET",
+            path=self._miso.endpoint,
+            params=params,
+            timeout=self._miso.timeout_seconds
+        )
 
     def parse_page(self, payload: Mapping[str, Any]) -> Tuple[List[Mapping[str, Any]], Optional[str]]:
-        # MISO RT DB tables place data under response.data; support both {items:[], next:...} and simple list
-        if not payload:
-            return ([], None)
-        data = payload.get("items") or payload.get("data") or []
-        next_cursor = payload.get("next")
-        out: List[Mapping[str, Any]] = []
-        for item in data:
-            # Normalize to iso.lmp/load/genmix envelopes where possible
-            rec: dict[str, Any] = dict(item)
-            # Ensure ingest_ts and basic required fields exist
-            rec.setdefault("ingest_ts", int(datetime.now(tz=timezone.utc).timestamp() * 1_000_000))
-            out.append(rec)
-        return (out, next_cursor)
+        """Parse response with enhanced error handling and data validation."""
+        try:
+            if not payload:
+                return ([], None)
+
+            data = payload.get("items") or payload.get("data") or []
+
+            if not isinstance(data, list):
+                logger.warning("Expected list of items in response, got: %s", type(data))
+                return ([], None)
+
+            next_cursor = payload.get("next")
+            out: List[Mapping[str, Any]] = []
+
+            for i, item in enumerate(data):
+                try:
+                    # Normalize to standard format
+                    rec: dict[str, Any] = dict(item)
+
+                    # Ensure required fields exist
+                    rec.setdefault("ingest_ts", int(datetime.now(tz=timezone.utc).timestamp() * 1_000_000))
+
+                    # Validate record structure
+                    if self._validate_record(rec):
+                        out.append(rec)
+                        self._total_records_processed += 1
+                    else:
+                        logger.warning("Invalid record at index %d: %s", i, rec)
+                        self.metrics.increment_counter("miso.record_validation_errors")
+
+                except Exception as e:
+                    logger.error("Error processing record at index %d: %s", i, e)
+                    self.metrics.increment_counter("miso.record_processing_errors")
+
+            # Check for reasonable page size limits
+            if len(out) > self._miso.max_page_size:
+                logger.warning("Page size %d exceeds limit %d", len(out), self._miso.max_page_size)
+
+            return (out, next_cursor)
+
+        except Exception as e:
+            logger.error("Error parsing response: %s", e)
+            self.metrics.increment_counter("miso.response_parse_errors")
+            raise
+
+    def _validate_request_params(self, params: dict) -> None:
+        """Validate request parameters."""
+        start_time = params.get("startDateTime")
+        end_time = params.get("endDateTime")
+        market_type = params.get("marketType")
+
+        if not all([start_time, end_time, market_type]):
+            raise ValueError("Missing required parameters: startDateTime, endDateTime, or marketType")
+
+        # Basic format validation
+        try:
+            datetime.fromisoformat(start_time.replace('Z', '+00:00'))
+            datetime.fromisoformat(end_time.replace('Z', '+00:00'))
+        except ValueError as e:
+            raise ValueError(f"Invalid datetime format in request: {e}")
+
+        # Validate market type
+        valid_markets = ["RTM", "DAM", "RTPD"]
+        if market_type not in valid_markets:
+            raise ValueError(f"Invalid market type: {market_type}. Must be one of {valid_markets}")
+
+    def _validate_record(self, record: dict) -> bool:
+        """Validate individual record structure."""
+        # Basic validation - can be extended based on data type
+        required_fields = ["timestamp", "value"]
+
+        for field in required_fields:
+            if field not in record:
+                logger.warning("Missing required field '%s' in record", field)
+                return False
+
+        # Type validation
+        if not isinstance(record.get("timestamp"), str):
+            logger.warning("Invalid timestamp type in record")
+            return False
+
+        if not isinstance(record.get("value"), (int, float)):
+            logger.warning("Invalid value type in record")
+            return False
+
+        return True
+
+    async def make_resilient_request(self, request: HttpRequest) -> dict:
+        """Make HTTP request with enhanced resilience patterns."""
+        if self.circuit_breaker and self.circuit_breaker.is_open():
+            logger.warning("Circuit breaker is open, rejecting request")
+            self.metrics.increment_counter("miso.circuit_breaker_rejections")
+            raise RuntimeError("Circuit breaker is open")
+
+        self._request_count += 1
+        current_time = time.time()
+
+        # Rate limiting - MISO has stricter limits
+        time_since_last = current_time - self._last_request_time
+        min_interval = 2.0  # Minimum 2 seconds between requests for MISO
+        if time_since_last < min_interval:
+            await asyncio.sleep(min_interval - time_since_last)
+
+        self._last_request_time = time.time()
+
+        try:
+            # Make request with retries
+            response = await self._retry_with_backoff(request)
+
+            # Record success
+            if self.circuit_breaker:
+                self.circuit_breaker.record_success()
+            self.metrics.increment_counter("miso.requests_success")
+
+            return response.json() if response.content else {}
+
+        except Exception as e:
+            # Record failure
+            self._error_count += 1
+            if self.circuit_breaker:
+                self.circuit_breaker.record_failure()
+            self.metrics.increment_counter("miso.requests_failed")
+            logger.error("Request failed after retries: %s", e)
+            raise
+
+    async def _retry_with_backoff(self, request: HttpRequest) -> Any:
+        """Execute request with exponential backoff retry logic."""
+        last_exception = None
+
+        for attempt in range(self._miso.max_retries + 1):
+            try:
+                # Create fresh HTTP request for each attempt
+                http_request = HttpRequest(
+                    method=request.method,
+                    path=request.path,
+                    params=request.params,
+                    timeout=self._miso.timeout_seconds
+                )
+
+                response = self.collector.request(http_request)
+
+                # Check for HTTP errors
+                if response.status >= 400:
+                    error_content = response.content.decode('utf-8', errors='ignore') if response.content else 'No content'
+                    raise RuntimeError(f"HTTP {response.status}: {error_content}")
+
+                return response
+
+            except Exception as e:
+                last_exception = e
+                if attempt == self._miso.max_retries:
+                    break
+
+                # Calculate backoff time with longer delays for MISO
+                backoff_time = min(
+                    self._miso.base_backoff_seconds * (2 ** attempt),
+                    self._miso.max_backoff_seconds
+                )
+
+                # Add jitter
+                jitter = backoff_time * 0.1 * (0.5 - (hash(str(request.path)) % 100) / 100.0)
+                backoff_time += jitter
+
+                logger.warning(
+                    "Request attempt %d failed, retrying in %.2f seconds: %s",
+                    attempt + 1, backoff_time, e
+                )
+
+                await asyncio.sleep(backoff_time)
+
+        # All retries failed
+        raise last_exception or RuntimeError("All retry attempts failed")
+
+    def get_health_status(self) -> dict:
+        """Get health status of the adapter."""
+        circuit_breaker_status = "closed" if not self.circuit_breaker or not self.circuit_breaker.is_open() else "open"
+
+        return {
+            "adapter": "miso",
+            "circuit_breaker_status": circuit_breaker_status,
+            "total_requests": self._request_count,
+            "error_count": self._error_count,
+            "error_rate": self._error_count / max(self._request_count, 1),
+            "total_records_processed": self._total_records_processed,
+            "last_request_time": self._last_request_time,
+            "config": {
+                "endpoint": self._miso.endpoint,
+                "region": self._miso.region,
+                "market": self._miso.market,
+                "max_retries": self._miso.max_retries,
+                "circuit_breaker_threshold": self._miso.circuit_breaker_threshold,
+                "circuit_breaker_timeout": self._miso.circuit_breaker_timeout
+            }
+        }
 

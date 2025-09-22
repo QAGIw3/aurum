@@ -157,3 +157,37 @@ expectations:
     kwargs:
       column: series_id
     table: mart_cpi_series_latest
+
+  - expectation_type: expect_column_values_to_not_be_null
+    kwargs:
+      column: provider
+    table: mart_external_series_catalog
+  - expectation_type: expect_column_values_to_not_be_null
+    kwargs:
+      column: series_id
+    table: mart_external_series_catalog
+  - expectation_type: expect_multicolumn_values_to_be_unique
+    kwargs:
+      column_list:
+        - provider
+        - series_id
+    table: mart_external_series_catalog
+
+  - expectation_type: expect_column_values_to_not_be_null
+    kwargs:
+      column: external_provider
+    table: mart_series_curve_mapping
+  - expectation_type: expect_column_values_to_not_be_null
+    kwargs:
+      column: external_series_id
+    table: mart_series_curve_mapping
+  - expectation_type: expect_column_values_to_not_be_null
+    kwargs:
+      column: curve_key
+    table: mart_series_curve_mapping
+  - expectation_type: expect_column_values_to_be_between
+    kwargs:
+      column: mapping_confidence
+      min_value: 0
+      max_value: 1
+    table: mart_series_curve_mapping

@@ -1,0 +1,187 @@
+api:
+  name: "Aurum API v2"
+  version: "0.2.0"
+
+  # Base URL for testing
+  base_url: "http://localhost:8000"
+
+  # Authentication settings
+  auth:
+    - name: "API Key"
+      type: "header"
+      header: "X-API-Key"
+      value: "test-key"
+    - name: "Tenant Context"
+      type: "query"
+      parameter: "tenant_id"
+      value: "test-tenant"
+
+  # Performance SLOs
+  performance:
+    # Response time SLOs
+    response_time:
+      p50: 200ms    # 50th percentile <= 200ms
+      p95: 500ms    # 95th percentile <= 500ms
+      p99: 1000ms   # 99th percentile <= 1000ms
+
+    # Throughput SLOs
+    throughput:
+      requests_per_second: 1000
+      concurrent_users: 100
+
+    # Availability SLOs
+    availability:
+      uptime_percentage: 99.9
+      error_rate_percentage: 0.1
+
+  # Load testing configuration
+  load_testing:
+    # Ramp-up configuration
+    ramp_up:
+      duration: 60s
+      users_per_second: 10
+
+    # Steady state
+    steady_state:
+      duration: 300s
+      users: 50
+
+    # Ramp-down
+    ramp_down:
+      duration: 30s
+
+  # Performance profiles
+  profiles:
+    - name: "smoke"
+      description: "Basic smoke test with minimal load"
+      requests: 100
+      concurrency: 5
+
+    - name: "load"
+      description: "Standard load test"
+      requests: 1000
+      concurrency: 25
+
+    - name: "stress"
+      description: "Stress test to find breaking point"
+      requests: 10000
+      concurrency: 100
+
+  # Endpoint-specific configurations
+  endpoints:
+    # Health endpoints - should be very fast
+    "/health":
+      performance:
+        response_time:
+          p95: 50ms
+      load_testing:
+        requests: 500
+
+    "/ready":
+      performance:
+        response_time:
+          p95: 100ms
+      load_testing:
+        requests: 500
+
+    # Data endpoints
+    "/v2/scenarios":
+      performance:
+        response_time:
+          p95: 300ms
+      load_testing:
+        requests: 1000
+
+    "/v2/curves":
+      performance:
+        response_time:
+          p95: 500ms
+      load_testing:
+        requests: 1000
+
+    # Admin endpoints
+    "/v2/admin/*":
+      auth:
+        - name: "Admin API Key"
+          type: "header"
+          header: "X-API-Key"
+          value: "admin-key"
+      performance:
+        response_time:
+          p95: 200ms
+      load_testing:
+        requests: 200
+
+  # Failure scenarios
+  failure_scenarios:
+    - name: "rate_limit_exceeded"
+      description: "Test rate limiting behavior"
+      endpoint: "/v2/scenarios"
+      method: "GET"
+      expected_status: 429
+      headers:
+        X-RateLimit-Limit: "10"
+        X-RateLimit-Remaining: "0"
+        Retry-After: "60"
+
+    - name: "server_error"
+      description: "Test 5xx error handling"
+      endpoint: "/v2/scenarios"
+      method: "GET"
+      expected_status: 500
+      probability: 0.01  # 1% of requests
+
+  # Data generation
+  data_generation:
+    scenarios:
+      count: 1000
+      names:
+        - "energy-price-analysis"
+        - "market-volatility-study"
+        - "risk-assessment-model"
+        - "portfolio-optimization"
+        - "trend-forecasting"
+
+    curves:
+      count: 500
+      names:
+        - "electricity-forward-curve"
+        - "natural-gas-curve"
+        - "carbon-emissions-curve"
+        - "renewable-energy-curve"
+
+  # Reporting
+  reporting:
+    output_format: "json"
+    include_metrics:
+      - "response_time"
+      - "throughput"
+      - "error_rate"
+      - "availability"
+      - "resource_usage"
+
+    charts:
+      - "response_time_distribution"
+      - "throughput_over_time"
+      - "error_rate_trend"
+      - "resource_utilization"
+
+  # Hooks
+  hooks:
+    before_test: "scripts/performance/setup.py"
+    after_test: "scripts/performance/teardown.py"
+    on_failure: "scripts/performance/handle_failure.py"
+
+  # Custom checks
+  checks:
+    - name: "tenant_context_validation"
+      description: "Ensure tenant_id is required and validated"
+      check_function: "checks.tenant_context_check"
+
+    - name: "pagination_completeness"
+      description: "Verify pagination metadata and Link headers"
+      check_function: "checks.pagination_check"
+
+    - name: "error_format_validation"
+      description: "Ensure errors follow RFC 7807"
+      check_function: "checks.error_format_check"

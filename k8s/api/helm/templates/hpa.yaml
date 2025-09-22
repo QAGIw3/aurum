@@ -1,8 +1,77 @@
 {{- if .Values.autoscaling.enabled }}
+apiVersion: keda.sh/v1alpha1
+kind: ScaledObject
+metadata:
+  name: {{ include "aurum-api.fullname" . }}-keda
+  labels:
+    {{- include "aurum-api.labels" . | nindent 4 }}
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: {{ include "aurum-api.fullname" . }}
+  minReplicaCount: {{ .Values.autoscaling.minReplicas }}
+  maxReplicaCount: {{ .Values.autoscaling.maxReplicas }}
+  cooldownPeriod: 300  # 5 minutes cooldown
+  pollingInterval: 30   # Check every 30 seconds
+  triggers:
+    # Scale based on Kafka queue depth
+    - type: kafka
+      metadata:
+        topic: aurum-api-requests
+        bootstrapServers: kafka.aurum-dev.svc.cluster.local:9092
+        consumerGroup: aurum-api-scalers
+        lagThreshold: "10"  # Scale up if lag > 10 messages
+        offsetResetPolicy: latest
+        allowIdleConsumers: "false"
+      authenticationRef:
+        name: kafka-auth
+
+    # Scale based on HTTP request rate
+    - type: prometheus
+      metadata:
+        serverAddress: http://prometheus.aurum-dev.svc.cluster.local:9090
+        metricName: aurum_api_requests_total
+        query: |
+          sum(rate(aurum_api_requests_total[5m]))
+        threshold: "100"  # Scale up if RPS > 100
+        activationThreshold: "50"  # Scale down if RPS < 50
+
+    # Scale based on error rate
+    - type: prometheus
+      metadata:
+        serverAddress: http://prometheus.aurum-dev.svc.cluster.local:9090
+        metricName: aurum_api_error_rate
+        query: |
+          sum(rate(aurum_api_requests_total{status=~"5.."}[5m])) / sum(rate(aurum_api_requests_total[5m]))
+        threshold: "0.05"  # Scale down if error rate < 5%
+
+    # Scale based on CPU utilization (fallback)
+    - type: cpu
+      metricType: Utilization
+      metadata:
+        value: "{{ .Values.autoscaling.targetCPUUtilizationPercentage }}"
+
+    # Scale based on memory utilization (fallback)
+    - type: memory
+      metricType: Utilization
+      metadata:
+        value: "{{ .Values.autoscaling.targetMemoryUtilizationPercentage }}"
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: kafka-auth
+  namespace: {{ .Release.Namespace }}
+type: Opaque
+data:
+  sasl: "disabled"  # In production, use proper SASL authentication
+  tls: "disabled"
+---
 apiVersion: autoscaling/v2
 kind: HorizontalPodAutoscaler
 metadata:
-  name: {{ include "aurum-api.fullname" . }}
+  name: {{ include "aurum-api.fullname" . }}-fallback
   labels:
     {{- include "aurum-api.labels" . | nindent 4 }}
 spec:
@@ -13,20 +82,16 @@ spec:
   minReplicas: {{ .Values.autoscaling.minReplicas }}
   maxReplicas: {{ .Values.autoscaling.maxReplicas }}
   metrics:
-    {{- if .Values.autoscaling.targetCPUUtilizationPercentage }}
     - type: Resource
       resource:
         name: cpu
         target:
           type: Utilization
           averageUtilization: {{ .Values.autoscaling.targetCPUUtilizationPercentage }}
-    {{- end }}
-    {{- if .Values.autoscaling.targetMemoryUtilizationPercentage }}
     - type: Resource
       resource:
         name: memory
         target:
           type: Utilization
           averageUtilization: {{ .Values.autoscaling.targetMemoryUtilizationPercentage }}
-    {{- end }}
 {{- end }}

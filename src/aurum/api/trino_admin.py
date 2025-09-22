@@ -39,6 +39,7 @@ async def trino_health() -> dict:
 async def trino_pool_status() -> dict:
     """Expose basic connection pool metrics for Trino client."""
     try:
+        settings = get_settings()
         client = get_trino_client()
         pool = client.connection_pool
         return {
@@ -48,8 +49,8 @@ async def trino_pool_status() -> dict:
                 "idle_timeout_seconds": pool.idle_timeout_seconds,
                 "wait_timeout_seconds": pool.wait_timeout_seconds,
                 "queue_size": pool._pool.qsize(),
-            }
+            },
+            "config": settings.api.concurrency.model_dump(),
         }
     except Exception as exc:
         raise HTTPException(status_code=503, detail={"error": str(exc)})
-

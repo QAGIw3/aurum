@@ -271,7 +271,7 @@ def _execute_trino_query(
     params: Optional[Dict[str, Any]] = None,
 ) -> List[Dict[str, Any]]:
     client = get_trino_client(trino_cfg)
-    return asyncio.run(client.execute_query(query, params=params))
+    return asyncio.run(client.execute_query(query, params=params, use_cache=True))
 
 
 def _build_sql(
@@ -2477,7 +2477,7 @@ async def fetch_iso_locations(
 
     query += " ORDER BY iso_code, market_code, location_code"
 
-    rows = await trino_client.execute_query(query, params)
+    rows = await trino_client.execute_query(query, params, use_cache=True)
 
     return [
         {
@@ -2512,7 +2512,7 @@ async def fetch_units_canonical() -> List[Dict]:
         ORDER BY unit_category, unit_code
     """
 
-    rows = await trino_client.execute_query(query)
+    rows = await trino_client.execute_query(query, use_cache=True)
 
     return [
         {
@@ -2551,7 +2551,7 @@ async def fetch_units_mapping(prefix: Optional[str] = None) -> List[Dict]:
 
     query += " ORDER BY raw_unit"
 
-    rows = await trino_client.execute_query(query, params)
+    rows = await trino_client.execute_query(query, params, use_cache=True)
 
     return [
         {
@@ -2585,7 +2585,7 @@ async def fetch_calendars() -> List[Dict]:
         ORDER BY calendar_name
     """
 
-    rows = await trino_client.execute_query(query)
+    rows = await trino_client.execute_query(query, use_cache=True)
 
     return [
         {
@@ -2622,7 +2622,7 @@ async def fetch_calendar_blocks(name: str) -> List[Dict]:
         ORDER BY block_name
     """
 
-    rows = await trino_client.execute_query(query, {"calendar_name": name})
+    rows = await trino_client.execute_query(query, {"calendar_name": name}, use_cache=True)
 
     return [
         {
@@ -2676,7 +2676,7 @@ async def fetch_calendar_hours(
 
     query += " ORDER BY hour_date, hour_start"
 
-    rows = await trino_client.execute_query(query, params)
+    rows = await trino_client.execute_query(query, params, use_cache=True)
 
     return [
         {

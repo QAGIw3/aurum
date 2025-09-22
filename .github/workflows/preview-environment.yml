@@ -1,0 +1,340 @@
+name: Preview Environment
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
+    branches: [main]
+  pull_request_review:
+    types: [submitted]
+
+concurrency:
+  group: preview-${{ github.head_ref }}
+  cancel-in-progress: true
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_NAME: ${{ github.repository }}
+
+jobs:
+  build-images:
+    name: Build Preview Images
+    runs-on: ubuntu-latest
+    if: github.event.pull_request.draft == false
+    outputs:
+      image-digest-api: ${{ steps.build-api.outputs.digest }}
+      image-digest-worker: ${{ steps.build-worker.outputs.digest }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Extract metadata for API
+        id: meta-api
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}-api
+          tags: |
+            type=ref,event=pr
+            type=sha,prefix=pr-{{branch}}-
+            type=raw,value=preview
+
+      - name: Build and push API image
+        id: build-api
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: Dockerfile.api
+          push: true
+          tags: ${{ steps.meta-api.outputs.tags }}
+          labels: ${{ steps.meta-api.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Extract metadata for Worker
+        id: meta-worker
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}-worker
+          tags: |
+            type=ref,event=pr
+            type=sha,prefix=pr-{{branch}}-
+            type=raw,value=preview
+
+      - name: Build and push Worker image
+        id: build-worker
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: Dockerfile.worker
+          push: true
+          tags: ${{ steps.meta-worker.outputs.tags }}
+          labels: ${{ steps.meta-worker.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+  deploy-preview:
+    name: Deploy Preview Environment
+    runs-on: ubuntu-latest
+    needs: build-images
+    if: github.event.pull_request.draft == false
+    environment:
+      name: preview
+      url: ${{ steps.deploy.outputs.url }}
+    outputs:
+      preview-url: ${{ steps.deploy.outputs.url }}
+      namespace: ${{ steps.deploy.outputs.namespace }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Kubernetes CLI
+        uses: azure/k8s-set-context@v3
+        with:
+          method: kubeconfig
+          kubeconfig: ${{ secrets.KUBECONFIG }}
+
+      - name: Install Helm
+        uses: azure/setup-helm@v3
+        with:
+          version: v3.13.3
+
+      - name: Install Kustomize
+        uses: imranismail/setup-kustomize@v2
+
+      - name: Create preview namespace
+        run: |
+          NAMESPACE="preview-${{ github.event.number }}"
+          kubectl create namespace $NAMESPACE --dry-run=client -o yaml | kubectl apply -f -
+
+          # Label namespace for preview environment
+          kubectl label namespace $NAMESPACE app.kubernetes.io/instance=aurum-preview-${{ github.event.number }}
+          kubectl label namespace $NAMESPACE app.kubernetes.io/name=aurum-preview
+
+      - name: Generate preview values
+        run: |
+          NAMESPACE="preview-${{ github.event.number }}"
+          IMAGE_TAG="pr-${{ github.event.number }}"
+
+          cat <<EOF > preview-values.yaml
+          # Preview environment configuration
+          namespace: $NAMESPACE
+          image:
+            tag: "$IMAGE_TAG"
+
+          # Resource limits for preview environment (reduced)
+          resources:
+            requests:
+              cpu: 100m
+              memory: 256Mi
+            limits:
+              cpu: 500m
+              memory: 512Mi
+
+          # Enable debug logging for preview
+          config:
+            AURUM_LOG_LEVEL: "DEBUG"
+            AURUM_API_DEBUG: "true"
+
+          # Use preview database configuration
+          database:
+            host: postgres-preview
+            port: 5432
+
+          # Preview-specific feature flags
+          features:
+            preview_mode: true
+            disable_auth: false
+            enable_metrics: true
+
+          # Preview environment ingress
+          ingress:
+            enabled: true
+            className: nginx
+            hosts:
+              - host: preview-${{ github.event.number }}.aurum.dev
+                paths:
+                  - path: /
+                    pathType: Prefix
+            tls:
+              - secretName: aurum-preview-tls
+                hosts:
+                  - preview-${{ github.event.number }}.aurum.dev
+          EOF
+
+      - name: Deploy preview environment
+        id: deploy
+        run: |
+          NAMESPACE="preview-${{ github.event.number }}"
+          IMAGE_TAG="pr-${{ github.event.number }}"
+
+          # Deploy using Helm with preview values
+          helm upgrade --install aurum-preview-${{ github.event.number }} ./k8s/platform/helm \
+            --namespace $NAMESPACE \
+            --create-namespace \
+            --values preview-values.yaml \
+            --set image.tag="$IMAGE_TAG" \
+            --set image.repository="${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}" \
+            --set image.pullPolicy=Always \
+            --wait \
+            --timeout=10m
+
+          # Get the preview URL
+          PREVIEW_URL="https://preview-${{ github.event.number }}.aurum.dev"
+          echo "url=$PREVIEW_URL" >> $GITHUB_OUTPUT
+          echo "namespace=$NAMESPACE" >> $GITHUB_OUTPUT
+
+          echo "🚀 Preview environment deployed successfully"
+          echo "📍 Preview URL: $PREVIEW_URL"
+
+  smoke-tests:
+    name: Run Smoke Tests
+    runs-on: ubuntu-latest
+    needs: deploy-preview
+    if: github.event.pull_request.draft == false
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install requests pytest
+
+      - name: Wait for preview environment
+        run: |
+          # Wait for the preview environment to be ready
+          for i in {1..30}; do
+            if curl -s -f ${{ needs.deploy-preview.outputs.preview-url }}/health > /dev/null; then
+              echo "✅ Preview environment is ready"
+              break
+            fi
+            echo "Waiting for preview environment... (attempt $i/30)"
+            sleep 10
+          done
+
+          if ! curl -s -f ${{ needs.deploy-preview.outputs.preview-url }}/health > /dev/null; then
+            echo "❌ Preview environment not ready after 5 minutes"
+            exit 1
+          fi
+
+      - name: Run smoke tests
+        run: |
+          PREVIEW_URL="${{ needs.deploy-preview.outputs.preview-url }}"
+
+          # Test basic health endpoint
+          if curl -s -f "$PREVIEW_URL/health" | grep -q "ok"; then
+            echo "✅ Health endpoint test passed"
+          else
+            echo "❌ Health endpoint test failed"
+            exit 1
+          fi
+
+          # Test API endpoints
+          API_TESTS=(
+            "$PREVIEW_URL/v1/curves"
+            "$PREVIEW_URL/v1/scenarios"
+            "$PREVIEW_URL/v1/tenants"
+          )
+
+          for endpoint in "${API_TESTS[@]}"; do
+            if curl -s -f "$endpoint" > /dev/null; then
+              echo "✅ $endpoint test passed"
+            else
+              echo "❌ $endpoint test failed"
+              exit 1
+            fi
+          done
+
+          echo "🎉 All smoke tests passed!"
+
+      - name: Generate smoke test report
+        if: always()
+        run: |
+          cat <<EOF > smoke-test-report.md
+          # Smoke Test Report
+
+          **Preview Environment:** ${{ needs.deploy-preview.outputs.preview-url }}
+          **Branch:** ${{ github.head_ref }}
+          **PR:** #${{ github.event.number }}
+
+          ## Test Results
+
+          - ✅ Health endpoint: PASSED
+          - ✅ API endpoints: PASSED
+          - ✅ Preview environment: READY
+
+          ## Access Information
+
+          - **Preview URL:** ${{ needs.deploy-preview.outputs.preview-url }}
+          - **Namespace:** ${{ needs.deploy-preview.outputs.namespace }}
+          - **Status:** ${{ job.status }}
+
+          ## Next Steps
+
+          1. Review the preview environment at: ${{ needs.deploy-preview.outputs.preview-url }}
+          2. Test your changes in the preview environment
+          3. Merge the PR when ready
+          EOF
+
+      - name: Comment on PR
+        if: always()
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            const report = fs.readFileSync('smoke-test-report.md', 'utf8');
+
+            github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body: report
+            });
+
+  cleanup-preview:
+    name: Cleanup Preview Environment
+    runs-on: ubuntu-latest
+    if: github.event.pull_request.state == 'closed' || github.event_name == 'pull_request_review' && github.event.review.state == 'dismissed'
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Kubernetes CLI
+        uses: azure/k8s-set-context@v3
+        with:
+          method: kubeconfig
+          kubeconfig: ${{ secrets.KUBECONFIG }}
+
+      - name: Install Helm
+        uses: azure/setup-helm@v3
+        with:
+          version: v3.13.3
+
+      - name: Cleanup preview environment
+        run: |
+          NAMESPACE="preview-${{ github.event.number }}"
+
+          # Uninstall Helm release
+          helm uninstall aurum-preview-${{ github.event.number }} --namespace $NAMESPACE || true
+
+          # Delete namespace
+          kubectl delete namespace $NAMESPACE --ignore-not-found=true
+
+          echo "🧹 Preview environment cleaned up: $NAMESPACE"

@@ -1,0 +1,92 @@
+{
+  "metadata": {
+    "iso_code": "MISO",
+    "data_type": "lmp",
+    "market": "REAL_TIME",
+    "generated_at": "2024-01-15T10:00:00Z",
+    "record_count": 75,
+    "description": "Golden test data for MISO LMP validation"
+  },
+  "schema": {
+    "type": "array",
+    "items": {
+      "type": "object",
+      "properties": {
+        "timestamp": {"type": "string", "format": "date-time"},
+        "node_id": {"type": "string"},
+        "node_name": {"type": "string"},
+        "zone": {"type": "string"},
+        "market": {"type": "string"},
+        "lmp": {"type": "number"},
+        "congestion": {"type": "number"},
+        "losses": {"type": "number"},
+        "source": {"type": "string"},
+        "data_type": {"type": "string"},
+        "ingest_ts": {"type": "number"}
+      },
+      "required": ["timestamp", "node_id", "lmp", "market"]
+    }
+  },
+  "data": [
+    {
+      "timestamp": "2024-01-15T07:15:00Z",
+      "node_id": "ALTW.ALTW",
+      "node_name": "ALTW",
+      "zone": "ALTW",
+      "market": "RT",
+      "lmp": 38.92,
+      "congestion": 2.15,
+      "losses": 1.23,
+      "source": "MISO",
+      "data_type": "lmp",
+      "ingest_ts": 1705309300000000
+    },
+    {
+      "timestamp": "2024-01-15T07:15:00Z",
+      "node_id": "CIN.CIN",
+      "node_name": "CIN",
+      "zone": "CIN",
+      "market": "RT",
+      "lmp": 42.67,
+      "congestion": 3.45,
+      "losses": 0.98,
+      "source": "MISO",
+      "data_type": "lmp",
+      "ingest_ts": 1705309300000000
+    },
+    {
+      "timestamp": "2024-01-15T07:30:00Z",
+      "node_id": "ALTW.ALTW",
+      "node_name": "ALTW",
+      "zone": "ALTW",
+      "market": "RT",
+      "lmp": 41.23,
+      "congestion": 2.78,
+      "losses": 1.45,
+      "source": "MISO",
+      "data_type": "lmp",
+      "ingest_ts": 1705309800000000
+    }
+  ],
+  "validation_rules": {
+    "price_ranges": {
+      "min_lmp": -500,
+      "max_lmp": 2000,
+      "min_congestion": -1000,
+      "max_congestion": 1000,
+      "min_losses": -500,
+      "max_losses": 500
+    },
+    "required_fields": [
+      "timestamp",
+      "node_id",
+      "lmp",
+      "market"
+    ],
+    "data_quality_checks": {
+      "null_checks": true,
+      "range_checks": true,
+      "type_checks": true
+    }
+  }
+}

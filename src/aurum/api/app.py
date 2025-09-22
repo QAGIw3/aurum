@@ -17,6 +17,8 @@ See also:
 
 import sys
 import types
+import logging
+import contextlib
 
 from fastapi import Depends, FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
@@ -25,6 +27,10 @@ from fastapi.responses import JSONResponse
 
 from aurum.core import AurumSettings
 from aurum.telemetry import configure_telemetry
+
+from aurum.performance.warehouse import WarehouseMaintenanceCoordinator
+from .cache import AsyncCache, CacheBackend, CacheManager
+from .golden_query_cache import initialize_golden_query_cache
 
 from . import routes as _routes
 
@@ -50,11 +56,26 @@ from .versioning import (
     VersionStatus,
     DeprecationInfo
 )
-try:  # optional at import time for tooling
-    from .v2 import scenarios as v2_scenarios, curves as v2_curves
-except Exception:  # pragma: no cover
-    v2_scenarios = None  # type: ignore
-    v2_curves = None  # type: ignore
+    try:  # optional at import time for tooling
+        from .v2 import (
+            scenarios as v2_scenarios,
+            curves as v2_curves,
+            metadata as v2_metadata,
+            iso as v2_iso,
+            eia as v2_eia,
+            ppa as v2_ppa,
+            drought as v2_drought,
+            admin as v2_admin
+        )
+    except Exception:  # pragma: no cover
+        v2_scenarios = None  # type: ignore
+        v2_curves = None  # type: ignore
+        v2_metadata = None  # type: ignore
+        v2_iso = None  # type: ignore
+        v2_eia = None  # type: ignore
+        v2_ppa = None  # type: ignore
+        v2_drought = None  # type: ignore
+        v2_admin = None  # type: ignore
 
 
 async def create_app(settings: AurumSettings | None = None) -> FastAPI:
@@ -178,7 +199,16 @@ async def create_app(settings: AurumSettings | None = None) -> FastAPI:
         app.include_router(v1_curves_router)
 
         # Register v2 endpoints (new and improved)
-        from .v2 import scenarios as v2_scenarios, curves as v2_curves
+        from .v2 import (
+            scenarios as v2_scenarios,
+            curves as v2_curves,
+            metadata as v2_metadata,
+            iso as v2_iso,
+            eia as v2_eia,
+            ppa as v2_ppa,
+            drought as v2_drought,
+            admin as v2_admin
+        )
 
         # Register v2 scenarios
         v2_scenarios_router = v2_scenarios.router
@@ -188,7 +218,31 @@ async def create_app(settings: AurumSettings | None = None) -> FastAPI:
         v2_curves_router = v2_curves.router
         app.include_router(v2_curves_router)
 
-    # Set up versioning
+        # Register v2 metadata
+        v2_metadata_router = v2_metadata.router
+        app.include_router(v2_metadata_router)
+
+        # Register v2 ISO
+        v2_iso_router = v2_iso.router
+        app.include_router(v2_iso_router)
+
+        # Register v2 EIA
+        v2_eia_router = v2_eia.router
+        app.include_router(v2_eia_router)
+
+        # Register v2 PPA
+        v2_ppa_router = v2_ppa.router
+        app.include_router(v2_ppa_router)
+
+        # Register v2 drought
+        v2_drought_router = v2_drought.router
+        app.include_router(v2_drought_router)
+
+        # Register v2 admin
+        v2_admin_router = v2_admin.router
+        app.include_router(v2_admin_router)
+
+    # Set up versioning with feature freeze
     await version_manager.register_version(
         "1.0",
         status=VersionStatus.DEPRECATED,
@@ -208,12 +262,22 @@ async def create_app(settings: AurumSettings | None = None) -> FastAPI:
             "cursor_pagination",
             "rfc7807_errors",
             "enhanced_etag",
-            "improved_observability"
+            "improved_observability",
+            "tenant_context_enforcement",
+            "link_headers",
+            "conditional_requests"
         ]
     )
 
+    # Freeze v1 features
+    await version_manager.freeze_features("1.0")
+
     # Initialize external dependencies on lifecycle events
     from aurum.scenarios.storage import initialize_scenario_store, close_scenario_store
+
+    maintenance_coordinator: WarehouseMaintenanceCoordinator | None = None
+    cache_service: AsyncCache | None = None
+    logger = logging.getLogger(__name__)
 
     @app.on_event("startup")
     async def _startup():  # pragma: no cover - integration wiring
@@ -225,12 +289,52 @@ async def create_app(settings: AurumSettings | None = None) -> FastAPI:
             # Keep app starting even if store init fails; endpoints will raise clearly
             pass
 
+        nonlocal cache_service
+        try:
+            cache_cfg = CacheConfig.from_settings(settings)
+            redis_mode = getattr(settings.redis, "mode", "standalone")
+            backend = (
+                CacheBackend.MEMORY
+                if str(redis_mode).lower() == "disabled"
+                else CacheBackend.HYBRID
+            )
+            cache_service = AsyncCache(cache_cfg, backend=backend)
+            app.state.cache_service = cache_service
+            app.state.cache_manager = CacheManager(cache_service)
+            await initialize_golden_query_cache(cache_service)
+        except Exception as exc:
+            cache_service = None
+            app.state.cache_service = None
+            app.state.cache_manager = None
+            logger.warning("Cache subsystem failed to initialize: %s", exc, exc_info=True)
+
+        nonlocal maintenance_coordinator
+        try:
+            maintenance_coordinator = WarehouseMaintenanceCoordinator(settings)
+            await maintenance_coordinator.start()
+            app.state.warehouse_maintenance = maintenance_coordinator
+        except Exception as exc:
+            maintenance_coordinator = None
+            logger.warning("Warehouse maintenance coordinator failed to start: %s", exc, exc_info=True)
+            app.state.warehouse_maintenance = None
+
     @app.on_event("shutdown")
     async def _shutdown():  # pragma: no cover - integration wiring
         try:
             await close_scenario_store()
         except Exception:
             pass
+
+        if maintenance_coordinator is not None:
+            with contextlib.suppress(Exception):
+                await maintenance_coordinator.stop()
+        app.state.warehouse_maintenance = None
+
+        if cache_service is not None:
+            with contextlib.suppress(Exception):
+                await cache_service.clear()
+        app.state.cache_service = None
+        app.state.cache_manager = None
 
     await version_manager.set_default_version("2.0")
 

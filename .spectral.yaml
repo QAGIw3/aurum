@@ -1,140 +1,264 @@
-extends:
-  # Base Spectral OAS rules
-  - "spectral:oas"
-  # Project-wide baseline rules
-  - "./.spectral.yml"
+extends: ["spectral:oas"]
 
 rules:
-  # Custom rules for Aurum API
-  aurum-api-security:
-    description: All endpoints must have security requirements
-    message: "Missing security requirements for endpoint"
+  # Custom Aurum API Rules
+
+  # Tenant Context Rules
+  tenant-context-required:
+    description: "All v2 endpoints must require tenant_id parameter"
+    message: "{{error}}"
     severity: error
-    given: "$.paths[*][*]"
+    given: "$..paths[*][*]"
     then:
-      function: "truthy"
-      field: "security"
+      - field: "parameters"
+        function: "schema"
+        functionOptions:
+          schema:
+            type: "array"
+            items:
+              type: "object"
+              properties:
+                name:
+                  type: "string"
+                  enum: ["tenant_id"]
+                in:
+                  type: "string"
+                  enum: ["query"]
+                required:
+                  type: "boolean"
+                  const: true
+              required: ["name", "in", "required"]
+            contains:
+              type: "object"
+              properties:
+                name:
+                  type: "string"
+                  const: "tenant_id"
 
-  aurum-api-operation-ids:
-    description: All operations must have unique operationIds
-    message: "Missing or duplicate operationId"
+  # Pagination Rules
+  cursor-pagination-required:
+    description: "Collection endpoints must support cursor-based pagination"
+    message: "{{error}}"
+    severity: warn
+    given: "$..paths[*][*]"
+    then:
+      - field: "parameters"
+        function: "schema"
+        functionOptions:
+          schema:
+            type: "array"
+            items:
+              type: "object"
+              properties:
+                name:
+                  type: "string"
+                  enum: ["cursor", "limit"]
+                in:
+                  type: "string"
+                  enum: ["query"]
+              required: ["name", "in"]
+
+  # Error Response Rules
+  error-responses-defined:
+    description: "All operations must define appropriate error responses"
+    message: "{{error}}"
     severity: error
-    given: "$.paths[*][*]"
+    given: "$..paths[*][*]"
     then:
-      function: "truthy"
-      field: "operationId"
+      - field: "responses"
+        function: "schema"
+        functionOptions:
+          schema:
+            type: "object"
+            properties:
+              "400":
+                type: "object"
+                description: "Bad Request"
+              "401":
+                type: "object"
+                description: "Unauthorized"
+              "403":
+                type: "object"
+                description: "Forbidden"
+              "404":
+                type: "object"
+                description: "Not Found"
+              "429":
+                type: "object"
+                description: "Too Many Requests"
+              "500":
+                type: "object"
+                description: "Internal Server Error"
+            required: ["400", "401", "403", "404", "429", "500"]
 
-  aurum-api-responses:
-    description: All operations must have 200, 400, 401, 403, 404, 429, and 500 responses
-    message: "Missing required response codes"
+  # Rate Limit Headers Rule
+  rate-limit-headers-present:
+    description: "Rate limiting headers must be documented"
+    message: "{{error}}"
+    severity: warn
+    given: "$..paths[*][*]"
+    then:
+      - field: "responses.429"
+        function: "schema"
+        functionOptions:
+          schema:
+            type: "object"
+            properties:
+              headers:
+                type: "object"
+                properties:
+                  "X-RateLimit-Limit":
+                    type: "object"
+                  "X-RateLimit-Remaining":
+                    type: "object"
+                  "X-RateLimit-Reset":
+                    type: "object"
+                  "Retry-After":
+                    type: "object"
+
+  # ETag Support Rule
+  etag-support-documented:
+    description: "ETag support must be documented for GET operations"
+    message: "{{error}}"
+    severity: warn
+    given: "$..paths[*].get"
+    then:
+      - field: "responses.200"
+        function: "schema"
+        functionOptions:
+          schema:
+            type: "object"
+            properties:
+              headers:
+                type: "object"
+                properties:
+                  "ETag":
+                    type: "object"
+
+  # Link Headers Rule
+  link-headers-documented:
+    description: "Link headers must be documented for collection endpoints"
+    message: "{{error}}"
+    severity: warn
+    given: "$..paths[*][*]"
+    then:
+      - field: "responses.200"
+        function: "schema"
+        functionOptions:
+          schema:
+            type: "object"
+            properties:
+              headers:
+                type: "object"
+                properties:
+                  "Link":
+                    type: "object"
+
+  # Request ID Rule
+  request-id-header:
+    description: "All responses must include X-Request-Id header"
+    message: "{{error}}"
+    severity: warn
+    given: "$..responses[*]"
+    then:
+      - field: "headers.X-Request-Id"
+        function: "defined"
+
+  # Tenant ID Validation Rule
+  tenant-id-format:
+    description: "Tenant ID must follow proper format"
+    message: "{{error}}"
+    severity: warn
+    given: "$..parameters[*]"
+    then:
+      - field: "name"
+        function: "pattern"
+        functionOptions:
+          pattern: "tenant_id"
+      - field: "schema"
+        function: "schema"
+        functionOptions:
+          schema:
+            type: "object"
+            properties:
+              pattern:
+                type: "string"
+                pattern: "^[a-zA-Z0-9-_]+$"
+
+  # API Version Rule
+  api-version-header:
+    description: "All responses must include X-API-Version header"
+    message: "{{error}}"
+    severity: warn
+    given: "$..responses[*]"
+    then:
+      - field: "headers.X-API-Version"
+        function: "defined"
+
+  # Documentation Completeness Rules
+  summary-required:
+    description: "All operations must have a summary"
+    message: "{{error}}"
     severity: error
-    given: "$.paths[*][*].responses"
+    given: "$..paths[*][*]"
     then:
-      function: "schema"
-      functionOptions:
-        schema:
-          type: object
-          properties:
-            "200":
-              type: object
-            "400":
-              type: object
-            "401":
-              type: object
-            "403":
-              type: object
-            "404":
-              type: object
-            "429":
-              type: object
-            "500":
-              type: object
-          additionalProperties: false
+      - field: "summary"
+        function: "defined"
 
-  aurum-api-pagination:
-    description: All list endpoints should use cursor-based pagination
-    message: "Deprecated offset parameter found - use cursor instead"
+  description-required:
+    description: "All operations must have a description"
+    message: "{{error}}"
     severity: warn
-    given: "$.paths[*][*].parameters[*]"
+    given: "$..paths[*][*]"
     then:
-      function: "pattern"
-      functionOptions:
-        notMatch: "offset"
+      - field: "description"
+        function: "defined"
 
-  aurum-api-examples:
-    description: All request/response schemas should have examples
-    message: "Missing example for schema"
+  # Security Rules
+  security-documented:
+    description: "Security requirements must be documented"
+    message: "{{error}}"
     severity: warn
-    given: "$.components.schemas[*]"
+    given: "$..paths[*][*]"
     then:
-      function: "any"
-      functionOptions:
-        properties:
-          - example
-          - examples
+      - field: "security"
+        function: "defined"
 
-  aurum-api-tenant-context:
-    description: All operations should support tenant context
-    message: "Missing tenant context documentation"
-    severity: info
-    given: "$.paths[*][*].summary"
+  # Response Schema Rules
+  response-schema-defined:
+    description: "All success responses must have schemas"
+    message: "{{error}}"
+    severity: error
+    given: "$..responses[?(@property.match(/^[2-3][0-9][0-9]$/))]"
     then:
-      function: "pattern"
-      functionOptions:
-        match: "tenant"
+      - field: "content"
+        function: "defined"
 
-  aurum-api-metadata:
-    description: All responses should include metadata
-    message: "Response should include meta field"
+  # Parameter Documentation Rules
+  parameter-description-required:
+    description: "All parameters must have descriptions"
+    message: "{{error}}"
+    severity: error
+    given: "$..parameters[*]"
+    then:
+      - field: "description"
+        function: "defined"
+
+  # Example Rules
+  response-examples-required:
+    description: "Important endpoints should have response examples"
+    message: "{{error}}"
     severity: warn
-    given: "$.paths[*][*].responses[*].content[*].schema"
+    given: "$..responses[?(@property.match(/^[2-3][0-9][0-9]$/))]"
     then:
-      function: "schema"
-      functionOptions:
-        schema:
-          type: object
-          properties:
-            meta:
-              type: object
-          required:
-            - meta
+      - field: "content.*.schema.example"
+        function: "defined"
 
-  aurum-api-error-format:
-    description: All error responses should follow RFC 7807 format
-    message: "Error responses should follow RFC 7807"
+  request-examples-required:
+    description: "POST/PUT operations should have request examples"
+    message: "{{error}}"
     severity: warn
-    given: "$.paths[*][*].responses[4??].content[*].schema"
+    given: "$..requestBody"
     then:
-      function: "schema"
-      functionOptions:
-        schema:
-          type: object
-          properties:
-            error:
-              type: string
-            message:
-              type: string
-            request_id:
-              type: string
-          required:
-            - error
-            - message
-
-  aurum-api-cursor-format:
-    description: Cursor parameters should be properly documented
-    message: "Cursor parameter missing description"
-    severity: warn
-    given: "$.paths[*][*].parameters[?(@.name=='cursor')]"
-    then:
-      function: "truthy"
-      field: "description"
-
-  aurum-api-rate-limiting:
-    description: All endpoints should document rate limiting behavior
-    message: "Missing rate limiting documentation"
-    severity: info
-    given: "$.paths[*][*].description"
-    then:
-      function: "pattern"
-      functionOptions:
-        match: "rate limit|429|throttle"
+      - field: "content.*.schema.example"
+        function: "defined"

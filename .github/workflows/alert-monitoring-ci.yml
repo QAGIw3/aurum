@@ -1,0 +1,248 @@
+name: Alert Monitoring CI
+
+on:
+  pull_request:
+    branches: [ main ]
+  push:
+    branches: [ main ]
+  schedule:
+    - cron: '*/15 * * * *'  # Every 15 minutes
+
+permissions:
+  contents: read
+  pull-requests: read
+  actions: read
+
+jobs:
+  alert-spike-detection:
+    name: Alert Spike Detection
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install requests prometheus-api-client
+
+      - name: Check alert history for spikes
+        env:
+          PROMETHEUS_URL: ${{ secrets.PROMETHEUS_URL }}
+          ALERTMANAGER_URL: ${{ secrets.ALERTMANAGER_URL }}
+        run: |
+          python3 -c "
+          import os
+          import requests
+          from datetime import datetime, timedelta
+          from collections import defaultdict
+
+          def check_alert_spikes():
+              prometheus_url = os.getenv('PROMETHEUS_URL', 'http://prometheus.aurum-dev.svc.cluster.local:9090')
+              alertmanager_url = os.getenv('ALERTMANAGER_URL', 'http://alertmanager.aurum-dev.svc.cluster.local:9093')
+
+              # Define thresholds
+              MAX_ALERTS_PER_HOUR = 10
+              MAX_CRITICAL_ALERTS_PER_HOUR = 3
+              SPIKE_MULTIPLIER = 3.0
+
+              # Get current alerts
+              try:
+                  response = requests.get(f'{alertmanager_url}/api/v2/alerts', timeout=10)
+                  response.raise_for_status()
+                  current_alerts = response.json()
+              except Exception as e:
+                  print(f'Error fetching alerts: {e}')
+                  return False
+
+              # Count alerts by severity and hour
+              alert_counts = defaultdict(lambda: defaultdict(int))
+              now = datetime.now()
+
+              for alert in current_alerts:
+                  severity = alert.get('labels', {}).get('severity', 'warning')
+                  alert_name = alert.get('labels', {}).get('alertname', 'unknown')
+
+                  # Count by hour
+                  for hour_offset in range(24):
+                      hour = now - timedelta(hours=hour_offset)
+                      hour_key = hour.strftime('%Y-%m-%d %H')
+
+                      alert_counts[hour_key][severity] += 1
+                      alert_counts[hour_key]['total'] += 1
+
+              # Check for spikes
+              spike_detected = False
+              spike_details = []
+
+              for hour_key, counts in alert_counts.items():
+                  total_alerts = counts['total']
+                  critical_alerts = counts.get('critical', 0)
+
+                  if total_alerts > MAX_ALERTS_PER_HOUR:
+                      spike_details.append(f'High alert volume: {total_alerts} alerts in {hour_key}')
+                      spike_detected = True
+
+                  if critical_alerts > MAX_CRITICAL_ALERTS_PER_HOUR:
+                      spike_details.append(f'High critical alert volume: {critical_alerts} critical alerts in {hour_key}')
+                      spike_detected = True
+
+              # Check for relative spikes (compared to baseline)
+              if len(alert_counts) >= 2:
+                  # Get recent hours
+                  sorted_hours = sorted(alert_counts.keys(), reverse=True)
+                  recent_hour = sorted_hours[0]
+                  baseline_hour = sorted_hours[1]
+
+                  recent_total = alert_counts[recent_hour]['total']
+                  baseline_total = alert_counts[baseline_hour]['total']
+
+                  if baseline_total > 0 and recent_total > (baseline_total * SPIKE_MULTIPLIER):
+                      spike_details.append(f'Alert spike detected: {recent_total} vs baseline {baseline_total} in recent hours')
+                      spike_detected = True
+
+              # Output results
+              if spike_detected:
+                  print('🚨 ALERT SPIKE DETECTED')
+                  for detail in spike_details:
+                      print(f'  - {detail}')
+
+                  # Get detailed alert information
+                  print('\\n📊 RECENT ALERTS:')
+                  for alert in current_alerts[-10:]:  # Show last 10 alerts
+                      name = alert.get('labels', {}).get('alertname', 'unknown')
+                      severity = alert.get('labels', {}).get('severity', 'warning')
+                      status = alert.get('status', {}).get('state', 'unknown')
+                      print(f'  - {name} ({severity}/{status})')
+
+                  return False
+              else:
+                  print('✅ No alert spikes detected')
+                  return True
+
+          # Run the check
+          success = check_alert_spikes()
+          exit(0 if success else 1)
+          "
+
+      - name: Create alert spike comment
+        if: failure() && github.event_name == 'pull_request'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+
+            // Read alert analysis (if available)
+            let alert_details = 'Alert spike detected during CI checks. Please investigate the alert history.';
+
+            try {
+              const alert_data = fs.readFileSync('alert_analysis.txt', 'utf8');
+              alert_details = alert_data;
+            } catch (e) {
+              // Use default message
+            }
+
+            github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body: `🚨 **Alert Spike Detected**
+
+              ${alert_details}
+
+              **Action Required:**
+              - Review recent alerts in the monitoring system
+              - Check for legitimate issues or false positives
+              - Consider if changes in this PR may have caused the spike
+              - Contact the platform team if needed
+
+              **Links:**
+              - [Grafana Dashboard](https://grafana.aurum-dev.com)
+              - [AlertManager](http://alertmanager.aurum-dev.svc.cluster.local:9093)
+              - [Runbook: Alert Investigation](docs/runbooks/alert-investigation-runbook.md)
+            });
+
+      - name: Fail build on alert spike
+        if: failure()
+        run: |
+          echo "🚨 Build failed due to alert spike detection"
+          echo "This prevents deploying potentially problematic code that may cause system instability"
+          exit 1
+
+  external-endpoint-monitoring:
+    name: External Endpoint Monitoring
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Test external endpoints
+        run: |
+          # Test critical external endpoints
+          EXTERNAL_ENDPOINTS=(
+            "https://api.github.com"
+            "https://www.google.com"
+            "https://httpstat.us/200"
+          )
+
+          echo "🔍 Testing external endpoints..."
+
+          failures=0
+          for endpoint in "${EXTERNAL_ENDPOINTS[@]}"; do
+            echo "Testing: $endpoint"
+
+            if curl -s --max-time 10 --fail "$endpoint" > /dev/null 2>&1; then
+              echo "  ✅ $endpoint - OK"
+            else
+              echo "  ❌ $endpoint - FAILED"
+              failures=$((failures + 1))
+            fi
+          done
+
+          if [ $failures -gt 0 ]; then
+            echo "🚨 $failures external endpoints failed"
+            exit 1
+          else
+            echo "✅ All external endpoints accessible"
+          fi
+
+  synthetic-monitoring-summary:
+    name: Synthetic Monitoring Summary
+    needs: [alert-spike-detection, external-endpoint-monitoring]
+    runs-on: ubuntu-latest
+    if: always()
+    steps:
+      - name: Generate monitoring summary
+        run: |
+          echo "📊 Synthetic Monitoring Summary"
+          echo "================================"
+
+          # This step runs regardless of previous step outcomes
+          if [ "${{ needs.alert-spike-detection.result }}" == "success" ]; then
+            echo "✅ Alert spike detection: PASSED"
+          else
+            echo "❌ Alert spike detection: FAILED"
+          fi
+
+          if [ "${{ needs.external-endpoint-monitoring.result }}" == "success" ]; then
+            echo "✅ External endpoint monitoring: PASSED"
+          else
+            echo "❌ External endpoint monitoring: FAILED"
+          fi
+
+          # Overall status
+          if [ "${{ needs.alert-spike-detection.result }}" == "success" ] && \
+             [ "${{ needs.external-endpoint-monitoring.result }}" == "success" ]; then
+            echo ""
+            echo "🎉 All monitoring checks passed!"
+          else
+            echo ""
+            echo "⚠️ Some monitoring checks failed. Review the logs above."
+            exit 1
+          fi

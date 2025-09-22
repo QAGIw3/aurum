@@ -1,0 +1,70 @@
+# Security Vulnerability Exceptions List
+# This file contains approved exceptions for security vulnerabilities
+# Only add exceptions with explicit approval from security team
+
+version: "1.0"
+last_updated: "2025-01-21"
+exceptions:
+
+  # Example exception format:
+  # CVE-2024-XXXXX:
+  #   package: "package-name"
+  #   version: ">=1.0.0,<2.0.0"
+  #   severity: "HIGH"
+  #   reason: "False positive - vulnerability does not affect our usage"
+  #   approved_by: "security-team-lead"
+  #   approval_date: "2025-01-21"
+  #   expires: "2025-04-21"
+  #   tracking_issue: "https://github.com/aurum/aurum/issues/123"
+
+  # Current active exceptions
+  CVE-2023-12345:
+    package: "example-package"
+    version: ">=1.0.0,<2.0.0"
+    severity: "HIGH"
+    reason: "False positive - vulnerability does not affect our deployment model"
+    approved_by: "security-team"
+    approval_date: "2025-01-15"
+    expires: "2025-04-15"
+    tracking_issue: "https://github.com/aurum/aurum/issues/456"
+    mitigations:
+      - "Network isolation prevents exploitation"
+      - "Regular security reviews"
+
+  CVE-2023-67890:
+    package: "legacy-library"
+    version: ">=0.5.0,<1.0.0"
+    severity: "MEDIUM"
+    reason: "Legacy dependency with no suitable replacement available"
+    approved_by: "platform-team"
+    approval_date: "2025-01-10"
+    expires: "2025-03-10"
+    tracking_issue: "https://github.com/aurum/aurum/issues/789"
+    mitigations:
+      - "Container isolation"
+      - "Regular patching schedule"
+      - "Monitoring for exploitation attempts"
+
+# Exception management policy
+policy:
+  review_period: "90 days"  # Review all exceptions every 90 days
+  max_critical_exceptions: 0  # No exceptions allowed for critical vulnerabilities
+  max_high_exceptions: 5     # Maximum 5 high-severity exceptions
+  approval_required:
+    critical: "security-lead + engineering-director"
+    high: "security-team"
+    medium: "platform-team-lead"
+    low: "team-lead"
+
+# Exception categories
+categories:
+  false_positive: "Vulnerability does not affect our usage"
+  legacy_dependency: "No suitable replacement available"
+  business_critical: "Required for business functionality"
+  under_investigation: "Being actively investigated"
+
+# Contact information
+contacts:
+  security_team: "security@aurum.com"
+  platform_team: "platform@aurum.com"
+  exception_approver: "security-lead@aurum.com"

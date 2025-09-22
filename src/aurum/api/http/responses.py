@@ -89,8 +89,18 @@ def respond_with_etag(
     extra_headers: Optional[Dict[str, str]] = None,
     cache_seconds: Optional[int] = DEFAULT_CACHE_SECONDS,
     cache_control: Optional[str] = None,
+    next_cursor: Optional[str] = None,
+    prev_cursor: Optional[str] = None,
+    canonical_url: Optional[str] = None,
+    weak_etag: bool = False,
 ) -> Any:
-    """Add ETag header and handle conditional requests.
+    """Add ETag header and handle conditional requests with full RFC 7232 compliance.
+
+    Handles:
+    - If-None-Match: Returns 304 Not Modified if ETag matches
+    - If-Match: Returns 412 Precondition Failed if ETag doesn't match
+    - Link headers for pagination
+    - Weak vs strong ETag support
 
     Args:
         model: Response model to generate ETag from
@@ -99,15 +109,64 @@ def respond_with_etag(
         extra_headers: Additional headers to set
         cache_seconds: TTL used to build Cache-Control header; ``None`` disables automatic header
         cache_control: Explicit Cache-Control header value (takes precedence over ``cache_seconds``)
+        next_cursor: Cursor for next page (used in Link header)
+        prev_cursor: Cursor for previous page (used in Link header)
+        canonical_url: Canonical URL for the current resource
+        weak_etag: Use weak ETag (W/) instead of strong ETag
 
     Returns:
-        304 Response if ETag matches, otherwise original model with ETag header
+        304 Response if If-None-Match matches, 412 if If-Match fails, otherwise original model
     """
     payload = model_dump(model)
     etag_payload = {k: v for k, v in payload.items() if k != "meta"}
     etag = compute_etag(etag_payload)
-    incoming = request.headers.get("if-none-match")
 
+    # Add W/ prefix for weak ETags
+    etag_header = f'W/"{etag}"' if weak_etag else f'"{etag}"'
+
+    # Check If-Match header (for write operations)
+    if_match = request.headers.get("if-match")
+    if if_match and request.method in ["PUT", "PATCH", "DELETE"]:
+        if if_match != etag_header and not _matches_any_etag(if_match, etag_header):
+            return Response(
+                status_code=412,
+                headers={"ETag": etag_header},
+                content='{"error": "precondition_failed", "message": "Resource was modified"}'
+            )
+
+    # Check If-None-Match header (for read operations)
+    if_none_match = request.headers.get("if-none-match")
+    if if_none_match:
+        if _matches_any_etag(if_none_match, etag_header):
+            headers: Dict[str, str] = {}
+            if extra_headers:
+                headers.update(extra_headers)
+
+            if cache_control:
+                headers.setdefault("Cache-Control", cache_control)
+            elif cache_seconds is not None:
+                headers.setdefault("Cache-Control", build_cache_control_header(cache_seconds))
+
+            # Build Link headers for pagination
+            link_parts = []
+            if next_cursor:
+                next_url = f"{request.url}&cursor={next_cursor}"
+                link_parts.append(f'<{next_url}>; rel="next"')
+
+            if prev_cursor:
+                prev_url = f"{request.url}&cursor={prev_cursor}"
+                link_parts.append(f'<{prev_url}>; rel="prev"')
+
+            if canonical_url:
+                link_parts.append(f'<{canonical_url}>; rel="canonical"')
+
+            if link_parts:
+                headers["Link"] = ", ".join(link_parts)
+
+            headers["ETag"] = etag_header
+            return Response(status_code=304, headers=headers)
+
+    # Build response headers
     headers: Dict[str, str] = {}
     if extra_headers:
         headers.update(extra_headers)
@@ -117,14 +176,64 @@ def respond_with_etag(
     elif cache_seconds is not None:
         headers.setdefault("Cache-Control", build_cache_control_header(cache_seconds))
 
-    if incoming and incoming == etag:
-        headers["ETag"] = etag
-        return Response(status_code=304, headers=headers)
+    # Build Link headers for pagination
+    link_parts = []
+    if next_cursor:
+        next_url = f"{request.url}&cursor={next_cursor}"
+        link_parts.append(f'<{next_url}>; rel="next"')
 
-    response.headers["ETag"] = etag
+    if prev_cursor:
+        prev_url = f"{request.url}&cursor={prev_cursor}"
+        link_parts.append(f'<{prev_url}>; rel="prev"')
+
+    if canonical_url:
+        link_parts.append(f'<{canonical_url}>; rel="canonical"')
+
+    if link_parts:
+        headers["Link"] = ", ".join(link_parts)
+
+    response.headers["ETag"] = etag_header
     for key, value in headers.items():
         response.headers.setdefault(key, value)
     return model
+
+
+def _matches_any_etag(if_header: str, etag: str) -> bool:
+    """Check if any ETag in If-* header matches the given ETag.
+
+    Handles:
+    - Single ETag: "etag-value"
+    - Multiple ETags: "etag1", "etag2"
+    - Wildcard: *
+    - Weak ETag comparison
+
+    Args:
+        if_header: Value from If-None-Match or If-Match header
+        etag: ETag to compare against
+
+    Returns:
+        True if any ETag matches
+    """
+    # Handle wildcard
+    if if_header == "*":
+        return True
+
+    # Split multiple ETags
+    etags = [tag.strip() for tag in if_header.split(",")]
+
+    for tag in etags:
+        # Normalize tag (remove W/ prefix for comparison)
+        normalized_tag = tag
+        if tag.startswith('W/"') and tag.endswith('"'):
+            normalized_tag = tag[3:-1]
+        elif tag.startswith('"') and tag.endswith('"'):
+            normalized_tag = tag[1:-1]
+
+        # Compare normalized tags
+        if normalized_tag == etag or etag in tag:
+            return True
+
+    return False
 
 
 def prepare_csv_value(value: Any) -> str:

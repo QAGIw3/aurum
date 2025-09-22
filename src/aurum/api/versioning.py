@@ -7,13 +7,14 @@ import inspect
 import re
 from datetime import datetime, timedelta
 from enum import Enum
-from typing import Any, Callable, Dict, List, Optional, Tuple, Union
+from typing import Any, Callable, Dict, List, Optional, Set, Tuple, Union
 
 from fastapi import APIRouter, HTTPException, Request, Response
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
 from ..telemetry.context import get_request_id
+from ..telemetry import get_logger
 
 
 class VersionStatus(Enum):
@@ -95,13 +96,16 @@ class APIVersion:
 
 
 class VersionManager:
-    """Manages API versions and their lifecycle."""
+    """Manages API versions and their lifecycle with telemetry tracking."""
 
     def __init__(self):
         self._versions: Dict[str, APIVersion] = {}
         self._default_version = "1.0"
         self._version_aliases: Dict[str, str] = {}
         self._lock = asyncio.Lock()
+        self._usage_stats: Dict[str, Dict[str, int]] = {}
+        self._logger = get_logger(__name__)
+        self._feature_frozen_versions: Set[str] = set()
 
     async def register_version(
         self,
@@ -187,6 +191,62 @@ class VersionManager:
 
         async with self._lock:
             api_version.status = VersionStatus.RETIRED
+
+    async def freeze_features(self, version: str) -> None:
+        """Mark a version as feature-frozen (no new features, only bug fixes)."""
+        api_version = await self.get_version(version)
+        if not api_version:
+            raise ValueError(f"Version {version} is not registered")
+
+        async with self._lock:
+            self._feature_frozen_versions.add(version)
+            self._logger.warning(f"Version {version} is now feature-frozen")
+
+    async def is_feature_frozen(self, version: str) -> bool:
+        """Check if a version is feature-frozen."""
+        async with self._lock:
+            return version in self._feature_frozen_versions
+
+    async def track_usage(self, version: str, endpoint: str, method: str) -> None:
+        """Track API usage for telemetry and analytics."""
+        async with self._lock:
+            if version not in self._usage_stats:
+                self._usage_stats[version] = {}
+            if endpoint not in self._usage_stats[version]:
+                self._usage_stats[version][endpoint] = {}
+
+            key = f"{method}:{endpoint}"
+            self._usage_stats[version][endpoint][key] = self._usage_stats[version][endpoint].get(key, 0) + 1
+
+    async def get_usage_stats(self, version: Optional[str] = None) -> Dict[str, Any]:
+        """Get usage statistics for all versions or a specific version."""
+        async with self._lock:
+            if version:
+                return self._usage_stats.get(version, {})
+            return self._usage_stats.copy()
+
+    async def get_deprecation_report(self) -> Dict[str, Any]:
+        """Generate a deprecation report with usage statistics."""
+        async with self._lock:
+            report = {
+                "feature_frozen_versions": list(self._feature_frozen_versions),
+                "deprecated_versions": [],
+                "usage_by_version": {},
+                "migration_recommendations": {}
+            }
+
+            for ver_str, api_version in self._versions.items():
+                if api_version.is_deprecated():
+                    report["deprecated_versions"].append({
+                        "version": ver_str,
+                        "status": api_version.status.value,
+                        "deprecation_info": api_version.deprecation_info.model_dump() if api_version.deprecation_info else None,
+                        "usage": self._usage_stats.get(ver_str, {})
+                    })
+
+                report["usage_by_version"][ver_str] = self._usage_stats.get(ver_str, {})
+
+            return report
 
     async def resolve_version(
         self,
@@ -322,7 +382,7 @@ def create_versioned_app(
 
 
 def version_header_middleware(version_manager: VersionManager):
-    """Middleware to handle API versioning headers."""
+    """Middleware to handle API versioning headers with telemetry tracking."""
     async def middleware(request: Request, call_next):
         # Extract version from headers or path
         version = None
@@ -339,6 +399,13 @@ def version_header_middleware(version_manager: VersionManager):
         # Store version in request state
         request.state.api_version = version or await version_manager.get_default_version()
 
+        # Track usage
+        await version_manager.track_usage(
+            version=request.state.api_version,
+            endpoint=request.url.path,
+            method=request.method
+        )
+
         response = await call_next(request)
 
         # Add version headers to response
@@ -348,6 +415,14 @@ def version_header_middleware(version_manager: VersionManager):
                 deprecation_headers = api_version.get_deprecation_headers()
                 for header, value in deprecation_headers.items():
                     response.headers[header] = value
+
+        # Add version info to response headers
+        response.headers["X-API-Version"] = request.state.api_version
+
+        # Check for feature freeze warnings
+        if await version_manager.is_feature_frozen(request.state.api_version):
+            response.headers["X-API-Feature-Freeze"] = "true"
+            response.headers["X-API-Feature-Freeze-Info"] = f"Version {request.state.api_version} is feature-frozen. Please migrate to latest version."
 
         return response
 
