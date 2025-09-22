@@ -1,0 +1,78 @@
+{
+  "providers": [
+    {
+      "name": "fred",
+      "datasets": [
+        "DGS10",
+        "DGS5",
+        "DGS2",
+        "DGS1",
+        "DEXUSEU",
+        "DEXJPUS",
+        "DEXUSUK",
+        "UNRATE",
+        "CPIAUCSL",
+        "SP500",
+        "DJIA",
+        "VIX",
+        "DFF",
+        "MORTGAGE30US"
+      ],
+      "update_frequency_minutes": 240,
+      "rate_limit_rps": 8,
+      "daily_quota": 1000,
+      "batch_size": 500
+    },
+    {
+      "name": "eia",
+      "datasets": [
+        "PET.W_EPC0_SAX_Y05LA_DPG.W",
+        "PET.W_EPC0_SAX_Y44MB_DPG.W",
+        "NG.NW2_EPG0_SAX_Y05LA_MMCF.M"
+      ],
+      "update_frequency_minutes": 360,
+      "rate_limit_rps": 4,
+      "daily_quota": 1000,
+      "batch_size": 1000
+    },
+    {
+      "name": "noaa",
+      "datasets": [
+        "CDO.TAVG",
+        "CDO.TMAX",
+        "CDO.TMIN",
+        "CDO.PRCP"
+      ],
+      "update_frequency_minutes": 480,
+      "rate_limit_rps": 2,
+      "daily_quota": 1000,
+      "batch_size": 200
+    },
+    {
+      "name": "worldbank",
+      "datasets": [
+        "NY.GDP.MKTP.CD",
+        "SP.POP.TOTL",
+        "EN.ATM.CO2E.KT"
+      ],
+      "update_frequency_minutes": 1440,
+      "rate_limit_rps": 3,
+      "daily_quota": null,
+      "batch_size": 500
+    }
+  ],
+  "global_settings": {
+    "max_concurrent_providers": 2,
+    "retry_attempts": 3,
+    "backoff_factor": 0.5,
+    "timeout_seconds": 120,
+    "health_check_interval_minutes": 5
+  },
+  "monitoring": {
+    "alert_on_sla_violation": true,
+    "alert_on_quality_drop": true,
+    "alert_on_provider_failure": true,
+    "quality_threshold": 0.8,
+    "freshness_threshold_hours": 24
+  }
+}
