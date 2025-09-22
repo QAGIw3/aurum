@@ -1597,14 +1597,14 @@ def run_worker():  # pragma: no cover - integration entrypoint
                         )
                         if CANCELLED_RUNS:
                             CANCELLED_RUNS.inc()
-                if not success and not cancelled and last_exc is not None:
-                    LOGGER.error(
-                        "Scenario worker exhausted retries for scenario %s: %s",
-                        scenario_req.scenario_id,
-                        last_exc,
-                    )
-                    if RETRY_EXHAUSTED:
-                        RETRY_EXHAUSTED.inc()
+                    if not success and not cancelled and last_exc is not None:
+                        LOGGER.error(
+                            "Scenario worker exhausted retries for scenario %s: %s",
+                            scenario_req.scenario_id,
+                            last_exc,
+                        )
+                        if RETRY_EXHAUSTED:
+                            RETRY_EXHAUSTED.inc()
             finally:
                 if token:
                     reset_request_id(token)

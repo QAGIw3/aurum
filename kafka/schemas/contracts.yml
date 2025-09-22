@@ -1,7 +1,7 @@
 defaults:
   compatibility: BACKWARD
   naming:
-    pattern: ^aurum\\.[a-z0-9_.]+\\.v[0-9]+(-key|-value)?$
+    pattern: '^aurum\.[a-z0-9_.]+\.v[0-9]+(-key|-value)?$'
     prefix: aurum
     versioning: major-version suffix (v1, v2, ...)
     exceptions:

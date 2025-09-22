@@ -45,7 +45,9 @@ class CompatibilityResult:
         if issue in [
             CompatibilityIssue.FIELD_REMOVED,
             CompatibilityIssue.FIELD_TYPE_CHANGED,
-            CompatibilityIssue.SCHEMA_TYPE_CHANGED
+            CompatibilityIssue.SCHEMA_TYPE_CHANGED,
+            CompatibilityIssue.ENUM_VALUE_REMOVED,
+            CompatibilityIssue.UNION_MEMBER_REMOVED,
         ]:
             self.breaking_changes.append(message)
 

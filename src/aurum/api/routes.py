@@ -1034,11 +1034,6 @@ def list_curves(
     cursor: Optional[str] = Query(None, description="Opaque cursor for stable pagination"),
     since_cursor: Optional[str] = Query(None, description="Alias for 'cursor' to resume iteration from a previous next_cursor value"),
     offset: Optional[int] = Query(None, ge=0, description="DEPRECATED: Use cursor for pagination instead"),
-    cursor: Optional[str] = Query(None, description="Opaque cursor for stable pagination"),
-    since_cursor: Optional[str] = Query(
-        None,
-        description="Alias for 'cursor' to resume iteration from a previously returned next_cursor",
-    ),
     prev_cursor: Optional[str] = Query(
         None,
         description="Cursor pointing to the previous page; obtained from meta.prev_cursor",
@@ -1270,11 +1265,6 @@ def list_curves_diff(
     cursor: Optional[str] = Query(None, description="Opaque cursor for stable pagination"),
     since_cursor: Optional[str] = Query(None, description="Alias for 'cursor' to resume iteration from a previous next_cursor value"),
     offset: Optional[int] = Query(None, ge=0, description="DEPRECATED: Use cursor for pagination instead"),
-    cursor: Optional[str] = Query(None, description="Opaque cursor for stable pagination"),
-    since_cursor: Optional[str] = Query(
-        None,
-        description="Alias for 'cursor' to resume iteration from a previously returned next_cursor",
-    ),
     *,
     response: Response,
 ) -> CurveDiffResponse:
