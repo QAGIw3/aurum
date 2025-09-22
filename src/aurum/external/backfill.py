@@ -13,12 +13,18 @@ from aurum.external.collect.checkpoints import PostgresCheckpointStore
 from aurum.external.providers import (
     load_eia_dataset_configs,
     load_fred_dataset_configs,
+    load_isone_dataset_configs,
+    load_miso_dataset_configs,
     load_noaa_dataset_configs,
     load_worldbank_dataset_configs,
     EiaApiClient,
     EiaCollector,
     FredApiClient,
     FredCollector,
+    IsoNeApiClient,
+    IsoNeCollector,
+    MisoApiClient,
+    MisoCollector,
     NoaaApiClient,
     NoaaCollector,
     NoaaDatasetConfig,
@@ -156,6 +162,10 @@ class BackfillManager:
             return await self._create_eia_collector(dataset, catalog_collector, obs_collector)
         elif self.config.provider.lower() == "fred":
             return await self._create_fred_collector(dataset, catalog_collector, obs_collector)
+        elif self.config.provider.lower() == "isone":
+            return await self._create_isone_collector(dataset, catalog_collector, obs_collector)
+        elif self.config.provider.lower() == "miso":
+            return await self._create_miso_collector(dataset, catalog_collector, obs_collector)
         elif self.config.provider.lower() == "noaa":
             return await self._create_noaa_collector(dataset, catalog_collector, obs_collector)
         elif self.config.provider.lower() == "worldbank":
@@ -202,6 +212,26 @@ class BackfillManager:
         """Create WorldBank collector for backfill."""
         # Implementation would create WorldBank collector with backfill-specific configuration
         raise NotImplementedError("WorldBank backfill collector not yet implemented")
+
+    async def _create_isone_collector(
+        self,
+        dataset: str,
+        catalog_collector: ExternalCollector,
+        obs_collector: ExternalCollector
+    ) -> IsoNeCollector:
+        """Create ISO-NE collector for backfill."""
+        # Implementation would create ISO-NE collector with backfill-specific configuration
+        raise NotImplementedError("ISO-NE backfill collector not yet implemented")
+
+    async def _create_miso_collector(
+        self,
+        dataset: str,
+        catalog_collector: ExternalCollector,
+        obs_collector: ExternalCollector
+    ) -> MisoCollector:
+        """Create MISO collector for backfill."""
+        # Implementation would create MISO collector with backfill-specific configuration
+        raise NotImplementedError("MISO backfill collector not yet implemented")
 
     async def _execute_backfill(self, collector: Any, dataset: str) -> Dict[str, Any]:
         """Execute the backfill process."""

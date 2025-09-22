@@ -3,6 +3,7 @@ kind: Kustomization
 namespace: aurum-dev
 resources:
   - ../base
+  - ../ui
 
 patchesStrategicMerge:
   - patches/api-vault.yaml

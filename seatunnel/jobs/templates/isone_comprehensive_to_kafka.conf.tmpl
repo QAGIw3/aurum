@@ -1,0 +1,214 @@
+# DEPRECATED: ISO-NE comprehensive template with Jinja-like placeholders.
+#
+# This repository now uses per-datatype templates without Jinja:
+#   - isone_lmp_to_kafka.conf.tmpl
+#   - isone_load_to_kafka.conf.tmpl
+#   - isone_genmix_to_kafka.conf.tmpl
+#   - isone_asm_to_kafka.conf.tmpl
+#
+# If you need a single entrypoint, use the runner job name
+#   isone_comprehensive_to_kafka
+# and set ISONE_DATA_TYPE in {lmp,load,generation_mix,ancillary_services}.
+# The runner dispatches to the appropriate template.
+#
+# Placeholders and required environment variables:
+#   ISONE_URL                    - ISO-NE web service endpoint (for selected data_type)
+#   ISONE_START                  - Start datetime (ISO8601)
+#   ISONE_END                    - End datetime (ISO8601)
+#   ISONE_MARKET                 - Market type (DAM/RTM)
+#   ISONE_TOPIC                  - Kafka topic to publish to (e.g., aurum.iso.isone.lmp.v1)
+#   ISONE_SUBJECT                - Schema subject to use in Schema Registry
+#   ISONE_AVRO_SCHEMA            - Full Avro schema string for value serialization
+#   ISONE_API_KEY                - Optional API key/header for ISO-NE
+#   AURUM_KAFKA_BOOTSTRAP_SERVERS - Kafka brokers
+#   AURUM_SCHEMA_REGISTRY_URL     - Schema Registry endpoint
+#
+# Example:
+#   export ISONE_DATA_TYPE=lmp \
+#          ISONE_URL="https://webservices.iso-ne.com/api/v1.1/dayaheadlmp" \
+#          ISONE_START="2024-01-01T00:00:00Z" \
+#          ISONE_END="2024-01-01T23:55:00Z" \
+#          ISONE_MARKET=DAM \
+#          ISONE_TOPIC=aurum.iso.isone.lmp.v1 \
+#          ISONE_SUBJECT=aurum.iso.isone.lmp.v1-value \
+#          ISONE_AVRO_SCHEMA="$(cat kafka/schemas/aurum.iso.isone.lmp.v1.avsc)" \
+#          AURUM_KAFKA_BOOTSTRAP_SERVERS=broker:29092 \
+#          AURUM_SCHEMA_REGISTRY_URL=http://schema-registry:8081
+
+env {
+  job.mode = "BATCH"
+  parallelism = 1
+}
+
+source {
+  Http {
+    url = "${ISONE_URL}"
+    method = "GET"
+    params {
+      start = "${ISONE_START}"
+      end = "${ISONE_END}"
+      market = "${ISONE_MARKET}"
+    }
+    connection_timeout_ms = 20000
+    retry = 10
+    format = "json"
+    schema = { fields {
+      begin = string
+      end = string
+      ptid = string
+      location_id = string
+      name = string
+      location_name = string
+      lmp = string
+      energy = string
+      congestion = string
+      loss = string
+      load = string
+      fuel_type = string
+      generation = string
+      service_type = string
+      price = string
+      mw = string
+    } }
+    jsonpath = "$.items[*]"
+    headers {
+      Accept = "application/json"
+      "X-API-Key" = "${ISONE_API_KEY}"
+    }
+    result_table_name = "isone_raw"
+  }
+}
+
+transform {
+  Sql {
+    source_table_name = "isone_raw"
+    result_table_name = "isone_normalized"
+    query = """
+      WITH prepared AS (
+        SELECT
+          COALESCE(begin, startTime, start_time) AS begin_raw,
+          COALESCE(end, endTime, end_time) AS end_raw,
+          COALESCE(ptid, location_id) AS node_id,
+          COALESCE(name, location_name) AS node_name,
+          CAST(lmp AS DOUBLE) AS price_total,
+          CAST(energy AS DOUBLE) AS price_energy,
+          CAST(congestion AS DOUBLE) AS price_congestion,
+          CAST(loss AS DOUBLE) AS price_loss,
+          CAST(load AS DOUBLE) AS load_mw,
+          fuel_type,
+          CAST(generation AS DOUBLE) AS generation_mw,
+          service_type,
+          CAST(price AS DOUBLE) AS service_price,
+          CAST(mw AS DOUBLE) AS service_mw
+        FROM isone_raw
+      ), converted AS (
+        SELECT
+          begin_raw,
+          end_raw,
+          node_id,
+          node_name,
+          price_total,
+          price_energy,
+          price_congestion,
+          price_loss,
+          load_mw,
+          fuel_type,
+          generation_mw,
+          service_type,
+          service_price,
+          service_mw,
+          CAST(UNIX_TIMESTAMP(SUBSTRING(begin_raw, 1, 19), 'yyyy-MM-dd''T''HH:mm:ss') * 1000000 AS BIGINT) AS interval_start,
+          CAST(UNIX_TIMESTAMP(SUBSTRING(end_raw, 1, 19), 'yyyy-MM-dd''T''HH:mm:ss') * 1000000 AS BIGINT) AS interval_end
+        FROM prepared
+      )
+      SELECT
+        {% if data_type == 'lmp' %}
+        'ISONE' AS iso_code,
+        CASE
+          WHEN upper('${ISONE_MARKET}') LIKE 'DA%' THEN 'DAY_AHEAD'
+          ELSE 'REAL_TIME'
+        END AS market,
+        DATEDIFF(TO_DATE(SUBSTRING(c.begin_raw, 1, 10)), TO_DATE('1970-01-01')) AS delivery_date,
+        interval_start,
+        interval_end,
+        CAST((interval_end - interval_start) / 60000000 AS INT) AS interval_minutes,
+        CAST(c.node_id AS STRING) AS location_id,
+        CAST(c.node_name AS STRING) AS location_name,
+        'NODE' AS location_type,
+        COALESCE(c.price_total, 0.0) AS price_total,
+        c.price_energy AS price_energy,
+        c.price_congestion AS price_congestion,
+        c.price_loss AS price_loss,
+        'USD' AS currency,
+        'MWh' AS uom,
+        CAST(c.node_name AS STRING) AS settlement_point,
+        NULL AS source_run_id,
+        CAST(UNIX_TIMESTAMP() * 1000000 AS BIGINT) AS ingest_ts,
+        SHA2(CONCAT_WS('|', c.begin_raw, CAST(c.node_id AS STRING), CAST(c.price_total AS STRING)), 256) AS record_hash,
+        NULL AS metadata
+        {% elif data_type == 'load' %}
+        'ISONE' AS iso_code,
+        'ALL' AS area,
+        interval_start,
+        interval_end,
+        CAST((interval_end - interval_start) / 60000000 AS INT) AS interval_minutes,
+        COALESCE(c.load_mw, 0.0) AS mw,
+        CAST(UNIX_TIMESTAMP() * 1000000 AS BIGINT) AS ingest_ts,
+        NULL AS metadata
+        {% elif data_type == 'generation_mix' %}
+        'ISONE' AS iso_code,
+        CAST(UNIX_TIMESTAMP(SUBSTRING(c.begin_raw, 1, 19), 'yyyy-MM-dd''T''HH:mm:ss') * 1000000 AS BIGINT) AS asof_time,
+        CAST(c.fuel_type AS STRING) AS fuel_type,
+        COALESCE(c.generation_mw, 0.0) AS mw,
+        'MW' AS unit,
+        CAST(UNIX_TIMESTAMP() * 1000000 AS BIGINT) AS ingest_ts,
+        NULL AS metadata
+        {% elif data_type == 'ancillary_services' %}
+        'ISONE' AS iso_code,
+        '${ISONE_MARKET}' AS market,
+        CAST(c.service_type AS STRING) AS product,
+        CAST(c.node_id AS STRING) AS zone,
+        NULL AS preliminary_final,
+        interval_start,
+        interval_end,
+        CAST((interval_end - interval_start) / 60000000 AS INT) AS interval_minutes,
+        COALESCE(c.service_price, 0.0) AS price_mcp,
+        'USD' AS currency,
+        'MWh' AS uom,
+        CAST(UNIX_TIMESTAMP() * 1000000 AS BIGINT) AS ingest_ts,
+        SHA2(CONCAT_WS('|', c.begin_raw, CAST(c.node_id AS STRING), CAST(c.service_type AS STRING)), 256) AS record_hash,
+        NULL AS metadata
+        {% endif %}
+      FROM converted c
+      WHERE interval_start IS NOT NULL
+    """
+  }
+}
+
+sink {
+  Kafka {
+    plugin_input = "isone_normalized"
+    bootstrap.servers = "${AURUM_KAFKA_BOOTSTRAP_SERVERS}"
+    topic = "${ISONE_TOPIC}"
+    semantic = "AT_LEAST_ONCE"
+    format = "avro"
+    avro {
+      use.schema.registry = true
+      schema.registry.url = "${AURUM_SCHEMA_REGISTRY_URL}"
+      value.schema.subject = "${ISONE_SUBJECT}"
+      value.schema = """${ISONE_AVRO_SCHEMA}"""
+    }
+    producer {
+      request.timeout.ms = 30000
+      delivery.timeout.ms = 120000
+      retry.backoff.max.ms = 10000
+      retry.backoff.ms = 100
+      acks = "all"
+      enable.idempotence = true
+      max.in.flight.requests.per.connection = 5
+      linger.ms = 500
+      batch.size = 32768
+      retries = 5
+    }
+  }
+}

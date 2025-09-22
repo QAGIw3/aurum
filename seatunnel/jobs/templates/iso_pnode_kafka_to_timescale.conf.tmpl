@@ -1,0 +1,54 @@
+# ISO PNODE/APNODE topics [38;5;11m[1m[7m[K[m(B[m[38;5;8m[1m[7m[K[m(B[m[0m[38;5;8m[1m[7m[K[m(B[m[0m[38;5;8m[1m[7m[K[m(B[m[0m[38;5;8m[1m[7m[K[m(B[m[0m TimescaleDB (JDBC)
+
+env {
+  job.mode = "STREAMING"
+  checkpoint.interval = 60000
+}
+
+source {
+  Kafka {
+    bootstrap.servers = "${AURUM_KAFKA_BOOTSTRAP_SERVERS}"
+    pattern = "${ISO_PNODE_TOPIC_PATTERN}"
+    format = "avro"
+    start_mode = "latest"
+    avro {
+      schema.registry.url = "${AURUM_SCHEMA_REGISTRY_URL}"
+    }
+    result_table_name = "pnode_raw"
+  }
+}
+
+transform {
+  Sql {
+    source_table_name = "pnode_raw"
+    result_table_name = "pnode_enriched"
+    query = """
+      SELECT
+        iso_code,
+        pnode_id,
+        pnode_name,
+        type,
+        zone,
+        hub,
+        CASE WHEN effective_start IS NULL THEN NULL ELSE TO_TIMESTAMP(effective_start / 1000000.0) END AS effective_start,
+        CASE WHEN effective_end IS NULL THEN NULL ELSE TO_TIMESTAMP(effective_end / 1000000.0) END AS effective_end,
+        TO_TIMESTAMP(ingest_ts / 1000000.0) AS ingest_ts
+      FROM pnode_raw
+    """
+  }
+}
+
+sink {
+  Jdbc {
+    plugin_input = "pnode_enriched"
+    driver = "org.postgresql.Driver"
+    url = "${AURUM_TIMESCALE_JDBC_URL}"
+    user = "${AURUM_TIMESCALE_USER}"
+    password = "${AURUM_TIMESCALE_PASSWORD}"
+    table = "${ISO_PNODE_TABLE}"
+    primary_keys = ["iso_code", "pnode_id", "effective_start"]
+    save_mode = "${ISO_PNODE_SAVE_MODE}"
+    connection_check_timeout_sec = 30
+  }
+}
+

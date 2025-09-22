@@ -554,14 +554,12 @@ async def example_rate_limiting():
     premium_quota = manager.get_quota(QuotaTier.PREMIUM)
 
     if free_quota:
-        print("
-Quota Comparison:")
+        print("Quota Comparison:")
         print(f"  Free Tier: {free_quota.requests_per_minute}/min, {free_quota.requests_per_hour}/hour")
         print(f"  Premium Tier: {premium_quota.requests_per_minute if premium_quota else 'N/A'}/min, {premium_quota.requests_per_hour if premium_quota else 'N/A'}/hour")
 
     # Simulate rate limit checks
-    print("
-Simulated Rate Limit Checks:")
+    print("Simulated Rate Limit Checks:")
 
     # Test different identifiers
     test_identifiers = [
@@ -599,16 +597,14 @@ async def example_rate_limit_middleware():
     print("  - Rate limit headers in responses")
     print("  - 429 responses for exceeded limits")
 
-    print("
-Identifier Extraction Priority:")
+    print("Identifier Extraction Priority:")
     print("  1. X-API-Key header")
     print("  2. Authorization: Bearer token")
     print("  3. X-Tenant-ID header")
     print("  4. X-User-ID header")
     print("  5. Client IP address")
 
-    print("
-Response Headers Added:")
+    print("Response Headers Added:")
     print("  X-RateLimit-Limit: requests per minute")
     print("  X-RateLimit-Remaining: remaining requests")
     print("  X-RateLimit-Reset: reset time in seconds")
@@ -639,21 +635,18 @@ async def example_rate_limit_management():
     for endpoint in management_endpoints:
         print(f"  {endpoint}")
 
-    print("
-Quota Tiers Available:")
+    print("Quota Tiers Available:")
     tiers = ["free", "basic", "premium", "enterprise", "unlimited"]
     for tier in tiers:
         print(f"  - {tier}")
 
-    print("
-Rate Limit Algorithms:")
+    print("Rate Limit Algorithms:")
     algorithms = ["token_bucket", "sliding_window", "fixed_window", "adaptive"]
     for alg in algorithms:
         print(f"  - {alg}")
 
     # Example management operations
-    print("
-Example Management Operations:")
+    print("Example Management Operations:")
     print("  curl -X GET /v1/admin/ratelimit/usage?tier=premium")
     print("  curl -X POST /v1/admin/ratelimit/quotas/premium \\")
     print("    -H 'Content-Type: application/json' \\")
@@ -674,8 +667,7 @@ async def example_rate_limit_scenarios():
     print("    X-RateLimit-Tier: free")
     print("  ✓ Request allowed")
 
-    print("
-Scenario 2: Approaching Limit")
+    print("Scenario 2: Approaching Limit")
     print("  Request: GET /v1/curves (59th request in minute)")
     print("  Response: 200 OK")
     print("  Headers:")
@@ -684,8 +676,7 @@ Scenario 2: Approaching Limit")
     print("    X-RateLimit-Tier: free")
     print("  ⚠ Near limit")
 
-    print("
-Scenario 3: Rate Limited")
+    print("Scenario 3: Rate Limited")
     print("  Request: GET /v1/curves (61st request in minute)")
     print("  Response: 429 Too Many Requests")
     print("  Headers:")
@@ -695,8 +686,7 @@ Scenario 3: Rate Limited")
     print("    X-RateLimit-Tier: free")
     print("  ✗ Request denied")
 
-    print("
-Scenario 4: Premium Tier")
+    print("Scenario 4: Premium Tier")
     print("  Request: GET /v1/curves (Premium tier)")
     print("  Response: 200 OK")
     print("  Headers:")
@@ -705,8 +695,7 @@ Scenario 4: Premium Tier")
     print("    X-RateLimit-Tier: premium")
     print("  ✓ Higher limits")
 
-    print("
-Scenario 5: Burst Handling")
+    print("Scenario 5: Burst Handling")
     print("  Request: Multiple rapid requests")
     print("  Response: 200 OK (within burst limit)")
     print("  Headers: X-RateLimit-Remaining reflects burst usage")
@@ -723,8 +712,7 @@ async def example_rate_limit_monitoring():
     print("  - Violation counts and patterns")
     print("  - Top violators identification")
 
-    print("
-Usage Analytics:")
+    print("Usage Analytics:")
     print("  curl -X GET '/v1/admin/ratelimit/usage?tier=premium&hours=24'")
     print("  Response:")
     print("  {")
@@ -735,8 +723,7 @@ Usage Analytics:")
     print("    'average_utilization': 0.78")
     print("  }")
 
-    print("
-Violation Analytics:")
+    print("Violation Analytics:")
     print("  curl -X GET '/v1/admin/ratelimit/violations?hours=24'")
     print("  Response:")
     print("  {")
@@ -746,8 +733,7 @@ Violation Analytics:")
     print("    'top_violators': ['ip:192.168.1.100', 'apikey:abc123']")
     print("  }")
 
-    print("
-Health Monitoring:")
+    print("Health Monitoring:")
     print("  curl -X GET '/v1/admin/ratelimit/health'")
     print("  Response:")
     print("  {")
@@ -757,8 +743,7 @@ Health Monitoring:")
     print("    'cleanup_last_run': 1640995200.0")
     print("  }")
 
-    print("
-Alerting Examples:")
+    print("Alerting Examples:")
     print("  - High violation rate alerts")
     print("  - Tier utilization thresholds")
     print("  - Storage backend health issues")
@@ -777,8 +762,7 @@ async def example_api_documentation():
     print("  - Markdown for documentation sites")
     print("  - Interactive Swagger UI")
 
-    print("
-Documentation Features:")
+    print("Documentation Features:")
     print("  - Auto-generated from FastAPI routes")
     print("  - Server information for different environments")
     print("  - Security schemes and authentication")
@@ -845,8 +829,7 @@ async def example_database_monitoring():
     print("  - Performance scoring and metrics")
     print("  - Automatic cleanup of old data")
 
-    print("
-Performance Levels:")
+    print("Performance Levels:")
     for level in QueryPerformanceLevel:
         threshold = {
             QueryPerformanceLevel.EXCELLENT: "< 100ms",
@@ -857,8 +840,7 @@ Performance Levels:")
         }[level]
         print(f"  - {level.value}: {threshold}")
 
-    print("
-Query Metrics Structure:")
+    print("Query Metrics Structure:")
     print("  {")
     print("    'query_hash': 'abc123...'",)
     print("    'query_text': 'SELECT * FROM curves WHERE iso = ? AND asof = ?'",)
@@ -871,8 +853,7 @@ Query Metrics Structure:")
     print("    'parameters': {'iso': 'PJM', 'asof': '2024-01-01'}")
     print("  }")
 
-    print("
-Monitoring Configuration:")
+    print("Monitoring Configuration:")
     print("  - Configurable slow query thresholds")
     print("  - Automatic data retention policies")
     print("  - Background monitoring and analysis")
@@ -890,8 +871,7 @@ async def example_query_optimization():
     for opt_type in OptimizationType:
         print(f"  - {opt_type.value}")
 
-    print("
-Example Optimization Suggestions:")
+    print("Example Optimization Suggestions:")
 
     suggestions = [
         {
@@ -927,8 +907,7 @@ Example Optimization Suggestions:")
         print(f"     Effort: {suggestion['effort']}")
         print(f"     Description: {suggestion['description']}")
 
-    print("
-Optimization Analysis:")
+    print("Optimization Analysis:")
     print("  - Impact Score: Estimated performance improvement (0-1)")
     print("  - Effort Score: Implementation difficulty (0-1)")
     print("  - Confidence Score: Reliability of suggestion (0-1)")
@@ -956,8 +935,7 @@ async def example_performance_analysis():
     for endpoint in endpoints:
         print(f"  {endpoint}")
 
-    print("
-Performance Metrics:")
+    print("Performance Metrics:")
     print("  - Total queries executed")
     print("  - Slow query count and percentage")
     print("  - Average query execution time")
@@ -965,16 +943,14 @@ Performance Metrics:")
     print("  - Top slow queries with details")
     print("  - Query pattern analysis")
 
-    print("
-Health Scoring:")
+    print("Health Scoring:")
     print("  - Excellent: ≥90% (few slow queries, fast averages)")
     print("  - Good: 75-89% (acceptable performance)")
     print("  - Fair: 50-74% (needs attention)")
     print("  - Poor: 25-49% (significant issues)")
     print("  - Critical: <25% (major problems)")
 
-    print("
-Recommendations Engine:")
+    print("Recommendations Engine:")
     print("  - Automated analysis of query patterns")
     print("  - Index optimization suggestions")
     print("  - Query rewriting recommendations")
@@ -1001,18 +977,15 @@ async def example_feature_flags():
     print("  - Rules-based targeting with conditions")
     print("  - Real-time flag evaluation")
 
-    print("
-Feature Flag Statuses:")
+    print("Feature Flag Statuses:")
     for status in FeatureFlagStatus:
         print(f"  - {status.value}")
 
-    print("
-User Segments:")
+    print("User Segments:")
     for segment in UserSegment:
         print(f"  - {segment.value}")
 
-    print("
-Example Feature Flag Structure:")
+    print("Example Feature Flag Structure:")
     print("  {")
     print("    'name': 'New Dashboard',")
     print("    'key': 'new_dashboard_feature',")
@@ -1028,8 +1001,7 @@ Example Feature Flag Structure:")
     print("    'tags': ['ui', 'dashboard', 'beta']")
     print("  }")
 
-    print("
-Feature Flag Evaluation:")
+    print("Feature Flag Evaluation:")
     print("  - Deterministic user assignment")
     print("  - Cached evaluations for performance")
     print("  - Context-aware targeting")
@@ -1050,13 +1022,11 @@ async def example_ab_testing():
     print("  - Event tracking for analysis")
     print("  - Test scheduling and lifecycle management")
 
-    print("
-A/B Test Variants:")
+    print("A/B Test Variants:")
     for variant in ABTestVariant:
         print(f"  - {variant.value}")
 
-    print("
-Example A/B Test Configuration:")
+    print("Example A/B Test Configuration:")
     print("  {")
     print("    'feature_key': 'new_search_algorithm',")
     print("    'variants': {")
@@ -1069,8 +1039,7 @@ Example A/B Test Configuration:")
     print("    'end_date': '2024-02-01T00:00:00Z'")
     print("  }")
 
-    print("
-A/B Testing Workflow:")
+    print("A/B Testing Workflow:")
     print("  1. Create feature flag with A/B test config")
     print("  2. Define variants and traffic percentages")
     print("  3. Set up event tracking for analysis")
@@ -1078,8 +1047,7 @@ A/B Testing Workflow:")
     print("  5. Analyze results and make decisions")
     print("  6. Gradually roll out winning variant")
 
-    print("
-A/B Test Management:")
+    print("A/B Test Management:")
     print("  - Real-time variant assignment")
     print("  - Sticky user assignments")
     print("  - Gradual traffic migration")
@@ -1097,8 +1065,7 @@ async def example_gradual_rollouts():
     for strategy in RolloutStrategy:
         print(f"  - {strategy.value}")
 
-    print("
-Rollout Scenarios:")
+    print("Rollout Scenarios:")
 
     scenarios = [
         {
@@ -1147,16 +1114,14 @@ Rollout Scenarios:")
         if scenario['config'].get('excluded_flags'):
             print(f"     Excluded Flags: {', '.join(scenario['config']['excluded_flags'])}")
 
-    print("
-Gradual Rollout Benefits:")
+    print("Gradual Rollout Benefits:")
     print("  - Risk mitigation with controlled exposure")
     print("  - Early feedback from targeted users")
     print("  - Performance monitoring at each stage")
     print("  - Quick rollback capability")
     print("  - Data-driven decisions")
 
-    print("
-Management Endpoints:")
+    print("Management Endpoints:")
     endpoints = [
         "POST /v1/admin/features - Create feature flag",
         "GET /v1/admin/features - List feature flags",

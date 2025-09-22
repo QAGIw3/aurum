@@ -1,0 +1,59 @@
+# ISO ASM topics → TimescaleDB (JDBC)
+
+env {
+  job.mode = "STREAMING"
+  checkpoint.interval = 60000
+}
+
+source {
+  Kafka {
+    bootstrap.servers = "${AURUM_KAFKA_BOOTSTRAP_SERVERS}"
+    pattern = "${ISO_ASM_TOPIC_PATTERN}"
+    format = "avro"
+    start_mode = "latest"
+    avro {
+      schema.registry.url = "${AURUM_SCHEMA_REGISTRY_URL}"
+    }
+    result_table_name = "asm_raw"
+  }
+}
+
+transform {
+  Sql {
+    source_table_name = "asm_raw"
+    result_table_name = "asm_enriched"
+    query = """
+      SELECT
+        record_hash,
+        iso_code,
+        market,
+        product,
+        zone,
+        preliminary_final,
+        TO_TIMESTAMP(interval_start / 1000000.0) AS interval_start,
+        CASE WHEN interval_end IS NOT NULL THEN TO_TIMESTAMP(interval_end / 1000000.0) ELSE NULL END AS interval_end,
+        interval_minutes,
+        price_mcp,
+        currency,
+        uom,
+        CASE WHEN metadata IS NULL THEN NULL ELSE CAST(metadata AS STRING) END AS metadata,
+        TO_TIMESTAMP(ingest_ts / 1000000.0) AS ingest_ts
+      FROM asm_raw
+    """
+  }
+}
+
+sink {
+  Jdbc {
+    plugin_input = "asm_enriched"
+    driver = "org.postgresql.Driver"
+    url = "${AURUM_TIMESCALE_JDBC_URL}"
+    user = "${AURUM_TIMESCALE_USER}"
+    password = "${AURUM_TIMESCALE_PASSWORD}"
+    table = "${ISO_ASM_TABLE}"
+    primary_keys = ["record_hash", "interval_start"]
+    save_mode = "${ISO_ASM_SAVE_MODE}"
+    connection_check_timeout_sec = 30
+  }
+}
+

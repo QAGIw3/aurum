@@ -1,4 +1,8 @@
-"""Golden query cache for hot endpoints with TTL and bust-on-write hooks."""
+"""Golden query cache for hot endpoints with TTL and bust-on-write hooks.
+
+See docs: docs/golden_query_cache.md for concepts, TTL guidance, and
+operational recommendations.
+"""
 
 from __future__ import annotations
 

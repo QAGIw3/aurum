@@ -870,6 +870,30 @@ PY
     export ISO_LMP_TABLE="${ISO_LMP_TABLE:-iso_lmp_timeseries}"
     export ISO_LMP_SAVE_MODE="${ISO_LMP_SAVE_MODE:-upsert}"
     ;;
+  iso_asm_kafka_to_timescale)
+    REQUIRED_VARS=(
+      AURUM_KAFKA_BOOTSTRAP_SERVERS
+      AURUM_SCHEMA_REGISTRY_URL
+      AURUM_TIMESCALE_JDBC_URL
+      AURUM_TIMESCALE_USER
+      AURUM_TIMESCALE_PASSWORD
+    )
+    export ISO_ASM_TOPIC_PATTERN="${ISO_ASM_TOPIC_PATTERN:-aurum\\.iso\\..*\\.asm\\.v1}"
+    export ISO_ASM_TABLE="${ISO_ASM_TABLE:-iso_asm_timeseries}"
+    export ISO_ASM_SAVE_MODE="${ISO_ASM_SAVE_MODE:-upsert}"
+    ;;
+  iso_pnode_kafka_to_timescale)
+    REQUIRED_VARS=(
+      AURUM_KAFKA_BOOTSTRAP_SERVERS
+      AURUM_SCHEMA_REGISTRY_URL
+      AURUM_TIMESCALE_JDBC_URL
+      AURUM_TIMESCALE_USER
+      AURUM_TIMESCALE_PASSWORD
+    )
+    export ISO_PNODE_TOPIC_PATTERN="${ISO_PNODE_TOPIC_PATTERN:-aurum\\.iso\\..*\\.pnode\\.v1}"
+    export ISO_PNODE_TABLE="${ISO_PNODE_TABLE:-iso_pnode_registry}"
+    export ISO_PNODE_SAVE_MODE="${ISO_PNODE_SAVE_MODE:-upsert}"
+    ;;
   iso_load_kafka_to_timescale)
     REQUIRED_VARS=(
       AURUM_KAFKA_BOOTSTRAP_SERVERS
@@ -1053,6 +1077,210 @@ PY
       fi
     fi
     ensure_iso_lmp_schema
+    ;;
+  isone_comprehensive_to_kafka)
+    # Compatibility wrapper that dispatches to the appropriate ISO-NE template based on ISONE_DATA_TYPE
+    # Supported: lmp, load, generation_mix, ancillary_services
+    REQUIRED_VARS=(
+      ISONE_URL
+      ISONE_START
+      ISONE_END
+      ISONE_MARKET
+      ISONE_DATA_TYPE
+      AURUM_KAFKA_BOOTSTRAP_SERVERS
+      AURUM_SCHEMA_REGISTRY_URL
+    )
+    export ISONE_DATA_TYPE="${ISONE_DATA_TYPE:?}"  # explicit
+    # Default the topic to aurum.iso.isone.<type>.v1 if not provided by caller
+    export ISONE_TOPIC="${ISONE_TOPIC:-aurum.iso.isone.${ISONE_DATA_TYPE}.v1}"
+    export ISONE_SUBJECT="${ISONE_SUBJECT:-${ISONE_TOPIC}-value}"
+    case "${ISONE_DATA_TYPE}" in
+      lmp)
+        TEMPLATE="seatunnel/jobs/templates/isone_lmp_to_kafka.conf.tmpl"
+        export ISONE_NODE_FIELD="${ISONE_NODE_FIELD:-name}"
+        export ISONE_NODE_ID_FIELD="${ISONE_NODE_ID_FIELD:-ptid}"
+        export ISONE_NODE_TYPE_FIELD="${ISONE_NODE_TYPE_FIELD:-locationType}"
+        if [[ -n "${ISONE_AUTH_HEADER:-}" ]]; then
+          export ISONE_HTTP_AUTH_ENABLED=false
+        else
+          if [[ -n "${ISONE_USERNAME:-}" && -n "${ISONE_PASSWORD:-}" ]]; then
+            export ISONE_HTTP_AUTH_ENABLED=true
+          else
+            export ISONE_HTTP_AUTH_ENABLED=false
+          fi
+        fi
+        ensure_iso_lmp_schema
+        ;;
+      load)
+        TEMPLATE="seatunnel/jobs/templates/isone_load_to_kafka.conf.tmpl"
+        export ISONE_LOAD_ENDPOINT="${ISONE_URL}"
+        export ISONE_LOAD_INTERVAL_START="${ISONE_START}"
+        export ISONE_LOAD_INTERVAL_END="${ISONE_END}"
+        export ISONE_LOAD_AUTH_HEADER="${ISONE_LOAD_AUTH_HEADER:-}"
+        export ISONE_LOAD_JSONPATH="${ISONE_LOAD_JSONPATH:-$$.items[*]}"
+        export ISONE_LOAD_START_FIELD="${ISONE_LOAD_START_FIELD:-begin}"
+        export ISONE_LOAD_END_FIELD="${ISONE_LOAD_END_FIELD:-end}"
+        export ISONE_LOAD_AREA_FIELD="${ISONE_LOAD_AREA_FIELD:-name}"
+        export ISONE_LOAD_MW_FIELD="${ISONE_LOAD_MW_FIELD:-load}"
+        export ISONE_LOAD_START_EXTRACT="${ISONE_LOAD_START_EXTRACT:-\`$ISONE_LOAD_START_FIELD\`}"
+        export ISONE_LOAD_END_EXTRACT="${ISONE_LOAD_END_EXTRACT:-\`$ISONE_LOAD_END_FIELD\`}"
+        export ISONE_LOAD_AREA_EXPR="${ISONE_LOAD_AREA_EXPR:-COALESCE(\`$ISONE_LOAD_AREA_FIELD\`, 'SYSTEM')}"
+        export ISONE_LOAD_MW_EXPR="${ISONE_LOAD_MW_EXPR:-\`$ISONE_LOAD_MW_FIELD\`}"
+        export ISONE_LOAD_TIME_FORMAT="${ISONE_LOAD_TIME_FORMAT:-yyyy-MM-dd''T''HH:mm:ss}"
+        export ISONE_LOAD_TOPIC="${ISONE_TOPIC}"
+        export ISONE_LOAD_SUBJECT="${ISONE_LOAD_SUBJECT:-${ISONE_LOAD_TOPIC}-value}"
+        export ISO_LOAD_SCHEMA_PATH="${ISO_LOAD_SCHEMA_PATH:-${REPO_ROOT}/kafka/schemas/iso.load.v1.avsc}"
+        if [[ -z "${ISO_LOAD_SCHEMA:-}" ]]; then
+          ISO_LOAD_SCHEMA="$(render_schema "${ISO_LOAD_SCHEMA_PATH}")"
+        fi
+        export ISO_LOAD_SCHEMA
+        ;;
+      generation_mix)
+        TEMPLATE="seatunnel/jobs/templates/isone_genmix_to_kafka.conf.tmpl"
+        export ISONE_GENMIX_ENDPOINT="${ISONE_URL}"
+        export ISONE_GENMIX_INTERVAL_START="${ISONE_START}"
+        export ISONE_GENMIX_INTERVAL_END="${ISONE_END}"
+        export ISONE_GENMIX_AUTH_HEADER="${ISONE_GENMIX_AUTH_HEADER:-}"
+        export ISONE_GENMIX_JSONPATH="${ISONE_GENMIX_JSONPATH:-$$.items[*]}"
+        export ISONE_GENMIX_ASOF_FIELD="${ISONE_GENMIX_ASOF_FIELD:-begin}"
+        export ISONE_GENMIX_FUEL_FIELD="${ISONE_GENMIX_FUEL_FIELD:-fuel_type}"
+        export ISONE_GENMIX_MW_FIELD="${ISONE_GENMIX_MW_FIELD:-generation}"
+        export ISONE_GENMIX_ASOF_EXTRACT="${ISONE_GENMIX_ASOF_EXTRACT:-\`$ISONE_GENMIX_ASOF_FIELD\`}"
+        export ISONE_GENMIX_FUEL_EXPR="${ISONE_GENMIX_FUEL_EXPR:-\`$ISONE_GENMIX_FUEL_FIELD\`}"
+        export ISONE_GENMIX_MW_EXPR="${ISONE_GENMIX_MW_EXPR:-\`$ISONE_GENMIX_MW_FIELD\`}"
+        export ISONE_GENMIX_TIME_FORMAT="${ISONE_GENMIX_TIME_FORMAT:-yyyy-MM-dd''T''HH:mm:ss}"
+        export ISONE_GENMIX_UNIT="${ISONE_GENMIX_UNIT:-MW}"
+        export ISONE_GENMIX_TOPIC="${ISONE_TOPIC}"
+        export ISONE_GENMIX_SUBJECT="${ISONE_GENMIX_SUBJECT:-${ISONE_GENMIX_TOPIC}-value}"
+        export ISO_GENMIX_SCHEMA_PATH="${ISO_GENMIX_SCHEMA_PATH:-${REPO_ROOT}/kafka/schemas/iso.genmix.v1.avsc}"
+        if [[ -z "${ISO_GENMIX_SCHEMA:-}" ]]; then
+          ISO_GENMIX_SCHEMA="$(render_schema "${ISO_GENMIX_SCHEMA_PATH}")"
+        fi
+        export ISO_GENMIX_SCHEMA
+        ;;
+      ancillary_services)
+        TEMPLATE="seatunnel/jobs/templates/isone_asm_to_kafka.conf.tmpl"
+        export ISONE_ASM_ENDPOINT="${ISONE_URL}"
+        export ISONE_ASM_INTERVAL_START="${ISONE_START}"
+        export ISONE_ASM_INTERVAL_END="${ISONE_END}"
+        export ISONE_ASM_MARKET="${ISONE_MARKET:-DAM}"
+        export ISONE_ASM_AUTH_HEADER="${ISONE_ASM_AUTH_HEADER:-}"
+        export ISONE_ASM_JSONPATH="${ISONE_ASM_JSONPATH:-$$.items[*]}"
+        export ISONE_ASM_START_FIELD="${ISONE_ASM_START_FIELD:-begin}"
+        export ISONE_ASM_END_FIELD="${ISONE_ASM_END_FIELD:-end}"
+        export ISONE_ASM_ZONE_FIELD="${ISONE_ASM_ZONE_FIELD:-name}"
+        export ISONE_ASM_PRODUCT_FIELD="${ISONE_ASM_PRODUCT_FIELD:-service_type}"
+        export ISONE_ASM_PRICE_FIELD="${ISONE_ASM_PRICE_FIELD:-price}"
+        export ISONE_ASM_START_EXTRACT="${ISONE_ASM_START_EXTRACT:-\`$ISONE_ASM_START_FIELD\`}"
+        export ISONE_ASM_END_EXTRACT="${ISONE_ASM_END_EXTRACT:-\`$ISONE_ASM_END_FIELD\`}"
+        export ISONE_ASM_ZONE_EXPR="${ISONE_ASM_ZONE_EXPR:-\`$ISONE_ASM_ZONE_FIELD\`}"
+        export ISONE_ASM_PRODUCT_EXPR="${ISONE_ASM_PRODUCT_EXPR:-\`$ISONE_ASM_PRODUCT_FIELD\`}"
+        export ISONE_ASM_PRICE_EXPR="${ISONE_ASM_PRICE_EXPR:-\`$ISONE_ASM_PRICE_FIELD\`}"
+        export ISONE_ASM_TIME_FORMAT="${ISONE_ASM_TIME_FORMAT:-yyyy-MM-dd''T''HH:mm:ss}"
+        export ISONE_ASM_TOPIC="${ISONE_TOPIC}"
+        export ISONE_ASM_SUBJECT="${ISONE_ASM_SUBJECT:-${ISONE_ASM_TOPIC}-value}"
+        ensure_iso_asm_schema
+        ;;
+      *)
+        echo "Unsupported ISONE_DATA_TYPE: ${ISONE_DATA_TYPE}. Expected one of lmp, load, generation_mix, ancillary_services" >&2
+        exit 1
+        ;;
+    esac
+    ;;
+  isone_load_rtm)
+    TEMPLATE="seatunnel/jobs/templates/isone_load_to_kafka.conf.tmpl"
+    REQUIRED_VARS=(
+      ISONE_URL
+      ISONE_START
+      ISONE_END
+      ISONE_TOPIC
+      AURUM_KAFKA_BOOTSTRAP_SERVERS
+      AURUM_SCHEMA_REGISTRY_URL
+    )
+    export ISONE_LOAD_ENDPOINT="${ISONE_URL}"
+    export ISONE_LOAD_INTERVAL_START="${ISONE_START}"
+    export ISONE_LOAD_INTERVAL_END="${ISONE_END}"
+    export ISONE_LOAD_AUTH_HEADER="${ISONE_LOAD_AUTH_HEADER:-}"
+    export ISONE_LOAD_JSONPATH="${ISONE_LOAD_JSONPATH:-$$.items[*]}"
+    export ISONE_LOAD_START_FIELD="${ISONE_LOAD_START_FIELD:-begin}"
+    export ISONE_LOAD_END_FIELD="${ISONE_LOAD_END_FIELD:-end}"
+    export ISONE_LOAD_AREA_FIELD="${ISONE_LOAD_AREA_FIELD:-name}"
+    export ISONE_LOAD_MW_FIELD="${ISONE_LOAD_MW_FIELD:-load}"
+    export ISONE_LOAD_START_EXTRACT="${ISONE_LOAD_START_EXTRACT:-\`$ISONE_LOAD_START_FIELD\`}"
+    export ISONE_LOAD_END_EXTRACT="${ISONE_LOAD_END_EXTRACT:-\`$ISONE_LOAD_END_FIELD\`}"
+    export ISONE_LOAD_AREA_EXPR="${ISONE_LOAD_AREA_EXPR:-COALESCE(\`$ISONE_LOAD_AREA_FIELD\`, 'SYSTEM')}"
+    export ISONE_LOAD_MW_EXPR="${ISONE_LOAD_MW_EXPR:-\`$ISONE_LOAD_MW_FIELD\`}"
+    export ISONE_LOAD_TIME_FORMAT="${ISONE_LOAD_TIME_FORMAT:-yyyy-MM-dd''T''HH:mm:ss}"
+    export ISONE_LOAD_TOPIC="${ISONE_TOPIC:-aurum.iso.isone.load.v1}"
+    export ISONE_LOAD_SUBJECT="${ISONE_LOAD_SUBJECT:-${ISONE_LOAD_TOPIC}-value}"
+    export ISO_LOAD_SCHEMA_PATH="${ISO_LOAD_SCHEMA_PATH:-${REPO_ROOT}/kafka/schemas/iso.load.v1.avsc}"
+    if [[ -z "${ISO_LOAD_SCHEMA:-}" ]]; then
+      ISO_LOAD_SCHEMA="$(render_schema "${ISO_LOAD_SCHEMA_PATH}")"
+    fi
+    export ISO_LOAD_SCHEMA
+    ;;
+  isone_generation_mix)
+    TEMPLATE="seatunnel/jobs/templates/isone_genmix_to_kafka.conf.tmpl"
+    REQUIRED_VARS=(
+      ISONE_URL
+      ISONE_START
+      ISONE_END
+      ISONE_TOPIC
+      AURUM_KAFKA_BOOTSTRAP_SERVERS
+      AURUM_SCHEMA_REGISTRY_URL
+    )
+    export ISONE_GENMIX_ENDPOINT="${ISONE_URL}"
+    export ISONE_GENMIX_INTERVAL_START="${ISONE_START}"
+    export ISONE_GENMIX_INTERVAL_END="${ISONE_END}"
+    export ISONE_GENMIX_AUTH_HEADER="${ISONE_GENMIX_AUTH_HEADER:-}"
+    export ISONE_GENMIX_JSONPATH="${ISONE_GENMIX_JSONPATH:-$$.items[*]}"
+    export ISONE_GENMIX_ASOF_FIELD="${ISONE_GENMIX_ASOF_FIELD:-begin}"
+    export ISONE_GENMIX_FUEL_FIELD="${ISONE_GENMIX_FUEL_FIELD:-fuel_type}"
+    export ISONE_GENMIX_MW_FIELD="${ISONE_GENMIX_MW_FIELD:-generation}"
+    export ISONE_GENMIX_ASOF_EXTRACT="${ISONE_GENMIX_ASOF_EXTRACT:-\`$ISONE_GENMIX_ASOF_FIELD\`}"
+    export ISONE_GENMIX_FUEL_EXPR="${ISONE_GENMIX_FUEL_EXPR:-\`$ISONE_GENMIX_FUEL_FIELD\`}"
+    export ISONE_GENMIX_MW_EXPR="${ISONE_GENMIX_MW_EXPR:-\`$ISONE_GENMIX_MW_FIELD\`}"
+    export ISONE_GENMIX_TIME_FORMAT="${ISONE_GENMIX_TIME_FORMAT:-yyyy-MM-dd''T''HH:mm:ss}"
+    export ISONE_GENMIX_UNIT="${ISONE_GENMIX_UNIT:-MW}"
+    export ISONE_GENMIX_TOPIC="${ISONE_TOPIC:-aurum.iso.isone.genmix.v1}"
+    export ISONE_GENMIX_SUBJECT="${ISONE_GENMIX_SUBJECT:-${ISONE_GENMIX_TOPIC}-value}"
+    export ISO_GENMIX_SCHEMA_PATH="${ISO_GENMIX_SCHEMA_PATH:-${REPO_ROOT}/kafka/schemas/iso.genmix.v1.avsc}"
+    if [[ -z "${ISO_GENMIX_SCHEMA:-}" ]]; then
+      ISO_GENMIX_SCHEMA="$(render_schema "${ISO_GENMIX_SCHEMA_PATH}")"
+    fi
+    export ISO_GENMIX_SCHEMA
+    ;;
+  isone_ancillary_services)
+    TEMPLATE="seatunnel/jobs/templates/isone_asm_to_kafka.conf.tmpl"
+    REQUIRED_VARS=(
+      ISONE_URL
+      ISONE_START
+      ISONE_END
+      ISONE_MARKET
+      ISONE_TOPIC
+      AURUM_KAFKA_BOOTSTRAP_SERVERS
+      AURUM_SCHEMA_REGISTRY_URL
+    )
+    export ISONE_ASM_ENDPOINT="${ISONE_URL}"
+    export ISONE_ASM_INTERVAL_START="${ISONE_START}"
+    export ISONE_ASM_INTERVAL_END="${ISONE_END}"
+    export ISONE_ASM_MARKET="${ISONE_MARKET:-DAM}"
+    export ISONE_ASM_AUTH_HEADER="${ISONE_ASM_AUTH_HEADER:-}"
+    export ISONE_ASM_JSONPATH="${ISONE_ASM_JSONPATH:-$$.items[*]}"
+    export ISONE_ASM_START_FIELD="${ISONE_ASM_START_FIELD:-begin}"
+    export ISONE_ASM_END_FIELD="${ISONE_ASM_END_FIELD:-end}"
+    export ISONE_ASM_ZONE_FIELD="${ISONE_ASM_ZONE_FIELD:-name}"
+    export ISONE_ASM_PRODUCT_FIELD="${ISONE_ASM_PRODUCT_FIELD:-service_type}"
+    export ISONE_ASM_PRICE_FIELD="${ISONE_ASM_PRICE_FIELD:-price}"
+    export ISONE_ASM_START_EXTRACT="${ISONE_ASM_START_EXTRACT:-\`$ISONE_ASM_START_FIELD\`}"
+    export ISONE_ASM_END_EXTRACT="${ISONE_ASM_END_EXTRACT:-\`$ISONE_ASM_END_FIELD\`}"
+    export ISONE_ASM_ZONE_EXPR="${ISONE_ASM_ZONE_EXPR:-\`$ISONE_ASM_ZONE_FIELD\`}"
+    export ISONE_ASM_PRODUCT_EXPR="${ISONE_ASM_PRODUCT_EXPR:-\`$ISONE_ASM_PRODUCT_FIELD\`}"
+    export ISONE_ASM_PRICE_EXPR="${ISONE_ASM_PRICE_EXPR:-\`$ISONE_ASM_PRICE_FIELD\`}"
+    export ISONE_ASM_TIME_FORMAT="${ISONE_ASM_TIME_FORMAT:-yyyy-MM-dd''T''HH:mm:ss}"
+    export ISONE_ASM_TOPIC="${ISONE_TOPIC:-aurum.iso.isone.asm.v1}"
+    export ISONE_ASM_SUBJECT="${ISONE_ASM_SUBJECT:-${ISONE_ASM_TOPIC}-value}"
+    ensure_iso_asm_schema
     ;;
   caiso_lmp_to_kafka)
     REQUIRED_VARS=(

@@ -191,7 +191,7 @@ class StalenessDetector:
 
         self.logger.log(
             LogLevel.WARN,
-            f"Dataset {dataset} is stale ({staleness_info.hours_since_update".2f"}h old)",
+            f"Dataset {dataset} is stale ({staleness_info.hours_since_update:.2f}h old)",
             "dataset_stale",
             dataset=dataset,
             hours_since_update=staleness_info.hours_since_update,
@@ -229,7 +229,7 @@ class StalenessDetector:
 
         self.logger.log(
             LogLevel.ERROR,
-            f"Dataset {dataset} is critically stale ({staleness_info.hours_since_update".2f"}h old)",
+            f"Dataset {dataset} is critically stale ({staleness_info.hours_since_update:.2f}h old)",
             "dataset_critical",
             dataset=dataset,
             hours_since_update=staleness_info.hours_since_update,

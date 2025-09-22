@@ -365,7 +365,7 @@ class BulkArchiveManager:
                         progress = (downloaded / total_size) * 100
                         self.logger.log(
                             LogLevel.DEBUG,
-                            f"Download progress: {progress".1f"}% ({downloaded}/{total_size} bytes)",
+                            f"Download progress: {progress:.1f}% ({downloaded}/{total_size} bytes)",
                             "archive_download_progress",
                             source_name=self.config.source_name,
                             progress_percent=progress,

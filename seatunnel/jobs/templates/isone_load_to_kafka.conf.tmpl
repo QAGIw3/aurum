@@ -1,0 +1,65 @@
+# ISO-NE load observations → Kafka (Avro)
+
+env {
+  job.mode = "BATCH"
+  parallelism = 1
+}
+
+source {
+  Http {
+    url = "${ISONE_LOAD_ENDPOINT}"
+    method = "GET"
+    params {
+      start = "${ISONE_LOAD_INTERVAL_START}"
+      end = "${ISONE_LOAD_INTERVAL_END}"
+    }
+    connection_timeout_ms = 20000
+    retry = 10
+    format = "json"
+    schema = { fields { ${ISONE_LOAD_START_FIELD} = string ${ISONE_LOAD_END_FIELD} = string ${ISONE_LOAD_AREA_FIELD} = string ${ISONE_LOAD_MW_FIELD} = string } }
+    jsonpath = "${ISONE_LOAD_JSONPATH}"
+    headers {
+      Authorization = "${ISONE_LOAD_AUTH_HEADER}"
+    }
+    result_table_name = "isone_load_raw"
+  }
+}
+
+transform {
+  Sql {
+    source_table_name = "isone_load_raw"
+    result_table_name = "isone_load_normalized"
+    query = """
+      SELECT
+        'ISONE' AS iso_code,
+        CAST(${ISONE_LOAD_AREA_EXPR} AS STRING) AS area,
+        CAST(UNIX_TIMESTAMP(${ISONE_LOAD_START_EXTRACT}, '${ISONE_LOAD_TIME_FORMAT}') * 1000000 AS BIGINT) AS interval_start,
+        CAST(UNIX_TIMESTAMP(${ISONE_LOAD_END_EXTRACT}, '${ISONE_LOAD_TIME_FORMAT}') * 1000000 AS BIGINT) AS interval_end,
+        CAST(TIMESTAMPDIFF(MINUTE, ${ISONE_LOAD_START_EXTRACT}, ${ISONE_LOAD_END_EXTRACT}) AS INT) AS interval_minutes,
+        CAST(${ISONE_LOAD_MW_EXPR} AS DOUBLE) AS mw,
+        CAST(UNIX_TIMESTAMP() * 1000000 AS BIGINT) AS ingest_ts,
+        NULL AS metadata
+      FROM isone_load_raw
+    """
+  }
+}
+
+sink {
+  Kafka {
+    plugin_input = "isone_load_normalized"
+    bootstrap.servers = "${AURUM_KAFKA_BOOTSTRAP_SERVERS}"
+    topic = "${ISONE_LOAD_TOPIC}"
+    semantic = "AT_LEAST_ONCE"
+    format = "avro"
+    avro {
+      use.schema.registry = true
+      schema.registry.url = "${AURUM_SCHEMA_REGISTRY_URL}"
+      value.schema.subject = "${ISONE_LOAD_SUBJECT}"
+      value.schema = """${ISO_LOAD_SCHEMA}"""
+      # Key configuration for message routing and partitioning
+      key.serializer = "${ISONE.CONF_KEY_SERIALIZER:-string}"
+      key.format = "${ISONE.CONF_KEY_FORMAT:-json}"
+    }
+  }
+}
+

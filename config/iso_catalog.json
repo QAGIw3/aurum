@@ -117,10 +117,10 @@
       "full_name": "ISO New England",
       "region": "New England",
       "base_url": "https://webservices.iso-ne.com",
-      "description": "ISO-NE market data via Web Services",
-      "data_types": ["lmp"],
-      "markets": ["DAM", "RTM"],
-      "zones": ["ISO-NE"],
+      "description": "ISO-NE comprehensive market data via Web Services",
+      "data_types": ["lmp", "load", "generation_mix", "ancillary_services", "interchange", "nodes", "generators"],
+      "markets": ["DAM", "RTM", "ALL"],
+      "zones": ["CT", "ME", "NH", "VT", "MA", "RI"],
       "rate_limits": {
         "requests_per_minute": 60,
         "requests_per_hour": 3600
@@ -128,7 +128,7 @@
       "api_format": "json",
       "authentication": "basic_auth",
       "price_nodes_available": true,
-      "ancillary_services_available": false
+      "ancillary_services_available": true
     },
     {
       "name": "ercot",

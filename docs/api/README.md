@@ -8,6 +8,8 @@
 
 The Aurum API provides comprehensive access to market data, curves, and analytics through a high-performance RESTful interface built with FastAPI. It offers enterprise-grade features including authentication, rate limiting, caching, and comprehensive monitoring.
 
+See also: ../pagination.md and ../runtime-config.md
+
 ## 🚀 Quick Start
 
 ### Installation

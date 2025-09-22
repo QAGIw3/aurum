@@ -191,7 +191,7 @@ class ProfileReport:
             md += "| --- | --- | --- | --- |\n"
 
             for ds_name, ds_data in breakdown.items():
-                md += f"| {ds_name} | ${ds_data.get('total_costs_usd', 0)".2f"} | ${ds_data.get('average_cost_per_dataset_usd', 0)".2f"} | {ds_data.get('cost_efficiency_score', 0)".2f"} |\n"
+                md += f"| {ds_name} | ${ds_data.get('total_costs_usd', 0):.2f} | ${ds_data.get('average_cost_per_dataset_usd', 0):.2f} | {ds_data.get('cost_efficiency_score', 0):.2f} |\n"
 
             md += "\n"
 
@@ -238,7 +238,7 @@ class CostReport:
         md += f"**Time Period:** {self.time_period}\n\n"
 
         md += f"## Total Costs\n\n"
-        md += f"**Total Cost:** ${self.total_costs_usd".2f"} USD\n\n"
+        md += f"**Total Cost:** ${self.total_costs_usd:.2f} USD\n\n"
 
         if self.data_source_costs:
             md += "## Data Source Breakdown\n\n"
@@ -247,7 +247,7 @@ class CostReport:
 
             for ds_name, ds_costs in self.data_source_costs.items():
                 summary = ds_costs.get_cost_summary()
-                md += f"| {ds_name} | ${summary['total_costs_usd']".2f"} | {summary['dataset_count']} | ${summary['average_cost_per_dataset_usd']".2f"} | {summary['cost_efficiency_score']".2f"} |\n"
+                md += f"| {ds_name} | ${summary['total_costs_usd']:.2f} | {summary['dataset_count']} | ${summary['average_cost_per_dataset_usd']:.2f} | {summary['cost_efficiency_score']:.2f} |\n"
 
             md += "\n"
 
@@ -494,14 +494,14 @@ class ProfileReporter:
         total_costs = summary.get("total_costs_usd", 0)
         if total_costs > 1000:  # $1000 threshold
             recommendations.append(
-                f"High total costs (${total_costs".0f"}) - consider optimizing API usage and batch sizes"
+                f"High total costs (${total_costs:.0f}) - consider optimizing API usage and batch sizes"
             )
 
         # Check cost efficiency
         efficiency_score = summary.get("overall_cost_efficiency_score", 0)
         if efficiency_score < 100:  # Less than 100 records per dollar
             recommendations.append(
-                f"Low cost efficiency ({efficiency_score".0f"} records per USD) - review error rates and throughput"
+                f"Low cost efficiency ({efficiency_score:.0f} records per USD) - review error rates and throughput"
             )
 
         # Check per-data-source costs
@@ -510,7 +510,7 @@ class ProfileReporter:
             ds_cost = ds_data.get("total_costs_usd", 0)
             if ds_cost > 200:  # $200 per data source threshold
                 recommendations.append(
-                    f"High costs for {ds_name} (${ds_cost".0f"}) - consider reducing API calls or switching to bulk endpoints"
+                    f"High costs for {ds_name} (${ds_cost:.0f}) - consider reducing API calls or switching to bulk endpoints"
                 )
 
         if not recommendations:

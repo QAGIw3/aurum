@@ -4,48 +4,14 @@ from __future__ import annotations
 
 import logging
 import threading
-import time
 from contextlib import contextmanager
-from dataclasses import dataclass, field
 from typing import Iterator, Optional
 
 import httpx
 
 LOGGER = logging.getLogger(__name__)
 
-
-@dataclass
-class CircuitBreaker:
-    """Minimal circuit breaker implementation for outbound HTTP calls."""
-
-    failure_threshold: int = 5
-    recovery_time_seconds: float = 30.0
-    _failures: int = 0
-    _opened_at: Optional[float] = None
-    _lock: threading.Lock = field(default_factory=threading.Lock)
-
-    def allow_request(self) -> bool:
-        with self._lock:
-            if self._opened_at is None:
-                return True
-            elapsed = time.monotonic() - self._opened_at
-            if elapsed >= self.recovery_time_seconds:
-                # Half-open state: allow a single trial request.
-                self._opened_at = None
-                self._failures = 0
-                return True
-            return False
-
-    def record_success(self) -> None:
-        with self._lock:
-            self._failures = 0
-            self._opened_at = None
-
-    def record_failure(self) -> None:
-        with self._lock:
-            self._failures += 1
-            if self._failures >= self.failure_threshold:
-                self._opened_at = time.monotonic()
+from aurum.common.circuit_breaker import CircuitBreaker
 
 
 class HttpClientManager:
@@ -96,7 +62,7 @@ class HttpClientManager:
                 self._client = None
 
     def request(self, method: str, url: str, **kwargs) -> httpx.Response:
-        if not self._breaker.allow_request():
+        if self._breaker.is_open():
             raise httpx.RequestError("HTTP circuit breaker open", request=httpx.Request(method, url))
 
         client = self._ensure_client()

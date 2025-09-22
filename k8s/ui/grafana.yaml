@@ -1060,6 +1060,81 @@ data:
       ]
     }
 
+  aurum-iso-ingestion.json: |
+    {
+      "id": null,
+      "uid": "aurum-iso-ingestion",
+      "title": "ISO Ingestion Overview",
+      "timezone": "browser",
+      "schemaVersion": 39,
+      "version": 1,
+      "refresh": "1m",
+      "time": { "from": "now-12h", "to": "now" },
+      "panels": [
+        {
+          "type": "stat",
+          "title": "Max ISO Watermark Lag (minutes)",
+          "datasource": {"type": "postgres", "uid": "aurum-postgres"},
+          "targets": [{
+            "refId": "A",
+            "format": "table",
+            "rawQuery": true,
+            "sql": "SELECT ROUND(MAX(EXTRACT(EPOCH FROM (NOW() AT TIME ZONE 'UTC' - watermark)))/60.0, 2) AS lag_minutes FROM ingest_watermark WHERE source_name LIKE 'iso.%'"
+          }],
+          "fieldConfig": {"defaults": {"unit": "m", "decimals": 2}, "overrides": []},
+          "gridPos": {"h": 4, "w": 6, "x": 0, "y": 0}
+        },
+        {
+          "type": "table",
+          "title": "Top ISO Sources by Lag",
+          "datasource": {"type": "postgres", "uid": "aurum-postgres"},
+          "targets": [{
+            "refId": "B",
+            "format": "table",
+            "rawQuery": true,
+            "sql": "SELECT source_name, ROUND(EXTRACT(EPOCH FROM (NOW() AT TIME ZONE 'UTC' - MAX(watermark)))/60.0, 2) AS lag_minutes, MAX(updated_at) AS last_update FROM ingest_watermark WHERE source_name LIKE 'iso.%' GROUP BY source_name ORDER BY lag_minutes DESC LIMIT 20"
+          }],
+          "gridPos": {"h": 10, "w": 10, "x": 6, "y": 0}
+        },
+        {
+          "type": "timeseries",
+          "title": "Ingest Error Rate (ClickHouse)",
+          "datasource": {"type": "grafana-clickhouse-datasource", "uid": "clickhouse"},
+          "targets": [{
+            "refId": "C",
+            "format": "time_series",
+            "query": "SELECT toStartOfInterval(timestamp, toIntervalMinute(1)) AS minute, countIf(level = 'ERROR') AS errors FROM ops.logs WHERE (positionCaseInsensitive(service, 'seatunnel') > 0 OR positionCaseInsensitive(message, 'iso') > 0) AND $__timeFilter(timestamp) GROUP BY minute ORDER BY minute"
+          }],
+          "fieldConfig": {"defaults": {"unit": "req/min"}, "overrides": []},
+          "gridPos": {"h": 7, "w": 24, "x": 0, "y": 10}
+        },
+        {
+          "type": "timeseries",
+          "title": "ISO Rows/sec (approx)",
+          "datasource": {"type": "grafana-clickhouse-datasource", "uid": "clickhouse"},
+          "targets": [{
+            "refId": "D",
+            "format": "time_series",
+            "query": "SELECT toStartOfInterval(timestamp, toIntervalMinute(1)) AS minute, countIf(positionCaseInsensitive(message, 'Produced') > 0 AND positionCaseInsensitive(message, 'aurum.iso.') > 0) AS rows FROM ops.logs WHERE $__timeFilter(timestamp) GROUP BY minute ORDER BY minute"
+          }],
+          "fieldConfig": {"defaults": {"unit": "rows/min"}, "overrides": []},
+          "gridPos": {"h": 7, "w": 24, "x": 0, "y": 17}
+        },
+        {
+          "type": "stat",
+          "title": "Schema Drift Events (24h)",
+          "datasource": {"type": "grafana-clickhouse-datasource", "uid": "clickhouse"},
+          "targets": [{
+            "refId": "E",
+            "format": "table",
+            "query": "SELECT count() AS drift FROM ops.logs WHERE $__timeFilter(timestamp) AND (positionCaseInsensitive(event, 'schema_contract_schema_missing') > 0 OR positionCaseInsensitive(event, 'schema_subject_registered') > 0)"
+          }],
+          "gridPos": {"h": 4, "w": 6, "x": 0, "y": 24}
+        }
+      ]
+    }
+
+
 ---
 apiVersion: apps/v1
 kind: Deployment

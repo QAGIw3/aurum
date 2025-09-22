@@ -202,7 +202,7 @@ def _write_schema_file() -> None:
                         "data_type": {"type": "string", "enum": ["lmp", "load", "generation_mix", "ancillary_services"]},
                         "market": {"type": "string", "enum": ["DAM", "RTM"]},
                         "description": {"type": "string"},
-                        "schedule": {"type": "string", "pattern": "^([0-9*,\-/ ]+|@yearly|@monthly|@weekly|@daily|@midnight|@noon)$"},
+                        "schedule": {"type": "string", "pattern": r"^([0-9*,\-/ ]+|@yearly|@monthly|@weekly|@daily|@midnight|@noon)$"},
                         "topic_var": {"type": "string"},
                         "default_topic": {"type": "string"},
                         "frequency": {"type": "string", "enum": ["HOURLY", "DAILY"]},

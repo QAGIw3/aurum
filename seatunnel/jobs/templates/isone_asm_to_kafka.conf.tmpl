@@ -1,0 +1,72 @@
+# ISO-NE ancillary services → Kafka (Avro)
+
+env {
+  job.mode = "BATCH"
+  parallelism = 1
+}
+
+source {
+  Http {
+    url = "${ISONE_ASM_ENDPOINT}"
+    method = "GET"
+    params {
+      start = "${ISONE_ASM_INTERVAL_START}"
+      end = "${ISONE_ASM_INTERVAL_END}"
+      market = "${ISONE_ASM_MARKET}"
+    }
+    connection_timeout_ms = 20000
+    retry = 10
+    format = "json"
+    schema = { fields { ${ISONE_ASM_START_FIELD} = string ${ISONE_ASM_END_FIELD} = string ${ISONE_ASM_ZONE_FIELD} = string ${ISONE_ASM_PRODUCT_FIELD} = string ${ISONE_ASM_PRICE_FIELD} = string } }
+    jsonpath = "${ISONE_ASM_JSONPATH}"
+    headers {
+      Authorization = "${ISONE_ASM_AUTH_HEADER}"
+    }
+    result_table_name = "isone_asm_raw"
+  }
+}
+
+transform {
+  Sql {
+    source_table_name = "isone_asm_raw"
+    result_table_name = "isone_asm_normalized"
+    query = """
+      SELECT
+        'ISONE' AS iso_code,
+        '${ISONE_ASM_MARKET}' AS market,
+        CAST(${ISONE_ASM_PRODUCT_EXPR} AS STRING) AS product,
+        CAST(${ISONE_ASM_ZONE_EXPR} AS STRING) AS zone,
+        NULL AS preliminary_final,
+        CAST(UNIX_TIMESTAMP(${ISONE_ASM_START_EXTRACT}, '${ISONE_ASM_TIME_FORMAT}') * 1000000 AS BIGINT) AS interval_start,
+        CAST(UNIX_TIMESTAMP(${ISONE_ASM_END_EXTRACT}, '${ISONE_ASM_TIME_FORMAT}') * 1000000 AS BIGINT) AS interval_end,
+        CAST(TIMESTAMPDIFF(MINUTE, ${ISONE_ASM_START_EXTRACT}, ${ISONE_ASM_END_EXTRACT}) AS INT) AS interval_minutes,
+        CAST(${ISONE_ASM_PRICE_EXPR} AS DOUBLE) AS price_mcp,
+        'USD' AS currency,
+        'MWh' AS uom,
+        CAST(UNIX_TIMESTAMP() * 1000000 AS BIGINT) AS ingest_ts,
+        SHA2(CONCAT_WS('|', ${ISONE_ASM_START_EXTRACT}, CAST(${ISONE_ASM_ZONE_EXPR} AS STRING), CAST(${ISONE_ASM_PRODUCT_EXPR} AS STRING)), 256) AS record_hash,
+        NULL AS metadata
+      FROM isone_asm_raw
+    """
+  }
+}
+
+sink {
+  Kafka {
+    plugin_input = "isone_asm_normalized"
+    bootstrap.servers = "${AURUM_KAFKA_BOOTSTRAP_SERVERS}"
+    topic = "${ISONE_ASM_TOPIC}"
+    semantic = "AT_LEAST_ONCE"
+    format = "avro"
+    avro {
+      use.schema.registry = true
+      schema.registry.url = "${AURUM_SCHEMA_REGISTRY_URL}"
+      value.schema.subject = "${ISONE_ASM_SUBJECT}"
+      value.schema = """${ISO_ASM_SCHEMA}"""
+      # Key configuration for message routing and partitioning
+      key.serializer = "${ISONE.CONF_KEY_SERIALIZER:-string}"
+      key.format = "${ISONE.CONF_KEY_FORMAT:-json}"
+    }
+  }
+}
+

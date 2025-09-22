@@ -1,0 +1,21 @@
+{
+  "items": [
+    {
+      "interval_start": 1737571200000000,
+      "interval_end": 1737571500000000,
+      "interval_minutes": 60,
+      "location_id": "4000",
+      "location_name": "ISONE_HUB",
+      "location_type": "HUB",
+      "zone": "ISONE",
+      "hub": "ISONE_HUB",
+      "timezone": "America/New_York",
+      "price_total": 28.5,
+      "currency": "USD",
+      "uom": "MWh",
+      "source_run_id": "demo",
+      "record_hash": "ghi789"
+    }
+  ]
+}
+

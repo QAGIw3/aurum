@@ -1,0 +1,150 @@
+version: 2
+
+models:
+  - name: stg_isone_lmp
+    description: "ISO-NE Locational Marginal Pricing staging data"
+    columns:
+      - name: iso_code
+        description: "ISO identifier"
+        tests:
+          - not_null
+      - name: market
+        description: "Market type (DAM, RTM)"
+        tests:
+          - not_null
+      - name: delivery_date
+        description: "Delivery date"
+        tests:
+          - not_null
+      - name: interval_start
+        description: "Interval start timestamp"
+        tests:
+          - not_null
+      - name: location_id
+        description: "Location/node identifier"
+        tests:
+          - not_null
+      - name: price_total
+        description: "Total locational marginal price"
+        tests:
+          - not_null
+
+  - name: stg_isone_load
+    description: "ISO-NE Load data staging"
+    columns:
+      - name: iso_code
+        description: "ISO identifier"
+        tests:
+          - not_null
+      - name: area
+        description: "Area/zone identifier"
+      - name: interval_start
+        description: "Interval start timestamp"
+        tests:
+          - not_null
+      - name: mw
+        description: "Load in MW"
+        tests:
+          - not_null
+
+  - name: stg_isone_generation_mix
+    description: "ISO-NE Generation Mix staging data"
+    columns:
+      - name: iso_code
+        description: "ISO identifier"
+        tests:
+          - not_null
+      - name: asof_time
+        description: "As of timestamp"
+        tests:
+          - not_null
+      - name: fuel_type
+        description: "Fuel type"
+        tests:
+          - not_null
+      - name: mw
+        description: "Generation in MW"
+        tests:
+          - not_null
+
+  - name: stg_isone_ancillary_services
+    description: "ISO-NE Ancillary Services staging data"
+    columns:
+      - name: iso_code
+        description: "ISO identifier"
+        tests:
+          - not_null
+      - name: market
+        description: "Market type"
+        tests:
+          - not_null
+      - name: product
+        description: "Ancillary service product"
+        tests:
+          - not_null
+      - name: zone
+        description: "Reserve zone"
+        tests:
+          - not_null
+      - name: interval_start
+        description: "Interval start timestamp"
+        tests:
+          - not_null
+
+  - name: stg_isone_interchange
+    description: "ISO-NE Interchange staging data"
+    columns:
+      - name: iso_code
+        description: "ISO identifier"
+        tests:
+          - not_null
+      - name: area
+        description: "Area identifier"
+      - name: interval_start
+        description: "Interval start timestamp"
+        tests:
+          - not_null
+      - name: mw
+        description: "Interchange in MW"
+        tests:
+          - not_null
+
+  - name: stg_isone_nodes
+    description: "ISO-NE Node definitions staging"
+    columns:
+      - name: iso_code
+        description: "ISO identifier"
+        tests:
+          - not_null
+      - name: location_id
+        description: "Location/node identifier"
+        tests:
+          - not_null
+      - name: location_name
+        description: "Location name"
+      - name: location_type
+        description: "Location type"
+      - name: zone
+        description: "Zone"
+      - name: hub
+        description: "Hub"
+
+  - name: stg_isone_generators
+    description: "ISO-NE Generator definitions staging"
+    columns:
+      - name: iso_code
+        description: "ISO identifier"
+        tests:
+          - not_null
+      - name: generator_id
+        description: "Generator identifier"
+        tests:
+          - not_null
+      - name: generator_name
+        description: "Generator name"
+      - name: fuel_type
+        description: "Fuel type"
+      - name: capacity_mw
+        description: "Generator capacity in MW"
+        tests:
+          - not_null

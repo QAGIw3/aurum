@@ -14,6 +14,8 @@
   "aurum.iso.caiso.load.v1-value": "iso.load.v1.avsc",
   "aurum.iso.ercot.lmp.v1-value": "iso.lmp.v1.avsc",
   "aurum.iso.isone.lmp.v1-value": "iso.lmp.v1.avsc",
+  "aurum.iso.isone.load.v1-value": "iso.load.v1.avsc",
+  "aurum.iso.isone.genmix.v1-value": "iso.genmix.v1.avsc",
   "aurum.iso.miso.asm.v1-value": "iso.asm.v1.avsc",
   "aurum.iso.miso.genmix.v1-value": "iso.genmix.v1.avsc",
   "aurum.iso.miso.lmp.v1-value": "iso.lmp.v1.avsc",

@@ -1,0 +1,6 @@
+{
+  "pinned_at": "2025-01-24",
+  "rtdb_endpoint": "/MISORTDBService/rest/data/getLMPConsolidatedTable",
+  "headers_format": "Ocp-Apim-Subscription-Key:<key>"
+}
+

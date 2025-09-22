@@ -335,7 +335,7 @@ class BulkArchiveMonitor:
         # Log completion
         self.logger.log(
             LogLevel.INFO,
-            f"Operation {operation_id} completed in {duration".2f"}s",
+            f"Operation {operation_id} completed in {duration:.2f}s",
             "operation_monitoring_completed",
             operation_id=operation_id,
             success=success,

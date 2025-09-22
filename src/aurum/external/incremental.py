@@ -1,4 +1,20 @@
-"""Incremental data processing for external providers."""
+"""Incremental data processing for external providers.
+
+Supported providers: EIA, FRED, NOAA, World Bank.
+
+Highlights:
+- Emits catalog upserts and observation records to Kafka topics
+- Respects per-series checkpoints stored in Postgres
+- Windowed updates (default last 24h), suitable for periodic Airflow runs
+
+Environment (providers):
+- EIA: `EIA_API_KEY`, optional `EIA_API_BASE_URL`
+- FRED: `FRED_API_KEY`, optional `FRED_API_BASE_URL`
+- NOAA: `NOAA_TOKEN` (or `aurum_noaa_api_token` via Airflow Variable), `NOAA_API_BASE_URL`
+- World Bank: `WORLD_BANK_API_BASE_URL`
+
+See docs/external-data.md and seatunnel/README.md for end‑to‑end ingestion details.
+"""
 
 from __future__ import annotations
 

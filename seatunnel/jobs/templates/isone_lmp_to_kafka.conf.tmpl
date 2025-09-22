@@ -135,7 +135,7 @@ transform {
         NULL AS source_run_id,
         CAST(UNIX_TIMESTAMP() * 1000000 AS BIGINT) AS ingest_ts,
         SHA2(CONCAT_WS('|', c.begin_raw, CAST(c.node_id AS STRING), CAST(c.price_total AS STRING)), 256) AS record_hash,
-        NULL AS metadata
+        MAP('source_timezone', 'America/New_York', 'normalized_to_utc', 'true') AS metadata
       FROM converted c
       LEFT JOIN iso_registry reg
         ON upper(reg.iso) = 'ISONE'

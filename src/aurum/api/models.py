@@ -12,7 +12,7 @@ from .http.pagination import DEFAULT_PAGE_SIZE, MAX_CURSOR_LENGTH, MAX_PAGE_SIZE
 from aurum.scenarios.models import ScenarioAssumption
 
 
-class AurumBaseModel(AurumBaseModel):
+class AurumBaseModel(BaseModel):
     """Base model for all Aurum API models with consistent configuration."""
 
     model_config = ConfigDict(

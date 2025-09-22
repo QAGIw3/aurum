@@ -34,4 +34,13 @@
   "aurum_miso_asm_expost_url": "https://apim.misoenergy.org/pricing/v1/day-ahead/${YYYY}-${MM}-${DD}/asm-expost",
   "aurum_miso_asm_topic": "aurum.iso.miso.asm.v1",
   "aurum_miso_asm_subject": "aurum.iso.miso.asm.v1-value"
+  ,
+  "aurum_miso_rt_url": "https://apim.misoenergy.org/pricing/v1/real-time/${YYYY}-${MM}-${DD}/cpnode-lmp",
+  "aurum_miso_da_url": "https://apim.misoenergy.org/pricing/v1/day-ahead/${YYYY}-${MM}-${DD}/cpnode-lmp",
+  "aurum_miso_market": "REAL_TIME",
+  "aurum_iso_location_registry": "config/iso_nodes.csv",
+  "aurum_caiso_genmix_endpoint": "https://oasis.caiso.com/oasisapi/eir/GenFuelMix?resultformat=6",
+  "aurum_caiso_genmix_auth_header": "",
+  "aurum_caiso_load_endpoint": "https://oasis.caiso.com/oasisapi/eir/SystemLoad?resultformat=6",
+  "aurum_caiso_load_auth_header": ""
 }

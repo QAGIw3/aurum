@@ -9,7 +9,7 @@ from __future__ import annotations
 import os
 from contextlib import contextmanager
 from datetime import datetime
-from typing import Generator, Optional
+from typing import Generator, Optional, Tuple, List
 
 import psycopg
 
@@ -86,3 +86,73 @@ def get_ingest_watermark(
         )
         row = cur.fetchone()
         return row[0] if row else None
+
+
+def claim_window(
+    source_name: str,
+    watermark_key: str,
+    *,
+    window_seconds: int,
+    max_ahead_seconds: int = 86400,
+    job_id: str,
+    dsn: Optional[str] = None,
+) -> Optional[Tuple[datetime, datetime]]:
+    """Claim the next ingest window for (source, key) and return (start, end) if acquired."""
+    with _get_connection(dsn) as conn, conn.cursor() as cur:
+        cur.execute(
+            "SELECT * FROM public.claim_ingest_window(%s, %s, %s, %s, %s)",
+            (source_name, watermark_key, window_seconds, max_ahead_seconds, job_id),
+        )
+        row = cur.fetchone()
+        if row:
+            return row[0], row[1]
+        return None
+
+
+def commit_window(
+    source_name: str,
+    watermark_key: str,
+    window_start: datetime,
+    window_end: datetime,
+    *,
+    job_id: str,
+    dsn: Optional[str] = None,
+) -> bool:
+    """Commit a previously claimed window and advance the watermark."""
+    with _get_connection(dsn) as conn, conn.cursor() as cur:
+        cur.execute(
+            "SELECT public.commit_ingest_window(%s, %s, %s, %s, %s)",
+            (source_name, watermark_key, window_start, window_end, job_id),
+        )
+        row = cur.fetchone()
+        committed = bool(row and row[0])
+        conn.commit()
+        return committed
+
+
+def gap_scan(
+    source_name: str,
+    watermark_key: str,
+    *,
+    backfill_hours: int,
+    window_seconds: int,
+    limit: int = 100,
+    dsn: Optional[str] = None,
+) -> List[Tuple[datetime, datetime]]:
+    """Return a list of missing committed windows to backfill."""
+    with _get_connection(dsn) as conn, conn.cursor() as cur:
+        cur.execute(
+            "SELECT * FROM public.gap_scan_ingest_windows(%s, %s, %s, %s, %s)",
+            (source_name, watermark_key, backfill_hours, window_seconds, limit),
+        )
+        return [(row[0], row[1]) for row in cur.fetchall()]
+
+
+__all__ = [
+    "register_ingest_source",
+    "update_ingest_watermark",
+    "get_ingest_watermark",
+    "claim_window",
+    "commit_window",
+    "gap_scan",
+]

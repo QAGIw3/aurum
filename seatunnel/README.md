@@ -78,6 +78,7 @@ This exposes Vault at `http://localhost:8200` with root token `aurum-dev-token` 
 - `miso_lmp_to_kafka.conf.tmpl`: Downloads MISO market report CSVs (configurable DA/RT) and maps their columns into the ISO LMP Avro schema. Column names and interval length can be overridden via environment variables.
 - `miso_rtd_lmp_to_kafka.conf.tmpl`: Calls the MISO Data Broker real-time API (`getLMPConsolidatedTable`) to ingest five-minute observations. Provide `MISO_RTD_ENDPOINT`, `MISO_RTD_START/END`, Kafka/Schema Registry coordinates, and (optionally) `MISO_RTD_HEADERS` using `||` as a separator for multiple header entries.
 - `isone_lmp_to_kafka.conf.tmpl`: Calls the ISO-NE JSON web services, handles optional basic/bearer auth, and projects results into the ISO LMP schema before emitting to Kafka.
+  - Note: The legacy `isone_comprehensive_to_kafka.conf.tmpl` (Jinja-like) is deprecated. Prefer the per‑datatype templates (LMP/Load/GenMix/ASM) or use the runner with `ISONE_DATA_TYPE` to dispatch.
 - `caiso_lmp_to_kafka.conf.tmpl`: Reads staged CAISO JSON payloads (typically produced by `scripts/ingest/caiso_prc_lmp_to_kafka.py --output-json`) and publishes Avro messages to the CAISO topic.
 - `ercot_lmp_to_kafka.conf.tmpl`: Consumes normalized ERCOT MIS observations from a JSON file and emits them to Kafka using the shared ISO LMP schema.
 - `spp_lmp_to_kafka.conf.tmpl`: Loads SPP Marketplace LMP records from staged JSON and writes them to Kafka.

@@ -279,7 +279,7 @@ class StalenessAlertManager:
         message = f"""
 Dataset: {dataset}
 Staleness Level: {staleness_level}
-Hours Since Update: {hours".2f"}
+Hours Since Update: {hours:.2f}
 
 """
 

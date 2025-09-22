@@ -1,0 +1,53 @@
+# ISO generation mix topic → Iceberg table (configurable)
+
+env {
+  job.mode = "STREAMING"
+  checkpoint.interval = 60000
+}
+
+source {
+  Kafka {
+    bootstrap.servers = "${AURUM_KAFKA_BOOTSTRAP_SERVERS}"
+    topic = "${ISO_GENMIX_TOPIC_PATTERN:-aurum\\.iso\\..*\\.genmix\\.v1}"
+    format = "avro"
+    start_mode = "latest"
+    avro { schema.registry.url = "${AURUM_SCHEMA_REGISTRY_URL}" }
+    result_table_name = "genmix_raw"
+  }
+}
+
+transform {
+  Sql {
+    source_table_name = "genmix_raw"
+    result_table_name = "genmix_enriched"
+    query = """
+      SELECT
+        iso_code,
+        TO_TIMESTAMP(asof_time / 1000000.0) AS asof_time,
+        fuel_type,
+        mw,
+        unit,
+        TO_TIMESTAMP(ingest_ts / 1000000.0) AS ingest_ts,
+        CAST(metadata AS STRING) AS metadata,
+        '${ISO_CODE:-UNKNOWN}' AS iso,
+        '${ISO_DATASET:-genmix}'  AS dataset,
+        CAST(TO_DATE(TO_TIMESTAMP(asof_time / 1000000.0)) AS DATE) AS dt
+      FROM genmix_raw
+    """
+  }
+}
+
+sink {
+  Iceberg {
+    plugin_input = "genmix_enriched"
+    catalog_name = "${ICEBERG_CATALOG_NAME}"
+    catalog_type = "${ICEBERG_CATALOG_TYPE}"
+    uri = "${ICEBERG_URI}"
+    warehouse = "${ICEBERG_WAREHOUSE}"
+    database = "${ICEBERG_DB}"
+    table = "${ICEBERG_TABLE}"
+    write.distribution-mode = "${ICEBERG_WRITE_DISTRIBUTION:-hash}"
+    format = "${ICEBERG_WRITE_FORMAT:-parquet}"
+    upsert = true
+  }
+}

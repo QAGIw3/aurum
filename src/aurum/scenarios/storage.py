@@ -1,4 +1,18 @@
-"""Database persistence layer for scenario management."""
+"""Scenario persistence layer (Postgres/Timescale) with RLS.
+
+Responsibilities:
+- Manage scenario and run metadata in Postgres (`scenario`, `scenario_run`)
+- Persist fine‑grained outputs/metrics when configured (`scenario_output`)
+- Enforce tenant scoping via RLS by setting `app.current_tenant`
+
+Notes:
+- See DDL in `postgres/ddl/app.sql` and the RLS migration in
+  `db/migrations/versions/*tenant_rls*`.
+- The API `/v1/scenarios/*` reads outputs either from Iceberg via Trino
+  or from Postgres depending on deployment; this store focuses on
+  operational metadata and feature flags.
+- All methods assume `aurum.telemetry.context` has tenant/user context.
+"""
 
 from __future__ import annotations
 

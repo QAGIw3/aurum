@@ -610,7 +610,6 @@ fetch('{base_url}{path}', {{
         }
     else:
         return {
-            "code": f"# {operation.get('summary', f'{method.upper()} {path}')}
-# {base_url}{path}",
+            "code": f"# {operation.get('summary', f'{method.upper()} {path}')}\n# {base_url}{path}",
             "explanation": f"Generic example for {method.upper()} {path}"
         }

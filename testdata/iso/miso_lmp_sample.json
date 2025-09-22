@@ -1,0 +1,25 @@
+{
+  "items": [
+    {
+      "interval_start": 1737571200000000,
+      "interval_end": 1737571500000000,
+      "interval_minutes": 5,
+      "location_id": "MICHIGAN.HUB",
+      "location_name": "Michigan Hub",
+      "location_type": "HUB",
+      "zone": "MISO-NORTH",
+      "hub": "MICHIGAN.HUB",
+      "timezone": "America/Detroit",
+      "price_total": 24.12,
+      "price_energy": 22.8,
+      "price_congestion": 0.9,
+      "price_loss": 0.42,
+      "currency": "USD",
+      "uom": "MWh",
+      "source_run_id": "demo",
+      "record_hash": "abc123"
+    }
+  ],
+  "next": null
+}
+

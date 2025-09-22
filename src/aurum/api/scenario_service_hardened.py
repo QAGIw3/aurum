@@ -17,7 +17,7 @@ import time
 import uuid
 from collections import defaultdict
 from contextlib import asynccontextmanager, contextmanager
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any, Dict, Iterable, List, Optional, Tuple
 
@@ -85,42 +85,18 @@ class DatabaseError(Exception):
         }
 
 
-class CircuitBreaker:
-    """Simple circuit breaker for database operations."""
+from aurum.common.circuit_breaker import CircuitBreaker as _CommonCircuitBreaker
+
+
+class CircuitBreaker(_CommonCircuitBreaker):
+    """Wrapper around the shared circuit breaker with the local API."""
 
     def __init__(self, failure_threshold: int = 5, reset_timeout: int = 60):
-        self.failure_threshold = failure_threshold
-        self.reset_timeout = reset_timeout
-        self.failure_count = 0
-        self.last_failure_time = 0
-        self.state = "CLOSED"  # CLOSED, OPEN, HALF_OPEN
+        super().__init__(failure_threshold=failure_threshold, recovery_timeout=reset_timeout)
 
     def can_execute(self) -> bool:
-        """Check if operations can be executed."""
-        if self.state == "CLOSED":
-            return True
-
-        if self.state == "OPEN":
-            if time.time() - self.last_failure_time > self.reset_timeout:
-                self.state = "HALF_OPEN"
-                return True
-            return False
-
-        return self.state == "HALF_OPEN"
-
-    def record_success(self):
-        """Record successful operation."""
-        if self.state == "HALF_OPEN":
-            self.state = "CLOSED"
-        self.failure_count = 0
-
-    def record_failure(self):
-        """Record failed operation."""
-        self.failure_count += 1
-        self.last_failure_time = time.time()
-
-        if self.failure_count >= self.failure_threshold:
-            self.state = "OPEN"
+        # Allow execution when the breaker is not open (CLOSED or HALF_OPEN).
+        return not self.is_open()
 
 
 class PostgresScenarioStore:

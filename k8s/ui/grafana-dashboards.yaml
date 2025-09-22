@@ -1,0 +1,50 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: grafana-dashboard-defs
+  namespace: aurum-dev
+  labels:
+    app: grafana
+data:
+  simple-dashboard.json: |
+    {
+      "id": null,
+      "uid": "simple-dashboard",
+      "title": "Aurum Simple Dashboard",
+      "timezone": "browser",
+      "schemaVersion": 39,
+      "version": 1,
+      "panels": [
+        {
+          "type": "stat",
+          "title": "Aurum Status",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "targets": [
+            {
+              "refId": "A",
+              "expr": "up",
+              "legendFormat": "status"
+            }
+          ],
+          "fieldConfig": {
+            "defaults": {
+              "unit": "none",
+              "decimals": 0,
+              "mappings": [
+                {"type": "value", "options": {"0": {"color": "red", "text": "Down"}, "1": {"color": "green", "text": "Up"}}}
+              ]
+            }
+          },
+          "options": {
+            "reduceOptions": {
+              "values": true,
+              "calcs": ["lastNotNull"]
+            }
+          },
+          "gridPos": {"h": 8, "w": 24, "x": 0, "y": 0}
+        }
+      ]
+    }

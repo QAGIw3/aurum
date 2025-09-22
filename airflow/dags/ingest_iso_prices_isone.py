@@ -1,9 +1,9 @@
-"""Airflow DAG to ingest ISO-NE web services LMP into Kafka via SeaTunnel."""
+"""Airflow DAG to ingest ISO-NE LMP data into Kafka via SeaTunnel."""
 from __future__ import annotations
 
 import os
 from datetime import datetime, timedelta
-from typing import Any
+from typing import Any, Tuple
 
 from airflow import DAG
 from airflow.operators.bash import BashOperator
@@ -29,22 +29,88 @@ DEFAULT_ARGS: dict[str, Any] = {
 BIN_PATH = os.environ.get("AURUM_BIN_PATH", ".venv/bin:$PATH")
 PYTHONPATH_ENTRY = os.environ.get("AURUM_PYTHONPATH_ENTRY", "/opt/airflow/src")
 
-
 SOURCES = (
     iso_utils.IngestSource(
-        "isone_ws_lmp",
-        description="ISO-NE web services LMP ingestion",
-        schedule="10 * * * *",
+        "isone_da_lmp",
+        description="ISO-NE day-ahead LMP ingestion",
+        schedule="15 * * * *",
+        target="kafka",
+    ),
+    iso_utils.IngestSource(
+        "isone_rt_lmp",
+        description="ISO-NE real-time LMP ingestion",
+        schedule="*/5 * * * *",
         target="kafka",
     ),
 )
 
 
+def build_isone_lmp_task(
+    task_prefix: str,
+    *,
+    market: str,
+    url_var: str,
+    interval_seconds: int,
+    source_name: str,
+    pool: str | None = None,
+) -> Tuple[BashOperator, BashOperator, PythonOperator]:
+    kafka_bootstrap = "{{ var.value.get('aurum_kafka_bootstrap', 'localhost:9092') }}"
+    schema_registry = "{{ var.value.get('aurum_schema_registry', 'http://localhost:8081') }}"
+
+    env_parts = [
+        f"ISONE_URL=\"{{{{ var.value.get('{url_var}') }}}}\"",
+        f"ISONE_MARKET=\"{market}\"",
+        "ISONE_TOPIC=\"aurum.iso.isone.lmp.v1\"",
+        f"ISONE_INTERVAL_SECONDS=\"{interval_seconds}\"",
+        "ISONE_TIME_FORMAT=\"{{ var.value.get('aurum_isone_time_format', 'yyyy-MM-dd HH:mm:ss') }}\"",
+        "ISONE_LOCATION_COLUMN=\"{{ var.value.get('aurum_isone_location_column', 'LocationID') }}\"",
+        "ISONE_LMP_COLUMN=\"{{ var.value.get('aurum_isone_lmp_column', 'LMP') }}\"",
+        "ISONE_ENERGY_COLUMN=\"{{ var.value.get('aurum_isone_energy_column', 'EnergyComponent') }}\"",
+        "ISONE_CONGESTION_COLUMN=\"{{ var.value.get('aurum_isone_congestion_column', 'CongestionComponent') }}\"",
+        "ISONE_LOSS_COLUMN=\"{{ var.value.get('aurum_isone_loss_column', 'LossComponent') }}\"",
+        f"KAFKA_BOOTSTRAP_SERVERS='{kafka_bootstrap}'",
+        f"SCHEMA_REGISTRY_URL='{schema_registry}'",
+    ]
+    env_line = " ".join(env_parts)
+
+    render = BashOperator(
+        task_id=f"{task_prefix}_render",
+        bash_command=iso_utils.build_render_command(
+            "isone_lmp_to_kafka",
+            env_assignments=f"AURUM_EXECUTE_SEATUNNEL=0 {env_line}",
+            bin_path=BIN_PATH,
+            pythonpath_entry=PYTHONPATH_ENTRY,
+            debug_dump_env=True,
+        ),
+        execution_timeout=timedelta(minutes=10),
+        pool=pool,
+    )
+
+    exec_task = BashOperator(
+        task_id=f"{task_prefix}_execute",
+        bash_command=iso_utils.build_k8s_command(
+            "isone_lmp_to_kafka",
+            bin_path=BIN_PATH,
+            pythonpath_entry=PYTHONPATH_ENTRY,
+            timeout=600,
+        ),
+        execution_timeout=timedelta(minutes=20),
+        pool=pool,
+    )
+
+    watermark = PythonOperator(
+        task_id=f"{task_prefix}_watermark",
+        python_callable=iso_utils.make_watermark_callable(source_name),
+    )
+
+    return render, exec_task, watermark
+
+
 with DAG(
     dag_id="ingest_iso_prices_isone",
-    description="Fetch ISO-NE LMP via web services and publish to Kafka (SeaTunnel)",
+    description="Download ISO-NE LMP data (DA/RT) and publish via SeaTunnel",
     default_args=DEFAULT_ARGS,
-    schedule_interval="10 * * * *",
+    schedule_interval="15 * * * *",
     start_date=datetime(2024, 1, 1),
     catchup=False,
     max_active_runs=1,
@@ -55,13 +121,16 @@ with DAG(
     preflight = PythonOperator(
         task_id="preflight_airflow_vars",
         python_callable=build_preflight_callable(
-            required_variables=("aurum_kafka_bootstrap", "aurum_schema_registry"),
-            optional_variables=(
-                "aurum_isone_ws_username",
-                "aurum_isone_ws_password",
-                "aurum_isone_topic",
+            required_variables=(
+                "aurum_kafka_bootstrap",
+                "aurum_schema_registry",
+                "aurum_isone_da_url",
+                "aurum_isone_rt_url",
             ),
-            warn_only_variables=("aurum_isone_timezone",),
+            optional_variables=(
+                "aurum_isone_time_format",
+                "aurum_isone_lmp_column",
+            ),
         ),
     )
 
@@ -70,64 +139,29 @@ with DAG(
         python_callable=lambda: iso_utils.register_sources(SOURCES),
     )
 
-    # Best-effort pull of ISO-NE WS creds from Vault
-    pull_cmd = (
-        "eval \"$(VAULT_ADDR=${AURUM_VAULT_ADDR:-http://127.0.0.1:8200} "
-        "VAULT_TOKEN=${AURUM_VAULT_TOKEN:-aurum-dev-token} "
-        "PYTHONPATH=${PYTHONPATH:-}:" + PYTHONPATH_ENTRY + " "
-        + os.environ.get("AURUM_VENV_PYTHON", ".venv/bin/python") +
-        " scripts/secrets/pull_vault_env.py --mapping secret/data/aurum/isone:username=ISONE_USERNAME --mapping secret/data/aurum/isone:password=ISONE_PASSWORD --format shell)\" || true"
-    )
-
-    env_exports = "\n".join(
-        [
-            "export ISONE_URL=\"{{ var.value.get('aurum_isone_endpoint') }}\"",
-            "export ISONE_START=\"{{ data_interval_start.in_timezone('UTC').isoformat() }}\"",
-            "export ISONE_END=\"{{ data_interval_end.in_timezone('UTC').isoformat() }}\"",
-            "export ISONE_MARKET=\"{{ var.value.get('aurum_isone_market', 'DA') }}\"",
-            "export ISONE_TOPIC=\"aurum.iso.isone.lmp.v1\"",
-            "export ISONE_AUTH_HEADER=\"{{ var.value.get('aurum_isone_auth_header', '') }}\"",
-            "export ISONE_USERNAME=\"{{ var.value.get('aurum_isone_username', '') }}\"",
-            "export ISONE_PASSWORD=\"{{ var.value.get('aurum_isone_password', '') }}\"",
-            "export ISONE_NODE_FIELD=\"{{ var.value.get('aurum_isone_node_field', 'name') }}\"",
-            "export ISONE_NODE_ID_FIELD=\"{{ var.value.get('aurum_isone_node_id_field', 'ptid') }}\"",
-            "export ISONE_NODE_TYPE_FIELD=\"{{ var.value.get('aurum_isone_node_type_field', 'locationType') }}\"",
-            "export KAFKA_BOOTSTRAP_SERVERS=\"{{ var.value.get('aurum_kafka_bootstrap', 'localhost:9092') }}\"",
-            "export SCHEMA_REGISTRY_URL=\"{{ var.value.get('aurum_schema_registry', 'http://localhost:8081') }}\"",
-        ]
-    )
-
-    bash_command = "\n".join(
-        [
-            "set -euo pipefail",
-            "cd /opt/airflow",
-            f"export PATH=\"{BIN_PATH}\"",
-            f"export PYTHONPATH=\"${{PYTHONPATH:-}}:{PYTHONPATH_ENTRY}\"",
-            pull_cmd,
-            env_exports,
-            # Prefer Python helper in-cluster; avoid depending on docker in seatunnel runner
-            "python scripts/ingest/isone_ws_to_kafka.py "
-            "--url \"${ISONE_URL}\" --start \"${ISONE_START}\" --end \"${ISONE_END}\" "
-            "--market \"${ISONE_MARKET}\" --topic \"${ISONE_TOPIC}\" "
-            "--schema-registry \"${SCHEMA_REGISTRY_URL}\" --bootstrap-servers \"${KAFKA_BOOTSTRAP_SERVERS}\" "
-            "${ISONE_USERNAME:+--username \"${ISONE_USERNAME}\"} ${ISONE_PASSWORD:+--password \"${ISONE_PASSWORD}\"}",
-        ]
-    )
-
-    isone_ingest = BashOperator(
-        task_id="isone_ws_to_kafka",
-        bash_command=bash_command,
-        execution_timeout=timedelta(minutes=20),
+    da_render, da_exec, da_watermark = build_isone_lmp_task(
+        "isone_da",
+        market="DAY_AHEAD",
+        url_var="aurum_isone_da_url",
+        interval_seconds=3600,
+        source_name="isone_da_lmp",
         pool="api_isone",
     )
 
-    watermark = PythonOperator(
-        task_id="isone_watermark",
-        python_callable=iso_utils.make_watermark_callable("isone_ws_lmp"),
+    rt_render, rt_exec, rt_watermark = build_isone_lmp_task(
+        "isone_rt",
+        market="REAL_TIME",
+        url_var="aurum_isone_rt_url",
+        interval_seconds=300,
+        source_name="isone_rt_lmp",
+        pool="api_isone",
     )
 
     end = EmptyOperator(task_id="end")
 
-    start >> preflight >> register_sources >> isone_ingest >> watermark >> end
+    start >> preflight >> register_sources
+    register_sources >> da_render >> da_exec >> da_watermark
+    register_sources >> rt_render >> rt_exec >> rt_watermark
+    [da_watermark, rt_watermark] >> end
 
     dag.on_failure_callback = build_failure_callback(source="aurum.airflow.ingest_iso_prices_isone")

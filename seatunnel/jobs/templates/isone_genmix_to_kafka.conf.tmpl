@@ -1,0 +1,64 @@
+# ISO-NE generation mix → Kafka (Avro)
+
+env {
+  job.mode = "BATCH"
+  parallelism = 1
+}
+
+source {
+  Http {
+    url = "${ISONE_GENMIX_ENDPOINT}"
+    method = "GET"
+    params {
+      start = "${ISONE_GENMIX_INTERVAL_START}"
+      end = "${ISONE_GENMIX_INTERVAL_END}"
+    }
+    connection_timeout_ms = 20000
+    retry = 10
+    format = "json"
+    schema = { fields { ${ISONE_GENMIX_ASOF_FIELD} = string ${ISONE_GENMIX_FUEL_FIELD} = string ${ISONE_GENMIX_MW_FIELD} = string } }
+    jsonpath = "${ISONE_GENMIX_JSONPATH}"
+    headers {
+      Authorization = "${ISONE_GENMIX_AUTH_HEADER}"
+    }
+    result_table_name = "isone_genmix_raw"
+  }
+}
+
+transform {
+  Sql {
+    source_table_name = "isone_genmix_raw"
+    result_table_name = "isone_genmix_normalized"
+    query = """
+      SELECT
+        'ISONE' AS iso_code,
+        CAST(UNIX_TIMESTAMP(${ISONE_GENMIX_ASOF_EXTRACT}, '${ISONE_GENMIX_TIME_FORMAT}') * 1000000 AS BIGINT) AS asof_time,
+        CAST(${ISONE_GENMIX_FUEL_EXPR} AS STRING) AS fuel_type,
+        CAST(${ISONE_GENMIX_MW_EXPR} AS DOUBLE) AS mw,
+        '${ISONE_GENMIX_UNIT}' AS unit,
+        CAST(UNIX_TIMESTAMP() * 1000000 AS BIGINT) AS ingest_ts,
+        NULL AS metadata
+      FROM isone_genmix_raw
+    """
+  }
+}
+
+sink {
+  Kafka {
+    plugin_input = "isone_genmix_normalized"
+    bootstrap.servers = "${AURUM_KAFKA_BOOTSTRAP_SERVERS}"
+    topic = "${ISONE_GENMIX_TOPIC}"
+    semantic = "AT_LEAST_ONCE"
+    format = "avro"
+    avro {
+      use.schema.registry = true
+      schema.registry.url = "${AURUM_SCHEMA_REGISTRY_URL}"
+      value.schema.subject = "${ISONE_GENMIX_SUBJECT}"
+      value.schema = """${ISO_GENMIX_SCHEMA}"""
+      # Key configuration for message routing and partitioning
+      key.serializer = "${ISONE.CONF_KEY_SERIALIZER:-string}"
+      key.format = "${ISONE.CONF_KEY_FORMAT:-json}"
+    }
+  }
+}
+

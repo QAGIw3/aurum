@@ -33,6 +33,17 @@ repos:
         args: ["--profile", "black", "--filter-files"]
         exclude: ^(tests/|docs/)
 
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.6.9
+    hooks:
+      - id: ruff
+        name: ruff (lint)
+        args: ["--fix"]
+        additional_dependencies: []
+      - id: ruff-format
+        name: ruff (format)
+        additional_dependencies: []
+
   - repo: https://github.com/pycqa/flake8
     rev: 7.0.0
     hooks:

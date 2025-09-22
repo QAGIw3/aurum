@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import abc
 import json
+import time
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from enum import Enum
@@ -285,8 +286,3 @@ class IsoBaseExtractor(abc.ABC):
 
         except ValueError as e:
             raise ValueError(f"Invalid date format or range: {e}")
-
-
-# Import required modules at the end to avoid circular imports
-import time
-from datetime import datetime, timedelta

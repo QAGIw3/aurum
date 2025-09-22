@@ -397,11 +397,11 @@ class ISOTestDataGenerator(SyntheticDataGenerator):
         for i, date in enumerate(dates):
             record = {
                 "iso": random.choice(["NYISO", "PJM", "CAISO", "MISO"]),
-                "datetime": f"{date}T{i%24"02d"}:00:00",
+                "datetime": f"{date}T{i%24:02d}:00:00",
                 "lmp": round(random.uniform(10, 200), 2),
                 "load": random.randint(1000, 50000),
                 "generation": random.randint(8000, 45000),
-                "node": f"NODE_{i%100"03d"}",
+                "node": f"NODE_{i%100:03d}",
                 "zone": random.choice(["ZONE_A", "ZONE_B", "ZONE_C"]),
                 "source": "ISO",
                 "ingested_at": datetime.now().isoformat()

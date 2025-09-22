@@ -1469,7 +1469,7 @@ def run_worker():  # pragma: no cover - integration entrypoint
                                 value_schema=value_schema,
                                 output_topic=output_topic,
                                 request_id=request_id,
-                                ):
+                            ):
                                 cancelled = True
                                 break
 

@@ -3,6 +3,16 @@ Audit logging for external data API routes.
 
 This module provides comprehensive audit logging for all external data operations
 including API calls, data access, and administrative actions.
+
+Environment:
+- `AURUM_AUDIT_LOG_DIR`: directory to write audit/compliance/security logs. If not
+  writable, logs fall back to stdout.
+
+Notes:
+- A correlation ID is ensured for every request (header `x-correlation-id` or
+  generated) and echoed on the response.
+- Loggers: `audit.external_data` (info/warn), `compliance.external_data` (info),
+  `security.external_data` (warning) — suitable for forwarding to SIEM.
 """
 
 import json

@@ -1,6 +1,19 @@
 from __future__ import annotations
 
-"""Application factory for the Aurum API."""
+"""Aurum API application factory and wiring.
+
+Creates a FastAPI app with:
+- Versioned routers (v1 deprecated with headers; v2 active)
+- CORS, gzip, access logs, optional metrics middleware
+- Optional OIDC auth and external audit middleware
+- Rate limiting and cache integration via settings
+- Custom OpenAPI JSON/YAML endpoints (generated from the running app)
+
+See also:
+- docs/api/README.md for usage and endpoint index
+- docs/migration-guide.md for v1 → v2 migration details
+- docs/runtime-config.md for admin runtime configuration
+"""
 
 import sys
 import types

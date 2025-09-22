@@ -414,9 +414,9 @@ async def get_database_alerts(
             alerts.append({
                 "level": "warning",
                 "type": "slow_query_rate",
-                "message": f"High slow query rate: {slow_query_rate".1f"}%",
+                "message": f"High slow query rate: {slow_query_rate:.1f}%",
                 "threshold": "10%",
-                "current_value": f"{slow_query_rate".1f"}%",
+                "current_value": f"{slow_query_rate:.1f}%",
             })
             issues.append("High percentage of slow queries detected")
 
@@ -426,9 +426,9 @@ async def get_database_alerts(
             alerts.append({
                 "level": "warning",
                 "type": "average_query_time",
-                "message": f"High average query time: {avg_time".3f"}s",
+                "message": f"High average query time: {avg_time:.3f}s",
                 "threshold": "1.0s",
-                "current_value": f"{avg_time".3f"}s",
+                "current_value": f"{avg_time:.3f}s",
             })
             issues.append("Average query execution time is high")
 

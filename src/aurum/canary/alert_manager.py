@@ -306,7 +306,7 @@ class CanaryAlertManager:
         message = f"""
 Canary: {canary_name}
 Status: {status}
-Execution Time: {execution_time".2f"} seconds
+Execution Time: {execution_time:.2f} seconds
 Consecutive Failures: {consecutive_failures}
 
 """

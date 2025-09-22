@@ -106,6 +106,28 @@ The script relies on `AurumSettings` environment variables for Trino/Redis conne
 
 Idempotency: Repeated `run` requests with identical `scenario_id` and options may be de‑duplicated by the worker; cancellation is idempotent.
 
+## Worker & K8s
+
+Local (docker compose):
+
+```
+COMPOSE_PROFILES=core,worker docker compose -f compose/docker-compose.dev.yml up -d scenario-worker
+```
+
+Environment:
+- `AURUM_APP_DB_DSN` (optional): Postgres DSN for scenario metadata. If unset, the API/worker fall back to `AURUM_TIMESCALE_DSN`.
+- `AURUM_SCENARIO_METRICS_PORT` (default 9500): Prometheus metrics port.
+- `AURUM_SCENARIO_METRICS_ADDR` (optional): Bind address for metrics.
+
+Kubernetes:
+- Reference deployment: k8s/scenario-worker/deployment.yaml
+- Ensure the pod env provides a Postgres/Timescale DSN and any required feature flags.
+- Expose metrics via a Service/ServiceMonitor targeting the configured port.
+
+Operational tips:
+- The worker publishes outputs into Iceberg (via Trino/Spark) or Postgres depending on your deployment; API output endpoints read from Iceberg by default.
+- Use the runtime config API (docs/runtime-config.md) to toggle feature flags and tune rate limits if needed.
+
 ## Storage & Models
 
 - Postgres operational tables (see `postgres/ddl/app.sql`): `scenario`, `scenario_run`, `scenario_event`.

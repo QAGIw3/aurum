@@ -1,0 +1,70 @@
+# ISO load topic → Iceberg table (configurable)
+
+env {
+  job.mode = "STREAMING"
+  checkpoint.interval = 60000
+}
+
+source {
+  Kafka {
+    bootstrap.servers = "${AURUM_KAFKA_BOOTSTRAP_SERVERS}"
+    topic = "${ISO_LOAD_TOPIC_PATTERN:-aurum\\.iso\\..*\\.load\\.v1}"
+    format = "avro"
+    start_mode = "latest"
+    avro { schema.registry.url = "${AURUM_SCHEMA_REGISTRY_URL}" }
+    result_table_name = "load_raw"
+  }
+}
+
+transform {
+  Sql {
+    source_table_name = "load_raw"
+    result_table_name = "load_enriched"
+    query = """
+      SELECT
+        iso_code,
+        market,
+        (DATE '1970-01-01' + delivery_date * INTERVAL '1' DAY) AS delivery_date,
+        TO_TIMESTAMP(interval_start / 1000000.0) AS interval_start,
+        CASE WHEN interval_end IS NOT NULL THEN TO_TIMESTAMP(interval_end / 1000000.0) ELSE NULL END AS interval_end,
+        interval_minutes,
+        location_id,
+        location_name,
+        location_type,
+        zone,
+        hub,
+        timezone,
+        CAST(NULL AS DOUBLE) AS price_total,
+        CAST(NULL AS DOUBLE) AS price_energy,
+        CAST(NULL AS DOUBLE) AS price_congestion,
+        CAST(NULL AS DOUBLE) AS price_loss,
+        currency,
+        uom,
+        settlement_point,
+        source_run_id,
+        TO_TIMESTAMP(ingest_ts / 1000000.0) AS ingest_ts,
+        record_hash,
+        CAST(metadata AS STRING) AS metadata,
+        '${ISO_CODE:-UNKNOWN}' AS iso,
+        '${ISO_DATASET:-load}'  AS dataset,
+        CAST(TO_DATE(TO_TIMESTAMP(interval_start / 1000000.0)) AS DATE) AS dt
+      FROM load_raw
+    """
+  }
+}
+
+sink {
+  Iceberg {
+    plugin_input = "load_enriched"
+    catalog_name = "${ICEBERG_CATALOG_NAME}"
+    catalog_type = "${ICEBERG_CATALOG_TYPE}"
+    uri = "${ICEBERG_URI}"
+    warehouse = "${ICEBERG_WAREHOUSE}"
+    database = "${ICEBERG_DB}"
+    table = "${ICEBERG_TABLE}"
+    write.distribution-mode = "${ICEBERG_WRITE_DISTRIBUTION:-hash}"
+    format = "${ICEBERG_WRITE_FORMAT:-parquet}"
+    upsert = true
+  }
+}
+

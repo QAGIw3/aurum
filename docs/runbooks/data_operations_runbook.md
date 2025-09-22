@@ -845,3 +845,37 @@ python scripts/ops/enable_enhanced_validation.py \
 **Last Updated**: 2025-01-21
 **Version**: 1.0.0
 **Owner**: Data Engineering Team
+## 8. ISO Ingestion
+
+Overview
+- Ingest ISO datasets (LMP, load, generation mix) via SeaTunnel → Kafka, with downstream sinks to Timescale and Iceberg.
+
+Airflow
+- DAG: `iso_ingest_dag`
+  - Variables:
+    - `aurum_iso_code` (e.g. `MISO`, `CAISO`, `ISONE`)
+    - `aurum_iso_dataset` (`lmp` | `load` | `genmix`)
+    - `aurum_iso_chunker` (`hour` | `day`)
+    - `aurum_iso_topic` (optional) default `aurum.iso.<iso>.<dataset>.v1`
+    - `aurum_iso_subject` (optional) default `<topic>-value`
+  - Source registration and watermark updates handled within the DAG.
+
+SeaTunnel templates
+- Kafka → Timescale: `iso_lmp_kafka_to_timescale.conf.tmpl`, `iso_load_kafka_to_timescale.conf.tmpl`, `iso_genmix_kafka_to_timescale.conf.tmpl`
+- Kafka → Iceberg: `iso_lmp_kafka_to_iceberg.conf.tmpl`, `iso_load_kafka_to_iceberg.conf.tmpl`, `iso_genmix_kafka_to_iceberg.conf.tmpl`
+
+Iceberg tables (partitioning)
+- Trino DDL: `sql/iceberg/external/011_iso_lmp.sql`, `012_iso_load.sql`, `013_iso_genmix.sql`
+- Partitioning: `iso` / `dataset` / `dt`, with sort on keys for efficient pruning.
+
+Schema Registry
+- Subjects enumerated in `kafka/schemas/contracts.yml` and `kafka/schemas/subjects.json`.
+- Validate contracts: `python aurum/scripts/kafka/register_schemas.py --validate-only --compatibility BACKWARD`
+- Register in env: `python aurum/scripts/kafka/register_schemas.py --schema-registry-url http://<host>:8081 --compatibility BACKWARD`
+
+Watermark windowing
+- Postgres functions: `claim_ingest_window`, `commit_ingest_window`, `gap_scan_ingest_windows`
+- Python API: `aurum.db.watermark` → `claim_window`, `commit_window`, `gap_scan`
+
+Monitoring
+- Grafana dashboard: ISO Ingestion Overview (uid `aurum-iso-ingestion`) for lag, error rate, rows/min, schema drift.

@@ -1,4 +1,18 @@
-"""Pluggable data backend interfaces for Aurum API."""
+"""Pluggable data backend interfaces for the Aurum API.
+
+Provides a small abstraction over multiple query backends with pooled
+connections and a unified `QueryResult`:
+- Trino (federated queries: Iceberg, ClickHouse, Postgres, Timescale)
+- ClickHouse (OLAP)
+- Timescale/Postgres (operational timeseries)
+
+Use `BackendFactory.create_backend()` or `get_backend()` to obtain a cached
+backend instance. Close all pooled connections with `close_all_backends()`.
+
+See also:
+- docs/observability/observability-guide.md (query metrics)
+- docs/pagination.md (cursor semantics)
+"""
 
 from __future__ import annotations
 

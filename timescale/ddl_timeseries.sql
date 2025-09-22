@@ -185,6 +185,63 @@ SELECT add_continuous_aggregate_policy(
     if_not_exists => TRUE
 );
 
+-- Ancillary services time series (ISO ASM)
+CREATE TABLE IF NOT EXISTS public.iso_asm_timeseries (
+    record_hash TEXT NOT NULL,
+    iso_code TEXT NOT NULL,
+    market TEXT NOT NULL,
+    product TEXT NOT NULL,
+    zone TEXT,
+    preliminary_final TEXT,
+    interval_start TIMESTAMPTZ NOT NULL,
+    interval_end TIMESTAMPTZ,
+    interval_minutes INTEGER,
+    price_mcp DOUBLE PRECISION,
+    currency TEXT DEFAULT 'USD',
+    uom TEXT DEFAULT 'MWh',
+    metadata JSONB,
+    ingest_ts TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    PRIMARY KEY (record_hash, interval_start)
+);
+
+SELECT
+    create_hypertable(
+        'public.iso_asm_timeseries',
+        'interval_start',
+        if_not_exists => TRUE,
+        migrate_data => TRUE
+    );
+
+CREATE INDEX IF NOT EXISTS idx_iso_asm_lookup
+    ON public.iso_asm_timeseries (iso_code, product, zone, interval_start DESC);
+
+ALTER TABLE IF EXISTS public.iso_asm_timeseries
+    SET (
+        timescaledb.compress = true,
+        timescaledb.compress_segmentby = 'iso_code,product,zone',
+        timescaledb.compress_orderby = 'interval_start DESC'
+    );
+
+SELECT add_compression_policy('public.iso_asm_timeseries', INTERVAL '7 days', if_not_exists => TRUE);
+SELECT add_retention_policy('public.iso_asm_timeseries', INTERVAL '365 days', if_not_exists => TRUE);
+
+-- PNODE/APNODE registry (metadata; not a hypertable)
+CREATE TABLE IF NOT EXISTS public.iso_pnode_registry (
+    iso_code TEXT NOT NULL,
+    pnode_id TEXT NOT NULL,
+    pnode_name TEXT,
+    type TEXT,
+    zone TEXT,
+    hub TEXT,
+    effective_start TIMESTAMPTZ,
+    effective_end TIMESTAMPTZ,
+    ingest_ts TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    PRIMARY KEY (iso_code, pnode_id, effective_start)
+);
+
+CREATE INDEX IF NOT EXISTS idx_iso_pnode_lookup
+    ON public.iso_pnode_registry (iso_code, pnode_id);
+
 CREATE TABLE IF NOT EXISTS public.load_timeseries (
     tenant_id TEXT NOT NULL,
     iso_code TEXT NOT NULL,

@@ -1,0 +1,25 @@
+{
+  "PRC_LMP": {
+    "results": {
+      "items": [
+        {
+          "interval_start": 1737571200000000,
+          "interval_end": 1737571500000000,
+          "interval_minutes": 5,
+          "location_id": "NP15",
+          "location_name": "NP15",
+          "location_type": "HUB",
+          "zone": "CAISO-NORTH",
+          "hub": "NP15",
+          "timezone": "America/Los_Angeles",
+          "price_total": 35.1,
+          "currency": "USD",
+          "uom": "MWh",
+          "source_run_id": "demo",
+          "record_hash": "def456"
+        }
+      ]
+    }
+  }
+}
+

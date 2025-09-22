@@ -1,4 +1,21 @@
-"""Enhanced Trino client with concurrency controls, timeouts, and resilience patterns."""
+"""Enhanced Trino client with concurrency controls, timeouts, and resilience patterns.
+
+Features:
+- Connection pooling with async acquisition and health checks
+- Circuit breaker with HALF_OPEN testing and retry backoff
+- Query timeouts with threadpool execution of DB-API calls
+- Normalized query stats + structured logging for observability
+
+Configuration keys (via `concurrency_config`):
+- `trino_max_retries`, `trino_retry_delay_seconds`, `trino_max_retry_delay_seconds`
+- `trino_connection_timeout_seconds`, `trino_query_timeout_seconds`
+- `trino_circuit_breaker_failure_threshold`, `trino_circuit_breaker_timeout_seconds`
+- `trino_connection_pool_{min_size,max_size,max_idle,idle_timeout_seconds,wait_timeout_seconds}`
+
+See docs:
+- docs/structured_logging_guide.md
+- docs/quotas_and_concurrency.md
+"""
 
 from __future__ import annotations
 
@@ -13,7 +30,6 @@ from contextlib import asynccontextmanager
 from datetime import datetime, timedelta
 from enum import Enum
 from typing import Any, Dict, List, Optional, Tuple, Union
-from dataclasses import dataclass, field
 from concurrent.futures import ThreadPoolExecutor
 
 try:
@@ -38,51 +54,24 @@ class CircuitBreakerState(Enum):
     HALF_OPEN = "half_open"  # Testing if service recovered
 
 
-@dataclass
-class CircuitBreaker:
-    """Circuit breaker for Trino connections."""
-    failure_threshold: int = 5
-    timeout_seconds: float = 60.0
-    _failures: int = 0
-    _last_failure_time: Optional[float] = None
-    _state: CircuitBreakerState = CircuitBreakerState.CLOSED
-    _lock: threading.Lock = field(default_factory=threading.Lock)
+from aurum.common.circuit_breaker import CircuitBreaker as _CommonCircuitBreaker
 
-    def _should_attempt_reset(self) -> bool:
-        """Check if enough time has passed to attempt a reset."""
-        if self._last_failure_time is None:
-            return False
-        return time.time() - self._last_failure_time >= self.timeout_seconds
 
-    def record_success(self) -> None:
-        """Record a successful operation."""
-        with self._lock:
-            self._failures = 0
-            self._state = CircuitBreakerState.CLOSED
+class CircuitBreaker(_CommonCircuitBreaker):
+    """Adapter around the shared circuit breaker with Trino's enum state API."""
 
-    def record_failure(self) -> None:
-        """Record a failed operation."""
-        with self._lock:
-            self._failures += 1
-            self._last_failure_time = time.time()
-
-            if self._failures >= self.failure_threshold:
-                self._state = CircuitBreakerState.OPEN
-
-    def is_open(self) -> bool:
-        """Check if circuit breaker is open."""
-        with self._lock:
-            if self._state == CircuitBreakerState.OPEN:
-                if self._should_attempt_reset():
-                    self._state = CircuitBreakerState.HALF_OPEN
-                    return False
-                return True
-            return False
+    def __init__(self, failure_threshold: int = 5, timeout_seconds: float = 60.0) -> None:
+        super().__init__(failure_threshold=failure_threshold, recovery_timeout=timeout_seconds)
 
     def get_state(self) -> CircuitBreakerState:
-        """Get current circuit breaker state."""
-        with self._lock:
-            return self._state
+        # Progress OPEN -> HALF_OPEN if recovery timeout elapsed
+        _ = self.is_open()
+        state = getattr(self, "_state", "CLOSED")
+        if state == "OPEN":
+            return CircuitBreakerState.OPEN
+        if state == "HALF_OPEN":
+            return CircuitBreakerState.HALF_OPEN
+        return CircuitBreakerState.CLOSED
 
 
 class ConnectionPool:

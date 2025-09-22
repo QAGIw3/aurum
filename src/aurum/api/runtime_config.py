@@ -1,4 +1,15 @@
-"""Runtime configuration management for rate limits and feature flags."""
+"""Runtime configuration management for rate limits and feature flags.
+
+Exposes admin endpoints under `/v1/admin/config/*` to:
+- Update per-tenant rate limits for specific paths
+- Update per-tenant feature flags and configuration
+- Retrieve an in-memory audit log of changes
+
+Notes:
+- Persists to in-memory settings and the scenario store; wire to durable storage in production.
+- All changes are logged with `tenant_id`, `user_id`, and `request_id`.
+- See docs/runtime-config.md for examples and operational guidance.
+"""
 
 from __future__ import annotations
 
