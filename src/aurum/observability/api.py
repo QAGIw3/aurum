@@ -11,7 +11,7 @@ from ..telemetry.context import get_request_id
 from .metrics import get_metrics_collector, MetricPoint, MetricType
 from .tracing import get_trace_collector, get_trace_report
 from .slo_dashboard import get_slo_dashboard_config, check_slo_status, get_sli_values
-from .enhanced_logging import get_logger
+from .logging import get_logger
 
 
 router = APIRouter(prefix="/v1/observability", tags=["Observability"])

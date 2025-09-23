@@ -19,7 +19,7 @@ except ImportError:  # pragma: no cover - optional dependency
 from aurum.core import AurumSettings
 from aurum.telemetry.context import log_structured
 
-from ..api.trino_client import get_trino_client
+from ..api.database.trino_client import get_trino_client
 
 LOGGER = logging.getLogger(__name__)
 

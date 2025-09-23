@@ -146,13 +146,6 @@ def get_logger(name: str = "aurum") -> StructuredLogger:
     return StructuredLogger(name)
 
 
-def log_structured(
-    level: str,
-    message: str,
-    **kwargs
-):
-    """Log a structured message using the global logger."""
-    _logger._log(level, message, **kwargs)
 
 
 def log_api_request(
