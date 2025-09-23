@@ -100,7 +100,13 @@ else:
         APIEndpoint,
     )
     from .documentation_manager import router as documentation_manager_router
-    from .database.database_management import router as database_management_router
+    from .database import (
+        performance_router,
+        query_analysis_router,
+        optimization_router,
+        connections_router,
+        health_router,
+    )
     from .features.feature_flags import (
         get_feature_manager,
         initialize_feature_flags,
