@@ -7,9 +7,9 @@ from typing import Dict, List, Optional
 
 from fastapi import APIRouter, HTTPException, Query, Request
 
-from ..telemetry.context import get_request_id
+from aurum.telemetry.context import get_request_id
 from .database_monitor import get_database_monitor, QueryPerformanceLevel, OptimizationType
-from ..cache.cache import CacheManager
+from aurum.cache import CacheManager
 
 
 router = APIRouter()

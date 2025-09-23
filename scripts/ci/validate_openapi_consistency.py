@@ -162,51 +162,5 @@ def validate_response_schemas(specs: List[Tuple[str, dict]]) -> bool:
     return all_valid
 
 
-def main():
-    """Main function to validate OpenAPI consistency."""
-    print("🔍 Validating OpenAPI specification consistency...")
-
-    # Find OpenAPI files
-    openapi_files = []
-    for pattern in ['openapi/**/*.yaml', 'openapi/**/*.yml']:
-        openapi_files.extend(Path('.').glob(pattern))
-
-    if not openapi_files:
-        print("⚠️ No OpenAPI files found")
-        return 0
-
-    print(f"Found {len(openapi_files)} OpenAPI files")
-
-    # Load all specifications
-    specs = []
-    for file_path in openapi_files:
-        try:
-            spec = load_openapi_spec(str(file_path))
-            specs.append((str(file_path), spec))
-        except Exception as e:
-            print(f"❌ Error loading {file_path}: {e}")
-            return 1
-
-    # Validate each specification
-    all_valid = True
-    for file_path, spec in specs:
-        if not validate_openapi_structure(spec, file_path):
-            all_valid = False
-
-    if not all_valid:
-        return 1
-
-    # Check consistency across specs
-    if not check_consistency_across_specs(specs):
-        return 1
-
-    # Validate response schemas
-    if not validate_response_schemas(specs):
-        return 1
-
-    print("\n✅ All OpenAPI specifications are consistent and valid")
-    return 0
-
-
 if __name__ == "__main__":
     sys.exit(main())

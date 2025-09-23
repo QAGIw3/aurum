@@ -23,9 +23,9 @@ jobs:
         python-version: ['3.10', '3.11']
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v4.2.2
       - name: Set up Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v5.4.0
         with:
           python-version: ${{ matrix.python-version }}
           cache: 'pip'
@@ -96,9 +96,9 @@ jobs:
       AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: sqlite:///${{ runner.temp }}/airflow/airflow.db
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v4.2.2
       - name: Set up Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v5.4.0
         with:
           python-version: '3.11'
           cache: 'pip'
@@ -118,7 +118,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v4.2.2
 
       - name: Install Spectral
         run: |
@@ -183,7 +183,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v4.2.2
 
       - name: Fetch main branch
         run: git fetch origin main
@@ -211,13 +211,13 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v4.2.2
       - name: Prepare SBOM directory
         run: |
           mkdir -p sbom
           mkdir -p security
       - name: Set up Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v5.4.0
         with:
           python-version: '3.11'
           cache: 'pip'
@@ -248,7 +248,7 @@ jobs:
         continue-on-error: true
 
       - name: Upload pip-audit results to Code Scanning
-        uses: github/codeql-action/upload-sarif@v3
+        uses: github/codeql-action/upload-sarif@v3.27.0
         if: always()
         with:
           sarif_file: security/pip-audit.json
@@ -300,11 +300,11 @@ jobs:
           output-file: sbom/spdx-syft.json
           upload-artifact: true
       - name: Upload Bandit SARIF to Code Scanning
-        uses: github/codeql-action/upload-sarif@v3
+        uses: github/codeql-action/upload-sarif@v3.27.0
         with:
           sarif_file: security/bandit.sarif
       - name: Upload Trivy SARIF to Code Scanning
-        uses: github/codeql-action/upload-sarif@v3
+        uses: github/codeql-action/upload-sarif@v3.27.0
         with:
           sarif_file: security/trivy.sarif
       - name: Validate SBOM completeness
@@ -485,14 +485,14 @@ jobs:
           echo "✅ Security scan completed"
 
       - name: Upload SBOM artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v4.4.3
         with:
           name: sbom-${{ github.sha }}
           path: sbom/
           retention-days: 90
 
       - name: Upload security reports
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v4.4.3
         with:
           name: security-reports-${{ github.sha }}
           path: |
@@ -506,10 +506,10 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v4.2.2
 
       - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
+        uses: docker/setup-buildx-action@v4.0.0
 
       - name: Build API image for smoke test
         run: |
@@ -540,10 +540,10 @@ jobs:
       DBT_VARS: '{"iceberg_catalog": "main"}'
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v4.2.2
 
       - name: Set up Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v5.4.0
         with:
           python-version: '3.11'
           cache: 'pip'
@@ -574,7 +574,7 @@ jobs:
           dbt docs generate --profiles-dir "$DBT_PROFILES_DIR" --target "$DBT_TARGET" --vars "$DBT_VARS"
 
       - name: Upload dbt docs
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v4.4.3
         with:
           name: dbt-docs
           path: artifacts/dbt
@@ -585,16 +585,16 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v4.2.2
 
       - name: Download dbt artifacts
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v4.1.8
         with:
           name: dbt-docs
           path: artifacts/dbt
 
       - name: Set up Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v5.4.0
         with:
           python-version: '3.11'
           cache: 'pip'
@@ -627,10 +627,10 @@ jobs:
       id-token: write
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v4.2.2
 
       - name: Set up Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v5.4.0
         with:
           python-version: '3.11'
           cache: 'pip'
@@ -651,7 +651,7 @@ jobs:
           cp -R target/* public/dbt/
 
       - name: Configure Pages
-        uses: actions/configure-pages@v5
+        uses: actions/configure-pages@v5.0.0
 
       - name: Prepare API documentation bundle
         run: |
@@ -660,7 +660,7 @@ jobs:
           cp openapi/aurum.yaml public/api/aurum.yaml
 
       - name: Upload GitHub Pages artifact
-        uses: actions/upload-pages-artifact@v3
+        uses: actions/upload-pages-artifact@v3.0.2
         with:
           path: public
 
@@ -678,23 +678,23 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v4.2.2
 
       - name: Set up QEMU
-        uses: docker/setup-qemu-action@v3
+        uses: docker/setup-qemu-action@v3.2.0
 
       - name: Set up Buildx
-        uses: docker/setup-buildx-action@v3
+        uses: docker/setup-buildx-action@v4.0.0
 
       - name: Log in to GHCR
-        uses: docker/login-action@v3
+        uses: docker/login-action@v3.3.0
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Build & push API image
-        uses: docker/build-push-action@v5
+        uses: docker/build-push-action@v6.9.0
         with:
           context: .
           file: Dockerfile.api
@@ -704,7 +704,7 @@ jobs:
             ghcr.io/aurum/aurum-api:${{ github.sha }}
 
       - name: Build & push worker image
-        uses: docker/build-push-action@v5
+        uses: docker/build-push-action@v6.9.0
         with:
           context: .
           file: Dockerfile.worker
@@ -714,7 +714,7 @@ jobs:
             ghcr.io/aurum/aurum-worker:${{ github.sha }}
 
       - name: Install Helm
-        uses: azure/setup-helm@v3
+        uses: azure/setup-helm@v4.3.0
         with:
           version: v3.13.3
 
@@ -764,13 +764,13 @@ jobs:
               newTag: ${GITHUB_SHA}
           PATCH
       - name: Upload kustomize overlay
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v4.4.3
         with:
           name: kustomize-images-${{ github.sha }}
           path: dist/kustomize/dev-${{ github.sha }}
 
       - name: Upload Helm charts
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v4.4.3
         with:
           name: helm-charts
           path: dist/pages
@@ -792,7 +792,7 @@ jobs:
     steps:
       - name: Deploy to GitHub Pages
         id: deploy
-        uses: actions/deploy-pages@v4
+        uses: actions/deploy-pages@v4.0.5
 
   deploy-helm-pages:
     name: Publish Helm Repo
@@ -808,19 +808,19 @@ jobs:
       url: ${{ steps.deploy.outputs.page_url }}
     steps:
       - name: Configure Pages
-        uses: actions/configure-pages@v3
+        uses: actions/configure-pages@v5.0.0
 
       - name: Download Helm artifacts
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v4.1.8
         with:
           name: helm-charts
           path: public
 
       - name: Upload Pages artifact
-        uses: actions/upload-pages-artifact@v2
+        uses: actions/upload-pages-artifact@v3.0.2
         with:
           path: public
 
       - name: Deploy to GitHub Pages
         id: deploy
-        uses: actions/deploy-pages@v3
+        uses: actions/deploy-pages@v4.0.5

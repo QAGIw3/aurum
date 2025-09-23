@@ -100,16 +100,6 @@ else:
         APIEndpoint,
     )
     from .documentation_manager import router as documentation_manager_router
-    from .database.database_monitor import (
-        get_database_monitor,
-        initialize_database_monitoring,
-        DatabaseMonitor,
-        QueryMetrics,
-        QueryPattern,
-        OptimizationSuggestion,
-        QueryPerformanceLevel,
-        OptimizationType,
-    )
     from .database.database_management import router as database_management_router
     from .features.feature_flags import (
         get_feature_manager,
