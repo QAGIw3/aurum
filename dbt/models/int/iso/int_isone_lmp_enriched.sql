@@ -49,14 +49,15 @@ with lmp_stg as (
 
 node_registry as (
     select
-        iso_code,
+        iso as iso_code,
         location_id,
         location_name,
         location_type,
         zone,
         hub,
         timezone
-    from {{ ref('stg_isone_nodes') }}
+    from {{ ref('iso_nodes') }}
+    where iso = 'ISO-NE'
 ),
 
 enriched as (

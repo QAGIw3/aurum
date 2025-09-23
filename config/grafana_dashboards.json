@@ -15,9 +15,18 @@
             }
           ],
           "thresholds": [
-            { "value": 100, "color": "green" },
-            { "value": 500, "color": "yellow" },
-            { "value": 1000, "color": "red" }
+            {
+              "value": 100,
+              "color": "green"
+            },
+            {
+              "value": 500,
+              "color": "yellow"
+            },
+            {
+              "value": 1000,
+              "color": "red"
+            }
           ]
         },
         {
@@ -30,9 +39,18 @@
             }
           ],
           "thresholds": [
-            { "value": 0.5, "color": "green" },
-            { "value": 1.0, "color": "yellow" },
-            { "value": 2.0, "color": "red" }
+            {
+              "value": 0.5,
+              "color": "green"
+            },
+            {
+              "value": 1.0,
+              "color": "yellow"
+            },
+            {
+              "value": 2.0,
+              "color": "red"
+            }
           ]
         },
         {
@@ -45,9 +63,18 @@
             }
           ],
           "thresholds": [
-            { "value": 0.01, "color": "green" },
-            { "value": 0.05, "color": "yellow" },
-            { "value": 0.1, "color": "red" }
+            {
+              "value": 0.005,
+              "color": "green"
+            },
+            {
+              "value": 0.01,
+              "color": "yellow"
+            },
+            {
+              "value": 0.02,
+              "color": "red"
+            }
           ]
         },
         {
@@ -82,8 +109,14 @@
             }
           ],
           "thresholds": [
-            { "value": 0.8, "color": "yellow" },
-            { "value": 0.9, "color": "green" }
+            {
+              "value": 0.85,
+              "color": "yellow"
+            },
+            {
+              "value": 0.9,
+              "color": "green"
+            }
           ]
         },
         {
@@ -122,8 +155,18 @@
             }
           ],
           "thresholds": [
-            { "value": 0.95, "color": "yellow" },
-            { "value": 0.99, "color": "green" }
+            {
+              "value": 0.95,
+              "color": "red"
+            },
+            {
+              "value": 0.97,
+              "color": "yellow"
+            },
+            {
+              "value": 0.99,
+              "color": "green"
+            }
           ]
         },
         {
@@ -136,9 +179,14 @@
             }
           ],
           "thresholds": [
-            { "value": 0.5, "color": "green" },
-            { "value": 1.0, "color": "yellow" },
-            { "value": 2.0, "color": "red" }
+            {
+              "value": 1.0,
+              "color": "yellow"
+            },
+            {
+              "value": 1.5,
+              "color": "red"
+            }
           ]
         },
         {
@@ -151,9 +199,18 @@
             }
           ],
           "thresholds": [
-            { "value": 0.01, "color": "green" },
-            { "value": 0.05, "color": "yellow" },
-            { "value": 0.1, "color": "red" }
+            {
+              "value": 0.005,
+              "color": "green"
+            },
+            {
+              "value": 0.01,
+              "color": "yellow"
+            },
+            {
+              "value": 0.02,
+              "color": "red"
+            }
           ]
         },
         {
@@ -183,9 +240,18 @@
             }
           ],
           "thresholds": [
-            { "value": 12, "color": "green" },
-            { "value": 24, "color": "yellow" },
-            { "value": 48, "color": "red" }
+            {
+              "value": 12,
+              "color": "green"
+            },
+            {
+              "value": 24,
+              "color": "yellow"
+            },
+            {
+              "value": 48,
+              "color": "red"
+            }
           ]
         },
         {
@@ -218,9 +284,18 @@
             }
           ],
           "thresholds": [
-            { "value": 6, "color": "green" },
-            { "value": 12, "color": "yellow" },
-            { "value": 24, "color": "red" }
+            {
+              "value": 6,
+              "color": "green"
+            },
+            {
+              "value": 12,
+              "color": "yellow"
+            },
+            {
+              "value": 24,
+              "color": "red"
+            }
           ]
         },
         {
@@ -253,8 +328,14 @@
             }
           ],
           "thresholds": [
-            { "value": 0.8, "color": "yellow" },
-            { "value": 0.95, "color": "green" }
+            {
+              "value": 0.8,
+              "color": "yellow"
+            },
+            {
+              "value": 0.95,
+              "color": "green"
+            }
           ]
         },
         {
@@ -272,7 +353,7 @@
           "type": "singlestat",
           "targets": [
             {
-              "expr": "aurum_system_uptime_seconds_total / 86400",  # Days
+              "expr": "aurum_system_uptime_seconds_total / 86400",
               "format": "time_series"
             }
           ]
@@ -338,9 +419,18 @@
             }
           ],
           "thresholds": [
-            { "value": 0.01, "color": "green" },
-            { "value": 0.05, "color": "yellow" },
-            { "value": 0.1, "color": "red" }
+            {
+              "value": 0.01,
+              "color": "green"
+            },
+            {
+              "value": 0.05,
+              "color": "yellow"
+            },
+            {
+              "value": 0.1,
+              "color": "red"
+            }
           ]
         },
         {
@@ -357,42 +447,6 @@
     }
   },
   "alert_rules": {
-    "api_high_error_rate": {
-      "name": "API High Error Rate",
-      "expr": "rate(aurum_api_requests_total{status=~\"5..\"}[5m]) / rate(aurum_api_requests_total[5m]) > 0.05",
-      "for": "5m",
-      "labels": {
-        "severity": "critical"
-      },
-      "annotations": {
-        "summary": "API error rate is above 5%",
-        "description": "API endpoints are returning 5xx errors at a rate > 5%"
-      }
-    },
-    "api_high_latency": {
-      "name": "API High Latency",
-      "expr": "aurum_api_request_duration_seconds{quantile=\"0.95\"} > 2.0",
-      "for": "10m",
-      "labels": {
-        "severity": "warning"
-      },
-      "annotations": {
-        "summary": "API p95 latency > 2 seconds",
-        "description": "API requests are taking longer than 2 seconds (p95)"
-      }
-    },
-    "data_stale": {
-      "name": "Data Stale",
-      "expr": "aurum_data_freshness_hours > 24",
-      "for": "1h",
-      "labels": {
-        "severity": "warning"
-      },
-      "annotations": {
-        "summary": "Data freshness violation",
-        "description": "Data is older than 24 hours"
-      }
-    },
     "ge_validation_failed": {
       "name": "GE Validation Failed",
       "expr": "aurum_ge_validation_runs_total{status=\"failure\"} > 0",
@@ -429,18 +483,6 @@
         "description": "Database connection pool utilization > 95%"
       }
     },
-    "cache_hit_rate_low": {
-      "name": "Cache Hit Rate Low",
-      "expr": "aurum_cache_hit_ratio < 0.8",
-      "for": "30m",
-      "labels": {
-        "severity": "warning"
-      },
-      "annotations": {
-        "summary": "Cache hit rate below threshold",
-        "description": "Cache hit rate is below 80%"
-      }
-    },
     "slo_violation": {
       "name": "SLO Violation",
       "expr": "aurum_slo_compliance_total{status=\"violation\"} > 0",
@@ -451,6 +493,76 @@
       "annotations": {
         "summary": "SLO compliance violation",
         "description": "Service Level Objective is being violated"
+      }
+    },
+    "api_availability_slo_breach": {
+      "name": "API Availability SLO Breach",
+      "expr": "1 - (sum(rate(aurum_api_requests_total{status=~\"5..\"}[5m])) / clamp_min(sum(rate(aurum_api_requests_total[5m])), 1)) < 0.99",
+      "for": "10m",
+      "labels": {
+        "service": "api",
+        "severity": "critical"
+      },
+      "annotations": {
+        "summary": "API availability below 99%",
+        "description": "API availability (non-5xx share) dropped under the 99% SLO for 10 minutes",
+        "runbook": "docs/observability/observability-guide.md#default-slos"
+      }
+    },
+    "api_latency_slo_breach": {
+      "name": "API Latency SLO Breach",
+      "expr": "histogram_quantile(0.95, sum(rate(aurum_api_request_duration_seconds_bucket[5m])) by (le)) > 1.0",
+      "for": "10m",
+      "labels": {
+        "service": "api",
+        "severity": "critical"
+      },
+      "annotations": {
+        "summary": "API p95 latency above 1s",
+        "description": "API 95th percentile latency exceeded the 1 second SLO for 10 minutes",
+        "runbook": "docs/observability/observability-guide.md#default-slos"
+      }
+    },
+    "api_error_rate_slo_breach": {
+      "name": "API Error Rate SLO Breach",
+      "expr": "sum(rate(aurum_api_requests_total{status=~\"5..\"}[5m])) / clamp_min(sum(rate(aurum_api_requests_total[5m])), 1) > 0.01",
+      "for": "5m",
+      "labels": {
+        "service": "api",
+        "severity": "critical"
+      },
+      "annotations": {
+        "summary": "API error rate above 1%",
+        "description": "API error rate exceeded the 1% SLO threshold",
+        "runbook": "docs/observability/observability-guide.md#default-slos"
+      }
+    },
+    "external_data_freshness_slo_breach": {
+      "name": "External Data Freshness SLO Breach",
+      "expr": "max(aurum_external_data_freshness_seconds{provider!=\"\"}) > 86400",
+      "for": "15m",
+      "labels": {
+        "service": "external-data",
+        "severity": "critical"
+      },
+      "annotations": {
+        "summary": "External data freshness > 24h",
+        "description": "At least one provider's freshness breached the 24 hour SLO",
+        "runbook": "docs/observability/observability-guide.md#default-slos"
+      }
+    },
+    "cache_hit_rate_slo_breach": {
+      "name": "Cache Hit Rate SLO Breach",
+      "expr": "aurum_cache_hit_ratio < 0.9",
+      "for": "30m",
+      "labels": {
+        "service": "api",
+        "severity": "warning"
+      },
+      "annotations": {
+        "summary": "Cache hit rate below 90%",
+        "description": "Cache hit ratio dipped under the 90% SLO baseline",
+        "runbook": "docs/observability/observability-guide.md#default-slos"
       }
     }
   }

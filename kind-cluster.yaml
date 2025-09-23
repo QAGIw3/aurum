@@ -20,6 +20,10 @@ nodes:
     hostPort: 32443
     listenAddress: "0.0.0.0"
     protocol: TCP
+  - containerPort: 30808
+    hostPort: 8080
+    listenAddress: "127.0.0.1"
+    protocol: TCP
   kubeadmConfigPatches:
   - |
     kind: InitConfiguration

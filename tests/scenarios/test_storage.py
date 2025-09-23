@@ -95,6 +95,34 @@ class TestScenarioStore:
         assert result.status == ScenarioStatus.CREATED
         mock_conn.execute.assert_called_once()
 
+    async def test_get_connection_sets_tenant_context(self, store, mock_pool, monkeypatch):
+        """Ensure SET LOCAL app.current_tenant is executed for every connection."""
+        tenant_id = "tenant-test"
+        monkeypatch.setattr("aurum.scenarios.storage.get_tenant_id", lambda default=None: tenant_id)
+
+        mock_conn = mock_pool.acquire.return_value.__aenter__.return_value
+
+        async with store.get_connection():
+            pass
+
+        mock_conn.execute.assert_awaited_with("SET LOCAL app.current_tenant = $1", tenant_id)
+
+    async def test_get_scenario_filters_by_tenant(self, store, mock_pool, monkeypatch):
+        """Scenario queries should scope by tenant to enforce RLS."""
+        tenant_id = "tenant-alpha"
+        monkeypatch.setattr("aurum.scenarios.storage.get_tenant_id", lambda default=None: tenant_id)
+
+        mock_conn = mock_pool.acquire.return_value.__aenter__.return_value
+        mock_conn.fetchrow.return_value = None
+
+        result = await store.get_scenario("scenario-123")
+
+        mock_conn.fetchrow.assert_awaited_once()
+        call_args = mock_conn.fetchrow.await_args[0]
+        assert call_args[1] == "scenario-123"
+        assert call_args[2] == tenant_id
+        assert result is None
+
     async def test_get_scenario_found(self, store, mock_pool):
         """Test getting existing scenario."""
         scenario_id = "test-scenario-id"

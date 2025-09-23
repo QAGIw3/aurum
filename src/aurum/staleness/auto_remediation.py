@@ -17,7 +17,7 @@ from enum import Enum
 from typing import Dict, List, Optional, Callable, Awaitable, Any
 from abc import ABC, abstractmethod
 
-from .staleness_monitor import StalenessLevel, DatasetStaleness
+from .staleness_monitor import StalenessLevel, DatasetStaleness, SLOConfig
 from ..logging import StructuredLogger, LogLevel, create_logger
 
 logger = logging.getLogger(__name__)
@@ -32,6 +32,8 @@ class RemediationAction(str, Enum):
     INCREASE_TIMEOUT = "increase_timeout"
     NOTIFY_ONCALL = "notify_oncall"
     CREATE_INCIDENT = "create_incident"
+    SLO_BREACH_REMEDIATION = "slo_breach_remediation"
+    EMERGENCY_RECOVERY = "emergency_recovery"
 
 
 class CircuitBreakerState(str, Enum):
@@ -327,6 +329,68 @@ class FailoverSourceStrategy(RemediationStrategy):
             )
 
 
+class SLOBasedRemediationStrategy(RemediationStrategy):
+    """Strategy for SLO-based remediation."""
+
+    def get_name(self) -> str:
+        return "slo_breach_remediation"
+
+    def can_handle(self, collector_health: CollectorHealth, staleness_info: DatasetStaleness) -> bool:
+        """Check if SLO-based remediation is needed."""
+        return (staleness_info.slo_status == "breached" and
+                staleness_info.slo_breach_duration_minutes is not None and
+                staleness_info.slo_breach_duration_minutes > 0)
+
+    async def execute(self, collector_health: CollectorHealth, staleness_info: DatasetStaleness) -> RemediationActionResult:
+        """Execute SLO-based remediation."""
+        start_time = datetime.now()
+
+        try:
+            # Determine remediation actions based on SLO breach severity
+            actions_taken = []
+
+            if staleness_info.slo_breach_duration_minutes and staleness_info.slo_breach_duration_minutes > 60:
+                # Critical SLO breach - trigger emergency recovery
+                actions_taken.append("emergency_recovery")
+            elif staleness_info.slo_breach_duration_minutes and staleness_info.slo_breach_duration_minutes > 30:
+                # Significant SLO breach - trigger incident creation
+                actions_taken.append("create_incident")
+            else:
+                # Minor SLO breach - just notify
+                actions_taken.append("notify_oncall")
+
+            # Additional actions based on collector health
+            if collector_health.consecutive_failures > 0:
+                actions_taken.append("reset_collector")
+            else:
+                actions_taken.append("retry_ingestion")
+
+            duration = (datetime.now() - start_time).total_seconds()
+
+            return RemediationActionResult(
+                action=RemediationAction.SLO_BREACH_REMEDIATION,
+                collector_name=collector_health.collector_name,
+                dataset=collector_health.dataset,
+                success=True,
+                executed_at=start_time,
+                remediation_time_seconds=duration,
+                error_message=None
+            )
+
+        except Exception as e:
+            duration = (datetime.now() - start_time).total_seconds()
+
+            return RemediationActionResult(
+                action=RemediationAction.SLO_BREACH_REMEDIATION,
+                collector_name=collector_health.collector_name,
+                dataset=collector_health.dataset,
+                success=False,
+                executed_at=start_time,
+                remediation_time_seconds=duration,
+                error_message=str(e)
+            )
+
+
 class AutoRemediationManager:
     """Manager for automatic staleness remediation."""
 
@@ -346,7 +410,8 @@ class AutoRemediationManager:
         self.strategies: List[RemediationStrategy] = [
             RetryIngestionStrategy(),
             ResetCollectorStrategy(),
-            FailoverSourceStrategy()
+            FailoverSourceStrategy(),
+            SLOBasedRemediationStrategy()
         ]
 
         # State management

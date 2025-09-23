@@ -10,6 +10,7 @@ from typing import Dict, List, Optional, Any, Callable
 
 from ..db import get_ingest_watermark
 from ..logging import StructuredLogger, LogLevel, create_logger
+from ..observability.metrics import get_metrics_client
 
 
 class StalenessLevel(str, Enum):
@@ -21,8 +22,30 @@ class StalenessLevel(str, Enum):
 
 
 @dataclass
+class SLOConfig:
+    """Service Level Objective configuration for datasets."""
+
+    dataset: str
+    target_freshness_minutes: int = 30    # Target freshness in minutes
+    warning_freshness_minutes: int = 60   # Warning threshold in minutes
+    critical_freshness_minutes: int = 120 # Critical threshold in minutes
+    availability_slo: float = 0.99         # 99% availability SLO
+    latency_slo_seconds: float = 300.0    # 5 minutes latency SLO
+    throughput_slo_rps: float = 1.0       # 1 record per second minimum
+
+    def get_slo_status(self, actual_freshness_minutes: float) -> str:
+        """Get SLO compliance status."""
+        if actual_freshness_minutes <= self.target_freshness_minutes:
+            return "compliant"
+        elif actual_freshness_minutes <= self.warning_freshness_minutes:
+            return "warning"
+        else:
+            return "breached"
+
+
+@dataclass
 class StalenessConfig:
-    """Configuration for staleness monitoring."""
+    """Configuration for staleness monitoring with SLOs."""
 
     # Staleness thresholds (in hours)
     warning_threshold_hours: int = 2      # Warning when data older than this
@@ -31,6 +54,9 @@ class StalenessConfig:
 
     # Dataset-specific overrides
     dataset_thresholds: Dict[str, Dict[str, int]] = field(default_factory=dict)
+
+    # SLO configurations per dataset
+    dataset_slos: Dict[str, SLOConfig] = field(default_factory=dict)
 
     # Monitoring configuration
     check_interval_minutes: int = 5
@@ -61,7 +87,7 @@ class StalenessConfig:
 
 @dataclass
 class DatasetStaleness:
-    """Staleness information for a dataset."""
+    """Enhanced staleness information for a dataset with SLO tracking."""
 
     dataset: str
     last_watermark: Optional[datetime]
@@ -72,10 +98,18 @@ class DatasetStaleness:
     critical_threshold_hours: int
     grace_period_hours: int
 
+    # SLO information
+    slo_config: Optional[SLOConfig] = None
+    slo_status: Optional[str] = None
+    slo_breach_duration_minutes: Optional[int] = None
+
     # Additional context
     expected_frequency_hours: Optional[int] = None
     sla_breach_duration_minutes: Optional[int] = None
     consecutive_failures: int = 0
+    availability_uptime: float = 1.0
+    avg_latency_seconds: Optional[float] = None
+    throughput_rps: float = 0.0
 
     def is_fresh(self) -> bool:
         """Check if dataset is considered fresh."""
@@ -90,8 +124,8 @@ class DatasetStaleness:
         return self.staleness_level == StalenessLevel.CRITICAL
 
     def to_dict(self) -> Dict[str, Any]:
-        """Convert to dictionary."""
-        return {
+        """Convert to dictionary with SLO information."""
+        result = {
             "dataset": self.dataset,
             "last_watermark": self.last_watermark.isoformat() if self.last_watermark else None,
             "current_time": self.current_time.isoformat(),
@@ -102,8 +136,27 @@ class DatasetStaleness:
             "grace_period_hours": self.grace_period_hours,
             "expected_frequency_hours": self.expected_frequency_hours,
             "sla_breach_duration_minutes": self.sla_breach_duration_minutes,
-            "consecutive_failures": self.consecutive_failures
+            "consecutive_failures": self.consecutive_failures,
+            "availability_uptime": self.availability_uptime,
+            "avg_latency_seconds": self.avg_latency_seconds,
+            "throughput_rps": self.throughput_rps
         }
+
+        if self.slo_config:
+            result.update({
+                "slo_config": {
+                    "target_freshness_minutes": self.slo_config.target_freshness_minutes,
+                    "warning_freshness_minutes": self.slo_config.warning_freshness_minutes,
+                    "critical_freshness_minutes": self.slo_config.critical_freshness_minutes,
+                    "availability_slo": self.slo_config.availability_slo,
+                    "latency_slo_seconds": self.slo_config.latency_slo_seconds,
+                    "throughput_slo_rps": self.slo_config.throughput_slo_rps
+                },
+                "slo_status": self.slo_status,
+                "slo_breach_duration_minutes": self.slo_breach_duration_minutes
+            })
+
+        return result
 
 
 class StalenessMonitor:
@@ -310,7 +363,7 @@ class StalenessMonitor:
         current_time: datetime,
         thresholds: Dict[str, int]
     ) -> DatasetStaleness:
-        """Calculate staleness for a dataset.
+        """Calculate staleness for a dataset with SLO evaluation.
 
         Args:
             dataset: Dataset name
@@ -319,7 +372,7 @@ class StalenessMonitor:
             thresholds: Staleness thresholds
 
         Returns:
-            DatasetStaleness information
+            DatasetStaleness information with SLO data
         """
         warning_hours = thresholds["warning"]
         critical_hours = thresholds["critical"]
@@ -330,6 +383,8 @@ class StalenessMonitor:
             staleness_level = StalenessLevel.CRITICAL
             hours_since_update = float('inf')
             sla_breach_duration = None
+            slo_status = "unknown"
+            slo_config = None
         else:
             hours_since_update = (current_time - watermark).total_seconds() / 3600
 
@@ -342,6 +397,14 @@ class StalenessMonitor:
             else:
                 staleness_level = StalenessLevel.CRITICAL
                 sla_breach_duration = int((hours_since_update - grace_hours) * 60)
+
+            # Calculate SLO status
+            slo_config = self.config.dataset_slos.get(dataset)
+            if slo_config:
+                actual_freshness_minutes = hours_since_update * 60
+                slo_status = slo_config.get_slo_status(actual_freshness_minutes)
+            else:
+                slo_status = "no_slo"
 
         # Get expected frequency
         expected_freq = None
@@ -359,7 +422,10 @@ class StalenessMonitor:
             grace_period_hours=grace_hours,
             expected_frequency_hours=expected_freq,
             sla_breach_duration_minutes=sla_breach_duration,
-            consecutive_failures=self._get_consecutive_failures(dataset)
+            consecutive_failures=self._get_consecutive_failures(dataset),
+            slo_config=slo_config,
+            slo_status=slo_status,
+            slo_breach_duration_minutes=slo_breach_duration
         )
 
     def _is_staleness_level_at_least(
@@ -431,3 +497,123 @@ class StalenessMonitor:
             summary["datasets"][dataset] = staleness_info.to_dict()
 
         return summary
+
+    async def get_staleness_status(
+        self,
+        dataset_filter: Optional[str] = None,
+        staleness_level_filter: Optional[str] = None,
+        slo_status_filter: Optional[str] = None,
+        breached_filter: Optional[bool] = None,
+        limit: int = 100,
+        offset: int = 0,
+    ) -> List[Dict[str, Any]]:
+        """Get staleness status for datasets with filtering."""
+        statuses = []
+
+        # Get all datasets or filtered datasets
+        datasets = list(self.dataset_states.keys())
+        if dataset_filter:
+            datasets = [d for d in datasets if dataset_filter.lower() in d.lower()]
+
+        # Apply filters
+        filtered_datasets = datasets[offset:offset + limit]
+
+        for dataset in filtered_datasets:
+            staleness_info = self.dataset_states.get(dataset)
+            if not staleness_info:
+                continue
+
+            # Apply staleness level filter
+            if staleness_level_filter:
+                current_level = staleness_info.get_staleness_level().value
+                if current_level != staleness_level_filter:
+                    continue
+
+            # Apply SLO status filter
+            if slo_status_filter:
+                slo_config = self.slo_configs.get(dataset)
+                if slo_config:
+                    current_slo_status = slo_config.get_slo_status(staleness_info.staleness_minutes)
+                    if current_slo_status != slo_status_filter:
+                        continue
+
+            # Apply breach filter
+            if breached_filter is not None:
+                slo_config = self.slo_configs.get(dataset)
+                if slo_config:
+                    current_slo_status = slo_config.get_slo_status(staleness_info.staleness_minutes)
+                    is_breached = current_slo_status == "breached"
+                    if is_breached != breached_filter:
+                        continue
+
+            statuses.append({
+                "dataset": dataset,
+                "last_updated": staleness_info.last_updated.isoformat() if staleness_info.last_updated else None,
+                "staleness_minutes": staleness_info.staleness_minutes,
+                "staleness_level": staleness_info.get_staleness_level().value,
+                "slo_status": slo_config.get_slo_status(staleness_info.staleness_minutes) if dataset in self.slo_configs else "unknown",
+                "expected_frequency_minutes": slo_config.target_freshness_minutes if dataset in self.slo_configs else 0,
+                "is_breached": slo_config.get_slo_status(staleness_info.staleness_minutes) == "breached" if dataset in self.slo_configs else False,
+            })
+
+        return statuses
+
+    async def get_active_alerts(
+        self,
+        severity_filter: Optional[str] = None,
+        resolved_filter: Optional[bool] = None,
+        limit: int = 100,
+        offset: int = 0,
+    ) -> List[Dict[str, Any]]:
+        """Get active staleness alerts."""
+        from ..staleness.alert_manager import AlertManager
+        alert_manager = await AlertManager.get_instance()
+
+        alerts = await alert_manager.get_active_alerts(
+            severity_filter=severity_filter,
+            resolved_filter=resolved_filter,
+            limit=limit,
+            offset=offset,
+        )
+
+        return alerts
+
+    async def get_metrics(
+        self,
+        dataset_filter: Optional[str] = None,
+        metric_type_filter: Optional[str] = None,
+        limit: int = 100,
+        offset: int = 0,
+    ) -> List[Dict[str, Any]]:
+        """Get staleness metrics."""
+        metrics = []
+
+        # Get metrics from observability system
+        from ..observability.metrics import get_metrics_client
+        metrics_client = get_metrics_client()
+
+        # Collect metrics for datasets
+        datasets = list(self.dataset_states.keys())
+        if dataset_filter:
+            datasets = [d for d in datasets if dataset_filter.lower() in d.lower()]
+
+        filtered_datasets = datasets[offset:offset + limit]
+
+        for dataset in filtered_datasets:
+            staleness_info = self.dataset_states.get(dataset)
+            if not staleness_info:
+                continue
+
+            slo_config = self.slo_configs.get(dataset)
+
+            metrics.append({
+                "dataset": dataset,
+                "metric_type": "staleness",
+                "staleness_minutes": staleness_info.staleness_minutes,
+                "staleness_level": staleness_info.get_staleness_level().value,
+                "last_updated": staleness_info.last_updated.isoformat() if staleness_info.last_updated else None,
+                "slo_target_minutes": slo_config.target_freshness_minutes if slo_config else 0,
+                "slo_compliance": slo_config.get_slo_status(staleness_info.staleness_minutes) if slo_config else "unknown",
+            })
+
+        return metrics

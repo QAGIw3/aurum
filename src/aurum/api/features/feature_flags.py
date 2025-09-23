@@ -78,6 +78,10 @@ class FeatureFlagRule:
         if user_segment and self.user_segments and user_segment not in self.user_segments:
             return False
 
+        # Evaluate conditions
+        if not self._evaluate_conditions(context):
+            return False
+
         # Check rollout percentage
         if self.rollout_percentage < 100.0:
             user_id = context.get("user_id", "")
@@ -89,6 +93,82 @@ class FeatureFlagRule:
                     return False
 
         return True
+
+    def _evaluate_conditions(self, context: Dict[str, Any]) -> bool:
+        """Evaluate conditions against context."""
+        if not self.conditions:
+            return True
+
+        for field_path, condition in self.conditions.items():
+            if not self._evaluate_condition(field_path, condition, context):
+                return False
+
+        return True
+
+    def _evaluate_condition(self, field_path: str, condition: Any, context: Dict[str, Any]) -> bool:
+        """Evaluate a single condition."""
+        # Handle nested field access (e.g., "user.role", "tenant.plan")
+        field_value = self._get_nested_value(field_path, context)
+        if field_value is None:
+            return False
+
+        # Handle different condition types
+        if isinstance(condition, dict):
+            # Operator-based condition: {"op": "eq", "value": "premium"}
+            if "op" in condition and "value" in condition:
+                operator = condition["op"]
+                expected_value = condition["value"]
+                return self._evaluate_operator(field_value, expected_value, operator)
+            else:
+                # Nested condition - not supported yet
+                return True
+        else:
+            # Simple equality check
+            return field_value == condition
+
+    def _get_nested_value(self, field_path: str, context: Dict[str, Any]) -> Any:
+        """Get value from nested dictionary using dot notation."""
+        keys = field_path.split(".")
+        current = context
+
+        for key in keys:
+            if isinstance(current, dict) and key in current:
+                current = current[key]
+            else:
+                return None
+
+        return current
+
+    def _evaluate_operator(self, actual_value: Any, expected_value: Any, operator: str) -> bool:
+        """Evaluate operator-based conditions."""
+        if operator == "eq":
+            return actual_value == expected_value
+        elif operator == "neq":
+            return actual_value != expected_value
+        elif operator == "gt":
+            return actual_value > expected_value
+        elif operator == "gte":
+            return actual_value >= expected_value
+        elif operator == "lt":
+            return actual_value < expected_value
+        elif operator == "lte":
+            return actual_value <= expected_value
+        elif operator == "in":
+            return actual_value in expected_value
+        elif operator == "nin":
+            return actual_value not in expected_value
+        elif operator == "contains":
+            return expected_value in actual_value
+        elif operator == "startswith":
+            return str(actual_value).startswith(str(expected_value))
+        elif operator == "endswith":
+            return str(actual_value).endswith(str(expected_value))
+        elif operator == "regex":
+            import re
+            return bool(re.match(expected_value, str(actual_value)))
+        else:
+            # Unknown operator, default to equality
+            return actual_value == expected_value
 
 
 @dataclass
@@ -132,6 +212,103 @@ class FeatureFlag:
     updated_at: datetime = field(default_factory=datetime.utcnow)
     created_by: str = ""
     tags: List[str] = field(default_factory=list)
+
+    def to_dict(self) -> Dict[str, Any]:
+        """Convert feature flag to dictionary for serialization."""
+        data = {
+            "name": self.name,
+            "key": self.key,
+            "description": self.description,
+            "status": self.status.value,
+            "default_value": self.default_value,
+            "created_at": self.created_at.isoformat(),
+            "updated_at": self.updated_at.isoformat(),
+            "created_by": self.created_by,
+            "tags": self.tags,
+        }
+
+        # Handle rules
+        if self.rules:
+            data["rules"] = [
+                {
+                    "name": rule.name,
+                    "conditions": rule.conditions,
+                    "rollout_percentage": rule.rollout_percentage,
+                    "user_segments": [s.value for s in rule.user_segments],
+                    "required_flags": rule.required_flags,
+                    "excluded_flags": rule.excluded_flags,
+                }
+                for rule in self.rules
+            ]
+
+        # Handle A/B test config
+        if self.ab_test_config:
+            data["ab_test_config"] = {
+                "variants": self.ab_test_config.variants,
+                "control_variant": self.ab_test_config.control_variant,
+                "track_events": self.ab_test_config.track_events,
+                "end_date": self.ab_test_config.end_date.isoformat() if self.ab_test_config.end_date else None,
+            }
+
+        return data
+
+    @classmethod
+    def from_dict(cls, data: Dict[str, Any]) -> 'FeatureFlag':
+        """Create feature flag from dictionary."""
+        # Handle datetime conversion
+        created_at = data.get("created_at")
+        if isinstance(created_at, str):
+            created_at = datetime.fromisoformat(created_at.replace('Z', '+00:00'))
+
+        updated_at = data.get("updated_at")
+        if isinstance(updated_at, str):
+            updated_at = datetime.fromisoformat(updated_at.replace('Z', '+00:00'))
+
+        # Handle status conversion
+        status = FeatureFlagStatus(data.get("status", "disabled"))
+
+        # Handle rules
+        rules_data = data.get("rules", [])
+        rules = []
+        for rule_data in rules_data:
+            user_segments = [UserSegment(s) for s in rule_data.get("user_segments", [])]
+            rules.append(FeatureFlagRule(
+                name=rule_data.get("name", "Unnamed Rule"),
+                conditions=rule_data.get("conditions", {}),
+                rollout_percentage=rule_data.get("rollout_percentage", 100.0),
+                user_segments=user_segments,
+                required_flags=rule_data.get("required_flags", []),
+                excluded_flags=rule_data.get("excluded_flags", []),
+            ))
+
+        # Handle A/B test config
+        ab_config_data = data.get("ab_test_config")
+        ab_config = None
+        if ab_config_data:
+            end_date = ab_config_data.get("end_date")
+            if end_date:
+                end_date = datetime.fromisoformat(end_date.replace('Z', '+00:00'))
+
+            ab_config = ABTestConfiguration(
+                variants=ab_config_data.get("variants", {}),
+                control_variant=ab_config_data.get("control_variant", "control"),
+                track_events=ab_config_data.get("track_events", []),
+                end_date=end_date,
+            )
+
+        return cls(
+            name=data.get("name", ""),
+            key=data.get("key", ""),
+            description=data.get("description", ""),
+            status=status,
+            default_value=data.get("default_value", False),
+            rules=rules,
+            ab_test_config=ab_config,
+            created_at=created_at or datetime.utcnow(),
+            updated_at=updated_at or datetime.utcnow(),
+            created_by=data.get("created_by", ""),
+            tags=data.get("tags", []),
+        )
 
     def evaluate(
         self,
@@ -212,6 +389,120 @@ class FeatureFlagStore(ABC):
         pass
 
 
+class ScenarioFeatureFlagAdapter(FeatureFlagStore):
+    """Adapter to bridge scenario feature flags with the generic system."""
+
+    def __init__(self, generic_store: FeatureFlagStore, scenario_store):
+        self.generic_store = generic_store
+        self.scenario_store = scenario_store
+        self.scenario_prefix = "scenario:"
+
+    def _is_scenario_flag(self, key: str) -> bool:
+        """Check if a flag key is scenario-related."""
+        return key.startswith(self.scenario_prefix)
+
+    def _get_scenario_flag_name(self, key: str) -> str:
+        """Extract scenario flag name from key."""
+        return key[len(self.scenario_prefix):]
+
+    async def get_flag(self, key: str) -> Optional[FeatureFlag]:
+        """Get a feature flag by key."""
+        if self._is_scenario_flag(key):
+            # Handle scenario flags
+            scenario_flag_name = self._get_scenario_flag_name(key)
+            scenario_flag_data = await self.scenario_store.get_feature_flag(scenario_flag_name)
+
+            if scenario_flag_data:
+                # Convert scenario flag to generic format
+                return FeatureFlag(
+                    name=f"Scenario {scenario_flag_name.replace('_', ' ').title()}",
+                    key=key,
+                    description=f"Scenario output feature: {scenario_flag_name}",
+                    status=FeatureFlagStatus.ENABLED if scenario_flag_data.get("enabled", False) else FeatureFlagStatus.DISABLED,
+                    default_value=scenario_flag_data.get("enabled", False),
+                    rules=[],
+                    created_at=scenario_flag_data.get("created_at") or datetime.utcnow(),
+                    updated_at=scenario_flag_data.get("updated_at") or datetime.utcnow(),
+                    created_by="scenario_system",
+                    tags=["scenario", "auto-generated"]
+                )
+            return None
+        else:
+            # Handle generic flags
+            return await self.generic_store.get_flag(key)
+
+    async def set_flag(self, flag: FeatureFlag) -> None:
+        """Store a feature flag."""
+        if self._is_scenario_flag(flag.key):
+            # Handle scenario flags
+            scenario_flag_name = self._get_scenario_flag_name(flag.key)
+            await self.scenario_store.set_feature_flag(
+                feature_name=scenario_flag_name,
+                enabled=flag.status == FeatureFlagStatus.ENABLED,
+                configuration={}  # Scenario flags don't use complex configuration yet
+            )
+        else:
+            # Handle generic flags
+            await self.generic_store.set_flag(flag)
+
+    async def delete_flag(self, key: str) -> None:
+        """Delete a feature flag."""
+        if self._is_scenario_flag(key):
+            # Scenario flags are managed through the scenario system
+            # For now, we'll disable them rather than delete
+            scenario_flag_name = self._get_scenario_flag_name(key)
+            await self.scenario_store.set_feature_flag(
+                feature_name=scenario_flag_name,
+                enabled=False,
+                configuration={}
+            )
+        else:
+            # Handle generic flags
+            await self.generic_store.delete_flag(key)
+
+    async def list_flags(self) -> List[FeatureFlag]:
+        """List all feature flags."""
+        # Get generic flags
+        generic_flags = await self.generic_store.list_flags()
+
+        # Get scenario flags
+        scenario_flags = []
+        from ..scenarios.feature_flags import ScenarioOutputFeature
+        for feature in ScenarioOutputFeature:
+            scenario_flag_data = await self.scenario_store.get_feature_flag(feature.value)
+            if scenario_flag_data:
+                scenario_flags.append(FeatureFlag(
+                    name=f"Scenario {feature.value.replace('_', ' ').title()}",
+                    key=f"{self.scenario_prefix}{feature.value}",
+                    description=f"Scenario output feature: {feature.value}",
+                    status=FeatureFlagStatus.ENABLED if scenario_flag_data.get("enabled", False) else FeatureFlagStatus.DISABLED,
+                    default_value=scenario_flag_data.get("enabled", False),
+                    rules=[],
+                    created_at=scenario_flag_data.get("created_at") or datetime.utcnow(),
+                    updated_at=scenario_flag_data.get("updated_at") or datetime.utcnow(),
+                    created_by="scenario_system",
+                    tags=["scenario", "auto-generated"]
+                ))
+
+        return generic_flags + scenario_flags
+
+    async def get_flags_for_user(self, user_context: Dict[str, Any]) -> Dict[str, Any]:
+        """Get all feature flag values for a user."""
+        # Get generic flag evaluations
+        generic_evaluations = await self.generic_store.get_flags_for_user(user_context)
+
+        # Get scenario flag evaluations
+        scenario_evaluations = {}
+        from ..scenarios.feature_flags import ScenarioOutputFeature
+        for feature in ScenarioOutputFeature:
+            scenario_flag_data = await self.scenario_store.get_feature_flag(feature.value)
+            if scenario_flag_data:
+                scenario_evaluations[f"{self.scenario_prefix}{feature.value}"] = scenario_flag_data.get("enabled", False)
+
+        # Combine results
+        return {**generic_evaluations, **scenario_evaluations}
+
+
 class InMemoryFeatureFlagStore(FeatureFlagStore):
     """In-memory feature flag store for development/testing."""
 
@@ -276,11 +567,15 @@ class RedisFeatureFlagStore(FeatureFlagStore):
         try:
             data = await redis_client.get(flag_key)
             if data:
-                # Deserialize flag (simplified)
-                flag_dict = eval(data)  # In production, use proper serialization
-                return FeatureFlag(**flag_dict)
-        except Exception:
-            pass
+                # Deserialize flag using JSON
+                import json
+                flag_dict = json.loads(data)
+                return FeatureFlag.from_dict(flag_dict)
+        except Exception as e:
+            # Log error but don't raise - return None instead
+            import logging
+            logger = logging.getLogger(__name__)
+            logger.warning(f"Failed to deserialize feature flag {key}: {e}")
 
         return None
 
@@ -289,11 +584,16 @@ class RedisFeatureFlagStore(FeatureFlagStore):
         flag_key = self._make_key(flag.key)
 
         try:
-            # Serialize flag (simplified)
-            data = str(flag.__dict__)
+            # Serialize flag using JSON
+            import json
+            data = json.dumps(flag.to_dict(), default=str)
             await redis_client.set(flag_key, data)
-        except Exception:
-            pass
+        except Exception as e:
+            # Log error but don't raise - silently fail for now
+            import logging
+            logger = logging.getLogger(__name__)
+            logger.error(f"Failed to serialize feature flag {flag.key}: {e}")
+            raise
 
     async def delete_flag(self, key: str) -> None:
         redis_client = await self._get_redis_client()
@@ -315,11 +615,21 @@ class RedisFeatureFlagStore(FeatureFlagStore):
             for key in keys:
                 data = await redis_client.get(key)
                 if data:
-                    flag_dict = eval(data)
-                    flags.append(FeatureFlag(**flag_dict))
+                    try:
+                        import json
+                        flag_dict = json.loads(data)
+                        flags.append(FeatureFlag.from_dict(flag_dict))
+                    except Exception as e:
+                        import logging
+                        logger = logging.getLogger(__name__)
+                        logger.warning(f"Failed to deserialize feature flag from key {key}: {e}")
+                        continue
 
             return flags
-        except Exception:
+        except Exception as e:
+            import logging
+            logger = logging.getLogger(__name__)
+            logger.error(f"Failed to list feature flags: {e}")
             return []
 
     async def get_flags_for_user(self, user_context: Dict[str, Any]) -> Dict[str, Any]:
@@ -445,7 +755,8 @@ class FeatureFlagManager:
         key: str,
         description: str = "",
         default_value: bool = False,
-        status: FeatureFlagStatus = FeatureFlagStatus.DISABLED
+        status: FeatureFlagStatus = FeatureFlagStatus.DISABLED,
+        created_by: str = "system"
     ) -> FeatureFlag:
         """Create a new feature flag."""
         flag = FeatureFlag(
@@ -454,7 +765,7 @@ class FeatureFlagManager:
             description=description,
             default_value=default_value,
             status=status,
-            created_by=user_context.get("user_id", "system")
+            created_by=created_by
         )
 
         await self.set_flag(flag)
@@ -537,16 +848,23 @@ def get_feature_manager() -> FeatureFlagManager:
 
 async def initialize_feature_flags(
     redis_url: Optional[str] = None,
-    cache_manager: Optional[CacheManager] = None
+    cache_manager: Optional[CacheManager] = None,
+    scenario_store = None
 ) -> FeatureFlagManager:
     """Initialize the feature flag system."""
     global _feature_manager
 
     if _feature_manager is None:
         if redis_url:
-            store = RedisFeatureFlagStore(redis_url)
+            generic_store = RedisFeatureFlagStore(redis_url)
         else:
-            store = InMemoryFeatureFlagStore()
+            generic_store = InMemoryFeatureFlagStore()
+
+        # Use adapter if scenario store is available
+        if scenario_store:
+            store = ScenarioFeatureFlagAdapter(generic_store, scenario_store)
+        else:
+            store = generic_store
 
         _feature_manager = FeatureFlagManager(store, cache_manager)
 

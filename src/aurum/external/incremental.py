@@ -743,7 +743,8 @@ async def run_incremental_update(
     provider: str,
     vault_addr: str,
     vault_token: str,
-    window_hours: Optional[int] = None
+    window_hours: Optional[int] = None,
+    datasets: Optional[List[str]] = None
 ) -> Dict[str, Any]:
     """Run incremental update for a provider.
 
@@ -758,7 +759,8 @@ async def run_incremental_update(
     """
     config = IncrementalConfig(
         provider=provider,
-        window_hours=window_hours or DEFAULT_INCREMENTAL_WINDOW_HOURS
+        window_hours=window_hours or DEFAULT_INCREMENTAL_WINDOW_HOURS,
+        datasets=datasets
     )
 
     processor = IncrementalProcessor(config)

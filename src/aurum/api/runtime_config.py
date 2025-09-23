@@ -70,24 +70,34 @@ class RuntimeConfigService:
         request_id: str
     ) -> Dict[str, Any]:
         """Update rate limit configuration for a tenant and path."""
-        # Get current config
-        settings = AurumSettings.from_env()
-        old_config = settings.api.rate_limit.tenant_overrides.get(tenant_id, {}).get(path)
+        from aurum.scenarios.storage import get_scenario_store
+        from aurum.telemetry.context import set_tenant_id, reset_tenant_id
 
-        # Update configuration
-        async with self._lock:
-            if tenant_id not in settings.api.rate_limit.tenant_overrides:
-                settings.api.rate_limit.tenant_overrides[tenant_id] = {}
+        store = get_scenario_store()
 
-            settings.api.rate_limit.tenant_overrides[tenant_id][path] = (
-                config.requests_per_second,
-                config.burst
+        # Get current config from database
+        token = set_tenant_id(tenant_id)
+        try:
+            old_config = await store.get_rate_limit_override(path, tenant_id)
+        finally:
+            reset_tenant_id(token)
+
+        # Update configuration in database
+        token = set_tenant_id(tenant_id)
+        try:
+            updated_config = await store.set_rate_limit_override(
+                path_prefix=path,
+                requests_per_second=config.requests_per_second,
+                burst_capacity=config.burst,
+                daily_cap=100000,  # default daily cap
+                enabled=config.enabled,
+                tenant_id=tenant_id
             )
+        finally:
+            reset_tenant_id(token)
 
-            # Save configuration (this would persist to database/file in production)
-            # For now, we'll just log the change
-
-            # Create audit log entry
+        # Create audit log entry
+        async with self._lock:
             audit_entry = AuditLogEntry(
                 id=str(uuid4()),
                 tenant_id=tenant_id,
@@ -95,7 +105,11 @@ class RuntimeConfigService:
                 action="update_rate_limit",
                 resource_type="rate_limit",
                 resource_id=path,
-                old_value={"rps": old_config[0] if old_config else None, "burst": old_config[1] if old_config else None},
+                old_value={
+                    "rps": old_config["requests_per_second"] if old_config else None,
+                    "burst": old_config["burst_capacity"] if old_config else None,
+                    "enabled": old_config["enabled"] if old_config else None,
+                },
                 new_value={"rps": config.requests_per_second, "burst": config.burst, "enabled": config.enabled},
                 timestamp=datetime.utcnow(),
                 request_id=request_id
@@ -119,6 +133,7 @@ class RuntimeConfigService:
             "requests_per_second": config.requests_per_second,
             "burst": config.burst,
             "enabled": config.enabled,
+            "daily_cap": updated_config.get("daily_cap", 100000),
         }
 
     async def update_feature_flag(
@@ -342,16 +357,22 @@ async def get_tenant_feature_flags(
 
     try:
         from aurum.scenarios.storage import get_scenario_store
+        from aurum.telemetry.context import set_tenant_id, reset_tenant_id
+
         store = get_scenario_store()
 
-        # Get all feature flags for the tenant (this would need to be implemented in storage)
-        # For now, return empty list
-        feature_flags = []
+        # Temporarily impersonate the target tenant for RLS-bound operations
+        token = set_tenant_id(tenant_id)
+        try:
+            feature_flags = await store.list_feature_flags()
+        finally:
+            reset_tenant_id(token)
 
         return {
             "meta": {
                 "request_id": request_id,
-                "tenant_id": tenant_id
+                "tenant_id": tenant_id,
+                "total_count": len(feature_flags)
             },
             "data": feature_flags
         }

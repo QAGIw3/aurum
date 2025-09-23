@@ -7,7 +7,31 @@ import sys
 from contextlib import contextmanager
 from contextvars import ContextVar, Token
 from datetime import datetime
-from typing import Iterator, Optional, Dict, Any
+from typing import Iterator, Optional, Dict, Any, Mapping, Iterable
+
+try:  # pragma: no cover - optional dependency
+    from opentelemetry import trace as _otel_trace  # type: ignore
+except ImportError:  # pragma: no cover - tracing optional
+    _otel_trace = None
+
+_SENSITIVE_KEYS = {
+    "authorization",
+    "proxy-authorization",
+    "cookie",
+    "set-cookie",
+    "x-api-key",
+    "x-aurum-api-key",
+    "access_token",
+    "refresh_token",
+    "id_token",
+    "token",
+    "password",
+    "secret",
+    "client_secret",
+    "session",
+    "session_id",
+}
+_REDACTED = "[REDACTED]"
 
 _REQUEST_ID: ContextVar[Optional[str]] = ContextVar("aurum_request_id", default=None)
 _CORRELATION_ID: ContextVar[Optional[str]] = ContextVar("aurum_correlation_id", default=None)
@@ -150,6 +174,55 @@ def correlation_context(
                 pass
 
 
+def redact_sensitive_data(value: Any) -> Any:
+    """Recursively redact sensitive keys inside mappings and sequences."""
+
+    if isinstance(value, Mapping):
+        redacted: Dict[Any, Any] = {}
+        for key, item in value.items():
+            if isinstance(key, str) and key.lower() in _SENSITIVE_KEYS:
+                redacted[key] = _REDACTED
+            else:
+                redacted[key] = redact_sensitive_data(item)
+        return redacted
+    if isinstance(value, list):
+        return [redact_sensitive_data(item) for item in value]
+    if isinstance(value, tuple):
+        return tuple(redact_sensitive_data(item) for item in value)
+    if isinstance(value, set):
+        return {redact_sensitive_data(item) for item in value}
+    return value
+
+
+def get_trace_span_ids() -> tuple[Optional[str], Optional[str]]:
+    """Return the current trace and span identifiers if OpenTelemetry is active."""
+
+    if _otel_trace is None:  # pragma: no cover - tracing optional
+        return None, None
+    try:
+        span = _otel_trace.get_current_span()
+    except Exception:  # pragma: no cover - defensive for instrumentation edge cases
+        return None, None
+    if span is None:
+        return None, None
+
+    try:
+        context = span.get_span_context()
+    except AttributeError:  # pragma: no cover - missing API support
+        return None, None
+    if context is None:
+        return None, None
+
+    try:
+        if not context.is_valid:
+            return None, None
+        trace_id = f"{context.trace_id:032x}"
+        span_id = f"{context.span_id:016x}"
+        return trace_id, span_id
+    except Exception:  # pragma: no cover - guard against unexpected attr access
+        return None, None
+
+
 def log_structured(
     level: str,
     event: str,
@@ -157,6 +230,9 @@ def log_structured(
 ) -> None:
     """Log a structured message with context information."""
     context = get_context()
+    sanitized_kwargs = redact_sensitive_data(dict(kwargs)) if kwargs else {}
+    trace_id, span_id = get_trace_span_ids()
+
     log_data = {
         "timestamp": datetime.utcnow().isoformat(),
         "level": level,
@@ -166,8 +242,13 @@ def log_structured(
         "tenant_id": context["tenant_id"],
         "user_id": context["user_id"],
         "session_id": context["session_id"],
-        **kwargs
+        **sanitized_kwargs,
     }
+
+    if trace_id:
+        log_data["trace_id"] = trace_id
+    if span_id:
+        log_data["span_id"] = span_id
 
     # Filter out None values
     log_data = {k: v for k, v in log_data.items() if v is not None}

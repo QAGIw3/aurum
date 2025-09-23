@@ -19,7 +19,7 @@ spec:
         version: "v1"
       annotations:
         prometheus.io/scrape: "true"
-        prometheus.io/port: "8000"
+        prometheus.io/port: "9464"
         prometheus.io/path: "/metrics"
     spec:
       containers:
@@ -27,8 +27,8 @@ spec:
         image: aurum-worker:latest
         imagePullPolicy: Always
         ports:
-        - containerPort: 8000
-          name: http
+        - containerPort: 9464
+          name: metrics
           protocol: TCP
         env:
         - name: AURUM_APP_DB_DSN
@@ -89,31 +89,25 @@ spec:
             secretKeyRef:
               name: aurum-external-secrets
               key: noaa-token
+        - name: AURUM_SCENARIO_METRICS_PORT
+          value: "9464"
+        - name: AURUM_SCENARIO_HTTP_PORT
+          value: "9464"
+        - name: AURUM_SCENARIO_METRICS_ADDR
+          value: "0.0.0.0"
         livenessProbe:
-          exec:
-            command:
-            - python
-            - -c
-            - |
-              import sys
-              from aurum.api.worker import WorkerHealthCheck
-              check = WorkerHealthCheck()
-              sys.exit(0 if check.is_healthy() else 1)
+          httpGet:
+            path: /live
+            port: metrics
           initialDelaySeconds: 60
           periodSeconds: 30
           timeoutSeconds: 10
           failureThreshold: 3
           successThreshold: 1
         readinessProbe:
-          exec:
-            command:
-            - python
-            - -c
-            - |
-              import sys
-              from aurum.api.worker import WorkerHealthCheck
-              check = WorkerHealthCheck()
-              sys.exit(0 if check.is_ready() else 1)
+          httpGet:
+            path: /ready
+            port: metrics
           initialDelaySeconds: 30
           periodSeconds: 10
           timeoutSeconds: 5

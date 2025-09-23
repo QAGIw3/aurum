@@ -2,15 +2,19 @@
 
 from __future__ import annotations
 
+import hashlib
 import time
 from typing import Dict, List, Optional
 
 from fastapi import APIRouter, HTTPException, Query, Request
 
-from ..telemetry.context import get_request_id
+from ..telemetry.context import get_request_id, get_tenant_id
 from .advanced_cache import get_advanced_cache_manager, get_cache_warming_service
+from .golden_query_cache import get_golden_query_cache
 from .cache_models import (
     CacheAnalyticsResponse,
+    CachePurgeRequest,
+    CacheTTLOverrideRequest,
 )
 from .models import (
     CacheStatsResponse,
@@ -44,6 +48,8 @@ async def get_cache_analytics(
 
         # Get memory usage
         memory_usage = await cache_manager.get_memory_usage()
+        golden_cache = get_golden_query_cache()
+        ttl_overrides = await golden_cache.list_query_ttl_overrides()
 
         query_time_ms = (time.perf_counter() - start_time) * 1000
 
@@ -60,6 +66,17 @@ async def get_cache_analytics(
                 memory_usage_bytes=memory_usage.get("namespaces", {}).get(ns_name, 0)
             ))
 
+        summary = {
+            "total_hits": sum(ns.hits for ns in namespaces_data),
+            "total_misses": sum(ns.misses for ns in namespaces_data),
+            "overall_hit_rate": (
+                sum(ns.hits for ns in namespaces_data) /
+                max(sum(ns.total_requests for ns in namespaces_data), 1)
+            ),
+            "total_memory_bytes": memory_usage.get("estimated_size_bytes", 0),
+            "ttl_override_count": len(ttl_overrides),
+        }
+
         return CacheAnalyticsResponse(
             meta={
                 "request_id": get_request_id(),
@@ -68,15 +85,8 @@ async def get_cache_analytics(
             },
             data={
                 "namespaces": namespaces_data,
-                "summary": {
-                    "total_hits": sum(ns.hits for ns in namespaces_data),
-                    "total_misses": sum(ns.misses for ns in namespaces_data),
-                    "overall_hit_rate": (
-                        sum(ns.hits for ns in namespaces_data) /
-                        max(sum(ns.total_requests for ns in namespaces_data), 1)
-                    ),
-                    "total_memory_bytes": memory_usage.get("estimated_size_bytes", 0),
-                }
+                "summary": summary,
+                "ttl_overrides": ttl_overrides,
             }
         )
 
@@ -114,6 +124,104 @@ async def get_cache_stats(
         raise HTTPException(
             status_code=500,
             detail=f"Failed to get cache stats: {str(exc)}"
+        ) from exc
+
+
+@router.post("/v1/cache/analytics/purge")
+async def purge_cache_entries(
+    request: Request,
+    payload: CachePurgeRequest,
+) -> Dict[str, Any]:
+    """Invalidate cache entries by pattern or exact query."""
+    start_time = time.perf_counter()
+
+    try:
+        cache = get_golden_query_cache()
+        tenant_id = payload.tenant_id or get_tenant_id()
+
+        invalidated = 0
+        details: Dict[str, Any] = {"tenant_id": tenant_id}
+
+        if payload.pattern:
+            count = await cache.invalidate_pattern(payload.pattern, tenant_id)
+            invalidated += count
+            details["pattern"] = payload.pattern
+
+        if payload.query:
+            count = await cache.invalidate_query(payload.query, tenant_id)
+            invalidated += count
+            details["query_hash"] = hashlib.sha256(payload.query.encode("utf-8")).hexdigest()[:16]
+
+        details["invalidated"] = invalidated
+
+        query_time_ms = (time.perf_counter() - start_time) * 1000
+
+        return {
+            "meta": {
+                "request_id": get_request_id(),
+                "query_time_ms": round(query_time_ms, 2),
+            },
+            "data": details,
+        }
+
+    except Exception as exc:
+        query_time_ms = (time.perf_counter() - start_time) * 1000
+        raise HTTPException(
+            status_code=500,
+            detail={
+                "message": f"Failed to purge cache entries: {str(exc)}",
+                "query_time_ms": round(query_time_ms, 2),
+            },
+        ) from exc
+
+
+@router.post("/v1/cache/analytics/ttl")
+async def manage_cache_ttl_override(
+    request: Request,
+    payload: CacheTTLOverrideRequest,
+) -> Dict[str, Any]:
+    """Set or clear per-query TTL overrides for the golden query cache."""
+    start_time = time.perf_counter()
+
+    cache = get_golden_query_cache()
+    query_hash = hashlib.sha256(payload.query.encode("utf-8")).hexdigest()[:16]
+
+    try:
+        if payload.clear:
+            changed = await cache.clear_query_ttl_override(payload.query)
+            action = "cleared" if changed else "noop"
+        else:
+            await cache.set_query_ttl_override(payload.query, payload.ttl_seconds or 0)
+            action = "set"
+
+        overrides = await cache.list_query_ttl_overrides()
+        current_ttl = overrides.get(query_hash)
+
+        query_time_ms = (time.perf_counter() - start_time) * 1000
+
+        return {
+            "meta": {
+                "request_id": get_request_id(),
+                "query_time_ms": round(query_time_ms, 2),
+            },
+            "data": {
+                "query_hash": query_hash,
+                "action": action,
+                "ttl_seconds": current_ttl,
+                "total_overrides": len(overrides),
+            },
+        }
+
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except Exception as exc:
+        query_time_ms = (time.perf_counter() - start_time) * 1000
+        raise HTTPException(
+            status_code=500,
+            detail={
+                "message": f"Failed to update TTL override: {str(exc)}",
+                "query_time_ms": round(query_time_ms, 2),
+            },
         ) from exc
 
 

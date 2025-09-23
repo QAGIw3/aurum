@@ -30,6 +30,7 @@ resources:
   - trino.yaml
   - airflow.yaml
   - airflow-rbac.yaml
+  - airflow-ingress.yaml
   - clickhouse.yaml
   - vector.yaml
   - vector-rbac.yaml

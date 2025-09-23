@@ -1,3 +1,26 @@
+# Generic ISO LMP → Kafka (Avro)
+#
+# Required environment variables:
+#   ISO_BASE_URL             - ISO web service base URL
+#   ISO_LMP_ENDPOINT         - LMP endpoint path
+#   ISO_START_DATE           - Start date (YYYY-MM-DD)
+#   ISO_END_DATE             - End date (YYYY-MM-DD)
+#   ISO_MARKET               - Market type (DAM, RTM, etc.)
+#   ISO_FORMAT               - Response format (json, csv, xml)
+#   AURUM_KAFKA_BOOTSTRAP_SERVERS - Kafka brokers
+#   AURUM_SCHEMA_REGISTRY_URL     - Schema Registry endpoint
+#
+# Optional environment variables:
+#   ISO_AUTH_PARAMS          - Additional auth parameters
+#   ISO_LMP_TOPIC            - Kafka topic (default aurum.iso.<iso>.lmp.v1)
+#   ISO_LMP_SUBJECT          - Schema Registry subject
+#   ISO_LMP_SCHEMA           - Avro schema JSON populated by run_job.sh
+#   ISO_LOCATION_REGISTRY    - Path to iso_nodes.csv (default config/iso_nodes.csv)
+#   ISO_KEY_SERIALIZER       - Kafka key serializer (default: string)
+#   ISO_KEY_FORMAT           - Kafka key format (default: json)
+#
+# Generic template for ISO LMP data ingestion with registry enrichment.
+
 env {
   parallelism = 1
   job.mode = "BATCH"
@@ -36,26 +59,52 @@ source {
     }
     result_table_name = "iso_lmp"
   }
+  LocalFile {
+    path = "${ISO_LOCATION_REGISTRY}"
+    format = "csv"
+    csv {
+      delimiter = ","
+      header = true
+    }
+    schema {
+      fields {
+        iso = string
+        location_id = string
+        location_name = string
+        location_type = string
+        zone = string
+        hub = string
+        timezone = string
+      }
+    }
+    result_table_name = "iso_registry"
+  }
 }
 
 transform {
-  # Normalize timestamps to UTC
+  # Normalize timestamps to UTC and enrich with registry data
   Sql {
     sql = """
       SELECT
-        CAST(timestamp AS TIMESTAMP) as timestamp,
-        node_id,
-        node_name,
-        zone,
-        market,
-        CAST(lmp AS DOUBLE) as lmp,
-        CAST(congestion AS DOUBLE) as congestion,
-        CAST(losses AS DOUBLE) as losses,
-        source,
-        data_type,
+        CAST(l.timestamp AS TIMESTAMP) as timestamp,
+        l.node_id,
+        COALESCE(l.node_name, r.location_name) as node_name,
+        COALESCE(l.zone, r.zone) as zone,
+        COALESCE(l.market, '${ISO_MARKET}') as market,
+        CAST(l.lmp AS DOUBLE) as lmp,
+        CAST(l.congestion AS DOUBLE) as congestion,
+        CAST(l.losses AS DOUBLE) as losses,
+        COALESCE(l.source, '${ISO}') as source,
+        COALESCE(l.data_type, 'LMP') as data_type,
+        r.location_type,
+        r.hub,
+        r.timezone,
         NOW() as ingested_at
-      FROM iso_lmp
-      WHERE lmp IS NOT NULL AND lmp > 0
+      FROM iso_lmp l
+      LEFT JOIN iso_registry r
+        ON upper(r.iso) = upper('${ISO}')
+        AND upper(r.location_id) = upper(l.node_id)
+      WHERE l.lmp IS NOT NULL AND l.lmp > 0
     """
     result_table_name = "iso_lmp_normalized"
   }

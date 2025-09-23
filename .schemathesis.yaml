@@ -15,10 +15,16 @@ test:
     - /v1/curves
     - /v1/external/providers
     - /v1/admin/config/*
+    - /v2/scenarios
+    - /v2/curves
+    - /v2/metadata/*
+    - /v2/admin/*
 
   # Exclude admin endpoints from property-based testing
   exclude:
     - /v1/admin/ratelimit/test
+    - /v2/admin/cache/scenario/*/invalidate
+    - /v2/admin/cache/curves/invalidate
     - /health
     - /ready
 
@@ -83,6 +89,25 @@ test_cases:
         status: "created"
       expected_status: [201, 400, 401, 403]
 
+    - endpoint: /v2/scenarios
+      method: GET
+      parameters:
+        tenant_id: "test-tenant-123"
+        limit: [1, 10, 100]
+        cursor: ["", "eyJ0ZXN0IjoidmFsdWUifQ=="]
+      expected_status: [200, 400, 401, 403]
+
+    - endpoint: /v2/scenarios
+      method: POST
+      content_type: application/json
+      parameters:
+        tenant_id: "test-tenant-123"
+      body:
+        name: "Test Scenario v2"
+        description: "Test scenario for API testing v2"
+        status: "created"
+      expected_status: [201, 400, 401, 403]
+
   # Curve endpoints
   curves:
     - endpoint: /v1/curves
@@ -102,6 +127,22 @@ test_cases:
         asset_class: ["power", "gas"]
         limit: [10, 100]
         cursor: ["", "eyJ0ZXN0IjoidmFsdWUifQ=="]
+      expected_status: [200, 400, 401, 403]
+
+    - endpoint: /v2/curves
+      method: GET
+      parameters:
+        tenant_id: "test-tenant-123"
+        limit: [10, 100, 500]
+        cursor: ["", "eyJ0ZXN0IjoidmFsdWUifQ=="]
+      expected_status: [200, 400, 401, 403]
+
+    - endpoint: /v2/curves/{curve_id}/diff
+      method: GET
+      parameters:
+        tenant_id: "test-tenant-123"
+        from_timestamp: "2024-01-01T00:00:00Z"
+        to_timestamp: "2024-06-01T00:00:00Z"
       expected_status: [200, 400, 401, 403]
 
   # External data endpoints
@@ -134,6 +175,16 @@ test_cases:
       method: GET
       parameters:
         limit: [10, 100, 1000]
+      expected_status: [200, 401, 403]
+
+    - endpoint: /v2/admin/cache/scenario/{scenario_id}/invalidate
+      method: POST
+      parameters:
+        scenario_id: "test-scenario-123"
+      expected_status: [204, 401, 403]
+
+    - endpoint: /v2/admin/cache/curves/invalidate
+      method: POST
       expected_status: [200, 401, 403]
 
 # Property-based testing rules
@@ -250,10 +301,17 @@ reporting:
       - /v1/scenarios
       - /v1/curves
       - /v1/external/*
+      - /v2/scenarios
+      - /v2/curves
+      - /v2/metadata/*
+      - /v2/admin/*
     exclude:
       - /health
       - /ready
       - /metrics
+      - /v1/admin/ratelimit/test
+      - /v2/admin/cache/scenario/*/invalidate
+      - /v2/admin/cache/curves/invalidate
 
 # Performance testing
 performance:

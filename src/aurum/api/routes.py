@@ -197,7 +197,14 @@ try:  # pragma: no cover - optional dependency
 except ModuleNotFoundError:  # pragma: no cover - drought features optional
     load_catalog = None  # type: ignore[assignment]
     DroughtCatalog = None  # type: ignore[assignment]
-from aurum.telemetry.context import get_request_id, set_request_id, reset_request_id
+from aurum.telemetry.context import (
+    correlation_context,
+    get_request_id,
+    get_trace_span_ids,
+    log_structured,
+    reset_request_id,
+    set_request_id,
+)
 
 # Import external API router (optional during tooling/doc generation)
 try:  # pragma: no cover
@@ -306,9 +313,32 @@ def _is_admin(principal: Dict[str, Any] | None) -> bool:
         return True
     if not principal:
         return False
+
+    # Check admin groups (existing logic)
     groups = principal.get("groups") or []
     normalized = {str(group).lower() for group in groups if group}
-    return any(group in normalized for group in ADMIN_GROUPS)
+    if any(group in normalized for group in ADMIN_GROUPS):
+        return True
+
+    # Check OIDC scopes for admin access
+    claims = principal.get("claims") or {}
+    scopes = claims.get("scope", "")
+    if isinstance(scopes, str):
+        scope_list = scopes.split()
+    else:
+        scope_list = scopes if isinstance(scopes, list) else []
+
+    # Check for specific admin scopes
+    admin_scopes = {
+        "admin",
+        "admin:read",
+        "admin:write",
+        "aurum:admin",
+        "admin:feature_flags",
+        "admin:rate_limits",
+        "admin:trino"
+    }
+    return any(scope in scope_list for scope in admin_scopes)
 
 
 def _require_admin(principal: Dict[str, Any] | None) -> None:
@@ -366,7 +396,6 @@ LOGGER = logging.getLogger(__name__)
 
 async def access_log_middleware(request, call_next):  # type: ignore[no-redef]
     import os
-    from aurum.telemetry.context import correlation_context, log_structured
 
     # Extract or generate identifiers
     request_id = request.headers.get("x-request-id") or str(uuid.uuid4())
@@ -387,6 +416,8 @@ async def access_log_middleware(request, call_next):  # type: ignore[no-redef]
         request.state.user_id = context["user_id"]
         request.state.session_id = context["session_id"]
 
+        query_params = dict(request.query_params.multi_items()) if request.query_params else {}
+
         # Set span attributes for tracing
         span = trace.get_current_span() if trace else None
         if span is not None and getattr(span, "is_recording", lambda: False)():  # pragma: no branch - inexpensive check
@@ -404,6 +435,11 @@ async def access_log_middleware(request, call_next):  # type: ignore[no-redef]
         except Exception as exc:
             duration_ms = (time.perf_counter() - start) * 1000.0
             principal = getattr(request.state, "principal", {}) or {}
+            trace_id, span_id = get_trace_span_ids()
+            if trace_id:
+                request.state.trace_id = trace_id
+            if span_id:
+                request.state.span_id = span_id
 
             log_structured(
                 "error",
@@ -418,11 +454,19 @@ async def access_log_middleware(request, call_next):  # type: ignore[no-redef]
                 error_type=exc.__class__.__name__,
                 error_message=str(exc),
                 service_name=os.getenv("AURUM_OTEL_SERVICE_NAME", "aurum-api"),
+                query_params=query_params or None,
+                trace_id=trace_id,
+                span_id=span_id,
             )
             raise
 
         duration_ms = (time.perf_counter() - start) * 1000.0
         principal = getattr(request.state, "principal", {}) or {}
+        trace_id, span_id = get_trace_span_ids()
+        if trace_id:
+            request.state.trace_id = trace_id
+        if span_id:
+            request.state.span_id = span_id
 
         # Set response headers with correlation IDs
         try:
@@ -430,6 +474,10 @@ async def access_log_middleware(request, call_next):  # type: ignore[no-redef]
             response.headers["X-Correlation-Id"] = context["correlation_id"]
             if context["tenant_id"]:
                 response.headers["X-Aurum-Tenant"] = context["tenant_id"]
+            if trace_id:
+                response.headers["X-Trace-Id"] = trace_id
+            if span_id:
+                response.headers["X-Span-Id"] = span_id
         except Exception:
             pass
 
@@ -447,6 +495,9 @@ async def access_log_middleware(request, call_next):  # type: ignore[no-redef]
             response_size=len(response.body) if hasattr(response, 'body') else 0,
             user_agent=request.headers.get("user-agent", "unknown"),
             service_name=os.getenv("AURUM_OTEL_SERVICE_NAME", "aurum-api"),
+            query_params=query_params or None,
+            trace_id=trace_id,
+            span_id=span_id,
         )
     return response
 
@@ -648,11 +699,22 @@ def _observe_tile_fetch(endpoint: str, status: str, duration: float) -> None:
 
 
 @router.get("/health")
+@router.get("/healthz")
+@router.get("/health/live")
 def health() -> dict:
+    """Liveness check returning the current service health."""
     return {"status": "ok"}
 
 
+@router.get("/live")
+@router.get("/livez")
+def live() -> dict:
+    """Alias for health checks used by legacy probes."""
+    return {"status": "alive"}
+
+
 @router.get("/ready")
+@router.get("/readyz")
 def ready() -> dict:
     """Deep readiness check with comprehensive dependency validation."""
     trino_cfg = _trino_config()
@@ -2959,20 +3021,64 @@ def list_scenarios(
 
 
 @router.post("/v1/scenarios", response_model=ScenarioResponse, status_code=201)
-def create_scenario(payload: CreateScenarioRequest, request: Request) -> ScenarioResponse:
+async def create_scenario(payload: CreateScenarioRequest, request: Request) -> ScenarioResponse:
     """Create a new scenario for the resolved tenant and return its definition."""
     request_id = _current_request_id()
     tenant_id = _resolve_tenant(request, payload.tenant_id)
-    record = ScenarioStore.create_scenario(
-        tenant_id=tenant_id,
-        name=payload.name,
-        description=payload.description,
-        assumptions=payload.assumptions,
-    )
-    return ScenarioResponse(
-        meta=Meta(request_id=request_id, query_time_ms=0),
-        data=_scenario_record_to_data(record),
-    )
+
+    # Use idempotency context if key is provided
+    idempotency_key = getattr(request.state, 'idempotency_key', None)
+
+    if idempotency_key:
+        from .idempotency import get_idempotency_manager
+
+        # Create a context manager for idempotent operation
+        async with get_idempotency_manager().idempotent_operation(
+            idempotency_key,
+            "create_scenario",
+            payload.model_dump()
+        ) as cached_result:
+            if cached_result:
+                # Return cached result
+                return ScenarioResponse(
+                    meta=Meta(request_id=request_id, query_time_ms=0),
+                    data=cached_result['scenario_data']
+                )
+
+            # Perform the operation
+            record = ScenarioStore.create_scenario(
+                tenant_id=tenant_id,
+                name=payload.name,
+                description=payload.description,
+                assumptions=payload.assumptions,
+            )
+
+            scenario_data = _scenario_record_to_data(record)
+
+            # Cache the result
+            await get_idempotency_manager().set_result(
+                idempotency_key,
+                "create_scenario",
+                payload.model_dump(),
+                {"scenario_data": scenario_data}
+            )
+
+            return ScenarioResponse(
+                meta=Meta(request_id=request_id, query_time_ms=0),
+                data=scenario_data
+            )
+    else:
+        # Original non-idempotent behavior
+        record = ScenarioStore.create_scenario(
+            tenant_id=tenant_id,
+            name=payload.name,
+            description=payload.description,
+            assumptions=payload.assumptions,
+        )
+        return ScenarioResponse(
+            meta=Meta(request_id=request_id, query_time_ms=0),
+            data=_scenario_record_to_data(record),
+        )
 
 
 @router.get("/v1/scenarios/{scenario_id}", response_model=ScenarioResponse)

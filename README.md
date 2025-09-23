@@ -65,6 +65,11 @@ Set `AURUM_SCENARIO_METRICS_PORT=9500` (and optionally `AURUM_SCENARIO_METRICS_A
 
 Command-line helper: once the project is installed in a virtualenv, use `aurum-scenario` to manage scenarios, e.g. `aurum-scenario --tenant demo list` or `aurum-scenario --tenant demo create "Test" --assumption '{"driver_type":"policy","payload":{"policy_name":"RPS"}}'`.
 
+### Warehouse maintenance
+
+- Trigger ad-hoc maintenance runs with `scripts/trino/maintenance.py`. Pick `--job iceberg|timescale|clickhouse|all` to run specific tasks and inspect aggregated counters printed at the end of the run.
+- ClickHouse maintenance is skipped when the optional `clickhouse-driver` dependency is missing; the `clickhouse_runs_skipped` counter surfaces this state so alerts can be wired without spurious failures.
+
 ### Curve API
 
 Spin up the API service (exposed on localhost:8095) alongside core services:

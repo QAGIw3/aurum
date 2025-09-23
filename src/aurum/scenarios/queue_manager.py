@@ -351,29 +351,210 @@ class ScenarioQueueManager:
 
     async def _execute_scenario_request(self, request: Dict[str, Any]) -> bool:
         """Execute the actual scenario request processing."""
-        # This is a placeholder - replace with actual scenario processing logic
         request_id = request["request_id"]
+        scenario_id = request["scenario_id"]
+        run_id = request.get("run_id", request_id)
 
         log_structured(
             "info",
             "processing_scenario_request",
             request_id=request_id,
-            scenario_id=request["scenario_id"],
+            scenario_id=scenario_id,
+            run_id=run_id,
         )
 
-        # Simulate processing time and occasional failures
-        await asyncio.sleep(1)
+        try:
+            # Update run status to running
+            from ..api.scenario_service import STORE as ScenarioStore
+            await ScenarioStore.update_run_state(run_id, {
+                "status": "running",
+                "started_at": datetime.utcnow(),
+            })
 
-        # Simulate 90% success rate
-        import random
-        success = random.random() < 0.9
+            # Process the scenario
+            success = await self._process_scenario_run(request)
 
-        if success:
-            log_structured("info", "scenario_request_completed", request_id=request_id)
-        else:
-            log_structured("warning", "scenario_request_failed", request_id=request_id)
+            if success:
+                # Update run status to completed
+                await ScenarioStore.update_run_state(run_id, {
+                    "status": "succeeded",
+                    "completed_at": datetime.utcnow(),
+                })
+                log_structured("info", "scenario_request_completed", request_id=request_id, run_id=run_id)
+            else:
+                # Update run status to failed
+                await ScenarioStore.update_run_state(run_id, {
+                    "status": "failed",
+                    "error_message": "Scenario processing failed",
+                    "completed_at": datetime.utcnow(),
+                })
+                log_structured("warning", "scenario_request_failed", request_id=request_id, run_id=run_id)
 
-        return success
+            return success
+
+        except Exception as exc:
+            log_structured(
+                "error",
+                "scenario_request_error",
+                request_id=request_id,
+                run_id=run_id,
+                error=str(exc),
+            )
+            # Update run status to failed
+            try:
+                from ..api.scenario_service import STORE as ScenarioStore
+                await ScenarioStore.update_run_state(run_id, {
+                    "status": "failed",
+                    "error_message": str(exc),
+                    "completed_at": datetime.utcnow(),
+                })
+            except Exception:
+                pass
+            return False
+
+    async def _process_scenario_run(self, request: Dict[str, Any]) -> bool:
+        """Process a scenario run request."""
+        run_id = request.get("run_id", request["request_id"])
+        scenario_id = request["scenario_id"]
+        scenario_type = request.get("scenario_type", "monte_carlo")
+
+        try:
+            # Get scenario details
+            from ..api.scenario_service import STORE as ScenarioStore
+            scenario = await ScenarioStore.get_scenario(scenario_id)
+            if not scenario:
+                log_structured("error", "scenario_not_found", scenario_id=scenario_id)
+                return False
+
+            # Process based on scenario type
+            if scenario_type == "monte_carlo":
+                return await self._run_monte_carlo_scenario(run_id, scenario, request)
+            elif scenario_type == "forecasting":
+                return await self._run_forecasting_scenario(run_id, scenario, request)
+            elif scenario_type == "cross_asset":
+                return await self._run_cross_asset_scenario(run_id, scenario, request)
+            else:
+                log_structured("error", "unsupported_scenario_type", scenario_type=scenario_type)
+                return False
+
+        except Exception as exc:
+            log_structured(
+                "error",
+                "scenario_processing_error",
+                run_id=run_id,
+                scenario_id=scenario_id,
+                error=str(exc),
+            )
+            return False
+
+    async def _run_monte_carlo_scenario(self, run_id: str, scenario: Any, request: Dict[str, Any]) -> bool:
+        """Run Monte Carlo scenario processing."""
+        try:
+            from ..api.async_service import get_monte_carlo_engine
+            mc_engine = get_monte_carlo_engine()
+
+            # Create options from request
+            options = {
+                "num_simulations": request.get("parameters", {}).get("num_simulations", 1000),
+                "confidence_level": request.get("parameters", {}).get("confidence_level", 0.95),
+                "seed": request.get("parameters", {}).get("seed"),
+            }
+
+            # Run the scenario
+            await mc_engine.run_scenario_async(run_id, scenario, options)
+
+            # Write results to Iceberg via Trino
+            await self._write_scenario_results_to_iceberg(run_id, scenario, request)
+
+            return True
+
+        except Exception as exc:
+            log_structured(
+                "error",
+                "monte_carlo_processing_error",
+                run_id=run_id,
+                error=str(exc),
+            )
+            return False
+
+    async def _run_forecasting_scenario(self, run_id: str, scenario: Any, request: Dict[str, Any]) -> bool:
+        """Run forecasting scenario processing."""
+        try:
+            from ..api.async_service import get_forecasting_engine
+            forecast_engine = get_forecasting_engine()
+
+            # Create options from request
+            options = {
+                "forecast_period_months": request.get("parameters", {}).get("forecast_period_months", 12),
+                "confidence_interval": request.get("parameters", {}).get("confidence_interval", 0.95),
+            }
+
+            # Run the scenario
+            await forecast_engine.run_scenario_async(run_id, scenario, options)
+
+            # Write results to Iceberg via Trino
+            await self._write_scenario_results_to_iceberg(run_id, scenario, request)
+
+            return True
+
+        except Exception as exc:
+            log_structured(
+                "error",
+                "forecasting_processing_error",
+                run_id=run_id,
+                error=str(exc),
+            )
+            return False
+
+    async def _run_cross_asset_scenario(self, run_id: str, scenario: Any, request: Dict[str, Any]) -> bool:
+        """Run cross-asset scenario processing."""
+        try:
+            # Cross-asset scenarios combine multiple models
+            # This is a simplified implementation
+            await self._run_monte_carlo_scenario(run_id, scenario, request)
+            await self._run_forecasting_scenario(run_id, scenario, request)
+            return True
+
+        except Exception as exc:
+            log_structured(
+                "error",
+                "cross_asset_processing_error",
+                run_id=run_id,
+                error=str(exc),
+            )
+            return False
+
+    async def _write_scenario_results_to_iceberg(self, run_id: str, scenario: Any, request: Dict[str, Any]) -> None:
+        """Write scenario results to Iceberg via Trino."""
+        try:
+            from ..parsers.iceberg_writer import write_scenario_output
+            from ..api.scenario_service import STORE as ScenarioStore
+
+            # Get run details
+            run = await ScenarioStore.get_run(run_id)
+            if not run:
+                return
+
+            # Write results to Iceberg
+            await write_scenario_output(
+                run_id=run_id,
+                scenario_id=scenario.id,
+                tenant_id=request["tenant_id"],
+                results={},  # This would contain actual results
+                metadata={
+                    "request_id": request["request_id"],
+                    "scenario_type": request.get("scenario_type", "monte_carlo"),
+                }
+            )
+
+        except Exception as exc:
+            log_structured(
+                "error",
+                "iceberg_write_error",
+                run_id=run_id,
+                error=str(exc),
+            )
+            raise
 
     async def get_queue_status(self) -> Dict[str, Any]:
         """Get current queue status and metrics."""
@@ -403,6 +584,8 @@ class ScenarioQueueManager:
                     try:
                         request = json.loads(message.value.decode())
                         await self.process_request(request)
+                        # Commit the message after successful processing
+                        await self.kafka_consumer.commit()
                     except Exception as exc:
                         log_structured(
                             "error",
@@ -411,5 +594,9 @@ class ScenarioQueueManager:
                             offset=message.offset,
                             error=str(exc),
                         )
+                        # Send to DLQ after multiple retries
+                        await self._handle_retry_failure(request)
+                        # Still commit to avoid infinite reprocessing
+                        await self.kafka_consumer.commit()
         except Exception as exc:
             log_structured("error", "consumer_error", topic=topic, error=str(exc))

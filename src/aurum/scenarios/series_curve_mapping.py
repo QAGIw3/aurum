@@ -645,3 +645,236 @@ def get_mapping_engine() -> MappingEngine:
     if _mapping_engine is None:
         _mapping_engine = MappingEngine()
     return _mapping_engine
+
+
+# Database operations for series-curve mappings
+class DatabaseSeriesCurveMapper:
+    """Database operations for series-curve mapping CRUD operations."""
+
+    def __init__(self):
+        self.pool = None
+
+    async def initialize(self):
+        """Initialize database connection."""
+        from ..api.database.postgres_client import get_postgres_pool
+        self.pool = await get_postgres_pool()
+
+    async def create_mapping(
+        self,
+        external_provider: str,
+        external_series_id: str,
+        curve_key: str,
+        mapping_confidence: float = 1.0,
+        mapping_method: str = "manual",
+        mapping_notes: Optional[str] = None,
+        is_active: bool = True,
+    ) -> str:
+        """Create a new series-curve mapping."""
+        from uuid import uuid4
+        mapping_id = str(uuid4())
+
+        async with self.pool.acquire() as conn:
+            await conn.execute(
+                """
+                INSERT INTO series_curve_map (
+                    id, external_provider, external_series_id, curve_key,
+                    mapping_confidence, mapping_method, mapping_notes, is_active,
+                    created_by
+                ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+                """,
+                mapping_id,
+                external_provider,
+                external_series_id,
+                curve_key,
+                mapping_confidence,
+                mapping_method,
+                mapping_notes,
+                is_active,
+                "system",  # TODO: Get from context
+            )
+
+        return mapping_id
+
+    async def list_mappings(
+        self,
+        external_provider: Optional[str] = None,
+        external_series_id: Optional[str] = None,
+        curve_key: Optional[str] = None,
+        is_active: Optional[bool] = None,
+        limit: int = 100,
+        offset: int = 0,
+    ) -> Tuple[List[Dict], int]:
+        """List series-curve mappings with filtering."""
+
+        conditions = []
+        params = []
+        param_count = 0
+
+        if external_provider:
+            param_count += 1
+            conditions.append(f"external_provider = ${param_count}")
+            params.append(external_provider)
+
+        if external_series_id:
+            param_count += 1
+            conditions.append(f"external_series_id = ${param_count}")
+            params.append(external_series_id)
+
+        if curve_key:
+            param_count += 1
+            conditions.append(f"curve_key = ${param_count}")
+            params.append(curve_key)
+
+        if is_active is not None:
+            param_count += 1
+            conditions.append(f"is_active = ${param_count}")
+            params.append(is_active)
+
+        where_clause = " AND ".join(conditions) if conditions else "TRUE"
+
+        # Get total count
+        count_query = f"SELECT COUNT(*) FROM series_curve_map WHERE {where_clause}"
+        total = await self.pool.fetchval(count_query, *params)
+
+        # Get mappings
+        query = f"""
+            SELECT id, external_provider, external_series_id, curve_key,
+                   mapping_confidence, mapping_method, mapping_notes, is_active,
+                   created_by, created_at, updated_by, updated_at
+            FROM series_curve_map
+            WHERE {where_clause}
+            ORDER BY created_at DESC
+            LIMIT ${param_count + 1} OFFSET ${param_count + 2}
+        """
+
+        params.extend([limit, offset])
+        rows = await self.pool.fetch(query, *params)
+
+        mappings = []
+        for row in rows:
+            mappings.append({
+                "id": str(row["id"]),
+                "external_provider": row["external_provider"],
+                "external_series_id": row["external_series_id"],
+                "curve_key": row["curve_key"],
+                "mapping_confidence": float(row["mapping_confidence"]),
+                "mapping_method": row["mapping_method"],
+                "mapping_notes": row["mapping_notes"],
+                "is_active": row["is_active"],
+                "created_by": row["created_by"],
+                "created_at": row["created_at"].isoformat() if row["created_at"] else None,
+                "updated_by": row["updated_by"],
+                "updated_at": row["updated_at"].isoformat() if row["updated_at"] else None,
+            })
+
+        return mappings, total
+
+    async def update_mapping(
+        self,
+        mapping_id: str,
+        external_provider: str,
+        external_series_id: str,
+        curve_key: str,
+        mapping_confidence: float = 1.0,
+        mapping_method: str = "manual",
+        mapping_notes: Optional[str] = None,
+        is_active: bool = True,
+    ) -> Dict:
+        """Update an existing series-curve mapping."""
+
+        async with self.pool.acquire() as conn:
+            result = await conn.execute(
+                """
+                UPDATE series_curve_map SET
+                    external_provider = $2,
+                    external_series_id = $3,
+                    curve_key = $4,
+                    mapping_confidence = $5,
+                    mapping_method = $6,
+                    mapping_notes = $7,
+                    is_active = $8,
+                    updated_by = $9,
+                    updated_at = NOW()
+                WHERE id = $1
+                """,
+                mapping_id,
+                external_provider,
+                external_series_id,
+                curve_key,
+                mapping_confidence,
+                mapping_method,
+                mapping_notes,
+                is_active,
+                "system",  # TODO: Get from context
+            )
+
+            if result == "UPDATE 0":
+                raise ValueError(f"Mapping {mapping_id} not found")
+
+        # Return updated mapping
+        mappings, _ = await self.list_mappings(
+            external_provider=external_provider,
+            external_series_id=external_series_id,
+            curve_key=curve_key,
+            is_active=is_active,
+        )
+
+        return mappings[0] if mappings else {}
+
+    async def delete_mapping(self, mapping_id: str) -> bool:
+        """Delete a series-curve mapping."""
+
+        async with self.pool.acquire() as conn:
+            result = await conn.execute(
+                "DELETE FROM series_curve_map WHERE id = $1",
+                mapping_id,
+            )
+
+        return result != "DELETE 0"
+
+    async def get_mapping_suggestions(
+        self,
+        provider: str,
+        series_id: str,
+        series_name: Optional[str] = None,
+        description: Optional[str] = None,
+        units: Optional[str] = None,
+        limit: int = 10,
+    ) -> List[Dict]:
+        """Get automated suggestions for mapping an external series to internal curves."""
+
+        # Use the database function for suggestions
+        async with self.pool.acquire() as conn:
+            rows = await conn.fetch(
+                "SELECT * FROM find_potential_series_mappings($1, $2, $3, $4, $5, $6)",
+                provider,
+                series_id,
+                series_name,
+                description,
+                units,
+                limit,
+            )
+
+        suggestions = []
+        for row in rows:
+            suggestions.append({
+                "curve_key": row["curve_key"],
+                "similarity_score": float(row["similarity_score"]),
+                "confidence_score": float(row["confidence_score"]),
+                "reasoning": row["reasoning"],
+            })
+
+        return suggestions
+
+
+# Global database mapper instance
+_db_mapper: Optional[DatabaseSeriesCurveMapper] = None
+
+
+def get_database_mapper() -> DatabaseSeriesCurveMapper:
+    """Get the global database mapper instance."""
+    global _db_mapper
+    if _db_mapper is None:
+        _db_mapper = DatabaseSeriesCurveMapper()
+        # Initialize in an async context
+    return _db_mapper

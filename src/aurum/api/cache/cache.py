@@ -299,3 +299,11 @@ class CacheManager:
     async def get_cache_stats(self) -> Dict[str, Any]:
         """Get cache performance statistics."""
         return await self._cache.get_stats()
+
+    async def get_cache_entry(self, key: str) -> Optional[Any]:
+        """Get cache entry (alias for get method)."""
+        return await self._cache.get(key)
+
+    async def set_cache_entry(self, key: str, value: Any, ttl_seconds: Optional[int] = None) -> None:
+        """Set cache entry (alias for set method)."""
+        await self._cache.set(key, value, ttl_seconds)

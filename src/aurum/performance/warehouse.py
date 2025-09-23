@@ -132,6 +132,7 @@ class WarehouseMaintenanceMetrics:
     clickhouse_tables_optimized: int = 0
     clickhouse_ttl_updates: int = 0
     clickhouse_failures: int = 0
+    clickhouse_runs_skipped: int = 0
 
 
 class TimescaleMaintenanceJob:
@@ -324,13 +325,15 @@ class ClickHouseMaintenanceJob:
         self._task: Optional[asyncio.Task] = None
         self._shutdown = asyncio.Event()
         self._client: Optional[Any] = None
+        self._driver_available = ClickHouseClient is not None
 
     async def start(self) -> None:
         if not self._tables:
             LOGGER.info("ClickHouse maintenance disabled - no tables configured")
             return
-        if ClickHouseClient is None:
+        if not self._driver_available:
             LOGGER.warning("clickhouse-driver not installed; skipping ClickHouse maintenance")
+            self._metrics.clickhouse_runs_skipped += 1
             return
         loop = asyncio.get_running_loop()
         self._client = await loop.run_in_executor(
@@ -357,6 +360,10 @@ class ClickHouseMaintenanceJob:
 
     async def run_once(self) -> None:
         if not self._tables:
+            return
+        if not self._driver_available:
+            self._metrics.clickhouse_runs_skipped += 1
+            LOGGER.debug("Skipping ClickHouse maintenance run - clickhouse-driver unavailable")
             return
         if self._client is None and ClickHouseClient is not None:
             loop = asyncio.get_running_loop()
@@ -484,10 +491,25 @@ class WarehouseMaintenanceCoordinator:
 
     async def run_once(self) -> None:
         """Execute one maintenance cycle for all jobs (primarily for tests)."""
-        await self._timescale_job.run_once()
-        await self._iceberg_job.run_once()
-        await self._clickhouse_job.run_once()
+        await self.run_timescale_once()
+        await self.run_iceberg_once()
+        await self.run_clickhouse_once()
         self.metrics.last_run = datetime.utcnow()
+
+    async def run_timescale_once(self) -> None:
+        if self._timescale_job:
+            await self._timescale_job.run_once()
+            self.metrics.last_run = datetime.utcnow()
+
+    async def run_iceberg_once(self) -> None:
+        if self._iceberg_job:
+            await self._iceberg_job.run_once()
+            self.metrics.last_run = datetime.utcnow()
+
+    async def run_clickhouse_once(self) -> None:
+        if self._clickhouse_job:
+            await self._clickhouse_job.run_once()
+            self.metrics.last_run = datetime.utcnow()
 
 
 __all__ = [

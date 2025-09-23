@@ -100,6 +100,24 @@ Per-slice TTLs for hot endpoints (Golden Query Cache, see `docs/golden_query_cac
 - `AURUM_OTEL_EXPORTER_INSECURE` (`1/0`)
 - `AURUM_OTEL_SAMPLER_RATIO` (`0.0..1.0`)
 
+## External Audit Logging
+
+- `AURUM_API_EXTERNAL_AUDIT_ENABLED`: enable the external audit middleware (`0` by default)
+- `AURUM_API_AUDIT_SINKS`: comma-separated sinks (`file`, `kafka`, `clickhouse`)
+- `AURUM_AUDIT_LOG_DIR` / `AURUM_API_AUDIT_LOG_DIR`: on-disk fallback directory for audit files
+- Kafka sink configuration:
+  - `AURUM_API_AUDIT_KAFKA_BOOTSTRAP`
+  - `AURUM_API_AUDIT_KAFKA_TOPIC`
+  - `AURUM_API_AUDIT_KAFKA_CLIENT_ID`
+  - `AURUM_API_AUDIT_KAFKA_SECURITY_PROTOCOL`
+  - Optional SASL: `AURUM_API_AUDIT_KAFKA_USERNAME`, `AURUM_API_AUDIT_KAFKA_PASSWORD`, `AURUM_API_AUDIT_KAFKA_SASL_MECHANISM`
+  - Optional compression/acks: `AURUM_API_AUDIT_KAFKA_COMPRESSION`, `AURUM_API_AUDIT_KAFKA_ACKS`
+- ClickHouse sink configuration:
+  - `AURUM_API_AUDIT_CLICKHOUSE_ENDPOINT`
+  - `AURUM_API_AUDIT_CLICKHOUSE_DATABASE`
+  - `AURUM_API_AUDIT_CLICKHOUSE_TABLE`
+  - Optional auth + timeout: `AURUM_API_AUDIT_CLICKHOUSE_USERNAME`, `AURUM_API_AUDIT_CLICKHOUSE_PASSWORD`, `AURUM_API_AUDIT_CLICKHOUSE_TIMEOUT`
+
 ## Example .env Snippet (API)
 
 ```env
@@ -128,4 +146,3 @@ AURUM_API_ADMIN_GROUP=aurum-admin
 ```
 
 For a deeper dive, see `src/aurum/core/settings.py` and inline docstrings.
-

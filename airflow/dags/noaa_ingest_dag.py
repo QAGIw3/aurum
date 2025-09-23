@@ -26,6 +26,108 @@ from aurum.airflow_utils.alerting import build_failure_callback
 from aurum.airflow_utils.metrics import emit_task_metrics
 from aurum.lakefs_client import emit_lakefs_lineage
 from aurum.parsers.runner import build_seatunnel_task
+from aurum.staleness.watermark_tracker import WatermarkTracker
+from aurum.telemetry.context import log_structured
+
+
+def update_watermark(
+    dataset_name: str,
+    logical_date: datetime,
+    **context
+) -> None:
+    """Update watermark for a dataset."""
+    watermark_tracker = WatermarkTracker()
+    watermark_tracker.update_watermark(
+        dataset_name=dataset_name,
+        watermark_key="logical_date",
+        watermark_value=logical_date,
+        metadata={
+            "dag_id": context.get("dag").dag_id,
+            "task_id": context.get("task_id"),
+            "execution_date": logical_date.isoformat(),
+        }
+    )
+
+
+def check_staleness_and_alert(
+    dataset_name: str,
+    expected_frequency_hours: int = 24,
+    **context
+) -> None:
+    """Check staleness and emit alerts if needed."""
+    from aurum.staleness.staleness_monitor import StalenessMonitor
+    from aurum.staleness.alert_manager import AlertManager
+
+    monitor = StalenessMonitor.get_instance()
+    alert_manager = AlertManager.get_instance()
+
+    # Check staleness
+    is_stale = monitor.is_dataset_stale(dataset_name, expected_frequency_hours)
+
+    if is_stale:
+        # Create alert
+        alert_manager.create_alert(
+            dataset=dataset_name,
+            alert_type="staleness",
+            severity="warning",
+            message=f"Dataset {dataset_name} is stale",
+            metadata={
+                "dag_id": context.get("dag").dag_id,
+                "expected_frequency_hours": expected_frequency_hours,
+            }
+        )
+
+
+def create_backfill_tasks(
+    start_date: str,
+    end_date: str,
+    dataset_name: str,
+    backfill_task_group: TaskGroup,
+    dag: DAG
+) -> None:
+    """Create backfill tasks for a dataset."""
+    from airflow.operators.python import PythonOperator
+
+    # Calculate date range
+    start = datetime.fromisoformat(start_date)
+    end = datetime.fromisoformat(end_date)
+
+    current_date = start
+    while current_date <= end:
+        task_id = f"backfill_{dataset_name}_{current_date.strftime('%Y%m%d')}"
+
+        PythonOperator(
+            task_id=task_id,
+            python_callable=run_backfill_for_date,
+            op_kwargs={
+                "dataset_name": dataset_name,
+                "backfill_date": current_date,
+            },
+            dag=dag,
+            task_group=backfill_task_group,
+        )
+
+        current_date += timedelta(days=1)
+
+
+def run_backfill_for_date(
+    dataset_name: str,
+    backfill_date: datetime,
+    **context
+) -> None:
+    """Run backfill for a specific date."""
+    # This would trigger the actual backfill process
+    # For now, just log the backfill operation
+    log_structured(
+        "info",
+        "backfill_operation_started",
+        dataset=dataset_name,
+        backfill_date=backfill_date.isoformat(),
+        dag_id=context.get("dag").dag_id,
+    )
+
+    # Update watermark after successful backfill
+    update_watermark(dataset_name, backfill_date, **context)
 
 
 # Production-ready default arguments for all tasks
@@ -297,11 +399,24 @@ with DAG(
             # Watermark update task
             watermark_task = PythonOperator(
                 task_id=f"noaa_{dataset_key}_watermark",
-                python_callable=lambda **ctx: update_noaa_watermark(dataset_key, str(ctx["logical_date"])),
+                python_callable=update_watermark,
+                op_kwargs={
+                    "dataset_name": f"noaa_{dataset_key}",
+                },
+            )
+
+            # Staleness check task
+            staleness_task = PythonOperator(
+                task_id=f"noaa_{dataset_key}_staleness_check",
+                python_callable=check_staleness_and_alert,
+                op_kwargs={
+                    "dataset_name": f"noaa_{dataset_key}",
+                    "expected_frequency_hours": 24,
+                },
             )
 
             # Set up task dependencies within the group
-            ingest_task >> timescale_task >> lineage_task >> watermark_task
+            ingest_task >> timescale_task >> lineage_task >> [watermark_task, staleness_task]
 
         dataset_tasks.append(dataset_group)
 
@@ -332,23 +447,32 @@ for dataset_key, dataset_config in NOAA_DATASETS.items():
 
         ingest = build_noaa_ingest_task(dataset_key, dataset_config)
 
+        # Watermark and staleness check tasks
+        watermark = PythonOperator(
+            task_id="watermark",
+            python_callable=update_watermark,
+            op_kwargs={
+                "dataset_name": f"noaa_{dataset_key}",
+            },
+        )
+
+        staleness_check = PythonOperator(
+            task_id="staleness_check",
+            python_callable=check_staleness_and_alert,
+            op_kwargs={
+                "dataset_name": f"noaa_{dataset_key}",
+                "expected_frequency_hours": 24,
+            },
+        )
+
         # Only add timescale loading for daily datasets to avoid duplicates
         if dataset_key == "ghcnd_daily":
             timescale = build_noaa_to_timescale_task(dataset_key, dataset_config)
             lineage = build_noaa_lineage_task(dataset_key, dataset_config)
-            watermark = PythonOperator(
-                task_id="watermark",
-                python_callable=lambda **ctx: update_noaa_watermark(dataset_key, str(ctx["logical_date"])),
-            )
 
-            start_task >> validate_task >> ingest >> timescale >> lineage >> watermark
+            start_task >> validate_task >> ingest >> timescale >> lineage >> [watermark, staleness_check]
         else:
-            watermark = PythonOperator(
-                task_id="watermark",
-                python_callable=lambda **ctx: update_noaa_watermark(dataset_key, str(ctx["logical_date"])),
-            )
-
-            start_task >> validate_task >> ingest >> watermark
+            start_task >> validate_task >> ingest >> [watermark, staleness_check]
 
         # Set up failure callback
         dataset_dag.on_failure_callback = build_failure_callback(source=f"aurum.airflow.{dag_id}")

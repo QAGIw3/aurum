@@ -1,11 +1,12 @@
 """Database connection management endpoints."""
 
 import time
-from typing import Dict, Optional
+from typing import Any, Dict, Optional
 
 from fastapi import APIRouter, HTTPException, Query, Request
 
 from aurum.telemetry.context import get_request_id
+from .trino_client import get_trino_client
 
 router = APIRouter()
 
@@ -13,24 +14,47 @@ router = APIRouter()
 @router.get("/v1/admin/db/connections")
 async def get_database_connections(
     request: Request,
-) -> Dict[str, str]:
+) -> Dict[str, Any]:
     """Get database connection pool statistics."""
     start_time = time.perf_counter()
 
     try:
-        # In a real implementation, this would query actual database connection pools
-        # For now, return mock data
-        connections_data = {
-            "active_connections": 25,
-            "idle_connections": 10,
-            "total_connections": 35,
-            "max_connections": 100,
-            "connection_utilization": 0.35,
-            "average_connection_age": 1800,  # 30 minutes
-            "connection_errors": 2,
-            "connection_timeouts": 1,
-            "database_engines": ["trino", "postgresql"],
+        connections: Dict[str, Any] = {}
+
+        # Trino connection pool metrics
+        try:
+            trino_client = get_trino_client()
+            pool_metrics = await trino_client.get_pool_metrics()
+            connections["trino"] = {
+                "active": pool_metrics.get("active_connections", 0),
+                "idle": pool_metrics.get("idle_connections", 0),
+                "total": pool_metrics.get("total_connections", 0),
+                "max": pool_metrics.get("max_connections", 0),
+                "utilization": pool_metrics.get("pool_utilization", 0.0),
+                "queue_depth": pool_metrics.get("request_queue_depth", 0),
+                "queue_capacity": pool_metrics.get("queue_capacity", 0),
+                "queue_utilization": pool_metrics.get("queue_utilization", 0.0),
+            }
+        except Exception as exc:  # pragma: no cover - defensive observation path
+            connections["trino"] = {"error": str(exc)}
+
+        aggregate = {
+            "active": 0,
+            "idle": 0,
+            "total": 0,
+            "max": 0,
         }
+
+        for entry in connections.values():
+            if isinstance(entry, dict) and "active" in entry:
+                aggregate["active"] += int(entry.get("active", 0))
+                aggregate["idle"] += int(entry.get("idle", 0))
+                aggregate["total"] += int(entry.get("total", 0))
+                aggregate["max"] += int(entry.get("max", 0))
+
+        aggregate["utilization"] = (
+            aggregate["active"] / aggregate["max"] if aggregate["max"] else 0.0
+        )
 
         query_time_ms = (time.perf_counter() - start_time) * 1000
 
@@ -38,8 +62,12 @@ async def get_database_connections(
             "meta": {
                 "request_id": get_request_id(),
                 "query_time_ms": round(query_time_ms, 2),
+                "backends": list(connections.keys()),
             },
-            "data": connections_data
+            "data": {
+                "connections": connections,
+                "summary": aggregate,
+            },
         }
 
     except Exception as exc:

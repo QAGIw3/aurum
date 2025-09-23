@@ -2,10 +2,12 @@
 
 from __future__ import annotations
 
+import hashlib
 import time
 from typing import Dict, List, Optional
 
 from fastapi import APIRouter, HTTPException, Query, Request, Body
+from pydantic import BaseModel, Field
 
 from ..telemetry.context import get_request_id
 from .feature_flags import (
@@ -18,49 +20,145 @@ from .feature_flags import (
 )
 
 
+# Pydantic Models for API requests and responses
+class FeatureFlagCreateRequest(BaseModel):
+    """Request model for creating a feature flag."""
+    name: str = Field(..., description="Feature flag name")
+    key: str = Field(..., description="Feature flag key")
+    description: str = Field("", description="Feature description")
+    default_value: bool = Field(False, description="Default value when disabled")
+    status: str = Field("disabled", description="Initial status")
+    tags: List[str] = Field([], description="Feature tags")
+
+
+class FeatureFlagResponse(BaseModel):
+    """Response model for feature flag data."""
+    key: str
+    name: str
+    description: str
+    status: str
+    default_value: bool
+    rules_count: int
+    has_ab_test: bool
+    created_at: str
+    updated_at: str
+    created_by: str
+    tags: List[str]
+
+
+class FeatureFlagListResponse(BaseModel):
+    """Response model for feature flag list."""
+    meta: Dict[str, any]
+    data: List[FeatureFlagResponse]
+
+
+class FeatureFlagDetailResponse(BaseModel):
+    """Response model for detailed feature flag data."""
+    meta: Dict[str, any]
+    data: Dict[str, any]
+
+
+class FeatureRuleRequest(BaseModel):
+    """Request model for creating a feature rule."""
+    name: str = Field(..., description="Rule name")
+    conditions: Dict[str, any] = Field(default_factory=dict, description="Rule conditions")
+    rollout_percentage: float = Field(100.0, description="Rollout percentage")
+    user_segments: List[str] = Field([], description="User segments")
+    required_flags: List[str] = Field([], description="Required flags")
+    excluded_flags: List[str] = Field([], description="Excluded flags")
+
+
+class ABTestRequest(BaseModel):
+    """Request model for A/B test configuration."""
+    variants: Dict[str, float] = Field(..., description="Variant name to percentage mapping")
+    control_variant: str = Field("control", description="Control variant name")
+    track_events: List[str] = Field([], description="Events to track")
+    end_date: Optional[str] = Field(None, description="Test end date (ISO format)")
+
+
+class FeatureFlagUpdateRequest(BaseModel):
+    """Request model for updating feature flag status."""
+    status: str = Field(..., description="New status")
+
+
+class FeatureTagsUpdateRequest(BaseModel):
+    """Request model for updating feature flag tags."""
+    tags: List[str] = Field(..., description="New tags list")
+
+
+class FeatureStatsResponse(BaseModel):
+    """Response model for feature statistics."""
+    meta: Dict[str, any]
+    data: Dict[str, any]
+
+
+class FeatureEvaluationRequest(BaseModel):
+    """Request model for feature evaluation."""
+    user_id: str = Field(..., description="User ID for evaluation")
+    user_segment: str = Field("all_users", description="User segment")
+    tenant_id: Optional[str] = Field(None, description="Tenant ID")
+
+
+class FeatureEvaluationResponse(BaseModel):
+    """Response model for feature evaluation."""
+    meta: Dict[str, any]
+    data: Dict[str, any]
+
+
+class ABTestListResponse(BaseModel):
+    """Response model for A/B test list."""
+    meta: Dict[str, any]
+    data: List[Dict[str, any]]
+
+
+class FeatureUsageResponse(BaseModel):
+    """Response model for feature usage statistics."""
+    meta: Dict[str, any]
+    data: Dict[str, any]
+
+
 router = APIRouter()
 
 
-@router.post("/v1/admin/features")
+@router.post("/v1/admin/features", response_model=FeatureFlagDetailResponse)
 async def create_feature_flag(
     request: Request,
-    name: str = Body(..., description="Feature flag name"),
-    key: str = Body(..., description="Feature flag key"),
-    description: str = Body("", description="Feature description"),
-    default_value: bool = Body(False, description="Default value when disabled"),
-    status: str = Body("disabled", description="Initial status"),
-    tags: List[str] = Body([], description="Feature tags"),
+    principal=Depends(_routes._get_principal),
+    flag_data: FeatureFlagCreateRequest,
 ) -> Dict[str, str]:
     """Create a new feature flag."""
     start_time = time.perf_counter()
 
     try:
+        _routes._require_admin(principal)
         manager = get_feature_manager()
 
         # Validate status
         try:
-            flag_status = FeatureFlagStatus(status)
+            flag_status = FeatureFlagStatus(flag_data.status)
         except ValueError:
-            raise HTTPException(status_code=400, detail=f"Invalid status: {status}")
+            raise HTTPException(status_code=400, detail=f"Invalid status: {flag_data.status}")
 
         # Create the flag
+        created_by = principal.get("user_id", "system") if principal else "system"
         flag = await manager.create_flag(
-            name=name,
-            key=key,
-            description=description,
-            default_value=default_value,
-            status=flag_status
+            name=flag_data.name,
+            key=flag_data.key,
+            description=flag_data.description,
+            default_value=flag_data.default_value,
+            status=flag_status,
+            created_by=created_by
         )
 
         # Set tags
-        flag.tags = tags
+        flag.tags = flag_data.tags
         await manager.set_flag(flag)
 
         query_time_ms = (time.perf_counter() - start_time) * 1000
 
         return {
-            "message": f"Feature flag '{name}' created successfully",
-            "feature_key": key,
+            "message": f"Feature flag '{flag_data.name}' created successfully",
+            "feature_key": flag_data.key,
             "status": flag_status.value,
             "meta": {
                 "request_id": get_request_id(),
@@ -78,16 +176,20 @@ async def create_feature_flag(
         ) from exc
 
 
-@router.get("/v1/admin/features")
+@router.get("/v1/admin/features", response_model=FeatureFlagListResponse)
 async def list_feature_flags(
     request: Request,
+    principal=Depends(_routes._get_principal),
     status: Optional[str] = Query(None, description="Filter by status"),
     tag: Optional[str] = Query(None, description="Filter by tag"),
+    page: int = Query(1, description="Page number", ge=1),
+    limit: int = Query(50, description="Items per page", ge=1, le=100),
 ) -> Dict[str, str]:
     """List all feature flags with optional filtering."""
     start_time = time.perf_counter()
 
     try:
+        _routes._require_admin(principal)
         manager = get_feature_manager()
         flags = await manager.list_flags()
 
@@ -102,17 +204,37 @@ async def list_feature_flags(
         if tag:
             flags = [f for f in flags if tag in f.tags]
 
+        # Generate ETag from flag keys and last updated times
+        etag = hashlib.md5(str(sorted([f.key + f.updated_at.isoformat() for f in flags])).encode()).hexdigest()
+
+        # Check if client has current version
+        if request.headers.get("If-None-Match") == etag:
+            from fastapi import Response
+            return Response(status_code=304)
+
+        # Apply pagination
+        total_flags = len(flags)
+        start_idx = (page - 1) * limit
+        end_idx = start_idx + limit
+        paginated_flags = flags[start_idx:end_idx]
+
         query_time_ms = (time.perf_counter() - start_time) * 1000
 
-        return {
+        response_data = {
             "meta": {
                 "request_id": get_request_id(),
                 "query_time_ms": round(query_time_ms, 2),
-                "total_flags": len(flags),
+                "total_flags": total_flags,
+                "page": page,
+                "limit": limit,
+                "total_pages": (total_flags + limit - 1) // limit,
+                "has_next": end_idx < total_flags,
+                "has_prev": page > 1,
                 "filters": {
                     "status": status,
                     "tag": tag,
-                }
+                },
+                "etag": etag
             },
             "data": [
                 {
@@ -128,9 +250,17 @@ async def list_feature_flags(
                     "created_by": flag.created_by,
                     "tags": flag.tags,
                 }
-                for flag in flags
+                for flag in paginated_flags
             ]
         }
+
+        # Set ETag header
+        from fastapi import Response
+        response = Response()
+        response.headers["ETag"] = etag
+        response.headers["Cache-Control"] = "private, max-age=300"  # 5 minutes
+
+        return response_data
 
     except Exception as exc:
         query_time_ms = (time.perf_counter() - start_time) * 1000
@@ -143,12 +273,14 @@ async def list_feature_flags(
 @router.get("/v1/admin/features/{flag_key}")
 async def get_feature_flag(
     request: Request,
+    principal=Depends(_routes._get_principal),
     flag_key: str,
 ) -> Dict[str, str]:
     """Get details for a specific feature flag."""
     start_time = time.perf_counter()
 
     try:
+        _routes._require_admin(principal)
         manager = get_feature_manager()
         flag = await manager.get_flag(flag_key)
 
@@ -204,6 +336,7 @@ async def get_feature_flag(
 @router.put("/v1/admin/features/{flag_key}/status")
 async def update_feature_flag_status(
     request: Request,
+    principal=Depends(_routes._get_principal),
     flag_key: str,
     status: str = Body(..., description="New status"),
 ) -> Dict[str, str]:
@@ -211,6 +344,7 @@ async def update_feature_flag_status(
     start_time = time.perf_counter()
 
     try:
+        _routes._require_admin(principal)
         manager = get_feature_manager()
 
         # Validate status
@@ -249,6 +383,7 @@ async def update_feature_flag_status(
 @router.post("/v1/admin/features/{flag_key}/rules")
 async def add_feature_flag_rule(
     request: Request,
+    principal=Depends(_routes._get_principal),
     flag_key: str,
     rule_data: Dict = Body(..., description="Rule configuration"),
 ) -> Dict[str, str]:
@@ -256,6 +391,7 @@ async def add_feature_flag_rule(
     start_time = time.perf_counter()
 
     try:
+        _routes._require_admin(principal)
         manager = get_feature_manager()
 
         # Create rule
@@ -297,6 +433,7 @@ async def add_feature_flag_rule(
 @router.post("/v1/admin/features/{flag_key}/ab-test")
 async def configure_ab_test(
     request: Request,
+    principal=Depends(_routes._get_principal),
     flag_key: str,
     variants: Dict[str, float] = Body(..., description="Variant name to percentage mapping"),
     control_variant: str = Body("control", description="Control variant name"),
@@ -307,6 +444,7 @@ async def configure_ab_test(
     start_time = time.perf_counter()
 
     try:
+        _routes._require_admin(principal)
         manager = get_feature_manager()
 
         # Parse end date
@@ -354,12 +492,14 @@ async def configure_ab_test(
 @router.delete("/v1/admin/features/{flag_key}")
 async def delete_feature_flag(
     request: Request,
+    principal=Depends(_routes._get_principal),
     flag_key: str,
 ) -> Dict[str, str]:
     """Delete a feature flag."""
     start_time = time.perf_counter()
 
     try:
+        _routes._require_admin(principal)
         manager = get_feature_manager()
 
         # Check if flag exists
@@ -394,6 +534,7 @@ async def delete_feature_flag(
 @router.post("/v1/admin/features/{flag_key}/tags")
 async def update_feature_flag_tags(
     request: Request,
+    principal=Depends(_routes._get_principal),
     flag_key: str,
     tags: List[str] = Body(..., description="New tags list"),
 ) -> Dict[str, str]:
@@ -401,6 +542,7 @@ async def update_feature_flag_tags(
     start_time = time.perf_counter()
 
     try:
+        _routes._require_admin(principal)
         manager = get_feature_manager()
 
         # Get the flag
@@ -438,11 +580,13 @@ async def update_feature_flag_tags(
 @router.get("/v1/admin/features/stats")
 async def get_feature_stats(
     request: Request,
+    principal=Depends(_routes._get_principal),
 ) -> Dict[str, str]:
     """Get feature flag system statistics."""
     start_time = time.perf_counter()
 
     try:
+        _routes._require_admin(principal)
         manager = get_feature_manager()
         stats = await manager.get_feature_stats()
 
@@ -467,6 +611,7 @@ async def get_feature_stats(
 @router.get("/v1/admin/features/evaluate")
 async def evaluate_feature_flags(
     request: Request,
+    principal=Depends(_routes._get_principal),
     user_id: str = Query(..., description="User ID for evaluation"),
     user_segment: str = Query("all_users", description="User segment"),
     tenant_id: Optional[str] = Query(None, description="Tenant ID"),
@@ -475,6 +620,7 @@ async def evaluate_feature_flags(
     start_time = time.perf_counter()
 
     try:
+        _routes._require_admin(principal)
         manager = get_feature_manager()
 
         # Create user context
@@ -522,12 +668,14 @@ async def evaluate_feature_flags(
 @router.get("/v1/admin/features/ab-tests")
 async def get_ab_tests(
     request: Request,
+    principal=Depends(_routes._get_principal),
     active_only: bool = Query(True, description="Show only active A/B tests"),
 ) -> Dict[str, str]:
     """Get all A/B tests with their status."""
     start_time = time.perf_counter()
 
     try:
+        _routes._require_admin(principal)
         manager = get_feature_manager()
         flags = await manager.list_flags()
 
@@ -577,12 +725,14 @@ async def get_ab_tests(
 @router.get("/v1/admin/features/usage")
 async def get_feature_usage(
     request: Request,
+    principal=Depends(_routes._get_principal),
     hours: int = Query(24, description="Time range in hours"),
 ) -> Dict[str, str]:
     """Get feature flag usage statistics."""
     start_time = time.perf_counter()
 
     try:
+        _routes._require_admin(principal)
         manager = get_feature_manager()
         flags = await manager.list_flags()
 

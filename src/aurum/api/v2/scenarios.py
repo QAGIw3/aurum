@@ -161,6 +161,7 @@ async def list_scenarios_v2(
 async def create_scenario_v2(
     request: Request,
     response: Response,
+    tenant_id: str = Query(..., description="Tenant ID"),
     scenario: ScenarioCreateRequest,
 ) -> ScenarioResponse:
     """Create a scenario with enhanced validation and error handling."""

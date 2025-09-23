@@ -73,6 +73,10 @@ PUBLIC_SOURCES: dict[str, dict[str, str]] = {
         "description": "FRED CPI series ingestion",
         "schedule": "0 6 * * *",
     },
+    "fx_rates": {
+        "description": "ECB FX rates ingestion via exchangerate.host",
+        "schedule": "0 6 * * *",
+    },
     "fuel_natgas_curve": {
         "description": "EIA Henry Hub natural gas fuel curve ingestion",
         "schedule": "0 6 * * *",
@@ -552,6 +556,22 @@ with DAG(
         op_kwargs={"dataset": "timescale.public.cpi_series_timeseries"},
     )
 
+    fx_task = build_seatunnel_task(
+        "fx_rates_to_kafka",
+        [
+            "FX_BASE_CURRENCY='{{ var.value.get('aurum_fx_base_currency', 'EUR') }}'",
+            "FX_SYMBOLS='{{ var.value.get('aurum_fx_symbols', 'USD,GBP,JPY,CAD,AUD') }}'",
+            "FX_TOPIC='{{ var.value.get('aurum_fx_topic', 'aurum.ref.fx.rate.v1') }}'",
+            "SCHEMA_REGISTRY_URL='{{ var.value.get('aurum_schema_registry', 'http://localhost:8081') }}'"
+        ],
+        pool="api_fred",
+    )
+
+    fx_watermark = PythonOperator(
+        task_id="fx_watermark",
+        python_callable=lambda **ctx: _update_watermark("fx_rates", ctx["logical_date"]),
+    )
+
     fuel_natgas_task = build_seatunnel_task(
         "eia_fuel_curve_to_kafka",
         [
@@ -713,6 +733,7 @@ with DAG(
         dynamic_eia_watermarks.append(dynamic_watermark)
     register_sources >> fred_task >> fred_to_timescale >> fred_lineage >> fred_watermark
     register_sources >> cpi_task >> cpi_to_timescale >> cpi_lineage >> cpi_watermark
+    register_sources >> fx_task >> fx_watermark
     register_sources >> fuel_natgas_task >> fuel_natgas_watermark
     register_sources >> fuel_co2_task >> fuel_co2_watermark
     if _enable_pjm:
@@ -726,6 +747,7 @@ with DAG(
         *dynamic_eia_watermarks,
         fred_watermark,
         cpi_watermark,
+        fx_watermark,
         fuel_natgas_watermark,
         fuel_co2_watermark,
         pjm_load_watermark,

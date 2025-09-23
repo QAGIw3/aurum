@@ -18,14 +18,24 @@ Notes:
 import json
 import logging
 import os
+import threading
 from pathlib import Path
 from datetime import datetime, timezone
-from typing import Dict, Any, Optional, List
+from typing import Dict, Any, Optional, List, Tuple
 from uuid import uuid4
 
 from fastapi import Request, Response
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
+
+from aurum.core.settings import (
+    ExternalAuditSettings,
+    AuditSinkType,
+    AuditKafkaSettings,
+    AuditClickHouseSettings,
+)
+
+LOGGER = logging.getLogger(__name__)
 
 class AuditEvent(BaseModel):
     """Model for audit log events."""
@@ -43,10 +53,181 @@ class AuditEvent(BaseModel):
     session_id: Optional[str]
     correlation_id: Optional[str]
 
+
+class AuditSink:
+    """Base interface for pluggable audit sinks."""
+
+    name = "audit-sink"
+
+    def is_enabled(self) -> bool:  # pragma: no cover - simple default
+        return True
+
+    def emit(self, event: AuditEvent, payload: Dict[str, Any]) -> None:  # pragma: no cover - interface
+        raise NotImplementedError
+
+
+class KafkaAuditSink(AuditSink):
+    """Emit audit events to Kafka topics."""
+
+    name = "kafka"
+
+    def __init__(self, config: AuditKafkaSettings):
+        self.config = config
+        self._producer = None
+        self._driver: Optional[str] = None
+        self._enabled = False
+        self._lock = threading.Lock()
+
+        bootstrap = (config.bootstrap_servers or "").strip()
+        if not bootstrap:
+            LOGGER.info("Kafka audit sink disabled: bootstrap servers not configured")
+            return
+
+        try:
+            from confluent_kafka import Producer  # type: ignore[import]
+
+            conf = {
+                "bootstrap.servers": bootstrap,
+                "client.id": config.client_id,
+                "enable.idempotence": True,
+                "compression.codec": (config.compression or "gzip"),
+                "acks": config.acks,
+                "security.protocol": config.security_protocol,
+            }
+            if config.sasl_username and config.sasl_password:
+                conf.update({
+                    "sasl.username": config.sasl_username,
+                    "sasl.password": config.sasl_password,
+                })
+                if config.sasl_mechanism:
+                    conf["sasl.mechanism"] = config.sasl_mechanism
+            try:
+                self._producer = Producer(conf)
+                self._driver = "confluent"
+                self._enabled = True
+                LOGGER.info("Kafka audit sink initialised using confluent-kafka")
+                return
+            except Exception:  # pragma: no cover - runtime dependency failure
+                LOGGER.warning("Failed to initialise confluent-kafka producer for audit sink", exc_info=True)
+        except ImportError:
+            Producer = None  # type: ignore[assignment]  # pragma: no cover - import path only
+
+        try:
+            from kafka import KafkaProducer  # type: ignore[import]
+
+            kwargs: Dict[str, Any] = {
+                "bootstrap_servers": [server.strip() for server in bootstrap.split(",") if server.strip()],
+                "client_id": config.client_id,
+                "value_serializer": lambda value: value,
+                "compression_type": config.compression,
+                "acks": config.acks,
+            }
+            if config.security_protocol:
+                kwargs["security_protocol"] = config.security_protocol
+            if config.sasl_username and config.sasl_password:
+                kwargs["sasl_plain_username"] = config.sasl_username
+                kwargs["sasl_plain_password"] = config.sasl_password
+            if config.sasl_mechanism:
+                kwargs["sasl_mechanism"] = config.sasl_mechanism
+            try:
+                self._producer = KafkaProducer(**{k: v for k, v in kwargs.items() if v is not None})
+                self._driver = "kafka-python"
+                self._enabled = True
+                LOGGER.info("Kafka audit sink initialised using kafka-python")
+            except Exception:  # pragma: no cover - runtime dependency failure
+                LOGGER.warning("Failed to initialise kafka-python producer for audit sink", exc_info=True)
+        except ImportError:
+            KafkaProducer = None  # type: ignore[assignment]  # pragma: no cover
+
+        if not self._enabled:
+            LOGGER.warning(
+                "Kafka audit sink requested but no Kafka client libraries are available; sink disabled."
+            )
+
+    def is_enabled(self) -> bool:
+        return bool(self._enabled and self._producer)
+
+    def emit(self, event: AuditEvent, payload: Dict[str, Any]) -> None:
+        if not self.is_enabled():
+            return
+        message = json.dumps(payload, separators=(",", ":"), ensure_ascii=False).encode("utf-8")
+        try:
+            with self._lock:
+                if self._driver == "confluent":
+                    try:
+                        self._producer.produce(self.config.topic, message)
+                    finally:
+                        self._producer.poll(0)
+                else:
+                    future = self._producer.send(self.config.topic, message)
+                    if hasattr(future, "add_errback"):
+                        future.add_errback(lambda exc: LOGGER.debug("Kafka audit sink send failed: %s", exc))
+        except BufferError:  # pragma: no cover - bounded buffer backpressure
+            LOGGER.warning("Kafka audit sink buffer full; dropping audit event")
+        except Exception:  # pragma: no cover - defensive logging
+            LOGGER.warning("Kafka audit sink failed to emit event", exc_info=True)
+
+
+class ClickHouseAuditSink(AuditSink):
+    """Emit audit events to ClickHouse over HTTP JSONEachRow."""
+
+    name = "clickhouse"
+
+    def __init__(self, config: AuditClickHouseSettings):
+        self.config = config
+        self._session = None
+        self._enabled = False
+        endpoint = (config.endpoint or "").rstrip("/")
+        if not endpoint:
+            LOGGER.info("ClickHouse audit sink disabled: endpoint not configured")
+            return
+        try:
+            import requests  # type: ignore[import]
+        except ImportError:
+            LOGGER.warning("ClickHouse audit sink requested but 'requests' is not installed; sink disabled.")
+            return
+
+        session = requests.Session()
+        if config.username and config.password:
+            session.auth = (config.username, config.password)
+        session.headers.update({"Content-Type": "application/json"})
+        self._requests = requests
+        self._session = session
+        self._endpoint = endpoint
+        self._enabled = True
+
+    def is_enabled(self) -> bool:
+        return bool(self._enabled and self._session)
+
+    def emit(self, event: AuditEvent, payload: Dict[str, Any]) -> None:
+        if not self.is_enabled():
+            return
+
+        table = f"{self.config.database}.{self.config.table}"
+        payload_line = json.dumps(payload, separators=(",", ":"), ensure_ascii=False)
+        query = f"INSERT INTO {table} FORMAT JSONEachRow"
+
+        try:
+            response = self._session.post(
+                f"{self._endpoint}/",
+                params={"query": query},
+                data=f"{payload_line}\n",
+                timeout=self.config.timeout_seconds,
+            )
+            if response.status_code >= 400:
+                LOGGER.warning(
+                    "ClickHouse audit sink failed with status %s: %s",
+                    response.status_code,
+                    response.text[:256],
+                )
+        except self._requests.RequestException:  # type: ignore[attr-defined]
+            LOGGER.warning("ClickHouse audit sink request failed", exc_info=True)
+
 class ExternalDataAuditLogger:
     """Enhanced audit logger for external data operations with compliance support."""
 
-    def __init__(self):
+    def __init__(self, config: ExternalAuditSettings | None = None):
+        self.config = config or ExternalAuditSettings()
         self.audit_logger = logging.getLogger("audit.external_data")
         self.audit_logger.setLevel(logging.INFO)
 
@@ -68,12 +249,15 @@ class ExternalDataAuditLogger:
         if not self.security_logger.handlers:
             self.security_logger.addHandler(self._build_handler("security_events.log"))
 
+        self._sinks: list[AuditSink] = []
+        self._configure_sinks()
+
     def _build_handler(self, filename: str) -> logging.Handler:
         """Create a log handler, preferring a writable directory.
 
         Uses AURUM_AUDIT_LOG_DIR if set, else tries /var/log/aurum, else falls back to stdout.
         """
-        log_dir = os.getenv("AURUM_AUDIT_LOG_DIR") or "/var/log/aurum"
+        log_dir = self.config.log_dir or "/var/log/aurum"
         try:
             path = Path(log_dir)
             path.mkdir(parents=True, exist_ok=True)
@@ -83,28 +267,59 @@ class ExternalDataAuditLogger:
         handler.setFormatter(logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s'))
         return handler
 
+    def register_sink(self, sink: AuditSink) -> None:
+        """Register an additional sink for downstream audit delivery."""
+        self._sinks.append(sink)
+        LOGGER.info("Registered audit sink %s", getattr(sink, "name", sink.__class__.__name__))
+
+    def _configure_sinks(self) -> None:
+        for sink_type in self.config.sinks:
+            if sink_type is AuditSinkType.FILE:
+                continue
+            try:
+                if sink_type is AuditSinkType.KAFKA:
+                    sink = KafkaAuditSink(self.config.kafka)
+                elif sink_type is AuditSinkType.CLICKHOUSE:
+                    sink = ClickHouseAuditSink(self.config.clickhouse)
+                else:
+                    LOGGER.warning("Unknown audit sink '%s'; skipping", sink_type)
+                    continue
+            except Exception:
+                LOGGER.warning("Failed to initialise audit sink '%s'", sink_type, exc_info=True)
+                continue
+            if sink.is_enabled():
+                self.register_sink(sink)
+            else:
+                LOGGER.info(
+                    "Audit sink %s disabled by configuration",
+                    getattr(sink, "name", sink_type),
+                )
+
+    def _dispatch_to_sinks(self, event: AuditEvent, payload: Dict[str, Any]) -> None:
+        if not self._sinks:
+            return
+        for sink in self._sinks:
+            try:
+                sink.emit(event, payload)
+            except Exception:
+                LOGGER.warning(
+                    "Audit sink %s failed to emit event %s",
+                    getattr(sink, "name", sink.__class__.__name__),
+                    event.event_id,
+                    exc_info=True,
+                )
+
     def log_event(self, event: AuditEvent):
         """Log an audit event."""
-        log_entry = {
-            "event_id": event.event_id,
-            "timestamp": event.timestamp.isoformat(),
-            "event_type": event.event_type,
-            "user_id": event.user_id,
-            "service": event.service,
-            "resource": event.resource,
-            "operation": event.operation,
-            "status": event.status,
-            "details": event.details,
-            "ip_address": event.ip_address,
-            "user_agent": event.user_agent,
-            "session_id": event.session_id,
-            "correlation_id": event.correlation_id,
-        }
+        payload = event.model_dump(mode="json")
+        message = json.dumps(payload, separators=(",", ":"), ensure_ascii=False)
 
         if event.status == "failure":
-            self.audit_logger.warning(json.dumps(log_entry))
+            self.audit_logger.warning(message)
         else:
-            self.audit_logger.info(json.dumps(log_entry))
+            self.audit_logger.info(message)
+
+        self._dispatch_to_sinks(event, payload)
 
     def log_api_call(
         self,
@@ -202,24 +417,10 @@ class ExternalDataAuditLogger:
 
     def _emit_compliance_event(self, event: AuditEvent):
         """Log a compliance-related audit event."""
-        log_entry = {
-            "event_id": event.event_id,
-            "timestamp": event.timestamp.isoformat(),
-            "event_type": event.event_type,
-            "user_id": event.user_id,
-            "service": event.service,
-            "resource": event.resource,
-            "operation": event.operation,
-            "status": event.status,
-            "details": event.details,
-            "ip_address": event.ip_address,
-            "user_agent": event.user_agent,
-            "session_id": event.session_id,
-            "correlation_id": event.correlation_id,
-            "compliance": True
-        }
-
-        self.compliance_logger.info(json.dumps(log_entry))
+        payload = event.model_dump(mode="json")
+        payload["compliance"] = True
+        self.compliance_logger.info(json.dumps(payload, separators=(",", ":"), ensure_ascii=False))
+        self._dispatch_to_sinks(event, payload)
 
     # Public helper to log compliance events; used by callers expecting a public API
     def log_compliance_event(self, event: AuditEvent):
@@ -232,24 +433,10 @@ class ExternalDataAuditLogger:
 
     def _emit_security_event(self, event: AuditEvent):
         """Log a security-related audit event (low-level)."""
-        log_entry = {
-            "event_id": event.event_id,
-            "timestamp": event.timestamp.isoformat(),
-            "event_type": event.event_type,
-            "user_id": event.user_id,
-            "service": event.service,
-            "resource": event.resource,
-            "operation": event.operation,
-            "status": event.status,
-            "details": event.details,
-            "ip_address": event.ip_address,
-            "user_agent": event.user_agent,
-            "session_id": event.session_id,
-            "correlation_id": event.correlation_id,
-            "security": True
-        }
-
-        self.security_logger.warning(json.dumps(log_entry))
+        payload = event.model_dump(mode="json")
+        payload["security"] = True
+        self.security_logger.warning(json.dumps(payload, separators=(",", ":"), ensure_ascii=False))
+        self._dispatch_to_sinks(event, payload)
 
     def log_tenant_isolation_violation(
         self,
@@ -421,6 +608,13 @@ class ExternalDataAuditLogger:
 
 # Global audit logger instance
 audit_logger = ExternalDataAuditLogger()
+
+
+def configure_external_audit_logger(config: ExternalAuditSettings) -> ExternalDataAuditLogger:
+    """Configure the global audit logger with the provided settings."""
+    global audit_logger
+    audit_logger = ExternalDataAuditLogger(config)
+    return audit_logger
 
 async def audit_middleware(request: Request, call_next):
     """FastAPI middleware for audit logging.

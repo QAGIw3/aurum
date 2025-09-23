@@ -47,7 +47,7 @@ podSecurityStandards: restricted
 livenessProbe:
   enabled: true
   httpGet:
-    path: /health
+    path: /live
     port: http
     scheme: HTTP
   initialDelaySeconds: 30
@@ -59,7 +59,7 @@ livenessProbe:
 readinessProbe:
   enabled: true
   httpGet:
-    path: /health
+    path: /ready
     port: http
     scheme: HTTP
   initialDelaySeconds: 5
@@ -71,7 +71,7 @@ readinessProbe:
 startupProbe:
   enabled: true
   httpGet:
-    path: /health
+    path: /ready
     port: http
     scheme: HTTP
   initialDelaySeconds: 10

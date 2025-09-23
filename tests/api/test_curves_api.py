@@ -709,6 +709,25 @@ def test_health_endpoint():
     assert resp.json()["status"] == "ok"
 
 
+def test_health_and_liveness_aliases():
+    pytest.importorskip("fastapi", reason="fastapi not installed")
+    from fastapi.testclient import TestClient
+    from aurum.api import app as api_app
+
+    client = TestClient(api_app.app)
+
+    healthz = client.get("/healthz")
+    assert healthz.status_code == 200
+    assert healthz.json()["status"] == "ok"
+
+    live = client.get("/live")
+    assert live.status_code == 200
+    assert live.json()["status"] == "alive"
+
+    livez = client.get("/livez")
+    assert livez.status_code == 200
+    assert livez.json()["status"] == "alive"
+
 def test_ready_endpoint(monkeypatch):
     pytest.importorskip("fastapi", reason="fastapi not installed")
     from fastapi.testclient import TestClient

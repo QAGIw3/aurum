@@ -28,6 +28,8 @@ from aurum.telemetry.context import (
     get_context,
     correlation_context,
     log_structured,
+    redact_sensitive_data,
+    get_trace_span_ids,
     STRUCTURED_LOGGER,
 )
 
@@ -190,6 +192,30 @@ class TestStructuredLogging:
 
             mock_info.assert_called_once()  # Should default to info
 
+    def test_log_structured_redacts_sensitive_fields(self):
+        """Structured logging should redact sensitive keys."""
+        with patch.object(STRUCTURED_LOGGER, 'info') as mock_info:
+            log_structured(
+                "info",
+                "test_event",
+                authorization="super-secret",
+                payload={
+                    "token": "abc123",
+                    "nested": {"password": "hunter2", "safe": "ok"},
+                    "list": [
+                        {"access_token": "abc"},
+                        "safe"
+                    ],
+                },
+            )
+
+            log_json = json.loads(mock_info.call_args[0][0])
+            assert log_json["authorization"] == "[REDACTED]"
+            assert log_json["payload"]["token"] == "[REDACTED]"
+            assert log_json["payload"]["nested"]["password"] == "[REDACTED]"
+            assert log_json["payload"]["nested"]["safe"] == "ok"
+            assert log_json["payload"]["list"][0]["access_token"] == "[REDACTED]"
+
     def test_log_structured_with_context(self):
         """Test structured logging with correlation context."""
         with correlation_context(
@@ -201,11 +227,34 @@ class TestStructuredLogging:
                 log_structured("info", "test_event", custom_field="custom_value")
 
                 call_args = mock_info.call_args[0][0]
-                log_data = json.loads(call_args)
+            log_data = json.loads(call_args)
 
-                assert log_data["correlation_id"] == "test-corr-123"
-                assert log_data["tenant_id"] == "test-tenant-123"
-                assert log_data["user_id"] == "test-user-123"
+            assert log_data["correlation_id"] == "test-corr-123"
+            assert log_data["tenant_id"] == "test-tenant-123"
+            assert log_data["user_id"] == "test-user-123"
+
+    def test_redact_sensitive_data_helper(self):
+        """Ensure direct helper usage redacts nested sensitive keys."""
+        value = {
+            "Authorization": "token",
+            "nested": {"password": "secret", "other": "ok"},
+            "array": [
+                {"token": "abc"},
+                "value",
+            ],
+        }
+        redacted = redact_sensitive_data(value)
+        assert redacted["Authorization"] == "[REDACTED]"
+        assert redacted["nested"]["password"] == "[REDACTED]"
+        assert redacted["nested"]["other"] == "ok"
+        assert redacted["array"][0]["token"] == "[REDACTED]"
+
+    def test_get_trace_span_ids_without_tracing(self):
+        """get_trace_span_ids should return Nones when tracing is disabled."""
+        with patch("aurum.telemetry.context._otel_trace", None):
+            trace_id, span_id = get_trace_span_ids()
+            assert trace_id is None
+            assert span_id is None
                 assert log_data["custom_field"] == "custom_value"
 
     def test_log_structured_filters_none_values(self):

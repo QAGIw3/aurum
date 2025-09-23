@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+import json
 import logging
 import math
 import random
@@ -52,6 +53,8 @@ from ..observability.metrics import (
     set_trino_circuit_breaker_state,
     set_trino_pool_saturation,
     set_trino_pool_saturation_status,
+    set_trino_request_queue_depth,
+    increment_trino_queue_rejections,
 )
 from .config import TrinoCatalogConfig, TrinoAccessLevel, TrinoCatalogType
 from .config import TrinoConfig
@@ -88,7 +91,7 @@ class CircuitBreaker(_CommonCircuitBreaker):
 
 
 class ConnectionPool:
-    """Simple connection pool for Trino connections."""
+    """Simple connection pool for Trino connections with basic instrumentation."""
 
     def __init__(
         self,
@@ -107,12 +110,31 @@ class ConnectionPool:
         self.wait_timeout_seconds = wait_timeout_seconds
 
         self._pool: asyncio.Queue = asyncio.Queue(maxsize=max_size)
-        self._idle_connections: List[Tuple[Any, float]] = []
         self._lock = asyncio.Lock()
+        self._stats_lock = asyncio.Lock()
         self._closed = False
 
-        # Initialize minimum connections
         self._initialized = False
+        self._active_connections = 0
+        self._total_connections = 0
+
+    async def _register_connection(self, *, active: bool) -> None:
+        async with self._stats_lock:
+            self._total_connections += 1
+            if active:
+                self._active_connections += 1
+
+    async def _mark_active(self) -> None:
+        async with self._stats_lock:
+            self._active_connections += 1
+
+    async def _mark_idle(self) -> None:
+        async with self._stats_lock:
+            self._active_connections = max(0, self._active_connections - 1)
+
+    async def _decrement_total(self) -> None:
+        async with self._stats_lock:
+            self._total_connections = max(0, self._total_connections - 1)
 
     async def _ensure_initialized(self) -> None:
         """Ensure pool is initialized with minimum connections."""
@@ -127,8 +149,9 @@ class ConnectionPool:
                 try:
                     conn = await self._create_connection()
                     await self._pool.put(conn)
-                except Exception as exc:
-                    LOGGER.warning(f"Failed to create initial connection: {exc}")
+                    await self._register_connection(active=False)
+                except Exception as exc:  # pragma: no cover - defensive
+                    LOGGER.warning("Failed to create initial Trino connection: %s", exc)
                     break
 
             self._initialized = True
@@ -152,73 +175,98 @@ class ConnectionPool:
         return await loop.run_in_executor(None, _connect)
 
     async def get_connection(self) -> Any:
-        """Get a connection from the pool."""
+        """Get a connection from the pool, creating one if capacity allows."""
         await self._ensure_initialized()
 
         try:
-            # Try to get existing connection first
             conn = self._pool.get_nowait()
+            await self._mark_active()
             return conn
         except asyncio.QueueEmpty:
-            # Pool is empty, create new connection if under max size
-            async with self._lock:
-                current_size = self._pool.qsize()
-                if current_size < self.max_size:
-                    try:
-                        conn = await self._create_connection()
-                        return conn
-                    except Exception as exc:
-                        log_structured(
-                            "error",
-                            "trino_connection_creation_failed",
-                            error=str(exc),
-                            max_connections=self.max_size,
-                        )
-                        raise
+            pass
 
-            # Wait for a connection to be returned
-            try:
-                conn = await asyncio.wait_for(self._pool.get(), timeout=self.wait_timeout_seconds)
-                return conn
-            except asyncio.TimeoutError:
-                raise ServiceUnavailableException(
-                    "trino",
-                    "Connection pool timeout exceeded"
-                )
+        async with self._lock:
+            if self._total_connections < self.max_size:
+                try:
+                    conn = await self._create_connection()
+                    await self._register_connection(active=True)
+                    return conn
+                except Exception as exc:  # pragma: no cover - defensive
+                    log_structured(
+                        "error",
+                        "trino_connection_creation_failed",
+                        error=str(exc),
+                        max_connections=self.max_size,
+                    )
+                    raise
+
+        try:
+            conn = await asyncio.wait_for(self._pool.get(), timeout=self.wait_timeout_seconds)
+            await self._mark_active()
+            return conn
+        except asyncio.TimeoutError as exc:
+            raise ServiceUnavailableException(
+                "trino",
+                "Connection pool timeout exceeded",
+            ) from exc
 
     async def return_connection(self, conn: Any) -> None:
-        """Return a connection to the pool."""
+        """Return a connection to the pool, closing if the pool is shutting down."""
+        await self._mark_idle()
+
         if self._closed:
-            conn.close()
+            if hasattr(conn, "close"):
+                conn.close()
+            await self._decrement_total()
             return
 
         try:
-            # Check if connection is still valid
-            if hasattr(conn, 'ping'):
+            if hasattr(conn, "ping"):
                 try:
                     conn.ping()
                 except Exception:
-                    conn.close()
+                    if hasattr(conn, "close"):
+                        conn.close()
+                    await self._decrement_total()
                     return
 
             await self._pool.put(conn)
-        except Exception:
-            # If pool is full, close the connection
-            if hasattr(conn, 'close'):
+        except Exception:  # pragma: no cover - defensive
+            if hasattr(conn, "close"):
                 conn.close()
+            await self._decrement_total()
 
     async def close(self) -> None:
         """Close all connections in the pool."""
         self._closed = True
 
-        # Close all connections in the queue
         while not self._pool.empty():
             try:
                 conn = self._pool.get_nowait()
-                if hasattr(conn, 'close'):
+                if hasattr(conn, "close"):
                     conn.close()
-            except:
+            except Exception:  # pragma: no cover - defensive
                 pass
+
+        async with self._stats_lock:
+            self._active_connections = 0
+            self._total_connections = 0
+
+    async def get_stats(self) -> Dict[str, Any]:
+        """Return a snapshot of pool utilisation."""
+        async with self._stats_lock:
+            active = self._active_connections
+            total = self._total_connections
+        idle = self._pool.qsize()
+        total = max(total, active + idle)
+        utilization = (active / total) if total else 0.0
+        return {
+            "active_connections": active,
+            "idle_connections": idle,
+            "total_connections": total,
+            "max_connections": self.max_size,
+            "pool_utilization": utilization,
+        }
 
 
 class RetryConfig:
@@ -305,9 +353,30 @@ class TrinoClient:
             wait_timeout_seconds=self.concurrency_config.get("trino_connection_pool_wait_timeout_seconds", 10.0),
         )
 
+        self._max_concurrent = max(1, int(self.concurrency_config.get("max_concurrent_trino_connections", 10)))
+        self._queue_max = max(0, int(self.concurrency_config.get("trino_queue_size", 0)))
+        self._queue_timeout = float(
+            self.concurrency_config.get(
+                "trino_queue_timeout_seconds",
+                self.concurrency_config.get("trino_connection_pool_wait_timeout_seconds", 10.0),
+            )
+        )
+        self._saturation_warning = float(self.concurrency_config.get("trino_saturation_warning_threshold", 0.75))
+        self._saturation_critical = float(self.concurrency_config.get("trino_saturation_critical_threshold", 0.9))
+
+        self._semaphore = asyncio.Semaphore(self._max_concurrent)
+        self._queue_lock = asyncio.Lock()
+        self._active_lock = asyncio.Lock()
+        self._queue_waiters = 0
+        self._active_queries = 0
+
+        self._start_time = time.time()
+        self._total_queries = 0
+        self._total_errors = 0
+
         # Initialize thread pool for sync operations
         self._executor = ThreadPoolExecutor(
-            max_workers=self.concurrency_config.get("max_concurrent_trino_connections", 10),
+            max_workers=self._max_concurrent,
             thread_name_prefix="trino-client"
         )
 
@@ -332,9 +401,27 @@ class TrinoClient:
                 "Circuit breaker is open - service temporarily unavailable"
             )
 
-        last_exception = None
+        last_exception: Optional[Exception] = None
 
         for attempt in range(self.retry_config.max_retries + 1):
+            stats: Optional[Dict[str, Any]] = None
+            acquired_slot = False
+
+            try:
+                await self._acquire_slot()
+                acquired_slot = True
+            except ServiceUnavailableException as exc:
+                last_exception = exc
+                log_structured(
+                    "warning",
+                    "trino_queue_rejected",
+                    tenant_id=tenant_id,
+                    attempt=attempt + 1,
+                    queue_limit=self._queue_max,
+                    error_message=str(exc),
+                )
+                break
+
             try:
                 if use_cache:
                     result = await self._execute_with_cache(
@@ -355,16 +442,16 @@ class TrinoClient:
                     )
                     result = results
 
-                # Record success
                 self.circuit_breaker.record_success()
+                self._total_queries += 1
 
-                # Track metrics
                 await increment_trino_queries(tenant_id, "success")
-                if "stats" in locals():
+                if stats:
+                    duration_seconds = self._duration_from_stats(stats)
                     await observe_trino_query_duration(
                         tenant_id,
                         self._classify_query_type(query),
-                        stats.get("execution_time", 0.0)
+                        duration_seconds,
                     )
 
                 log_structured(
@@ -380,18 +467,13 @@ class TrinoClient:
 
             except Exception as exc:
                 last_exception = exc
-
-                # Record failure
+                self._total_errors += 1
                 self.circuit_breaker.record_failure()
-
-                # Track error metrics
                 await increment_trino_queries(tenant_id, "error")
 
-                # Don't retry on the last attempt
                 if attempt >= self.retry_config.max_retries:
                     break
 
-                # Calculate delay and wait
                 delay = self.retry_config.calculate_delay(attempt)
                 log_structured(
                     "warning",
@@ -405,7 +487,10 @@ class TrinoClient:
 
                 await asyncio.sleep(delay)
 
-        # All retries exhausted
+            finally:
+                if acquired_slot:
+                    await self._release_slot()
+
         log_structured(
             "error",
             "trino_query_failed",
@@ -456,6 +541,85 @@ class TrinoClient:
             self._log_query_metrics(stats, tenant_id)
 
         return results, stats
+
+    async def _acquire_slot(self) -> None:
+        """Reserve a concurrency slot, applying queue backpressure when saturated."""
+        queue_full = False
+        async with self._queue_lock:
+            if self._queue_max and self._queue_waiters >= self._queue_max:
+                queue_full = True
+            else:
+                self._queue_waiters += 1
+
+        await self._update_queue_metrics()
+
+        if queue_full:
+            await increment_trino_queue_rejections("queue_full")
+            raise ServiceUnavailableException(
+                "trino",
+                "Trino request queue is saturated",
+            )
+
+        try:
+            await asyncio.wait_for(self._semaphore.acquire(), timeout=self._queue_timeout)
+        except asyncio.TimeoutError as exc:
+            async with self._queue_lock:
+                self._queue_waiters = max(0, self._queue_waiters - 1)
+            await increment_trino_queue_rejections("queue_timeout")
+            await self._update_queue_metrics()
+            raise ServiceUnavailableException(
+                "trino",
+                "Timed out waiting for available Trino worker",
+            ) from exc
+
+        async with self._queue_lock:
+            self._queue_waiters = max(0, self._queue_waiters - 1)
+        async with self._active_lock:
+            self._active_queries += 1
+
+        await self._update_queue_metrics()
+
+    async def _release_slot(self) -> None:
+        """Release a previously acquired concurrency slot."""
+        self._semaphore.release()
+        async with self._active_lock:
+            self._active_queries = max(0, self._active_queries - 1)
+        await self._update_queue_metrics()
+
+    async def _update_queue_metrics(self) -> None:
+        """Update queue depth and saturation gauges."""
+        async with self._active_lock:
+            active = self._active_queries
+        async with self._queue_lock:
+            queue_depth = self._queue_waiters
+
+        utilization = active / self._max_concurrent if self._max_concurrent else 0.0
+
+        await set_trino_request_queue_depth(queue_depth)
+        await set_trino_pool_saturation(utilization)
+
+        status = "healthy"
+        if utilization >= self._saturation_critical or (
+            self._queue_max and queue_depth >= self._queue_max
+        ):
+            status = "critical"
+        elif utilization >= self._saturation_warning or (
+            self._queue_max and queue_depth >= max(1, int(self._queue_max * 0.5))
+        ):
+            status = "warning"
+
+        await set_trino_pool_saturation_status(status)
+
+    async def _update_pool_metrics(self) -> None:
+        """Push connection pool utilisation metrics."""
+        try:
+            stats = await self.connection_pool.get_stats()
+        except Exception:  # pragma: no cover - defensive
+            return
+
+        await set_trino_connection_pool_active(stats["active_connections"])
+        await set_trino_connection_pool_idle(stats["idle_connections"])
+        await set_trino_connection_pool_utilization(stats["pool_utilization"])
 
     async def _execute_with_cache(
         self,
@@ -568,14 +732,18 @@ class TrinoClient:
 
         tenant_id = tenant_id or get_tenant_id()
         conn_context = self._get_connection()
-        conn = await conn_context.__aenter__()
         loop = asyncio.get_event_loop()
         cursor_holder: Dict[str, Any] = {}
         columns_holder: Dict[str, List[str]] = {}
         row_count = 0
         start_time = time.perf_counter()
+        acquired_slot = False
 
         try:
+            await self._acquire_slot()
+            acquired_slot = True
+            conn = await conn_context.__aenter__()
+
             def _prepare_cursor() -> None:
                 cursor = conn.cursor()
                 cursor.execute(query, params or {})
@@ -604,6 +772,8 @@ class TrinoClient:
             if cursor is not None:
                 await loop.run_in_executor(self._executor, cursor.close)
             await conn_context.__aexit__(None, None, None)
+            if acquired_slot:
+                await self._release_slot()
 
         duration = time.perf_counter() - start_time
         pseudo_stats = {
@@ -621,11 +791,15 @@ class TrinoClient:
     @asynccontextmanager
     async def _get_connection(self):
         """Get a connection from the pool."""
+        start = time.perf_counter()
         conn = await self.connection_pool.get_connection()
+        await observe_trino_connection_acquire_time(time.perf_counter() - start)
+        await self._update_pool_metrics()
         try:
             yield conn
         finally:
             await self.connection_pool.return_connection(conn)
+            await self._update_pool_metrics()
 
     def _normalize_stats(
         self,
@@ -737,44 +911,44 @@ class TrinoClient:
         else:
             return "other"
 
+    @staticmethod
+    def _duration_from_stats(stats: Dict[str, Any]) -> float:
+        """Extract execution duration in seconds from Trino stats payload."""
+        wall_ms = stats.get("wall_time_ms") or stats.get("wallTimeMillis")
+        if wall_ms is not None:
+            try:
+                return float(wall_ms) / 1000.0
+            except (TypeError, ValueError):  # pragma: no cover - defensive
+                pass
+        try:
+            return float(stats.get("execution_time", 0.0))
+        except (TypeError, ValueError):  # pragma: no cover - defensive
+            return 0.0
+
     async def get_health_status(self) -> Dict[str, Any]:
         """Get health status of the Trino client."""
-        # Update metrics
         await set_trino_circuit_breaker_state(self.circuit_breaker.get_state().value)
+        await self._update_queue_metrics()
+        await self._update_pool_metrics()
+
+        pool_metrics = await self.get_pool_metrics()
+
+        async with self._active_lock:
+            active_queries = self._active_queries
 
         status = {
             "circuit_breaker_state": self.circuit_breaker.get_state().value,
-            "pool_size": self.connection_pool._pool.qsize(),
-            "executor_active_threads": self._executor._threads.__len__(),
             "uptime_seconds": time.time() - self._start_time,
             "total_queries": getattr(self, "_total_queries", 0),
             "total_errors": getattr(self, "_total_errors", 0),
+            "active_queries": active_queries,
+            **pool_metrics,
         }
 
-        # Try a simple query to test health
         try:
             await self.execute_query("SELECT 1 as health_check", tenant_id="health-check")
             status["healthy"] = True
-            status["avg_response_time"] = getattr(self, "_avg_response_time", 0)
-
-            # Update pool metrics
-            pool_metrics = await self.get_pool_metrics()
-            await set_trino_connection_pool_active(pool_metrics["active_connections"])
-            await set_trino_connection_pool_idle(pool_metrics["idle_connections"])
-            await set_trino_connection_pool_utilization(pool_metrics["pool_utilization"])
-            await set_trino_pool_saturation(pool_metrics["pool_utilization"])
-
-            # Set pool saturation status
-            if pool_metrics["pool_utilization"] > 0.9:
-                await set_trino_pool_saturation_status("critical")
-            elif pool_metrics["pool_utilization"] > 0.7:
-                await set_trino_pool_saturation_status("warning")
-            elif pool_metrics["pool_utilization"] > 0.5:
-                await set_trino_pool_saturation_status("elevated")
-            else:
-                await set_trino_pool_saturation_status("healthy")
-
-        except Exception as exc:
+        except Exception as exc:  # pragma: no cover - health endpoint defensive
             status["healthy"] = False
             status["last_error"] = str(exc)
 
@@ -782,40 +956,20 @@ class TrinoClient:
 
     async def get_pool_metrics(self) -> Dict[str, Any]:
         """Get comprehensive connection pool metrics."""
-        pool = self.connection_pool
+        stats = await self.connection_pool.get_stats()
+        async with self._queue_lock:
+            queue_depth = self._queue_waiters
 
-        # Get current pool statistics
-        total_connections = pool.min_size  # Start with minimum
-        active_connections = 0
-        idle_connections = 0
-
-        # Count active vs idle connections
-        try:
-            # This is an approximation since we don't directly track active/idle
-            # In a real implementation, you'd maintain counters
-            pool_size = pool._pool.qsize()
-            total_connections = max(pool_size, pool.min_size)
-            # Assume most connections are active during load
-            active_connections = max(1, int(total_connections * 0.8))
-            idle_connections = total_connections - active_connections
-        except Exception:
-            active_connections = pool.min_size
-            idle_connections = 0
-            total_connections = pool.min_size
-
-        pool_utilization = total_connections / pool.max_size if pool.max_size > 0 else 0
-
-        return {
-            "active_connections": active_connections,
-            "idle_connections": idle_connections,
-            "total_connections": total_connections,
-            "max_connections": pool.max_size,
-            "pool_utilization": pool_utilization,
-            "queue_size": getattr(pool._pool, 'qsize', lambda: 0)(),
-            "wait_queue_size": getattr(pool._pool, 'qsize', lambda: 0)(),
-            "connection_acquire_time_ms": getattr(self, "_avg_acquire_time", 100.0),
-            "connection_errors": getattr(self, "_connection_errors", 0),
-        }
+        metrics = dict(stats)
+        metrics.update(
+            {
+                "request_queue_depth": queue_depth,
+                "queue_capacity": self._queue_max,
+                "queue_utilization": (queue_depth / self._queue_max) if self._queue_max else 0.0,
+                "max_concurrent_queries": self._max_concurrent,
+            }
+        )
+        return metrics
 
     async def get_query_stats(self) -> Dict[str, Any]:
         """Get query performance statistics."""
@@ -915,7 +1069,9 @@ class TrinoClientManager:
         concurrency_config: Optional[Dict[str, Any]] = None,
     ) -> TrinoClient:
         """Get or create a Trino client (legacy method)."""
-        key = f"{config.host}:{config.port}:{config.user}"
+        serialized_cfg = json.dumps(concurrency_config or {}, sort_keys=True)
+        cfg_hash = hashlib.sha1(serialized_cfg.encode("utf-8")).hexdigest()[:8]
+        key = f"{config.host}:{config.port}:{config.user}:{cfg_hash}"
 
         if key not in self._clients:
             self._clients[key] = TrinoClient(config, concurrency_config)
@@ -990,9 +1146,15 @@ def get_trino_client(
     concurrency_config: Optional[Dict[str, Any]] = None,
 ) -> TrinoClient:
     """Get a Trino client instance."""
-    if config is None:
+    settings = None
+
+    if config is None or concurrency_config is None:
         from .state import get_settings
+
         settings = get_settings()
+
+    if config is None:
+        assert settings is not None
         config = TrinoConfig(
             host=settings.trino.host,
             port=settings.trino.port,
@@ -1001,6 +1163,18 @@ def get_trino_client(
             schema=settings.trino.database_schema,
             http_scheme=settings.trino.http_scheme,
         )
+
+    if concurrency_config is None:
+        assert settings is not None
+        concurrency_config = settings.api.concurrency.model_dump()
+    else:
+        if settings is None:
+            from .state import get_settings
+
+            settings = get_settings()
+        merged_config = settings.api.concurrency.model_dump()
+        merged_config.update(concurrency_config)
+        concurrency_config = merged_config
 
     return _client_manager.get_client(config, concurrency_config)
 

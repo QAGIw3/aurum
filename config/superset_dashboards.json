@@ -1,0 +1,180 @@
+{
+  "dashboards": [
+    {
+      "name": "Data Ingestion Monitoring",
+      "slug": "data-ingestion-monitoring",
+      "description": "Comprehensive monitoring dashboard for all data ingestion pipelines",
+      "charts": [
+        {
+          "name": "Ingestion Status Overview",
+          "type": "big_number",
+          "datasource": "aurum_external_series_catalog",
+          "query": {
+            "metrics": ["count"],
+            "groupby": ["provider"]
+          }
+        },
+        {
+          "name": "Staleness Status by Provider",
+          "type": "pie_chart",
+          "datasource": "aurum_staleness_status",
+          "query": {
+            "metrics": ["count"],
+            "groupby": ["staleness_level", "provider"]
+          }
+        },
+        {
+          "name": "Ingestion Timeline",
+          "type": "line_chart",
+          "datasource": "aurum_external_timeseries_obs",
+          "query": {
+            "metrics": ["count"],
+            "groupby": ["__time", "provider"],
+            "time_range": "7 days"
+          }
+        },
+        {
+          "name": "SLO Compliance",
+          "type": "table",
+          "datasource": "aurum_staleness_status",
+          "query": {
+            "columns": ["dataset", "staleness_minutes", "slo_status", "is_breached"],
+            "filters": [{"col": "is_breached", "op": "==", "val": true}]
+          }
+        }
+      ]
+    },
+    {
+      "name": "ISO/North American Markets",
+      "slug": "iso-north-american-markets",
+      "description": "Monitoring dashboard for ISO/RTO electricity markets data",
+      "charts": [
+        {
+          "name": "ISO LMP Price Trends",
+          "type": "line_chart",
+          "datasource": "aurum_iso_lmp",
+          "query": {
+            "metrics": ["avg(lmp)"],
+            "groupby": ["__time", "iso_code"],
+            "time_range": "24 hours"
+          }
+        },
+        {
+          "name": "Load by ISO",
+          "type": "bar_chart",
+          "datasource": "aurum_iso_load",
+          "query": {
+            "metrics": ["sum(mw)"],
+            "groupby": ["iso_code", "zone"],
+            "time_range": "1 day"
+          }
+        },
+        {
+          "name": "Generation Mix",
+          "type": "pie_chart",
+          "datasource": "aurum_iso_genmix",
+          "query": {
+            "metrics": ["sum(mw)"],
+            "groupby": ["iso_code", "fuel_type"],
+            "time_range": "1 day"
+          }
+        }
+      ]
+    },
+    {
+      "name": "Weather & Environmental Data",
+      "slug": "weather-environmental-data",
+      "description": "NOAA weather and environmental monitoring dashboard",
+      "charts": [
+        {
+          "name": "Weather Station Coverage",
+          "type": "map",
+          "datasource": "aurum_noaa_weather_timeseries",
+          "query": {
+            "columns": ["station_id", "station_name", "latitude", "longitude", "elevation_m"],
+            "groupby": ["station_id"]
+          }
+        },
+        {
+          "name": "Temperature Trends",
+          "type": "line_chart",
+          "datasource": "aurum_noaa_weather_timeseries",
+          "query": {
+            "metrics": ["avg(value)"],
+            "groupby": ["__time"],
+            "filters": [{"col": "element", "op": "==", "val": "TAVG"}],
+            "time_range": "7 days"
+          }
+        },
+        {
+          "name": "Precipitation Analysis",
+          "type": "histogram",
+          "datasource": "aurum_noaa_weather_timeseries",
+          "query": {
+            "columns": ["value"],
+            "filters": [{"col": "element", "op": "==", "val": "PRCP"}],
+            "time_range": "30 days"
+          }
+        }
+      ]
+    },
+    {
+      "name": "Scenario Processing",
+      "slug": "scenario-processing",
+      "description": "Scenario execution and performance monitoring",
+      "charts": [
+        {
+          "name": "Scenario Run Status",
+          "type": "pie_chart",
+          "datasource": "aurum_scenario_run",
+          "query": {
+            "metrics": ["count"],
+            "groupby": ["status", "scenario_type"]
+          }
+        },
+        {
+          "name": "Processing Duration",
+          "type": "histogram",
+          "datasource": "aurum_scenario_run",
+          "query": {
+            "columns": ["duration_seconds"],
+            "filters": [{"col": "status", "op": "==", "val": "succeeded"}]
+          }
+        },
+        {
+          "name": "Queue Backlog",
+          "type": "line_chart",
+          "datasource": "aurum_scenario_request",
+          "query": {
+            "metrics": ["count"],
+            "groupby": ["__time"],
+            "time_range": "1 hour"
+          }
+        }
+      ]
+    }
+  ],
+  "alerts": [
+    {
+      "name": "Critical Staleness Alert",
+      "condition": "staleness_minutes > 120",
+      "action": "email",
+      "recipients": ["data-ops@example.com"],
+      "frequency": "immediate"
+    },
+    {
+      "name": "SLO Breach Notification",
+      "condition": "slo_status == 'breached'",
+      "action": "slack",
+      "channel": "#data-quality",
+      "frequency": "hourly"
+    },
+    {
+      "name": "Ingestion Failure",
+      "condition": "last_ingestion_minutes > 60",
+      "action": "pager",
+      "recipients": ["oncall-data@example.com"],
+      "frequency": "immediate"
+    }
+  ]
+}

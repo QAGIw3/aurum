@@ -2440,12 +2440,11 @@ async def fetch_iso_locations(
     prefix: Optional[str] = None,
 ) -> List[Dict]:
     """Fetch ISO locations from dbt dimensions."""
-    from .async_service import AsyncTrinoClient
-    from .container import get_service
+    from .database.trino_client import get_trino_client
     from .config import TrinoConfig
 
-    # Get Trino config and create client
-    trino_client = get_service(AsyncTrinoClient)
+    # Get Trino client
+    trino_client = get_trino_client()
 
     # Build query
     query = """
@@ -2495,10 +2494,9 @@ async def fetch_iso_locations(
 
 async def fetch_units_canonical() -> List[Dict]:
     """Fetch canonical units from dbt dimensions."""
-    from .async_service import AsyncTrinoClient
-    from .container import get_service
+    from .database.trino_client import get_trino_client
 
-    trino_client = get_service(AsyncTrinoClient)
+    trino_client = get_trino_client()
 
     query = """
         SELECT
@@ -2529,10 +2527,9 @@ async def fetch_units_canonical() -> List[Dict]:
 
 async def fetch_units_mapping(prefix: Optional[str] = None) -> List[Dict]:
     """Fetch units mapping from dbt dimensions."""
-    from .async_service import AsyncTrinoClient
-    from .container import get_service
+    from .database.trino_client import get_trino_client
 
-    trino_client = get_service(AsyncTrinoClient)
+    trino_client = get_trino_client()
 
     query = """
         SELECT
@@ -2567,10 +2564,9 @@ async def fetch_units_mapping(prefix: Optional[str] = None) -> List[Dict]:
 
 async def fetch_calendars() -> List[Dict]:
     """Fetch calendars from dbt dimensions."""
-    from .async_service import AsyncTrinoClient
-    from .container import get_service
+    from .database.trino_client import get_trino_client
 
-    trino_client = get_service(AsyncTrinoClient)
+    trino_client = get_trino_client()
 
     query = """
         SELECT
@@ -2603,10 +2599,9 @@ async def fetch_calendars() -> List[Dict]:
 
 async def fetch_calendar_blocks(name: str) -> List[Dict]:
     """Fetch calendar blocks from dbt dimensions."""
-    from .async_service import AsyncTrinoClient
-    from .container import get_service
+    from .database.trino_client import get_trino_client
 
-    trino_client = get_service(AsyncTrinoClient)
+    trino_client = get_trino_client()
 
     query = """
         SELECT
@@ -2645,10 +2640,9 @@ async def fetch_calendar_hours(
     end: Optional[str] = None,
 ) -> List[Dict]:
     """Fetch calendar hours from dbt dimensions."""
-    from .async_service import AsyncTrinoClient
-    from .container import get_service
+    from .database.trino_client import get_trino_client
 
-    trino_client = get_service(AsyncTrinoClient)
+    trino_client = get_trino_client()
 
     query = """
         SELECT

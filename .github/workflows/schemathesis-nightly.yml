@@ -1,0 +1,118 @@
+name: Schemathesis Nightly
+
+on:
+  schedule:
+    - cron: '0 5 * * *'
+  workflow_dispatch: {}
+
+jobs:
+  fuzz:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    env:
+      PYTHONUNBUFFERED: "1"
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install .[api,test]
+          pip install pyyaml
+
+      - name: Start Aurum API
+        run: |
+          AURUM_API_LIGHT_INIT=1 AURUM_API_AUTH_DISABLED=1 uvicorn aurum.api.app:app --host 0.0.0.0 --port 9050 > uvicorn.log 2>&1 &
+          echo $! > uvicorn.pid
+          for attempt in {1..30}; do
+            if curl -sSf http://127.0.0.1:9050/ready > /dev/null; then
+              exit 0
+            fi
+            sleep 2
+          done
+          echo "API failed to become ready" >&2
+          cat uvicorn.log >&2 || true
+          exit 1
+
+      - name: Detect OpenAPI drift
+        id: drift_check
+        continue-on-error: true
+        run: |
+          curl -sSf http://127.0.0.1:9050/openapi.json -o server-openapi.json
+          python - <<'PY'
+import json
+import sys
+from pathlib import Path
+
+try:
+    import yaml
+except ImportError as exc:  # pragma: no cover
+    raise SystemExit("PyYAML is required for drift detection") from exc
+
+repo_spec_path = Path("openapi/aurum.generated.yaml")
+if not repo_spec_path.exists():
+    print("Repository OpenAPI spec not found", file=sys.stderr)
+    sys.exit(1)
+
+repo_spec = yaml.safe_load(repo_spec_path.read_text(encoding="utf-8"))
+server_spec = json.loads(Path("server-openapi.json").read_text(encoding="utf-8"))
+
+if repo_spec != server_spec:
+    repo_str = json.dumps(repo_spec, indent=2, sort_keys=True)
+    server_str = json.dumps(server_spec, indent=2, sort_keys=True)
+    import difflib
+
+    diff = "\n".join(
+        difflib.unified_diff(
+            repo_str.splitlines(),
+            server_str.splitlines(),
+            fromfile="repo-spec",
+            tofile="server-spec",
+        )
+    )
+    Path("openapi-drift.diff").write_text(diff, encoding="utf-8")
+    print("OpenAPI specification drift detected", file=sys.stderr)
+    sys.exit(1)
+Path("openapi-drift.diff").write_text("no drift detected\n", encoding="utf-8")
+PY
+
+      - name: Fail on OpenAPI drift
+        if: steps.drift_check.outcome == 'failure'
+        run: |
+          echo "OpenAPI specification drift detected" >&2
+          exit 1
+
+      - name: Run Schemathesis
+        run: |
+          schemathesis run \
+            --checks all \
+            --stateful=links \
+            --hypothesis-max-examples=25 \
+            --contrib-openapi-formats \
+            --base-url http://127.0.0.1:9050 \
+            --report schemathesis-report.json \
+            openapi/aurum.generated.yaml
+
+      - name: Upload Schemathesis artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: schemathesis-nightly
+          path: |
+            schemathesis-report.json
+            server-openapi.json
+            uvicorn.log
+            openapi-drift.diff
+
+      - name: Stop API server
+        if: always()
+        run: |
+          if [ -f uvicorn.pid ]; then
+            kill $(cat uvicorn.pid) || true
+          fi

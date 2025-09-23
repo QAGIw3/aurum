@@ -26,13 +26,23 @@ from aurum.observability.metrics import (
     GE_VALIDATION_FAILURES
 )
 
+try:
+    from aurum.kafka.optimized_producer import OptimizedKafkaProducer
+except ImportError:
+    OptimizedKafkaProducer = None
+
 logger = logging.getLogger(__name__)
 
 
 class GreatExpectationsValidator:
-    """Great Expectations validator for external data sources."""
+    """Great Expectations validator for external data sources with Kafka emission."""
 
-    def __init__(self, context_root_dir: Optional[str] = None):
+    def __init__(
+        self,
+        context_root_dir: Optional[str] = None,
+        kafka_bootstrap_servers: Optional[str] = None,
+        kafka_topic: str = "qa.result.v1"
+    ):
         if not GREAT_EXPECTATIONS_AVAILABLE:
             raise RuntimeError("Great Expectations is required for data validation")
 
@@ -42,6 +52,14 @@ class GreatExpectationsValidator:
             self.context = ge.get_context()
 
         self._expectation_suites = {}
+        self.kafka_topic = kafka_topic
+        self.kafka_producer = None
+
+        if kafka_bootstrap_servers and OptimizedKafkaProducer:
+            self.kafka_producer = OptimizedKafkaProducer(
+                bootstrap_servers=kafka_bootstrap_servers,
+                topic=kafka_topic
+            )
 
     async def validate_data(
         self,
@@ -138,6 +156,15 @@ class GreatExpectationsValidator:
                         "validation_results": results.to_json_dict()
                     }
                 )
+
+            # Emit QA results to Kafka
+            await self._emit_qa_results(
+                table_name=table_name,
+                expectation_suite=expectation_suite_name,
+                results=results,
+                duration=duration,
+                context=context
+            )
 
             return {
                 "status": "success",
@@ -307,6 +334,53 @@ class GreatExpectationsValidator:
             }
         )
 
+    async def _emit_qa_results(
+        self,
+        table_name: str,
+        expectation_suite: str,
+        results: ExpectationSuiteValidationResult,
+        duration: float,
+        context: Optional[Dict[str, Any]]
+    ) -> None:
+        """Emit QA validation results to Kafka."""
+        if not self.kafka_producer:
+            return
+
+        # Build QA result message
+        qa_result = {
+            "event_type": "qa_validation_result",
+            "timestamp": datetime.now().isoformat(),
+            "table_name": table_name,
+            "expectation_suite": expectation_suite,
+            "validation_success": results.success,
+            "validation_duration_seconds": duration,
+            "total_expectations": len(results.results),
+            "successful_expectations": sum(1 for r in results.results if r.success),
+            "failed_expectations": sum(1 for r in results.results if not r.success),
+            "context": context or {},
+            "results": results.to_json_dict()
+        }
+
+        try:
+            await self.kafka_producer.produce_message(qa_result)
+            logger.info(
+                "QA results emitted to Kafka",
+                extra={
+                    "table_name": table_name,
+                    "expectation_suite": expectation_suite,
+                    "validation_success": results.success
+                }
+            )
+        except Exception as e:
+            logger.error(
+                "Failed to emit QA results to Kafka",
+                extra={
+                    "table_name": table_name,
+                    "expectation_suite": expectation_suite,
+                    "error": str(e)
+                }
+            )
+
 
 # Convenience functions for DAGs
 async def run_ge_validation(
@@ -314,9 +388,10 @@ async def run_ge_validation(
     expectation_suite: str,
     vault_addr: str,
     vault_token: str,
-    data_context_root: Optional[str] = None
+    data_context_root: Optional[str] = None,
+    kafka_bootstrap_servers: Optional[str] = None
 ) -> Dict[str, Any]:
-    """Run Great Expectations validation for external data.
+    """Run Great Expectations validation for external data with Kafka emission.
 
     Args:
         table_name: Name of the table/dataset to validate
@@ -324,13 +399,17 @@ async def run_ge_validation(
         vault_addr: Vault address for secrets
         vault_token: Vault token for authentication
         data_context_root: Optional Great Expectations context root
+        kafka_bootstrap_servers: Optional Kafka bootstrap servers for QA results
 
     Returns:
         Validation results dictionary
     """
     # This would typically load data from the table and validate it
     # For now, return placeholder implementation
-    validator = GreatExpectationsValidator(data_context_root)
+    validator = GreatExpectationsValidator(
+        data_context_root,
+        kafka_bootstrap_servers
+    )
     return await validator.validate_data(
         table_name=table_name,
         expectation_suite_name=expectation_suite,

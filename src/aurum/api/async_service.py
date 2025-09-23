@@ -24,51 +24,23 @@ from ..scenarios.feature_store import get_feature_store
 
 
 class AsyncTrinoClient:
-    """Async wrapper for Trino client."""
+    """Async wrapper for Trino client. Deprecated: Use TrinoClient from database.trino_client."""
 
     def __init__(self, config: TrinoConfig):
         self.config = config
         self._executor = ThreadPoolExecutor(max_workers=4, thread_name_prefix="trino")
+        # Use the new TrinoClient for actual functionality
+        from .database.trino_client import get_trino_client
+        self._trino_client = get_trino_client()
 
     async def execute_query(
         self,
         query: str,
         params: Optional[Dict[str, Any]] = None
     ) -> List[Dict[str, Any]]:
-        """Execute a Trino query asynchronously."""
-        loop = asyncio.get_event_loop()
-
-        def _execute():
-            if trino is None:
-                raise RuntimeError("trino package not available")
-
-            conn = trino.dbapi.connect(
-                host=self.config.host,
-                port=self.config.port,
-                user=self.config.user,
-                catalog=self.config.catalog,
-                schema=self.config.database_schema,
-                http_scheme=self.config.http_scheme,
-            )
-
-            try:
-                with conn.cursor() as cur:
-                    cur.execute(query, params or {})
-                    columns = [col[0] for col in cur.description or []]
-                    results = []
-                    for row in cur.fetchall():
-                        result_row = {}
-                        for col, value in zip(columns, row):
-                            result_row[col] = value
-                        results.append(result_row)
-                    return results
-            finally:
-                conn.close()
-
-        try:
-            return await loop.run_in_executor(self._executor, _execute)
-        except Exception as exc:
-            raise RuntimeError(f"Trino query failed: {exc}") from exc
+        """Execute a Trino query asynchronously. Deprecated: Use TrinoClient.execute_query."""
+        # Delegate to the new TrinoClient
+        return await self._trino_client.execute_query(query, params)
 
     async def execute_query_stream(
         self,
@@ -76,49 +48,10 @@ class AsyncTrinoClient:
         params: Optional[Dict[str, Any]] = None,
         chunk_size: int = 1000
     ) -> asyncio.AsyncGenerator[List[Dict[str, Any]], None]:
-        """Execute a Trino query and stream results in chunks."""
-        loop = asyncio.get_event_loop()
-
-        def _execute_stream():
-            if trino is None:
-                raise RuntimeError("trino package not available")
-
-            conn = trino.dbapi.connect(
-                host=self.config.host,
-                port=self.config.port,
-                user=self.config.user,
-                catalog=self.config.catalog,
-                schema=self.config.database_schema,
-                http_scheme=self.config.http_scheme,
-            )
-
-            try:
-                with conn.cursor() as cur:
-                    cur.execute(query, params or {})
-                    columns = [col[0] for col in cur.description or []]
-                    chunk = []
-
-                    for row in cur.fetchall():
-                        result_row = {}
-                        for col, value in zip(columns, row):
-                            result_row[col] = value
-                        chunk.append(result_row)
-
-                        if len(chunk) >= chunk_size:
-                            yield chunk
-                            chunk = []
-
-                    if chunk:
-                        yield chunk
-
-            finally:
-                conn.close()
-
-        try:
-            async for chunk in loop.run_in_executor(self._executor, _execute_stream):
-                yield chunk
-        except Exception as exc:
-            raise RuntimeError(f"Trino streaming query failed: {exc}") from exc
+        """Execute a Trino query and stream results in chunks. Deprecated: Use TrinoClient.stream_query."""
+        # Delegate to the new TrinoClient
+        async for chunk in self._trino_client.stream_query(query, params, chunk_size=chunk_size):
+            yield chunk
 
 
 class AsyncCurveService:
@@ -482,10 +415,11 @@ class AsyncScenarioService:
         return runs, total, meta
 
     async def create_scenario_run(self, scenario_id: str, options: Dict[str, Any]) -> Any:
-        """Create a new scenario run using Monte Carlo or forecasting models."""
+        """Create a new scenario run and enqueue for processing."""
+        from ..scenarios.queue_manager import ScenarioQueueManager
+        from ..telemetry.context import get_tenant_id, get_user_id
+
         store = get_scenario_store()
-        mc_engine = get_monte_carlo_engine()
-        forecast_engine = get_forecasting_engine()
 
         # Get the scenario first to validate it exists
         scenario = await store.get_scenario(scenario_id)
@@ -494,48 +428,59 @@ class AsyncScenarioService:
 
         run_id = str(uuid4())
 
-        # Check scenario type
-        scenario_type = options.get("scenario_type", "monte_carlo")
-        is_forecasting = scenario_type in ["forecasting", "backtest"]
-        is_cross_asset = scenario_type == "cross_asset"
-
         # Create run record
         run_data = {
             "id": run_id,
             "scenario_id": scenario_id,
-            "status": "running",
+            "status": "queued",
             "priority": options.get("priority", "normal"),
             "parameters": options.get("parameters", {}),
             "environment": options.get("environment", {}),
             "created_at": datetime.utcnow(),
-            "started_at": datetime.utcnow(),
         }
 
         run = await store.create_run_from_dict(run_data)
 
+        # Enqueue the scenario run request
+        request_data = {
+            "request_id": run_id,
+            "scenario_id": scenario_id,
+            "tenant_id": get_tenant_id(),
+            "requested_by": get_user_id(),
+            "asof_date": options.get("asof_date"),
+            "curve_def_ids": options.get("curve_def_ids", []),
+            "assumptions": options.get("assumptions", []),
+            "parameters": options.get("parameters", {}),
+            "environment": options.get("environment", {}),
+            "scenario_type": options.get("scenario_type", "monte_carlo"),
+            "priority": options.get("priority", "normal"),
+            "timeout_minutes": options.get("timeout_minutes", 60),
+            "max_retries": options.get("max_retries", 3),
+            "idempotency_key": options.get("idempotency_key"),
+            "retry_count": 0,
+            "submitted_ts": int(datetime.utcnow().timestamp() * 1_000_000),
+            "metadata": {
+                "submitted_via": "api",
+                "correlation_id": get_correlation_id(),
+            }
+        }
+
         try:
-            if is_cross_asset:
-                # Run cross-asset scenario
-                await self._run_cross_asset_scenario(run_id, scenario, options)
-            elif is_forecasting:
-                # Run forecasting scenario
-                await self._run_forecasting_scenario(run_id, scenario, options)
-            else:
-                # Run Monte Carlo scenario
-                await self._run_monte_carlo_scenario(run_id, scenario, options, mc_engine)
-
-            # Update run status to completed
-            await store.update_run_state(run_id, {
-                "status": "succeeded",
-                "completed_at": datetime.utcnow(),
-                "duration_seconds": (datetime.utcnow() - run_data["created_at"]).total_seconds(),
-            })
-
+            # Send to Kafka request topic
+            from ..scenarios.kafka_client import create_kafka_producer
+            producer = create_kafka_producer("localhost:9092")  # Use config
+            await producer.start()
+            await producer.send_and_wait(
+                "aurum.scenario.request.v1",
+                key=run_id.encode(),
+                value=json.dumps(request_data).encode()
+            )
+            await producer.stop()
         except Exception as exc:
-            # Update run status to failed
+            # If queueing fails, update run status to failed
             await store.update_run_state(run_id, {
                 "status": "failed",
-                "error_message": str(exc),
+                "error_message": f"Failed to queue scenario: {str(exc)}",
                 "completed_at": datetime.utcnow(),
             })
             raise

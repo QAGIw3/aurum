@@ -135,23 +135,38 @@ class OpenAPIGenerator:
             }
         ]
 
-        # Add security schemes
+        # Add comprehensive security schemes
         openapi_schema["components"]["securitySchemes"] = {
             "APIKeyAuth": {
                 "type": "apiKey",
                 "in": "header",
-                "name": "X-API-Key"
+                "name": "X-API-Key",
+                "description": "API key for authentication"
             },
             "BearerAuth": {
                 "type": "http",
                 "scheme": "bearer",
-                "bearerFormat": "JWT"
+                "bearerFormat": "JWT",
+                "description": "JWT token authentication"
             },
             "BasicAuth": {
                 "type": "http",
-                "scheme": "basic"
+                "scheme": "basic",
+                "description": "Basic authentication for admin endpoints"
+            },
+            "OIDCAuth": {
+                "type": "openIdConnect",
+                "openIdConnectUrl": "https://auth.aurum-platform.com/.well-known/openid_configuration",
+                "description": "OpenID Connect authentication"
             }
         }
+
+        # Add global security requirements
+        openapi_schema["security"] = [
+            {"APIKeyAuth": []},
+            {"BearerAuth": []},
+            {"OIDCAuth": []}
+        ]
 
         # Add comprehensive error response schemas (RFC 7807)
         openapi_schema["components"]["schemas"] = openapi_schema.get("components", {}).get("schemas", {})
@@ -440,6 +455,41 @@ class OpenAPIGenerator:
 
                 responses = operation["responses"]
 
+                # Add headers to successful responses (200, 201)
+                for status_code in ["200", "201"]:
+                    if status_code in responses:
+                        response_def = responses[status_code]
+                        if "headers" not in response_def:
+                            response_def["headers"] = {}
+                        
+                        # Add rate limiting headers to successful responses
+                        headers = response_def["headers"]
+                        if "X-RateLimit-Limit" not in headers:
+                            headers["X-RateLimit-Limit"] = {
+                                "description": "Maximum number of requests allowed per time window",
+                                "schema": {"type": "integer"}
+                            }
+                        if "X-RateLimit-Remaining" not in headers:
+                            headers["X-RateLimit-Remaining"] = {
+                                "description": "Number of requests remaining in the current time window",
+                                "schema": {"type": "integer"}
+                            }
+                        if "X-RateLimit-Reset" not in headers:
+                            headers["X-RateLimit-Reset"] = {
+                                "description": "Time when the rate limit resets (Unix timestamp)",
+                                "schema": {"type": "integer"}
+                            }
+                        if "X-Request-Id" not in headers:
+                            headers["X-Request-Id"] = {
+                                "description": "Request identifier for debugging and tracing",
+                                "schema": {"type": "string"}
+                            }
+                        if "X-API-Version" not in headers:
+                            headers["X-API-Version"] = {
+                                "description": "API version",
+                                "schema": {"type": "string"}
+                            }
+
                 # Add common error responses
                 responses["400"] = {
                     "description": "Bad Request",
@@ -488,6 +538,32 @@ class OpenAPIGenerator:
                         "application/json": {
                             "schema": {"$ref": "#/components/schemas/ErrorEnvelope"}
                         }
+                    },
+                    "headers": {
+                        "X-RateLimit-Limit": {
+                            "description": "Maximum number of requests allowed per time window",
+                            "schema": {"type": "integer"}
+                        },
+                        "X-RateLimit-Remaining": {
+                            "description": "Number of requests remaining in the current time window",
+                            "schema": {"type": "integer"}
+                        },
+                        "X-RateLimit-Reset": {
+                            "description": "Time when the rate limit resets (Unix timestamp)",
+                            "schema": {"type": "integer"}
+                        },
+                        "Retry-After": {
+                            "description": "Number of seconds to wait before retrying",
+                            "schema": {"type": "integer"}
+                        },
+                        "X-Request-Id": {
+                            "description": "Request identifier for debugging and tracing",
+                            "schema": {"type": "string"}
+                        },
+                        "X-API-Version": {
+                            "description": "API version",
+                            "schema": {"type": "string"}
+                        }
                     }
                 }
 
@@ -500,7 +576,89 @@ class OpenAPIGenerator:
                     }
                 }
 
+        self._ensure_examples(openapi_schema)
         return openapi_schema
+
+    def _ensure_examples(self, schema: Dict[str, Any]) -> None:
+        """Ensure request and response bodies contain example payloads."""
+
+        components = schema.get("components", {})
+        for path_item in schema.get("paths", {}).values():
+            for method, operation in path_item.items():
+                if method.upper() not in {"GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS"}:
+                    continue
+
+                request_body = operation.get("requestBody")
+                if request_body:
+                    for media_type, content in request_body.get("content", {}).items():
+                        if media_type.startswith("application/") and "example" not in content and "examples" not in content:
+                            example = self._build_example(content.get("schema", {}), components)
+                            if example is not None:
+                                content["example"] = example
+
+                for response in operation.get("responses", {}).values():
+                    for media_type, content in response.get("content", {}).items():
+                        if media_type.startswith("application/") and "example" not in content and "examples" not in content:
+                            example = self._build_example(content.get("schema", {}), components)
+                            if example is not None:
+                                content["example"] = example
+
+    def _build_example(self, schema: Dict[str, Any], components: Dict[str, Any]) -> Any:
+        """Recursively generate an example payload from a schema definition."""
+
+        if not schema:
+            return None
+
+        if "$ref" in schema:
+            ref = schema["$ref"].split("/")[-1]
+            ref_schema = components.get("schemas", {}).get(ref, {})
+            return self._build_example(ref_schema, components)
+
+        if "allOf" in schema:
+            combined: Dict[str, Any] = {}
+            for item in schema.get("allOf", []):
+                value = self._build_example(item, components)
+                if isinstance(value, dict):
+                    combined.update(value)
+            return combined or None
+
+        schema_type = schema.get("type")
+        if schema_type == "object":
+            properties = schema.get("properties", {})
+            example: Dict[str, Any] = {}
+            for key, prop_schema in properties.items():
+                example[key] = self._build_example(prop_schema, components)
+            if not example and schema.get("additionalProperties"):
+                example = {
+                    "key": self._build_example(schema["additionalProperties"], components)
+                }
+            return example
+        if schema_type == "array":
+            items = schema.get("items", {})
+            item_example = self._build_example(items, components)
+            return [item_example] if item_example is not None else []
+        if schema_type == "string":
+            if "enum" in schema:
+                return schema["enum"][0]
+            fmt = schema.get("format")
+            if fmt == "date-time":
+                return datetime.utcnow().isoformat() + "Z"
+            if fmt == "date":
+                return datetime.utcnow().date().isoformat()
+            if fmt == "uuid":
+                return "00000000-0000-0000-0000-000000000000"
+            if fmt == "email":
+                return "user@example.com"
+            return schema.get("example", "string")
+        if schema_type == "integer":
+            return schema.get("example", 0)
+        if schema_type == "number":
+            return schema.get("example", 0.0)
+        if schema_type == "boolean":
+            return schema.get("example", True)
+        if "enum" in schema:
+            return schema["enum"][0]
+        return schema.get("example")
 
     def save_schema(self, output_path: str, format_type: DocumentationFormat = DocumentationFormat.JSON) -> None:
         """Save the OpenAPI schema to a file."""
@@ -517,6 +675,36 @@ class OpenAPIGenerator:
                 yaml.dump(schema, f, default_flow_style=False, sort_keys=False)
         else:
             raise ValueError(f"Unsupported format: {format_type}")
+
+    def generate_redoc_html(self, output_path: str) -> None:
+        """Generate Redoc HTML documentation."""
+        schema = self.generate_schema()
+
+        redoc_html = f'''<!DOCTYPE html>
+<html>
+<head>
+    <title>{schema.get('info', {}).get('title', 'API Documentation')}</title>
+    <meta charset="utf-8"/>
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <link href="https://fonts.googleapis.com/css?family=Montserrat:300,400,700|Roboto:300,400,700" rel="stylesheet">
+
+    <style>
+        body {{
+            margin: 0;
+            padding: 0;
+        }}
+    </style>
+</head>
+<body>
+    <redoc spec-url="{Path(output_path).parent / 'openapi.json'}"></redoc>
+    <script src="https://cdn.jsdelivr.net/npm/redoc@next/bundles/redoc.standalone.js"> </script>
+</body>
+</html>'''
+
+        output_file = Path(output_path)
+        output_file.parent.mkdir(parents=True, exist_ok=True)
+        with open(output_file, 'w') as f:
+            f.write(redoc_html)
 
     def generate_markdown_docs(self, output_path: str) -> None:
         """Generate comprehensive Markdown documentation with examples."""
@@ -1585,6 +1773,9 @@ def generate_documentation(
         elif format_type == DocumentationFormat.MARKDOWN:
             generator.generate_markdown_docs(str(output_path / "api_docs.md"))
 
+    # Generate Redoc HTML documentation
+    generator.generate_redoc_html(str(output_path / "redoc.html"))
+
     # Generate SDKs
     sdk_generator = SDKGenerator(schema)
     sdk_output_path = output_path / "sdks"
@@ -1592,9 +1783,9 @@ def generate_documentation(
 
     for language in languages:
         if language == SDKLanguage.PYTHON:
-            sdk_generator.generate_python_sdk(sdk_output_path)
+            sdk_generator.generate_python_sdk(str(sdk_output_path))
         elif language == SDKLanguage.TYPESCRIPT:
-            sdk_generator.generate_typescript_sdk(sdk_output_path)
+            sdk_generator.generate_typescript_sdk(str(sdk_output_path))
 
     # Validate documentation
     validator = DocumentationValidator(schema)
@@ -1625,4 +1816,5 @@ def generate_documentation(
     print(f"Documentation generated in {output_path}")
     print(f"Formats: {', '.join([f.value for f in formats])}")
     print(f"SDKs: {', '.join([l.value for l in languages])}")
+    print(f"Redoc: {output_path / 'redoc.html'}")
     print(f"Validation issues: {len(issues)}")

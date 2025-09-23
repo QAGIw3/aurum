@@ -437,6 +437,15 @@ if PROMETHEUS_AVAILABLE:  # pragma: no branch - simplify instrumentation when av
         "Trino pool saturation status (0=healthy, 1=warning, 2=critical)",
         ["status"],
     )
+    TRINO_REQUEST_QUEUE_DEPTH = Gauge(
+        "aurum_trino_request_queue_depth",
+        "Depth of the Trino client request queue",
+    )
+    TRINO_QUEUE_REJECTIONS = Counter(
+        "aurum_trino_queue_rejections_total",
+        "Total Trino queue rejections due to backpressure",
+        ["reason"],
+    )
 
     # Cache Performance Metrics (Enhanced)
     CACHE_HIT_RATIO = Gauge(
@@ -1577,6 +1586,26 @@ async def set_trino_pool_saturation_status(status: str) -> None:
         pass
 
 
+async def set_trino_request_queue_depth(depth: int) -> None:
+    """Set Trino request queue depth."""
+    if TRINO_REQUEST_QUEUE_DEPTH is None:
+        return
+    try:
+        TRINO_REQUEST_QUEUE_DEPTH.set(depth)
+    except Exception:
+        pass
+
+
+async def increment_trino_queue_rejections(reason: str) -> None:
+    """Increment Trino queue rejection counter."""
+    if TRINO_QUEUE_REJECTIONS is None:
+        return
+    try:
+        TRINO_QUEUE_REJECTIONS.labels(reason=reason).inc()
+    except Exception:
+        pass
+
+
 __all__ = [
     "MetricPoint",
     "MetricType",
@@ -1759,6 +1788,8 @@ __all__ = [
     "TRINO_CIRCUIT_BREAKER_STATE",
     "TRINO_POOL_SATURATION",
     "TRINO_POOL_SATURATION_STATUS",
+    "TRINO_REQUEST_QUEUE_DEPTH",
+    "TRINO_QUEUE_REJECTIONS",
     "increment_trino_queries",
     "observe_trino_query_duration",
     "set_trino_connection_pool_active",
@@ -1768,4 +1799,6 @@ __all__ = [
     "set_trino_circuit_breaker_state",
     "set_trino_pool_saturation",
     "set_trino_pool_saturation_status",
+    "set_trino_request_queue_depth",
+    "increment_trino_queue_rejections",
 ]

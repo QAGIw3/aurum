@@ -17,6 +17,12 @@ import requests
 from requests import Response, Session
 from requests.exceptions import RequestException, Timeout
 
+try:
+    from ..compat.requests import requests as resilient_requests, ResilienceConfig
+except ImportError:
+    resilient_requests = None  # type: ignore[assignment]
+    ResilienceConfig = None  # type: ignore[assignment]
+
 try:  # Optional instrumentation
     from prometheus_client import Counter, Histogram  # type: ignore
 except Exception:  # pragma: no cover - metrics optional
@@ -118,6 +124,7 @@ class CollectorConfig:
     rate_limit: Optional[RateLimitConfig] = None
     http_timeout: float = 30.0
     kafka_config: Mapping[str, Any] = field(default_factory=dict)
+    resilience_config: Optional[ResilienceConfig] = None
 
 
 @dataclass
@@ -339,12 +346,20 @@ class ExternalCollector:
         self.config = config
         self.context = context or CollectorContext()
         self.metrics = metrics or CollectorMetrics(config.provider)
-        self.session = session or requests.Session()
-        self.session.headers.update(config.default_headers)
-        self.session.headers.setdefault(
-            "User-Agent",
-            f"aurum-collector/{config.provider}",
-        )
+
+        # Use resilient session if resilience config is provided, otherwise fallback to regular session
+        if config.resilience_config and resilient_requests:
+            self.resilient_session = resilient_requests.get_session(config.provider)
+            self.session = None  # Will use resilient session's internal session
+        else:
+            self.resilient_session = None
+            self.session = session or requests.Session()
+            self.session.headers.update(config.default_headers)
+            self.session.headers.setdefault(
+                "User-Agent",
+                f"aurum-collector/{config.provider}",
+            )
+
         self._sleep = sleep
         self._monotonic = monotonic
         self.retry_config = config.retry
@@ -360,6 +375,42 @@ class ExternalCollector:
         if self._closed:
             raise RuntimeError("collector is closed")
 
+        # Use resilient session if available (it handles retries/circuit breaker internally)
+        if self.resilient_session:
+            waited = self._apply_rate_limit()
+            if waited and self.metrics:
+                self.metrics.record_rate_limit_wait(waited)
+
+            try:
+                start = self._monotonic()
+                response = self.resilient_session.request(
+                    method=request.method.upper(),
+                    url=request.resolve_url(self.config.base_url),
+                    params=request.params,
+                    headers=self._merge_headers(request.headers),
+                    json=request.json,
+                    data=request.data,
+                )
+                duration = self._monotonic() - start
+
+                http_response = self._to_http_response(response)
+                self.metrics.record_http_request(
+                    request.method.upper(),
+                    http_response.status_code,
+                    duration,
+                )
+
+                return http_response
+
+            except Exception as exc:
+                # Resilient session already handled retries and circuit breaker
+                raise HttpRequestError(
+                    f"HTTP request failed: {exc}",
+                    request=request,
+                    original=exc,
+                ) from exc
+
+        # Fallback to legacy retry logic for backward compatibility
         attempt = 0
         last_exc: Optional[Exception] = None
         while attempt < self.retry_config.max_attempts:
@@ -475,7 +526,10 @@ class ExternalCollector:
             if self.producer:
                 self.producer.flush()
         finally:
-            self.session.close()
+            if self.resilient_session:
+                self.resilient_session.close()
+            elif self.session:
+                self.session.close()
             self._closed = True
 
     def __enter__(self) -> "ExternalCollector":

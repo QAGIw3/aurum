@@ -24,6 +24,7 @@ from fastapi import Depends, FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.responses import JSONResponse
+from starlette.datastructures import MutableHeaders
 
 from aurum.core import AurumSettings
 from aurum.telemetry import configure_telemetry
@@ -31,6 +32,8 @@ from aurum.telemetry import configure_telemetry
 from aurum.performance.warehouse import WarehouseMaintenanceCoordinator
 from .cache.cache import AsyncCache, CacheBackend, CacheManager
 from .cache.golden_query_cache import initialize_golden_query_cache
+from .features.feature_flags import initialize_feature_flags
+from .idempotency import initialize_idempotency_manager, IdempotencyConfig
 
 from . import routes as _routes
 
@@ -131,14 +134,41 @@ async def create_app(settings: AurumSettings | None = None) -> FastAPI:
     if settings.api.metrics.enabled and METRICS_MIDDLEWARE is not None:
         app.middleware("http")(METRICS_MIDDLEWARE)
 
+    # Add response headers middleware for RFC 7807 compliance
+    async def response_headers_middleware(request: Request, call_next):
+        """Ensure all responses include X-Request-Id and X-API-Version headers."""
+        from ..telemetry.context import get_request_id
+
+        request_id = get_request_id()
+        response = await call_next(request)
+
+        # Add required headers if not already present
+        headers = MutableHeaders(response.headers)
+        if not headers.get("X-Request-Id"):
+            headers["X-Request-Id"] = request_id
+        if not headers.get("X-API-Version"):
+            headers["X-API-Version"] = settings.api.version
+
+        return response
+
+    app.middleware("http")(response_headers_middleware)
+
     # Optional external audit middleware (logs to audit/compliance/security channels)
-    import os as _os
-    if _os.getenv("AURUM_API_EXTERNAL_AUDIT_ENABLED", "0").lower() in {"1", "true", "yes"}:
+    if settings.api.audit.enabled:
         try:  # pragma: no cover - optional logging
-            from .external_audit_logging import audit_middleware as _audit_mw
+            from .external_audit_logging import (
+                audit_middleware as _audit_mw,
+                configure_external_audit_logger as _configure_audit,
+            )
+            _configure_audit(settings.api.audit)
             app.middleware("http")(_audit_mw)
         except Exception:
-            pass
+            logging.getLogger(__name__).warning(
+                "Failed to initialise external audit middleware",
+                exc_info=True,
+            )
+
+    import os as _os
 
     def _observability_admin_guard(
         principal=Depends(_routes._get_principal),
@@ -188,7 +218,7 @@ async def create_app(settings: AurumSettings | None = None) -> FastAPI:
                 response.headers["X-API-Deprecation-Info"] = "v1 API is deprecated. Please migrate to v2."
                 response.headers["X-API-Sunset"] = "2025-12-31"
                 response.headers["X-API-Removed"] = "v3.0.0"
-                response.headers["X-API-Migration-Guide"] = "https://github.com/supernova-corp/aurum/blob/main/docs/migration-guide.md"
+                response.headers["X-API-Migration-Guide"] = "docs/migration-guide.md"
                 return response
             return await call_next(request)
 
@@ -250,7 +280,7 @@ async def create_app(settings: AurumSettings | None = None) -> FastAPI:
             deprecated_in="2024-01-01",
             sunset_on="2025-12-31",
             removed_in="3.0.0",
-            migration_guide="https://github.com/supernova-corp/aurum/blob/main/docs/migration-guide.md",
+            migration_guide="docs/migration-guide.md",
             alternative_endpoints=["/v2/scenarios", "/v2/curves"]
         )
     )
@@ -302,6 +332,21 @@ async def create_app(settings: AurumSettings | None = None) -> FastAPI:
             app.state.cache_service = cache_service
             app.state.cache_manager = CacheManager(cache_service)
             await initialize_golden_query_cache(cache_service)
+
+            # Initialize idempotency manager
+            idempotency_config = IdempotencyConfig()
+            app.state.idempotency_manager = await initialize_idempotency_manager(
+                idempotency_config, cache_service
+            )
+
+            # Initialize feature flags
+            from ..scenarios.storage import get_scenario_store
+            scenario_store = get_scenario_store()
+            await initialize_feature_flags(
+                redis_url=getattr(settings.redis, 'url', None),
+                cache_manager=app.state.cache_manager,
+                scenario_store=scenario_store
+            )
         except Exception as exc:
             cache_service = None
             app.state.cache_service = None
@@ -365,6 +410,16 @@ async def create_app(settings: AurumSettings | None = None) -> FastAPI:
         runtime_config_router,
         dependencies=[Depends(_observability_admin_guard)],
     )
+
+    # Feature management router
+    try:  # pragma: no cover - optional import
+        from .features.feature_management import router as feature_management_router
+        app.include_router(
+            feature_management_router,
+            dependencies=[Depends(_observability_admin_guard)],
+        )
+    except Exception:
+        pass
 
     return app
 

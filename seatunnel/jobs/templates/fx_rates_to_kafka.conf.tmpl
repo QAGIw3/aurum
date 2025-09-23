@@ -1,0 +1,110 @@
+# FX Rates → Kafka (Avro)
+#
+# Required environment variables:
+#   FX_BASE_CURRENCY         - Base currency (e.g., EUR)
+#   FX_SYMBOLS               - Comma-separated quote currencies (e.g., USD,GBP,JPY)
+#   FX_TOPIC                 - Kafka topic (default aurum.ref.fx.rate.v1)
+#   AURUM_KAFKA_BOOTSTRAP_SERVERS - Kafka brokers
+#   AURUM_SCHEMA_REGISTRY_URL     - Schema Registry endpoint
+#
+# Optional environment variables:
+#   FX_API_URL               - FX API URL (default: https://api.exchangerate.host/latest)
+#   FX_API_SOURCE            - Source parameter for API (default: ecb)
+#   FX_KEY_SERIALIZER        - Kafka key serializer (string/json/avro, default: string)
+#   FX_KEY_FORMAT            - Kafka key format (json/avro, default: json)
+#   FX_SUBJECT               - Schema Registry subject (default <topic>-value)
+#   FX_SCHEMA                - Avro schema JSON populated by run_job.sh
+#   FX_DLQ_TOPIC             - Dead letter queue topic
+#   FX_METADATA_SOURCE       - Source identifier for metadata (default: exchangerate.host)
+#
+# Fetches daily FX reference rates from ECB via exchangerate.host API.
+
+env {
+  job.mode = "BATCH"
+  parallelism = 1
+}
+
+source {
+  Http {
+    url = "${FX_API_URL:-https://api.exchangerate.host/latest}"
+    method = "GET"
+    params {
+      base = "${FX_BASE_CURRENCY}"
+      symbols = "${FX_SYMBOLS}"
+      source = "${FX_API_SOURCE:-ecb}"
+    }
+    connection_timeout_ms = 15000
+    retry = 3
+    retry_backoff_multiplier_ms = 2000
+    retry_backoff_max_ms = 60000
+    format = "json"
+    rate_limit_sleep_ms = 1000
+    schema = {
+      fields {
+        date = string
+        rates = map<string, double>
+        base = string
+        success = boolean
+      }
+    }
+    jsonpath = "$$"
+    result_table_name = "fx_raw"
+  }
+}
+
+transform {
+  Sql {
+    source_table_name = "fx_raw"
+    result_table_name = "fx_normalized"
+    query = """
+      WITH rates AS (
+        SELECT
+          base,
+          date,
+          rate,
+          quote_currency,
+          '${FX_METADATA_SOURCE:-exchangerate.host}' as metadata_source
+        FROM fx_raw
+        CROSS JOIN UNNEST(rates) AS t(quote_currency, rate)
+        WHERE success = true
+      )
+      SELECT
+        base AS base_currency,
+        quote_currency,
+        CAST(rate AS DOUBLE) AS rate,
+        'ECB' AS source,
+        CAST(DATEDIFF(TO_DATE(date), TO_DATE('1970-01-01')) AS INT) AS as_of_date,
+        CAST(UNIX_TIMESTAMP() * 1000000 AS BIGINT) AS ingest_ts,
+        MAP('api', metadata_source) AS metadata
+      FROM rates
+      WHERE rate IS NOT NULL AND rate > 0
+    """
+  }
+}
+
+sink {
+  Kafka {
+    plugin_input = "fx_normalized"
+    bootstrap.servers = "${AURUM_KAFKA_BOOTSTRAP_SERVERS}"
+    topic = "${FX_TOPIC}"
+    semantic = "AT_LEAST_ONCE"
+    format = "avro"
+    avro {
+      use.schema.registry = true
+      schema.registry.url = "${AURUM_SCHEMA_REGISTRY_URL}"
+      value.schema.subject = "${FX_SUBJECT}"
+      value.schema = """${FX_SCHEMA}"""
+      # Key configuration for message routing and partitioning
+      key.serializer = "${FX_KEY_SERIALIZER:-string}"
+      key.format = "${FX_KEY_FORMAT:-json}"
+    }
+    producer {
+      acks = "all"
+      enable.idempotence = true
+      max.in.flight.requests.per.connection = 5
+      linger.ms = 500
+      batch.size = 32768
+      retries = 5
+    }
+  }
+}

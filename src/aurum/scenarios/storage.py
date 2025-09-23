@@ -658,6 +658,129 @@ class ScenarioStore:
 
         return await self.get_feature_flag(feature_name) or {}
 
+    async def list_feature_flags(
+        self,
+        tenant_id: Optional[str] = None
+    ) -> List[Dict[str, Any]]:
+        """List all feature flags for a tenant."""
+        current_tenant_id = get_tenant_id() if tenant_id is None else tenant_id
+
+        async with self.get_connection() as conn:
+            rows = await conn.fetch("""
+                SELECT feature_name, enabled, configuration, created_at, updated_at
+                FROM scenario_feature_flag
+                WHERE tenant_id = $1
+                ORDER BY feature_name
+            """, current_tenant_id)
+
+        return [{
+            "feature_name": row["feature_name"],
+            "enabled": row["enabled"],
+            "configuration": json.loads(row["configuration"]),
+            "created_at": row["created_at"],
+            "updated_at": row["updated_at"],
+        } for row in rows]
+
+    # === RATE LIMIT OVERRIDE OPERATIONS ===
+
+    async def get_rate_limit_override(
+        self,
+        path_prefix: str,
+        tenant_id: Optional[str] = None
+    ) -> Optional[Dict[str, Any]]:
+        """Get rate limit override for a path prefix."""
+        current_tenant_id = get_tenant_id() if tenant_id is None else tenant_id
+
+        async with self.get_connection() as conn:
+            row = await conn.fetchrow("""
+                SELECT path_prefix, requests_per_second, burst_capacity, daily_cap, enabled, created_at, updated_at
+                FROM rate_limit_override
+                WHERE tenant_id = $1 AND path_prefix = $2
+            """, current_tenant_id, path_prefix)
+
+        if not row:
+            return None
+
+        return {
+            "path_prefix": row["path_prefix"],
+            "requests_per_second": row["requests_per_second"],
+            "burst_capacity": row["burst_capacity"],
+            "daily_cap": row["daily_cap"],
+            "enabled": row["enabled"],
+            "created_at": row["created_at"],
+            "updated_at": row["updated_at"],
+        }
+
+    async def set_rate_limit_override(
+        self,
+        path_prefix: str,
+        requests_per_second: int,
+        burst_capacity: int,
+        daily_cap: int = 100000,
+        enabled: bool = True,
+        tenant_id: Optional[str] = None
+    ) -> Dict[str, Any]:
+        """Set rate limit override for a path prefix."""
+        current_tenant_id = get_tenant_id() if tenant_id is None else tenant_id
+
+        async with self.get_connection() as conn:
+            await conn.execute("""
+                INSERT INTO rate_limit_override (
+                    tenant_id, path_prefix, requests_per_second, burst_capacity, daily_cap, enabled, updated_at
+                ) VALUES ($1, $2, $3, $4, $5, $6, $7)
+                ON CONFLICT (tenant_id, path_prefix) DO UPDATE
+                SET requests_per_second = EXCLUDED.requests_per_second,
+                    burst_capacity = EXCLUDED.burst_capacity,
+                    daily_cap = EXCLUDED.daily_cap,
+                    enabled = EXCLUDED.enabled,
+                    updated_at = EXCLUDED.updated_at
+            """,
+                current_tenant_id,
+                path_prefix,
+                requests_per_second,
+                burst_capacity,
+                daily_cap,
+                enabled,
+                datetime.utcnow(),
+            )
+
+        log_structured(
+            "info",
+            "rate_limit_override_updated",
+            tenant_id=current_tenant_id,
+            path_prefix=path_prefix,
+            requests_per_second=requests_per_second,
+            burst_capacity=burst_capacity,
+            enabled=enabled,
+        )
+
+        return await self.get_rate_limit_override(path_prefix, current_tenant_id) or {}
+
+    async def list_rate_limit_overrides(
+        self,
+        tenant_id: Optional[str] = None
+    ) -> List[Dict[str, Any]]:
+        """List all rate limit overrides for a tenant."""
+        current_tenant_id = get_tenant_id() if tenant_id is None else tenant_id
+
+        async with self.get_connection() as conn:
+            rows = await conn.fetch("""
+                SELECT path_prefix, requests_per_second, burst_capacity, daily_cap, enabled, created_at, updated_at
+                FROM rate_limit_override
+                WHERE tenant_id = $1
+                ORDER BY path_prefix
+            """, current_tenant_id)
+
+        return [{
+            "path_prefix": row["path_prefix"],
+            "requests_per_second": row["requests_per_second"],
+            "burst_capacity": row["burst_capacity"],
+            "daily_cap": row["daily_cap"],
+            "enabled": row["enabled"],
+            "created_at": row["created_at"],
+            "updated_at": row["updated_at"],
+        } for row in rows]
+
     # === SCHEMA V2 OPERATIONS ===
 
     # Curve Family Operations

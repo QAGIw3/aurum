@@ -22,11 +22,15 @@ data:
   SCHEMA_REGISTRY_URL: http://schema-registry.aurum-dev.svc.cluster.local:8081
   SCHEMA_REGISTRY_EXTERNAL_URL: http://schema-registry.aurum.localtest.me
   TRINO_JAVA_TOOL_OPTIONS: -Xms512M -Xmx2G
-  AIRFLOW__CORE__EXECUTOR: LocalExecutor
+  AIRFLOW__CORE__EXECUTOR: CeleryExecutor
   AIRFLOW__CORE__LOAD_EXAMPLES: "False"
   AIRFLOW__CORE__DAGS_ARE_PAUSED_AT_CREATION: "True"
   AIRFLOW__WEBSERVER__DEFAULT_UI_TIMEZONE: UTC
   AIRFLOW_HOME: /opt/airflow
+  AIRFLOW_ADMIN_USER: admin
+  AIRFLOW_ADMIN_PASSWORD: admin
+  AIRFLOW_ADMIN_EMAIL: admin@example.com
+  AIRFLOW_SECRET_KEY: airflow-secret-key-change-in-production
   # API defaults
   AURUM_API_TRINO_HOST: trino.aurum-dev.svc.cluster.local
   AURUM_API_TRINO_PORT: "8080"

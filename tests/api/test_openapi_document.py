@@ -88,3 +88,35 @@ def test_openapi_includes_fastapi_routes():
     }
     # allowlist explicitly documented differences while enforcing no new gaps
     assert missing.issubset(allowed_missing), f"OpenAPI spec missing operations: {sorted(missing)}"
+
+
+def test_openapi_has_examples_for_requests_and_responses():
+    spec = _load_spec()
+    for path_item in spec.get("paths", {}).values():
+        if not isinstance(path_item, dict):
+            continue
+        for operation in path_item.values():
+            if not isinstance(operation, dict):
+                continue
+            request_body = operation.get("requestBody")
+            if isinstance(request_body, dict):
+                for media_type, media in request_body.get("content", {}).items():
+                    if not isinstance(media, dict):
+                        continue
+                    if not str(media_type).startswith("application/"):
+                        continue
+                    if any(key in media for key in ("example", "examples")):
+                        continue
+                    assert "example" in media or "examples" in media, "request body missing example"
+
+            for response in operation.get("responses", {}).values():
+                if not isinstance(response, dict):
+                    continue
+                for media_type, media in response.get("content", {}).items():
+                    if not isinstance(media, dict):
+                        continue
+                    if not str(media_type).startswith("application/"):
+                        continue
+                    if any(key in media for key in ("example", "examples")):
+                        continue
+                    assert "example" in media or "examples" in media, "response body missing example"

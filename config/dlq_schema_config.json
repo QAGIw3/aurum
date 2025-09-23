@@ -1,0 +1,138 @@
+{
+  "dead_letter_queue": {
+    "topic": "aurum.ingestion.dlq.v1",
+    "schema": {
+      "type": "record",
+      "name": "IngestionDeadLetter",
+      "namespace": "aurum.ingestion",
+      "doc": "Dead letter queue record for failed ingestion attempts.",
+      "fields": [
+        {
+          "name": "original_topic",
+          "type": "string",
+          "doc": "Original Kafka topic where the message was published"
+        },
+        {
+          "name": "original_key",
+          "type": ["null", "string"],
+          "default": null,
+          "doc": "Original message key"
+        },
+        {
+          "name": "original_value",
+          "type": ["null", "bytes"],
+          "default": null,
+          "doc": "Original message value (may be truncated for large messages)"
+        },
+        {
+          "name": "error_type",
+          "type": "string",
+          "doc": "Type of error that caused the failure"
+        },
+        {
+          "name": "error_message",
+          "type": "string",
+          "doc": "Detailed error message"
+        },
+        {
+          "name": "error_timestamp",
+          "type": {"type": "long", "logicalType": "timestamp-micros"},
+          "doc": "Timestamp when the error occurred"
+        },
+        {
+          "name": "processing_attempt",
+          "type": "int",
+          "default": 1,
+          "doc": "Which attempt this was (1-based)"
+        },
+        {
+          "name": "max_retries",
+          "type": "int",
+          "doc": "Maximum number of retry attempts configured"
+        },
+        {
+          "name": "retry_count",
+          "type": "int",
+          "default": 0,
+          "doc": "Number of times this message has been retried"
+        },
+        {
+          "name": "source_component",
+          "type": "string",
+          "doc": "Component that generated the error (seatunnel, worker, etc.)"
+        },
+        {
+          "name": "dataset",
+          "type": ["null", "string"],
+          "default": null,
+          "doc": "Dataset identifier if applicable"
+        },
+        {
+          "name": "tenant_id",
+          "type": ["null", "string"],
+          "default": null,
+          "doc": "Tenant identifier if applicable"
+        },
+        {
+          "name": "processing_metadata",
+          "type": ["null", {"type": "map", "values": "string"}],
+          "default": null,
+          "doc": "Additional metadata from processing"
+        },
+        {
+          "name": "remediation_suggestion",
+          "type": ["null", "string"],
+          "default": null,
+          "doc": "Suggested action to resolve the issue"
+        },
+        {
+          "name": "dlq_timestamp",
+          "type": {"type": "long", "logicalType": "timestamp-micros"},
+          "doc": "Timestamp when the message was sent to DLQ"
+        }
+      ]
+    },
+    "retention_hours": 168,
+    "cleanup_policy": "delete"
+  },
+  "provider_specific_dlq": {
+    "noaa": {
+      "topic": "aurum.noaa.ingestion.dlq.v1",
+      "additional_fields": ["station_id", "element", "observation_date"]
+    },
+    "iso": {
+      "topic": "aurum.iso.ingestion.dlq.v1",
+      "additional_fields": ["iso_code", "location_id", "market"]
+    },
+    "fred": {
+      "topic": "aurum.fred.ingestion.dlq.v1",
+      "additional_fields": ["series_id", "frequency"]
+    },
+    "eia": {
+      "topic": "aurum.eia.ingestion.dlq.v1",
+      "additional_fields": ["series_id", "units"]
+    }
+  },
+  "alerting": {
+    "enabled": true,
+    "thresholds": {
+      "messages_per_hour": 10,
+      "consecutive_failures": 5,
+      "error_rate_percent": 5.0
+    },
+    "webhook_urls": [
+      "https://hooks.slack.com/workflows/..."
+    ],
+    "email_recipients": [
+      "data-quality@example.com",
+      "platform-ops@example.com"
+    ]
+  },
+  "processing": {
+    "batch_size": 100,
+    "max_concurrent_processors": 3,
+    "retry_backoff_seconds": 30,
+    "max_retry_delay_seconds": 300,
+    "enable_auto_remediation": true
+  }
+}

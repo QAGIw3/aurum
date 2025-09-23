@@ -24,6 +24,8 @@ import json
 import subprocess
 import sys
 import tempfile
+import os
+import shlex
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Iterable, Mapping
@@ -73,6 +75,15 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     return parser.parse_args(argv)
 
 
+def _airflow_cli_tokens() -> list[str]:
+    """Return the Airflow CLI command as tokens (supports AIRFLOW_CLI wrapper)."""
+    raw = os.getenv("AIRFLOW_CLI", "airflow")
+    try:
+        return shlex.split(raw)
+    except Exception:
+        return [raw]
+
+
 def fetch_existing_variables(*, require: bool) -> dict[str, str] | None:
     """Export existing Airflow variables via the CLI."""
 
@@ -81,14 +92,14 @@ def fetch_existing_variables(*, require: bool) -> dict[str, str] | None:
     tmp_file.close()
     try:
         subprocess.run(
-            ["airflow", "variables", "export", str(tmp_path)],
+            [*_airflow_cli_tokens(), "variables", "export", str(tmp_path)],
             check=True,
             capture_output=True,
             text=True,
         )
     except FileNotFoundError as exc:
         if require:
-            raise RuntimeError("Airflow CLI not found on PATH") from exc
+            raise RuntimeError("Airflow CLI not found. Install 'airflow' or set AIRFLOW_CLI to a wrapper (e.g., 'docker compose -f <file> exec -T <svc> airflow').") from exc
         return None
     except subprocess.CalledProcessError as exc:
         if require:
@@ -135,23 +146,27 @@ def build_actions(
 
 
 def print_actions(actions: Iterable[Action]) -> None:
+    cli = _airflow_cli_tokens()
     for action in actions:
         if action.op == "set":
             value = action.value if action.value is not None else ""
-            print(f"airflow variables set {action.key} {value}")
+            cmd = [*cli, "variables", "set", action.key, value]
+            print(" ".join(cmd))
         elif action.op == "delete":
-            print(f"airflow variables delete {action.key}")
+            cmd = [*cli, "variables", "delete", action.key]
+            print(" ".join(cmd))
         else:  # pragma: no cover - defensive
             print(f"# unknown action for {action.key}")
 
 
 def execute_actions(actions: Iterable[Action]) -> None:
+    cli = _airflow_cli_tokens()
     for action in actions:
         if action.op == "set":
             value = action.value if action.value is not None else ""
-            cmd = ["airflow", "variables", "set", action.key, value]
+            cmd = [*cli, "variables", "set", action.key, value]
         elif action.op == "delete":
-            cmd = ["airflow", "variables", "delete", action.key]
+            cmd = [*cli, "variables", "delete", action.key]
         else:  # pragma: no cover - defensive
             continue
         print(" ".join(cmd))

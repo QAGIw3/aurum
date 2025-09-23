@@ -11,7 +11,155 @@ import json
 
 from .maintenance import _load_catalog_table, _run_with_metrics, _as_count
 
+# External table-specific configurations
+EXTERNAL_TABLE_CONFIGS = {
+    "external.*": {
+        "compaction_target_file_size_mb": 256,  # Larger files for external tables
+        "retention_snapshots": 7,              # Keep 7 days of snapshots
+        "retention_files_days": 30,            # Keep files for 30 days
+        "zorder_columns": ["timestamp", "iso_code"],  # Z-order by time and source
+        "partition_evolution_threshold": 1000, # Evolve partitions after 1000 files
+        "optimize_rewrite_delete_file_threshold": 10,  # Optimize after 10 delete files
+        "expire_snapshots_older_than_days": 7,
+        "remove_orphan_files_older_than_days": 30
+    }
+}
+
+# Provider-specific configurations
+PROVIDER_CONFIGS = {
+    "caiso": {
+        "compaction_target_file_size_mb": 512,
+        "zorder_columns": ["timestamp", "location_id", "market"],
+        "retention_snapshots": 14  # Keep longer for CAISO
+    },
+    "pjm": {
+        "compaction_target_file_size_mb": 512,
+        "zorder_columns": ["timestamp", "pnode_id", "market_type"],
+        "retention_snapshots": 14
+    },
+    "miso": {
+        "compaction_target_file_size_mb": 256,
+        "zorder_columns": ["timestamp", "node", "market"],
+        "retention_snapshots": 7
+    }
+}
+
 LOGGER = logging.getLogger(__name__)
+
+
+def get_external_table_config(table_name: str) -> Dict[str, Any]:
+    """Get maintenance configuration for external tables."""
+    # Extract provider from table name (e.g., "external.caiso_lmp" -> "caiso")
+    provider = None
+    if table_name.startswith("external."):
+        parts = table_name.split(".")
+        if len(parts) >= 2:
+            provider = parts[1].split("_")[0]  # Get provider from first part
+
+    # Start with default external table config
+    config = EXTERNAL_TABLE_CONFIGS["external.*"].copy()
+
+    # Override with provider-specific config if available
+    if provider and provider in PROVIDER_CONFIGS:
+        provider_config = PROVIDER_CONFIGS[provider]
+        config.update(provider_config)
+
+    return config
+
+
+def analyze_external_table_health(table_name: str) -> Dict[str, Any]:
+    """Analyze external table health with provider-specific optimizations."""
+    config = get_external_table_config(table_name)
+
+    def _operation() -> Dict[str, Any]:
+        table = _load_catalog_table(table_name)
+
+        # Get table metadata
+        metadata = getattr(table, 'metadata', {})
+        schema = getattr(table, 'schema', {})
+        partition_spec = getattr(table, 'spec', {})
+
+        # Analyze snapshot health
+        snapshots = list(getattr(table, 'snapshots', lambda: [])())
+        current_snapshot = getattr(table, 'current_snapshot', None)
+
+        # Analyze file health
+        manifests = list(getattr(table, 'manifests', lambda: [])())
+        data_files = []
+        for manifest in manifests:
+            manifest_files = getattr(manifest, 'entries', [])
+            for entry in manifest_files:
+                if hasattr(entry, 'file_path'):
+                    data_files.append(entry)
+
+        # Calculate metrics
+        total_snapshots = len(snapshots)
+        stale_snapshots = sum(1 for s in snapshots if s != current_snapshot)
+
+        # Analyze partition health
+        partition_columns = []
+        if partition_spec:
+            partition_columns = [field.get('name', '') for field in partition_spec.get('fields', [])]
+
+        # Analyze file sizes
+        file_sizes = [getattr(f, 'file_size_in_bytes', 0) for f in data_files]
+        avg_file_size_mb = sum(file_sizes) / max(len(file_sizes), 1) / (1024 * 1024)
+        small_files_count = sum(1 for size in file_sizes if size < config['compaction_target_file_size_mb'] * 1024 * 1024)
+
+        # Provider-specific analysis
+        provider_insights = {}
+        if table_name.startswith("external."):
+            provider_insights["is_external_table"] = True
+            provider_insights["provider"] = table_name.split(".")[1].split("_")[0] if "." in table_name else "unknown"
+        else:
+            provider_insights["is_external_table"] = False
+
+        # Generate recommendations based on config
+        recommendations = []
+
+        # Snapshot retention recommendations
+        if stale_snapshots > config['retention_snapshots']:
+            recommendations.append({
+                'action': 'expire_snapshots',
+                'reasoning': f'Table has {stale_snapshots} stale snapshots, config allows {config["retention_snapshots"]}',
+                'priority': 'high' if stale_snapshots > config['retention_snapshots'] * 2 else 'medium'
+            })
+
+        # File compaction recommendations
+        if small_files_count > len(data_files) * 0.2:  # More than 20% small files
+            recommendations.append({
+                'action': 'compact_files',
+                'reasoning': f'Table has {small_files_count}/{len(data_files)} small files (<{config["compaction_target_file_size_mb"]}MB)',
+                'priority': 'high' if small_files_count > len(data_files) * 0.4 else 'medium'
+            })
+
+        # Z-order optimization recommendations
+        if len(data_files) > 500 and config.get('zorder_columns'):
+            recommendations.append({
+                'action': 'optimize_zorder',
+                'reasoning': f'Large external table with {len(data_files)} files, Z-order recommended on {config["zorder_columns"]}',
+                'priority': 'medium'
+            })
+
+        return {
+            'table_name': table_name,
+            'analysis_timestamp': datetime.now(timezone.utc).isoformat(),
+            'provider_insights': provider_insights,
+            'config': config,
+            'metrics': {
+                'total_snapshots': total_snapshots,
+                'stale_snapshots': stale_snapshots,
+                'data_files_count': len(data_files),
+                'manifest_files_count': len(manifests),
+                'avg_file_size_mb': avg_file_size_mb,
+                'small_files_count': small_files_count,
+                'partition_columns': partition_columns
+            },
+            'recommendations': recommendations,
+            'health_score': _calculate_health_score(total_snapshots, stale_snapshots, small_files_count, len(data_files))
+        }
+
+    return _run_with_metrics("analyze_external_table_health", table_name, False, _operation)
 
 
 @dataclass

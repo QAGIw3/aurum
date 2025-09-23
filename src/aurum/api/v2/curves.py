@@ -15,13 +15,16 @@ Notes:
 from __future__ import annotations
 
 import time
-from typing import List, Optional
+from typing import AsyncIterator, Dict, List, Optional
 from uuid import uuid4
 
 from fastapi import APIRouter, HTTPException, Query, Request, Response
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
-from ..http import respond_with_etag, deprecation_warning_headers
+from ..database import get_trino_client
+from ..http import respond_with_etag, deprecation_warning_headers, csv_response
+from ..query import build_curve_export_query
 from ..curves import get_curve_service
 from ...telemetry.context import get_request_id
 
@@ -49,6 +52,7 @@ class CurveListResponse(BaseModel):
 async def get_curves_v2(
     request: Request,
     response: Response,
+    tenant_id: str = Query(..., description="Tenant ID"),
     cursor: Optional[str] = Query(None, description="Cursor for pagination"),
     limit: int = Query(10, ge=1, le=100, description="Maximum number of items to return"),
     name_filter: Optional[str] = Query(None, description="Filter by curve name"),
@@ -155,11 +159,70 @@ async def get_curves_v2(
         )
 
 
+@router.get(
+    "/curves/export",
+    response_class=StreamingResponse,
+    summary="Stream curve observations as CSV",
+)
+async def export_curves_v2(
+    request: Request,
+    asof: Optional[str] = Query(None, description="Filter by as-of date (YYYY-MM-DD)"),
+    iso: Optional[str] = None,
+    market: Optional[str] = None,
+    location: Optional[str] = None,
+    product: Optional[str] = None,
+    block: Optional[str] = None,
+    chunk_size: int = Query(1000, ge=100, le=5000, description="Number of rows per streamed chunk"),
+) -> StreamingResponse:
+    """Stream curve observations backed by Trino."""
+
+    query = build_curve_export_query(
+        asof=asof,
+        iso=iso,
+        market=market,
+        location=location,
+        product=product,
+        block=block,
+    )
+
+    client = get_trino_client()
+
+    async def row_stream() -> AsyncIterator[Dict[str, Any]]:
+        async for chunk in client.stream_query(query, chunk_size=chunk_size):
+            for row in chunk:
+                yield row
+
+    request_id = get_request_id() or str(uuid4())
+    fieldnames = [
+        "curve_key",
+        "tenor_label",
+        "tenor_type",
+        "contract_month",
+        "asof_date",
+        "mid",
+        "bid",
+        "ask",
+        "price_type",
+    ]
+    filename = f"curve_export_{asof or 'all'}.csv"
+
+    response = csv_response(
+        request_id,
+        row_stream(),
+        fieldnames,
+        filename,
+        cache_control="public, max-age=300",
+    )
+    response.headers["Content-Disposition"] = f"attachment; filename=\"{filename}\""
+    return response
+
+
 @router.get("/curves/{curve_id}/diff", response_model=CurveResponse)
 async def get_curve_diff_v2(
     request: Request,
     response: Response,
     curve_id: str,
+    tenant_id: str = Query(..., description="Tenant ID"),
     from_timestamp: str = Query(..., description="From timestamp"),
     to_timestamp: str = Query(..., description="To timestamp"),
 ) -> CurveResponse:

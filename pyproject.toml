@@ -11,6 +11,9 @@ authors = [
 ]
 readme = "README.md"
 requires-python = ">=3.9"
+
+[project.scripts]
+aurum-feature = "aurum.cli.feature:main"
 dependencies = [
     # Core FastAPI and async dependencies
     "fastapi==0.115.6",
@@ -182,8 +185,10 @@ ingest = [
     "xlrd==2.0.2",
     "openpyxl==3.1.5",
     "kafka-python==2.2.15",
+    "aiokafka==0.10.0",
     "jsonschema==4.25.1",
     "openapi-spec-validator==0.7.2",
+    "spectral==0.1.0",
     "trino==0.336.0",
     "dbt-core==1.8.8",
     "dbt-duckdb==1.9.6",

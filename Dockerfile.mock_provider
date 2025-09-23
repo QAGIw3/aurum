@@ -1,0 +1,18 @@
+FROM python:3.11-slim
+
+WORKDIR /app
+
+# Install dependencies
+RUN pip install --no-cache-dir fastapi uvicorn requests
+
+# Copy mock provider code
+COPY scripts/sandbox_mock_provider.py /app/mock_provider.py
+
+# Copy test data
+COPY testdata /app/testdata
+
+# Expose port
+EXPOSE 8001 8002 8003
+
+# Run the mock provider
+CMD ["python", "/app/mock_provider.py"]

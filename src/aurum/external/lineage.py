@@ -10,6 +10,18 @@ from typing import Any, Dict, List, Optional
 from aurum.external.collect import ExternalCollector
 from aurum.external.collect.base import CollectorContext
 
+try:
+    from aurum.kafka.optimized_producer import OptimizedKafkaProducer
+except ImportError:
+    OptimizedKafkaProducer = None
+
+try:
+    import uuid
+    import json
+except ImportError:
+    uuid = None
+    json = None
+
 logger = logging.getLogger(__name__)
 
 # Kafka topics for lineage data
@@ -17,7 +29,7 @@ LINEAGE_TOPIC = "aurum.data.lineage.v1"
 
 
 class LineageEvent:
-    """Data lineage event for tracking data flow."""
+    """Enhanced data lineage event supporting OpenLineage format with dataset facets."""
 
     def __init__(
         self,
@@ -26,7 +38,10 @@ class LineageEvent:
         target_dataset: str,
         transformation: Optional[Dict[str, Any]] = None,
         metadata: Optional[Dict[str, Any]] = None,
-        timestamp: Optional[datetime] = None
+        timestamp: Optional[datetime] = None,
+        run_id: Optional[str] = None,
+        job_name: Optional[str] = None,
+        namespace: str = "aurum"
     ):
         self.event_type = event_type  # "create", "update", "transform", "validate"
         self.source_dataset = source_dataset
@@ -34,6 +49,70 @@ class LineageEvent:
         self.transformation = transformation or {}
         self.metadata = metadata or {}
         self.timestamp = timestamp or datetime.now()
+        self.run_id = run_id or str(uuid.uuid4()) if uuid else f"run-{self.timestamp.timestamp()}"
+        self.job_name = job_name or f"{event_type}_job"
+        self.namespace = namespace
+
+    def to_openlineage_dict(self) -> Dict[str, Any]:
+        """Convert lineage event to OpenLineage format."""
+        # Create dataset facets
+        source_dataset_facet = {
+            "schema": {"fields": [{"name": "source", "type": "string"}]},
+            "dataSource": {"name": self.source_dataset, "uri": self.source_dataset}
+        }
+
+        target_dataset_facet = {
+            "schema": {"fields": [{"name": "target", "type": "string"}]},
+            "dataSource": {"name": self.target_dataset, "uri": self.target_dataset}
+        }
+
+        # Create job facets
+        job_facet = {
+            "jobDetails": {
+                "name": self.job_name,
+                "namespace": self.namespace,
+                "description": f"External data {self.event_type} operation"
+            }
+        }
+
+        # Create run facets
+        run_facet = {
+            "runDetails": {
+                "runId": self.run_id,
+                "facets": {
+                    "transformation": {
+                        "operation": self.event_type,
+                        "details": self.transformation
+                    }
+                }
+            }
+        }
+
+        return {
+            "eventType": self.event_type.upper(),
+            "eventTime": self.timestamp.isoformat(),
+            "run": {
+                "runId": self.run_id,
+                "facets": run_facet
+            },
+            "job": {
+                "namespace": self.namespace,
+                "name": self.job_name,
+                "facets": job_facet
+            },
+            "inputs": [{
+                "namespace": self.namespace,
+                "name": self.source_dataset,
+                "facets": source_dataset_facet
+            }],
+            "outputs": [{
+                "namespace": self.namespace,
+                "name": self.target_dataset,
+                "facets": target_dataset_facet
+            }],
+            "producer": "aurum-external-lineage",
+            "schemaURL": "https://openlineage.io/spec/1-0-5/OpenLineage.json"
+        }
 
     def to_dict(self) -> Dict[str, Any]:
         """Convert lineage event to dictionary."""
@@ -43,20 +122,34 @@ class LineageEvent:
             "target_dataset": self.target_dataset,
             "transformation": self.transformation,
             "metadata": self.metadata,
-            "timestamp": self.timestamp.isoformat()
+            "timestamp": self.timestamp.isoformat(),
+            "run_id": self.run_id,
+            "job_name": self.job_name
         }
 
 
 class LineageTracker:
-    """Tracker for data lineage events."""
+    """Enhanced tracker for data lineage events supporting OpenLineage format."""
 
-    def __init__(self, collector: Optional[ExternalCollector] = None):
+    def __init__(
+        self,
+        collector: Optional[ExternalCollector] = None,
+        openlineage_topic: str = "openlineage.events"
+    ):
         self.collector = collector
+        self.openlineage_topic = openlineage_topic
         self._events: List[LineageEvent] = []
         self._context = CollectorContext()
+        self._openlineage_producer = None
+
+        if OptimizedKafkaProducer:
+            self._openlineage_producer = OptimizedKafkaProducer(
+                bootstrap_servers="kafka:9092",  # Would be configurable
+                topic=openlineage_topic
+            )
 
     async def track_event(self, event: LineageEvent) -> None:
-        """Track a lineage event."""
+        """Track a lineage event with OpenLineage emission."""
         self._events.append(event)
 
         # Log the event
@@ -73,6 +166,9 @@ class LineageTracker:
         # Emit to lineage topic if collector is available
         if self.collector:
             await self._emit_lineage_event(event)
+
+        # Emit OpenLineage event
+        await self._emit_openlineage_event(event)
 
     async def _emit_lineage_event(self, event: LineageEvent) -> None:
         """Emit lineage event to Kafka."""
@@ -98,6 +194,31 @@ class LineageTracker:
                 "Failed to emit lineage event",
                 extra={
                     "event_type": event.event_type,
+                    "error": str(e)
+                }
+            )
+
+    async def _emit_openlineage_event(self, event: LineageEvent) -> None:
+        """Emit OpenLineage event to Kafka."""
+        if not self._openlineage_producer:
+            return
+
+        try:
+            openlineage_event = event.to_openlineage_dict()
+            await self._openlineage_producer.produce_message(openlineage_event)
+            logger.debug(
+                "OpenLineage event emitted",
+                extra={
+                    "event_type": event.event_type,
+                    "run_id": event.run_id
+                }
+            )
+        except Exception as e:
+            logger.error(
+                "Failed to emit OpenLineage event",
+                extra={
+                    "event_type": event.event_type,
+                    "run_id": event.run_id,
                     "error": str(e)
                 }
             )
@@ -187,7 +308,8 @@ class LineageManager:
             metadata={
                 "source_url": source_url,
                 "ingestion_timestamp": datetime.now().isoformat()
-            }
+            },
+            job_name=f"{provider}_ingestion_job"
         )
 
         await tracker.track_event(event)
@@ -218,7 +340,8 @@ class LineageManager:
             metadata={
                 "transformation_timestamp": datetime.now().isoformat(),
                 "provider": provider
-            }
+            },
+            job_name=f"{provider}_transformation_job"
         )
 
         await tracker.track_event(event)
@@ -246,7 +369,8 @@ class LineageManager:
                 "validation_timestamp": datetime.now().isoformat(),
                 "provider": provider,
                 "validation_details": validation_details or {}
-            }
+            },
+            job_name=f"{provider}_validation_job"
         )
 
         await tracker.track_event(event)

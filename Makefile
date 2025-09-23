@@ -1,5 +1,5 @@
 
-.PHONY: help build test deploy lint clean docker-build docker-push k8s-deploy db-migrate security-scan trino-harness trino-harness-metrics reconcile-kafka-lake iceberg-maintenance \
+.PHONY: help build test deploy lint clean docker-build docker-push k8s-deploy db-migrate security-scan security-pip-audit security-bandit trino-harness trino-harness-metrics reconcile-kafka-lake iceberg-maintenance ci-trino-smoke cache-warm \
 	kind-create kind-apply kind-bootstrap kind-up kind-down kind-apply-ui kind-delete-ui \
 	kafka-bootstrap kafka-register-schemas kafka-set-compat kafka-apply-topics kafka-apply-topics-kind kafka-apply-topics-dry-run \
 	compose-bootstrap perf-k6 \
@@ -131,10 +131,13 @@ db-rollback: ## Rollback database migrations
 	alembic downgrade -$$num
 
 # Security
-security-scan: ## Run security scans
-	bandit -r src/ -f json -o bandit-report.json
-	safety check --json | jq '.[] | .vulnerability' > safety-report.json
-	@echo "Security scan reports generated"
+security-pip-audit: ## Run pip-audit against project dependencies
+	python3 scripts/ci/run_security_scans.py --tool pip-audit
+
+security-bandit: ## Run bandit static analysis
+	python3 scripts/ci/run_security_scans.py --tool bandit
+
+security-scan: security-pip-audit security-bandit ## Run combined security scans
 
 # Performance
 trino-harness: ## Run Trino query harness with default plan
@@ -178,6 +181,34 @@ ci-test: ## Run full test suite locally
 	$(MAKE) lint
 	$(MAKE) test
 	$(MAKE) security-scan
+	$(MAKE) docs-openapi-check-drift
+
+ci-trino-smoke: ## Run Trino query smoke tests with latency thresholds
+	python scripts/ci/run_trino_smoke.py \
+		--server $(TRINO_SERVER) \
+		--user $(TRINO_USER) \
+		--catalog $(TRINO_CATALOG) \
+		--schema $(TRINO_SCHEMA) \
+		--plan config/trino_query_harness.json
+
+cache-warm: ## Run cache warmer locally using configured modes
+	python - <<'PY'
+import json
+import subprocess
+import sys
+from pathlib import Path
+
+config = json.loads(Path("config/trino_query_harness.json").read_text(encoding="utf-8"))
+cache_cfg = config.get("cache_warming", {})
+modes = cache_cfg.get("modes", ["warm", "refresh"])
+host = cache_cfg.get("host", "$(TRINO_SERVER_HOST)")
+port = cache_cfg.get("port", $(TRINO_SERVER_PORT))
+script = cache_cfg.get("script", "scripts/trino/cache_warmer.py")
+
+for mode in modes:
+    cmd = [sys.executable, script, "--host", str(host), "--port", str(port), "--mode", mode, "--verbose"]
+    subprocess.check_call(cmd)
+PY
 
 ci-deploy: ## Run deployment pipeline locally
 	$(MAKE) build
@@ -192,7 +223,12 @@ airflow-print-vars: ## Preview commands to sync Airflow Variables (dry run)
 	python3 scripts/airflow/set_variables.py --apply --dry-run --file config/airflow_variables.json
 
 airflow-apply-vars: ## Apply Airflow Variables from config/airflow_variables.json
-	python3 scripts/airflow/set_variables.py --apply --file config/airflow_variables.json
+	@if command -v airflow >/dev/null 2>&1 || [ -n "$$AIRFLOW_CLI" ]; then \
+		python3 scripts/airflow/set_variables.py --apply --file config/airflow_variables.json; \
+	else \
+		echo "Airflow CLI not found. Showing commands (dry-run). Set AIRFLOW_CLI to a wrapper (e.g., 'docker compose -f <file> exec -T <svc> airflow') or install 'airflow'."; \
+		python3 scripts/airflow/set_variables.py --apply --dry-run --file config/airflow_variables.json; \
+	fi
 
 # Environment setup
 env-setup: ## Set up development environment
@@ -225,17 +261,28 @@ docs-openapi: ## Generate OpenAPI spec from FastAPI routes
 	python3 scripts/docs/generate_openapi.py
 
 docs-openapi-validate: ## Validate OpenAPI spec (requires openapi-spec-validator)
-	python3 -c "import sys, yaml; from openapi_spec_validator import validate_spec; s=yaml.safe_load(open('docs/api/openapi-spec.yaml')); validate_spec(s); print('✅ OpenAPI spec valid')"
+	python3 -c "import sys, yaml; from openapi_spec_validator import validate_spec; s=yaml.safe_load(open('docs/api/openapi.yaml')); validate_spec(s); print('✅ OpenAPI spec valid')"
+
+docs-openapi-spectral: ## Validate OpenAPI spec with Spectral (requires spectral)
+	@echo "Running Spectral validation on OpenAPI spec..."
+	@spectral lint docs/api/openapi.yaml --config .spectral.yaml || (echo "❌ Spectral validation failed" && exit 1)
+	@echo "✅ Spectral validation passed"
 
 docs-openapi-check-drift: ## Fail if OpenAPI spec differs from generated output
+	python3 scripts/docs/generate_openapi.py --check-drift
+
+docs-redoc: ## Generate Redoc HTML documentation
 	python3 scripts/docs/generate_openapi.py
-	@git diff --quiet -- docs/api/openapi-spec.yaml docs/api/openapi-spec.json || (echo '\n❌ OpenAPI spec drift detected. Run: make docs-openapi && commit changes.' && exit 1)
-	@cd docs && python -m http.server 8000
 
 docs-build: ## Build documentation
 	@echo "Building documentation..."
 	@python scripts/docs/build_docs.py 2>/dev/null || python3 scripts/docs/build_docs.py
 	@echo "Run 'make docs-serve' to preview static docs"
+
+test-api-oas: ## Run API tests using OpenAPI spec with Schemathesis
+	@echo "Running API tests with Schemathesis..."
+	@schemathesis run --config .schemathesis.yaml --report-json=reports/schemathesis-results.json --report-junit=reports/junit.xml
+	@echo "✅ API testing completed"
 
 noaa-register-schemas: ## Register NOAA Avro schemas for configured topics
 	@echo "Registering NOAA schemas to Schema Registry..."

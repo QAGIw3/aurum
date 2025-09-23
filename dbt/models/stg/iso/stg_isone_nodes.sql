@@ -8,17 +8,12 @@
 }}
 
 select
-    iso_code,
+    iso as iso_code,
     location_id,
     location_name,
     location_type,
     zone,
     hub,
     timezone
-from {{ source('external', 'isone_nodes') }}
-
--- Only latest version of each node
-qualify row_number() over (
-    partition by iso_code, location_id
-    order by ingest_ts desc
-) = 1
+from {{ ref('iso_nodes') }}
+where iso = 'ISO-NE'

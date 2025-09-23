@@ -45,6 +45,12 @@ def _load_incremental_config() -> dict[str, Any]:
 
 def _create_incremental_task(dag: DAG, provider: str) -> BashOperator:
     """Create a task to run incremental updates for a provider."""
+    config = _load_incremental_config()
+    provider_config = next((p for p in config.get("providers", []) if p["name"] == provider.lower()), {})
+    datasets = provider_config.get("datasets", [])
+    
+    datasets_str = " ".join(f"'{d}'" for d in datasets) if datasets else ""
+    
     return BashOperator(
         task_id=f"incremental_{provider}",
         bash_command=f"""
@@ -60,7 +66,8 @@ def _create_incremental_task(dag: DAG, provider: str) -> BashOperator:
             await run_incremental_update(
                 provider='{provider}',
                 vault_addr='{VAULT_ADDR}',
-                vault_token='{VAULT_TOKEN}'
+                vault_token='{VAULT_TOKEN}',
+                datasets=[{datasets_str}]
             )
 
         asyncio.run(main())

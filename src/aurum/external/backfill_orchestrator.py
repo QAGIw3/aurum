@@ -122,6 +122,9 @@ class BackfillOrchestrator:
         # Start background processing
         self._processing_task: Optional[asyncio.Task] = None
         self._is_running = False
+        self._is_paused = False
+        self._pause_event = asyncio.Event()
+        self._pause_event.set()  # Start unpaused
 
     async def start(self):
         """Start the backfill orchestrator."""
@@ -149,6 +152,35 @@ class BackfillOrchestrator:
                 task.cancel()
 
         logger.info("Backfill orchestrator stopped")
+
+    async def pause(self):
+        """Pause the backfill orchestrator."""
+        if not self._is_running:
+            return
+
+        self._is_paused = True
+        self._pause_event.clear()
+
+        # Wait for all active chunk tasks to complete
+        active_tasks = [task for task in self.chunk_tasks.values() if not task.done()]
+        if active_tasks:
+            logger.info(f"Waiting for {len(active_tasks)} active chunks to complete before pausing")
+            await asyncio.gather(*active_tasks, return_exceptions=True)
+
+        logger.info("Backfill orchestrator paused")
+
+    async def resume(self):
+        """Resume the backfill orchestrator."""
+        if not self._is_running:
+            return
+
+        self._is_paused = False
+        self._pause_event.set()
+        logger.info("Backfill orchestrator resumed")
+
+    async def is_paused(self) -> bool:
+        """Check if orchestrator is paused."""
+        return self._is_paused
 
     async def create_backfill_job(
         self,
@@ -260,6 +292,9 @@ class BackfillOrchestrator:
         """Background task to process the job queue."""
         while self._is_running:
             try:
+                # Wait for pause to be lifted
+                await self._pause_event.wait()
+
                 # Wait for a job from the queue
                 priority, job_id, job = await self.job_queue.get()
 
@@ -285,6 +320,9 @@ class BackfillOrchestrator:
             # Process chunks concurrently
             chunk_tasks = []
             semaphore = asyncio.Semaphore(job.max_concurrent_chunks)
+
+            # Wait for pause to be lifted before starting chunks
+            await self._pause_event.wait()
 
             for chunk in job.chunks.values():
                 task = asyncio.create_task(self._process_chunk_with_semaphore(chunk, semaphore))
@@ -381,14 +419,57 @@ class BackfillOrchestrator:
 
     async def _should_skip_chunk(self, chunk: BackfillChunk) -> bool:
         """Check if a chunk should be skipped (already processed)."""
-        # Check watermark store
+        # Create unique key for this chunk
+        chunk_key = f"backfill_{chunk.chunk_id}"
+
+        # Check if chunk was already processed successfully
         existing_watermark = await self.watermark_store.get_watermark(
-            f"{chunk.iso_code}.{chunk.data_type}",
-            chunk.start_date,
-            chunk.end_date
+            source=f"{chunk.iso_code}.{chunk.data_type}",
+            table=chunk_key
         )
 
-        return existing_watermark is not None
+        if existing_watermark:
+            logger.info(f"Chunk {chunk.chunk_id} already processed, skipping")
+            return True
+
+        # Check if chunk is currently being processed (prevent duplicate processing)
+        processing_key = f"processing_{chunk.chunk_id}"
+        processing_watermark = await self.watermark_store.get_watermark(
+            source=f"{chunk.iso_code}.{chunk.data_type}",
+            table=processing_key
+        )
+
+        if processing_watermark:
+            # Check if it's been processing for too long (>1 hour)
+            try:
+                processing_time = datetime.now(timezone.utc) - datetime.fromisoformat(processing_watermark)
+                if processing_time.total_seconds() > 3600:  # 1 hour
+                    logger.warning(f"Chunk {chunk.chunk_id} appears stuck, will retry")
+                    await self.watermark_store.set_watermark(
+                        source=f"{chunk.iso_code}.{chunk.data_type}",
+                        table=processing_key,
+                        value=None  # Clear stuck processing flag
+                    )
+                    return False
+                else:
+                    logger.info(f"Chunk {chunk.chunk_id} is currently being processed")
+                    return True
+            except (ValueError, TypeError):
+                # Invalid timestamp, clear the processing flag
+                await self.watermark_store.set_watermark(
+                    source=f"{chunk.iso_code}.{chunk.data_type}",
+                    table=processing_key,
+                    value=None
+                )
+
+        # Mark chunk as being processed
+        await self.watermark_store.set_watermark(
+            source=f"{chunk.iso_code}.{chunk.data_type}",
+            table=processing_key,
+            value=datetime.now(timezone.utc).isoformat()
+        )
+
+        return False
 
     async def _get_watermark(self, chunk: BackfillChunk) -> Optional[str]:
         """Get watermark before processing."""
@@ -399,15 +480,30 @@ class BackfillOrchestrator:
         )
 
     async def _update_watermark(self, chunk: BackfillChunk) -> Optional[str]:
-        """Update watermark after processing."""
-        watermark = f"processed_{chunk.records_processed}_{chunk.completed_at.isoformat()}"
+        """Update watermark after processing and mark chunk as completed."""
+        # Mark chunk as completed
+        chunk_key = f"backfill_{chunk.chunk_id}"
         await self.watermark_store.set_watermark(
-            f"{chunk.iso_code}.{chunk.data_type}",
-            chunk.start_date,
-            chunk.end_date,
-            watermark
+            source=f"{chunk.iso_code}.{chunk.data_type}",
+            table=chunk_key,
+            value=datetime.now(timezone.utc).isoformat(),
+            metadata={
+                "records_processed": chunk.records_processed,
+                "bytes_processed": chunk.bytes_processed,
+                "processing_time_seconds": chunk.processing_time_seconds,
+                "status": "completed"
+            }
         )
-        return watermark
+
+        # Clear processing flag
+        processing_key = f"processing_{chunk.chunk_id}"
+        await self.watermark_store.set_watermark(
+            source=f"{chunk.iso_code}.{chunk.data_type}",
+            table=processing_key,
+            value=None
+        )
+
+        return chunk_key
 
     async def _execute_chunk(self, chunk: BackfillChunk) -> Dict[str, Any]:
         """Execute the actual chunk processing."""

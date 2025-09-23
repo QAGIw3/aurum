@@ -1,0 +1,49 @@
+{
+  "openlineage_url": "http://localhost:5000",
+  "namespace": "aurum",
+  "scenario_components": [
+    {
+      "name": "scenario_worker",
+      "enabled": true,
+      "tags": ["scenario", "worker", "processing"]
+    },
+    {
+      "name": "iceberg_writer",
+      "enabled": true,
+      "tags": ["iceberg", "storage", "output"]
+    }
+  ],
+  "data_sources": {
+    "scenario": {
+      "type": "postgres",
+      "table": "scenario"
+    },
+    "scenario_run": {
+      "type": "postgres",
+      "table": "scenario_run"
+    },
+    "scenario_output": {
+      "type": "iceberg",
+      "table": "scenario_output"
+    },
+    "market_data": {
+      "type": "iceberg",
+      "table": "curve_observation"
+    }
+  },
+  "kafka_topics": {
+    "requests": "aurum.scenario.request.v1",
+    "outputs": "aurum.scenario.output.v1",
+    "dlq": "aurum.scenario.request.dlq.v1"
+  },
+  "trino_integration": {
+    "enabled": true,
+    "set_lineage_tags": true,
+    "tags": ["scenario", "data_flow"]
+  },
+  "monitoring": {
+    "emit_metrics": true,
+    "metrics_topic": "aurum.openlineage.metrics",
+    "alert_on_failure": true
+  }
+}

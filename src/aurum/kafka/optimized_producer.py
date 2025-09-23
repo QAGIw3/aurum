@@ -15,7 +15,7 @@ from confluent_kafka.schema_registry.avro import AvroSerializer
 from confluent_kafka.serialization import StringSerializer, SerializationContext, MessageField
 
 from ..config import settings
-from ..monitoring.metrics import get_metrics_client
+from ..observability.metrics import get_metrics_client
 
 
 class OptimizedKafkaProducer:
@@ -54,36 +54,48 @@ class OptimizedKafkaProducer:
 
     def _init_producer(self, additional_config: Dict[str, Any]):
         """Initialize producer with optimized configuration."""
-        # Base configuration optimized for performance
+        # Base configuration optimized for performance and reliability
         base_config = {
             # Client configuration
             'bootstrap.servers': self.bootstrap_servers,
             'client.id': self.client_id,
 
-            # Reliability configuration
+            # Reliability configuration - enhanced idempotency
             'acks': 'all',  # Wait for all replicas
             'enable.idempotence': True,
             'max.in.flight.requests.per.connection': 5,
+            'transactional.id': False,  # Enable for transaction support if needed
 
-            # Batching and buffering optimization
-            'batch.size': 32768,  # 32KB batches
-            'linger.ms': 500,     # Wait 500ms for batching
-            'buffer.memory': 67108864,  # 64MB buffer
-            'compression.type': 'snappy',  # Fast compression
+            # Batching and buffering optimization - tuned for high throughput
+            'batch.size': 65536,  # 64KB batches for better compression
+            'linger.ms': 200,     # Reduced linger for lower latency
+            'buffer.memory': 134217728,  # 128MB buffer for high throughput
+            'compression.type': 'lz4',  # Fast compression for time series data
 
-            # Timeout configuration
-            'delivery.timeout.ms': 120000,    # 2 minutes
-            'request.timeout.ms': 30000,      # 30 seconds
-            'retry.backoff.ms': 100,          # 100ms backoff
-            'retry.backoff.max.ms': 10000,    # Max 10 seconds
+            # Timeout configuration with jittered retries
+            'delivery.timeout.ms': 60000,    # 1 minute delivery timeout
+            'request.timeout.ms': 15000,     # 15 seconds request timeout
+            'retry.backoff.ms': 50,          # Base backoff with jitter
+            'retry.backoff.max.ms': 5000,    # Max 5 seconds backoff
+
+            # Enhanced retry and reliability configuration
+            'retries': 10,  # More retries for reliability
+            'retry.backoff.jitter.ms': 100,  # Jitter to avoid thundering herd
 
             # Performance optimization
-            'send.buffer.bytes': 1048576,     # 1MB send buffer
-            'receive.buffer.bytes': 1048576,  # 1MB receive buffer
+            'send.buffer.bytes': 2097152,     # 2MB send buffer
+            'receive.buffer.bytes': 2097152,  # 2MB receive buffer
             'socket.keepalive.enable': True,
+            'socket.send.buffer.bytes': 1048576,
+            'socket.receive.buffer.bytes': 1048576,
 
-            # Monitoring
-            'statistics.interval.ms': 30000,  # Statistics every 30 seconds
+            # Connection optimization
+            'connections.max.idle.ms': 540000,  # 9 minutes idle timeout
+            'reconnect.backoff.ms': 100,        # Connection backoff
+            'reconnect.backoff.max.ms': 10000,  # Max connection backoff
+
+            # Monitoring and debugging
+            'statistics.interval.ms': 10000,  # Statistics every 10 seconds
             'log_level': 4,  # INFO level for debugging
 
             # Additional configuration from caller

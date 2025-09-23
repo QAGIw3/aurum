@@ -122,12 +122,20 @@ models:
           - not_null
       - name: location_name
         description: "Location name"
+        tests:
+          - not_null
       - name: location_type
         description: "Location type"
+        tests:
+          - not_null
       - name: zone
         description: "Zone"
       - name: hub
         description: "Hub"
+      - name: timezone
+        description: "Timezone"
+        tests:
+          - not_null
 
   - name: stg_isone_generators
     description: "ISO-NE Generator definitions staging"

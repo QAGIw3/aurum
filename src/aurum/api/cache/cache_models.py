@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Any, Dict, List, Optional
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 from .models import AurumBaseModel
 
@@ -26,6 +26,10 @@ class CacheAnalyticsData(AurumBaseModel):
 
     namespaces: List[NamespaceAnalytics] = Field(..., description="Per-namespace analytics")
     summary: Dict[str, Any] = Field(..., description="Summary statistics")
+    ttl_overrides: Dict[str, int] = Field(
+        default_factory=dict,
+        description="Per-query TTL overrides keyed by query hash",
+    )
 
 
 class CacheAnalyticsResponse(AurumBaseModel):
@@ -111,6 +115,39 @@ class CacheHealthResponse(AurumBaseModel):
 
     meta: Dict[str, Any] = Field(..., description="Response metadata")
     data: CacheHealthData = Field(..., description="Health data")
+
+
+class CachePurgeRequest(AurumBaseModel):
+    """Request payload for targeted cache invalidation."""
+
+    pattern: Optional[str] = Field(None, description="Named golden query pattern to invalidate")
+    query: Optional[str] = Field(None, description="Exact SQL query to invalidate from the cache")
+    tenant_id: Optional[str] = Field(None, description="Tenant scope for the invalidation")
+
+    @model_validator(mode="after")
+    def _ensure_target(cls, values: "CachePurgeRequest") -> "CachePurgeRequest":
+        if not values.pattern and not values.query:
+            raise ValueError("Provide either a pattern or query to purge")
+        return values
+
+
+class CacheTTLOverrideRequest(AurumBaseModel):
+    """Request payload for managing per-query TTL overrides."""
+
+    query: str = Field(..., description="Exact SQL query to override the TTL for")
+    ttl_seconds: Optional[int] = Field(
+        None,
+        ge=1,
+        le=604800,
+        description="TTL override in seconds (1 second to 7 days)",
+    )
+    clear: bool = Field(False, description="Remove the override instead of setting it")
+
+    @model_validator(mode="after")
+    def _validate_state(cls, values: "CacheTTLOverrideRequest") -> "CacheTTLOverrideRequest":
+        if not values.clear and values.ttl_seconds is None:
+            raise ValueError("ttl_seconds is required when clear is false")
+        return values
 
 
 # Legacy models for backward compatibility

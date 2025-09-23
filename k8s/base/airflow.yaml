@@ -11,6 +11,29 @@ spec:
         component: init
     spec:
       restartPolicy: OnFailure
+      initContainers:
+        - name: wait-for-postgres
+          image: postgres:15
+          command: ["/bin/sh", "-c"]
+          args:
+            - |
+              set -e
+              until PGPASSWORD="$POSTGRES_PASSWORD" pg_isready -h postgres -p 5432 -U "$POSTGRES_USER"; do
+                echo "Waiting for PostgreSQL..."
+                sleep 2
+              done
+              echo "PostgreSQL is ready!"
+          env:
+            - name: POSTGRES_USER
+              valueFrom:
+                secretKeyRef:
+                  name: aurum-secrets
+                  key: POSTGRES_USER
+            - name: POSTGRES_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: aurum-secrets
+                  key: POSTGRES_PASSWORD
       containers:
         - name: airflow-init
           image: apache/airflow:2.8.1
@@ -19,61 +42,61 @@ spec:
                 name: aurum-config
             - secretRef:
                 name: aurum-secrets
+          env:
+            - name: POSTGRES_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: aurum-secrets
+                  key: POSTGRES_PASSWORD
           command: ["/bin/bash", "-c"]
           args:
             - |
               set -e
+
+              # Wait for PostgreSQL to be ready
+              until PGPASSWORD="$POSTGRES_PASSWORD" pg_isready -h postgres -p 5432 -U "$POSTGRES_USER"; do
+                echo "Waiting for PostgreSQL..."
+                sleep 2
+              done
+
+              # Initialize Airflow database
               airflow db migrate
+
+              # Create default connections
               airflow connections create-default-connections
+
+              # Create admin user
               airflow users create \
                 --role Admin \
-                --username "${AIRFLOW_ADMIN_USER}" \
-                --password "${AIRFLOW_ADMIN_PASSWORD}" \
+                --username "${AIRFLOW_ADMIN_USER:-admin}" \
+                --password "${AIRFLOW_ADMIN_PASSWORD:-admin}" \
                 --firstname Aurum \
                 --lastname Admin \
-                --email "${AIRFLOW_ADMIN_EMAIL}" || true
+                --email "${AIRFLOW_ADMIN_EMAIL:-admin@example.com}" || true
+
+              # Create connection to PostgreSQL
+              airflow connections add 'postgres_default' \
+                --conn-uri "postgresql+psycopg2://aurum:aurum@postgres:5432/airflow"
+
+              echo "Airflow initialization completed successfully"
           volumeMounts:
             - name: dags
-              mountPath: /opt/airflow/dags
+              mountPath: /opt/airflow/@dags
             - name: logs
               mountPath: /opt/airflow/logs
-            - name: src
-              mountPath: /opt/airflow/src
-              subPath: src
-            - name: scripts
-              mountPath: /opt/airflow/scripts
-              subPath: scripts
-            - name: seatunnel
-              mountPath: /opt/airflow/seatunnel
-            - name: kafka
-              mountPath: /opt/airflow/scripts/kafka
-              subPath: kafka
-            - name: kafka
-              mountPath: /opt/airflow/kafka
-              subPath: kafka
+            - name: airflow-config
+              mountPath: /opt/airflow/airflow.cfg
+              subPath: airflow.cfg
       volumes:
         - name: dags
           hostPath:
-            path: /workspace/airflow/dags
+            path: /Users/mstudio/dev/aurum/airflow/dags
             type: DirectoryOrCreate
         - name: logs
           emptyDir: {}
-        - name: src
-          hostPath:
-            path: /workspace
-            type: DirectoryOrCreate
-        - name: scripts
-          hostPath:
-            path: /workspace
-            type: DirectoryOrCreate
-        - name: seatunnel
-          hostPath:
-            path: /workspace/seatunnel
-            type: DirectoryOrCreate
-        - name: kafka
-          hostPath:
-            path: /workspace
-            type: DirectoryOrCreate
+        - name: airflow-config
+          configMap:
+            name: airflow-config
 ---
 apiVersion: apps/v1
 kind: Deployment
@@ -96,6 +119,10 @@ spec:
         component: webserver
     spec:
       serviceAccountName: airflow
+      securityContext:
+        runAsUser: 50000
+        runAsGroup: 0
+        fsGroup: 0
       containers:
         - name: webserver
           image: apache/airflow:2.8.1
@@ -105,6 +132,11 @@ spec:
                 name: aurum-config
             - secretRef:
                 name: aurum-secrets
+          env:
+            - name: AIRFLOW__CELERY__RESULT_BACKEND
+              value: "db+postgresql://aurum:aurum@postgres:5432/airflow"
+            - name: AIRFLOW__DATABASE__SQL_ALCHEMY_CONN
+              value: "postgresql+psycopg2://aurum:aurum@postgres:5432/airflow"
           ports:
             - containerPort: 8080
           readinessProbe:
@@ -121,46 +153,22 @@ spec:
             periodSeconds: 60
           volumeMounts:
             - name: dags
-              mountPath: /opt/airflow/dags
+              mountPath: /opt/airflow/@dags
             - name: logs
               mountPath: /opt/airflow/logs
-            - name: src
-              mountPath: /opt/airflow/src
-              subPath: src
-            - name: scripts
-              mountPath: /opt/airflow/scripts
-              subPath: scripts
-            - name: seatunnel
-              mountPath: /opt/airflow/seatunnel
-            - name: kafka
-              mountPath: /opt/airflow/scripts/kafka
-              subPath: kafka
-            - name: kafka
-              mountPath: /opt/airflow/kafka
-              subPath: kafka
+            - name: airflow-config
+              mountPath: /opt/airflow/airflow.cfg
+              subPath: airflow.cfg
       volumes:
         - name: dags
           hostPath:
-            path: /workspace/airflow/dags
+            path: /Users/mstudio/dev/aurum/airflow/dags
             type: DirectoryOrCreate
         - name: logs
           emptyDir: {}
-        - name: src
-          hostPath:
-            path: /workspace
-            type: DirectoryOrCreate
-        - name: scripts
-          hostPath:
-            path: /workspace
-            type: DirectoryOrCreate
-        - name: seatunnel
-          hostPath:
-            path: /workspace/seatunnel
-            type: DirectoryOrCreate
-        - name: kafka
-          hostPath:
-            path: /workspace
-            type: DirectoryOrCreate
+        - name: airflow-config
+          configMap:
+            name: airflow-config
 ---
 apiVersion: apps/v1
 kind: Deployment
@@ -183,6 +191,10 @@ spec:
         component: scheduler
     spec:
       serviceAccountName: airflow
+      securityContext:
+        runAsUser: 50000
+        runAsGroup: 0
+        fsGroup: 0
       containers:
         - name: scheduler
           image: apache/airflow:2.8.1
@@ -192,6 +204,11 @@ spec:
                 name: aurum-config
             - secretRef:
                 name: aurum-secrets
+          env:
+            - name: AIRFLOW__CELERY__RESULT_BACKEND
+              value: "db+postgresql://aurum:aurum@postgres:5432/airflow"
+            - name: AIRFLOW__DATABASE__SQL_ALCHEMY_CONN
+              value: "postgresql+psycopg2://aurum:aurum@postgres:5432/airflow"
           readinessProbe:
             exec:
               command: ["/bin/bash", "-c", "airflow jobs check --job-type SchedulerJob --hostname $(hostname)"]
@@ -204,54 +221,150 @@ spec:
             periodSeconds: 120
           volumeMounts:
             - name: dags
-              mountPath: /opt/airflow/dags
+              mountPath: /opt/airflow/@dags
             - name: logs
               mountPath: /opt/airflow/logs
-            - name: src
-              mountPath: /opt/airflow/src
-              subPath: src
-            - name: scripts
-              mountPath: /opt/airflow/scripts
-              subPath: scripts
-            - name: seatunnel
-              mountPath: /opt/airflow/seatunnel
-            - name: kafka
-              mountPath: /opt/airflow/scripts/kafka
-              subPath: kafka
-            - name: kafka
-              mountPath: /opt/airflow/kafka
-              subPath: kafka
+            - name: airflow-config
+              mountPath: /opt/airflow/airflow.cfg
+              subPath: airflow.cfg
       volumes:
         - name: dags
           hostPath:
-            path: /workspace/airflow/dags
+            path: /Users/mstudio/dev/aurum/airflow/dags
             type: DirectoryOrCreate
         - name: logs
           emptyDir: {}
-        - name: src
+        - name: airflow-config
+          configMap:
+            name: airflow-config
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: airflow-config
+  namespace: aurum-dev
+data:
+  airflow.cfg: |
+    [core]
+    executor = CeleryExecutor
+    load_examples = False
+    dags_are_paused_at_creation = True
+    default_timezone = UTC
+    sql_alchemy_conn = postgresql+psycopg2://aurum:aurum@postgres:5432/airflow
+    parallel_processing = True
+    max_active_tasks = 16
+    max_active_runs = 8
+    dags_folder = /opt/airflow/@dags
+
+    [database]
+    sql_alchemy_conn = postgresql+psycopg2://aurum:aurum@postgres:5432/airflow
+
+    [webserver]
+    default_ui_timezone = UTC
+    web_server_host = 0.0.0.0
+    web_server_port = 8080
+    secret_key = $(AIRFLOW_SECRET_KEY)
+    rbac = True
+
+    [scheduler]
+    job_heartbeat_sec = 60
+    scheduler_heartbeat_sec = 60
+    num_runs = -1
+
+    [api]
+    auth_backends = airflow.api.auth.backend.session
+
+    [celery]
+    broker_url = redis://redis:6379/0
+    result_backend = db+postgresql://aurum:aurum@postgres:5432/airflow
+    worker_concurrency = 4
+    worker_prefetch_multiplier = 1
+    worker_log_format = %(asctime)s - %(hostname)s - %(name)s - %(levelname)s - %(message)s
+    worker_task_log_format = %(asctime)s - %(hostname)s - %(name)s - %(levelname)s - %(message)s
+
+    [celery_broker_transport_options]
+    master_name = master
+    sentinel_kwargs = {}
+
+    [logging]
+    remote_logging = False
+    logging_level = INFO
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: airflow-worker
+  namespace: aurum-dev
+  labels:
+    app: airflow
+    component: worker
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: airflow
+      component: worker
+  template:
+    metadata:
+      labels:
+        app: airflow
+        component: worker
+    spec:
+      serviceAccountName: airflow
+      securityContext:
+        runAsUser: 50000
+        runAsGroup: 0
+        fsGroup: 0
+      containers:
+        - name: worker
+          image: apache/airflow:2.8.1
+          args: ["celery", "worker"]
+          envFrom:
+            - configMapRef:
+                name: aurum-config
+            - secretRef:
+                name: aurum-secrets
+          env:
+            - name: AIRFLOW__CELERY__RESULT_BACKEND
+              value: "db+postgresql://aurum:aurum@postgres:5432/airflow"
+            - name: AIRFLOW__DATABASE__SQL_ALCHEMY_CONN
+              value: "postgresql+psycopg2://aurum:aurum@postgres:5432/airflow"
+          resources:
+            requests:
+              cpu: 100m
+              memory: 256Mi
+            limits:
+              cpu: 500m
+              memory: 1Gi
+          volumeMounts:
+            - name: dags
+              mountPath: /opt/airflow/@dags
+            - name: logs
+              mountPath: /opt/airflow/logs
+            - name: airflow-config
+              mountPath: /opt/airflow/airflow.cfg
+              subPath: airflow.cfg
+      volumes:
+        - name: dags
           hostPath:
-            path: /workspace
+            path: /Users/mstudio/dev/aurum/airflow/dags
             type: DirectoryOrCreate
-        - name: scripts
-          hostPath:
-            path: /workspace
-            type: DirectoryOrCreate
-        - name: seatunnel
-          hostPath:
-            path: /workspace/seatunnel
-            type: DirectoryOrCreate
-        - name: kafka
-          hostPath:
-            path: /workspace
-            type: DirectoryOrCreate
+        - name: logs
+          emptyDir: {}
+        - name: airflow-config
+          configMap:
+            name: airflow-config
 ---
 apiVersion: v1
 kind: Service
 metadata:
   name: airflow-webserver
   namespace: aurum-dev
+  labels:
+    app: airflow
+    component: webserver
 spec:
-  type: NodePort
+  type: ClusterIP
   selector:
     app: airflow
     component: webserver
@@ -259,4 +372,39 @@ spec:
     - name: http
       port: 8080
       targetPort: 8080
-      nodePort: 30888
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: airflow-scheduler
+  namespace: aurum-dev
+  labels:
+    app: airflow
+    component: scheduler
+spec:
+  type: ClusterIP
+  selector:
+    app: airflow
+    component: scheduler
+  ports:
+    - name: scheduler
+      port: 8974
+      targetPort: 8974
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: airflow-worker
+  namespace: aurum-dev
+  labels:
+    app: airflow
+    component: worker
+spec:
+  type: ClusterIP
+  selector:
+    app: airflow
+    component: worker
+  ports:
+    - name: worker
+      port: 8793
+      targetPort: 8793

@@ -5,6 +5,11 @@ from __future__ import annotations
 from typing import Any, Dict, Optional
 
 from fastapi import HTTPException, Request
+from fastapi.responses import JSONResponse
+from starlette.datastructures import MutableHeaders
+from starlette.types import Message
+
+from .models import ErrorEnvelope, ValidationErrorDetail, ValidationErrorResponse
 
 
 class AurumAPIException(HTTPException):

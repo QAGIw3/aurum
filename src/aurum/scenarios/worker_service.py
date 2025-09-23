@@ -15,6 +15,7 @@ import signal
 from typing import Any, Dict, Optional
 
 from ..telemetry.context import log_structured
+from .kafka_client import create_kafka_producer, create_kafka_consumer
 from .queue_manager import ScenarioQueueManager, RetryPolicy
 
 
@@ -120,10 +121,21 @@ async def run_worker_service(
 ) -> None:
     """Run a scenario worker service instance."""
 
-    # In a real implementation, these would be properly configured Kafka clients
-    # For now, this is a placeholder
-    kafka_producer = None  # Replace with actual Kafka producer
-    kafka_consumer = None  # Replace with actual Kafka consumer
+    bootstrap_servers = kafka_config.get("bootstrap_servers", "localhost:9092")
+    consumer_group = kafka_config.get("consumer_group", "scenario-workers")
+    topics = kafka_config.get("topics", ["aurum.scenario.request.v1", "aurum.scenario.request.retry.v1"])
+
+    # Create async Kafka clients
+    kafka_producer = create_kafka_producer(bootstrap_servers)
+    kafka_consumer = create_kafka_consumer(
+        bootstrap_servers=bootstrap_servers,
+        group_id=consumer_group,
+        topics=topics,
+        auto_offset_reset="earliest",
+        enable_auto_commit=True,
+        auto_commit_interval_ms=1000,
+        max_poll_records=100,
+    )
 
     worker = ScenarioWorkerService(
         kafka_producer=kafka_producer,
@@ -133,6 +145,8 @@ async def run_worker_service(
     )
 
     try:
+        await kafka_producer.start()
+        await kafka_consumer.start()
         await worker.start()
     except KeyboardInterrupt:
         log_structured("info", "worker_service_interrupted")
@@ -140,3 +154,5 @@ async def run_worker_service(
         log_structured("error", "worker_service_crashed", error=str(exc))
     finally:
         await worker.stop()
+        await kafka_producer.stop()
+        await kafka_consumer.stop()

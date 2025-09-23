@@ -41,6 +41,11 @@ class Permission(str, Enum):
     ADMIN_READ = "admin:read"
     ADMIN_WRITE = "admin:write"
 
+    # Specific admin features
+    FEATURE_FLAGS_MANAGE = "admin:feature_flags"
+    RATE_LIMIT_MANAGE = "admin:rate_limits"
+    TRINO_ADMIN = "admin:trino"
+
     # Tenant management
     TENANT_MANAGE = "tenant:manage"
 
@@ -91,6 +96,9 @@ class AuthorizationConfig:
                     Permission.SCENARIOS_RUN,
                     Permission.SCENARIOS_DELETE,
                     Permission.ADMIN_READ,
+                    Permission.FEATURE_FLAGS_MANAGE,
+                    Permission.RATE_LIMIT_MANAGE,
+                    Permission.TRINO_ADMIN,
                 },
                 Role.SUPER_ADMIN: {
                     Permission.CURVES_READ,
@@ -101,6 +109,9 @@ class AuthorizationConfig:
                     Permission.SCENARIOS_DELETE,
                     Permission.ADMIN_READ,
                     Permission.ADMIN_WRITE,
+                    Permission.FEATURE_FLAGS_MANAGE,
+                    Permission.RATE_LIMIT_MANAGE,
+                    Permission.TRINO_ADMIN,
                     Permission.TENANT_MANAGE,
                 },
             },

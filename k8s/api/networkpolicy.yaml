@@ -126,3 +126,45 @@ spec:
       ports:
         - protocol: TCP
           port: 4317
+        - protocol: TCP
+          port: 4318
+        - protocol: TCP
+          port: 14268
+    # Allow HTTPS traffic for external APIs
+    - to: []
+      ports:
+        - protocol: TCP
+          port: 443
+    # Allow NTP for time synchronization
+    - to: []
+      ports:
+        - protocol: UDP
+          port: 123
+    # Allow egress to Kafka brokers
+    - to:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: kafka
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: aurum-dev
+      ports:
+        - protocol: TCP
+          port: 9092
+        - protocol: TCP
+          port: 9093
+    # Allow egress to ClickHouse
+    - to:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: clickhouse
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: aurum-dev
+      ports:
+        - protocol: TCP
+          port: 9000
+        - protocol: TCP
+          port: 8123
+        - protocol: HTTP
+          port: 8123

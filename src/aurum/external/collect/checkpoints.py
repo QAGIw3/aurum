@@ -5,7 +5,7 @@ from __future__ import annotations
 
 import json
 import os
-from contextlib import contextmanager
+from contextlib import asynccontextmanager, contextmanager
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Any, Callable, Dict, Optional
@@ -19,6 +19,11 @@ try:  # Optional dependency - redis client
     import redis  # type: ignore
 except Exception:  # pragma: no cover - allow usage without redis installed
     redis = None  # type: ignore[assignment]
+
+try:  # Optional dependency - watermark store
+    from ...data_ingestion.watermark_store import WatermarkStore
+except Exception:  # pragma: no cover - allow usage without watermark store
+    WatermarkStore = None  # type: ignore[assignment]
 
 
 @dataclass
@@ -128,6 +133,61 @@ class RedisCheckpointStore(CheckpointStore):
         return parsed if isinstance(parsed, dict) else {}
 
 
+class WatermarkCheckpointStore(CheckpointStore):
+    """Checkpoint store backed by the centralized watermark store."""
+
+    def __init__(self, watermark_store: Optional[Any] = None) -> None:
+        if WatermarkStore is None:
+            raise RuntimeError("WatermarkStore not available")
+        self._watermark_store = watermark_store or WatermarkStore()
+
+    async def get(self, provider: str, series_id: str) -> Optional[Checkpoint]:
+        """Get checkpoint from watermark store."""
+        # Use provider as source and series_id as table
+        watermark = await self._watermark_store.get_watermark(provider, series_id)
+        if watermark is None:
+            return None
+
+        # Create checkpoint from watermark
+        return Checkpoint(
+            provider=provider,
+            series_id=series_id,
+            last_timestamp=watermark if isinstance(watermark, datetime) else None,
+            last_page=None,
+            metadata={"watermark_value": str(watermark) if not isinstance(watermark, datetime) else None}
+        )
+
+    async def set(self, checkpoint: Checkpoint) -> None:
+        """Set checkpoint in watermark store."""
+        # Use current timestamp as watermark value for checkpoints
+        current_time = datetime.now(timezone.utc)
+        metadata = dict(checkpoint.metadata)
+        metadata.update({
+            "checkpoint_provider": checkpoint.provider,
+            "checkpoint_series_id": checkpoint.series_id,
+            "checkpoint_last_page": checkpoint.last_page,
+        })
+
+        # Set watermark with current timestamp
+        await self._watermark_store.set_watermark(
+            source=checkpoint.provider,
+            table=checkpoint.series_id,
+            value=current_time,
+            metadata=metadata
+        )
+
+    async def delete(self, provider: str, series_id: str) -> None:
+        """Delete checkpoint from watermark store."""
+        # Note: WatermarkStore doesn't have a delete method, so we'll set a very old watermark
+        old_time = datetime(1970, 1, 1, tzinfo=timezone.utc)
+        await self._watermark_store.set_watermark(
+            source=provider,
+            table=series_id,
+            value=old_time,
+            metadata={"deleted": True}
+        )
+
+
 class PostgresCheckpointStore(CheckpointStore):
     """Checkpoint store backed by Postgres."""
 
@@ -157,16 +217,16 @@ class PostgresCheckpointStore(CheckpointStore):
         if ensure_schema:
             self._ensure_table()
 
-    def get(self, provider: str, series_id: str) -> Optional[Checkpoint]:
+    async def get(self, provider: str, series_id: str) -> Optional[Checkpoint]:
         query = f"""
             SELECT last_timestamp, last_page, metadata
             FROM {self.TABLE_NAME}
             WHERE provider = %s AND series_id = %s
         """
-        with self._connection() as conn:
-            with conn.cursor() as cur:
-                cur.execute(query, (provider, series_id))
-                row = cur.fetchone()
+        async with self._connection() as conn:
+            async with conn.cursor() as cur:
+                await cur.execute(query, (provider, series_id))
+                row = await cur.fetchone()
         if not row:
             return None
         last_timestamp, last_page, metadata = row
@@ -184,7 +244,7 @@ class PostgresCheckpointStore(CheckpointStore):
             metadata=metadata_dict,
         )
 
-    def set(self, checkpoint: Checkpoint) -> None:
+    async def set(self, checkpoint: Checkpoint) -> None:
         query = f"""
             INSERT INTO {self.TABLE_NAME} (provider, series_id, last_timestamp, last_page, metadata, updated_at)
             VALUES (%s, %s, %s, %s, %s::jsonb, now())
@@ -196,9 +256,9 @@ class PostgresCheckpointStore(CheckpointStore):
                 updated_at = now()
         """
         metadata_json = json.dumps(checkpoint.metadata or {})
-        with self._connection() as conn:
-            with conn.cursor() as cur:
-                cur.execute(
+        async with self._connection() as conn:
+            async with conn.cursor() as cur:
+                await cur.execute(
                     query,
                     (
                         checkpoint.provider,
@@ -209,17 +269,17 @@ class PostgresCheckpointStore(CheckpointStore):
                     ),
                 )
             if hasattr(conn, "commit"):
-                conn.commit()
+                await conn.commit()
 
-    def delete(self, provider: str, series_id: str) -> None:
+    async def delete(self, provider: str, series_id: str) -> None:
         query = f"DELETE FROM {self.TABLE_NAME} WHERE provider = %s AND series_id = %s"
-        with self._connection() as conn:
-            with conn.cursor() as cur:
-                cur.execute(query, (provider, series_id))
+        async with self._connection() as conn:
+            async with conn.cursor() as cur:
+                await cur.execute(query, (provider, series_id))
             if hasattr(conn, "commit"):
-                conn.commit()
+                await conn.commit()
 
-    def _ensure_table(self) -> None:
+    async def _ensure_table(self) -> None:
         ddl = f"""
             CREATE TABLE IF NOT EXISTS {self.TABLE_NAME} (
                 provider TEXT NOT NULL,
@@ -231,20 +291,20 @@ class PostgresCheckpointStore(CheckpointStore):
                 PRIMARY KEY (provider, series_id)
             )
         """
-        with self._connection() as conn:
-            with conn.cursor() as cur:
-                cur.execute(ddl)
+        async with self._connection() as conn:
+            async with conn.cursor() as cur:
+                await cur.execute(ddl)
             if hasattr(conn, "commit"):
-                conn.commit()
+                await conn.commit()
 
-    @contextmanager
-    def _connection(self):
+    @asynccontextmanager
+    async def _connection(self):
         conn = self._connection_factory()
         try:
             yield conn
         finally:
             if self._manage_close and hasattr(conn, "close"):
-                conn.close()
+                await conn.close()
 
     @staticmethod
     def _default_dsn() -> str:

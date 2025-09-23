@@ -6,7 +6,7 @@ import os
 from enum import Enum
 from typing import Any, Dict, Iterable, List
 
-from pydantic import AliasChoices, ConfigDict, Field, field_validator
+from pydantic import AliasChoices, ConfigDict, Field, ValidationInfo, field_validator
 
 try:  # pragma: no cover - fallback when pydantic-settings is unavailable
     from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -36,6 +36,12 @@ class DataBackendType(str, Enum):
     TRINO = "trino"
     CLICKHOUSE = "clickhouse"
     TIMESCALE = "timescale"
+
+
+class AuditSinkType(str, Enum):
+    FILE = "file"
+    KAFKA = "kafka"
+    CLICKHOUSE = "clickhouse"
 
 
 class DataBackendSettings(AurumBaseModel):
@@ -339,6 +345,107 @@ class AuthSettings(AurumBaseModel):
         raise TypeError("Invalid admin group definition")
 
 
+class AuditKafkaSettings(AurumBaseModel):
+    bootstrap_servers: str | None = Field(
+        default=None,
+        validation_alias=AliasChoices("API_AUDIT_KAFKA_BOOTSTRAP")
+    )
+    topic: str = Field(
+        default="aurum.audit.external",
+        validation_alias=AliasChoices("API_AUDIT_KAFKA_TOPIC")
+    )
+    client_id: str = Field(
+        default="aurum-api",
+        validation_alias=AliasChoices("API_AUDIT_KAFKA_CLIENT_ID")
+    )
+    security_protocol: str = Field(
+        default="PLAINTEXT",
+        validation_alias=AliasChoices("API_AUDIT_KAFKA_SECURITY_PROTOCOL")
+    )
+    sasl_username: str | None = Field(
+        default=None,
+        validation_alias=AliasChoices("API_AUDIT_KAFKA_USERNAME")
+    )
+    sasl_password: str | None = Field(
+        default=None,
+        validation_alias=AliasChoices("API_AUDIT_KAFKA_PASSWORD")
+    )
+    sasl_mechanism: str | None = Field(
+        default=None,
+        validation_alias=AliasChoices("API_AUDIT_KAFKA_SASL_MECHANISM")
+    )
+    compression: str | None = Field(
+        default="gzip",
+        validation_alias=AliasChoices("API_AUDIT_KAFKA_COMPRESSION")
+    )
+    acks: str = Field(
+        default="all",
+        validation_alias=AliasChoices("API_AUDIT_KAFKA_ACKS")
+    )
+
+
+class AuditClickHouseSettings(AurumBaseModel):
+    endpoint: str | None = Field(
+        default=None,
+        validation_alias=AliasChoices("API_AUDIT_CLICKHOUSE_ENDPOINT")
+    )
+    database: str = Field(
+        default="aurum",
+        validation_alias=AliasChoices("API_AUDIT_CLICKHOUSE_DATABASE")
+    )
+    table: str = Field(
+        default="external_audit_events",
+        validation_alias=AliasChoices("API_AUDIT_CLICKHOUSE_TABLE")
+    )
+    username: str | None = Field(
+        default=None,
+        validation_alias=AliasChoices("API_AUDIT_CLICKHOUSE_USERNAME")
+    )
+    password: str | None = Field(
+        default=None,
+        validation_alias=AliasChoices("API_AUDIT_CLICKHOUSE_PASSWORD")
+    )
+    timeout_seconds: float = Field(
+        default=5.0,
+        ge=0.1,
+        validation_alias=AliasChoices("API_AUDIT_CLICKHOUSE_TIMEOUT")
+    )
+
+
+class ExternalAuditSettings(AurumBaseModel):
+    enabled: bool = Field(
+        default=False,
+        validation_alias=AliasChoices("AURUM_API_EXTERNAL_AUDIT_ENABLED", "API_EXTERNAL_AUDIT_ENABLED")
+    )
+    sinks: tuple[AuditSinkType, ...] = Field(
+        default_factory=lambda: (AuditSinkType.FILE,),
+        validation_alias=AliasChoices("API_AUDIT_SINKS")
+    )
+    log_dir: str = Field(
+        default="/var/log/aurum",
+        validation_alias=AliasChoices("AURUM_AUDIT_LOG_DIR", "API_AUDIT_LOG_DIR")
+    )
+    kafka: AuditKafkaSettings = Field(default_factory=AuditKafkaSettings)
+    clickhouse: AuditClickHouseSettings = Field(default_factory=AuditClickHouseSettings)
+
+    @field_validator("sinks", mode="before")
+    @classmethod
+    def _parse_sinks(cls, value: Any) -> tuple[AuditSinkType, ...]:
+        if value in (None, "", ()):  # default behaviour
+            return (AuditSinkType.FILE,)
+        if isinstance(value, str):
+            raw_values = [item.strip() for item in value.split(",") if item.strip()]
+        else:
+            raw_values = list(value)
+        sinks: list[AuditSinkType] = []
+        for item in raw_values:
+            try:
+                sinks.append(AuditSinkType(str(item).lower()))
+            except ValueError as exc:
+                raise ValueError(f"Unsupported audit sink '{item}'") from exc
+        return tuple(sinks)
+
+
 class ConcurrencyControlSettings(AurumBaseModel):
     """Settings for API concurrency controls and timeouts."""
     max_concurrent_trino_connections: int = Field(default=24, ge=1, validation_alias=AliasChoices("API_TRINO_MAX_CONNECTIONS"))
@@ -354,6 +461,10 @@ class ConcurrencyControlSettings(AurumBaseModel):
     trino_connection_pool_max_idle: int = Field(default=16, ge=0, validation_alias=AliasChoices("API_TRINO_POOL_MAX_IDLE"))
     trino_connection_pool_idle_timeout_seconds: float = Field(default=180.0, gt=0.0, validation_alias=AliasChoices("API_TRINO_POOL_IDLE_TIMEOUT"))
     trino_connection_pool_wait_timeout_seconds: float = Field(default=5.0, gt=0.0, validation_alias=AliasChoices("API_TRINO_POOL_WAIT_TIMEOUT"))
+    trino_queue_size: int = Field(default=128, ge=0, validation_alias=AliasChoices("API_TRINO_QUEUE_SIZE"))
+    trino_queue_timeout_seconds: float = Field(default=5.0, gt=0.0, validation_alias=AliasChoices("API_TRINO_QUEUE_TIMEOUT"))
+    trino_saturation_warning_threshold: float = Field(default=0.75, ge=0.0, le=1.0, validation_alias=AliasChoices("API_TRINO_SATURATION_WARNING"))
+    trino_saturation_critical_threshold: float = Field(default=0.9, ge=0.0, le=1.0, validation_alias=AliasChoices("API_TRINO_SATURATION_CRITICAL"))
 
     @field_validator("trino_connection_pool_max_size")
     @classmethod
@@ -370,6 +481,14 @@ class ConcurrencyControlSettings(AurumBaseModel):
         if v > 10:  # Reasonable upper bound
             raise ValueError("Trino max retries cannot exceed 10")
         return v
+
+    @field_validator("trino_saturation_critical_threshold")
+    @classmethod
+    def validate_saturation_thresholds(cls, critical: float, info: ValidationInfo) -> float:
+        warning = info.data.get("trino_saturation_warning_threshold")
+        if warning is not None and critical < warning:
+            raise ValueError("Trino saturation critical threshold must be >= warning threshold")
+        return critical
 
 
 class ApiCacheSettings(AurumBaseModel):
@@ -426,6 +545,7 @@ class ApiSettings(AurumBaseModel):
     cache: ApiCacheSettings = Field(default_factory=ApiCacheSettings)
     concurrency: ConcurrencyControlSettings = Field(default_factory=ConcurrencyControlSettings)
     metrics: MetricsSettings = Field(default_factory=MetricsSettings)
+    audit: ExternalAuditSettings = Field(default_factory=ExternalAuditSettings)
 
     @field_validator("cors_allow_origins", mode="before")
     @classmethod

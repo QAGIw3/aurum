@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+import json
 import logging
 from datetime import datetime, timedelta
+from pathlib import Path
 
 from airflow import DAG
 from airflow.operators.python import PythonOperator
@@ -15,9 +17,19 @@ from aurum.airflow_utils import build_failure_callback, emit_alert, metrics
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
+CONFIG_PATH = Path(__file__).resolve().parents[2] / "config" / "trino_query_harness.json"
+try:
+    with CONFIG_PATH.open("r", encoding="utf-8") as config_file:
+        HARNESS_CONFIG = json.load(config_file)
+except Exception as exc:  # pragma: no cover - defensive
+    logger.warning("Failed to load Trino harness config from %s: %s", CONFIG_PATH, exc)
+    HARNESS_CONFIG = {}
+
 # DAG configuration
 DAG_ID = "cache_warming"
-SCHEDULE_INTERVAL = "0 */4 * * *"  # Every 4 hours
+DEFAULT_SCHEDULE = "0 */4 * * *"  # Every 4 hours
+CACHE_CONFIG = HARNESS_CONFIG.get("cache_warming", {})
+SCHEDULE_INTERVAL = CACHE_CONFIG.get("schedule", DEFAULT_SCHEDULE)
 DEFAULT_ARGS = {
     "owner": "data-platform",
     "depends_on_past": False,
@@ -29,24 +41,38 @@ DEFAULT_ARGS = {
 }
 
 # Cache warming configuration
-TRINO_HOST = "trino-coordinator.trino.svc.cluster.local"
-TRINO_PORT = 8080
-CACHE_WARMER_SCRIPT = "/opt/aurum/scripts/trino/cache_warmer.py"
+DEFAULT_TRINO_HOST = "trino-coordinator.trino.svc.cluster.local"
+DEFAULT_TRINO_PORT = 8080
+DEFAULT_CACHE_WARMER_SCRIPT = "/opt/aurum/scripts/trino/cache_warmer.py"
+
+TRINO_HOST = CACHE_CONFIG.get("host", DEFAULT_TRINO_HOST)
+TRINO_PORT = CACHE_CONFIG.get("port", DEFAULT_TRINO_PORT)
+CACHE_WARMER_SCRIPT = CACHE_CONFIG.get("script", DEFAULT_CACHE_WARMER_SCRIPT)
+CACHE_WARMER_MODES = list(CACHE_CONFIG.get("modes", ["warm", "refresh"]))
 
 
-def run_cache_warmer(mode: str = "warm", **context) -> dict:
+def run_cache_warmer(
+    mode: str = "warm",
+    *,
+    trino_host: str | None = None,
+    trino_port: int | None = None,
+    **context,
+) -> dict:
     """Execute cache warming with specified mode."""
     import subprocess
     import sys
     from pathlib import Path
+
+    host = trino_host or TRINO_HOST
+    port = trino_port or TRINO_PORT
 
     try:
         # Build command
         cmd = [
             sys.executable,
             CACHE_WARMER_SCRIPT,
-            "--host", TRINO_HOST,
-            "--port", str(TRINO_PORT),
+            "--host", host,
+            "--port", str(port),
             "--mode", mode,
             "--verbose"
         ]
@@ -155,19 +181,15 @@ dag = DAG(
 )
 
 # Cache warming tasks
-warm_cache_task = PythonOperator(
-    task_id="warm_analytical_cache",
-    python_callable=run_cache_warmer,
-    op_kwargs={"mode": "warm"},
-    dag=dag,
-)
-
-refresh_views_task = PythonOperator(
-    task_id="refresh_materialized_views",
-    python_callable=run_cache_warmer,
-    op_kwargs={"mode": "refresh"},
-    dag=dag,
-)
+cache_warmer_tasks = []
+for mode in CACHE_WARMER_MODES:
+    task = PythonOperator(
+        task_id=f"cache_warmer_{mode}",
+        python_callable=run_cache_warmer,
+        op_kwargs={"mode": mode, "trino_host": TRINO_HOST, "trino_port": TRINO_PORT},
+        dag=dag,
+    )
+    cache_warmer_tasks.append(task)
 
 # Health check task
 health_check_task = BashOperator(
@@ -204,7 +226,12 @@ health_check_task = BashOperator(
 )
 
 # Task dependencies
-warm_cache_task >> refresh_views_task >> health_check_task
+if cache_warmer_tasks:
+    for upstream, downstream in zip(cache_warmer_tasks, cache_warmer_tasks[1:]):
+        upstream >> downstream
+    cache_warmer_tasks[-1] >> health_check_task
+else:
+    health_check_task
 
 # Set up failure callback
 dag.on_failure_callback = build_failure_callback(source=f"aurum.airflow.{DAG_ID}")

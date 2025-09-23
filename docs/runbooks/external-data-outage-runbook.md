@@ -123,6 +123,21 @@ Templates live in `docs/runbooks/templates/incident-updates.md`.
   admin API for temporary overrides, `dbt run/test` for marts.
  - **ISO contract**: See `docs/external/iso_canonical_contract.md` for canonical fields and validation steps.
 
+### Audit Logging Sinks
+
+- **Enable external audit middleware**: set `AURUM_API_EXTERNAL_AUDIT_ENABLED=1` and choose sinks via
+  `AURUM_API_AUDIT_SINKS=file,kafka,clickhouse` (default is `file`).
+- **Kafka sink**: configure `AURUM_API_AUDIT_KAFKA_BOOTSTRAP`, `AURUM_API_AUDIT_KAFKA_TOPIC`, optional SASL settings
+  (`AURUM_API_AUDIT_KAFKA_USERNAME`, `AURUM_API_AUDIT_KAFKA_PASSWORD`, `AURUM_API_AUDIT_KAFKA_SASL_MECHANISM`).
+  Verify delivery with `kafka-console-consumer --bootstrap-server $BOOTSTRAP --topic $TOPIC --from-beginning --max-messages 5`.
+- **ClickHouse sink**: configure `AURUM_API_AUDIT_CLICKHOUSE_ENDPOINT`, `AURUM_API_AUDIT_CLICKHOUSE_DATABASE`,
+  `AURUM_API_AUDIT_CLICKHOUSE_TABLE`, optional credentials. Validate with
+  `clickhouse-client --query "SELECT * FROM <db>.<table> ORDER BY timestamp DESC LIMIT 10"`.
+- **Fallback file sink**: logs live under `AURUM_AUDIT_LOG_DIR` (default `/var/log/aurum`). During incidents make sure the
+  directory is writable or switch sinks to avoid losing compliance events.
+- When disabling a sink temporarily, update the config map or secret and redeploy the API so the middleware rehydrates. The
+  middleware logs warnings to `aurum.api.access` if a sink fails to initialise; check pod logs when onboarding new sinks.
+
 Keep this runbook in sync with the Airflow DAG ownership map and provider
 contracts. Update contact info and automation references at least quarterly.
 

@@ -52,3 +52,30 @@ seeds:
       - name: tenor_type
         tests:
           - not_null
+  - name: iso_nodes
+    description: ISO node and zone registry for location metadata enrichment.
+    columns:
+      - name: iso
+        description: ISO code identifier
+        tests:
+          - not_null
+      - name: location_id
+        description: Location/node identifier
+        tests:
+          - not_null
+      - name: location_name
+        description: Location name
+        tests:
+          - not_null
+      - name: location_type
+        description: Type of location (ZONE, HUB, NODE, etc.)
+        tests:
+          - not_null
+      - name: zone
+        description: Zone identifier
+      - name: hub
+        description: Hub identifier
+      - name: timezone
+        description: Timezone for the location
+        tests:
+          - not_null

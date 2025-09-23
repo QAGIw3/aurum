@@ -18,7 +18,9 @@ from typing import Dict, Iterable, List
 
 from aurum.external.collect import CollectorConfig, ExternalCollector
 from aurum.external.collect.base import RetryConfig
+from aurum.compat.requests import ResilienceConfig
 from aurum.external.collect.checkpoints import PostgresCheckpointStore
+from aurum.external.quota_manager import get_quota_manager, DatasetQuota, configure_dataset_quotas
 from aurum.external.providers import (
     EiaApiClient,
     EiaCollector,
@@ -73,6 +75,13 @@ def _build_kafka_collector(provider: str, topic: str, schema_name: str) -> Exter
             "linger.ms": 250,
             "batch.num.messages": 500,
         },
+        resilience_config=ResilienceConfig(
+            timeout=30.0,
+            max_retries=3,
+            backoff_factor=0.5,
+            circuit_breaker_failure_threshold=5,
+            circuit_breaker_recovery_timeout=60.0,
+        ),
     )
     return ExternalCollector(config)
 
@@ -84,16 +93,92 @@ def _build_http_collector(provider: str, base_url: str, *, headers: Dict[str, st
         kafka_topic=f"{provider}.noop",
         default_headers=headers or {},
         retry=RetryConfig(max_attempts=5, backoff_factor=0.5, max_backoff_seconds=30.0),
+        resilience_config=ResilienceConfig(
+            timeout=30.0,
+            max_retries=3,
+            backoff_factor=0.5,
+            circuit_breaker_failure_threshold=5,
+            circuit_breaker_recovery_timeout=60.0,
+        ),
     )
     return ExternalCollector(config)
 
 
-def _build_checkpoint_store() -> PostgresCheckpointStore:
-    dsn = os.getenv("AURUM_COLLECTOR_CHECKPOINT_DSN", os.getenv("AURUM_APP_DB_DSN", "postgresql://aurum:aurum@postgres:5432/aurum"))
-    return PostgresCheckpointStore(dsn=dsn)
+async def _build_checkpoint_store() -> Any:
+    """Build checkpoint store using watermark store for consistency."""
+    try:
+        from aurum.external.collect.checkpoints import WatermarkCheckpointStore
+        from aurum.data_ingestion.watermark_store import WatermarkStore
+        watermark_store = WatermarkStore()
+        return WatermarkCheckpointStore(watermark_store)
+    except ImportError:
+        # Fallback to Postgres checkpoint store
+        from aurum.external.collect.checkpoints import PostgresCheckpointStore
+        dsn = os.getenv("AURUM_COLLECTOR_CHECKPOINT_DSN", os.getenv("AURUM_APP_DB_DSN", "postgresql://aurum:aurum@postgres:5432/aurum"))
+        return PostgresCheckpointStore(dsn=dsn)
 
 
-def run_eia(*, catalog: bool, observations: bool) -> None:
+async def _configure_dataset_quotas() -> None:
+    """Configure dataset quotas for external providers."""
+    quotas = []
+
+    # EIA quotas
+    for data_type in ['electricity', 'petroleum', 'natural_gas']:
+        quotas.append(DatasetQuota(
+            dataset_id=f"eia_{data_type}",
+            iso_code="EIA",
+            max_records_per_hour=500_000,
+            max_bytes_per_hour=500_000_000,
+            max_concurrent_requests=3,
+            max_requests_per_minute=30,
+            max_requests_per_hour=1000,
+            priority=1
+        ))
+
+    # FRED quotas
+    quotas.append(DatasetQuota(
+        dataset_id="fred_economic",
+        iso_code="FRED",
+        max_records_per_hour=200_000,
+        max_bytes_per_hour=200_000_000,
+        max_concurrent_requests=2,
+        max_requests_per_minute=20,
+        max_requests_per_hour=500,
+        priority=2
+    ))
+
+    # NOAA quotas
+    quotas.append(DatasetQuota(
+        dataset_id="noaa_weather",
+        iso_code="NOAA",
+        max_records_per_hour=100_000,
+        max_bytes_per_hour=100_000_000,
+        max_concurrent_requests=5,
+        max_requests_per_minute=10,
+        max_requests_per_hour=300,
+        priority=3
+    ))
+
+    # World Bank quotas
+    quotas.append(DatasetQuota(
+        dataset_id="worldbank_development",
+        iso_code="WB",
+        max_records_per_hour=50_000,
+        max_bytes_per_hour=50_000_000,
+        max_concurrent_requests=2,
+        max_requests_per_minute=15,
+        max_requests_per_hour=200,
+        priority=4
+    ))
+
+    await get_quota_manager()
+    await configure_dataset_quotas(quotas)
+
+
+async def run_eia(*, catalog: bool, observations: bool) -> None:
+    # Configure quotas for EIA
+    await _configure_dataset_quotas()
+
     api_key = os.getenv("EIA_API_KEY")
     if not api_key:
         logger.warning("Skipping EIA collector; EIA_API_KEY is not set")
@@ -101,8 +186,19 @@ def run_eia(*, catalog: bool, observations: bool) -> None:
     base_url = os.getenv("EIA_API_BASE_URL", "https://api.eia.gov/v2/")
     http_collector = _build_http_collector("eia-http", base_url)
     api_client = EiaApiClient(http_collector, api_key=api_key)
+
+    # Configure resilience for EIA provider
+    if hasattr(http_collector, 'resilient_session') and http_collector.resilient_session:
+        from aurum.compat.requests import ResilienceConfig
+        http_collector.resilient_session.config = ResilienceConfig(
+            timeout=30.0,
+            max_retries=3,
+            backoff_factor=0.5,
+            circuit_breaker_failure_threshold=5,
+            circuit_breaker_recovery_timeout=60.0,
+        )
     datasets = load_eia_dataset_configs()
-    store = _build_checkpoint_store()
+    store = await _build_checkpoint_store()
     catalog_collector = _build_kafka_collector("eia-catalog", CATALOG_TOPIC, SCHEMA_FILES["catalog"])
     obs_collector = _build_kafka_collector("eia-observation", OBS_TOPIC, SCHEMA_FILES["observation"])
     for dataset in datasets:
@@ -123,7 +219,10 @@ def run_eia(*, catalog: bool, observations: bool) -> None:
     obs_collector.flush()
 
 
-def run_fred(*, catalog: bool, observations: bool) -> None:
+async def run_fred(*, catalog: bool, observations: bool) -> None:
+    # Configure quotas for FRED
+    await _configure_dataset_quotas()
+
     api_key = os.getenv("FRED_API_KEY")
     if not api_key:
         logger.warning("Skipping FRED collector; FRED_API_KEY is not set")
@@ -132,7 +231,7 @@ def run_fred(*, catalog: bool, observations: bool) -> None:
     http_collector = _build_http_collector("fred-http", base_url)
     api_client = FredApiClient(http_collector, api_key=api_key)
     datasets = load_fred_dataset_configs()
-    store = _build_checkpoint_store()
+    store = await _build_checkpoint_store()
     catalog_collector = _build_kafka_collector("fred-catalog", CATALOG_TOPIC, SCHEMA_FILES["catalog"])
     obs_collector = _build_kafka_collector("fred-observation", OBS_TOPIC, SCHEMA_FILES["observation"])
     for dataset in datasets:
@@ -153,7 +252,10 @@ def run_fred(*, catalog: bool, observations: bool) -> None:
     obs_collector.flush()
 
 
-def run_noaa(*, catalog: bool, observations: bool) -> None:
+async def run_noaa(*, catalog: bool, observations: bool) -> None:
+    # Configure quotas for NOAA
+    await _configure_dataset_quotas()
+
     token = os.getenv("NOAA_GHCND_TOKEN")
     if not token:
         logger.warning("Skipping NOAA collector; NOAA_GHCND_TOKEN is not set")
@@ -169,7 +271,7 @@ def run_noaa(*, catalog: bool, observations: bool) -> None:
         quota = DailyQuota(limit=quota_limit)
     api_client = NoaaApiClient(http_collector, token=token, rate_limiter=rate_limiter, quota=quota, base_url=base_url)
     datasets = load_noaa_dataset_configs()
-    store = _build_checkpoint_store()
+    store = await _build_checkpoint_store()
     catalog_collector = _build_kafka_collector("noaa-catalog", CATALOG_TOPIC, SCHEMA_FILES["catalog"])
     obs_collector = _build_kafka_collector("noaa-observation", OBS_TOPIC, SCHEMA_FILES["observation"])
     for dataset in datasets:
@@ -190,12 +292,15 @@ def run_noaa(*, catalog: bool, observations: bool) -> None:
     obs_collector.flush()
 
 
-def run_worldbank(*, catalog: bool, observations: bool) -> None:
+async def run_worldbank(*, catalog: bool, observations: bool) -> None:
+    # Configure quotas for World Bank
+    await _configure_dataset_quotas()
+
     base_url = os.getenv("WORLD_BANK_API_BASE_URL", "https://api.worldbank.org/v2")
     http_collector = _build_http_collector("worldbank-http", base_url)
     api_client = WorldBankApiClient(http_collector, base_url=base_url)
     datasets = load_worldbank_dataset_configs()
-    store = _build_checkpoint_store()
+    store = await _build_checkpoint_store()
     catalog_collector = _build_kafka_collector("worldbank-catalog", CATALOG_TOPIC, SCHEMA_FILES["catalog"])
     obs_collector = _build_kafka_collector("worldbank-observation", OBS_TOPIC, SCHEMA_FILES["observation"])
     for dataset in datasets:
@@ -255,19 +360,19 @@ def parse_args(argv: Iterable[str] | None = None) -> argparse.Namespace:
     return parser.parse_args(argv)
 
 
-def run_once(providers: Iterable[str], *, catalog: bool, observations: bool) -> None:
+async def run_once(providers: Iterable[str], *, catalog: bool, observations: bool) -> None:
     for provider in providers:
         runner = RUNNERS.get(provider.lower().strip())
         if not runner:
             logger.warning("Unknown provider %s", provider)
             continue
         try:
-            runner(catalog=catalog, observations=observations)
+            await runner(catalog=catalog, observations=observations)
         except Exception:
             logger.exception("Collector run failed", extra={"provider": provider})
 
 
-def main(argv: Iterable[str] | None = None) -> int:
+async def main(argv: Iterable[str] | None = None) -> int:
     logging.basicConfig(level=os.getenv("AURUM_COLLECTOR_LOG_LEVEL", "INFO"))
     args = parse_args(argv)
     providers = [p for p in (part.strip() for part in args.providers.split(",")) if p]
@@ -287,12 +392,13 @@ def main(argv: Iterable[str] | None = None) -> int:
         interval = max(60, args.interval)
         logger.info("Starting collector loop", extra={"interval_seconds": interval, "providers": providers})
         while True:
-            run_once(providers, catalog=run_catalog, observations=run_observations)
+            await run_once(providers, catalog=run_catalog, observations=run_observations)
             time.sleep(interval)
     else:
-        run_once(providers, catalog=run_catalog, observations=run_observations)
+        await run_once(providers, catalog=run_catalog, observations=run_observations)
     return 0
 
 
 if __name__ == "__main__":
-    sys.exit(main())
+    import asyncio
+    sys.exit(asyncio.run(main()))

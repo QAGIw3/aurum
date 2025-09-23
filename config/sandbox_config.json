@@ -1,0 +1,56 @@
+{
+  "providers": [
+    {
+      "name": "caiso",
+      "enabled": true,
+      "base_url": "http://mock-caiso:8001",
+      "api_key": "sandbox_key",
+      "rate_limit_rps": 10.0,
+      "daily_quota": 10000,
+      "datasets": [
+        "mock_caiso_lmp",
+        "mock_caiso_load"
+      ],
+      "update_frequency_minutes": 60
+    },
+    {
+      "name": "eia",
+      "enabled": true,
+      "base_url": "http://mock-eia:8002",
+      "api_key": "sandbox_key",
+      "rate_limit_rps": 20.0,
+      "daily_quota": 20000,
+      "datasets": [
+        "mock_eia_electricity",
+        "mock_eia_petroleum"
+      ],
+      "update_frequency_minutes": 30
+    },
+    {
+      "name": "fred",
+      "enabled": true,
+      "base_url": "http://mock-fred:8003",
+      "api_key": "sandbox_key",
+      "rate_limit_rps": 50.0,
+      "daily_quota": 50000,
+      "datasets": [
+        "mock_fred_economic"
+      ],
+      "update_frequency_minutes": 15
+    }
+  ],
+  "kafka": {
+    "bootstrap_servers": "kafka:9092",
+    "schema_registry_url": "http://schema-registry:8081"
+  },
+  "iceberg": {
+    "catalog_name": "sandbox_catalog",
+    "warehouse_path": "s3://sandbox-bucket/warehouse"
+  },
+  "monitoring": {
+    "enable_prometheus": true,
+    "prometheus_port": 9090,
+    "enable_grafana": true,
+    "grafana_port": 3000
+  }
+}

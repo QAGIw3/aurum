@@ -169,17 +169,42 @@ class RateLimitConfig:
             whitelist=tuple(rl.whitelist),
         )
 
-    def limits_for_path(self, path: str, tenant: Optional[str] = None) -> Tuple[int, int]:
-        # First check tenant-specific overrides
-        if tenant and tenant in self.tenant_overrides:
-            tenant_overrides = self.tenant_overrides[tenant]
-            match_prefix = ""
-            selected = (self.rps, self.burst)
-            for prefix, values in tenant_overrides.items():
-                if path.startswith(prefix) and len(prefix) > len(match_prefix):
-                    match_prefix = prefix
-                    selected = values
-            return selected
+    async def limits_for_path(self, path: str, tenant: Optional[str] = None) -> Tuple[int, int]:
+        # First check tenant-specific overrides from database
+        if tenant:
+            try:
+                from aurum.scenarios.storage import get_scenario_store
+                from aurum.telemetry.context import set_tenant_id, reset_tenant_id
+
+                store = get_scenario_store()
+                token = set_tenant_id(tenant)
+                try:
+                    overrides = await store.list_rate_limit_overrides(tenant)
+                    match_prefix = ""
+                    selected = (self.rps, self.burst)
+                    for override in overrides:
+                        if override["enabled"] and path.startswith(override["path_prefix"]):
+                            if len(override["path_prefix"]) > len(match_prefix):
+                                match_prefix = override["path_prefix"]
+                                selected = (override["requests_per_second"], override["burst_capacity"])
+                    if match_prefix:
+                        return selected
+                finally:
+                    reset_tenant_id(token)
+            except Exception:
+                # Fall back to in-memory overrides if database query fails
+                pass
+
+            # Fall back to in-memory tenant overrides
+            if tenant in self.tenant_overrides:
+                tenant_overrides = self.tenant_overrides[tenant]
+                match_prefix = ""
+                selected = (self.rps, self.burst)
+                for prefix, values in tenant_overrides.items():
+                    if path.startswith(prefix) and len(prefix) > len(match_prefix):
+                        match_prefix = prefix
+                        selected = values
+                return selected
 
         # Fall back to path-based overrides
         match_prefix = ""
@@ -237,7 +262,7 @@ class RateLimitMiddleware:
             return
         path = request.url.path
         identifier, tenant_id, header_identifier, client_ip = self._resolve_identity(request)
-        rps, burst = self.rl_cfg.limits_for_path(path, tenant_id)
+        rps, burst = await self.rl_cfg.limits_for_path(path, tenant_id)
 
         if self.rl_cfg.is_whitelisted(identifier, tenant_id, header_identifier, client_ip):
             await self.app(scope, receive, send)

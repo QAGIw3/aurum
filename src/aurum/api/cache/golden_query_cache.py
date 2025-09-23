@@ -109,6 +109,8 @@ class GoldenQueryCache:
         self._query_stats: Dict[str, Dict[str, Any]] = {}
         self._lock = asyncio.Lock()
         self._settings = get_settings()
+        self._default_ttl = max(60, self._settings.api.cache.cache_ttl_medium_frequency)
+        self._query_ttl_overrides: Dict[str, int] = {}
 
         # Register default query patterns
         self._register_default_patterns()
@@ -252,6 +254,34 @@ class GoldenQueryCache:
                 return pattern
         return None
 
+    def _resolve_cache_entry(
+        self,
+        query: str,
+        tenant_id: str,
+        ttl_override: Optional[int] = None,
+    ) -> Tuple[str, int, Optional[QueryPattern], str]:
+        """Resolve cache key, TTL, and pattern metadata for the given query."""
+        query_hash = self._generate_query_hash(query)
+        pattern = self._find_matching_pattern(query)
+
+        if pattern:
+            params = pattern.extract_params(query)
+            key = pattern.generate_key(params, tenant_id)
+        else:
+            key = f"query:{query_hash}"
+
+        override_ttl = self._query_ttl_overrides.get(query_hash)
+        if override_ttl is not None:
+            ttl = override_ttl
+        elif ttl_override is not None:
+            ttl = ttl_override
+        elif pattern is not None:
+            ttl = pattern.ttl_seconds
+        else:
+            ttl = self._default_ttl
+
+        return key, int(ttl), pattern, query_hash
+
     async def get_or_compute(
         self,
         query: str,
@@ -261,19 +291,11 @@ class GoldenQueryCache:
     ) -> Any:
         """Get cached result or compute and cache it."""
         tenant_id = get_tenant_id()
-        query_hash = self._generate_query_hash(query)
-
-        # Find matching pattern
-        pattern = self._find_matching_pattern(query)
-        if not pattern:
-            # No pattern match, use simple caching
-            key = f"query:{query_hash}"
-            ttl = ttl_seconds or 300  # 5 minutes default
-        else:
-            # Use pattern-based caching
-            params = pattern.extract_params(query)
-            key = pattern.generate_key(params, tenant_id)
-            ttl = ttl_seconds or pattern.ttl_seconds
+        key, ttl, pattern, query_hash = self._resolve_cache_entry(
+            query,
+            tenant_id,
+            ttl_override=ttl_seconds,
+        )
 
         # Try to get from cache
         if not force_refresh:
@@ -361,6 +383,33 @@ class GoldenQueryCache:
 
         await self.cache.set(key, entry.__dict__, ttl_seconds)
 
+    async def invalidate_query(
+        self,
+        query: str,
+        tenant_id: Optional[str] = None,
+    ) -> int:
+        """Invalidate a specific query cache entry."""
+        tenant = tenant_id or get_tenant_id()
+        key, _, pattern, query_hash = self._resolve_cache_entry(query, tenant)
+
+        cached = await self.cache.get(key)
+        if cached is None:
+            return 0
+
+        await self.cache.delete(key)
+        async with self._lock:
+            self._query_stats.pop(key, None)
+
+        log_structured(
+            "info",
+            "golden_query_cache_entry_invalidated",
+            cache_key=key,
+            query_hash=query_hash,
+            tenant_id=tenant,
+            pattern=pattern.name if pattern else None,
+        )
+        return 1
+
     async def invalidate_pattern(
         self,
         pattern_name: str,
@@ -430,6 +479,42 @@ class GoldenQueryCache:
         )
 
         return invalidated_count
+
+    async def set_query_ttl_override(self, query: str, ttl_seconds: int) -> None:
+        """Apply a TTL override for a specific query fingerprint."""
+        if ttl_seconds <= 0:
+            raise ValueError("TTL override must be positive")
+
+        query_hash = self._generate_query_hash(query)
+        async with self._lock:
+            self._query_ttl_overrides[query_hash] = ttl_seconds
+
+        log_structured(
+            "info",
+            "golden_query_ttl_override_set",
+            query_hash=query_hash,
+            ttl_seconds=ttl_seconds,
+        )
+
+    async def clear_query_ttl_override(self, query: str) -> bool:
+        """Remove a TTL override if present."""
+        query_hash = self._generate_query_hash(query)
+        async with self._lock:
+            removed = self._query_ttl_overrides.pop(query_hash, None)
+
+        if removed is not None:
+            log_structured(
+                "info",
+                "golden_query_ttl_override_cleared",
+                query_hash=query_hash,
+            )
+            return True
+        return False
+
+    async def list_query_ttl_overrides(self) -> Dict[str, int]:
+        """Return current TTL overrides keyed by query hash."""
+        async with self._lock:
+            return dict(self._query_ttl_overrides)
 
     async def invalidate_on_asof_publish(
         self,
