@@ -4315,3 +4315,22 @@ def get_drought_tile_metadata(
 # Include external API router
 if external_router is not None:
     router.include_router(external_router)
+
+# Include database routers
+try:
+    from .database import (
+        performance_router,
+        query_analysis_router,
+        optimization_router,
+        connections_router,
+        health_router,
+        trino_admin_router,
+    )
+    router.include_router(performance_router, prefix="/v1/admin/db", tags=["Database"])
+    router.include_router(query_analysis_router, prefix="/v1/admin/db", tags=["Database"])
+    router.include_router(optimization_router, prefix="/v1/admin/db", tags=["Database"])
+    router.include_router(connections_router, prefix="/v1/admin/db", tags=["Database"])
+    router.include_router(health_router, prefix="/v1/admin/db", tags=["Database"])
+    router.include_router(trino_admin_router, prefix="/v1/admin/trino", tags=["Trino"])
+except Exception:  # pragma: no cover - optional during tooling
+    pass

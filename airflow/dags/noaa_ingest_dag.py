@@ -28,19 +28,24 @@ from aurum.lakefs_client import emit_lakefs_lineage
 from aurum.parsers.runner import build_seatunnel_task
 
 
-# Default arguments for all tasks
+# Production-ready default arguments for all tasks
 DEFAULT_ARGS = {
     "owner": "data-engineering",
     "depends_on_past": False,
     "start_date": datetime(2024, 1, 1),
     "email_on_failure": False,
     "email_on_retry": False,
-    "retries": 3,
-    "retry_delay": timedelta(minutes=5),
+    "retries": 5,
+    "retry_delay": timedelta(minutes=10),
     "retry_exponential_backoff": True,
-    "max_retry_delay": timedelta(minutes=30),
-    "execution_timeout": timedelta(hours=2),
+    "max_retry_delay": timedelta(minutes=60),
+    "execution_timeout": timedelta(hours=4),
+    "sla": timedelta(hours=12),  # SLA for production
+    "pool": "api_noaa",
+    "pool_slots": 1,
     "on_failure_callback": build_failure_callback(source="aurum.airflow.noaa_ingest"),
+    "on_success_callback": None,
+    "on_retry_callback": None,
 }
 
 # NOAA dataset configurations
@@ -91,28 +96,49 @@ NOAA_DATASETS = {
     }
 }
 
-# NOAA API configuration
+# Production-ready NOAA API configuration with cost controls
 NOAA_API_CONFIG = {
-    "base_url": "https://www.ncei.noaa.gov/access/services/data/v1",
-    "timeout_seconds": 45,
-    "rate_limit_sleep_ms": 250,
-    "retry_attempts": 5,
-    "retry_backoff_ms": 2000,
-    "retry_backoff_max_ms": 120000,
+    "base_url": "https://www.ncei.noaa.gov/cdo-web/api/v2",
+    "timeout_seconds": 60,
+    "rate_limit_sleep_ms": 300,
+    "retry_attempts": 7,
+    "retry_backoff_ms": 3000,
+    "retry_backoff_max_ms": 180000,
     "page_limit": 1000,
     "station_limit": 1000,
+    "daily_request_limit": 50000,
+    "hourly_request_limit": 10000,
+    "cost_per_1000_requests_usd": 0.01,
+    "monthly_budget_usd": 5000.00,
+    "enable_circuit_breaker": True,
+    "circuit_breaker_failure_threshold": 10,
+    "enable_adaptive_rate_limiting": True,
+    "enable_quota_management": True,
+    "enable_cost_tracking": True,
 }
 
 def get_noaa_config() -> Dict[str, Any]:
-    """Get NOAA configuration from environment or defaults."""
+    """Get NOAA configuration from environment with production defaults."""
     return {
         "api_token": "{{ var.value.get('aurum_noaa_api_token', '') }}",
         "base_url": NOAA_API_CONFIG["base_url"],
-        "kafka_bootstrap_servers": "{{ var.value.get('aurum_kafka_bootstrap_servers', 'localhost:9092') }}",
-        "schema_registry_url": "{{ var.value.get('aurum_schema_registry', 'http://localhost:8081') }}",
-        "timescale_jdbc_url": "{{ var.value.get('aurum_timescale_jdbc', 'jdbc:postgresql://timescale:5432/timeseries') }}",
+        "kafka_bootstrap_servers": "{{ var.value.get('aurum_kafka_bootstrap_servers', 'kafka-prod:9092') }}",
+        "schema_registry_url": "{{ var.value.get('aurum_schema_registry', 'http://schema-registry-prod:8081') }}",
+        "timescale_jdbc_url": "{{ var.value.get('aurum_timescale_jdbc', 'jdbc:postgresql://timescale-prod:5432/timeseries') }}",
         "timescale_table": "{{ var.value.get('aurum_noaa_timescale_table', 'noaa_weather_timeseries') }}",
         "dlq_topic": "{{ var.value.get('aurum_noaa_dlq_topic', 'aurum.ref.noaa.weather.dlq.v1') }}",
+        # Production settings
+        "daily_request_limit": NOAA_API_CONFIG["daily_request_limit"],
+        "hourly_request_limit": NOAA_API_CONFIG["hourly_request_limit"],
+        "cost_per_1000_requests": NOAA_API_CONFIG["cost_per_1000_requests_usd"],
+        "monthly_budget": NOAA_API_CONFIG["monthly_budget_usd"],
+        "enable_circuit_breaker": NOAA_API_CONFIG["enable_circuit_breaker"],
+        "enable_adaptive_rate_limiting": NOAA_API_CONFIG["enable_adaptive_rate_limiting"],
+        "enable_cost_tracking": NOAA_API_CONFIG["enable_cost_tracking"],
+        # Environment-specific settings
+        "environment": "{{ var.value.get('aurum_environment', 'prod') }}",
+        "region": "{{ var.value.get('aurum_region', 'us-east-1') }}",
+        "deployment_id": "{{ var.value.get('aurum_deployment_id', 'prod-001') }}",
     }
 
 def validate_noaa_config(**context) -> bool:

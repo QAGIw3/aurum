@@ -67,14 +67,26 @@ def load_noaa_dataset_configs(path: Path | None = None) -> List[NoaaDatasetConfi
 
 
 class NoaaRateLimiter:
-    """Enforces maximum requests per second."""
+    """Enforces maximum requests per second with adaptive rate limiting."""
 
-    def __init__(self, rate_per_sec: float = 5.0, *, monotonic: Optional[callable] = None, sleep: Optional[callable] = None) -> None:
+    def __init__(
+        self,
+        rate_per_sec: float = 5.0,
+        *,
+        monotonic: Optional[callable] = None,
+        sleep: Optional[callable] = None,
+        burst_limit: int = 10,
+        adaptive_backoff: bool = True
+    ) -> None:
         self.rate = rate_per_sec
         self._interval = 1.0 / rate_per_sec
         self._monotonic = monotonic or time.monotonic
         self._sleep = sleep or time.sleep
         self._next_allowed = self._monotonic()
+        self.burst_limit = burst_limit
+        self.adaptive_backoff = adaptive_backoff
+        self._consecutive_errors = 0
+        self._current_rate = rate_per_sec
 
     def acquire(self) -> None:
         now = self._monotonic()
@@ -82,26 +94,90 @@ class NoaaRateLimiter:
             delay = self._next_allowed - now
             self._sleep(delay)
             now = self._monotonic()
-        self._next_allowed = max(self._next_allowed + self._interval, now)
+
+        # Adaptive rate limiting based on recent errors
+        if self.adaptive_backoff and self._consecutive_errors > 0:
+            # Reduce rate when experiencing errors
+            adaptive_rate = max(self.rate * (1.0 / (1.0 + self._consecutive_errors)), 0.1)
+            interval = 1.0 / adaptive_rate
+        else:
+            interval = self._interval
+
+        self._next_allowed = max(self._next_allowed + interval, now)
+
+    def record_success(self) -> None:
+        """Record a successful request."""
+        self._consecutive_errors = max(0, self._consecutive_errors - 1)
+
+    def record_error(self) -> None:
+        """Record an error and potentially trigger rate limiting."""
+        self._consecutive_errors += 1
+        # Exponential backoff for the next request
+        if self._consecutive_errors > 3:
+            self._next_allowed = self._monotonic() + (2 ** (self._consecutive_errors - 3))
+
+    @property
+    def current_rate(self) -> float:
+        """Get current effective rate."""
+        return self._current_rate
 
 
 class DailyQuota:
-    """Simple daily quota tracker."""
+    """Enhanced daily quota tracker with alerts and burst handling."""
 
-    def __init__(self, limit: int, *, today_fn: Optional[callable] = None) -> None:
+    def __init__(
+        self,
+        limit: int,
+        *,
+        today_fn: Optional[callable] = None,
+        warning_threshold: float = 0.8,
+        critical_threshold: float = 0.95,
+        enable_burst: bool = True,
+        burst_size: int = 100
+    ) -> None:
         self.limit = limit
         self._today_fn = today_fn or (lambda: date.today())
         self._today = self._today_fn()
         self._count = 0
+        self.warning_threshold = warning_threshold
+        self.critical_threshold = critical_threshold
+        self.enable_burst = enable_burst
+        self.burst_size = burst_size
+        self._burst_used = 0
+        self._alerts_sent = set()
 
     def consume(self) -> None:
         today = self._today_fn()
         if today != self._today:
             self._today = today
             self._count = 0
-        if self.limit and self._count >= self.limit:
-            raise RuntimeError("NOAA daily quota exceeded")
+            self._burst_used = 0
+            self._alerts_sent.clear()
+
+        if not self.limit:
+            return  # No limit set
+
+        # Check if we're within burst allowance
+        if self.enable_burst and self._burst_used < self.burst_size:
+            self._burst_used += 1
+            return
+
+        # Regular quota consumption
+        if self._count >= self.limit:
+            raise RuntimeError(f"NOAA daily quota exceeded: {self._count}/{self.limit}")
+
         self._count += 1
+
+        # Send alerts based on thresholds
+        usage_ratio = self._count / self.limit
+
+        if usage_ratio >= self.critical_threshold and "critical" not in self._alerts_sent:
+            print(f"🚨 CRITICAL: NOAA quota usage at {usage_ratio:.1%} ({self._count}/{self.limit})")
+            self._alerts_sent.add("critical")
+
+        elif usage_ratio >= self.warning_threshold and "warning" not in self._alerts_sent:
+            print(f"⚠️ WARNING: NOAA quota usage at {usage_ratio:.1%} ({self._count}/{self.limit})")
+            self._alerts_sent.add("warning")
 
     @property
     def remaining(self) -> Optional[int]:
@@ -109,9 +185,23 @@ class DailyQuota:
             return None
         return max(0, self.limit - self._count)
 
+    @property
+    def usage_ratio(self) -> float:
+        if not self.limit:
+            return 0.0
+        return self._count / self.limit
+
+    @property
+    def is_critical(self) -> bool:
+        return self.usage_ratio >= self.critical_threshold
+
+    @property
+    def is_warning(self) -> bool:
+        return self.usage_ratio >= self.warning_threshold
+
 
 class NoaaApiClient:
-    """Wrapper around :class:`ExternalCollector` with auth, throttling, and quota."""
+    """Enhanced wrapper around :class:`ExternalCollector` with auth, throttling, quota, and robust error handling."""
 
     def __init__(
         self,
@@ -121,28 +211,107 @@ class NoaaApiClient:
         rate_limiter: Optional[NoaaRateLimiter] = None,
         quota: Optional[DailyQuota] = None,
         base_url: str = DEFAULT_BASE_URL,
+        max_retries: int = 5,
+        timeout_seconds: int = 45,
+        backoff_multiplier: float = 2.0,
+        max_backoff_seconds: int = 120,
     ) -> None:
         self.collector = collector
         self.token = token
         self.rate_limiter = rate_limiter or NoaaRateLimiter()
         self.quota = quota
         self.base_url = base_url.rstrip("/")
+        self.max_retries = max_retries
+        self.timeout_seconds = timeout_seconds
+        self.backoff_multiplier = backoff_multiplier
+        self.max_backoff_seconds = max_backoff_seconds
+        self._circuit_breaker_tripped = False
+        self._consecutive_failures = 0
 
     def request(self, path: str, params: Optional[Mapping[str, Any]] = None) -> Mapping[str, Any]:
-        self.rate_limiter.acquire()
-        if self.quota:
-            self.quota.consume()
-        headers = {"token": self.token}
-        response = self.collector.request(
-            HttpRequest(
-                method="GET",
-                path=f"{self.base_url}{path}",
-                params=params,
-                headers=headers,
-            )
-        )
-        payload = response.json() or {}
-        return payload
+        """Make a request with enhanced retry logic and error handling."""
+        if self._circuit_breaker_tripped:
+            raise RuntimeError("NOAA API circuit breaker is tripped due to consecutive failures")
+
+        last_exception = None
+
+        for attempt in range(self.max_retries + 1):
+            try:
+                # Rate limiting
+                self.rate_limiter.acquire()
+
+                # Quota management
+                if self.quota:
+                    try:
+                        self.quota.consume()
+                    except RuntimeError as quota_error:
+                        print(f"🚫 NOAA quota exceeded: {quota_error}")
+                        raise quota_error
+
+                headers = {"token": self.token}
+
+                # Make the request
+                response = self.collector.request(
+                    HttpRequest(
+                        method="GET",
+                        path=f"{self.base_url}{path}",
+                        params=params,
+                        headers=headers,
+                        timeout=self.timeout_seconds,
+                    )
+                )
+
+                # Validate response
+                if response.status_code == 429:
+                    # Rate limited
+                    retry_after = response.headers.get("Retry-After", "60")
+                    wait_time = min(int(retry_after), self.max_backoff_seconds)
+                    print(f"⏱️ NOAA rate limited. Waiting {wait_time}s before retry {attempt + 1}/{self.max_retries}")
+                    time.sleep(wait_time)
+                    continue
+
+                if response.status_code >= 500:
+                    # Server error - exponential backoff
+                    backoff_time = min(self.backoff_multiplier ** attempt, self.max_backoff_seconds)
+                    print(f"🌐 NOAA server error ({response.status_code}). Retrying in {backoff_time}s...")
+                    time.sleep(backoff_time)
+                    continue
+
+                if response.status_code != 200:
+                    raise RuntimeError(f"NOAA API error: {response.status_code} - {response.text}")
+
+                payload = response.json() or {}
+
+                # Success - record it
+                self.rate_limiter.record_success()
+                self._consecutive_failures = 0
+
+                return payload
+
+            except Exception as e:
+                last_exception = e
+                self.rate_limiter.record_error()
+                self._consecutive_failures += 1
+
+                if attempt < self.max_retries:
+                    backoff_time = min(self.backoff_multiplier ** attempt, self.max_backoff_seconds)
+                    print(f"❌ NOAA API request failed (attempt {attempt + 1}/{self.max_retries}): {e}")
+                    print(f"⏱️ Retrying in {backoff_time}s...")
+                    time.sleep(backoff_time)
+                else:
+                    # Check if we should trip circuit breaker
+                    if self._consecutive_failures >= 10:
+                        self._circuit_breaker_tripped = True
+                        print(f"🔴 Circuit breaker tripped after {self._consecutive_failures} consecutive failures")
+
+        # All retries exhausted
+        raise RuntimeError(f"NOAA API request failed after {self.max_retries + 1} attempts. Last error: {last_exception}")
+
+    def reset_circuit_breaker(self) -> None:
+        """Reset the circuit breaker to allow new requests."""
+        self._circuit_breaker_tripped = False
+        self._consecutive_failures = 0
+        print("✅ NOAA API circuit breaker reset")
 
     def iterate(self, path: str, params: Mapping[str, Any], *, page_limit: int) -> Iterator[List[Mapping[str, Any]]]:
         offset = int(params.get("offset", 0))

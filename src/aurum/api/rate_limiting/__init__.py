@@ -16,7 +16,7 @@ from .rate_limiting import (
     RateLimitState,
     RateLimitResult,
 )
-from .quota_manager import APIQuotaExceeded
+from .quota_manager import APIQuotaExceeded, TenantQuotaManager
 from .concurrency_middleware import ConcurrencyMiddleware
 
 __all__ = [
@@ -41,6 +41,7 @@ __all__ = [
     "rate_limit_management_router",
     # Quota Management
     "APIQuotaExceeded",
+    "TenantQuotaManager",
     # Concurrency
     "ConcurrencyMiddleware",
 ]

@@ -53,14 +53,14 @@ ISO_PROVIDER_DEFAULTS: Dict[str, Dict[str, Any]] = {
         "location_type": "NODE",
     },
     "iso.isone": {
-        "iso_code": "ISO-NE",
+        "iso_code": "ISONE",
         "timezone": "America/New_York",
         "interval_minutes": 60,
         "unit": "USD/MWh",
         "location_type": "NODE",
     },
     "isone": {
-        "iso_code": "ISO-NE",
+        "iso_code": "ISONE",
         "timezone": "America/New_York",
         "interval_minutes": 60,
         "unit": "USD/MWh",

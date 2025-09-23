@@ -1,12 +1,29 @@
-"""API quota management and rate limiting system."""
+"""API quota management and rate limiting system.
+
+This module contains two related systems:
+
+- External API QuotaManager: tracks usage for third‑party APIs (EIA, FRED, NOAA, World Bank)
+  keyed by provider API keys. It provides coarse rate checks and simulated requests for
+  integration testing.
+
+- TenantQuotaManager: enforces per‑tenant quotas for the Aurum API itself using Redis.
+  It supports per‑tenant requests/second (RPS) with burst via a sliding window over 1s
+  (backed by a Redis ZSET) and per‑tenant daily caps via Redis counters with day‑scoped
+  keys. This manager is lightweight and stateless beyond Redis keys.
+
+Both managers are safe to import even if Redis is unavailable; the tenant manager
+will no‑op if no client is provided.
+"""
 
 from __future__ import annotations
 
 import asyncio
 import logging
 import time
+import uuid
+import math
 from datetime import datetime, timedelta, timezone
-from typing import Any, Dict, List, Optional, Union
+from typing import Any, Dict, List, Optional, Tuple, Union
 
 import redis
 from redis.exceptions import ConnectionError, TimeoutError
@@ -660,3 +677,211 @@ async def call_world_bank_api(endpoint: str, **kwargs) -> Dict[str, Any]:
     """Make a rate-limited call to the World Bank API."""
     quota_manager = get_quota_manager()
     return await quota_manager.check_quota_and_make_request("world_bank", endpoint, **kwargs)
+
+
+# =====================
+# Tenant quota manager
+# =====================
+
+class TenantQuotaManager:
+    """Enforce per‑tenant RPS, burst and daily caps using Redis.
+
+    Implementation details:
+    - RPS/burst uses a 1s sliding window backed by a Redis ZSET where each request
+      is added as a unique member with a millisecond score. Old entries are evicted
+      on each check. This approximates a token bucket and allows short bursts.
+    - Daily caps use a per‑tenant counter key for the UTC day. We increment on every
+      allowed request and set the key to expire at the next UTC midnight. If an
+      increment would exceed the cap we atomically decrement back and deny.
+    """
+
+    def __init__(self, redis_client: Optional[redis.Redis], namespace: str = "quota") -> None:
+        self._redis = redis_client
+        self._ns = namespace.rstrip(":")
+
+    # ---- Key helpers ----
+    def _key_rps(self, tenant_id: str) -> str:
+        return f"{self._ns}:tenant:{tenant_id}:rps"
+
+    def _key_day(self, tenant_id: str, day_str: str) -> str:
+        return f"{self._ns}:tenant:{tenant_id}:day:{day_str}"
+
+    def _key_cfg(self, tenant_id: str) -> str:
+        return f"{self._ns}:tenant:{tenant_id}:config"
+
+    # ---- Public API ----
+    def get_tenant_config(self, tenant_id: str, default_rps: int, default_burst: int, default_daily: int) -> Dict[str, int]:
+        """Return effective config for a tenant, falling back to provided defaults.
+
+        Values can be overridden by a Redis hash at ``{ns}:tenant:{id}:config`` with fields
+        ``rps``, ``burst``, and ``daily_cap``.
+        """
+        if not self._redis:
+            return {"rps": default_rps, "burst": default_burst, "daily_cap": default_daily}
+        try:
+            values = self._redis.hgetall(self._key_cfg(tenant_id)) or {}
+        except Exception:
+            values = {}
+        rps = int(values.get("rps", default_rps) or default_rps)
+        burst = int(values.get("burst", default_burst) or default_burst)
+        daily = int(values.get("daily_cap", default_daily) or default_daily)
+        return {"rps": rps, "burst": burst, "daily_cap": daily}
+
+    def get_day_usage(self, tenant_id: str, now: Optional[datetime] = None) -> Tuple[int, int]:
+        """Return (used_today, seconds_until_reset) for the tenant in UTC."""
+        if now is None:
+            now = datetime.now(timezone.utc)
+        day_str = now.strftime("%Y%m%d")
+        if not self._redis:
+            # No Redis available: report zero usage and next reset at next midnight
+            tomorrow = (now + timedelta(days=1)).date()
+            midnight_next = datetime.combine(tomorrow, datetime.min.time(), tzinfo=timezone.utc)
+            return 0, int((midnight_next - now).total_seconds())
+        try:
+            count = int(self._redis.get(self._key_day(tenant_id, day_str)) or 0)
+        except Exception:
+            count = 0
+        # Compute seconds until next UTC midnight
+        tomorrow = (now + timedelta(days=1)).date()
+        midnight_next = datetime.combine(tomorrow, datetime.min.time(), tzinfo=timezone.utc)
+        return count, int((midnight_next - now).total_seconds())
+
+    def get_rps_usage(self, tenant_id: str, window_ms: int = 1000, now_ms: Optional[int] = None) -> int:
+        """Return current request count in the 1s sliding window for the tenant."""
+        if not self._redis:
+            return 0
+        now_ms = now_ms or int(time.time() * 1000)
+        key = self._key_rps(tenant_id)
+        try:
+            pipe = self._redis.pipeline()
+            pipe.zremrangebyscore(key, 0, now_ms - window_ms)
+            pipe.zcard(key)
+            _, count = pipe.execute()
+            return int(count)
+        except Exception:
+            return 0
+
+    def check_and_consume(
+        self,
+        tenant_id: str,
+        rps: int,
+        burst: int,
+        daily_cap: int,
+        now: Optional[datetime] = None,
+    ) -> Dict[str, Any]:
+        """Check quotas and consume a unit if allowed.
+
+        Returns a dict with keys:
+        - allowed: bool
+        - reason: "ok" | "rps_exceeded" | "daily_exceeded" | "unavailable"
+        - rps_remaining: int, rps_reset: int (seconds)
+        - daily_remaining: int, daily_reset: int (seconds)
+        """
+        if not self._redis:
+            return {
+                "allowed": True,
+                "reason": "unavailable",
+                "rps_remaining": max(0, rps + burst - 1),
+                "rps_reset": 1,
+                "daily_remaining": max(0, daily_cap - 1),
+                "daily_reset": 60,
+            }
+
+        now = now or datetime.now(timezone.utc)
+        now_ms = int(now.timestamp() * 1000)
+        window_ms = 1000
+        key_rps = self._key_rps(tenant_id)
+        # Sliding window check
+        try:
+            member = f"{now_ms}:{tenant_id}:{uuid.uuid4().hex}"
+            pipe = self._redis.pipeline()
+            pipe.zremrangebyscore(key_rps, 0, now_ms - window_ms)
+            pipe.zadd(key_rps, {member: now_ms})
+            pipe.zcard(key_rps)
+            pipe.zrange(key_rps, 0, 0, withscores=True)
+            pipe.pexpire(key_rps, window_ms)
+            _, _, current_count, earliest, _ = pipe.execute()
+            current = int(current_count)
+            limit_total = int(rps + burst)
+            rps_allowed = current <= limit_total
+            # Compute reset seconds for window
+            oldest_score = None
+            if earliest:
+                try:
+                    oldest_score = float(earliest[0][1])
+                except (ValueError, TypeError, IndexError):
+                    oldest_score = None
+            rps_reset_seconds = 1
+            if oldest_score is not None:
+                reset_window = ((oldest_score + window_ms) - now_ms) / 1000.0
+                rps_reset_seconds = max(0, math.ceil(reset_window))
+            rps_remaining = max(0, limit_total - current)
+        except Exception:
+            # Fail open but report unavailable
+            return {
+                "allowed": True,
+                "reason": "unavailable",
+                "rps_remaining": max(0, rps + burst - 1),
+                "rps_reset": 1,
+                "daily_remaining": max(0, daily_cap - 1),
+                "daily_reset": 60,
+            }
+
+        if not rps_allowed:
+            used_today, day_reset = self.get_day_usage(tenant_id, now)
+            return {
+                "allowed": False,
+                "reason": "rps_exceeded",
+                "rps_remaining": rps_remaining,
+                "rps_reset": rps_reset_seconds,
+                "daily_remaining": max(0, daily_cap - used_today),
+                "daily_reset": day_reset,
+            }
+
+        # Daily cap enforcement with atomic increment and optional rollback
+        day_str = now.strftime("%Y%m%d")
+        key_day = self._key_day(tenant_id, day_str)
+        try:
+            new_value = int(self._redis.incr(key_day))
+            if new_value == 1:
+                # First request today: expire at next UTC midnight
+                tomorrow = (now + timedelta(days=1)).date()
+                midnight_next = datetime.combine(tomorrow, datetime.min.time(), tzinfo=timezone.utc)
+                self._redis.expireat(key_day, int(midnight_next.timestamp()))
+            if new_value > daily_cap:
+                # Roll back and deny
+                try:
+                    self._redis.decr(key_day)
+                except Exception:
+                    pass
+                used_today = new_value - 1
+                _, day_reset = self.get_day_usage(tenant_id, now)
+                return {
+                    "allowed": False,
+                    "reason": "daily_exceeded",
+                    "rps_remaining": rps_remaining,
+                    "rps_reset": rps_reset_seconds,
+                    "daily_remaining": max(0, daily_cap - used_today),
+                    "daily_reset": day_reset,
+                }
+        except Exception:
+            # Fail open on Redis issues, but report unavailable
+            return {
+                "allowed": True,
+                "reason": "unavailable",
+                "rps_remaining": rps_remaining,
+                "rps_reset": rps_reset_seconds,
+                "daily_remaining": max(0, daily_cap - 1),
+                "daily_reset": 60,
+            }
+
+        # Allowed and accounted for
+        used_today, day_reset = self.get_day_usage(tenant_id, now)
+        return {
+            "allowed": True,
+            "reason": "ok",
+            "rps_remaining": rps_remaining,
+            "rps_reset": rps_reset_seconds,
+            "daily_remaining": max(0, daily_cap - used_today),
+            "daily_reset": day_reset,
+        }

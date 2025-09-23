@@ -3,12 +3,64 @@ from __future__ import annotations
 """Configuration helpers for the Aurum API service."""
 
 from dataclasses import dataclass, field
-from typing import Tuple
+from typing import List, Tuple
 
 from aurum.core import AurumSettings
 from aurum.core.settings import RedisMode
 
 
+from enum import Enum
+
+
+class TrinoCatalogType(str, Enum):
+    """Trino catalog types for data lineage and access control."""
+    RAW = "iceberg_raw"
+    MARKET = "iceberg_market"
+
+
+class TrinoAccessLevel(str, Enum):
+    """Access levels for Trino catalogs."""
+    READ_ONLY = "read_only"
+    READ_WRITE = "read_write"
+    ADMIN = "admin"
+
+
+@dataclass(frozen=True)
+class TrinoCatalogConfig:
+    """Configuration for a specific Trino catalog."""
+    host: str
+    port: int
+    user: str
+    http_scheme: str
+    catalog: str
+    schema: str
+    access_level: TrinoAccessLevel
+    password: str | None = None
+    lineage_tags: List[str] = field(default_factory=list)
+
+    @classmethod
+    def from_settings(
+        cls,
+        settings: AurumSettings,
+        catalog_type: TrinoCatalogType,
+        access_level: TrinoAccessLevel = TrinoAccessLevel.READ_WRITE,
+        lineage_tags: List[str] | None = None,
+    ) -> "TrinoCatalogConfig":
+        trino = settings.trino
+        return cls(
+            host=trino.host,
+            port=trino.port,
+            user=trino.user,
+            http_scheme=trino.http_scheme,
+            catalog=catalog_type.value,
+            schema=trino.database_schema,
+            access_level=access_level,
+            password=trino.password,
+            lineage_tags=lineage_tags or [],
+        )
+
+
+# Backward compatibility - single catalog config
 @dataclass(frozen=True)
 class TrinoConfig:
     host: str = "localhost"
@@ -88,4 +140,4 @@ def _parse_host_port(value: str, *, default_port: int) -> Tuple[str, int] | None
     return host, port
 
 
-__all__ = ["TrinoConfig", "CacheConfig"]
+__all__ = ["TrinoCatalogType", "TrinoAccessLevel", "TrinoCatalogConfig", "TrinoConfig", "CacheConfig"]

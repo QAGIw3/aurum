@@ -24,15 +24,17 @@ import uuid
 from collections import deque
 from dataclasses import dataclass, field
 from typing import Deque, Dict, Optional, Tuple, Any
+from datetime import datetime, timezone, timedelta
 
 from aurum.core import AurumSettings
 
 from starlette.requests import Request
 from starlette.responses import JSONResponse, Response
 from starlette.types import ASGIApp, Receive, Scope, Send
-from fastapi import APIRouter, Query
+from fastapi import APIRouter, Query, HTTPException
 
 from .config import CacheConfig
+from .quota_manager import TenantQuotaManager
 from ..telemetry.context import get_request_id
 
 try:  # pragma: no cover - optional metric dependency
@@ -104,6 +106,7 @@ def _record_metric(result: str, path: str = "", tenant_id: str = "", request_cou
 class RateLimitConfig:
     rps: int = 10
     burst: int = 20
+    daily_cap: int = 100_000  # default daily cap per tenant; set 0 to disable
     overrides: Dict[str, Tuple[int, int]] = field(default_factory=dict)
     tenant_overrides: Dict[str, Dict[str, Tuple[int, int]]] = field(default_factory=dict)
     identifier_header: str | None = None
@@ -115,6 +118,8 @@ class RateLimitConfig:
 
         rps = int(os.getenv("AURUM_API_RATE_LIMIT_RPS", "10") or 10)
         burst = int(os.getenv("AURUM_API_RATE_LIMIT_BURST", "20") or 20)
+        daily_env = os.getenv("AURUM_API_DAILY_CAP") or os.getenv("AURUM_API_RATE_LIMIT_DAILY_CAP")
+        daily_cap = int(daily_env) if daily_env not in (None, "") else 100_000
         overrides_env = os.getenv("AURUM_API_RATE_LIMIT_OVERRIDES", "")
         overrides: Dict[str, Tuple[int, int]] = {}
         if overrides_env:
@@ -143,6 +148,7 @@ class RateLimitConfig:
         return cls(
             rps=rps,
             burst=burst,
+            daily_cap=daily_cap,
             overrides=overrides,
             identifier_header=identifier_header,
             whitelist=whitelist,
@@ -156,6 +162,7 @@ class RateLimitConfig:
         return cls(
             rps=rl.requests_per_second,
             burst=rl.burst,
+            daily_cap=100_000,  # default daily limit; can be overridden via Redis config
             overrides=overrides,
             tenant_overrides=tenant_overrides,
             identifier_header=rl.identifier_header,
@@ -210,6 +217,7 @@ class RateLimitMiddleware:
         self.cache_cfg = cache_cfg
         self.rl_cfg = rl_cfg
         self._redis = _redis_client(cache_cfg)
+        self._tenant_quota = TenantQuotaManager(self._redis)
         self._memory_windows: dict[str, Deque[float]] = {}
         self._window_seconds = 1.0
 
@@ -235,13 +243,38 @@ class RateLimitMiddleware:
             await self.app(scope, receive, send)
             return
 
-        key = self._rate_key(path, identifier)
-        allowed, remaining, reset = await self._allow(key, rps=rps, burst=burst)
-        if not allowed:
-            await self._reject(scope, receive, send, remaining=0, reset=reset)
-            return
-        # Inject rate limit headers on successful responses
         limit_total = rps + burst
+        daily_remaining_header: Optional[int] = None
+        daily_limit_header: Optional[int] = None
+
+        # Prefer per‑tenant quotas when tenant_id is known
+        if tenant_id is not None and self._tenant_quota is not None:
+            # Allow per-tenant overrides (rps, burst, daily) via Redis config hash
+            cfg = self._tenant_quota.get_tenant_config(
+                tenant_id,
+                default_rps=rps,
+                default_burst=burst,
+                default_daily=self.rl_cfg.daily_cap,
+            )
+            rps = int(cfg.get("rps", rps))
+            burst = int(cfg.get("burst", burst))
+            daily_cap = int(cfg.get("daily_cap", self.rl_cfg.daily_cap))
+            limit_total = rps + burst
+            result = self._tenant_quota.check_and_consume(tenant_id, rps=rps, burst=burst, daily_cap=daily_cap)
+            if not result.get("allowed", False):
+                reset_seconds = int(result.get("daily_reset") if result.get("reason") == "daily_exceeded" else result.get("rps_reset", 1))
+                await self._reject(scope, receive, send, remaining=0, reset=reset_seconds)
+                return
+            remaining = int(result.get("rps_remaining", 0))
+            reset = int(result.get("rps_reset", 1))
+            daily_remaining_header = int(result.get("daily_remaining", 0))
+            daily_limit_header = daily_cap
+        else:
+            key = self._rate_key(path, identifier)
+            allowed, remaining, reset = await self._allow(key, rps=rps, burst=burst)
+            if not allowed:
+                await self._reject(scope, receive, send, remaining=0, reset=reset)
+                return
 
         async def send_with_headers(message: dict[str, Any]) -> None:
             if message.get("type") == "http.response.start":
@@ -249,6 +282,10 @@ class RateLimitMiddleware:
                 headers.append((b"X-RateLimit-Limit", str(limit_total).encode("ascii")))
                 headers.append((b"X-RateLimit-Remaining", str(max(0, remaining)).encode("ascii")))
                 headers.append((b"X-RateLimit-Reset", str(reset).encode("ascii")))
+                if daily_remaining_header is not None:
+                    headers.append((b"X-RateLimit-Daily-Remaining", str(max(0, daily_remaining_header)).encode("ascii")))
+                if daily_limit_header is not None:
+                    headers.append((b"X-RateLimit-Daily-Limit", str(max(0, daily_limit_header)).encode("ascii")))
                 message["headers"] = headers
             await send(message)
 
@@ -286,12 +323,7 @@ class RateLimitMiddleware:
                 if oldest_score is not None:
                     reset_window = ((oldest_score + window_ms) - now_ms) / 1000.0
                     reset_seconds = max(0, math.ceil(reset_window))
-                _record_metric(
-                    "allowed" if allowed else "blocked",
-                    path=path,
-                    tenant_id=tenant,
-                    request_count=current
-                )
+                _record_metric("allowed" if allowed else "blocked")
                 return allowed, remaining, reset_seconds
             except Exception:
                 _record_metric("error")
@@ -305,17 +337,22 @@ class RateLimitMiddleware:
         current = len(bucket)
         remaining = max(0, limit_total - current)
         allowed = current <= limit_total
-        _record_metric(
-            "allowed" if allowed else "blocked",
-            path=path,
-            tenant_id=tenant,
-            request_count=current
-        )
+        _record_metric("allowed" if allowed else "blocked")
         reset_seconds = 1
         if bucket:
             reset_window = self._window_seconds - (now - bucket[0])
             reset_seconds = max(0, math.ceil(reset_window))
         return allowed, remaining, reset_seconds
+
+    async def _reject(self, scope: Scope, receive: Receive, send: Send, *, remaining: int, reset: int) -> None:
+        headers = {
+            "Retry-After": str(reset),
+            "X-RateLimit-Limit": str(self.rl_cfg.rps + self.rl_cfg.burst),
+            "X-RateLimit-Remaining": str(remaining),
+            "X-RateLimit-Reset": str(reset),
+        }
+        response = JSONResponse({"error": "rate_limited", "message": "Too Many Requests"}, status_code=429, headers=headers)
+        await response(scope, receive, send)
 
     def _client_ip(self, request: Request) -> str:
         xff = request.headers.get("x-forwarded-for")
@@ -378,6 +415,7 @@ async def get_ratelimit_config() -> Dict[str, Any]:
 
     settings = AurumSettings.from_env()
     rl = settings.api.rate_limit
+    window_seconds = getattr(rl, "window_seconds", 1)
 
     return {
         "meta": {
@@ -387,9 +425,10 @@ async def get_ratelimit_config() -> Dict[str, Any]:
             "enabled": rl.enabled,
             "requests_per_second": rl.requests_per_second,
             "burst": rl.burst,
+            "daily_cap": RateLimitConfig.from_settings(settings).daily_cap,
             "overrides": rl.overrides,
             "tenant_overrides": rl.tenant_overrides,
-            "window_seconds": rl.window_seconds,
+            "window_seconds": window_seconds,
         }
     }
 
@@ -441,6 +480,90 @@ async def get_ratelimit_metrics(
     }
 
 
+def _admin_redis_client() -> Optional["redis.Redis"]:
+    try:
+        from .config import CacheConfig  # local import to avoid import cycles
+        from aurum.core import AurumSettings
+        settings = AurumSettings.from_env()
+        cache_cfg = CacheConfig.from_settings(settings)
+        return _redis_client(cache_cfg)
+    except Exception:
+        return None
+
+
+@ratelimit_admin_router.get("/v1/admin/ratelimit/tenants")
+async def list_tenant_quotas(
+    prefix: Optional[str] = Query(None, description="Filter tenants by prefix"),
+    limit: int = Query(100, ge=1, le=1000, description="Maximum tenants to return"),
+) -> Dict[str, Any]:
+    """List per‑tenant daily usage and effective caps for the current UTC day."""
+    now = datetime.utcnow()
+    day_str = now.strftime("%Y%m%d")
+    client = _admin_redis_client()
+    tqm = TenantQuotaManager(client)
+    rl_cfg = RateLimitConfig.from_settings(AurumSettings.from_env())
+    items: List[Dict[str, Any]] = []
+    scanned = 0
+    if client is not None:
+        try:
+            pattern = f"quota:tenant:*:day:{day_str}"
+            for key in client.scan_iter(match=pattern, count=1000):
+                key_str = key.decode("utf-8") if isinstance(key, (bytes, bytearray)) else str(key)
+                # Extract tenant id between 'tenant:' and ':day:'
+                try:
+                    tenant_id = key_str.split(":tenant:", 1)[1].split(":day:", 1)[0]
+                except Exception:
+                    continue
+                if prefix and not tenant_id.startswith(prefix):
+                    continue
+                try:
+                    used = int(client.get(key) or 0)
+                except Exception:
+                    used = 0
+                cfg = tqm.get_tenant_config(tenant_id, default_rps=rl_cfg.rps, default_burst=rl_cfg.burst, default_daily=rl_cfg.daily_cap)
+                items.append({
+                    "tenant_id": tenant_id,
+                    "used_today": used,
+                    "daily_cap": cfg["daily_cap"],
+                    "remaining_today": max(0, int(cfg["daily_cap"]) - used),
+                    "rps": cfg["rps"],
+                    "burst": cfg["burst"],
+                })
+                scanned += 1
+                if scanned >= limit:
+                    break
+        except Exception:
+            pass
+    return {
+        "meta": {"request_id": get_request_id(), "day": day_str, "count": len(items)},
+        "data": items,
+    }
+
+
+@ratelimit_admin_router.get("/v1/admin/ratelimit/tenants/{tenant_id}")
+async def get_tenant_quota(tenant_id: str) -> Dict[str, Any]:
+    """Get quota status and usage for a specific tenant."""
+    client = _admin_redis_client()
+    tqm = TenantQuotaManager(client)
+    rl_cfg = RateLimitConfig.from_settings(AurumSettings.from_env())
+    cfg = tqm.get_tenant_config(tenant_id, default_rps=rl_cfg.rps, default_burst=rl_cfg.burst, default_daily=rl_cfg.daily_cap)
+    used_today, day_reset = tqm.get_day_usage(tenant_id)
+    current_window = tqm.get_rps_usage(tenant_id)
+    return {
+        "meta": {"request_id": get_request_id()},
+        "data": {
+            "tenant_id": tenant_id,
+            "config": cfg,
+            "usage": {
+                "rps_window_count": current_window,
+                "used_today": used_today,
+                "remaining_today": max(0, int(cfg["daily_cap"]) - int(used_today)),
+                "reset_today_seconds": day_reset,
+            },
+        },
+    }
+
+
 @ratelimit_admin_router.post("/v1/admin/ratelimit/test")
 async def test_ratelimit(
     path: str = Query(..., description="Path to test rate limiting for"),
@@ -465,10 +588,52 @@ async def test_ratelimit(
         }
     }
 
-    async def _reject(self, scope: Scope, receive: Receive, send: Send, *, remaining: int, reset: int) -> None:
-        headers = {"Retry-After": str(reset), "X-RateLimit-Limit": str(self.rl_cfg.rps + self.rl_cfg.burst), "X-RateLimit-Remaining": str(remaining), "X-RateLimit-Reset": str(reset)}
-        response = JSONResponse({"error": "rate_limited", "message": "Too Many Requests"}, status_code=429, headers=headers)
-        await response(scope, receive, send)
+
+@ratelimit_admin_router.post("/v1/admin/ratelimit/tenants/{tenant_id}/config")
+async def set_tenant_quota_config(
+    tenant_id: str,
+    body: Dict[str, int],
+) -> Dict[str, Any]:
+    """Set per-tenant quota configuration in Redis.
+
+    Body fields (optional):
+    - rps: int
+    - burst: int
+    - daily_cap: int
+    """
+    client = _admin_redis_client()
+    if client is None:
+        raise HTTPException(status_code=503, detail="Redis unavailable")
+    fields: Dict[str, int] = {}
+    for key in ("rps", "burst", "daily_cap"):
+        if key in body:
+            try:
+                val = int(body[key])
+                if val < 0:
+                    raise ValueError
+                fields[key] = val
+            except Exception:
+                raise HTTPException(status_code=400, detail=f"Invalid integer for {key}")
+    if not fields:
+        raise HTTPException(status_code=400, detail="No valid fields provided")
+    tqm = TenantQuotaManager(client)
+    client.hset(tqm._key_cfg(tenant_id), mapping=fields)
+    return {"meta": {"request_id": get_request_id()}, "data": {"tenant_id": tenant_id, "updated": fields}}
+
+
+@ratelimit_admin_router.post("/v1/admin/ratelimit/tenants/{tenant_id}/reset")
+async def reset_tenant_daily_usage(tenant_id: str) -> Dict[str, Any]:
+    """Reset the tenant's usage for the current UTC day."""
+    client = _admin_redis_client()
+    if client is None:
+        raise HTTPException(status_code=503, detail="Redis unavailable")
+    now = datetime.utcnow()
+    day_str = now.strftime("%Y%m%d")
+    key = f"quota:tenant:{tenant_id}:day:{day_str}"
+    with client.pipeline() as pipe:
+        pipe.delete(key)
+        pipe.execute()
+    return {"meta": {"request_id": get_request_id()}, "data": {"tenant_id": tenant_id, "reset_day": day_str}}
 
 
 __all__ = ["RateLimitConfig", "RateLimitMiddleware"]

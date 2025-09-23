@@ -1306,6 +1306,34 @@ PY
     export ERCOT_UOM="${ERCOT_UOM:-MWh}"
     ensure_iso_lmp_schema
     ;;
+  iso_lmp_kafka_to_timescale)
+    REQUIRED_VARS=(
+      AURUM_KAFKA_BOOTSTRAP_SERVERS
+      AURUM_SCHEMA_REGISTRY_URL
+      AURUM_TIMESCALE_JDBC_URL
+      AURUM_TIMESCALE_USER
+      AURUM_TIMESCALE_PASSWORD
+    )
+    # Provide a sane default topic pattern covering PJM/CAISO/ERCOT/MISO/ISONE/SPP
+    export ISO_LMP_TOPIC_PATTERN="${ISO_LMP_TOPIC_PATTERN:-aurum\\.iso\\..*\\.lmp\\.v1}"
+    ;;
+  iso_lmp_kafka_to_iceberg)
+    REQUIRED_VARS=(
+      AURUM_KAFKA_BOOTSTRAP_SERVERS
+      AURUM_SCHEMA_REGISTRY_URL
+      ICEBERG_CATALOG_NAME
+      ICEBERG_CATALOG_TYPE
+      ICEBERG_URI
+      ICEBERG_WAREHOUSE
+      ICEBERG_DB
+      ICEBERG_TABLE
+    )
+    export ISO_LMP_TOPIC_PATTERN="${ISO_LMP_TOPIC_PATTERN:-aurum\\.iso\\..*\\.lmp\\.v1}"
+    export ISO_CODE="${ISO_CODE:-UNKNOWN}"
+    export ISO_DATASET="${ISO_DATASET:-lmp}"
+    export ICEBERG_WRITE_DISTRIBUTION="${ICEBERG_WRITE_DISTRIBUTION:-hash}"
+    export ICEBERG_WRITE_FORMAT="${ICEBERG_WRITE_FORMAT:-parquet}"
+    ;;
   spp_lmp_to_kafka)
     REQUIRED_VARS=(
       SPP_INPUT_JSON
@@ -1367,7 +1395,7 @@ for var in "${REQUIRED_VARS[@]}"; do
   render_args+=(--required "${var}")
 done
 
-PYTHONPATH="${REPO_ROOT}/src${PYTHONPATH:+:${PYTHONPATH}}" python3 -m aurum.seatunnel.renderer "${render_args[@]}"
+PYTHONPATH="${REPO_ROOT}/src${PYTHONPATH:+:${PYTHONPATH}}" python3 "${REPO_ROOT}/src/aurum/seatunnel/renderer.py" "${render_args[@]}"
 
 if [[ "${RENDER_ONLY}" == "true" ]]; then
   cat "${OUTPUT_CONFIG}"

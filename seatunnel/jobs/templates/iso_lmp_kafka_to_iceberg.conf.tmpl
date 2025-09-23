@@ -19,7 +19,7 @@ env {
 source {
   Kafka {
     bootstrap.servers = "${AURUM_KAFKA_BOOTSTRAP_SERVERS}"
-    topic = "${ISO_LMP_TOPIC_PATTERN:-aurum\\.iso\\..*\\.lmp\\.v1}"
+    pattern = "${ISO_LMP_TOPIC_PATTERN}"
     format = "avro"
     start_mode = "latest"
     avro {
@@ -58,8 +58,8 @@ transform {
         TO_TIMESTAMP(ingest_ts / 1000000.0) AS ingest_ts,
         record_hash,
         CAST(metadata AS STRING) AS metadata,
-        '${ISO_CODE:-UNKNOWN}' AS iso,
-        '${ISO_DATASET:-lmp}'  AS dataset,
+        '${ISO_CODE}' AS iso,
+        '${ISO_DATASET}'  AS dataset,
         CAST(TO_DATE(TO_TIMESTAMP(interval_start / 1000000.0)) AS DATE) AS dt
       FROM lmp_raw
     """
@@ -75,9 +75,8 @@ sink {
     warehouse = "${ICEBERG_WAREHOUSE}"
     database = "${ICEBERG_DB}"
     table = "${ICEBERG_TABLE}"
-    write.distribution-mode = "${ICEBERG_WRITE_DISTRIBUTION:-hash}"
-    format = "${ICEBERG_WRITE_FORMAT:-parquet}"
+    write.distribution-mode = "${ICEBERG_WRITE_DISTRIBUTION}"
+    format = "${ICEBERG_WRITE_FORMAT}"
     upsert = true
   }
 }
-

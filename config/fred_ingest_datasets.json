@@ -1,4 +1,71 @@
 {
+  "metadata": {
+    "description": "FRED Economic Data Ingestion Configuration",
+    "version": "2.0.0",
+    "last_updated": "2024-09-23",
+    "source": "FRED API v2",
+    "base_url": "https://api.stlouisfed.org/fred"
+  },
+  "global_settings": {
+    "rate_limit_sleep_ms": 500,
+    "timeout_seconds": 60,
+    "retry_attempts": 7,
+    "retry_backoff_ms": 3000,
+    "retry_backoff_max_ms": 180000,
+    "page_limit": 1000,
+    "concurrent_requests": 2,
+    "max_active_runs": 3,
+    "pool": "api_fred",
+    "schema_registry_url": "http://localhost:8081",
+    "kafka_bootstrap_servers": "localhost:9092",
+    "timescale_table": "fred_series_timeseries",
+    "dlq_topic": "aurum.ref.fred.series.dlq.v1"
+  },
+  "cost_controls": {
+    "daily_request_limit": 50000,
+    "hourly_request_limit": 10000,
+    "monthly_budget_usd": 5000.00,
+    "cost_per_1000_requests": 0.005,
+    "enable_dynamic_throttling": true,
+    "cost_alert_thresholds": {
+      "warning_percent": 75,
+      "critical_percent": 90,
+      "stop_percent": 100
+    },
+    "monitoring": {
+      "enable_request_tracking": true,
+      "enable_cost_estimation": true,
+      "enable_usage_alerts": true,
+      "alert_channels": ["#data-cost-monitoring", "#fred-alerts"],
+      "cost_report_frequency_hours": 6
+    }
+  },
+  "alerting": {
+    "slack_channels": ["#data-ingestion-alerts", "#economic-data", "#data-cost-monitoring"],
+    "email_recipients": ["data-team@aurum.com", "economic-team@aurum.com", "cost-monitoring@aurum.com"],
+    "critical_staleness_hours": 48,
+    "warning_staleness_hours": 12,
+    "quality_threshold_percent": 95,
+    "cost_alerts": {
+      "daily_budget_warning_percent": 70,
+      "daily_budget_critical_percent": 85,
+      "hourly_rate_spike_percent": 150,
+      "enable_cost_prediction": true,
+      "cost_prediction_hours_ahead": 24
+    },
+    "performance_alerts": {
+      "average_response_time_ms_threshold": 15000,
+      "error_rate_threshold_percent": 5,
+      "retry_rate_threshold_percent": 20,
+      "throughput_drop_percent": 30
+    },
+    "data_quality_alerts": {
+      "null_value_rate_threshold": 0.05,
+      "outlier_rate_threshold": 0.02,
+      "duplicate_rate_threshold": 0.01,
+      "freshness_hours": 24
+    }
+  },
   "datasets": [
     {
       "source_name": "fred_dgs10",

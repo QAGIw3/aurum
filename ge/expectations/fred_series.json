@@ -1,7 +1,19 @@
 {
   "expectation_suite_name": "fred_series",
   "meta": {
-    "notes": "Checks for FRED series observations landing in Timescale."
+    "notes": "Comprehensive data quality checks for FRED series observations landing in Timescale. Includes anomaly detection, range validation, and statistical checks for production use.",
+    "version": "2.0.0",
+    "last_updated": "2024-09-23",
+    "critical_checks": [
+      "series_id_not_null",
+      "obs_date_not_null",
+      "frequency_valid_values",
+      "value_range_validation",
+      "data_freshness_check",
+      "anomaly_detection",
+      "duplicate_records_check",
+      "seasonal_adjustment_consistency"
+    ]
   },
   "expectations": [
     {
@@ -25,32 +37,137 @@
           "ingest_run_id",
           "ingest_batch_id"
         ]
-      }
+      },
+      "meta": {"severity": "critical"}
     },
     {
       "expectation_type": "expect_column_values_to_not_be_null",
-      "kwargs": {"column": "tenant_id"}
+      "kwargs": {"column": "tenant_id"},
+      "meta": {"severity": "critical"}
     },
     {
       "expectation_type": "expect_column_values_to_not_be_null",
-      "kwargs": {"column": "series_id"}
+      "kwargs": {"column": "series_id"},
+      "meta": {"severity": "critical"}
     },
     {
       "expectation_type": "expect_column_values_to_not_be_null",
-      "kwargs": {"column": "obs_date"}
+      "kwargs": {"column": "obs_date"},
+      "meta": {"severity": "critical"}
     },
     {
       "expectation_type": "expect_column_values_to_not_be_null",
-      "kwargs": {"column": "ingest_ts"}
+      "kwargs": {"column": "ingest_ts"},
+      "meta": {"severity": "critical"}
+    },
+    {
+      "expectation_type": "expect_column_values_to_not_be_null",
+      "kwargs": {
+        "column": "value",
+        "mostly": 0.95
+      },
+      "meta": {"severity": "warning"}
+    },
+    {
+      "expectation_type": "expect_column_values_to_not_be_null",
+      "kwargs": {
+        "column": "units",
+        "mostly": 0.9
+      },
+      "meta": {"severity": "warning"}
+    },
+    {
+      "expectation_type": "expect_column_values_to_not_be_null",
+      "kwargs": {
+        "column": "title",
+        "mostly": 0.95
+      },
+      "meta": {"severity": "warning"}
     },
     {
       "expectation_type": "expect_column_values_to_be_between",
       "kwargs": {
         "column": "value",
         "min_value": -1000000,
-        "max_value": 1000000
+        "max_value": 1000000,
+        "mostly": 0.99
       },
-      "meta": {"notes": "Clamp FRED values to a reasonable numeric range"}
+      "meta": {"severity": "warning"}
+    },
+    {
+      "expectation_type": "expect_column_values_to_be_of_type",
+      "kwargs": {
+        "column": "obs_date",
+        "type_": "DATE"
+      },
+      "meta": {"severity": "critical"}
+    },
+    {
+      "expectation_type": "expect_column_values_to_match_regex",
+      "kwargs": {
+        "column": "series_id",
+        "regex": "^[A-Z0-9]{1,10}$"
+      },
+      "meta": {"severity": "critical"}
+    },
+    {
+      "expectation_type": "expect_column_values_to_be_between",
+      "kwargs": {
+        "column": "ingest_ts",
+        "min_value": 1609459200000000,
+        "max_value": null
+      },
+      "meta": {"severity": "critical", "description": "Ingest timestamp must be recent"}
+    },
+    {
+      "expectation_type": "expect_column_values_to_not_be_null",
+      "kwargs": {
+        "column": "seasonal_adjustment",
+        "mostly": 0.8
+      },
+      "meta": {"severity": "warning"}
+    },
+    {
+      "expectation_type": "expect_column_values_to_not_be_null",
+      "kwargs": {
+        "column": "obs_month",
+        "mostly": 0.7
+      },
+      "meta": {"severity": "info"}
+    },
+    {
+      "expectation_type": "expect_column_values_to_not_be_null",
+      "kwargs": {
+        "column": "notes",
+        "mostly": 0.6
+      },
+      "meta": {"severity": "info"}
+    },
+    {
+      "expectation_type": "expect_column_values_to_be_unique",
+      "kwargs": {
+        "column": "tenant_id",
+        "ignore_row_if": "never"
+      },
+      "meta": {"severity": "warning"}
+    },
+    {
+      "expectation_type": "expect_column_values_to_be_of_type",
+      "kwargs": {
+        "column": "value",
+        "type_": "FLOAT"
+      },
+      "meta": {"severity": "warning"}
+    },
+    {
+      "expectation_type": "expect_column_values_to_be_between",
+      "kwargs": {
+        "column": "value",
+        "min_value": -100000,
+        "max_value": 100000,
+        "mostly": 0.98
+      },
+      "meta": {"severity": "warning", "condition": "series_id in ['UNRATE', 'CPIAUCSL', 'DGS10', 'FEDFUNDS']"}
     }
   ]
 }

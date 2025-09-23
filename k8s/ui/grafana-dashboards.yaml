@@ -167,97 +167,208 @@ data:
       "panels": [
         {
           "type": "stat",
-          "title": "Trino Query Rate",
+          "title": "Trino Query Rate (5m)",
           "datasource": {"type": "prometheus", "uid": "prometheus"},
-          "targets": [{"refId": "A", "expr": "sum(rate(trino_query_completed_total[5m]))"}],
+          "targets": [{"refId": "A", "expr": "sum(rate(aurum_trino_queries_total{status=\"success\"}[5m]))"}],
           "fieldConfig": {"defaults": {"unit": "qps"}},
           "gridPos": {"h": 4, "w": 6, "x": 0, "y": 0}
         },
         {
           "type": "stat",
-          "title": "Failed Queries (5m)",
+          "title": "Trino Error Rate (5m)",
           "datasource": {"type": "prometheus", "uid": "prometheus"},
-          "targets": [{"refId": "A", "expr": "sum(rate(trino_query_failed_total[5m]))"}],
-          "fieldConfig": {"defaults": {"unit": "none"}},
+          "targets": [{"refId": "A", "expr": "sum(rate(aurum_trino_queries_total{status=\"error\"}[5m])) / sum(rate(aurum_trino_queries_total[5m])) * 100"}],
+          "fieldConfig": {"defaults": {"unit": "percent", "decimals": 2}},
           "gridPos": {"h": 4, "w": 6, "x": 6, "y": 0}
         },
         {
           "type": "stat",
-          "title": "Running Queries",
+          "title": "Pool Saturation",
           "datasource": {"type": "prometheus", "uid": "prometheus"},
-          "targets": [{"refId": "A", "expr": "sum(trino_query_running)"}],
-          "fieldConfig": {"defaults": {"unit": "none"}},
+          "targets": [{"refId": "A", "expr": "aurum_trino_pool_saturation"}],
+          "fieldConfig": {
+            "defaults": {
+              "unit": "percent",
+              "decimals": 1,
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  {"color": "green", "value": null},
+                  {"color": "yellow", "value": 0.7},
+                  {"color": "red", "value": 0.9}
+                ]
+              }
+            }
+          },
           "gridPos": {"h": 4, "w": 6, "x": 12, "y": 0}
         },
         {
           "type": "stat",
-          "title": "Queued Queries",
+          "title": "Circuit Breaker",
           "datasource": {"type": "prometheus", "uid": "prometheus"},
-          "targets": [{"refId": "A", "expr": "sum(trino_query_queued)"}],
-          "fieldConfig": {"defaults": {"unit": "none"}},
+          "targets": [{"refId": "A", "expr": "aurum_trino_circuit_breaker_state{state=\"open\"}"}],
+          "fieldConfig": {
+            "defaults": {
+              "unit": "none",
+              "mappings": [
+                {"type": "value", "options": {"0": {"color": "green", "text": "Closed"}, "1": {"color": "red", "text": "Open"}, "2": {"color": "yellow", "text": "Half-Open"}}}
+              ]
+            }
+          },
           "gridPos": {"h": 4, "w": 6, "x": 18, "y": 0}
         },
         {
           "type": "graph",
-          "title": "Query Performance",
+          "title": "Query Duration (P95)",
           "datasource": {"type": "prometheus", "uid": "prometheus"},
           "targets": [
-            {"refId": "A", "expr": "histogram_quantile(0.95, sum(rate(trino_query_duration_seconds_bucket[5m])) by (le))", "legendFormat": "P95 Query Duration"},
-            {"refId": "B", "expr": "histogram_quantile(0.99, sum(rate(trino_query_duration_seconds_bucket[5m])) by (le))", "legendFormat": "P99 Query Duration"}
+            {"refId": "A", "expr": "histogram_quantile(0.95, sum(rate(aurum_trino_query_duration_seconds_bucket[5m])) by (le))", "legendFormat": "P95 Query Duration"}
           ],
+          "fieldConfig": {"defaults": {"unit": "s", "decimals": 3}},
           "gridPos": {"h": 8, "w": 12, "x": 0, "y": 4}
         },
         {
           "type": "graph",
-          "title": "Query Types",
+          "title": "Query Types (5m rate)",
           "datasource": {"type": "prometheus", "uid": "prometheus"},
           "targets": [
-            {"refId": "A", "expr": "sum(rate(trino_query_select_total[5m]))", "legendFormat": "SELECT"},
-            {"refId": "B", "expr": "sum(rate(trino_query_insert_total[5m]))", "legendFormat": "INSERT"},
-            {"refId": "C", "expr": "sum(rate(trino_query_update_total[5m]))", "legendFormat": "UPDATE"},
-            {"refId": "D", "expr": "sum(rate(trino_query_delete_total[5m]))", "legendFormat": "DELETE"}
+            {"refId": "A", "expr": "sum(rate(aurum_trino_queries_total{status=\"success\",query_type=\"select\"}[5m]))", "legendFormat": "SELECT"},
+            {"refId": "B", "expr": "sum(rate(aurum_trino_queries_total{status=\"success\",query_type=\"insert\"}[5m]))", "legendFormat": "INSERT"},
+            {"refId": "C", "expr": "sum(rate(aurum_trino_queries_total{status=\"success\",query_type=\"update\"}[5m]))", "legendFormat": "UPDATE"},
+            {"refId": "D", "expr": "sum(rate(aurum_trino_queries_total{status=\"success\",query_type=\"delete\"}[5m]))", "legendFormat": "DELETE"}
           ],
           "gridPos": {"h": 8, "w": 12, "x": 12, "y": 4}
         },
         {
           "type": "graph",
-          "title": "Resource Utilization",
+          "title": "Connection Pool",
           "datasource": {"type": "prometheus", "uid": "prometheus"},
           "targets": [
-            {"refId": "A", "expr": "sum(rate(trino_cpu_time_seconds_total[5m]))", "legendFormat": "CPU Time"},
-            {"refId": "B", "expr": "sum(trino_memory_reservation)", "legendFormat": "Memory Reservation"}
+            {"refId": "A", "expr": "aurum_trino_connection_pool_active", "legendFormat": "Active Connections"},
+            {"refId": "B", "expr": "aurum_trino_connection_pool_idle", "legendFormat": "Idle Connections"},
+            {"refId": "C", "expr": "aurum_trino_connection_pool_utilization * 100", "legendFormat": "Utilization %"}
           ],
           "gridPos": {"h": 8, "w": 12, "x": 0, "y": 12}
         },
         {
           "type": "graph",
-          "title": "Catalog Performance",
+          "title": "Pool Saturation Status",
           "datasource": {"type": "prometheus", "uid": "prometheus"},
           "targets": [
-            {"refId": "A", "expr": "histogram_quantile(0.95, sum(rate(trino_catalog_metadata_fetch_seconds_bucket[5m])) by (le))", "legendFormat": "P95 Metadata Fetch"},
-            {"refId": "B", "expr": "histogram_quantile(0.95, sum(rate(trino_catalog_data_fetch_seconds_bucket[5m])) by (le))", "legendFormat": "P95 Data Fetch"}
+            {"refId": "A", "expr": "aurum_trino_pool_saturation_status{status=\"healthy\"}", "legendFormat": "Healthy"},
+            {"refId": "B", "expr": "aurum_trino_pool_saturation_status{status=\"warning\"}", "legendFormat": "Warning"},
+            {"refId": "C", "expr": "aurum_trino_pool_saturation_status{status=\"critical\"}", "legendFormat": "Critical"}
           ],
           "gridPos": {"h": 8, "w": 12, "x": 12, "y": 12}
         },
         {
           "type": "graph",
-          "title": "Partition Statistics",
+          "title": "Connection Acquire Time",
           "datasource": {"type": "prometheus", "uid": "prometheus"},
           "targets": [
-            {"refId": "A", "expr": "sum(trino_partition_count)", "legendFormat": "Total Partitions"},
-            {"refId": "B", "expr": "sum(rate(trino_partition_pruned_total[5m]))", "legendFormat": "Pruned Partitions"}
+            {"refId": "A", "expr": "histogram_quantile(0.95, rate(aurum_trino_connection_acquire_time_seconds_bucket[5m]))", "legendFormat": "P95 Acquire Time"}
           ],
+          "fieldConfig": {"defaults": {"unit": "s", "decimals": 3}},
           "gridPos": {"h": 8, "w": 12, "x": 0, "y": 20}
         },
         {
           "type": "graph",
-          "title": "Worker Performance",
+          "title": "Error Rate by Tenant",
           "datasource": {"type": "prometheus", "uid": "prometheus"},
           "targets": [
-            {"refId": "A", "expr": "sum(trino_worker_running_queries)", "legendFormat": "Running Queries"},
-            {"refId": "B", "expr": "sum(trino_worker_blocked_queries)", "legendFormat": "Blocked Queries"}
+            {"refId": "A", "expr": "sum(rate(aurum_trino_queries_total{status=\"error\"}[5m])) by (tenant_id)", "legendFormat": "{{tenant_id}}"}
           ],
           "gridPos": {"h": 8, "w": 12, "x": 12, "y": 20}
+        }
+      ],
+      "alerts": [
+        {
+          "name": "Trino Pool Saturation Critical",
+          "type": "rule",
+          "rule": {
+            "for": "5m",
+            "annotations": {
+              "summary": "Trino connection pool is critically saturated",
+              "description": "Trino pool utilization is above 90% for more than 5 minutes"
+            },
+            "labels": {
+              "severity": "critical",
+              "service": "trino"
+            }
+          },
+          "condition": {
+            "evaluator": {"type": "gt", "params": [0.9]},
+            "operator": {"type": "and"},
+            "query": {"params": ["aurum_trino_pool_saturation", "5m", "now"]},
+            "reducer": {"type": "max", "params": []},
+            "type": "query"
+          }
+        },
+        {
+          "name": "Trino Pool Saturation Warning",
+          "type": "rule",
+          "rule": {
+            "for": "10m",
+            "annotations": {
+              "summary": "Trino connection pool is approaching saturation",
+              "description": "Trino pool utilization is above 70% for more than 10 minutes"
+            },
+            "labels": {
+              "severity": "warning",
+              "service": "trino"
+            }
+          },
+          "condition": {
+            "evaluator": {"type": "gt", "params": [0.7]},
+            "operator": {"type": "and"},
+            "query": {"params": ["aurum_trino_pool_saturation", "5m", "now"]},
+            "reducer": {"type": "max", "params": []},
+            "type": "query"
+          }
+        },
+        {
+          "name": "Trino Circuit Breaker Open",
+          "type": "rule",
+          "rule": {
+            "for": "1m",
+            "annotations": {
+              "summary": "Trino circuit breaker is open",
+              "description": "Trino circuit breaker has opened, rejecting all requests"
+            },
+            "labels": {
+              "severity": "critical",
+              "service": "trino"
+            }
+          },
+          "condition": {
+            "evaluator": {"type": "eq", "params": [1]},
+            "operator": {"type": "and"},
+            "query": {"params": ["aurum_trino_circuit_breaker_state{state=\"open\"}", "1m", "now"]},
+            "reducer": {"type": "max", "params": []},
+            "type": "query"
+          }
+        },
+        {
+          "name": "Trino High Error Rate",
+          "type": "rule",
+          "rule": {
+            "for": "5m",
+            "annotations": {
+              "summary": "Trino error rate is high",
+              "description": "Trino error rate is above 5% for more than 5 minutes"
+            },
+            "labels": {
+              "severity": "warning",
+              "service": "trino"
+            }
+          },
+          "condition": {
+            "evaluator": {"type": "gt", "params": [5]},
+            "operator": {"type": "and"},
+            "query": {"params": ["sum(rate(aurum_trino_queries_total{status=\"error\"}[5m])) / sum(rate(aurum_trino_queries_total[5m])) * 100", "5m", "now"]},
+            "reducer": {"type": "max", "params": []},
+            "type": "query"
+          }
         }
       ]
     }

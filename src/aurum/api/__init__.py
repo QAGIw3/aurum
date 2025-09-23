@@ -106,6 +106,7 @@ else:
         optimization_router,
         connections_router,
         health_router,
+        trino_admin_router,
     )
     from .features.feature_flags import (
         get_feature_manager,

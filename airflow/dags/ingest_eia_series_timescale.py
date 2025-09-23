@@ -15,9 +15,18 @@ DEFAULT_ARGS: dict[str, Any] = {
     "owner": "aurum-data",
     "depends_on_past": False,
     "email_on_failure": True,
-    "email": ["aurum-ops@example.com"],
-    "retries": 1,
-    "retry_delay": timedelta(minutes=10),
+    "email": ["aurum-ops@example.com", "data-team@aurum.com", "energy-team@aurum.com"],
+    "retries": 5,
+    "retry_delay": timedelta(minutes=15),
+    "retry_exponential_backoff": True,
+    "max_retry_delay": timedelta(minutes=60),
+    "execution_timeout": timedelta(hours=6),
+    "sla": timedelta(hours=24),
+    "pool": "api_eia",
+    "pool_slots": 1,
+    "on_failure_callback": None,
+    "on_success_callback": None,
+    "on_retry_callback": None,
 }
 
 

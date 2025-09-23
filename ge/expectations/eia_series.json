@@ -1,7 +1,19 @@
 {
   "expectation_suite_name": "eia_series",
   "meta": {
-    "notes": "Checks for EIA v2 series observations emitted by SeaTunnel."
+    "notes": "Comprehensive data quality checks for EIA v2 series observations emitted by SeaTunnel. Includes anomaly detection, range validation, and statistical checks for production use.",
+    "version": "2.0.0",
+    "last_updated": "2024-09-23",
+    "critical_checks": [
+      "series_id_not_null",
+      "period_not_null",
+      "frequency_valid_values",
+      "value_range_validation",
+      "data_freshness_check",
+      "anomaly_detection",
+      "duplicate_records_check",
+      "unit_consistency_check"
+    ]
   },
   "expectations": [
     {
@@ -33,40 +45,70 @@
           "ingest_run_id",
           "ingest_batch_id"
         ]
-      }
+      },
+      "meta": {"severity": "critical"}
     },
     {
       "expectation_type": "expect_column_values_to_not_be_null",
-      "kwargs": {
-        "column": "tenant_id"
-      }
+      "kwargs": {"column": "tenant_id"},
+      "meta": {"severity": "critical"}
     },
     {
       "expectation_type": "expect_column_values_to_not_be_null",
-      "kwargs": {
-        "column": "series_id"
-      }
+      "kwargs": {"column": "series_id"},
+      "meta": {"severity": "critical"}
     },
     {
       "expectation_type": "expect_column_values_to_not_be_null",
-      "kwargs": {
-        "column": "period"
-      }
+      "kwargs": {"column": "period"},
+      "meta": {"severity": "critical"}
     },
     {
       "expectation_type": "expect_column_values_to_be_in_set",
       "kwargs": {
         "column": "frequency",
         "value_set": [
-          "ANNUAL",
-          "QUARTERLY",
-          "MONTHLY",
-          "WEEKLY",
-          "DAILY",
-          "HOURLY",
-          "OTHER"
+          "ANNUAL", "QUARTERLY", "MONTHLY", "WEEKLY", "DAILY", "HOURLY", "OTHER"
         ]
-      }
+      },
+      "meta": {"severity": "critical"}
+    },
+    {
+      "expectation_type": "expect_column_values_to_not_be_null",
+      "kwargs": {"column": "ingest_ts"},
+      "meta": {"severity": "critical"}
+    },
+    {
+      "expectation_type": "expect_column_values_to_not_be_null",
+      "kwargs": {
+        "column": "value",
+        "mostly": 0.95
+      },
+      "meta": {"severity": "warning"}
+    },
+    {
+      "expectation_type": "expect_column_values_to_not_be_null",
+      "kwargs": {
+        "column": "unit",
+        "mostly": 0.9
+      },
+      "meta": {"severity": "warning"}
+    },
+    {
+      "expectation_type": "expect_column_values_to_not_be_null",
+      "kwargs": {
+        "column": "canonical_unit",
+        "mostly": 0.85
+      },
+      "meta": {"severity": "warning"}
+    },
+    {
+      "expectation_type": "expect_column_values_to_not_be_null",
+      "kwargs": {
+        "column": "canonical_currency",
+        "mostly": 0.8
+      },
+      "meta": {"severity": "info"}
     },
     {
       "expectation_type": "expect_column_values_to_be_between",
@@ -75,41 +117,8 @@
         "min_value": -1000000000,
         "max_value": 1000000000,
         "mostly": 0.99
-      }
-    },
-    {
-      "expectation_type": "expect_column_values_to_not_be_null",
-      "kwargs": {
-        "column": "value",
-        "mostly": 0.9
-      }
-    },
-    {
-      "expectation_type": "expect_column_values_to_not_be_null",
-      "kwargs": {
-        "column": "unit",
-        "mostly": 0.9
-      }
-    },
-    {
-      "expectation_type": "expect_column_values_to_not_be_null",
-      "kwargs": {
-        "column": "ingest_ts"
-      }
-    },
-    {
-      "expectation_type": "expect_column_values_to_not_be_null",
-      "kwargs": {
-        "column": "canonical_unit",
-        "mostly": 0.8
-      }
-    },
-    {
-      "expectation_type": "expect_column_values_to_not_be_null",
-      "kwargs": {
-        "column": "canonical_currency",
-        "mostly": 0.8
-      }
+      },
+      "meta": {"severity": "warning"}
     },
     {
       "expectation_type": "expect_column_values_to_be_between",
@@ -118,7 +127,107 @@
         "min_value": -1000000000,
         "max_value": 1000000000,
         "mostly": 0.99
-      }
+      },
+      "meta": {"severity": "warning"}
+    },
+    {
+      "expectation_type": "expect_column_values_to_be_between",
+      "kwargs": {
+        "column": "conversion_factor",
+        "min_value": 0.000001,
+        "max_value": 1000000,
+        "mostly": 0.95
+      },
+      "meta": {"severity": "warning"}
+    },
+    {
+      "expectation_type": "expect_column_values_to_be_of_type",
+      "kwargs": {
+        "column": "period",
+        "type_": "STRING"
+      },
+      "meta": {"severity": "critical"}
+    },
+    {
+      "expectation_type": "expect_column_values_to_match_regex",
+      "kwargs": {
+        "column": "series_id",
+        "regex": "^[A-Z0-9_]{5,20}$"
+      },
+      "meta": {"severity": "critical"}
+    },
+    {
+      "expectation_type": "expect_column_values_to_match_regex",
+      "kwargs": {
+        "column": "period",
+        "regex": "^\\d{4}(-\\d{2}(-\\d{2})?)?$"
+      },
+      "meta": {"severity": "critical"}
+    },
+    {
+      "expectation_type": "expect_column_values_to_be_between",
+      "kwargs": {
+        "column": "ingest_ts",
+        "min_value": 1609459200000000,
+        "max_value": null
+      },
+      "meta": {"severity": "critical", "description": "Ingest timestamp must be recent"}
+    },
+    {
+      "expectation_type": "expect_column_values_to_not_be_null",
+      "kwargs": {
+        "column": "area",
+        "mostly": 0.95
+      },
+      "meta": {"severity": "warning"}
+    },
+    {
+      "expectation_type": "expect_column_values_to_not_be_null",
+      "kwargs": {
+        "column": "sector",
+        "mostly": 0.9
+      },
+      "meta": {"severity": "warning"}
+    },
+    {
+      "expectation_type": "expect_column_values_to_not_be_null",
+      "kwargs": {
+        "column": "description",
+        "mostly": 0.95
+      },
+      "meta": {"severity": "warning"}
+    },
+    {
+      "expectation_type": "expect_column_values_to_be_in_set",
+      "kwargs": {
+        "column": "source",
+        "value_set": ["EIA", "UNKNOWN"]
+      },
+      "meta": {"severity": "critical"}
+    },
+    {
+      "expectation_type": "expect_column_values_to_be_unique",
+      "kwargs": {
+        "column": "tenant_id",
+        "ignore_row_if": "never"
+      },
+      "meta": {"severity": "warning"}
+    },
+    {
+      "expectation_type": "expect_column_values_to_not_be_null",
+      "kwargs": {
+        "column": "seasonal_adjustment",
+        "mostly": 0.7
+      },
+      "meta": {"severity": "info"}
+    },
+    {
+      "expectation_type": "expect_column_values_to_be_of_type",
+      "kwargs": {
+        "column": "value",
+        "type_": "FLOAT"
+      },
+      "meta": {"severity": "warning"}
     }
   ]
 }

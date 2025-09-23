@@ -1,7 +1,9 @@
+
 .PHONY: help build test deploy lint clean docker-build docker-push k8s-deploy db-migrate security-scan trino-harness trino-harness-metrics reconcile-kafka-lake iceberg-maintenance \
 	kind-create kind-apply kind-bootstrap kind-up kind-down kind-apply-ui kind-delete-ui \
 	kafka-bootstrap kafka-register-schemas kafka-set-compat kafka-apply-topics kafka-apply-topics-kind kafka-apply-topics-dry-run \
-	compose-bootstrap perf-k6
+	compose-bootstrap perf-k6 \
+	airflow-check-vars airflow-print-vars airflow-apply-vars
 
 TRINO_SERVER ?= http://localhost:8080
 TRINO_USER ?= aurum
@@ -181,6 +183,16 @@ ci-deploy: ## Run deployment pipeline locally
 	$(MAKE) build
 	$(MAKE) k8s-deploy
 	$(MAKE) k8s-validate
+
+# Airflow Variables management
+airflow-check-vars: ## Validate Airflow variable mapping file (no changes applied)
+	python3 scripts/airflow/validate_variables.py --file config/airflow_variables.json
+
+airflow-print-vars: ## Preview commands to sync Airflow Variables (dry run)
+	python3 scripts/airflow/set_variables.py --apply --dry-run --file config/airflow_variables.json
+
+airflow-apply-vars: ## Apply Airflow Variables from config/airflow_variables.json
+	python3 scripts/airflow/set_variables.py --apply --file config/airflow_variables.json
 
 # Environment setup
 env-setup: ## Set up development environment

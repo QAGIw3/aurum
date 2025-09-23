@@ -79,19 +79,150 @@ def load_fred_dataset_configs(path: Path | None = None) -> List[FredDatasetConfi
     return [FredDatasetConfig.from_dict(entry) for entry in datasets]
 
 
-class FredApiClient:
-    """Thin wrapper for interacting with the FRED API."""
+class FredRateLimiter:
+    """Enforces maximum requests per second with adaptive rate limiting for FRED API."""
 
-    def __init__(self, collector: ExternalCollector, *, api_key: str) -> None:
+    def __init__(
+        self,
+        rate_per_sec: float = 2.0,
+        *,
+        monotonic: Optional[callable] = None,
+        sleep: Optional[callable] = None,
+        burst_limit: int = 5,
+        adaptive_backoff: bool = True
+    ) -> None:
+        self.rate = rate_per_sec
+        self._interval = 1.0 / rate_per_sec
+        self._monotonic = monotonic or time.monotonic
+        self._sleep = sleep or time.sleep
+        self._next_allowed = self._monotonic()
+        self.burst_limit = burst_limit
+        self.adaptive_backoff = adaptive_backoff
+        self._consecutive_errors = 0
+        self._current_rate = rate_per_sec
+
+    def acquire(self) -> None:
+        now = self._monotonic()
+        if now < self._next_allowed:
+            delay = self._next_allowed - now
+            self._sleep(delay)
+            now = self._monotonic()
+
+        # Adaptive rate limiting based on recent errors
+        if self.adaptive_backoff and self._consecutive_errors > 0:
+            adaptive_rate = max(self.rate * (1.0 / (1.0 + self._consecutive_errors)), 0.1)
+            interval = 1.0 / adaptive_rate
+        else:
+            interval = self._interval
+
+        self._next_allowed = max(self._next_allowed + interval, now)
+
+    def record_success(self) -> None:
+        """Record a successful request."""
+        self._consecutive_errors = max(0, self._consecutive_errors - 1)
+
+    def record_error(self) -> None:
+        """Record an error and potentially trigger rate limiting."""
+        self._consecutive_errors += 1
+        if self._consecutive_errors > 3:
+            self._next_allowed = self._monotonic() + (2 ** (self._consecutive_errors - 3))
+
+
+class FredApiClient:
+    """Enhanced wrapper for interacting with the FRED API with retry logic."""
+
+    def __init__(
+        self,
+        collector: ExternalCollector,
+        *,
+        api_key: str,
+        rate_limiter: Optional[FredRateLimiter] = None,
+        max_retries: int = 5,
+        timeout_seconds: int = 60,
+        backoff_multiplier: float = 2.0,
+        max_backoff_seconds: int = 120,
+    ) -> None:
         self.collector = collector
         self.api_key = api_key
+        self.rate_limiter = rate_limiter or FredRateLimiter()
+        self.max_retries = max_retries
+        self.timeout_seconds = timeout_seconds
+        self.backoff_multiplier = backoff_multiplier
+        self.max_backoff_seconds = max_backoff_seconds
+        self._circuit_breaker_tripped = False
+        self._consecutive_failures = 0
 
     def _request(self, path: str, params: Optional[Mapping[str, Any]] = None) -> Mapping[str, Any]:
-        query: Dict[str, Any] = {"api_key": self.api_key, "file_type": "json"}
-        if params:
-            query.update(params)
-        response = self.collector.request(HttpRequest(method="GET", path=path, params=query))
-        return response.json() or {}
+        """Make a request with enhanced retry logic and error handling."""
+        if self._circuit_breaker_tripped:
+            raise RuntimeError("FRED API circuit breaker is tripped due to consecutive failures")
+
+        last_exception = None
+
+        for attempt in range(self.max_retries + 1):
+            try:
+                self.rate_limiter.acquire()
+
+                query: Dict[str, Any] = {"api_key": self.api_key, "file_type": "json"}
+                if params:
+                    query.update(params)
+
+                response = self.collector.request(
+                    HttpRequest(
+                        method="GET",
+                        path=path,
+                        params=query,
+                        timeout=self.timeout_seconds,
+                    )
+                )
+
+                # Validate response
+                if response.status_code == 429:
+                    retry_after = response.headers.get("Retry-After", "60")
+                    wait_time = min(int(retry_after), self.max_backoff_seconds)
+                    print(f"⏱️ FRED rate limited. Waiting {wait_time}s before retry {attempt + 1}/{self.max_retries}")
+                    time.sleep(wait_time)
+                    continue
+
+                if response.status_code >= 500:
+                    backoff_time = min(self.backoff_multiplier ** attempt, self.max_backoff_seconds)
+                    print(f"🌐 FRED server error ({response.status_code}). Retrying in {backoff_time}s...")
+                    time.sleep(backoff_time)
+                    continue
+
+                if response.status_code != 200:
+                    raise RuntimeError(f"FRED API error: {response.status_code} - {response.text}")
+
+                payload = response.json() or {}
+
+                # Success - record it
+                self.rate_limiter.record_success()
+                self._consecutive_failures = 0
+
+                return payload
+
+            except Exception as e:
+                last_exception = e
+                self.rate_limiter.record_error()
+                self._consecutive_failures += 1
+
+                if attempt < self.max_retries:
+                    backoff_time = min(self.backoff_multiplier ** attempt, self.max_backoff_seconds)
+                    print(f"❌ FRED API request failed (attempt {attempt + 1}/{self.max_retries}): {e}")
+                    print(f"⏱️ Retrying in {backoff_time}s...")
+                    time.sleep(backoff_time)
+                else:
+                    if self._consecutive_failures >= 10:
+                        self._circuit_breaker_tripped = True
+                        print(f"🔴 Circuit breaker tripped after {self._consecutive_failures} consecutive failures")
+
+        raise RuntimeError(f"FRED API request failed after {self.max_retries + 1} attempts. Last error: {last_exception}")
+
+    def reset_circuit_breaker(self) -> None:
+        """Reset the circuit breaker to allow new requests."""
+        self._circuit_breaker_tripped = False
+        self._consecutive_failures = 0
+        print("✅ FRED API circuit breaker reset")
 
     def get_series(self, series_id: str) -> Optional[Mapping[str, Any]]:
         payload = self._request("fred/series", {"series_id": series_id})

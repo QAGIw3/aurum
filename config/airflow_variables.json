@@ -20,6 +20,7 @@
   "aurum_cpi_series_table": "cpi_series_timeseries",
 
   "aurum_iso_lmp_topic_pattern": "aurum\\.iso\\..*\\.lmp\\.v1",
+  "aurum_iso_lmp_table": "iso_lmp_timeseries",
   "aurum_iso_load_topic_pattern": "aurum\\.iso\\..*\\.load\\.v1",
   "aurum_iso_load_table": "load_timeseries",
 

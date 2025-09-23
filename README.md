@@ -391,6 +391,34 @@ Variables overview (defaults for dev):
 - ISO LMP (shared)
   - `aurum_iso_lmp_topic_pattern`: Pattern for ISO LMP topics (`aurum\.iso\..*\.lmp\.v1`)
 
+### Unified ISO adapter runner
+
+Use the Python runner to emit ISO LMP windows directly to Kafka using the shared adapters (CAISO, MISO, ISO‑NE, ERCOT, SPP):
+
+```
+scripts/ingest/iso_adapter_lmp_to_kafka.py \
+  --provider isone \
+  --series-id demo.isone.lmp \
+  --start 2025-01-01T00:00:00Z \
+  --end 2025-01-01T04:00:00Z \
+  --topic aurum.iso.isone.lmp.v1
+
+scripts/ingest/iso_adapter_lmp_to_kafka.py \
+  --provider ercot \
+  --series-id demo.ercot.lmp \
+  --start 2025-01-01T00:00:00Z \
+  --end 2025-01-01T04:00:00Z \
+  --topic aurum.iso.ercot.lmp.v1
+```
+
+Requirements:
+- `KAFKA_BOOTSTRAP_SERVERS` and `SCHEMA_REGISTRY_URL` exported (or pass `--bootstrap-servers` and `--schema-registry`).
+- Avro schema `kafka/schemas/iso.lmp.v1.avsc` is bundled and auto‑loaded when a Schema Registry URL is set.
+
+Downstream sinks:
+- Timescale: `seatunnel/jobs/templates/iso_lmp_kafka_to_timescale.conf.tmpl` (defaults to topic pattern `aurum\.iso\..*\.lmp\.v1`).
+- Iceberg: `seatunnel/jobs/templates/iso_lmp_kafka_to_iceberg.conf.tmpl` (uses the same default pattern).
+
 Helpful targets:
 - `make airflow-print-vars` (prints apply commands for the matrix)
 - `make airflow-apply-vars` (applies variables)

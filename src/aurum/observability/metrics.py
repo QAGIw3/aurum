@@ -394,6 +394,50 @@ if PROMETHEUS_AVAILABLE:  # pragma: no branch - simplify instrumentation when av
         ["pool_name", "error_type"],
     )
 
+    # Trino-Specific Metrics
+    TRINO_QUERY_TOTAL = Counter(
+        "aurum_trino_queries_total",
+        "Total Trino queries executed",
+        ["tenant_id", "status"],
+    )
+    TRINO_QUERY_DURATION = Histogram(
+        "aurum_trino_query_duration_seconds",
+        "Trino query execution duration",
+        ["tenant_id", "query_type"],
+        buckets=(0.01, 0.05, 0.1, 0.25, 0.5, 1.0, 2.5, 5.0, 10.0, 30.0, 60.0, 300.0),
+    )
+    TRINO_CONNECTION_POOL_ACTIVE = Gauge(
+        "aurum_trino_connection_pool_active",
+        "Active Trino connections",
+    )
+    TRINO_CONNECTION_POOL_IDLE = Gauge(
+        "aurum_trino_connection_pool_idle",
+        "Idle Trino connections",
+    )
+    TRINO_CONNECTION_POOL_UTILIZATION = Gauge(
+        "aurum_trino_connection_pool_utilization",
+        "Trino connection pool utilization (0-1)",
+    )
+    TRINO_CONNECTION_ACQUIRE_TIME = Histogram(
+        "aurum_trino_connection_acquire_time_seconds",
+        "Time to acquire Trino connection",
+        buckets=(0.001, 0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1.0, 2.5, 5.0),
+    )
+    TRINO_CIRCUIT_BREAKER_STATE = Gauge(
+        "aurum_trino_circuit_breaker_state",
+        "Trino circuit breaker state (0=closed, 1=open, 2=half_open)",
+        ["state"],
+    )
+    TRINO_POOL_SATURATION = Gauge(
+        "aurum_trino_pool_saturation",
+        "Trino pool saturation level (0-1)",
+    )
+    TRINO_POOL_SATURATION_STATUS = Gauge(
+        "aurum_trino_pool_saturation_status",
+        "Trino pool saturation status (0=healthy, 1=warning, 2=critical)",
+        ["status"],
+    )
+
     # Cache Performance Metrics (Enhanced)
     CACHE_HIT_RATIO = Gauge(
         "aurum_cache_hit_ratio",
@@ -1436,6 +1480,103 @@ async def increment_system_uptime_seconds() -> None:
         pass
 
 
+# Trino Metrics Helper Functions
+async def increment_trino_queries(tenant_id: str, status: str = "success") -> None:
+    """Increment Trino query counter."""
+    if TRINO_QUERY_TOTAL is None:
+        return
+    try:
+        TRINO_QUERY_TOTAL.labels(tenant_id=tenant_id, status=status).inc()
+    except Exception:
+        pass
+
+
+async def observe_trino_query_duration(tenant_id: str, query_type: str, duration_seconds: float) -> None:
+    """Observe Trino query duration."""
+    if TRINO_QUERY_DURATION is None:
+        return
+    try:
+        TRINO_QUERY_DURATION.labels(tenant_id=tenant_id, query_type=query_type).observe(duration_seconds)
+    except Exception:
+        pass
+
+
+async def set_trino_connection_pool_active(count: int) -> None:
+    """Set active Trino connections."""
+    if TRINO_CONNECTION_POOL_ACTIVE is None:
+        return
+    try:
+        TRINO_CONNECTION_POOL_ACTIVE.set(count)
+    except Exception:
+        pass
+
+
+async def set_trino_connection_pool_idle(count: int) -> None:
+    """Set idle Trino connections."""
+    if TRINO_CONNECTION_POOL_IDLE is None:
+        return
+    try:
+        TRINO_CONNECTION_POOL_IDLE.set(count)
+    except Exception:
+        pass
+
+
+async def set_trino_connection_pool_utilization(utilization: float) -> None:
+    """Set Trino connection pool utilization."""
+    if TRINO_CONNECTION_POOL_UTILIZATION is None:
+        return
+    try:
+        TRINO_CONNECTION_POOL_UTILIZATION.set(utilization)
+    except Exception:
+        pass
+
+
+async def observe_trino_connection_acquire_time(duration_seconds: float) -> None:
+    """Observe Trino connection acquire time."""
+    if TRINO_CONNECTION_ACQUIRE_TIME is None:
+        return
+    try:
+        TRINO_CONNECTION_ACQUIRE_TIME.observe(duration_seconds)
+    except Exception:
+        pass
+
+
+async def set_trino_circuit_breaker_state(state: str) -> None:
+    """Set Trino circuit breaker state."""
+    if TRINO_CIRCUIT_BREAKER_STATE is None:
+        return
+    try:
+        # Convert state to numeric value
+        state_map = {"closed": 0, "open": 1, "half_open": 2}
+        numeric_state = state_map.get(state.lower(), 0)
+        TRINO_CIRCUIT_BREAKER_STATE.labels(state=state).set(numeric_state)
+    except Exception:
+        pass
+
+
+async def set_trino_pool_saturation(saturation: float) -> None:
+    """Set Trino pool saturation level."""
+    if TRINO_POOL_SATURATION is None:
+        return
+    try:
+        TRINO_POOL_SATURATION.set(saturation)
+    except Exception:
+        pass
+
+
+async def set_trino_pool_saturation_status(status: str) -> None:
+    """Set Trino pool saturation status."""
+    if TRINO_POOL_SATURATION_STATUS is None:
+        return
+    try:
+        # Convert status to numeric value
+        status_map = {"healthy": 0, "warning": 1, "critical": 2}
+        numeric_status = status_map.get(status.lower(), 0)
+        TRINO_POOL_SATURATION_STATUS.labels(status=status).set(numeric_status)
+    except Exception:
+        pass
+
+
 __all__ = [
     "MetricPoint",
     "MetricType",
@@ -1608,4 +1749,23 @@ __all__ = [
     "set_system_health_score",
     "set_component_health_status",
     "increment_system_uptime_seconds",
+    # Trino metrics
+    "TRINO_QUERY_TOTAL",
+    "TRINO_QUERY_DURATION",
+    "TRINO_CONNECTION_POOL_ACTIVE",
+    "TRINO_CONNECTION_POOL_IDLE",
+    "TRINO_CONNECTION_POOL_UTILIZATION",
+    "TRINO_CONNECTION_ACQUIRE_TIME",
+    "TRINO_CIRCUIT_BREAKER_STATE",
+    "TRINO_POOL_SATURATION",
+    "TRINO_POOL_SATURATION_STATUS",
+    "increment_trino_queries",
+    "observe_trino_query_duration",
+    "set_trino_connection_pool_active",
+    "set_trino_connection_pool_idle",
+    "set_trino_connection_pool_utilization",
+    "observe_trino_connection_acquire_time",
+    "set_trino_circuit_breaker_state",
+    "set_trino_pool_saturation",
+    "set_trino_pool_saturation_status",
 ]

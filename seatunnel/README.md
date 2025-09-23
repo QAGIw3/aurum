@@ -72,15 +72,17 @@ This exposes Vault at `http://localhost:8200` with root token `aurum-dev-token` 
 - `eia_series_to_kafka.conf.tmpl`: Calls the EIA v2 API for a series path and emits Avro records matching `aurum.ref.eia.series.v1`. Provide `EIA_SERIES_PATH`, `EIA_SERIES_ID`, and `EIA_FREQUENCY`; adjust pagination or filters by editing the rendered configuration before running the job.
 - `fred_series_to_kafka.conf.tmpl`: Pulls observations for a given FRED series ID and emits Avro records aligned with `aurum.ref.fred.series.v1`. Set `FRED_SERIES_ID`, frequency, and seasonal adjustment; the API key is read from Vault.
 - `pjm_lmp_to_kafka.conf.tmpl`: Queries PJM Data Miner for day-ahead LMPs and emits Avro records matching `aurum.iso.*.lmp.v1`. Configure interval start/end and the Data Miner token via Vault.
-- `iso_lmp_kafka_to_timescale.conf.tmpl`: Reads all ISO LMP Kafka topics and writes rows into TimescaleDB via JDBC. Configure the topic pattern and Timescale connection environment variables before execution.
+- `iso_lmp_kafka_to_timescale.conf.tmpl`: Reads all ISO LMP Kafka topics (default pattern `aurum\\.iso\\..*\\.lmp\\.v1`, covering PJM/CAISO/ERCOT/MISO/ISONE/SPP) and writes rows into TimescaleDB via JDBC. Configure the topic pattern and Timescale connection environment variables before execution.
 - Not using SeaTunnel for CAISO/ ERCOT yet? Helper scripts `scripts/ingest/caiso_prc_lmp_to_kafka.py`, `scripts/ingest/ercot_mis_to_kafka.py`, and `scripts/ingest/miso_rtdb_to_kafka.py` normalize the OASIS/MIS/RTDB payloads and publish Avro records to Kafka.
 - `nyiso_lmp_to_kafka.conf.tmpl`: Fetches NYISO LBMP CSV data over HTTP, maps columns to the ISO LMP schema, and publishes to Kafka.
 - `miso_lmp_to_kafka.conf.tmpl`: Downloads MISO market report CSVs (configurable DA/RT) and maps their columns into the ISO LMP Avro schema. Column names and interval length can be overridden via environment variables.
 - `miso_rtd_lmp_to_kafka.conf.tmpl`: Calls the MISO Data Broker real-time API (`getLMPConsolidatedTable`) to ingest five-minute observations. Provide `MISO_RTD_ENDPOINT`, `MISO_RTD_START/END`, Kafka/Schema Registry coordinates, and (optionally) `MISO_RTD_HEADERS` using `||` as a separator for multiple header entries.
 - `isone_lmp_to_kafka.conf.tmpl`: Calls the ISO-NE JSON web services, handles optional basic/bearer auth, and projects results into the ISO LMP schema before emitting to Kafka.
+  - Alternatively, use the unified adapter runner: `scripts/ingest/iso_adapter_lmp_to_kafka.py --provider isone --series-id demo.isone.lmp --start 2025-01-01T00:00:00Z --end 2025-01-01T04:00:00Z --topic aurum.iso.isone.lmp.v1`
   - Note: The legacy `isone_comprehensive_to_kafka.conf.tmpl` (Jinja-like) is deprecated. Prefer the per‑datatype templates (LMP/Load/GenMix/ASM) or use the runner with `ISONE_DATA_TYPE` to dispatch.
 - `caiso_lmp_to_kafka.conf.tmpl`: Reads staged CAISO JSON payloads (typically produced by `scripts/ingest/caiso_prc_lmp_to_kafka.py --output-json`) and publishes Avro messages to the CAISO topic.
 - `ercot_lmp_to_kafka.conf.tmpl`: Consumes normalized ERCOT MIS observations from a JSON file and emits them to Kafka using the shared ISO LMP schema.
+  - Alternatively, use the unified adapter runner: `scripts/ingest/iso_adapter_lmp_to_kafka.py --provider ercot --series-id demo.ercot.lmp --start 2025-01-01T00:00:00Z --end 2025-01-01T04:00:00Z --topic aurum.iso.ercot.lmp.v1`
 - `spp_lmp_to_kafka.conf.tmpl`: Loads SPP Marketplace LMP records from staged JSON and writes them to Kafka.
 
 Add additional job templates following the same pattern and extend `scripts/seatunnel/run_job.sh` to declare required environment variables per job.

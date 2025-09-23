@@ -61,7 +61,6 @@ async def get_database_indexes(
     try:
         # In a real implementation, this would query database metadata
         # For now, return mock data based on query patterns
-        from .database_monitor import get_database_monitor
         monitor = get_database_monitor()
 
         # Analyze query patterns to suggest indexes
