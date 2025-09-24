@@ -213,6 +213,9 @@ except Exception:  # pragma: no cover - optional
     external_router = None  # type: ignore
 
 router = APIRouter()
+# Legacy v1 endpoints are being split out incrementally; this dedicated router
+# gives us a clear boundary while we migrate handlers into `aurum.api.v1`.
+legacy_router = APIRouter()
 
 def _settings() -> AurumSettings:
     return get_settings()
@@ -1640,7 +1643,7 @@ def list_curves_diff(
     )
 
 
-@router.get("/v1/metadata/dimensions", response_model=DimensionsResponse, tags=["Metadata"])
+@legacy_router.get("/v1/metadata/dimensions", response_model=DimensionsResponse, tags=["Metadata"])
 def list_dimensions(
     asof: Optional[date] = Query(None),
     asset_class: Optional[str] = Query(None),
@@ -1718,7 +1721,7 @@ def list_dimensions(
     return _respond_with_etag(model, request, response)
 
 
-@router.get(
+@legacy_router.get(
     "/v1/metadata/locations",
     response_model=IsoLocationsResponse,
     tags=["Metadata"],
@@ -1769,7 +1772,7 @@ def list_locations(
     )
 
 
-@router.get(
+@legacy_router.get(
     "/v1/metadata/locations/{iso}/{location_id}",
     response_model=IsoLocationResponse,
     tags=["Metadata"],
@@ -1818,7 +1821,7 @@ def get_location(
 # --- Units metadata ---
 
 
-@router.get(
+@legacy_router.get(
     "/v1/metadata/units",
     response_model=UnitsCanonicalResponse,
     tags=["Metadata"],
@@ -1858,7 +1861,7 @@ def list_units(
     )
 
 
-@router.get(
+@legacy_router.get(
     "/v1/metadata/units/mapping",
     response_model=UnitsMappingResponse,
     tags=["Metadata", "Units"],
@@ -1902,7 +1905,7 @@ def list_unit_mappings(
 # --- Calendars metadata ---
 
 
-@router.get(
+@legacy_router.get(
     "/v1/metadata/calendars",
     response_model=CalendarsResponse,
     tags=["Metadata"],
@@ -1931,7 +1934,7 @@ def list_calendars(request: Request, response: Response) -> CalendarsResponse:
     )
 
 
-@router.get(
+@legacy_router.get(
     "/v1/metadata/calendars/{name}/blocks",
     response_model=CalendarBlocksResponse,
     tags=["Metadata"],
@@ -2846,7 +2849,13 @@ def list_strips(
     )
 
 
-__all__ = ["router", "configure_routes", "access_log_middleware", "METRICS_MIDDLEWARE"]
+__all__ = [
+    "router",
+    "legacy_router",
+    "configure_routes",
+    "access_log_middleware",
+    "METRICS_MIDDLEWARE",
+]
 
 
 # --- Scenario endpoints (stubbed service behavior for now) ---
@@ -4414,6 +4423,9 @@ def get_drought_tile_metadata(
     meta = Meta(request_id=_current_request_id(), query_time_ms=0)
     return DroughtInfoResponse(meta=meta, data=payload)
 
+
+# Include legacy v1 endpoints (to be migrated out of this module)
+router.include_router(legacy_router)
 
 # Include external API router
 if external_router is not None:
