@@ -43,6 +43,24 @@ from .enhanced_caching import (
     create_memory_cache,
     create_multi_level_cache,
 )
+from .resilience import (
+    CircuitBreaker,
+    CircuitBreakerState,
+    CircuitBreakerConfig,
+    CircuitBreakerMetrics,
+    CircuitBreakerOpenException,
+    RetryConfig,
+    RetryExhaustedException,
+    BulkheadConfig,
+    Bulkhead,
+    TimeoutConfig,
+    ResilienceManager,
+    retry_with_backoff,
+    circuit_breaker,
+    retry,
+    with_timeout,
+    create_resilient_service,
+)
 
 __all__ = [
     # Original core components
@@ -99,4 +117,22 @@ __all__ = [
     "CacheWarmer",
     "create_memory_cache",
     "create_multi_level_cache",
+    
+    # Enhanced resilience patterns
+    "CircuitBreaker",
+    "CircuitBreakerState",
+    "CircuitBreakerConfig",
+    "CircuitBreakerMetrics",
+    "CircuitBreakerOpenException",
+    "RetryConfig",
+    "RetryExhaustedException",
+    "BulkheadConfig",
+    "Bulkhead",
+    "TimeoutConfig",
+    "ResilienceManager",
+    "retry_with_backoff",
+    "circuit_breaker",
+    "retry",
+    "with_timeout",
+    "create_resilient_service",
 ]
