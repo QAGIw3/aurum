@@ -20,6 +20,7 @@ except ModuleNotFoundError:  # pragma: no cover - allow stubbing in tests
     psycopg = None  # type: ignore[assignment]
 
 from aurum.core import AurumSettings
+from aurum.core.pagination import Cursor as _Cursor
 from aurum.telemetry import get_tracer
 
 from .config import CacheConfig, TrinoConfig
@@ -105,14 +106,7 @@ def _timescale_dsn() -> str:
     return _settings().database.timescale_dsn
 
 
-def _require_trino():
-    try:
-        from trino.dbapi import connect  # type: ignore
-    except ModuleNotFoundError as exc:  # pragma: no cover
-        raise RuntimeError(
-            "The 'trino' package is required for API queries. Install via 'pip install aurum[api]'."
-        ) from exc
-    return connect
+# Deprecated legacy helper removed; all Trino access goes through the pooled client
 
 
 def _maybe_redis_client(cache_cfg: CacheConfig):
@@ -470,16 +464,8 @@ def query_eia_series(
             data = json.loads(cached)
             return data, 0.0
 
-    connect = _require_trino()
     start_time = time.perf_counter()
-    rows: List[Dict[str, Any]] = []
-    with connect(host=trino_cfg.host, port=trino_cfg.port, user=trino_cfg.user, http_scheme=trino_cfg.http_scheme) as conn:  # type: ignore[arg-type]
-        cur = conn.cursor()
-        cur.execute(sql)
-        columns = [c[0] for c in cur.description]
-        for rec in cur.fetchall():
-            row = {col: val for col, val in zip(columns, rec)}
-            rows.append(row)
+    rows: List[Dict[str, Any]] = _execute_trino_query(trino_cfg, sql)
     elapsed = (time.perf_counter() - start_time) * 1000.0
 
     if client is not None and cache_key is not None:
@@ -566,7 +552,6 @@ def query_eia_series_dimensions(
             payload = json.loads(cached)
             return payload, 0.0
 
-    connect = _require_trino()
     start_time = time.perf_counter()
     results: Dict[str, List[str]] = {
         "dataset": [],
@@ -578,26 +563,28 @@ def query_eia_series_dimensions(
         "frequency": [],
         "source": [],
     }
-    with connect(host=trino_cfg.host, port=trino_cfg.port, user=trino_cfg.user, http_scheme=trino_cfg.http_scheme) as conn:  # type: ignore[arg-type]
-        cur = conn.cursor()
-        cur.execute(sql)
-        row = cur.fetchone()
+    try:
+        rows = _execute_trino_query(trino_cfg, sql)
+        row = rows[0] if rows else None
         if row:
             mapping = {
-                "dataset": row[0],
-                "area": row[1],
-                "sector": row[2],
-                "unit": row[3],
-                "canonical_unit": row[4],
-                "canonical_currency": row[5],
-                "frequency": row[6],
-                "source": row[7],
+                "dataset": row.get("dataset_values"),
+                "area": row.get("area_values"),
+                "sector": row.get("sector_values"),
+                "unit": row.get("unit_values"),
+                "canonical_unit": row.get("canonical_unit_values"),
+                "canonical_currency": row.get("canonical_currency_values"),
+                "frequency": row.get("frequency_values"),
+                "source": row.get("source_values"),
             }
             for key, values in mapping.items():
                 if not values:
                     continue
                 items = [str(item) for item in values if item is not None]
                 results[key] = sorted(set(items))
+    except Exception:
+        # Fall through with empty results; upstream caller handles
+        pass
     elapsed = (time.perf_counter() - start_time) * 1000.0
 
     if client is not None and cache_key is not None:
@@ -785,31 +772,22 @@ def query_curves_diff(
             data = json.loads(cached)
             return data, 0.0
 
-    connect = _require_trino()
     start = time.perf_counter()
-    rows: List[Dict[str, Any]] = []
-    with connect(host=trino_cfg.host, port=trino_cfg.port, user=trino_cfg.user, http_scheme=trino_cfg.http_scheme) as conn:  # type: ignore[arg-type]
-        cur = conn.cursor()
-        cur.execute(sql)
-        columns = [c[0] for c in cur.description]
-        for rec in cur.fetchall():
-            row = {col: val for col, val in zip(columns, rec)}
-            row.pop("tenant_id", None)
-            attribution_val = row.get("attribution")
-            if isinstance(attribution_val, str):
-                try:
-                    row["attribution"] = json.loads(attribution_val)
-                except json.JSONDecodeError:
-                    row["attribution"] = None
-            rows.append(row)
+    rows: List[Dict[str, Any]] = _execute_trino_query(trino_cfg, sql)
+    # Normalize fields
+    for row in rows:
+        row.pop("tenant_id", None)
+        attribution_val = row.get("attribution")
+        if isinstance(attribution_val, str):
+            try:
+                row["attribution"] = json.loads(attribution_val)
+            except json.JSONDecodeError:
+                row["attribution"] = None
     elapsed = (time.perf_counter() - start) * 1000.0
 
     if client is not None and cache_key is not None:
         try:  # pragma: no cover
             client.setex(cache_key, cache_cfg.ttl_seconds, json.dumps(rows, default=str))
-            index_key = _scenario_cache_index_key(cache_cfg.namespace, tenant_id, scenario_id)
-            client.sadd(index_key, cache_key)
-            client.expire(index_key, cache_cfg.ttl_seconds)
         except Exception:
             pass
 
@@ -1165,15 +1143,8 @@ def query_ppa_valuation(
         "ORDER BY contract_month NULLS LAST, tenor_label"
     )
 
-    connect = _require_trino()
     start = time.perf_counter()
-    rows: List[Dict[str, Any]] = []
-    with connect(host=trino_cfg.host, port=trino_cfg.port, user=trino_cfg.user, http_scheme=trino_cfg.http_scheme) as conn:  # type: ignore[arg-type]
-        cur = conn.cursor()
-        cur.execute(sql)
-        columns = [col[0] for col in cur.description]
-        for rec in cur.fetchall():
-            rows.append({col: val for col, val in zip(columns, rec)})
+    rows: List[Dict[str, Any]] = _execute_trino_query(trino_cfg, sql)
     elapsed = (time.perf_counter() - start) * 1000.0
 
     if not rows:
@@ -1311,26 +1282,15 @@ def query_ppa_contract_valuations(
         f"LIMIT {int(limit)} OFFSET {int(offset)}"
     )
 
-    connect = _require_trino()
     start = time.perf_counter()
-    rows: List[Dict[str, Any]] = []
-    with connect(
-        host=trino_cfg.host,
-        port=trino_cfg.port,
-        user=trino_cfg.user,
-        http_scheme=trino_cfg.http_scheme,
-    ) as conn:  # type: ignore[arg-type]
-        cur = conn.cursor()
-        cur.execute(sql)
-        columns = [col[0] for col in cur.description]
-        for rec in cur.fetchall():
-            record = {col: val for col, val in zip(columns, rec)}
-            for key in ("value", "cashflow", "npv"):
-                if record.get(key) is not None:
-                    record[key] = float(record[key])
-            if record.get("irr") is not None:
-                record["irr"] = float(record["irr"])
-            rows.append(record)
+    rows: List[Dict[str, Any]] = _execute_trino_query(trino_cfg, sql)
+    # Normalize numeric fields
+    for record in rows:
+        for key in ("value", "cashflow", "npv"):
+            if record.get(key) is not None:
+                record[key] = float(record[key])
+        if record.get("irr") is not None:
+            record["irr"] = float(record["irr"])
     elapsed = (time.perf_counter() - start) * 1000.0
     return rows, elapsed
 
@@ -1451,15 +1411,8 @@ def query_scenario_metrics_latest(
             except Exception:
                 pass
 
-        connect = _require_trino()
         start = time.perf_counter()
-        rows: List[Dict[str, Any]] = []
-        with connect(host=trino_cfg.host, port=trino_cfg.port, user=trino_cfg.user, http_scheme=trino_cfg.http_scheme) as conn:  # type: ignore[arg-type]
-            cur = conn.cursor()
-            cur.execute(sql)
-            columns = [col[0] for col in cur.description]
-            for rec in cur.fetchall():
-                rows.append({col: val for col, val in zip(columns, rec)})
+        rows: List[Dict[str, Any]] = _execute_trino_query(trino_cfg, sql)
         elapsed = (time.perf_counter() - start) * 1000.0
 
         if client is not None and cache_key is not None:
@@ -1934,7 +1887,6 @@ def query_drought_indices(
     end_date: Optional[date] = None,
     limit: int = 500,
 ) -> Tuple[List[Dict[str, Any]], float]:
-    connect = _require_trino()
     catalog = trino_cfg.catalog
     base_conditions: List[str] = []
     if region_type:
@@ -1989,20 +1941,14 @@ def query_drought_indices(
         LIMIT {int(limit)}
     """
     start_time = time.perf_counter()
-    rows: List[Dict[str, Any]] = []
-    with connect(host=trino_cfg.host, port=trino_cfg.port, user=trino_cfg.user, http_scheme=trino_cfg.http_scheme) as conn:  # type: ignore[arg-type]
-        cur = conn.cursor()
-        cur.execute(sql)
-        columns = [c[0] for c in cur.description]
-        for rec in cur.fetchall():
-            row = {col: val for col, val in zip(columns, rec)}
-            metadata = row.get("metadata")
-            if isinstance(metadata, str):
-                try:
-                    row["metadata"] = json.loads(metadata)
-                except json.JSONDecodeError:
-                    row["metadata"] = None
-            rows.append(row)
+    rows: List[Dict[str, Any]] = _execute_trino_query(trino_cfg, sql)
+    for row in rows:
+        metadata = row.get("metadata")
+        if isinstance(metadata, str):
+            try:
+                row["metadata"] = json.loads(metadata)
+            except json.JSONDecodeError:
+                row["metadata"] = None
     elapsed = (time.perf_counter() - start_time) * 1000.0
     return rows, elapsed
 
@@ -2016,7 +1962,6 @@ def query_drought_usdm(
     end_date: Optional[date] = None,
     limit: int = 500,
 ) -> Tuple[List[Dict[str, Any]], float]:
-    connect = _require_trino()
     catalog = trino_cfg.catalog
     conditions: List[str] = []
     if region_type:
@@ -2063,20 +2008,14 @@ def query_drought_usdm(
         LIMIT {int(limit)}
     """
     start_time = time.perf_counter()
-    rows: List[Dict[str, Any]] = []
-    with connect(host=trino_cfg.host, port=trino_cfg.port, user=trino_cfg.user, http_scheme=trino_cfg.http_scheme) as conn:  # type: ignore[arg-type]
-        cur = conn.cursor()
-        cur.execute(sql)
-        columns = [c[0] for c in cur.description]
-        for rec in cur.fetchall():
-            row = {col: val for col, val in zip(columns, rec)}
-            metadata = row.get("metadata")
-            if isinstance(metadata, str):
-                try:
-                    row["metadata"] = json.loads(metadata)
-                except json.JSONDecodeError:
-                    row["metadata"] = None
-            rows.append(row)
+    rows: List[Dict[str, Any]] = _execute_trino_query(trino_cfg, sql)
+    for row in rows:
+        metadata = row.get("metadata")
+        if isinstance(metadata, str):
+            try:
+                row["metadata"] = json.loads(metadata)
+            except json.JSONDecodeError:
+                row["metadata"] = None
     elapsed = (time.perf_counter() - start_time) * 1000.0
     return rows, elapsed
 
@@ -2091,7 +2030,6 @@ def query_drought_vector_events(
     end_time: Optional[datetime] = None,
     limit: int = 500,
 ) -> Tuple[List[Dict[str, Any]], float]:
-    connect = _require_trino()
     catalog = trino_cfg.catalog
     conditions: List[str] = []
     if layer:
@@ -2133,20 +2071,14 @@ def query_drought_vector_events(
         LIMIT {int(limit)}
     """
     start = time.perf_counter()
-    rows: List[Dict[str, Any]] = []
-    with connect(host=trino_cfg.host, port=trino_cfg.port, user=trino_cfg.user, http_scheme=trino_cfg.http_scheme) as conn:  # type: ignore[arg-type]
-        cur = conn.cursor()
-        cur.execute(sql)
-        columns = [c[0] for c in cur.description]
-        for rec in cur.fetchall():
-            row = {col: val for col, val in zip(columns, rec)}
-            props = row.get("properties")
-            if isinstance(props, str):
-                try:
-                    row["properties"] = json.loads(props)
-                except json.JSONDecodeError:
-                    row["properties"] = None
-            rows.append(row)
+    rows: List[Dict[str, Any]] = _execute_trino_query(trino_cfg, sql)
+    for row in rows:
+        props = row.get("properties")
+        if isinstance(props, str):
+            try:
+                row["properties"] = json.loads(props)
+            except json.JSONDecodeError:
+                row["properties"] = None
     elapsed = (time.perf_counter() - start) * 1000.0
     return rows, elapsed
 def query_dimensions(
@@ -2197,54 +2129,47 @@ def query_dimensions(
             payload = json.loads(cached)
             return payload.get("values", {}), payload.get("counts")
 
-    connect = _require_trino()
     results: Dict[str, List[str]] = {}
     counts: Dict[str, List[Dict[str, Any]]] | None = {} if include_counts else None
 
-    with connect(host=trino_cfg.host, port=trino_cfg.port, user=trino_cfg.user, http_scheme=trino_cfg.http_scheme) as conn:  # type: ignore[arg-type]
-        cur = conn.cursor()
+    if include_counts:
+        # Single UNION ALL query with counts
+        union_queries = []
+        for dim in dims:
+            union_queries.append(f"""
+                SELECT
+                    '{dim}' AS dimension,
+                    {dim} AS value,
+                    COUNT(*) AS count
+                FROM {base}{where + (" AND " if where else " WHERE ") + f"{dim} IS NOT NULL"}
+                GROUP BY {dim}
+                ORDER BY count DESC
+                LIMIT {per_dim_limit}
+            """)
 
-        if include_counts:
-            # Efficient implementation: Get all dimensions and counts in a single query
-            # Use UNION ALL with CTEs to get all dimension counts efficiently
-            union_queries = []
-            for dim in dims:
-                union_queries.append(f"""
-                    SELECT
-                        '{dim}' as dimension,
-                        {dim} as value,
-                        COUNT(*) as count
-                    FROM {base}{where + (" AND " if where else " WHERE ") + f"{dim} IS NOT NULL"}
-                    GROUP BY {dim}
-                    ORDER BY count DESC
-                    LIMIT {per_dim_limit}
-                """)
+        union_sql = " UNION ALL ".join(union_queries)
+        sql = f"SELECT dimension, value, count FROM ({union_sql}) ORDER BY dimension, count DESC"
+        rows = _execute_trino_query(trino_cfg, sql)
 
-            union_sql = " UNION ALL ".join(union_queries)
-            sql = f"SELECT dimension, value, count FROM ({union_sql}) ORDER BY dimension, count DESC"
-
-            cur.execute(sql)
-            all_counts = cur.fetchall()
-
-            # Group by dimension
-            for dim in dims:
-                dim_values = []
-                dim_counts = []
-                for row in all_counts:
-                    if row[0] == dim:  # dimension name
-                        dim_values.append(row[1])
-                        dim_counts.append({"value": row[1], "count": int(row[2])})
-                results[dim] = dim_values
-                if counts is not None:
-                    counts[dim] = dim_counts
-        else:
-            # Original implementation for when counts are not needed
-            for dim in dims:
-                clause = where + (" AND " if where else " WHERE ") + f"{dim} IS NOT NULL"
-                sql = f"SELECT DISTINCT {dim} FROM {base}{clause} LIMIT {per_dim_limit}"
-                cur.execute(sql)
-                values = [row[0] for row in cur.fetchall() if row and row[0] is not None]
-                results[dim] = values
+        for dim in dims:
+            dim_values: List[str] = []
+            dim_counts: List[Dict[str, Any]] = []
+            for row in rows:
+                if row.get("dimension") == dim:
+                    val = row.get("value")
+                    dim_values.append(val)
+                    dim_counts.append({"value": val, "count": int(row.get("count", 0))})
+            results[dim] = dim_values
+            if counts is not None:
+                counts[dim] = dim_counts
+    else:
+        # Per-dimension distinct values
+        for dim in dims:
+            clause = where + (" AND " if where else " WHERE ") + f"{dim} IS NOT NULL"
+            sql = f"SELECT DISTINCT {dim} AS value FROM {base}{clause} LIMIT {per_dim_limit}"
+            rows = _execute_trino_query(trino_cfg, sql)
+            values = [row.get("value") for row in rows if row.get("value") is not None]
+            results[dim] = values
 
     if client is not None and cache_key is not None:
         try:  # pragma: no cover
@@ -2277,19 +2202,56 @@ async def fetch_curve_data(
     from .async_service import AsyncCurveService
     from .container import get_service
 
+    # Determine effective pagination
+    if cursor is not None:
+        eff_limit = int(getattr(cursor, "limit", 100))
+        eff_offset = int(getattr(cursor, "offset", 0))
+    else:
+        eff_limit = int(getattr(pagination, "limit", 100)) if pagination is not None else 100
+        eff_offset = int(getattr(pagination, "offset", 0)) if pagination is not None else 0
+
+    # Over-fetch by 1 to detect if more pages exist
+    fetch_limit = max(1, eff_limit + 1)
+
     service = get_service(AsyncCurveService)
-    points, meta = await service.fetch_curve_data(
+    points, _raw_meta = await service.fetch_curve_data(
         asof=asof,
         iso=iso,
         market=market,
         location=location,
         product=product,
         block=block,
-        limit=limit,
-        offset=offset,
+        limit=fetch_limit,
+        offset=eff_offset,
     )
 
     # Transform CurvePoint objects to dicts for compatibility
+    # Trim to page size and compute cursors
+    has_more = len(points) > eff_limit
+    if has_more:
+        points = points[:eff_limit]
+
+    filters = {
+        "asof": asof,
+        "iso": iso,
+        "market": market,
+        "location": location,
+        "product": product,
+        "block": block,
+    }
+    next_token = None
+    prev_token = None
+    try:
+        if has_more:
+            next_token = _Cursor(offset=eff_offset + eff_limit, limit=eff_limit, timestamp=time.time(), filters=filters).to_string()
+        if eff_offset > 0:
+            prev_offset = max(0, eff_offset - eff_limit)
+            prev_token = _Cursor(offset=prev_offset, limit=eff_limit, timestamp=time.time(), filters=filters).to_string()
+    except Exception:
+        # If cursor encoding fails, fall back to None tokens
+        next_token = None
+        prev_token = None
+
     data = [
         {
             "curve_key": point.curve_key,
@@ -2309,7 +2271,12 @@ async def fetch_curve_data(
         for point in points
     ]
 
-    return data, meta
+    class _CursorMeta:
+        def __init__(self, next_cursor: Optional[str], prev_cursor: Optional[str]) -> None:
+            self.next_cursor = next_cursor
+            self.prev_cursor = prev_cursor
+
+    return data, _CursorMeta(next_token, prev_token)
 
 
 async def fetch_curve_diff_data(
@@ -2327,7 +2294,11 @@ async def fetch_curve_diff_data(
     from .container import get_service
 
     service = get_service(AsyncCurveService)
-    points, meta = await service.fetch_curve_diff(
+    # Derive limit/offset from pagination
+    eff_limit = int(getattr(pagination, "limit", 100)) if pagination is not None else 100
+    eff_offset = int(getattr(pagination, "offset", 0)) if pagination is not None else 0
+
+    points, _meta = await service.fetch_curve_diff(
         asof_a=asof_a,
         asof_b=asof_b,
         iso=iso,
@@ -2335,8 +2306,8 @@ async def fetch_curve_diff_data(
         location=location,
         product=product,
         block=block,
-        limit=100,  # Default limit
-        offset=0,   # Default offset
+        limit=eff_limit,
+        offset=eff_offset,
     )
 
     # Transform CurveDiffPoint objects to dicts for compatibility
@@ -2366,7 +2337,7 @@ async def fetch_curve_diff_data(
         for point in points
     ]
 
-    return data, meta
+    return data, None
 
 
 async def fetch_curve_strips_data(
@@ -2383,15 +2354,18 @@ async def fetch_curve_strips_data(
     from .container import get_service
 
     service = get_service(AsyncCurveService)
-    points, meta = await service.fetch_curve_strips(
+    eff_limit = int(getattr(pagination, "limit", 100)) if pagination is not None else 100
+    eff_offset = int(getattr(pagination, "offset", 0)) if pagination is not None else 0
+
+    points, _meta = await service.fetch_curve_strips(
         strip_type=strip_type,
         iso=iso,
         market=market,
         location=location,
         product=product,
         block=block,
-        limit=100,  # Default limit
-        offset=0,   # Default offset
+        limit=eff_limit,
+        offset=eff_offset,
     )
 
     # Transform CurvePoint objects to dicts for compatibility
@@ -2414,7 +2388,7 @@ async def fetch_curve_strips_data(
         for point in points
     ]
 
-    return data, meta
+    return data, None
 
 
 async def fetch_metadata_dimensions(

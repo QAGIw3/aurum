@@ -29,18 +29,23 @@ async def readiness_check() -> Dict[str, str]:
 
     # Check Trino connectivity
     try:
-        from .service import _check_trino_ready
-        checks["trino"] = "ready" if _check_trino_ready() else "unavailable"
+        from .config import TrinoConfig
+        from .routes import _check_trino_ready as _routes_check_trino_ready
+
+        trino_cfg = TrinoConfig.from_settings(settings)
+        checks["trino"] = "ready" if (await _routes_check_trino_ready(trino_cfg)) else "unavailable"
     except Exception:
         checks["trino"] = "unavailable"
 
     # Check Redis connectivity
     try:
         from .service import _maybe_redis_client
+        import asyncio as _asyncio
         cache_cfg = settings.api.cache
         client = _maybe_redis_client(cache_cfg)
         if client:
-            client.ping()
+            # Offload blocking ping call
+            await _asyncio.to_thread(client.ping)
             checks["redis"] = "ready"
         else:
             checks["redis"] = "disabled"

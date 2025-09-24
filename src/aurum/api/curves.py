@@ -350,3 +350,7 @@ async def export_curves(
     response = StreamingResponse(csv_stream(), media_type="text/csv; charset=utf-8")
     response.headers["Content-Disposition"] = f"attachment; filename=\"{filename}\""
     return response
+
+
+# --- v2 integration helpers -------------------------------------------------
+from .curves_v2_service import get_curve_service  # re-export for v2 router

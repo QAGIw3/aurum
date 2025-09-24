@@ -18,12 +18,16 @@ from __future__ import annotations
 
 import time
 from typing import List, Optional
-from uuid import uuid4
 
 from fastapi import APIRouter, HTTPException, Query, Request, Response
 from pydantic import BaseModel, Field
 
 from ..http import respond_with_etag
+from .pagination import (
+    resolve_pagination,
+    build_next_cursor,
+    build_pagination_envelope,
+)
 from ...telemetry.context import get_request_id
 
 router = APIRouter(prefix="/v2", tags=["drought"])
@@ -82,24 +86,22 @@ async def get_drought_indices_v2(
     start_time = time.perf_counter()
 
     try:
-        # Parse cursor if provided
-        offset = 0
-        if cursor:
-            try:
-                import base64
-                import json
-                cursor_data = json.loads(base64.urlsafe_b64decode(cursor.encode()).decode())
-                offset = cursor_data.get("offset", 0)
-            except Exception:
-                raise HTTPException(
-                    status_code=400,
-                    detail={
-                        "type": "invalid_cursor",
-                        "title": "Invalid cursor format",
-                        "detail": "The provided cursor is not valid",
-                        "instance": "/v2/drought/indices"
-                    }
-                )
+        # Resolve pagination
+        offset, effective_limit = resolve_pagination(
+            cursor=cursor,
+            limit=limit,
+            default_limit=limit,
+            filters={
+                "dataset": dataset,
+                "index": index,
+                "timescale": timescale,
+                "region": region,
+                "region_type": region_type,
+                "region_id": region_id,
+                "start": start,
+                "end": end,
+            },
+        )
 
         # Get drought indices service (placeholder - would integrate with actual service)
         from ..routes import _drought_indices_data
@@ -111,25 +113,54 @@ async def get_drought_indices_v2(
             region_type=region_type,
             region_id=region_id,
             start=start,
-            end=end
+            end=end,
         )
 
         # Apply pagination
         total_count = len(indices_data)
         start_idx = offset
-        end_idx = offset + limit
+        end_idx = offset + effective_limit
         paginated_data = indices_data[start_idx:end_idx]
 
-        # Create next cursor
-        next_cursor = None
-        if end_idx < total_count:
-            next_offset = end_idx
-            cursor_data = {"offset": next_offset}
-            import base64
-            import json
-            next_cursor = base64.urlsafe_b64encode(
-                json.dumps(cursor_data).encode()
-            ).decode()
+        # Build cursor and metadata envelope
+        next_cursor = build_next_cursor(
+            offset=offset,
+            limit=effective_limit,
+            has_more=end_idx < total_count,
+            filters={
+                "dataset": dataset,
+                "index": index,
+                "timescale": timescale,
+                "region": region,
+                "region_type": region_type,
+                "region_id": region_id,
+                "start": start,
+                "end": end,
+            },
+        )
+        from .pagination import build_prev_cursor
+        prev_cursor = build_prev_cursor(
+            offset=offset,
+            limit=effective_limit,
+            filters={
+                "dataset": dataset,
+                "index": index,
+                "timescale": timescale,
+                "region": region,
+                "region_type": region_type,
+                "region_id": region_id,
+                "start": start,
+                "end": end,
+            },
+        )
+        meta_page, links = build_pagination_envelope(
+            request_url=request.url,
+            offset=offset,
+            limit=effective_limit,
+            total=total_count,
+            next_cursor=next_cursor,
+            prev_cursor=prev_cursor,
+        )
 
         duration_ms = (time.perf_counter() - start_time) * 1000
 
@@ -155,42 +186,31 @@ async def get_drought_indices_v2(
             ))
 
         # Create response with enhanced metadata
+        meta_out = dict(meta_page)
+        meta_out.update({
+            "request_id": get_request_id(),
+            "tenant_id": tenant_id,
+            "filters": {
+                "dataset": dataset,
+                "index": index,
+                "timescale": timescale,
+                "region": region,
+                "region_type": region_type,
+                "region_id": region_id,
+                "start": start,
+                "end": end,
+            },
+            "returned_count": len(index_points),
+            "processing_time_ms": round(duration_ms, 2),
+        })
+
         result = DroughtIndexResponse(
             data=index_points,
-            meta={
-                "request_id": get_request_id(),
-                "tenant_id": tenant_id,
-                "filters": {
-                    "dataset": dataset,
-                    "index": index,
-                    "timescale": timescale,
-                    "region": region,
-                    "region_type": region_type,
-                    "region_id": region_id,
-                    "start": start,
-                    "end": end,
-                },
-                "total_count": total_count,
-                "returned_count": len(index_points),
-                "has_more": next_cursor is not None,
-                "cursor": cursor,
-                "next_cursor": next_cursor,
-                "processing_time_ms": round(duration_ms, 2),
-            },
-            links={
-                "self": str(request.url),
-                "next": f"{request.url}&cursor={next_cursor}" if next_cursor else None,
-            }
+            meta=meta_out,
+            links=links,
         )
 
-        # Add ETag for caching with Link headers
-        return respond_with_etag(
-            result,
-            request,
-            response,
-            next_cursor=next_cursor,
-            canonical_url=str(request.url)
-        )
+        return respond_with_etag(result, request, response, next_cursor=next_cursor, canonical_url=str(request.url.remove_query_params("cursor")))
 
     except HTTPException:
         raise
@@ -204,8 +224,8 @@ async def get_drought_indices_v2(
                 "detail": f"Failed to get drought indices: {str(exc)}",
                 "instance": "/v2/drought/indices",
                 "request_id": get_request_id(),
-                "processing_time_ms": round(duration_ms, 2)
-            }
+                "processing_time_ms": round(duration_ms, 2),
+            },
         )
 
 
@@ -226,24 +246,19 @@ async def get_drought_usdm_v2(
     start_time = time.perf_counter()
 
     try:
-        # Parse cursor if provided
-        offset = 0
-        if cursor:
-            try:
-                import base64
-                import json
-                cursor_data = json.loads(base64.urlsafe_b64decode(cursor.encode()).decode())
-                offset = cursor_data.get("offset", 0)
-            except Exception:
-                raise HTTPException(
-                    status_code=400,
-                    detail={
-                        "type": "invalid_cursor",
-                        "title": "Invalid cursor format",
-                        "detail": "The provided cursor is not valid",
-                        "instance": "/v2/drought/usdm"
-                    }
-                )
+        # Resolve pagination
+        offset, effective_limit = resolve_pagination(
+            cursor=cursor,
+            limit=limit,
+            default_limit=limit,
+            filters={
+                "region": region,
+                "region_type": region_type,
+                "region_id": region_id,
+                "start": start,
+                "end": end,
+            },
+        )
 
         # Get USDM service (placeholder - would integrate with actual service)
         from ..routes import _drought_usdm_data
@@ -252,62 +267,72 @@ async def get_drought_usdm_v2(
             region_type=region_type,
             region_id=region_id,
             start=start,
-            end=end
+            end=end,
         )
 
         # Apply pagination
         total_count = len(usdm_data)
         start_idx = offset
-        end_idx = offset + limit
+        end_idx = offset + effective_limit
         paginated_data = usdm_data[start_idx:end_idx]
 
-        # Create next cursor
-        next_cursor = None
-        if end_idx < total_count:
-            next_offset = end_idx
-            cursor_data = {"offset": next_offset}
-            import base64
-            import json
-            next_cursor = base64.urlsafe_b64encode(
-                json.dumps(cursor_data).encode()
-            ).decode()
+        # Build cursor and metadata envelope
+        next_cursor = build_next_cursor(
+            offset=offset,
+            limit=effective_limit,
+            has_more=end_idx < total_count,
+            filters={
+                "region": region,
+                "region_type": region_type,
+                "region_id": region_id,
+                "start": start,
+                "end": end,
+            },
+        )
+        prev_cursor = build_prev_cursor(
+            offset=offset,
+            limit=effective_limit,
+            filters={
+                "region": region,
+                "region_type": region_type,
+                "region_id": region_id,
+                "start": start,
+                "end": end,
+            },
+        )
+        meta_page, links = build_pagination_envelope(
+            request_url=request.url,
+            offset=offset,
+            limit=effective_limit,
+            total=total_count,
+            next_cursor=next_cursor,
+            prev_cursor=prev_cursor,
+        )
 
         duration_ms = (time.perf_counter() - start_time) * 1000
 
-        # Create response with enhanced metadata
+        meta_out = dict(meta_page)
+        meta_out.update({
+            "request_id": get_request_id(),
+            "tenant_id": tenant_id,
+            "filters": {
+                "region": region,
+                "region_type": region_type,
+                "region_id": region_id,
+                "start": start,
+                "end": end,
+            },
+            "returned_count": len(paginated_data),
+            "processing_time_ms": round(duration_ms, 2),
+        })
+
         result = DroughtUsdmResponse(
             data=paginated_data,
-            meta={
-                "request_id": get_request_id(),
-                "tenant_id": tenant_id,
-                "filters": {
-                    "region": region,
-                    "region_type": region_type,
-                    "region_id": region_id,
-                    "start": start,
-                    "end": end,
-                },
-                "total_count": total_count,
-                "returned_count": len(paginated_data),
-                "has_more": next_cursor is not None,
-                "cursor": cursor,
-                "next_cursor": next_cursor,
-                "processing_time_ms": round(duration_ms, 2),
-            },
-            links={
-                "self": str(request.url),
-                "next": f"{request.url}&cursor={next_cursor}" if next_cursor else None,
-            }
+            meta=meta_out,
+            links=links,
         )
 
-        # Add ETag for caching with Link headers
-        return respond_with_etag(
-            result,
-            request,
-            response,
-            next_cursor=next_cursor,
-            canonical_url=str(request.url)
-        )
+        return respond_with_etag(result, request, response, next_cursor=next_cursor, canonical_url=str(request.url.remove_query_params("cursor")))
 
     except HTTPException:
         raise
@@ -321,6 +346,6 @@ async def get_drought_usdm_v2(
                 "detail": f"Failed to get USDM data: {str(exc)}",
                 "instance": "/v2/drought/usdm",
                 "request_id": get_request_id(),
-                "processing_time_ms": round(duration_ms, 2)
-            }
+                "processing_time_ms": round(duration_ms, 2),
+            },
         )

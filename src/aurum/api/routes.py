@@ -715,114 +715,121 @@ def live() -> dict:
 
 @router.get("/ready")
 @router.get("/readyz")
-def ready() -> dict:
+async def ready() -> dict:
     """Deep readiness check with comprehensive dependency validation."""
     trino_cfg = _trino_config()
     cache_cfg = _cache_config()
     settings = _settings()
 
+    # Run checks concurrently; offload blocking checks to a thread
+    import asyncio as _asyncio
+    trino_fut = _check_trino_deep_health(trino_cfg)
+    schema_fut = _check_schema_registry_ready()
+    timescale_fut = _asyncio.to_thread(_check_timescale_ready, settings.database.timescale_dsn)
+    redis_fut = _asyncio.to_thread(_check_redis_ready, cache_cfg)
+
+    trino_status, schema_registry_status, timescale_status, redis_status = await _asyncio.gather(
+        trino_fut, schema_fut, timescale_fut, redis_fut, return_exceptions=True
+    )
+
+    # Normalize exceptions into unavailable statuses
+    def _norm(value: object) -> object:
+        if isinstance(value, Exception):
+            return {"status": "unavailable", "error": str(value)}
+        return value
+
     checks = {
-        "trino": _check_trino_deep_health(trino_cfg),
-        "timescale": _check_timescale_ready(settings.database.timescale_dsn),
-        "redis": _check_redis_ready(cache_cfg),
-        "schema_registry": _check_schema_registry_ready(),
+        "trino": _norm(trino_status),
+        "timescale": _norm(timescale_status),
+        "redis": _norm(redis_status),
+        "schema_registry": _norm(schema_registry_status),
     }
 
-    if all(checks.values()):
+    def _is_ok(value: object) -> bool:
+        if isinstance(value, bool):
+            return bool(value)
+        if isinstance(value, dict):
+            status = str(value.get("status", "")).lower()  # type: ignore[call-arg]
+            return status in {"healthy", "disabled"}
+        return False
+
+    if all(_is_ok(val) for val in checks.values()):
         return {"status": "ready", "checks": checks}
     raise HTTPException(status_code=503, detail={"status": "unavailable", "checks": checks})
 
 
-def _check_trino_deep_health(cfg: TrinoConfig) -> dict:
-    """Perform deep health check on Trino including query performance and schema validation."""
-    try:
-        connect = service._require_trino()
-    except RuntimeError:
-        return {"status": "unavailable", "error": "Trino client not available"}
-
+async def _check_trino_deep_health(cfg: TrinoConfig) -> dict:
+    """Perform deep health check on Trino using the pooled async client."""
     try:
         import time
+        from .database.trino_client import get_trino_client
+
+        client = get_trino_client(config=cfg)
         start_time = time.perf_counter()
 
-        with connect(
-            host=cfg.host,
-            port=cfg.port,
-            user=cfg.user,
-            http_scheme=cfg.http_scheme,
-        ) as conn:
-            cur = conn.cursor()
+        # Basic connectivity test
+        _ = await client.execute_query("SELECT 1")
 
-            # Basic connectivity test
-            cur.execute("SELECT 1")
-            cur.fetchone()
+        # Schema validation - check key tables exist (use information_schema in iceberg catalog)
+        schema_check_start = time.perf_counter()
+        schema_query = (
+            "SELECT table_name FROM iceberg.information_schema.tables "
+            "WHERE table_schema = 'market' AND table_name IN "
+            "('curve_observation','lmp_observation','series_observation')"
+        )
+        schema_rows = await client.execute_query(schema_query)
+        schema_tables_found = len(schema_rows)
+        schema_check_time = time.perf_counter() - schema_check_start
 
-            # Schema validation - check key tables exist
-            schema_check_start = time.perf_counter()
-            cur.execute("""
-                SELECT table_name
-                FROM information_schema.tables
-                WHERE table_schema = 'iceberg' AND table_catalog = 'market'
-                AND table_name IN ('curve_observation', 'lmp_observation', 'series_observation')
-                LIMIT 3
-            """)
-            schema_tables = [row[0] for row in cur.fetchall()]
-            schema_check_time = time.perf_counter() - schema_check_start
+        # Performance test - simple aggregation (sampled)
+        perf_check_start = time.perf_counter()
+        perf_query = (
+            "SELECT COUNT(*) AS total_count FROM iceberg.market.curve_observation TABLESAMPLE SYSTEM (1)"
+        )
+        sample_rows = await client.execute_query(perf_query)
+        perf_check_time = time.perf_counter() - perf_check_start
+        sample_result = sample_rows[0].get("total_count") if sample_rows else 0
 
-            # Performance test - simple aggregation
-            perf_check_start = time.perf_counter()
-            cur.execute("""
-                SELECT COUNT(*) as total_count
-                FROM iceberg.market.curve_observation
-                TABLESAMPLE SYSTEM (1)
-            """)
-            sample_result = cur.fetchone()
-            perf_check_time = time.perf_counter() - perf_check_start
+        total_time = time.perf_counter() - start_time
 
-            total_time = time.perf_counter() - start_time
-
-            return {
-                "status": "healthy",
-                "connectivity": "ok",
-                "schema_tables_found": len(schema_tables),
-                "schema_check_time_ms": round(schema_check_time * 1000, 2),
-                "performance_check_time_ms": round(perf_check_time * 1000, 2),
-                "total_check_time_ms": round(total_time * 1000, 2),
-                "sample_query_result": sample_result[0] if sample_result else 0,
-            }
+        return {
+            "status": "healthy",
+            "connectivity": "ok",
+            "schema_tables_found": schema_tables_found,
+            "schema_check_time_ms": round(schema_check_time * 1000, 2),
+            "performance_check_time_ms": round(perf_check_time * 1000, 2),
+            "total_check_time_ms": round(total_time * 1000, 2),
+            "sample_query_result": int(sample_result or 0),
+        }
 
     except Exception as exc:
         return {"status": "unavailable", "error": str(exc)}
 
 
-def _check_schema_registry_ready() -> dict:
-    """Check Schema Registry connectivity and health."""
+async def _check_schema_registry_ready() -> dict:
+    """Check Schema Registry connectivity and health using httpx."""
     try:
-        # Try to import and check schema registry
-        from aurum.api import kafka
-        import requests
+        import httpx
 
-        # Get schema registry URL from settings
         settings = _settings()
-        schema_registry_url = getattr(settings.kafka, 'schema_registry_url', None)
-
+        schema_registry_url = getattr(settings.kafka, "schema_registry_url", None)
         if not schema_registry_url:
             return {"status": "disabled", "error": "Schema Registry URL not configured"}
 
-        # Ping schema registry health endpoint
-        try:
-            response = requests.get(f"{schema_registry_url}/subjects", timeout=5)
-            if response.status_code == 200:
-                subjects = response.json()
-                return {
-                    "status": "healthy",
-                    "subjects_count": len(subjects),
-                    "response_time_ms": round(response.elapsed.total_seconds() * 1000, 2),
-                }
-            else:
+        url = f"{schema_registry_url.rstrip('/')}/subjects"
+        async with httpx.AsyncClient(timeout=5.0) as client:
+            try:
+                response = await client.get(url)
+                if response.status_code == 200:
+                    subjects = response.json()
+                    # httpx doesn't expose elapsed by default; compute minimal metric
+                    return {
+                        "status": "healthy",
+                        "subjects_count": len(subjects) if isinstance(subjects, list) else 0,
+                    }
                 return {"status": "unavailable", "error": f"HTTP {response.status_code}"}
-        except requests.RequestException as exc:
-            return {"status": "unavailable", "error": f"Connection failed: {exc}"}
-
+            except httpx.RequestError as exc:
+                return {"status": "unavailable", "error": f"Connection failed: {exc}"}
     except Exception as exc:
         return {"status": "unavailable", "error": str(exc)}
 
@@ -1167,21 +1174,11 @@ def _persist_ppa_valuation_records(
     except Exception as exc:  # pragma: no cover - integration failure
         LOGGER.warning("Failed to persist PPA valuation for %s/%s: %s", scenario_id, ppa_contract_id, exc)
 
-def _check_trino_ready(cfg: TrinoConfig) -> bool:
+async def _check_trino_ready(cfg: TrinoConfig) -> bool:
     try:
-        connect = service._require_trino()
-    except RuntimeError:
-        return False
-    try:
-        with connect(  # type: ignore[arg-type]
-            host=cfg.host,
-            port=cfg.port,
-            user=cfg.user,
-            http_scheme=cfg.http_scheme,
-        ) as conn:
-            cur = conn.cursor()
-            cur.execute("SELECT 1")
-            cur.fetchone()
+        from .database.trino_client import get_trino_client
+        client = get_trino_client(config=cfg)
+        _ = await client.execute_query("SELECT 1")
         return True
     except Exception:
         return False

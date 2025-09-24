@@ -116,6 +116,7 @@ def build_pagination_envelope(
     limit: int,
     total: Optional[int] = None,
     next_cursor: Optional[str] = None,
+    prev_cursor: Optional[str] = None,
 ) -> Tuple[Dict[str, object], Dict[str, Optional[str]]]:
     """Return ``meta`` and ``links`` dictionaries for responses."""
 
@@ -124,19 +125,41 @@ def build_pagination_envelope(
         limit=limit,
         offset=offset,
         next_cursor=next_cursor,
+        prev_cursor=prev_cursor,
     )
 
     base_url = request_url.remove_query_params("cursor")
     links = {
         "self": str(request_url),
         "next": str(base_url.include_query_params(cursor=next_cursor)) if next_cursor else None,
+        "prev": str(base_url.include_query_params(cursor=prev_cursor)) if prev_cursor else None,
     }
 
     return meta, links
 
 
+def build_prev_cursor(
+    *,
+    offset: int,
+    limit: int,
+    filters: Optional[Dict[str, object]] = None,
+) -> Optional[str]:
+    """Generate the previous cursor payload when a previous page exists."""
+    if offset <= 0:
+        return None
+    prev_offset = max(0, offset - limit)
+    payload = {
+        "offset": prev_offset,
+        "limit": limit,
+        "filters": _normalize_filters(filters),
+        "ts": time.time(),
+    }
+    return encode_cursor(payload)
+
+
 __all__ = [
     "resolve_pagination",
     "build_next_cursor",
+    "build_prev_cursor",
     "build_pagination_envelope",
 ]

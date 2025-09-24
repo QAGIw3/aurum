@@ -24,7 +24,13 @@ from fastapi import APIRouter, HTTPException, Query, Request, Response
 from pydantic import BaseModel, Field
 
 from ..http import respond_with_etag
+from .pagination import (
+    resolve_pagination,
+    build_next_cursor,
+    build_pagination_envelope,
+)
 from ...telemetry.context import get_request_id
+from ..models import EiaSeriesDimensionsData, EiaSeriesDimensionsResponse, Meta
 
 router = APIRouter(prefix="/v2", tags=["eia"])
 
@@ -74,86 +80,71 @@ async def list_eia_datasets_v2(
     start_time = time.perf_counter()
 
     try:
-        # Parse cursor if provided
-        offset = 0
-        if cursor:
-            try:
-                import base64
-                import json
-                cursor_data = json.loads(base64.urlsafe_b64decode(cursor.encode()).decode())
-                offset = cursor_data.get("offset", 0)
-            except Exception:
-                raise HTTPException(
-                    status_code=400,
-                    detail={
-                        "type": "invalid_cursor",
-                        "title": "Invalid cursor format",
-                        "detail": "The provided cursor is not valid",
-                        "instance": "/v2/metadata/eia/datasets"
-                    }
-                )
+        # Resolve pagination using shared helper
+        offset, effective_limit = resolve_pagination(
+            cursor=cursor,
+            limit=limit,
+            default_limit=limit,
+            filters=None,
+        )
 
-        # Get EIA datasets service (placeholder - would integrate with actual service)
-        from ..routes import _eia_datasets_data
-        datasets_data = _eia_datasets_data()
+        from ..eia_v2_service import get_eia_service
+        svc = await get_eia_service()
+        paginated_data, total_count = await svc.list_datasets(offset=offset, limit=effective_limit)
 
-        # Apply pagination
-        total_count = len(datasets_data)
-        start_idx = offset
-        end_idx = offset + limit
-        paginated_data = datasets_data[start_idx:end_idx]
-
-        # Create next cursor
-        next_cursor = None
-        if end_idx < total_count:
-            next_offset = end_idx
-            cursor_data = {"offset": next_offset}
-            import base64
-            import json
-            next_cursor = base64.urlsafe_b64encode(
-                json.dumps(cursor_data).encode()
-            ).decode()
+        # Create cursors and pagination envelope
+        has_more = (offset + effective_limit) < total_count
+        next_cursor = build_next_cursor(
+            offset=offset,
+            limit=effective_limit,
+            has_more=has_more,
+            filters=None,
+        )
+        from .pagination import build_prev_cursor
+        prev_cursor = build_prev_cursor(
+            offset=offset,
+            limit=effective_limit,
+            filters=None,
+        )
+        meta_page, links = build_pagination_envelope(
+            request_url=request.url,
+            offset=offset,
+            limit=effective_limit,
+            total=total_count,
+            next_cursor=next_cursor,
+            prev_cursor=prev_cursor,
+        )
 
         duration_ms = (time.perf_counter() - start_time) * 1000
 
         # Convert to response format
         datasets = []
-        for dataset_data in paginated_data:
+        for item in paginated_data:
             datasets.append(EiaDatasetResponse(
-                dataset_path=dataset_data["dataset_path"],
-                title=dataset_data["title"],
-                description=dataset_data["description"],
-                last_updated=dataset_data.get("last_updated", "unknown"),
+                dataset_path=item.dataset_path,
+                title=item.title,
+                description=item.description,
+                last_updated=item.last_updated or "unknown",
                 meta={"tenant_id": tenant_id}
             ))
 
         # Create response with enhanced metadata
+        meta_out = dict(meta_page)
+        meta_out.update({
+            "request_id": get_request_id(),
+            "tenant_id": tenant_id,
+            "returned_count": len(datasets),
+            "processing_time_ms": round(duration_ms, 2),
+        })
+
         result = EiaDatasetsResponse(
             data=datasets,
-            meta={
-                "request_id": get_request_id(),
-                "tenant_id": tenant_id,
-                "total_count": total_count,
-                "returned_count": len(datasets),
-                "has_more": next_cursor is not None,
-                "cursor": cursor,
-                "next_cursor": next_cursor,
-                "processing_time_ms": round(duration_ms, 2),
-            },
-            links={
-                "self": str(request.url),
-                "next": f"{request.url}&cursor={next_cursor}" if next_cursor else None,
-            }
+            meta=meta_out,
+            links=links,
         )
 
         # Add ETag for caching with Link headers
-        return respond_with_etag(
-            result,
-            request,
-            response,
-            next_cursor=next_cursor,
-            canonical_url=str(request.url)
-        )
+        return respond_with_etag(result, request, response, next_cursor=next_cursor, canonical_url=str(request.url.remove_query_params("cursor")))
 
     except HTTPException:
         raise
@@ -187,90 +178,80 @@ async def get_eia_series_v2(
     start_time = time.perf_counter()
 
     try:
-        # Parse cursor if provided
-        offset = 0
-        if cursor:
-            try:
-                import base64
-                import json
-                cursor_data = json.loads(base64.urlsafe_b64decode(cursor.encode()).decode())
-                offset = cursor_data.get("offset", 0)
-            except Exception:
-                raise HTTPException(
-                    status_code=400,
-                    detail={
-                        "type": "invalid_cursor",
-                        "title": "Invalid cursor format",
-                        "detail": "The provided cursor is not valid",
-                        "instance": "/v2/ref/eia/series"
-                    }
-                )
+        # Resolve pagination using shared helper (embed filters for integrity)
+        offset, effective_limit = resolve_pagination(
+            cursor=cursor,
+            limit=limit,
+            default_limit=limit,
+            filters={"series_id": series_id, "start_date": start_date, "end_date": end_date},
+        )
 
-        # Get EIA series service (placeholder - would integrate with actual service)
-        from ..routes import _eia_series_data
-        series_data = _eia_series_data(series_id, start_date, end_date)
+        from ..eia_v2_service import get_eia_service
+        svc = await get_eia_service()
+        series_points = await svc.get_series(
+            series_id=series_id,
+            start_date=start_date,
+            end_date=end_date,
+            offset=offset,
+            limit=effective_limit,
+        )
 
-        # Apply pagination
-        total_count = len(series_data)
-        start_idx = offset
-        end_idx = offset + limit
-        paginated_data = series_data[start_idx:end_idx]
-
-        # Create next cursor
-        next_cursor = None
-        if end_idx < total_count:
-            next_offset = end_idx
-            cursor_data = {"offset": next_offset}
-            import base64
-            import json
-            next_cursor = base64.urlsafe_b64encode(
-                json.dumps(cursor_data).encode()
-            ).decode()
+        has_more = len(series_points) == effective_limit
+        # Create cursors and pagination envelope
+        next_cursor = build_next_cursor(
+            offset=offset,
+            limit=effective_limit,
+            has_more=has_more,
+            filters={"series_id": series_id, "start_date": start_date, "end_date": end_date},
+        )
+        prev_cursor = build_prev_cursor(
+            offset=offset,
+            limit=effective_limit,
+            filters={"series_id": series_id, "start_date": start_date, "end_date": end_date},
+        )
+        meta_page, links = build_pagination_envelope(
+            request_url=request.url,
+            offset=offset,
+            limit=effective_limit,
+            total=None,
+            next_cursor=next_cursor,
+            prev_cursor=prev_cursor,
+        )
 
         duration_ms = (time.perf_counter() - start_time) * 1000
 
         # Convert to response format
-        series_points = []
-        for point_data in paginated_data:
-            series_points.append(EiaSeriesPoint(
-                series_id=series_id,
-                period=point_data["period"],
-                period_start=point_data["period_start"],
-                value=point_data["value"],
-                unit=point_data.get("unit", "unknown"),
+        series_points_out = []
+        for point in series_points:
+            series_points_out.append(EiaSeriesPoint(
+                series_id=point.series_id,
+                period=point.period,
+                period_start=point.period_start,
+                value=point.value,
+                unit=point.unit or "unknown",
                 meta={"tenant_id": tenant_id}
             ))
 
         # Create response with enhanced metadata
+        meta_out = dict(meta_page)
+        meta_out.update({
+            "request_id": get_request_id(),
+            "tenant_id": tenant_id,
+            "series_id": series_id,
+            "start_date": start_date,
+            "end_date": end_date,
+            "returned_count": len(series_points),
+            "processing_time_ms": round(duration_ms, 2),
+        })
+
         result = EiaSeriesResponse(
-            data=series_points,
-            meta={
-                "request_id": get_request_id(),
-                "tenant_id": tenant_id,
-                "series_id": series_id,
-                "start_date": start_date,
-                "end_date": end_date,
-                "total_count": total_count,
-                "returned_count": len(series_points),
-                "has_more": next_cursor is not None,
-                "cursor": cursor,
-                "next_cursor": next_cursor,
-                "processing_time_ms": round(duration_ms, 2),
-            },
-            links={
-                "self": str(request.url),
-                "next": f"{request.url}&cursor={next_cursor}" if next_cursor else None,
-            }
+            data=series_points_out,
+            meta=meta_out,
+            links=links,
         )
 
         # Add ETag for caching with Link headers
-        return respond_with_etag(
-            result,
-            request,
-            response,
-            next_cursor=next_cursor,
-            canonical_url=str(request.url)
-        )
+        return respond_with_etag(result, request, response, next_cursor=next_cursor, canonical_url=str(request.url.remove_query_params("cursor")))
 
     except HTTPException:
         raise
@@ -283,6 +264,70 @@ async def get_eia_series_v2(
                 "title": "Internal server error",
                 "detail": f"Failed to get EIA series: {str(exc)}",
                 "instance": "/v2/ref/eia/series",
+                "request_id": get_request_id(),
+                "processing_time_ms": round(duration_ms, 2)
+            }
+        )
+
+
+@router.get("/ref/eia/series/dimensions", response_model=EiaSeriesDimensionsResponse)
+async def get_eia_series_dimensions_v2(
+    request: Request,
+    response: Response,
+    tenant_id: str = Query(..., description="Tenant ID"),
+    series_id: Optional[str] = Query(None, description="Optional exact series identifier filter"),
+    frequency: Optional[str] = Query(None, description="Optional frequency filter"),
+    area: Optional[str] = Query(None, description="Area filter"),
+    sector: Optional[str] = Query(None, description="Sector filter"),
+    dataset: Optional[str] = Query(None, description="Dataset filter"),
+    unit: Optional[str] = Query(None, description="Unit filter"),
+    canonical_unit: Optional[str] = Query(None, description="Normalized unit filter"),
+    canonical_currency: Optional[str] = Query(None, description="Canonical currency filter"),
+    source: Optional[str] = Query(None, description="Source filter"),
+) -> EiaSeriesDimensionsResponse:
+    """List distinct EIA series dimension values (v2)."""
+    start_time = time.perf_counter()
+
+    try:
+        from ..eia_v2_service import get_eia_service
+        svc = await get_eia_service()
+        values = await svc.get_series_dimensions(
+            series_id=series_id,
+            frequency=frequency,
+            area=area,
+            sector=sector,
+            dataset=dataset,
+            unit=unit,
+            canonical_unit=canonical_unit,
+            canonical_currency=canonical_currency,
+            source=source,
+        )
+
+        duration_ms = (time.perf_counter() - start_time) * 1000
+        data = EiaSeriesDimensionsData(
+            dataset=values.get("dataset"),
+            area=values.get("area"),
+            sector=values.get("sector"),
+            unit=values.get("unit"),
+            canonical_unit=values.get("canonical_unit"),
+            canonical_currency=values.get("canonical_currency"),
+            frequency=values.get("frequency"),
+            source=values.get("source"),
+        )
+        meta = Meta(request_id=get_request_id(), query_time_ms=int(round(duration_ms)))
+        result = EiaSeriesDimensionsResponse(meta=meta, data=data)
+        return respond_with_etag(result, request, response, canonical_url=str(request.url))
+    except HTTPException:
+        raise
+    except Exception as exc:
+        duration_ms = (time.perf_counter() - start_time) * 1000
+        raise HTTPException(
+            status_code=500,
+            detail={
+                "type": "internal_error",
+                "title": "Internal server error",
+                "detail": f"Failed to list EIA series dimensions: {str(exc)}",
+                "instance": "/v2/ref/eia/series/dimensions",
                 "request_id": get_request_id(),
                 "processing_time_ms": round(duration_ms, 2)
             }

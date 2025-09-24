@@ -228,6 +228,56 @@ async def create_app(settings: AurumSettings | None = None) -> FastAPI:
         v1_curves_router = curves.router
         app.include_router(v1_curves_router)
 
+        # Include v1 metadata router (keep available by default)
+        try:
+            from .metadata import router as v1_metadata_router
+            app.include_router(v1_metadata_router)
+        except Exception:
+            logging.getLogger(__name__).warning("Failed to include v1 Metadata router", exc_info=True)
+
+        # Optionally include split v1 EIA router (feature-flag)
+        import os as _os2
+        if _os2.getenv("AURUM_API_V1_SPLIT_EIA", "0") == "1":  # pragma: no cover - opt-in
+            try:
+                from .v1.eia import router as v1_eia_router
+                app.include_router(v1_eia_router)
+            except Exception:
+                logging.getLogger(__name__).warning("Failed to include v1 EIA router", exc_info=True)
+
+        # (Metadata router included by default above)
+
+        # Optionally include split v1 ISO router (feature-flag)
+        if _os2.getenv("AURUM_API_V1_SPLIT_ISO", "0") == "1":  # pragma: no cover - opt-in
+            try:
+                from .v1.iso import router as v1_iso_router
+                app.include_router(v1_iso_router)
+            except Exception:
+                logging.getLogger(__name__).warning("Failed to include v1 ISO router", exc_info=True)
+
+        # Optionally include split v1 PPA router (feature-flag)
+        if _os2.getenv("AURUM_API_V1_SPLIT_PPA", "0") == "1":  # pragma: no cover - opt-in
+            try:
+                from .v1.ppa import router as v1_ppa_router
+                app.include_router(v1_ppa_router)
+            except Exception:
+                logging.getLogger(__name__).warning("Failed to include v1 PPA router", exc_info=True)
+
+        # Optionally include split v1 Drought router (feature-flag)
+        if _os2.getenv("AURUM_API_V1_SPLIT_DROUGHT", "0") == "1":  # pragma: no cover - opt-in
+            try:
+                from .v1.drought import router as v1_drought_router
+                app.include_router(v1_drought_router)
+            except Exception:
+                logging.getLogger(__name__).warning("Failed to include v1 Drought router", exc_info=True)
+
+        # Optionally include split v1 Admin router (feature-flag)
+        if _os2.getenv("AURUM_API_V1_SPLIT_ADMIN", "0") == "1":  # pragma: no cover - opt-in
+            try:
+                from .v1.admin import router as v1_admin_router
+                app.include_router(v1_admin_router)
+            except Exception:
+                logging.getLogger(__name__).warning("Failed to include v1 Admin router", exc_info=True)
+
         # Register v2 endpoints (new and improved)
         from .v2 import (
             scenarios as v2_scenarios,

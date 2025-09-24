@@ -15,7 +15,7 @@ Notes:
 from __future__ import annotations
 
 import time
-from typing import AsyncIterator, Dict, List, Optional
+from typing import Any, AsyncIterator, Dict, List, Optional
 from uuid import uuid4
 
 from fastapi import APIRouter, HTTPException, Query, Request, Response
@@ -24,6 +24,11 @@ from pydantic import BaseModel, Field
 
 from ..database import get_trino_client
 from ..http import respond_with_etag, deprecation_warning_headers, csv_response
+from .pagination import (
+    resolve_pagination,
+    build_next_cursor,
+    build_pagination_envelope,
+)
 from ..query import build_curve_export_query
 from ..curves import get_curve_service
 from ...telemetry.context import get_request_id
@@ -64,42 +69,43 @@ async def get_curves_v2(
         # Get curve service
         service = await get_curve_service()
 
-        # Parse cursor if provided
-        offset = 0
-        if cursor:
-            try:
-                import base64
-                import json
-                cursor_data = json.loads(base64.urlsafe_b64decode(cursor.encode()).decode())
-                offset = cursor_data.get("offset", 0)
-            except Exception:
-                raise HTTPException(
-                    status_code=400,
-                    detail={
-                        "type": "invalid_cursor",
-                        "title": "Invalid cursor format",
-                        "detail": "The provided cursor is not valid",
-                        "instance": "/v2/curves"
-                    }
-                )
+        # Resolve pagination using hardened utilities (embeds filters for integrity)
+        offset, effective_limit = resolve_pagination(
+            cursor=cursor,
+            limit=limit,
+            default_limit=limit,
+            filters={"name_filter": name_filter},
+        )
 
         # List curves
         curves = await service.list_curves(
             offset=offset,
-            limit=limit,
-            name_filter=name_filter
+            limit=effective_limit,
+            name_filter=name_filter,
         )
 
-        # Create next cursor
-        next_cursor = None
-        if len(curves) == limit:
-            next_offset = offset + limit
-            cursor_data = {"offset": next_offset}
-            import base64
-            import json
-            next_cursor = base64.urlsafe_b64encode(
-                json.dumps(cursor_data).encode()
-            ).decode()
+        # Compute pagination cursors and envelope
+        has_more = len(curves) == effective_limit
+        next_cursor = build_next_cursor(
+            offset=offset,
+            limit=effective_limit,
+            has_more=has_more,
+            filters={"name_filter": name_filter},
+        )
+        from .pagination import build_prev_cursor
+        prev_cursor = build_prev_cursor(
+            offset=offset,
+            limit=effective_limit,
+            filters={"name_filter": name_filter},
+        )
+        meta, links = build_pagination_envelope(
+            request_url=request.url,
+            offset=offset,
+            limit=effective_limit,
+            total=None,
+            next_cursor=next_cursor,
+            prev_cursor=prev_cursor,
+        )
 
         duration_ms = (time.perf_counter() - start_time) * 1000
 
@@ -116,31 +122,23 @@ async def get_curves_v2(
             ))
 
         # Create response with enhanced metadata
+        # Create response with enhanced metadata
+        # Augment meta with request-specific fields while keeping standardized keys
+        meta_out = dict(meta)
+        meta_out.update({
+            "request_id": get_request_id(),
+            "returned_count": len(curves),
+            "processing_time_ms": round(duration_ms, 2),
+        })
+
         result = CurveListResponse(
             data=curve_responses,
-            meta={
-                "request_id": get_request_id(),
-                "total_count": len(curves) + (1 if next_cursor else 0),  # Estimate
-                "returned_count": len(curves),
-                "has_more": next_cursor is not None,
-                "cursor": cursor,
-                "next_cursor": next_cursor,
-                "processing_time_ms": round(duration_ms, 2),
-            },
-            links={
-                "self": str(request.url),
-                "next": f"{request.url}&cursor={next_cursor}" if next_cursor else None,
-            }
+            meta=meta_out,
+            links=links,
         )
 
         # Add ETag for caching with Link headers
-        return respond_with_etag(
-            result,
-            request,
-            response,
-            next_cursor=next_cursor,
-            canonical_url=str(request.url)
-        )
+        return respond_with_etag(result, request, response, next_cursor=next_cursor, canonical_url=str(request.url.remove_query_params("cursor")))
 
     except HTTPException:
         raise
@@ -255,13 +253,7 @@ async def get_curve_diff_v2(
         )
 
         # Add ETag for caching with Link headers
-        return respond_with_etag(
-            result,
-            request,
-            response,
-            next_cursor=next_cursor,
-            canonical_url=str(request.url)
-        )
+        return respond_with_etag(result, request, response, canonical_url=str(request.url))
 
     except HTTPException:
         raise

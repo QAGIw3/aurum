@@ -9,7 +9,7 @@ from datetime import date, datetime
 from . import DataBackend, ConnectionConfig, get_backend, close_all_backends
 from aurum.performance.connection_pool import PoolConfig
 from aurum.core import AurumSettings
-from aurum.api.service import AsyncCurveService, AsyncScenarioService
+from aurum.api.async_service import AsyncCurveService, AsyncScenarioService
 
 
 class BackendAdapter:

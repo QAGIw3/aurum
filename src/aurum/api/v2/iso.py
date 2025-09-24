@@ -24,6 +24,11 @@ from fastapi import APIRouter, HTTPException, Query, Request, Response
 from pydantic import BaseModel, Field
 
 from ..http import respond_with_etag
+from .pagination import (
+    resolve_pagination,
+    build_next_cursor,
+    build_pagination_envelope,
+)
 from ...telemetry.context import get_request_id
 
 router = APIRouter(prefix="/v2", tags=["iso"])
@@ -65,45 +70,37 @@ async def get_lmp_last_24h_v2(
     start_time = time.perf_counter()
 
     try:
-        # Parse cursor if provided
-        offset = 0
-        if cursor:
-            try:
-                import base64
-                import json
-                cursor_data = json.loads(base64.urlsafe_b64decode(cursor.encode()).decode())
-                offset = cursor_data.get("offset", 0)
-            except Exception:
-                raise HTTPException(
-                    status_code=400,
-                    detail={
-                        "type": "invalid_cursor",
-                        "title": "Invalid cursor format",
-                        "detail": "The provided cursor is not valid",
-                        "instance": "/v2/iso/lmp/last-24h"
-                    }
-                )
+        # Resolve pagination (no additional filters beyond iso)
+        offset, effective_limit = resolve_pagination(
+            cursor=cursor,
+            limit=limit,
+            default_limit=limit,
+            filters={"iso": iso},
+        )
 
-        # Get LMP service (placeholder - would integrate with actual service)
-        from ..routes import _lmp_last_24h_data
-        lmp_data = _lmp_last_24h_data(iso)
+        # Get LMP service
+        from ..iso_v2_service import get_iso_service
+        svc = await get_iso_service()
+        paginated_data = await svc.lmp_last_24h(iso=iso, offset=offset, limit=effective_limit)
 
-        # Apply pagination
-        total_count = len(lmp_data)
-        start_idx = offset
-        end_idx = offset + limit
-        paginated_data = lmp_data[start_idx:end_idx]
-
-        # Create next cursor
-        next_cursor = None
-        if end_idx < total_count:
-            next_offset = end_idx
-            cursor_data = {"offset": next_offset}
-            import base64
-            import json
-            next_cursor = base64.urlsafe_b64encode(
-                json.dumps(cursor_data).encode()
-            ).decode()
+        # Create cursors and envelope
+        has_more = len(paginated_data) == effective_limit
+        next_cursor = build_next_cursor(
+            offset=offset,
+            limit=effective_limit,
+            has_more=has_more,
+            filters={"iso": iso},
+        )
+        from .pagination import build_prev_cursor
+        prev_cursor = build_prev_cursor(offset=offset, limit=effective_limit, filters={"iso": iso})
+        meta_page, links = build_pagination_envelope(
+            request_url=request.url,
+            offset=offset,
+            limit=effective_limit,
+            total=total_count,
+            next_cursor=next_cursor,
+            prev_cursor=prev_cursor,
+        )
 
         duration_ms = (time.perf_counter() - start_time) * 1000
 
@@ -119,33 +116,23 @@ async def get_lmp_last_24h_v2(
             ))
 
         # Create response with enhanced metadata
+        meta_out = dict(meta_page)
+        meta_out.update({
+            "request_id": get_request_id(),
+            "tenant_id": tenant_id,
+            "iso": iso,
+            "returned_count": len(lmp_points),
+            "processing_time_ms": round(duration_ms, 2),
+        })
+
         result = IsoLmpResponse(
             data=lmp_points,
-            meta={
-                "request_id": get_request_id(),
-                "tenant_id": tenant_id,
-                "iso": iso,
-                "total_count": total_count,
-                "returned_count": len(lmp_points),
-                "has_more": next_cursor is not None,
-                "cursor": cursor,
-                "next_cursor": next_cursor,
-                "processing_time_ms": round(duration_ms, 2),
-            },
-            links={
-                "self": str(request.url),
-                "next": f"{request.url}&cursor={next_cursor}" if next_cursor else None,
-            }
+            meta=meta_out,
+            links=links,
         )
 
         # Add ETag for caching with Link headers
-        return respond_with_etag(
-            result,
-            request,
-            response,
-            next_cursor=next_cursor,
-            canonical_url=str(request.url)
-        )
+        return respond_with_etag(result, request, response, next_cursor=next_cursor, canonical_url=str(request.url.remove_query_params("cursor")))
 
     except HTTPException:
         raise
@@ -178,77 +165,55 @@ async def get_lmp_hourly_v2(
     start_time = time.perf_counter()
 
     try:
-        # Parse cursor if provided
-        offset = 0
-        if cursor:
-            try:
-                import base64
-                import json
-                cursor_data = json.loads(base64.urlsafe_b64decode(cursor.encode()).decode())
-                offset = cursor_data.get("offset", 0)
-            except Exception:
-                raise HTTPException(
-                    status_code=400,
-                    detail={
-                        "type": "invalid_cursor",
-                        "title": "Invalid cursor format",
-                        "detail": "The provided cursor is not valid",
-                        "instance": "/v2/iso/lmp/hourly"
-                    }
-                )
+        offset, effective_limit = resolve_pagination(
+            cursor=cursor,
+            limit=limit,
+            default_limit=limit,
+            filters={"iso": iso, "date": date},
+        )
 
-        # Get hourly LMP service (placeholder - would integrate with actual service)
-        from ..routes import _lmp_hourly_data
-        hourly_data = _lmp_hourly_data(iso, date)
+        from ..iso_v2_service import get_iso_service
+        svc = await get_iso_service()
+        paginated_data = await svc.lmp_hourly(iso=iso, date=date, offset=offset, limit=effective_limit)
 
-        # Apply pagination
-        total_count = len(hourly_data)
-        start_idx = offset
-        end_idx = offset + limit
-        paginated_data = hourly_data[start_idx:end_idx]
-
-        # Create next cursor
-        next_cursor = None
-        if end_idx < total_count:
-            next_offset = end_idx
-            cursor_data = {"offset": next_offset}
-            import base64
-            import json
-            next_cursor = base64.urlsafe_b64encode(
-                json.dumps(cursor_data).encode()
-            ).decode()
+        has_more = len(paginated_data) == effective_limit
+        next_cursor = build_next_cursor(
+            offset=offset,
+            limit=effective_limit,
+            has_more=has_more,
+            filters={"iso": iso, "date": date},
+        )
+        prev_cursor = build_prev_cursor(offset=offset, limit=effective_limit, filters={"iso": iso, "date": date})
+        meta_page, links = build_pagination_envelope(
+            request_url=request.url,
+            offset=offset,
+            limit=effective_limit,
+            total=total_count,
+            next_cursor=next_cursor,
+            prev_cursor=prev_cursor,
+        )
 
         duration_ms = (time.perf_counter() - start_time) * 1000
 
         # Create response with enhanced metadata
+        meta_out = dict(meta_page)
+        meta_out.update({
+            "request_id": get_request_id(),
+            "tenant_id": tenant_id,
+            "iso": iso,
+            "date": date,
+            "returned_count": len(paginated_data),
+            "processing_time_ms": round(duration_ms, 2),
+        })
+
         result = IsoLmpAggregateResponse(
             data=paginated_data,
-            meta={
-                "request_id": get_request_id(),
-                "tenant_id": tenant_id,
-                "iso": iso,
-                "date": date,
-                "total_count": total_count,
-                "returned_count": len(paginated_data),
-                "has_more": next_cursor is not None,
-                "cursor": cursor,
-                "next_cursor": next_cursor,
-                "processing_time_ms": round(duration_ms, 2),
-            },
-            links={
-                "self": str(request.url),
-                "next": f"{request.url}&cursor={next_cursor}" if next_cursor else None,
-            }
+            meta=meta_out,
+            links=links,
         )
 
         # Add ETag for caching with Link headers
-        return respond_with_etag(
-            result,
-            request,
-            response,
-            next_cursor=next_cursor,
-            canonical_url=str(request.url)
-        )
+        return respond_with_etag(result, request, response, next_cursor=next_cursor, canonical_url=str(request.url.remove_query_params("cursor")))
 
     except HTTPException:
         raise
@@ -281,77 +246,55 @@ async def get_lmp_daily_v2(
     start_time = time.perf_counter()
 
     try:
-        # Parse cursor if provided
-        offset = 0
-        if cursor:
-            try:
-                import base64
-                import json
-                cursor_data = json.loads(base64.urlsafe_b64decode(cursor.encode()).decode())
-                offset = cursor_data.get("offset", 0)
-            except Exception:
-                raise HTTPException(
-                    status_code=400,
-                    detail={
-                        "type": "invalid_cursor",
-                        "title": "Invalid cursor format",
-                        "detail": "The provided cursor is not valid",
-                        "instance": "/v2/iso/lmp/daily"
-                    }
-                )
+        offset, effective_limit = resolve_pagination(
+            cursor=cursor,
+            limit=limit,
+            default_limit=limit,
+            filters={"iso": iso, "date": date},
+        )
 
-        # Get daily LMP service (placeholder - would integrate with actual service)
-        from ..routes import _lmp_daily_data
-        daily_data = _lmp_daily_data(iso, date)
+        from ..iso_v2_service import get_iso_service
+        svc = await get_iso_service()
+        paginated_data = await svc.lmp_daily(iso=iso, date=date, offset=offset, limit=effective_limit)
 
-        # Apply pagination
-        total_count = len(daily_data)
-        start_idx = offset
-        end_idx = offset + limit
-        paginated_data = daily_data[start_idx:end_idx]
-
-        # Create next cursor
-        next_cursor = None
-        if end_idx < total_count:
-            next_offset = end_idx
-            cursor_data = {"offset": next_offset}
-            import base64
-            import json
-            next_cursor = base64.urlsafe_b64encode(
-                json.dumps(cursor_data).encode()
-            ).decode()
+        has_more = len(paginated_data) == effective_limit
+        next_cursor = build_next_cursor(
+            offset=offset,
+            limit=effective_limit,
+            has_more=has_more,
+            filters={"iso": iso, "date": date},
+        )
+        prev_cursor = build_prev_cursor(offset=offset, limit=effective_limit, filters={"iso": iso, "date": date})
+        meta_page, links = build_pagination_envelope(
+            request_url=request.url,
+            offset=offset,
+            limit=effective_limit,
+            total=None,
+            next_cursor=next_cursor,
+            prev_cursor=prev_cursor,
+        )
 
         duration_ms = (time.perf_counter() - start_time) * 1000
 
         # Create response with enhanced metadata
+        meta_out = dict(meta_page)
+        meta_out.update({
+            "request_id": get_request_id(),
+            "tenant_id": tenant_id,
+            "iso": iso,
+            "date": date,
+            "returned_count": len(paginated_data),
+            "processing_time_ms": round(duration_ms, 2),
+        })
+
         result = IsoLmpAggregateResponse(
             data=paginated_data,
-            meta={
-                "request_id": get_request_id(),
-                "tenant_id": tenant_id,
-                "iso": iso,
-                "date": date,
-                "total_count": total_count,
-                "returned_count": len(paginated_data),
-                "has_more": next_cursor is not None,
-                "cursor": cursor,
-                "next_cursor": next_cursor,
-                "processing_time_ms": round(duration_ms, 2),
-            },
-            links={
-                "self": str(request.url),
-                "next": f"{request.url}&cursor={next_cursor}" if next_cursor else None,
-            }
+            meta=meta_out,
+            links=links,
         )
 
         # Add ETag for caching with Link headers
-        return respond_with_etag(
-            result,
-            request,
-            response,
-            next_cursor=next_cursor,
-            canonical_url=str(request.url)
-        )
+        return respond_with_etag(result, request, response, next_cursor=next_cursor, canonical_url=str(request.url.remove_query_params("cursor")))
 
     except HTTPException:
         raise

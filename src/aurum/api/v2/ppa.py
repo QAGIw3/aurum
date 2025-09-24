@@ -24,6 +24,11 @@ from fastapi import APIRouter, HTTPException, Query, Request, Response
 from pydantic import BaseModel, Field
 
 from ..http import respond_with_etag
+from .pagination import (
+    resolve_pagination,
+    build_next_cursor,
+    build_pagination_envelope,
+)
 from ...telemetry.context import get_request_id
 
 router = APIRouter(prefix="/v2", tags=["ppa"])
@@ -77,45 +82,39 @@ async def list_ppa_contracts_v2(
     start_time = time.perf_counter()
 
     try:
-        # Parse cursor if provided
-        offset = 0
-        if cursor:
-            try:
-                import base64
-                import json
-                cursor_data = json.loads(base64.urlsafe_b64decode(cursor.encode()).decode())
-                offset = cursor_data.get("offset", 0)
-            except Exception:
-                raise HTTPException(
-                    status_code=400,
-                    detail={
-                        "type": "invalid_cursor",
-                        "title": "Invalid cursor format",
-                        "detail": "The provided cursor is not valid",
-                        "instance": "/v2/ppa/contracts"
-                    }
-                )
+        offset, effective_limit = resolve_pagination(
+            cursor=cursor,
+            limit=limit,
+            default_limit=limit,
+            filters={"counterparty_filter": counterparty_filter},
+        )
 
-        # Get PPA contracts service (placeholder - would integrate with actual service)
-        from ..routes import _ppa_contracts_data
-        contracts_data = _ppa_contracts_data(counterparty_filter)
+        from ..ppa_v2_service import get_ppa_service
+        svc = await get_ppa_service()
+        paginated_data = await svc.list_contracts(
+            tenant_id=tenant_id,
+            offset=offset,
+            limit=effective_limit,
+            counterparty_filter=counterparty_filter,
+        )
 
-        # Apply pagination
-        total_count = len(contracts_data)
-        start_idx = offset
-        end_idx = offset + limit
-        paginated_data = contracts_data[start_idx:end_idx]
-
-        # Create next cursor
-        next_cursor = None
-        if end_idx < total_count:
-            next_offset = end_idx
-            cursor_data = {"offset": next_offset}
-            import base64
-            import json
-            next_cursor = base64.urlsafe_b64encode(
-                json.dumps(cursor_data).encode()
-            ).decode()
+        has_more = len(paginated_data) == effective_limit
+        next_cursor = build_next_cursor(
+            offset=offset,
+            limit=effective_limit,
+            has_more=has_more,
+            filters={"counterparty_filter": counterparty_filter},
+        )
+        from .pagination import build_prev_cursor
+        prev_cursor = build_prev_cursor(offset=offset, limit=effective_limit, filters={"counterparty_filter": counterparty_filter})
+        meta_page, links = build_pagination_envelope(
+            request_url=request.url,
+            offset=offset,
+            limit=effective_limit,
+            total=None,
+            next_cursor=next_cursor,
+            prev_cursor=prev_cursor,
+        )
 
         duration_ms = (time.perf_counter() - start_time) * 1000
 
@@ -123,43 +122,33 @@ async def list_ppa_contracts_v2(
         contracts = []
         for contract_data in paginated_data:
             contracts.append(PpaContractResponse(
-                contract_id=contract_data["contract_id"],
-                name=contract_data["name"],
-                counterparty=contract_data["counterparty"],
-                capacity_mw=contract_data["capacity_mw"],
-                price_usd_mwh=contract_data["price_usd_mwh"],
-                start_date=contract_data["start_date"],
-                end_date=contract_data["end_date"],
+                contract_id=contract_data.get("contract_id", ""),
+                name=contract_data.get("name", ""),
+                counterparty=contract_data.get("counterparty", "unknown"),
+                capacity_mw=float(contract_data.get("capacity_mw", 0.0)),
+                price_usd_mwh=float(contract_data.get("price_usd_mwh", 0.0)),
+                start_date=str(contract_data.get("start_date", "")),
+                end_date=str(contract_data.get("end_date", "")),
                 meta={"tenant_id": tenant_id}
             ))
 
         # Create response with enhanced metadata
+        meta_out = dict(meta_page)
+        meta_out.update({
+            "request_id": get_request_id(),
+            "tenant_id": tenant_id,
+            "returned_count": len(contracts),
+            "processing_time_ms": round(duration_ms, 2),
+        })
+
         result = PpaContractListResponse(
             data=contracts,
-            meta={
-                "request_id": get_request_id(),
-                "tenant_id": tenant_id,
-                "total_count": total_count,
-                "returned_count": len(contracts),
-                "has_more": next_cursor is not None,
-                "cursor": cursor,
-                "next_cursor": next_cursor,
-                "processing_time_ms": round(duration_ms, 2),
-            },
-            links={
-                "self": str(request.url),
-                "next": f"{request.url}&cursor={next_cursor}" if next_cursor else None,
-            }
+            meta=meta_out,
+            links=links,
         )
 
         # Add ETag for caching with Link headers
-        return respond_with_etag(
-            result,
-            request,
-            response,
-            next_cursor=next_cursor,
-            canonical_url=str(request.url)
-        )
+        return respond_with_etag(result, request, response, canonical_url=str(request.url.remove_query_params("cursor")))
 
     except HTTPException:
         raise
@@ -190,34 +179,17 @@ async def valuate_ppa_v2(
     start_time = time.perf_counter()
 
     try:
-        # Get PPA valuation service (placeholder - would integrate with actual service)
-        from ..routes import _valuate_ppa_data
-        valuation_data = _valuate_ppa_data(contract_id, valuation_date)
+        # Not implemented yet: v2 valuation requires scenario context.
+        raise HTTPException(status_code=501, detail={
+            "type": "not_implemented",
+            "title": "Valuation not implemented",
+            "detail": "PPA valuation in v2 requires scenario context and is not available yet",
+            "instance": "/v2/ppa/valuate",
+        })
 
         duration_ms = (time.perf_counter() - start_time) * 1000
 
-        # Create response with metadata
-        result = PpaValuationResponse(
-            contract_id=contract_id,
-            valuation_date=valuation_date,
-            present_value=valuation_data["present_value"],
-            currency=valuation_data.get("currency", "USD"),
-            meta={
-                "request_id": get_request_id(),
-                "tenant_id": tenant_id,
-                "processing_time_ms": round(duration_ms, 2),
-                "version": "v2"
-            }
-        )
-
-        # Add ETag for caching with Link headers
-        return respond_with_etag(
-            result,
-            request,
-            response,
-            next_cursor=next_cursor,
-            canonical_url=str(request.url)
-        )
+        # dead code; kept for structure
 
     except HTTPException:
         raise
@@ -251,45 +223,40 @@ async def list_ppa_valuations_v2(
     start_time = time.perf_counter()
 
     try:
-        # Parse cursor if provided
-        offset = 0
-        if cursor:
-            try:
-                import base64
-                import json
-                cursor_data = json.loads(base64.urlsafe_b64decode(cursor.encode()).decode())
-                offset = cursor_data.get("offset", 0)
-            except Exception:
-                raise HTTPException(
-                    status_code=400,
-                    detail={
-                        "type": "invalid_cursor",
-                        "title": "Invalid cursor format",
-                        "detail": "The provided cursor is not valid",
-                        "instance": f"/v2/ppa/contracts/{contract_id}/valuations"
-                    }
-                )
+        offset, effective_limit = resolve_pagination(
+            cursor=cursor,
+            limit=limit,
+            default_limit=limit,
+            filters={"contract_id": contract_id, "start_date": start_date, "end_date": end_date},
+        )
 
-        # Get PPA valuations service (placeholder - would integrate with actual service)
-        from ..routes import _ppa_valuations_data
-        valuations_data = _ppa_valuations_data(contract_id, start_date, end_date)
+        from ..ppa_v2_service import get_ppa_service
+        svc = await get_ppa_service()
+        paginated_data = await svc.list_valuations(
+            tenant_id=tenant_id,
+            contract_id=contract_id,
+            offset=offset,
+            limit=effective_limit,
+            start_date=start_date,
+            end_date=end_date,
+        )
 
-        # Apply pagination
-        total_count = len(valuations_data)
-        start_idx = offset
-        end_idx = offset + limit
-        paginated_data = valuations_data[start_idx:end_idx]
-
-        # Create next cursor
-        next_cursor = None
-        if end_idx < total_count:
-            next_offset = end_idx
-            cursor_data = {"offset": next_offset}
-            import base64
-            import json
-            next_cursor = base64.urlsafe_b64encode(
-                json.dumps(cursor_data).encode()
-            ).decode()
+        has_more = len(paginated_data) == effective_limit
+        next_cursor = build_next_cursor(
+            offset=offset,
+            limit=effective_limit,
+            has_more=has_more,
+            filters={"contract_id": contract_id, "start_date": start_date, "end_date": end_date},
+        )
+        prev_cursor = build_prev_cursor(offset=offset, limit=effective_limit, filters={"contract_id": contract_id, "start_date": start_date, "end_date": end_date})
+        meta_page, links = build_pagination_envelope(
+            request_url=request.url,
+            offset=offset,
+            limit=effective_limit,
+            total=None,
+            next_cursor=next_cursor,
+            prev_cursor=prev_cursor,
+        )
 
         duration_ms = (time.perf_counter() - start_time) * 1000
 
@@ -298,32 +265,28 @@ async def list_ppa_valuations_v2(
         for valuation_data in paginated_data:
             valuations.append(PpaValuationResponse(
                 contract_id=contract_id,
-                valuation_date=valuation_data["valuation_date"],
-                present_value=valuation_data["present_value"],
-                currency=valuation_data.get("currency", "USD"),
+                valuation_date=str(valuation_data.get("valuation_date")),
+                present_value=float(valuation_data.get("present_value", 0.0)),
+                currency=str(valuation_data.get("currency", "USD")),
                 meta={"tenant_id": tenant_id}
             ))
 
         # Create response with enhanced metadata
+        meta_out = dict(meta_page)
+        meta_out.update({
+            "request_id": get_request_id(),
+            "contract_id": contract_id,
+            "tenant_id": tenant_id,
+            "start_date": start_date,
+            "end_date": end_date,
+            "returned_count": len(valuations),
+            "processing_time_ms": round(duration_ms, 2),
+        })
+
         result = PpaValuationListResponse(
             data=valuations,
-            meta={
-                "request_id": get_request_id(),
-                "contract_id": contract_id,
-                "tenant_id": tenant_id,
-                "start_date": start_date,
-                "end_date": end_date,
-                "total_count": total_count,
-                "returned_count": len(valuations),
-                "has_more": next_cursor is not None,
-                "cursor": cursor,
-                "next_cursor": next_cursor,
-                "processing_time_ms": round(duration_ms, 2),
-            },
-            links={
-                "self": str(request.url),
-                "next": f"{request.url}&cursor={next_cursor}" if next_cursor else None,
-            }
+            meta=meta_out,
+            links=links,
         )
 
         # Add ETag for caching with Link headers

@@ -132,13 +132,7 @@ async def list_scenarios_v2(
         )
 
         # Add ETag for caching with Link headers
-        return respond_with_etag(
-            result,
-            request,
-            response,
-            next_cursor=next_cursor,
-            canonical_url=str(request.url.remove_query_params("cursor"))
-        )
+        return respond_with_etag(result, request, response, next_cursor=next_cursor, canonical_url=str(request.url.remove_query_params("cursor")))
 
     except HTTPException:
         raise
@@ -188,13 +182,7 @@ async def create_scenario_v2(
         )
 
         # Add ETag for caching with Link headers
-        return respond_with_etag(
-            result,
-            request,
-            response,
-            next_cursor=next_cursor,
-            canonical_url=str(request.url)
-        )
+        return respond_with_etag(result, request, response, canonical_url=str(request.url))
 
     except HTTPException:
         raise
@@ -243,13 +231,7 @@ async def get_scenario_v2(
         )
 
         # Add ETag for caching with Link headers
-        return respond_with_etag(
-            result,
-            request,
-            response,
-            next_cursor=next_cursor,
-            canonical_url=str(request.url)
-        )
+        return respond_with_etag(result, request, response, canonical_url=str(request.url))
 
     except HTTPException:
         raise
@@ -342,65 +324,51 @@ async def list_scenario_runs_v2(
         # Get scenario service
         service = await get_scenario_service()
 
-        # Parse cursor if provided
-        offset = 0
-        if cursor:
-            try:
-                import base64
-                import json
-                cursor_data = json.loads(base64.urlsafe_b64decode(cursor.encode()).decode())
-                offset = cursor_data.get("offset", 0)
-            except Exception:
-                raise HTTPException(
-                    status_code=400,
-                    detail={
-                        "type": "invalid_cursor",
-                        "title": "Invalid cursor format",
-                        "detail": "The provided cursor is not valid",
-                        "instance": f"/v2/scenarios/{scenario_id}/runs"
-                    }
-                )
+        offset, effective_limit = resolve_pagination(
+            cursor=cursor,
+            limit=limit,
+            default_limit=limit,
+            filters={"scenario_id": scenario_id, "tenant_id": tenant_id, "status_filter": status_filter},
+        )
 
-        # List scenario runs
         runs = await service.list_scenario_runs(
             scenario_id=scenario_id,
             tenant_id=tenant_id,
             offset=offset,
-            limit=limit,
-            status_filter=status_filter
+            limit=effective_limit,
+            status_filter=status_filter,
         )
 
-        # Create next cursor
-        next_cursor = None
-        if len(runs) == limit:
-            next_offset = offset + limit
-            cursor_data = {"offset": next_offset}
-            import base64
-            import json
-            next_cursor = base64.urlsafe_b64encode(
-                json.dumps(cursor_data).encode()
-            ).decode()
+        next_cursor = build_next_cursor(
+            offset=offset,
+            limit=effective_limit,
+            has_more=len(runs) == effective_limit,
+            filters={"scenario_id": scenario_id, "tenant_id": tenant_id, "status_filter": status_filter},
+        )
+        base_meta, links = build_pagination_envelope(
+            request_url=request.url,
+            offset=offset,
+            limit=effective_limit,
+            total=None,
+            next_cursor=next_cursor,
+        )
 
         duration_ms = (time.perf_counter() - start_time) * 1000
 
         # Create response with enhanced metadata
+        meta_out = dict(base_meta)
+        meta_out.update({
+            "request_id": get_request_id(),
+            "scenario_id": scenario_id,
+            "tenant_id": tenant_id,
+            "returned_count": len(runs),
+            "processing_time_ms": round(duration_ms, 2),
+        })
+
         result = ScenarioRunListResponse(
             data=runs,
-            meta={
-                "request_id": get_request_id(),
-                "scenario_id": scenario_id,
-                "tenant_id": tenant_id,
-                "total_count": len(runs) + (1 if next_cursor else 0),  # Estimate
-                "returned_count": len(runs),
-                "has_more": next_cursor is not None,
-                "cursor": cursor,
-                "next_cursor": next_cursor,
-                "processing_time_ms": round(duration_ms, 2),
-            },
-            links={
-                "self": str(request.url),
-                "next": f"{request.url}&cursor={next_cursor}" if next_cursor else None,
-            }
+            meta=meta_out,
+            links=links,
         )
 
         # Add ETag for caching with Link headers

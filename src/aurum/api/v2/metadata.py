@@ -24,6 +24,11 @@ from fastapi import APIRouter, HTTPException, Query, Request, Response
 from pydantic import BaseModel, Field
 
 from ..http import respond_with_etag
+from .pagination import (
+    resolve_pagination,
+    build_next_cursor,
+    build_pagination_envelope,
+)
 from ...telemetry.context import get_request_id
 from ...scenarios.series_curve_mapping import get_database_mapper
 
@@ -148,24 +153,12 @@ async def list_dimensions_v2(
     start_time = time.perf_counter()
 
     try:
-        # Parse cursor if provided
-        offset = 0
-        if cursor:
-            try:
-                import base64
-                import json
-                cursor_data = json.loads(base64.urlsafe_b64decode(cursor.encode()).decode())
-                offset = cursor_data.get("offset", 0)
-            except Exception:
-                raise HTTPException(
-                    status_code=400,
-                    detail={
-                        "type": "invalid_cursor",
-                        "title": "Invalid cursor format",
-                        "detail": "The provided cursor is not valid",
-                        "instance": "/v2/metadata/dimensions"
-                    }
-                )
+        offset, effective_limit = resolve_pagination(
+            cursor=cursor,
+            limit=limit,
+            default_limit=limit,
+            filters={"asof": asof},
+        )
 
         # Get dimensions service (placeholder - would integrate with actual service)
         from ..routes import _dimensions_data
@@ -174,19 +167,22 @@ async def list_dimensions_v2(
         # Apply pagination
         total_count = len(dimensions_data)
         start_idx = offset
-        end_idx = offset + limit
+        end_idx = offset + effective_limit
         paginated_data = dimensions_data[start_idx:end_idx]
 
-        # Create next cursor
-        next_cursor = None
-        if end_idx < total_count:
-            next_offset = end_idx
-            cursor_data = {"offset": next_offset}
-            import base64
-            import json
-            next_cursor = base64.urlsafe_b64encode(
-                json.dumps(cursor_data).encode()
-            ).decode()
+        next_cursor = build_next_cursor(
+            offset=offset,
+            limit=effective_limit,
+            has_more=end_idx < total_count,
+            filters={"asof": asof},
+        )
+        meta_page, links = build_pagination_envelope(
+            request_url=request.url,
+            offset=offset,
+            limit=effective_limit,
+            total=total_count,
+            next_cursor=next_cursor,
+        )
 
         duration_ms = (time.perf_counter() - start_time) * 1000
 
@@ -201,32 +197,22 @@ async def list_dimensions_v2(
             ))
 
         # Create response with enhanced metadata
+        meta_out = dict(meta_page)
+        meta_out.update({
+            "request_id": get_request_id(),
+            "tenant_id": tenant_id,
+            "returned_count": len(dimensions),
+            "processing_time_ms": round(duration_ms, 2),
+        })
+
         result = DimensionsResponse(
             data=dimensions,
-            meta={
-                "request_id": get_request_id(),
-                "tenant_id": tenant_id,
-                "total_count": total_count,
-                "returned_count": len(dimensions),
-                "has_more": next_cursor is not None,
-                "cursor": cursor,
-                "next_cursor": next_cursor,
-                "processing_time_ms": round(duration_ms, 2),
-            },
-            links={
-                "self": str(request.url),
-                "next": f"{request.url}&cursor={next_cursor}" if next_cursor else None,
-            }
+            meta=meta_out,
+            links=links,
         )
 
         # Add ETag for caching with Link headers
-        return respond_with_etag(
-            result,
-            request,
-            response,
-            next_cursor=next_cursor,
-            canonical_url=str(request.url)
-        )
+        return respond_with_etag(result, request, response, next_cursor=next_cursor, canonical_url=str(request.url.remove_query_params("cursor")))
 
     except HTTPException:
         raise
@@ -258,24 +244,12 @@ async def list_locations_v2(
     start_time = time.perf_counter()
 
     try:
-        # Parse cursor if provided
-        offset = 0
-        if cursor:
-            try:
-                import base64
-                import json
-                cursor_data = json.loads(base64.urlsafe_b64decode(cursor.encode()).decode())
-                offset = cursor_data.get("offset", 0)
-            except Exception:
-                raise HTTPException(
-                    status_code=400,
-                    detail={
-                        "type": "invalid_cursor",
-                        "title": "Invalid cursor format",
-                        "detail": "The provided cursor is not valid",
-                        "instance": "/v2/metadata/locations"
-                    }
-                )
+        offset, effective_limit = resolve_pagination(
+            cursor=cursor,
+            limit=limit,
+            default_limit=limit,
+            filters={"iso": iso},
+        )
 
         # Get locations service (placeholder - would integrate with actual service)
         from ..routes import _locations_data
@@ -284,19 +258,25 @@ async def list_locations_v2(
         # Apply pagination
         total_count = len(locations_data)
         start_idx = offset
-        end_idx = offset + limit
+        end_idx = offset + effective_limit
         paginated_data = locations_data[start_idx:end_idx]
 
-        # Create next cursor
-        next_cursor = None
-        if end_idx < total_count:
-            next_offset = end_idx
-            cursor_data = {"offset": next_offset}
-            import base64
-            import json
-            next_cursor = base64.urlsafe_b64encode(
-                json.dumps(cursor_data).encode()
-            ).decode()
+        next_cursor = build_next_cursor(
+            offset=offset,
+            limit=effective_limit,
+            has_more=end_idx < total_count,
+            filters={"iso": iso},
+        )
+        from .pagination import build_prev_cursor
+        prev_cursor = build_prev_cursor(offset=offset, limit=effective_limit, filters={"iso": iso})
+        meta_page, links = build_pagination_envelope(
+            request_url=request.url,
+            offset=offset,
+            limit=effective_limit,
+            total=total_count,
+            next_cursor=next_cursor,
+            prev_cursor=prev_cursor,
+        )
 
         duration_ms = (time.perf_counter() - start_time) * 1000
 
@@ -313,33 +293,23 @@ async def list_locations_v2(
             ))
 
         # Create response with enhanced metadata
+        meta_out = dict(meta_page)
+        meta_out.update({
+            "request_id": get_request_id(),
+            "tenant_id": tenant_id,
+            "iso": iso,
+            "returned_count": len(locations),
+            "processing_time_ms": round(duration_ms, 2),
+        })
+
         result = IsoLocationsResponse(
             data=locations,
-            meta={
-                "request_id": get_request_id(),
-                "tenant_id": tenant_id,
-                "iso": iso,
-                "total_count": total_count,
-                "returned_count": len(locations),
-                "has_more": next_cursor is not None,
-                "cursor": cursor,
-                "next_cursor": next_cursor,
-                "processing_time_ms": round(duration_ms, 2),
-            },
-            links={
-                "self": str(request.url),
-                "next": f"{request.url}&cursor={next_cursor}" if next_cursor else None,
-            }
+            meta=meta_out,
+            links=links,
         )
 
         # Add ETag for caching with Link headers
-        return respond_with_etag(
-            result,
-            request,
-            response,
-            next_cursor=next_cursor,
-            canonical_url=str(request.url)
-        )
+        return respond_with_etag(result, request, response, next_cursor=next_cursor, canonical_url=str(request.url.remove_query_params("cursor")))
 
     except HTTPException:
         raise
@@ -370,24 +340,12 @@ async def list_units_v2(
     start_time = time.perf_counter()
 
     try:
-        # Parse cursor if provided
-        offset = 0
-        if cursor:
-            try:
-                import base64
-                import json
-                cursor_data = json.loads(base64.urlsafe_b64decode(cursor.encode()).decode())
-                offset = cursor_data.get("offset", 0)
-            except Exception:
-                raise HTTPException(
-                    status_code=400,
-                    detail={
-                        "type": "invalid_cursor",
-                        "title": "Invalid cursor format",
-                        "detail": "The provided cursor is not valid",
-                        "instance": "/v2/metadata/units"
-                    }
-                )
+        offset, effective_limit = resolve_pagination(
+            cursor=cursor,
+            limit=limit,
+            default_limit=limit,
+            filters=None,
+        )
 
         # Get units service (placeholder - would integrate with actual service)
         from ..routes import _units_canonical_data
@@ -396,49 +354,44 @@ async def list_units_v2(
         # Apply pagination
         total_count = len(units_data)
         start_idx = offset
-        end_idx = offset + limit
+        end_idx = offset + effective_limit
         paginated_data = units_data[start_idx:end_idx]
 
-        # Create next cursor
-        next_cursor = None
-        if end_idx < total_count:
-            next_offset = end_idx
-            cursor_data = {"offset": next_offset}
-            import base64
-            import json
-            next_cursor = base64.urlsafe_b64encode(
-                json.dumps(cursor_data).encode()
-            ).decode()
+        next_cursor = build_next_cursor(
+            offset=offset,
+            limit=effective_limit,
+            has_more=end_idx < total_count,
+            filters=None,
+        )
+        prev_cursor = build_prev_cursor(offset=offset, limit=effective_limit, filters=None)
+        meta_page, links = build_pagination_envelope(
+            request_url=request.url,
+            offset=offset,
+            limit=effective_limit,
+            total=total_count,
+            next_cursor=next_cursor,
+            prev_cursor=prev_cursor,
+        )
 
         duration_ms = (time.perf_counter() - start_time) * 1000
 
         # Create response with enhanced metadata
+        meta_out = dict(meta_page)
+        meta_out.update({
+            "request_id": get_request_id(),
+            "tenant_id": tenant_id,
+            "returned_count": len(paginated_data),
+            "processing_time_ms": round(duration_ms, 2),
+        })
+
         result = UnitsCanonicalResponse(
             data=paginated_data,
-            meta={
-                "request_id": get_request_id(),
-                "tenant_id": tenant_id,
-                "total_count": total_count,
-                "returned_count": len(paginated_data),
-                "has_more": next_cursor is not None,
-                "cursor": cursor,
-                "next_cursor": next_cursor,
-                "processing_time_ms": round(duration_ms, 2),
-            },
-            links={
-                "self": str(request.url),
-                "next": f"{request.url}&cursor={next_cursor}" if next_cursor else None,
-            }
+            meta=meta_out,
+            links=links,
         )
 
         # Add ETag for caching with Link headers
-        return respond_with_etag(
-            result,
-            request,
-            response,
-            next_cursor=next_cursor,
-            canonical_url=str(request.url)
-        )
+        return respond_with_etag(result, request, response, next_cursor=next_cursor, canonical_url=str(request.url.remove_query_params("cursor")))
 
     except HTTPException:
         raise
@@ -469,24 +422,12 @@ async def list_calendars_v2(
     start_time = time.perf_counter()
 
     try:
-        # Parse cursor if provided
-        offset = 0
-        if cursor:
-            try:
-                import base64
-                import json
-                cursor_data = json.loads(base64.urlsafe_b64decode(cursor.encode()).decode())
-                offset = cursor_data.get("offset", 0)
-            except Exception:
-                raise HTTPException(
-                    status_code=400,
-                    detail={
-                        "type": "invalid_cursor",
-                        "title": "Invalid cursor format",
-                        "detail": "The provided cursor is not valid",
-                        "instance": "/v2/metadata/calendars"
-                    }
-                )
+        offset, effective_limit = resolve_pagination(
+            cursor=cursor,
+            limit=limit,
+            default_limit=limit,
+            filters=None,
+        )
 
         # Get calendars service (placeholder - would integrate with actual service)
         from ..routes import _calendars_data
@@ -495,49 +436,45 @@ async def list_calendars_v2(
         # Apply pagination
         total_count = len(calendars_data)
         start_idx = offset
-        end_idx = offset + limit
+        end_idx = offset + effective_limit
         paginated_data = calendars_data[start_idx:end_idx]
 
-        # Create next cursor
-        next_cursor = None
-        if end_idx < total_count:
-            next_offset = end_idx
-            cursor_data = {"offset": next_offset}
-            import base64
-            import json
-            next_cursor = base64.urlsafe_b64encode(
-                json.dumps(cursor_data).encode()
-            ).decode()
+        next_cursor = build_next_cursor(
+            offset=offset,
+            limit=effective_limit,
+            has_more=end_idx < total_count,
+            filters=None,
+        )
+        from .pagination import build_prev_cursor
+        prev_cursor = build_prev_cursor(offset=offset, limit=effective_limit, filters=None)
+        meta_page, links = build_pagination_envelope(
+            request_url=request.url,
+            offset=offset,
+            limit=effective_limit,
+            total=total_count,
+            next_cursor=next_cursor,
+            prev_cursor=prev_cursor,
+        )
 
         duration_ms = (time.perf_counter() - start_time) * 1000
 
         # Create response with enhanced metadata
+        meta_out = dict(meta_page)
+        meta_out.update({
+            "request_id": get_request_id(),
+            "tenant_id": tenant_id,
+            "returned_count": len(paginated_data),
+            "processing_time_ms": round(duration_ms, 2),
+        })
+
         result = CalendarsResponse(
             data=paginated_data,
-            meta={
-                "request_id": get_request_id(),
-                "tenant_id": tenant_id,
-                "total_count": total_count,
-                "returned_count": len(paginated_data),
-                "has_more": next_cursor is not None,
-                "cursor": cursor,
-                "next_cursor": next_cursor,
-                "processing_time_ms": round(duration_ms, 2),
-            },
-            links={
-                "self": str(request.url),
-                "next": f"{request.url}&cursor={next_cursor}" if next_cursor else None,
-            }
+            meta=meta_out,
+            links=links,
         )
 
         # Add ETag for caching with Link headers
-        return respond_with_etag(
-            result,
-            request,
-            response,
-            next_cursor=next_cursor,
-            canonical_url=str(request.url)
-        )
+        return respond_with_etag(result, request, response, next_cursor=next_cursor, canonical_url=str(request.url.remove_query_params("cursor")))
 
     except HTTPException:
         raise
