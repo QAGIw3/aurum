@@ -103,9 +103,9 @@ async def get_drought_indices_v2(
             },
         )
 
-        # Get drought indices service (placeholder - would integrate with actual service)
-        from ..routes import _drought_indices_data
-        indices_data = _drought_indices_data(
+        from ..drought_v2_service import get_drought_service
+        svc = await get_drought_service()
+        paginated_data = await svc.list_indices(
             dataset=dataset,
             index=index,
             timescale=timescale,
@@ -114,19 +114,16 @@ async def get_drought_indices_v2(
             region_id=region_id,
             start=start,
             end=end,
+            offset=offset,
+            limit=effective_limit,
         )
 
-        # Apply pagination
-        total_count = len(indices_data)
-        start_idx = offset
-        end_idx = offset + effective_limit
-        paginated_data = indices_data[start_idx:end_idx]
-
         # Build cursor and metadata envelope
+        has_more = len(paginated_data) == effective_limit
         next_cursor = build_next_cursor(
             offset=offset,
             limit=effective_limit,
-            has_more=end_idx < total_count,
+            has_more=has_more,
             filters={
                 "dataset": dataset,
                 "index": index,
@@ -157,7 +154,7 @@ async def get_drought_indices_v2(
             request_url=request.url,
             offset=offset,
             limit=effective_limit,
-            total=total_count,
+            total=None,
             next_cursor=next_cursor,
             prev_cursor=prev_cursor,
         )
@@ -260,27 +257,23 @@ async def get_drought_usdm_v2(
             },
         )
 
-        # Get USDM service (placeholder - would integrate with actual service)
-        from ..routes import _drought_usdm_data
-        usdm_data = _drought_usdm_data(
-            region=region,
+        from ..drought_v2_service import get_drought_service
+        svc = await get_drought_service()
+        paginated_data = await svc.list_usdm(
             region_type=region_type,
             region_id=region_id,
             start=start,
             end=end,
+            offset=offset,
+            limit=effective_limit,
         )
 
-        # Apply pagination
-        total_count = len(usdm_data)
-        start_idx = offset
-        end_idx = offset + effective_limit
-        paginated_data = usdm_data[start_idx:end_idx]
-
         # Build cursor and metadata envelope
+        has_more = len(paginated_data) == effective_limit
         next_cursor = build_next_cursor(
             offset=offset,
             limit=effective_limit,
-            has_more=end_idx < total_count,
+            has_more=has_more,
             filters={
                 "region": region,
                 "region_type": region_type,
@@ -304,7 +297,7 @@ async def get_drought_usdm_v2(
             request_url=request.url,
             offset=offset,
             limit=effective_limit,
-            total=total_count,
+            total=None,
             next_cursor=next_cursor,
             prev_cursor=prev_cursor,
         )

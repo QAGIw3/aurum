@@ -160,15 +160,9 @@ async def list_dimensions_v2(
             filters={"asof": asof},
         )
 
-        # Get dimensions service (placeholder - would integrate with actual service)
-        from ..routes import _dimensions_data
-        dimensions_data = _dimensions_data(asof)
-
-        # Apply pagination
-        total_count = len(dimensions_data)
-        start_idx = offset
-        end_idx = offset + effective_limit
-        paginated_data = dimensions_data[start_idx:end_idx]
+        from ..metadata_v2_service import get_metadata_service
+        svc = await get_metadata_service()
+        paginated_data, total_count = await svc.list_dimensions(asof=asof, offset=offset, limit=effective_limit)
 
         next_cursor = build_next_cursor(
             offset=offset,
@@ -251,15 +245,9 @@ async def list_locations_v2(
             filters={"iso": iso},
         )
 
-        # Get locations service (placeholder - would integrate with actual service)
-        from ..routes import _locations_data
-        locations_data = _locations_data(iso)
-
-        # Apply pagination
-        total_count = len(locations_data)
-        start_idx = offset
-        end_idx = offset + effective_limit
-        paginated_data = locations_data[start_idx:end_idx]
+        from ..metadata_v2_service import get_metadata_service
+        svc = await get_metadata_service()
+        paginated_data, total_count = await svc.list_locations(iso=iso, offset=offset, limit=effective_limit)
 
         next_cursor = build_next_cursor(
             offset=offset,
@@ -347,15 +335,9 @@ async def list_units_v2(
             filters=None,
         )
 
-        # Get units service (placeholder - would integrate with actual service)
-        from ..routes import _units_canonical_data
-        units_data = _units_canonical_data()
-
-        # Apply pagination
-        total_count = len(units_data)
-        start_idx = offset
-        end_idx = offset + effective_limit
-        paginated_data = units_data[start_idx:end_idx]
+        from ..metadata_v2_service import get_metadata_service
+        svc = await get_metadata_service()
+        paginated_data, total_count = await svc.list_units(offset=offset, limit=effective_limit)
 
         next_cursor = build_next_cursor(
             offset=offset,
@@ -429,15 +411,9 @@ async def list_calendars_v2(
             filters=None,
         )
 
-        # Get calendars service (placeholder - would integrate with actual service)
-        from ..routes import _calendars_data
-        calendars_data = _calendars_data()
-
-        # Apply pagination
-        total_count = len(calendars_data)
-        start_idx = offset
-        end_idx = offset + effective_limit
-        paginated_data = calendars_data[start_idx:end_idx]
+        from ..metadata_v2_service import get_metadata_service
+        svc = await get_metadata_service()
+        paginated_data, total_count = await svc.list_calendars(offset=offset, limit=effective_limit)
 
         next_cursor = build_next_cursor(
             offset=offset,
@@ -505,7 +481,7 @@ async def create_series_curve_mapping(
 
     try:
         # Get database mapper
-        mapper = await get_database_mapper()
+        mapper = get_database_mapper()
         await mapper.initialize()
         mapping_id = await mapper.create_mapping(
             external_provider=mapping.external_provider,
@@ -562,7 +538,7 @@ async def list_series_curve_mappings(
 
     try:
         # Get database mapper
-        mapper = await get_database_mapper()
+        mapper = get_database_mapper()
         await mapper.initialize()
         mappings, total = await mapper.list_mappings(
             external_provider=provider,
@@ -613,7 +589,7 @@ async def update_series_curve_mapping(
 
     try:
         # Get database mapper
-        mapper = await get_database_mapper()
+        mapper = get_database_mapper()
         await mapper.initialize()
         updated_mapping = await mapper.update_mapping(
             mapping_id=mapping_id,
@@ -657,7 +633,7 @@ async def delete_series_curve_mapping(
 
     try:
         # Get database mapper
-        mapper = await get_database_mapper()
+        mapper = get_database_mapper()
         await mapper.initialize()
         deleted = await mapper.delete_mapping(mapping_id)
 
@@ -695,7 +671,7 @@ async def get_series_mapping_suggestions(
 
     try:
         # Get database mapper
-        mapper = await get_database_mapper()
+        mapper = get_database_mapper()
         await mapper.initialize()
         suggestions = await mapper.get_mapping_suggestions(
             provider=provider,

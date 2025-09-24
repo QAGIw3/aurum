@@ -68,9 +68,15 @@ async def invalidate_scenario_cache_v2(
     start_time = time.perf_counter()
 
     try:
-        # Invalidate cache service (placeholder - would integrate with actual service)
-        from ..routes import _invalidate_scenario_cache
-        keys_purged = _invalidate_scenario_cache(scenario_id)
+        # Invalidate scenario caches via Redis indexes
+        from ..config import CacheConfig
+        from ..state import get_settings
+        from ..service import invalidate_scenario_outputs_cache
+
+        settings = get_settings()
+        cache_cfg = CacheConfig.from_settings(settings)
+        invalidate_scenario_outputs_cache(cache_cfg, tenant_id, scenario_id)
+        keys_purged = 0
 
         duration_ms = (time.perf_counter() - start_time) * 1000
 
@@ -109,9 +115,10 @@ async def invalidate_curves_cache_v2(
     start_time = time.perf_counter()
 
     try:
-        # Invalidate curves cache service (placeholder - would integrate with actual service)
-        from ..routes import _invalidate_curves_cache
-        keys_purged = _invalidate_curves_cache()
+        # Invalidate curve cache via CacheManager pattern delete
+        from ..service import invalidate_curve_cache
+        await invalidate_curve_cache()
+        keys_purged = 0
 
         duration_ms = (time.perf_counter() - start_time) * 1000
 
@@ -168,15 +175,18 @@ async def list_mappings_v2(
             filters={"provider": provider_filter, "series": series_filter},
         )
 
-        # Get mappings service (placeholder - would integrate with actual service)
-        from ..routes import _mappings_data
-        mappings_data = _mappings_data(provider_filter, series_filter)
-
-        # Apply pagination
-        total_count = len(mappings_data)
-        start_idx = offset
-        end_idx = offset + effective_limit
-        paginated_data = mappings_data[start_idx:end_idx]
+        # Fetch mappings from DB
+        from ...scenarios.series_curve_mapping import get_database_mapper
+        mapper = get_database_mapper()
+        await mapper.initialize()
+        paginated_data, total_count = await mapper.list_mappings(
+            external_provider=provider_filter,
+            external_series_id=series_filter,
+            curve_key=None,
+            is_active=None,
+            limit=effective_limit,
+            offset=offset,
+        )
 
         next_cursor = build_next_cursor(
             offset=offset,
@@ -201,10 +211,10 @@ async def list_mappings_v2(
         mappings = []
         for mapping_data in paginated_data:
             mappings.append(SeriesCurveMappingResponse(
-                provider=mapping_data["provider"],
-                series_id=mapping_data["series_id"],
-                curve_key=mapping_data["curve_key"],
-                mapping_type=mapping_data["mapping_type"],
+                provider=mapping_data.get("external_provider", ""),
+                series_id=mapping_data.get("external_series_id", ""),
+                curve_key=mapping_data.get("curve_key", ""),
+                mapping_type=mapping_data.get("mapping_method", "manual"),
                 meta={"tenant_id": tenant_id}
             ))
 

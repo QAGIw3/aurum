@@ -28,6 +28,9 @@ build: ## Build the application
 test: ## Run tests
 	pytest tests/ -v
 
+unit-test: ## Run unit test subset
+	pytest -m "unit" -q
+
 lint: ## Run linting
 	black --check src/ tests/
 	isort --check-only src/ tests/
@@ -182,6 +185,10 @@ ci-test: ## Run full test suite locally
 	$(MAKE) test
 	$(MAKE) security-scan
 	$(MAKE) docs-openapi-check-drift
+
+ci-unit: ## Run unit tests + lint locally
+	$(MAKE) lint
+	$(MAKE) unit-test
 
 ci-trino-smoke: ## Run Trino query smoke tests with latency thresholds
 	python scripts/ci/run_trino_smoke.py \
