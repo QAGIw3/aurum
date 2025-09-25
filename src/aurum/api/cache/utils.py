@@ -114,3 +114,102 @@ def cache_get_or_set_sync(
 
 
 __all__ = ["cache_get_or_set", "cache_get_or_set_sync"]
+
+
+def cache_get_sync(manager: Optional[CacheManager], key_suffix: str) -> Any:
+    """Synchronously get a cache entry if manager is available, else None."""
+    if not isinstance(manager, CacheManager):
+        return None
+    try:
+        loop = asyncio.get_running_loop()
+        running = loop.is_running()
+    except RuntimeError:
+        running = False
+        loop = None  # type: ignore
+
+    if running:
+        from threading import Thread
+
+        result_box: dict[str, Any] = {}
+        error_box: dict[str, BaseException] = {}
+
+        def _runner():
+            _loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(_loop)
+            try:
+                result_box["result"] = _loop.run_until_complete(manager.get_cache_entry(key_suffix))
+            except BaseException as exc:
+                error_box["error"] = exc
+            finally:
+                try:
+                    _loop.stop()
+                finally:
+                    _loop.close()
+                    asyncio.set_event_loop(None)
+
+        t = Thread(target=_runner, daemon=True)
+        t.start()
+        t.join()
+        if error_box:
+            raise error_box["error"]
+        return result_box.get("result")
+
+    loop2 = asyncio.new_event_loop()
+    try:
+        asyncio.set_event_loop(loop2)
+        return loop2.run_until_complete(manager.get_cache_entry(key_suffix))
+    finally:
+        try:
+            loop2.stop()
+        finally:
+            loop2.close()
+            asyncio.set_event_loop(None)
+
+
+def cache_set_sync(manager: Optional[CacheManager], key_suffix: str, value: Any, ttl_seconds: int) -> None:
+    """Synchronously set a cache entry if manager is available."""
+    if not isinstance(manager, CacheManager):
+        return
+    try:
+        loop = asyncio.get_running_loop()
+        running = loop.is_running()
+    except RuntimeError:
+        running = False
+        loop = None  # type: ignore
+
+    if running:
+        from threading import Thread
+
+        error_box: dict[str, BaseException] = {}
+
+        def _runner():
+            _loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(_loop)
+            try:
+                _loop.run_until_complete(manager.set_cache_entry(key_suffix, value, ttl_seconds=ttl_seconds))
+            except BaseException as exc:
+                error_box["error"] = exc
+            finally:
+                try:
+                    _loop.stop()
+                finally:
+                    _loop.close()
+                    asyncio.set_event_loop(None)
+
+        t = Thread(target=_runner, daemon=True)
+        t.start()
+        t.join()
+        if error_box:
+            raise error_box["error"]
+        return
+
+    loop2 = asyncio.new_event_loop()
+    try:
+        asyncio.set_event_loop(loop2)
+        loop2.run_until_complete(manager.set_cache_entry(key_suffix, value, ttl_seconds=ttl_seconds))
+    finally:
+        try:
+            loop2.stop()
+        finally:
+            loop2.close()
+            asyncio.set_event_loop(None)

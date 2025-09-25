@@ -1,0 +1,4 @@
+# file: /Users/mstudio/Library/Mobile Documents/com~apple~CloudDocs/dev/aurum/src/aurum/api/models/external.py
+# hypothesis_version: 6.140.2
+
+['%Y-%m-%d', 'ExternalObservation', 'ExternalProvider', 'ExternalSeries', 'asof', 'daily', 'end_date', 'frequency', 'json', 'monthly', 'quarterly', 'start_date', 'weekly', 'yearly']

@@ -1,0 +1,4 @@
+# file: /Users/mstudio/Library/Mobile Documents/com~apple~CloudDocs/dev/aurum/src/aurum/api/v2/pagination.py
+# hypothesis_version: 6.140.2
+
+[400, 'Invalid cursor', 'ascii', 'build_next_cursor', 'build_prev_cursor', 'cursor', 'filters', 'limit', 'next', 'offset', 'prev', 'resolve_pagination', 'self', 'ts', 'utf-8']

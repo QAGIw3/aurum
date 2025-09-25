@@ -19,8 +19,19 @@ from .models import CurvePoint, CurveDiffPoint, Meta
 from .scenario_models import ScenarioRunData, ScenarioRunStatus
 from ..scenarios.storage import get_scenario_store
 from ..scenarios.monte_carlo import get_monte_carlo_engine, MonteCarloConfig
-from ..scenarios.forecasting import get_forecasting_engine, ForecastConfig
-from ..scenarios.feature_store import get_feature_store
+try:
+    from ..scenarios.forecasting import get_forecasting_engine, ForecastConfig
+except ImportError:
+    ForecastConfig = None  # type: ignore[assignment]
+
+    def get_forecasting_engine(*_args: object, **_kwargs: object):
+        raise ModuleNotFoundError("scikit-learn extras are required for forecasting support")
+
+try:
+    from ..scenarios.feature_store import get_feature_store
+except ImportError:
+    def get_feature_store(*_args: object, **_kwargs: object):
+        raise ModuleNotFoundError("feature store extras are not installed")
 
 
 class AsyncTrinoClient:

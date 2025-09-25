@@ -365,15 +365,6 @@ def create_versioned_app(
     async def get_version(request: Request):
         return await versioned_router.get_version_response(request)
 
-    # Add health check endpoint
-    @app.get("/health")
-    async def health_check(request: Request):
-        return {
-            "status": "healthy",
-            "version": await version_manager.get_default_version(),
-            "request_id": get_request_id(),
-        }
-
     # Store versioned router on app
     app.state.versioned_router = versioned_router
     app.state.version_manager = version_manager

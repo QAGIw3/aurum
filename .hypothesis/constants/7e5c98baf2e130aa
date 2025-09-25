@@ -1,0 +1,4 @@
+# file: /Users/mstudio/Library/Mobile Documents/com~apple~CloudDocs/dev/aurum/src/aurum/scenarios/__init__.py
+# hypothesis_version: 6.140.2
+
+['DriverType', 'ScenarioAssumption']

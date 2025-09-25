@@ -1,0 +1,4 @@
+# file: /Users/mstudio/Library/Mobile Documents/com~apple~CloudDocs/dev/aurum/src/aurum/api/v2/scenarios.py
+# hypothesis_version: 6.140.2
+
+[100, 201, 500, 1000, '/scenarios', '/v2', '/v2/scenarios', 'Filter by run status', 'List of scenarios', 'Pagination links', 'Tenant ID', 'created_at', 'cursor', 'detail', 'has_more', 'instance', 'internal_error', 'name_filter', 'processing_time_ms', 'request_id', 'returned_count', 'scenario_id', 'scenarios', 'status_filter', 'tenant_id', 'title', 'type', 'v2', 'version']

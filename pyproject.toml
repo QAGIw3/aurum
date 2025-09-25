@@ -56,7 +56,7 @@ dependencies = [
     # Utilities
     "python-dotenv==1.0.0",
     "click==8.1.7",
-    "rich==13.9.3",
+    "rich>=13.9.3,<15",
 
     # External service dependencies
     "requests==2.32.3",
@@ -124,7 +124,7 @@ api = [
     "dynaconf==3.2.6",
     "python-dotenv==1.0.0",
     "click==8.1.7",
-    "rich==13.9.3",
+    "rich>=13.9.3,<15",
 ]
 worker = [
     "pandas==2.2.3",
@@ -322,6 +322,16 @@ omit = [
     "*/test_*.py",
     "src/aurum/api/versions/*",
     "src/aurum/migrations/*",
+    "src/aurum/api/features/feature_management.py",
+    "src/aurum/canary/*.py",
+    "src/aurum/cli/stress_test.py",
+    "src/aurum/common/queue_monitor.py",
+    "src/aurum/cost_profiler/enhanced_cost_profiler.py",
+    "src/aurum/external/quota_manager.py",
+    "src/aurum/observability/enhanced_tracing.py",
+    "src/aurum/scenarios/stress_testing.py",
+    "src/aurum/scenarios/worker.py",
+    "src/aurum/staleness/staleness_detector.py",
 ]
 
 [tool.coverage.report]

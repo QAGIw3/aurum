@@ -1,0 +1,4 @@
+# file: /Users/mstudio/Library/Mobile Documents/com~apple~CloudDocs/dev/aurum/src/aurum/telemetry/__init__.py
+# hypothesis_version: 6.140.2
+
+[0.0, 1.0, '1', '1.0', 'aurum', 'configure_telemetry', 'get_tracer', 'on', 'service.instance.id', 'service.name', 'service.namespace', 'true', 'yes']

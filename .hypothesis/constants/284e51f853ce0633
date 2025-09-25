@@ -1,0 +1,4 @@
+# file: /Users/mstudio/Library/Mobile Documents/com~apple~CloudDocs/dev/aurum/src/aurum/api/models/curves.py
+# hypothesis_version: 6.140.2
+
+[-10000000000.0, -1000000000.0, 1000000000.0, 10000000000.0, -1000, 100, 255, 365, 1000, '%Y-%m-%d', 'CurveDiffPoint', 'CurveDiffQueryParams', 'CurveDiffResponse', 'CurvePoint', 'CurveQueryParams', 'CurveResponse', 'Data cannot be empty', '_-.', 'ask', 'asof', 'asof_a', 'asof_b', 'before', 'bid', 'block', 'cursor', 'curve_key', 'data', 'diff_abs', 'diff_pct', 'iso', 'location', 'market', 'mid', 'mid_a', 'mid_b', 'offset', 'prev_cursor', 'product', 'since_cursor', 'tenor_label', 'tenor_type']

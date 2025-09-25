@@ -1,0 +1,4 @@
+# file: /Users/mstudio/Library/Mobile Documents/com~apple~CloudDocs/dev/aurum/src/aurum/api/http/responses.py
+# hypothesis_version: 6.140.2
+
+[304, 412, 600, 86400, '"', '*', ',', ', ', 'Cache-Control', 'Content-Disposition', 'DELETE', 'ETag', 'Link', 'PATCH', 'PUT', 'W/"', 'X-Next-Cursor', 'X-Prev-Cursor', 'X-Request-Id', 'code', 'error', 'f', 'field_errors', 'if-match', 'if-none-match', 'ignore', 'message', 'meta', 'model_dump', 'no-store', 'request_id', 'retry_after', 'utf-8']

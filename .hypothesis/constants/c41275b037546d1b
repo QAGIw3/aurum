@@ -1,0 +1,4 @@
+# file: /Users/mstudio/Library/Mobile Documents/com~apple~CloudDocs/dev/aurum/src/aurum/scenarios/monte_carlo.py
+# hypothesis_version: 6.140.2
+
+[0.0, 0.01, 0.05, 0.1, 0.3, 0.5, 0.6, 0.7, 0.95, 1.0, 1.96, -100, 100, 1000, 10000, 100000, 'base_demand', 'base_price', 'capacity_factor', 'capacity_mw', 'config', 'convergence_metric', 'curtailment_rate', 'demand', 'demand_elasticity', 'economic_factor', 'forecast_error', 'info', 'intermittency_factor', 'model_type', 'p25', 'p5', 'p75', 'p95', 'parameters', 'price', 'price_cap', 'price_floor', 'renewable', 'seasonal_volatility', 'time_horizon', 'trend_coefficient', 'volatility', 'weather_sensitivity']

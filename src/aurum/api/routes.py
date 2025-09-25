@@ -19,17 +19,12 @@ from dataclasses import replace
 from typing import Any, Dict, Iterable, List, Mapping, Optional, Sequence, Set
 
 from fastapi import APIRouter, Depends, HTTPException, Response, Request
-try:
-    from opentelemetry import trace
-except ImportError:  # pragma: no cover - optional dependency
-    trace = None  # type: ignore[assignment]
 from ._fastapi_compat import Query, Path
 from fastapi.responses import StreamingResponse
 
 from .config import CacheConfig, TrinoConfig
 from . import service
 from .container import get_service
-from .cache.cache import CacheManager, AsyncCache, CacheBackend
 from .ppa_utils import _persist_ppa_valuation_records, _scenario_outputs_enabled
 from .exceptions import (
     AurumAPIException,
@@ -75,6 +70,12 @@ from .http import (
     respond_with_etag as http_respond_with_etag,
 )
 from .http.clients import request as http_request
+from .health_checks import (
+    check_redis_ready,
+    check_timescale_ready,
+    check_trino_ready,
+)
+from .cache.cache import CacheManager
 try:  # pragma: no cover - optional dependency
     from prometheus_client import Counter as _PromCounter, REGISTRY as _PROM_REG
 except Exception:  # pragma: no cover - metrics optional
@@ -102,14 +103,7 @@ try:  # pragma: no cover - optional dependency
 except ModuleNotFoundError:  # pragma: no cover - drought features optional
     load_catalog = None  # type: ignore[assignment]
     DroughtCatalog = None  # type: ignore[assignment]
-from aurum.telemetry.context import (
-    correlation_context,
-    get_request_id,
-    get_trace_span_ids,
-    log_structured,
-    reset_request_id,
-    set_request_id,
-)
+from aurum.telemetry.context import get_request_id
 
 # Import external API router (optional during tooling/doc generation)
 try:  # pragma: no cover
@@ -129,7 +123,7 @@ def _cache_config(*, ttl_override: int | None = None) -> CacheConfig:
     return CacheConfig.from_settings(_settings(), ttl_override=ttl_override)
 
 def configure_routes(settings: AurumSettings) -> None:
-    global ADMIN_GROUPS, _TILE_CACHE_CFG, _TILE_CACHE, _INMEM_TTL, _CACHE
+    global ADMIN_GROUPS, _TILE_CACHE_CFG, _TILE_CACHE, _INMEM_TTL
     global METADATA_CACHE_TTL
     global CURVE_MAX_LIMIT, EIA_SERIES_MAX_LIMIT
     global CURVE_CACHE_TTL, CURVE_DIFF_CACHE_TTL, CURVE_STRIP_CACHE_TTL
@@ -139,7 +133,6 @@ def configure_routes(settings: AurumSettings) -> None:
     _TILE_CACHE_CFG = CacheConfig.from_settings(settings)
     _TILE_CACHE = None
     _INMEM_TTL = settings.api.cache.in_memory_ttl
-    _CACHE = _SimpleCache(default_ttl=_INMEM_TTL)
     METADATA_CACHE_TTL = settings.api.cache.metadata_ttl
     CURVE_CACHE_TTL = settings.api.cache.curve_ttl
     CURVE_DIFF_CACHE_TTL = settings.api.cache.curve_diff_ttl
@@ -156,6 +149,9 @@ def configure_routes(settings: AurumSettings) -> None:
 
     if _METRICS_ENABLED:
         observability_metrics.METRICS_PATH = _METRICS_PATH
+
+    with _METADATA_FALLBACK_LOCK:
+        _METADATA_FALLBACK_CACHE.clear()
 
     _register_metrics_route()
 _PPA_DECIMAL_QUANTIZER = Decimal("0.000001")
@@ -288,168 +284,69 @@ def _tile_cache():
     _TILE_CACHE = client
     return _TILE_CACHE
 
-
-
 # Structured access logging
-ACCESS_LOGGER = logging.getLogger("aurum.api.access")
 LOGGER = logging.getLogger(__name__)
 
 
-async def access_log_middleware(request, call_next):  # type: ignore[no-redef]
-    import os
+# --- Metadata caching helpers using CacheManager with in-process fallback ---
 
-    # Extract or generate identifiers
-    request_id = request.headers.get("x-request-id") or str(uuid.uuid4())
-    correlation_id = request.headers.get("x-correlation-id") or request_id
-    tenant_id = request.headers.get("x-aurum-tenant")
-    user_id = request.headers.get("x-user-id")
-
-    # Set up correlation context for the entire request
-    with correlation_context(
-        correlation_id=correlation_id,
-        tenant_id=tenant_id,
-        user_id=user_id,
-        session_id=request_id
-    ) as context:
-        request.state.request_id = context["request_id"]
-        request.state.correlation_id = context["correlation_id"]
-        request.state.tenant_id = context["tenant_id"]
-        request.state.user_id = context["user_id"]
-        request.state.session_id = context["session_id"]
-
-        query_params = dict(request.query_params.multi_items()) if request.query_params else {}
-
-        # Set span attributes for tracing
-        span = trace.get_current_span() if trace else None
-        if span is not None and getattr(span, "is_recording", lambda: False)():  # pragma: no branch - inexpensive check
-            span.set_attribute("aurum.request_id", context["request_id"])
-            span.set_attribute("aurum.correlation_id", context["correlation_id"])
-            span.set_attribute("aurum.tenant_id", context["tenant_id"])
-            span.set_attribute("aurum.user_id", context["user_id"])
-            span.set_attribute("http.request_id", context["request_id"])
-            span.set_attribute("http.correlation_id", context["correlation_id"])
-
-        start = time.perf_counter()
-
-        try:
-            response = await call_next(request)
-        except Exception as exc:
-            duration_ms = (time.perf_counter() - start) * 1000.0
-            principal = getattr(request.state, "principal", {}) or {}
-            trace_id, span_id = get_trace_span_ids()
-            if trace_id:
-                request.state.trace_id = trace_id
-            if span_id:
-                request.state.span_id = span_id
-
-            log_structured(
-                "error",
-                "http_request_failed",
-                method=request.method,
-                path=request.url.path,
-                status=500,
-                duration_ms=round(duration_ms, 2),
-                client_ip=request.client.host if request.client else None,
-                tenant=principal.get("tenant"),
-                subject=principal.get("sub"),
-                error_type=exc.__class__.__name__,
-                error_message=str(exc),
-                service_name=os.getenv("AURUM_OTEL_SERVICE_NAME", "aurum-api"),
-                query_params=query_params or None,
-                trace_id=trace_id,
-                span_id=span_id,
-            )
-            raise
-
-        duration_ms = (time.perf_counter() - start) * 1000.0
-        principal = getattr(request.state, "principal", {}) or {}
-        trace_id, span_id = get_trace_span_ids()
-        if trace_id:
-            request.state.trace_id = trace_id
-        if span_id:
-            request.state.span_id = span_id
-
-        # Set response headers with correlation IDs
-        try:
-            response.headers["X-Request-Id"] = context["request_id"]
-            response.headers["X-Correlation-Id"] = context["correlation_id"]
-            if context["tenant_id"]:
-                response.headers["X-Aurum-Tenant"] = context["tenant_id"]
-            if trace_id:
-                response.headers["X-Trace-Id"] = trace_id
-            if span_id:
-                response.headers["X-Span-Id"] = span_id
-        except Exception:
-            pass
-
-        # Structured access log
-        log_structured(
-            "info",
-            "http_request_completed",
-            method=request.method,
-            path=request.url.path,
-            status=response.status_code,
-            duration_ms=round(duration_ms, 2),
-            client_ip=request.client.host if request.client else None,
-            tenant=principal.get("tenant"),
-            subject=principal.get("sub"),
-            response_size=len(response.body) if hasattr(response, 'body') else 0,
-            user_agent=request.headers.get("user-agent", "unknown"),
-            service_name=os.getenv("AURUM_OTEL_SERVICE_NAME", "aurum-api"),
-            query_params=query_params or None,
-            trace_id=trace_id,
-            span_id=span_id,
-        )
-    return response
+_CACHE_MANAGER: CacheManager | None = None
+_METADATA_FALLBACK_CACHE: dict[str, tuple[float, Any]] = {}
+_METADATA_FALLBACK_LOCK = threading.Lock()
+_INMEM_TTL = 60
 
 
-# --- Simple in-memory cache for hot, mostly-static endpoints ---
+def set_cache_manager(manager: CacheManager | None) -> None:
+    """Register the active CacheManager for synchronous helpers."""
+    global _CACHE_MANAGER
+    _CACHE_MANAGER = manager
 
-class _SimpleCache:
-    def __init__(self, default_ttl: int = 60) -> None:
-        self._store: dict[str, tuple[float, Any]] = {}
-        self._lock = threading.Lock()
-        self._default_ttl = default_ttl
 
-    def get(self, key: str) -> Any | None:
-        now = _time.time()
-        with self._lock:
-            item = self._store.get(key)
-            if not item:
-                return None
-            exp, val = item
-            if now >= exp:
-                self._store.pop(key, None)
-                return None
-            return val
+def _metadata_fallback_get(key: str) -> Any | None:
+    now = _time.time()
+    with _METADATA_FALLBACK_LOCK:
+        entry = _METADATA_FALLBACK_CACHE.get(key)
+        if not entry:
+            return None
+        expires_at, value = entry
+        if now >= expires_at:
+            _METADATA_FALLBACK_CACHE.pop(key, None)
+            return None
+        return value
 
-    def set(self, key: str, value: Any, *, ttl: int | None = None) -> None:
-        ttl_eff = ttl if ttl is not None else self._default_ttl
-        with self._lock:
-            self._store[key] = (_time.time() + ttl_eff, value)
 
-    def get_or_set(self, key: str, supplier, *, ttl: int | None = None) -> Any:
-        cached = self.get(key)
+def _metadata_fallback_set(key: str, value: Any, ttl: int) -> None:
+    with _METADATA_FALLBACK_LOCK:
+        _METADATA_FALLBACK_CACHE[key] = (_time.time() + ttl, value)
+
+
+async def _cache_get_or_set(
+    request: Request | None,
+    key_suffix: str,
+    supplier,
+    ttl: int,
+) -> Any:
+    manager: CacheManager | None = _CACHE_MANAGER
+    if request is not None:
+        maybe_manager = getattr(getattr(request, "app", None), "state", None)
+        if maybe_manager is not None:
+            manager = getattr(maybe_manager, "cache_manager", manager)
+
+    if isinstance(manager, CacheManager):
+        cached = await manager.get_cache_entry(key_suffix)
         if cached is not None:
             return cached
         value = supplier()
-        self.set(key, value, ttl=ttl)
+        await manager.set_cache_entry(key_suffix, value, ttl_seconds=ttl)
         return value
 
-    def purge_prefix(self, prefix: str) -> int:
-        with self._lock:
-            keys = [cache_key for cache_key in self._store if cache_key.startswith(prefix)]
-            for cache_key in keys:
-                self._store.pop(cache_key, None)
-            return len(keys)
+    fallback = _metadata_fallback_get(key_suffix)
+    if fallback is not None:
+        return fallback
 
-    def clear(self) -> None:
-        with self._lock:
-            self._store.clear()
-
-
-_INMEM_TTL = 60
-_CACHE = _SimpleCache(default_ttl=_INMEM_TTL)
+    value = supplier()
+    _metadata_fallback_set(key_suffix, value, ttl)
+    return value
 
 
 def _model_dump(value: Any) -> Dict[str, Any]:
@@ -465,44 +362,23 @@ def _model_dump(value: Any) -> Dict[str, Any]:
 
 
 def _metadata_cache_get_or_set(key_suffix: str, supplier):
-    cache_cfg = replace(_cache_config(), ttl_seconds=METADATA_CACHE_TTL)
-    client = service._maybe_redis_client(cache_cfg)
-    redis_key = None
-    if client is not None:
-        namespace = cache_cfg.namespace or "aurum"
-        redis_key = f"{namespace}:metadata:{key_suffix}"
-        cached = client.get(redis_key)
-        if cached:
-            try:
-                return json.loads(cached)
-            except json.JSONDecodeError:
-                pass
+    cached = _metadata_fallback_get(key_suffix)
+    if cached is not None:
+        return cached
 
-    cached_local = _CACHE.get(key_suffix)
-    if cached_local is not None:
-        return cached_local
-
-    try:
-        value = supplier()
-    except LookupError:
-        raise
-
-    _CACHE.set(key_suffix, value, ttl=METADATA_CACHE_TTL)
-    if client is not None and redis_key is not None:
-        try:  # pragma: no cover - best effort Redis population
-            client.setex(redis_key, METADATA_CACHE_TTL, json.dumps(value, default=str))
-            index_key = f"{namespace}:metadata:index"
-            client.sadd(index_key, redis_key)
-            client.expire(index_key, METADATA_CACHE_TTL)
-        except Exception:
-            pass
+    value = supplier()
+    _metadata_fallback_set(key_suffix, value, METADATA_CACHE_TTL)
     return value
 
 
 def _metadata_cache_purge(prefixes: Sequence[str]) -> int:
     removed = 0
-    for prefix in prefixes:
-        removed += _CACHE.purge_prefix(prefix)
+    with _METADATA_FALLBACK_LOCK:
+        for prefix in prefixes:
+            keys = [k for k in _METADATA_FALLBACK_CACHE if k.startswith(prefix)]
+            for key in keys:
+                _METADATA_FALLBACK_CACHE.pop(key, None)
+            removed += len(keys)
     return removed
 
 
@@ -598,141 +474,6 @@ def _observe_tile_fetch(endpoint: str, status: str, duration: float) -> None:
     except Exception:  # pragma: no cover
         LOGGER.debug("Failed to record tile fetch latency", exc_info=True)
 
-
-@router.get("/health")
-@router.get("/healthz")
-@router.get("/health/live")
-def health() -> dict:
-    """Liveness check returning the current service health."""
-    return {"status": "ok"}
-
-
-@router.get("/live")
-@router.get("/livez")
-def live() -> dict:
-    """Alias for health checks used by legacy probes."""
-    return {"status": "alive"}
-
-
-@router.get("/ready")
-@router.get("/readyz")
-async def ready() -> dict:
-    """Deep readiness check with comprehensive dependency validation."""
-    trino_cfg = _trino_config()
-    cache_cfg = _cache_config()
-    settings = _settings()
-
-    # Run checks concurrently; offload blocking checks to a thread
-    import asyncio as _asyncio
-    trino_fut = _check_trino_deep_health(trino_cfg)
-    schema_fut = _check_schema_registry_ready()
-    timescale_fut = _asyncio.to_thread(_check_timescale_ready, settings.database.timescale_dsn)
-    redis_fut = _asyncio.to_thread(_check_redis_ready, cache_cfg)
-
-    trino_status, schema_registry_status, timescale_status, redis_status = await _asyncio.gather(
-        trino_fut, schema_fut, timescale_fut, redis_fut, return_exceptions=True
-    )
-
-    # Normalize exceptions into unavailable statuses
-    def _norm(value: object) -> object:
-        if isinstance(value, Exception):
-            return {"status": "unavailable", "error": str(value)}
-        return value
-
-    checks = {
-        "trino": _norm(trino_status),
-        "timescale": _norm(timescale_status),
-        "redis": _norm(redis_status),
-        "schema_registry": _norm(schema_registry_status),
-    }
-
-    def _is_ok(value: object) -> bool:
-        if isinstance(value, bool):
-            return bool(value)
-        if isinstance(value, dict):
-            status = str(value.get("status", "")).lower()  # type: ignore[call-arg]
-            return status in {"healthy", "disabled"}
-        return False
-
-    if all(_is_ok(val) for val in checks.values()):
-        return {"status": "ready", "checks": checks}
-    raise HTTPException(status_code=503, detail={"status": "unavailable", "checks": checks})
-
-
-async def _check_trino_deep_health(cfg: TrinoConfig) -> dict:
-    """Perform deep health check on Trino using the pooled async client."""
-    try:
-        import time
-        from .database.trino_client import get_trino_client
-
-        client = get_trino_client(config=cfg)
-        start_time = time.perf_counter()
-
-        # Basic connectivity test
-        _ = await client.execute_query("SELECT 1")
-
-        # Schema validation - check key tables exist (use information_schema in iceberg catalog)
-        schema_check_start = time.perf_counter()
-        schema_query = (
-            "SELECT table_name FROM iceberg.information_schema.tables "
-            "WHERE table_schema = 'market' AND table_name IN "
-            "('curve_observation','lmp_observation','series_observation')"
-        )
-        schema_rows = await client.execute_query(schema_query)
-        schema_tables_found = len(schema_rows)
-        schema_check_time = time.perf_counter() - schema_check_start
-
-        # Performance test - simple aggregation (sampled)
-        perf_check_start = time.perf_counter()
-        perf_query = (
-            "SELECT COUNT(*) AS total_count FROM iceberg.market.curve_observation TABLESAMPLE SYSTEM (1)"
-        )
-        sample_rows = await client.execute_query(perf_query)
-        perf_check_time = time.perf_counter() - perf_check_start
-        sample_result = sample_rows[0].get("total_count") if sample_rows else 0
-
-        total_time = time.perf_counter() - start_time
-
-        return {
-            "status": "healthy",
-            "connectivity": "ok",
-            "schema_tables_found": schema_tables_found,
-            "schema_check_time_ms": round(schema_check_time * 1000, 2),
-            "performance_check_time_ms": round(perf_check_time * 1000, 2),
-            "total_check_time_ms": round(total_time * 1000, 2),
-            "sample_query_result": int(sample_result or 0),
-        }
-
-    except Exception as exc:
-        return {"status": "unavailable", "error": str(exc)}
-
-
-async def _check_schema_registry_ready() -> dict:
-    """Check Schema Registry connectivity and health using httpx."""
-    try:
-        import httpx
-
-        settings = _settings()
-        schema_registry_url = getattr(settings.kafka, "schema_registry_url", None)
-        if not schema_registry_url:
-            return {"status": "disabled", "error": "Schema Registry URL not configured"}
-
-        url = f"{schema_registry_url.rstrip('/')}/subjects"
-        async with httpx.AsyncClient(timeout=5.0) as client:
-            try:
-                response = await client.get(url)
-                if response.status_code == 200:
-                    subjects = response.json()
-                    # httpx doesn't expose elapsed by default; compute minimal metric
-                    return {
-                        "status": "healthy",
-                        "subjects_count": len(subjects) if isinstance(subjects, list) else 0,
-                    }
-                return {"status": "unavailable", "error": f"HTTP {response.status_code}"}
-            except httpx.RequestError as exc:
-                return {"status": "unavailable", "error": f"Connection failed: {exc}"}
-    except Exception as exc:
-        return {"status": "unavailable", "error": str(exc)}
 
 # Register auth middleware after health/metrics route definitions
 
@@ -968,53 +709,21 @@ def ensure_cursor_stability(
 
 
 async def _check_trino_ready(cfg: TrinoConfig) -> bool:
-    try:
-        from .database.trino_client import get_trino_client
-        client = get_trino_client(config=cfg)
-        _ = await client.execute_query("SELECT 1")
-        return True
-    except Exception:
-        return False
+    return await check_trino_ready(cfg)
 
 
 def _check_timescale_ready(dsn: str) -> bool:
-    if not dsn:
-        return False
-    try:  # pragma: no cover - import guard
-        import psycopg  # type: ignore
-    except ModuleNotFoundError:
-        LOGGER.debug("Timescale readiness check skipped: psycopg not installed")
-        return False
-
-    try:
-        with psycopg.connect(dsn, connect_timeout=3) as conn:  # type: ignore[attr-defined]
-            with conn.cursor() as cur:
-                cur.execute("SELECT 1")
-                cur.fetchone()
-        return True
-    except Exception:
-        LOGGER.debug("Timescale readiness check failed", exc_info=True)
-        return False
+    result = check_timescale_ready(dsn)
+    if not result:
+        LOGGER.debug("Timescale readiness check failed")
+    return result
 
 
 def _check_redis_ready(cache_cfg: CacheConfig) -> bool:
-    try:
-        client = service._maybe_redis_client(cache_cfg)
-    except Exception:
-        LOGGER.debug("Redis readiness check failed", exc_info=True)
-        return False
-
-    if client is None:
-        redis_configured = bool(
-            cache_cfg.redis_url
-            or cache_cfg.sentinel_endpoints
-            or cache_cfg.cluster_nodes
-        )
-        if str(cache_cfg.mode).lower() == "disabled":
-            redis_configured = False
-        return not redis_configured
-
-    return True
+    result = check_redis_ready(cache_cfg)
+    if not result:
+        LOGGER.debug("Redis readiness check failed")
+    return result
 
 
 @router.get("/v1/curves", response_model=CurveResponse)
@@ -1782,7 +1491,7 @@ def iso_lmp_negative(
     summary="List EIA datasets",
     description="Return EIA datasets from the harvested catalog with optional case-insensitive prefix filter on path or name.",
 )
-def list_eia_datasets(
+async def list_eia_datasets(
     prefix: Optional[str] = Query(None, description="Startswith filter on path or name", examples={"default": {"value": "natural-gas/"}}),
     *,
     request: Request,
@@ -1805,7 +1514,12 @@ def list_eia_datasets(
         lst.sort(key=lambda d: d["path"])  # type: ignore[index]
         return lst
 
-    base = _CACHE.get_or_set("eia:datasets", _base_eia)
+    base = await _cache_get_or_set(
+        request,
+        "eia:datasets",
+        _base_eia,
+        METADATA_CACHE_TTL,
+    )
     if prefix:
         pfx = prefix.lower()
         filtered = [d for d in base if d.get("path", "").lower().startswith(pfx) or (d.get("name") or "").lower().startswith(pfx)]
@@ -1828,7 +1542,7 @@ def list_eia_datasets(
     summary="Get EIA dataset",
     description="Return dataset metadata including facets, frequencies, and data columns for the specified dataset path.",
 )
-def get_eia_dataset(
+async def get_eia_dataset(
     dataset_path: str = Path(..., description="Dataset path (e.g., natural-gas/stor/wkly)", examples={"default": {"value": "natural-gas/stor/wkly"}}),
     *,
     request: Request,
@@ -1850,7 +1564,12 @@ def get_eia_dataset(
             "default_date_format": ds.default_date_format,
         }
     try:
-        data = _CACHE.get_or_set(f"eia:detail:{dataset_path}", _detail)
+        data = await _cache_get_or_set(
+            request,
+            f"eia:detail:{dataset_path}",
+            _detail,
+            METADATA_CACHE_TTL,
+        )
     except ref_eia.DatasetNotFoundError as exc:  # type: ignore[attr-defined]
         raise HTTPException(status_code=404, detail="Dataset not found") from exc
     item = EiaDatasetDetailOut(**data)
@@ -2252,7 +1971,6 @@ def list_strips(
 __all__ = [
     "router",
     "configure_routes",
-    "access_log_middleware",
     "METRICS_MIDDLEWARE",
 ]
 

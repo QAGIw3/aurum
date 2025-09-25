@@ -1,0 +1,4 @@
+# file: /Users/mstudio/Library/Mobile Documents/com~apple~CloudDocs/dev/aurum/src/aurum/api/http/pagination.py
+# hypothesis_version: 6.140.2
+
+[100, 400, 500, 1000, ',', ':', 'Deprecation', 'Invalid cursor', 'X-Deprecation-Info', 'X-Sunset', '__cursor_type__', 'asc', 'ascii', 'asof_date', 'contract_month', 'created_at', 'curve_diff', 'curve_key', 'curve_strips', 'curves', 'date', 'datetime', 'desc', 'direction', 'eia_series', 'external_providers', 'external_series', 'get', 'has_next', 'has_prev', 'legacy', 'limit', 'metric', 'name', 'next_cursor', 'offset', 'period', 'period_start', 'ppa_contracts', 'ppa_valuations', 'prev_cursor', 'price_type', 'provider', 'run_id', 'scenario_id', 'scenario_metrics', 'scenario_outputs', 'scenario_runs', 'scenarios', 'schema', 'series_id', 'tenor_label', 'total', 'true', 'utf-8', 'v1', 'value', 'values', 'version']

@@ -6,6 +6,8 @@ import os
 from enum import Enum
 from typing import Any, Dict, Iterable, List
 
+import eval_type_backport  # type: ignore[import-untyped]
+
 from pydantic import AliasChoices, ConfigDict, Field, ValidationInfo, field_validator
 
 try:  # pragma: no cover - fallback when pydantic-settings is unavailable
