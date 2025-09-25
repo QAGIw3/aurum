@@ -82,8 +82,11 @@ else:  # pragma: no cover - no metrics backend
 class RetryConfig:
     """Retry configuration for HTTP requests."""
 
-    max_attempts: int = 3
-    backoff_factor: float = 0.5
+    max_retries: int = 3
+    initial_delay: float = 1.0
+    max_delay: float = 10.0
+    backoff_factor: float = 2.0
+    jitter: bool = True
     max_backoff_seconds: float = 30.0
     status_forcelist: Sequence[int] = (429, 500, 502, 503, 504)
     retry_on_timeout: bool = True
@@ -92,6 +95,10 @@ class RetryConfig:
         """Compute backoff delay for a given attempt (1-indexed)."""
         delay = self.backoff_factor * (2 ** (attempt - 1))
         return min(delay, self.max_backoff_seconds)
+
+    def calculate_delay(self, attempt: int) -> float:
+        """Calculate delay for a given attempt (alias for compute_backoff)."""
+        return self.compute_backoff(attempt)
 
 
 @dataclass(frozen=True)

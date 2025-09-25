@@ -100,7 +100,7 @@ class TestExternalDAO:
         assert "limit" in call_args[1][0]  # First keyword arg is params
         assert call_args[1][0]["limit"] == 100
 
-    def test_get_providers_with_pagination(self, dao, mock_trino_client):
+    async def test_get_providers_with_pagination(self, dao, mock_trino_client):
         """Test providers retrieval with pagination."""
         cursor = PaginationCursor(
             provider_id="fred",
@@ -120,7 +120,7 @@ class TestExternalDAO:
         assert params["cursor_provider_id"] == "fred"
         assert params["cursor_last_updated"] == datetime.fromisoformat("2025-01-21T10:30:00")
 
-    def test_get_providers_large_limit_warning(self, dao, mock_trino_client):
+    async def test_get_providers_large_limit_warning(self, dao, mock_trino_client):
         """Test warning for large result sets."""
         mock_trino_client.execute_query.return_value = []
 

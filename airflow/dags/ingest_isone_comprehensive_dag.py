@@ -4,12 +4,17 @@ from __future__ import annotations
 
 import os
 from datetime import datetime, timedelta
+import sys
 from typing import Any
 
 from airflow import DAG
 from airflow.operators.bash import BashOperator
 from airflow.operators.empty import EmptyOperator
 from airflow.operators.python import PythonOperator
+
+_SRC_PATH = os.environ.get("AURUM_PYTHONPATH_ENTRY", "/opt/airflow/src")
+if _SRC_PATH and _SRC_PATH not in sys.path:
+    sys.path.insert(0, _SRC_PATH)
 
 from aurum.airflow_utils import build_failure_callback, build_preflight_callable
 from aurum.airflow_utils import iso as iso_utils
@@ -75,14 +80,8 @@ ISONE_SOURCES = (
 )
 
 
-def build_isone_task(
-    source_name: str,
-    data_type: str,
-    market: str,
-    *,
-    extra_lines: list[str] | None = None,
-) -> tuple[BashOperator, BashOperator]:
-    """Build SeaTunnel render and execute tasks for ISO-NE data collection."""
+def build_isone_task(source_name: str, data_type: str, market: str, *, extra_lines: list[str] | None = None):
+    """Build standard render/execute/watermark chain for ISO-NE, with Vault preflight."""
     pull_cmd = (
         "eval \"$(VAULT_ADDR=${AURUM_VAULT_ADDR:-http://127.0.0.1:8200} "
         "VAULT_TOKEN=${AURUM_VAULT_TOKEN:-aurum-dev-token} "
@@ -90,45 +89,23 @@ def build_isone_task(
         + os.environ.get("AURUM_VENV_PYTHON", ".venv/bin/python") +
         " scripts/secrets/pull_vault_env.py --mapping secret/data/aurum/isone:username=ISONE_USERNAME --mapping secret/data/aurum/isone:password=ISONE_PASSWORD --format shell)\" || true"
     )
-
-    env_assignments = [
-        "ISONE_URL='{{ var.value.get('aurum_isone_endpoint') }}'",
-        "ISONE_START='{{ data_interval_start.in_timezone('UTC').isoformat() }}'",
-        "ISONE_END='{{ data_interval_end.in_timezone('UTC').isoformat() }}'",
-        f"ISONE_SOURCE='{source_name}'",
-        f"ISONE_DATA_TYPE='{data_type}'",
-        f"ISONE_MARKET='{market}'",
-        "KAFKA_BOOTSTRAP_SERVERS='{{ var.value.get('aurum_kafka_bootstrap', 'localhost:9092') }}'",
-        "SCHEMA_REGISTRY_URL='{{ var.value.get('aurum_schema_registry', 'http://localhost:8081') }}'",
+    env_entries = [
+        "ISONE_URL=\"{{ var.value.get('aurum_isone_endpoint') }}\"",
+        "ISONE_START=\"{{ data_interval_start.in_timezone('UTC').isoformat() }}\"",
+        "ISONE_END=\"{{ data_interval_end.in_timezone('UTC').isoformat() }}\"",
+        f"ISONE_SOURCE={source_name}",
+        f"ISONE_DATA_TYPE={data_type}",
+        f"ISONE_MARKET={market}",
     ]
-
-    render = BashOperator(
-        task_id=f"seatunnel_{source_name}",
-        bash_command=iso_utils.build_render_command(
-            job_name=source_name,
-            env_assignments=f"AURUM_EXECUTE_SEATUNNEL=0 {' '.join(env_assignments)}",
-            bin_path=BIN_PATH,
-            pythonpath_entry=PYTHONPATH_ENTRY,
-            debug_dump_env=True,
-            pre_lines=[pull_cmd],
-            extra_lines=extra_lines,
-        ),
-        execution_timeout=timedelta(minutes=10),
+    return iso_utils.create_seatunnel_ingest_chain(
+        f"seatunnel_{source_name}",
+        job_name=source_name,
+        source_name=source_name,
+        env_entries=env_entries,
+        pre_lines=[pull_cmd],
+        extra_lines=extra_lines or None,
+        watermark_policy="hour",
     )
-
-    exec_k8s = BashOperator(
-        task_id=f"seatunnel_{source_name}_execute_k8s",
-        bash_command=iso_utils.build_k8s_command(
-            source_name,
-            bin_path=BIN_PATH,
-            pythonpath_entry=PYTHONPATH_ENTRY,
-            timeout=600,
-            extra_lines=extra_lines,
-        ),
-        execution_timeout=timedelta(minutes=20),
-    )
-
-    return render, exec_k8s
 
 
 with DAG(
@@ -177,18 +154,13 @@ with DAG(
         data_type, market = SOURCE_DATA_TYPE_MAP.get(source_name, ("lmp", "ALL"))
 
         # Create task with source-specific parameters
-        render_task, exec_task = build_isone_task(
+        render_task, exec_task, watermark_task = build_isone_task(
             source_name,
             data_type,
             market,
             extra_lines=[
                 f"export ISONE_TOPIC='aurum.iso.isone.{data_type}.v1'",
             ]
-        )
-
-        watermark_task = PythonOperator(
-            task_id=f"{source_name}_watermark",
-            python_callable=iso_utils.make_watermark_callable(source_name),
         )
 
         start >> preflight >> register_sources >> render_task >> exec_task >> watermark_task

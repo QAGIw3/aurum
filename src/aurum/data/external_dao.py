@@ -9,7 +9,7 @@ from typing import Any, Dict, List, Optional, Tuple
 from dataclasses import dataclass
 
 from ..api.exceptions import NotFoundException
-from ..api.trino_client import TrinoClient
+from ..api.database.trino_client import TrinoClient
 from ..telemetry.context import log_structured
 
 LOGGER = logging.getLogger(__name__)

@@ -1,8 +1,31 @@
-"""Enhanced Airflow utilities with TaskFlow API support and comprehensive configuration."""
+"""Deprecated DAG-local Airflow utilities (shim).
+
+This package is deprecated. Prefer importing from src/aurum/airflow_utils.
+We keep this shim to maintain backward compatibility for existing DAGs and
+to ensure submodules like ``aurum.airflow_utils.iso`` resolve from ``src``.
+"""
 
 from __future__ import annotations
 
 from typing import Iterable, Sequence
+import os
+import sys
+from pathlib import Path
+
+# Extend package search path so submodules resolve from src/ when not present locally
+try:  # pragma: no cover - best effort
+    repo_root = Path(__file__).resolve().parents[4]
+    src_path = str(repo_root / "src" / "aurum" / "airflow_utils")
+    if src_path not in __path__:  # type: ignore[name-defined]
+        __path__.append(src_path)  # type: ignore[name-defined]
+except Exception:
+    pass
+
+try:
+    if os.getenv("AURUM_DEBUG_SHIM", "0") not in {"", "0", "false", "False"}:
+        print("[aurum.airflow_utils] Using deprecated DAG-local shim; prefer src/aurum/airflow_utils")
+except Exception:
+    pass
 
 from .alerting import build_failure_callback, emit_alert
 from .dag_factory import (

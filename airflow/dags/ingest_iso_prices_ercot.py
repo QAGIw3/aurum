@@ -3,12 +3,17 @@ from __future__ import annotations
 
 import os
 from datetime import timedelta
+import sys
 from typing import Any
 
 from airflow import DAG
 from airflow.operators.bash import BashOperator
 from airflow.operators.empty import EmptyOperator
 from airflow.operators.python import PythonOperator
+
+_SRC_PATH = os.environ.get("AURUM_PYTHONPATH_ENTRY", "/opt/airflow/src")
+if _SRC_PATH and _SRC_PATH not in sys.path:
+    sys.path.insert(0, _SRC_PATH)
 
 from aurum.airflow_utils import build_failure_callback, build_preflight_callable
 from aurum.airflow_utils import iso as iso_utils
@@ -110,34 +115,13 @@ with DAG(
         pool="api_ercot",
     )
 
-    kafka_bootstrap = "{{ var.value.get('aurum_kafka_bootstrap', 'localhost:9092') }}"
-    schema_registry = "{{ var.value.get('aurum_schema_registry', 'http://localhost:8081') }}"
-
-    seatunnel_command = iso_utils.build_render_command(
+    render_task, exec_k8s, watermark = iso_utils.create_seatunnel_ingest_chain(
+        "ercot_lmp",
         job_name="ercot_lmp_to_kafka",
-        env_assignments=(
-            f"AURUM_EXECUTE_SEATUNNEL=0 ERCOT_INPUT_JSON={staging_path} "
-            f"KAFKA_BOOTSTRAP_SERVERS='{kafka_bootstrap}' "
-            f"SCHEMA_REGISTRY_URL='{schema_registry}'"
-        ),
-        bin_path=BIN_PATH,
-        pythonpath_entry=PYTHONPATH_ENTRY,
-    )
-
-    seatunnel_task = BashOperator(
-        task_id="ercot_lmp_seatunnel",
-        bash_command=seatunnel_command,
-        execution_timeout=timedelta(minutes=15),
-    )
-    exec_k8s = BashOperator(
-        task_id="ercot_execute_k8s",
-        bash_command=iso_utils.build_k8s_command(
-            "ercot_lmp_to_kafka",
-            bin_path=BIN_PATH,
-            pythonpath_entry=PYTHONPATH_ENTRY,
-            timeout=600,
-        ),
-        execution_timeout=timedelta(minutes=20),
+        source_name="ercot_mis_lmp",
+        env_entries=[f"ERCOT_INPUT_JSON={staging_path}"],
+        pool="api_ercot",
+        watermark_policy="hour",
     )
 
     end = EmptyOperator(task_id="end")
@@ -147,11 +131,6 @@ with DAG(
         python_callable=lambda: iso_utils.register_sources(SOURCES),
     )
 
-    watermark = PythonOperator(
-        task_id="ercot_watermark",
-        python_callable=iso_utils.make_watermark_callable("ercot_mis_lmp"),
-    )
-
-    start >> preflight >> register_sources >> stage_ercot >> seatunnel_task >> exec_k8s >> watermark >> end
+    start >> preflight >> register_sources >> stage_ercot >> render_task >> exec_k8s >> watermark >> end
 
     dag.on_failure_callback = build_failure_callback(source="aurum.airflow.ingest_iso_prices_ercot")

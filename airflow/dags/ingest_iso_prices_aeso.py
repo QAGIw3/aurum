@@ -3,12 +3,17 @@ from __future__ import annotations
 
 import os
 from datetime import datetime, timedelta, timezone
+import sys
 from typing import Any
 
 from airflow import DAG
 from airflow.operators.bash import BashOperator
 from airflow.operators.empty import EmptyOperator
 from airflow.operators.python import PythonOperator
+
+_SRC_PATH = os.environ.get("AURUM_PYTHONPATH_ENTRY", "/opt/airflow/src")
+if _SRC_PATH and _SRC_PATH not in sys.path:
+    sys.path.insert(0, _SRC_PATH)
 
 from aurum.airflow_utils import build_failure_callback, build_preflight_callable
 from aurum.airflow_utils import iso as iso_utils
@@ -46,50 +51,30 @@ def _register_sources() -> None:
     iso_utils.register_sources(AESO_SOURCES)
 
 
-def build_seatunnel_task() -> BashOperator:
+def build_seatunnel_task():
     mapping_flags = " --mapping secret/data/aurum/aeso:token=AESO_API_KEY"
     pull_cmd = (
         f"eval \"$(VAULT_ADDR={VAULT_ADDR} VAULT_TOKEN={VAULT_TOKEN} "
         f"PYTHONPATH={PYTHONPATH_ENTRY}:${{PYTHONPATH:-}} "
         f"{VENV_PYTHON} scripts/secrets/pull_vault_env.py{mapping_flags} --format shell)\" || true\n"
-    )
+    ).rstrip()
 
-    env_parts = [
-        "AESO_ENDPOINT='{{ var.value.get('aurum_aeso_endpoint', 'https://api.aeso.ca/report/v1/price/systemMarginalPrice') }}'",
-        "AESO_START='{{ data_interval_start.in_timezone('UTC').isoformat() }}'",
-        "AESO_END='{{ data_interval_end.in_timezone('UTC').isoformat() }}'",
-        "AESO_TOPIC='{{ var.value.get('aurum_aeso_topic', 'aurum.iso.aeso.lmp.v1') }}'",
-        "KAFKA_BOOTSTRAP_SERVERS='{{ var.value.get('aurum_kafka_bootstrap', 'kafka:9092') }}'",
-        "SCHEMA_REGISTRY_URL='{{ var.value.get('aurum_schema_registry', 'http://localhost:8081') }}'",
-    ]
-    env_line = " ".join(env_parts)
-
-    seatunnel_render = BashOperator(
-        task_id="seatunnel_aeso_lmp_to_kafka",
-        bash_command=iso_utils.build_render_command(
-            job_name="aeso_lmp_to_kafka",
-            env_assignments=f"AURUM_EXECUTE_SEATUNNEL=0 {env_line}",
-            bin_path=BIN_PATH,
-            pythonpath_entry=PYTHONPATH_ENTRY,
-            debug_dump_env=True,
-            pre_lines=[pull_cmd.rstrip()],
-            extra_lines=["export ISO_LMP_SCHEMA_PATH=/opt/airflow/scripts/kafka/schemas/iso.lmp.v1.avsc"],
-        ),
-        execution_timeout=timedelta(minutes=10),
+    render, execute, watermark = iso_utils.create_seatunnel_ingest_chain(
+        "aeso_lmp",
+        job_name="aeso_lmp_to_kafka",
+        source_name="aeso_smp",
+        env_entries=[
+            "AESO_ENDPOINT=\"{{ var.value.get('aurum_aeso_endpoint', 'https://api.aeso.ca/report/v1/price/systemMarginalPrice') }}\"",
+            "AESO_START=\"{{ data_interval_start.in_timezone('UTC').isoformat() }}\"",
+            "AESO_END=\"{{ data_interval_end.in_timezone('UTC').isoformat() }}\"",
+            "AESO_TOPIC=\"{{ var.value.get('aurum_aeso_topic', 'aurum.iso.aeso.lmp.v1') }}\"",
+        ],
         pool="api_aeso",
+        pre_lines=[pull_cmd],
+        extra_lines=["export ISO_LMP_SCHEMA_PATH=/opt/airflow/scripts/kafka/schemas/iso.lmp.v1.avsc"],
+        watermark_policy="hour",
     )
-    seatunnel_exec = BashOperator(
-        task_id="aeso_execute_k8s",
-        bash_command=iso_utils.build_k8s_command(
-            "aeso_lmp_to_kafka",
-            bin_path=BIN_PATH,
-            pythonpath_entry=PYTHONPATH_ENTRY,
-            timeout=600,
-            extra_lines=["export ISO_LMP_SCHEMA_PATH=/opt/airflow/scripts/kafka/schemas/iso.lmp.v1.avsc"],
-        ),
-        execution_timeout=timedelta(minutes=20),
-    )
-    return seatunnel_render, seatunnel_exec
+    return render, execute, watermark
 
 
 with DAG(
@@ -118,12 +103,7 @@ with DAG(
 
     register_sources = PythonOperator(task_id="register_sources", python_callable=_register_sources)
 
-    aeso_render, aeso_exec = build_seatunnel_task()
-
-    aeso_watermark = PythonOperator(
-        task_id="aeso_watermark",
-        python_callable=iso_utils.make_watermark_callable("aeso_smp"),
-    )
+    aeso_render, aeso_exec, aeso_watermark = build_seatunnel_task()
 
     end = EmptyOperator(task_id="end")
 

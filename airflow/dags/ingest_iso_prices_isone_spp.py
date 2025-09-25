@@ -3,12 +3,17 @@ from __future__ import annotations
 
 import os
 from datetime import datetime, timedelta
+import sys
 from typing import Any
 
 from airflow import DAG
 from airflow.operators.bash import BashOperator
 from airflow.operators.empty import EmptyOperator
 from airflow.operators.python import PythonOperator
+
+_SRC_PATH = os.environ.get("AURUM_PYTHONPATH_ENTRY", "/opt/airflow/src")
+if _SRC_PATH and _SRC_PATH not in sys.path:
+    sys.path.insert(0, _SRC_PATH)
 
 from aurum.airflow_utils import build_failure_callback, build_preflight_callable
 from aurum.airflow_utils import iso as iso_utils
@@ -48,47 +53,47 @@ SOURCES = (
 )
 
 
-def build_seatunnel_task(
-    job_name: str,
-    env_assignments: list[str],
-    mappings: list[str],
-    *,
-    extra_lines: list[str] | None = None,
-) -> tuple[BashOperator, BashOperator]:
-    mapping_flags = " ".join(f"--mapping {mapping}" for mapping in mappings)
+def _isone_chain():
+    mapping_flags = [
+        "secret/data/aurum/isone:username=ISONE_USERNAME",
+        "secret/data/aurum/isone:password=ISONE_PASSWORD",
+    ]
     pull_cmd = (
         f"eval \"$(VAULT_ADDR={VAULT_ADDR} VAULT_TOKEN={VAULT_TOKEN} "
         f"PYTHONPATH={PYTHONPATH_ENTRY}:${{PYTHONPATH:-}} "
-        f"{VENV_PYTHON} scripts/secrets/pull_vault_env.py {mapping_flags} --format shell)\" || true"
+        f"{VENV_PYTHON} scripts/secrets/pull_vault_env.py "
+        + " ".join(f"--mapping {m}" for m in mapping_flags)
+        + " --format shell)\" || true"
+    )
+    return iso_utils.create_seatunnel_ingest_chain(
+        "isone_lmp",
+        job_name="isone_lmp_to_kafka",
+        source_name="isone_ws",
+        env_entries=[
+            "ISONE_URL=\"{{ var.value.get('aurum_isone_endpoint') }}\"",
+            "ISONE_START=\"{{ data_interval_start.in_timezone('UTC').isoformat() }}\"",
+            "ISONE_END=\"{{ data_interval_end.in_timezone('UTC').isoformat() }}\"",
+            "ISONE_MARKET=\"{{ var.value.get('aurum_isone_market', 'DA') }}\"",
+        ],
+        pre_lines=[pull_cmd],
+        pool="api_isone",
+        watermark_policy="hour",
     )
 
-    env_line = " ".join(env_assignments)
-
-    render = BashOperator(
-        task_id=f"seatunnel_{job_name}",
-        bash_command=iso_utils.build_render_command(
-            job_name=job_name,
-            env_assignments=f"AURUM_EXECUTE_SEATUNNEL=0 {env_line}",
-            bin_path=BIN_PATH,
-            pythonpath_entry=PYTHONPATH_ENTRY,
-            debug_dump_env=True,
-            pre_lines=[pull_cmd],
-            extra_lines=extra_lines,
-        ),
-        execution_timeout=timedelta(minutes=10),
+def _spp_chain(staging_path: str):
+    return iso_utils.create_seatunnel_ingest_chain(
+        "spp_lmp",
+        job_name="spp_lmp_to_kafka",
+        source_name="spp_file",
+        env_entries=[
+            f"SPP_INPUT_JSON={staging_path}",
+            "SPP_TOPIC=\"{{ var.value.get('aurum_spp_topic', 'aurum.iso.spp.lmp.v1') }}\"",
+            "ISO_LMP_SCHEMA_PATH=/opt/airflow/scripts/kafka/schemas/iso.lmp.v1.avsc",
+        ],
+        extra_lines=["export ISO_LMP_SCHEMA_PATH=/opt/airflow/scripts/kafka/schemas/iso.lmp.v1.avsc"],
+        pool="api_spp",
+        watermark_policy="hour",
     )
-    exec_k8s = BashOperator(
-        task_id=f"seatunnel_{job_name}_execute_k8s",
-        bash_command=iso_utils.build_k8s_command(
-            job_name,
-            bin_path=BIN_PATH,
-            pythonpath_entry=PYTHONPATH_ENTRY,
-            timeout=600,
-            extra_lines=extra_lines,
-        ),
-        execution_timeout=timedelta(minutes=20),
-    )
-    return render, exec_k8s
 
 
 with DAG(
@@ -121,21 +126,7 @@ with DAG(
         python_callable=lambda: iso_utils.register_sources(SOURCES),
     )
 
-    isone_render, isone_exec = build_seatunnel_task(
-        "isone_lmp_to_kafka",
-        [
-            "ISONE_URL='{{ var.value.get('aurum_isone_endpoint') }}'",
-            "ISONE_START='{{ data_interval_start.in_timezone('UTC').isoformat() }}'",
-            "ISONE_END='{{ data_interval_end.in_timezone('UTC').isoformat() }}'",
-            "ISONE_MARKET='{{ var.value.get('aurum_isone_market', 'DA') }}'",
-            "KAFKA_BOOTSTRAP_SERVERS='{{ var.value.get('aurum_kafka_bootstrap', 'kafka:9092') }}'",
-            "SCHEMA_REGISTRY_URL='{{ var.value.get('aurum_schema_registry', 'http://localhost:8081') }}'",
-        ],
-        mappings=[
-            "secret/data/aurum/isone:username=ISONE_USERNAME",
-            "secret/data/aurum/isone:password=ISONE_PASSWORD",
-        ],
-    )
+    isone_render, isone_exec, isone_watermark = _isone_chain()
 
     # SPP: stage JSON via Python helper, then publish via SeaTunnel LocalFile source
     spp_staging = os.environ.get("AURUM_STAGING_DIR", "files/staging") + "/spp/{{ ds }}.json"
@@ -163,28 +154,7 @@ with DAG(
         execution_timeout=timedelta(minutes=20),
     )
 
-    spp_render, spp_exec = build_seatunnel_task(
-        "spp_lmp_to_kafka",
-        [
-            f"SPP_INPUT_JSON={spp_staging}",
-            "KAFKA_BOOTSTRAP_SERVERS='{{ var.value.get('aurum_kafka_bootstrap', 'kafka:9092') }}'",
-            "SPP_TOPIC='{{ var.value.get('aurum_spp_topic', 'aurum.iso.spp.lmp.v1') }}'",
-            "SCHEMA_REGISTRY_URL='{{ var.value.get('aurum_schema_registry', 'http://localhost:8081') }}'",
-            "ISO_LMP_SCHEMA_PATH=/opt/airflow/scripts/kafka/schemas/iso.lmp.v1.avsc",
-        ],
-        mappings=[],
-        extra_lines=["export ISO_LMP_SCHEMA_PATH=/opt/airflow/scripts/kafka/schemas/iso.lmp.v1.avsc"],
-    )
-
-    isone_watermark = PythonOperator(
-        task_id="isone_watermark",
-        python_callable=iso_utils.make_watermark_callable("isone_ws"),
-    )
-
-    spp_watermark = PythonOperator(
-        task_id="spp_watermark",
-        python_callable=iso_utils.make_watermark_callable("spp_file"),
-    )
+    spp_render, spp_exec, spp_watermark = _spp_chain(spp_staging)
 
     end = EmptyOperator(task_id="end")
 

@@ -312,7 +312,7 @@ class QuotaManager:
                 alerts.append({
                     "dataset_id": dataset_id,
                     "alert_type": "bytes_quota_warning",
-                    "message": f"Bytes usage at {status['bytes_percent']".1f"}%",
+                    "message": f"Bytes usage at {status['bytes_percent']:.1f}%",
                     "current_usage": status["bytes_used"],
                     "limit": status["bytes_limit"],
                     "severity": "warning"

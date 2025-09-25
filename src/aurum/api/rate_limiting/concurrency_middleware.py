@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import time
-from typing import Any, Callable, Dict, Optional, Set
+from typing import Any, Callable, Dict, List, Optional, Set
 from collections import defaultdict
 from dataclasses import dataclass, field
 
@@ -44,6 +44,25 @@ class RequestLimits:
     _tenant_request_times: Dict[str, List[float]] = field(default_factory=lambda: defaultdict(list))
 
 
+@dataclass(frozen=True)
+class OffloadInstruction:
+    """Instruction produced by an offload predicate to enqueue work to Celery.
+
+    Attributes:
+        job_name: Registered job name for async execution.
+        payload: JSON-serializable payload to send to the worker.
+        queue: Optional Celery queue name (e.g., "cpu_bound").
+        response_headers: Optional extra headers to include in the 202 response.
+        status_url: Optional status polling URL to return in the response.
+    """
+
+    job_name: str
+    payload: Dict[str, Any]
+    queue: Optional[str] = None
+    response_headers: Optional[Dict[str, str]] = None
+    status_url: Optional[str] = None
+
+
 class ConcurrencyController:
     """Controls concurrency limits and throttling."""
 
@@ -76,8 +95,7 @@ class ConcurrencyController:
                 max_requests=self.limits.max_concurrent_requests,
             )
             raise ServiceUnavailableException(
-                "api",
-                "Too many concurrent requests"
+                "concurrency_control"
             )
 
         # Check tenant-specific limits
@@ -96,8 +114,7 @@ class ConcurrencyController:
                 # Release global semaphore
                 self._semaphore.release()
                 raise ServiceUnavailableException(
-                    "api",
-                    f"Too many concurrent requests for tenant {tenant_id}"
+                    "concurrency_control"
                 )
 
             await tenant_semaphore.acquire()
@@ -317,12 +334,14 @@ class ConcurrencyMiddleware:
         rate_limiter: RateLimiter,
         timeout_controller: TimeoutController,
         exclude_paths: Optional[Set[str]] = None,
+        offload_predicate: Optional[Callable[[Dict[str, Any]], Optional[OffloadInstruction]]] = None,
     ):
         self.app = app
         self.concurrency_controller = concurrency_controller
         self.rate_limiter = rate_limiter
         self.timeout_controller = timeout_controller
         self.exclude_paths = exclude_paths or {"/health", "/ready", "/metrics"}
+        self.offload_predicate = offload_predicate
 
         # Metrics (graceful degradation if prometheus not available)
         self.concurrency_requests = Counter(
@@ -380,7 +399,7 @@ class ConcurrencyMiddleware:
                 retry_seconds = 60  # Wait 1 minute
                 headers = self.timeout_controller.get_retry_after_header(retry_seconds)
 
-                async def send_rate_limited(response):
+                async def send_rate_limited():
                     await send({
                         "type": "http.response.start",
                         "status": 429,
@@ -407,8 +426,92 @@ class ConcurrencyMiddleware:
                     })
 
                 self.concurrency_requests.labels(result="rate_limited").inc()
-                await send_rate_limited
+                await send_rate_limited()
                 return
+
+            # Predicate-based async offload (before acquiring slot)
+            if self.offload_predicate is not None:
+                # Build lightweight request info for predicate
+                hdrs = {}
+                for k, v in dict(scope.get("headers", [])).items():
+                    try:
+                        hdrs[k.decode().lower()] = v.decode()
+                    except Exception:
+                        continue
+                req_info = {
+                    "path": path,
+                    "method": method,
+                    "headers": hdrs,
+                    "query_string": (scope.get("query_string") or b"").decode(errors="ignore"),
+                    "client": scope.get("client"),
+                }
+
+                try:
+                    decision = self.offload_predicate(req_info)
+                except Exception as exc:  # pragma: no cover - predicate errors fall through
+                    log_structured(
+                        "error",
+                        "offload_predicate_error",
+                        request_id=request_id,
+                        tenant_id=tenant_id,
+                        error=str(exc),
+                    )
+                    decision = None
+
+                if decision is not None:
+                    # Attempt to enqueue job
+                    try:
+                        from ..async_exec import run_job_async  # Local import to avoid hard dependency at parse time
+
+                        task_id = run_job_async(
+                            decision.job_name,
+                            decision.payload,
+                            queue=decision.queue,
+                        )
+
+                        # 202 Accepted with task id and optional status URL
+                        headers_out = {
+                            "Content-Type": "application/json",
+                            "X-Request-Id": request_id or "unknown",
+                        }
+                        if decision.response_headers:
+                            headers_out.update(decision.response_headers)
+
+                        async def send_offloaded():
+                            await send({
+                                "type": "http.response.start",
+                                "status": 202,
+                                "headers": [
+                                    (k.encode(), v.encode()) for k, v in headers_out.items()
+                                ],
+                            })
+
+                            body = {
+                                "status": "accepted",
+                                "task_id": task_id,
+                                "request_id": request_id,
+                            }
+                            if decision.status_url:
+                                body["status_url"] = decision.status_url.format(task_id=task_id)
+
+                            await send({
+                                "type": "http.response.body",
+                                "body": str(body).encode(),
+                            })
+
+                        self.concurrency_requests.labels(result="offloaded").inc()
+                        await send_offloaded()
+                        return
+
+                    except Exception as exc:  # pragma: no cover - if Celery not configured
+                        log_structured(
+                            "error",
+                            "offload_enqueue_failed",
+                            request_id=request_id,
+                            tenant_id=tenant_id,
+                            error=str(exc),
+                        )
+                        # Fall through to normal in-process handling
 
             # Acquire concurrency slot
             concurrency_slot = await self.concurrency_controller.acquire_slot(
@@ -529,7 +632,7 @@ class ConcurrencyMiddleware:
                     "body": str(error_detail).encode(),
                 })
 
-            await send_error
+            await send_error(exc)
             return
 
         except Exception as exc:
@@ -546,7 +649,7 @@ class ConcurrencyMiddleware:
             )
 
             # Send error response
-            async def send_error_response(response):
+            async def send_error_response():
                 await send({
                     "type": "http.response.start",
                     "status": 500,
@@ -570,7 +673,7 @@ class ConcurrencyMiddleware:
                     "body": str(error_detail).encode(),
                 })
 
-            await send_error_response
+            await send_error_response()
             return
 
 
@@ -604,6 +707,7 @@ def create_concurrency_middleware(
     concurrency_controller: Optional[ConcurrencyController] = None,
     rate_limiter: Optional[RateLimiter] = None,
     timeout_controller: Optional[TimeoutController] = None,
+    offload_predicate: Optional[Callable[[Dict[str, Any]], Optional[OffloadInstruction]]] = None,
 ) -> ConcurrencyMiddleware:
     """Create concurrency middleware with all components."""
     if concurrency_controller is None:
@@ -620,4 +724,5 @@ def create_concurrency_middleware(
         concurrency_controller=concurrency_controller,
         rate_limiter=rate_limiter,
         timeout_controller=timeout_controller,
+        offload_predicate=offload_predicate,
     )

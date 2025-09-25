@@ -1,0 +1,71 @@
+{
+  "datasets": [
+    {
+      "iso": "miso",
+      "dataset": "lmp",
+      "description": "MISO real-time LMP via SeaTunnel",
+      "job_name": "miso_lmp_to_kafka",
+      "task_prefix": "miso_rt",
+      "source_name": "miso_rt_lmp",
+      "pool": "api_miso",
+      "watermark_policy": "hour",
+      "env": {
+        "MISO_URL": "{{ var.value.get('aurum_miso_rt_url') }}",
+        "MISO_MARKET": "REAL_TIME",
+        "MISO_INTERVAL_SECONDS": "300",
+        "MISO_TOPIC": "{{ var.value.get('aurum_miso_topic', 'aurum.iso.miso.lmp.v1') }}",
+        "MISO_TIME_FORMAT": "{{ var.value.get('aurum_miso_time_format', 'yyyy-MM-dd HH:mm:ss') }}",
+        "MISO_TIME_COLUMN": "{{ var.value.get('aurum_miso_time_column', 'Time') }}",
+        "MISO_NODE_COLUMN": "{{ var.value.get('aurum_miso_node_column', 'CPNode') }}",
+        "MISO_NODE_ID_COLUMN": "{{ var.value.get('aurum_miso_node_id_column', 'CPNode ID') }}",
+        "MISO_LMP_COLUMN": "{{ var.value.get('aurum_miso_lmp_column', 'LMP') }}",
+        "MISO_CONGESTION_COLUMN": "{{ var.value.get('aurum_miso_congestion_column', 'MCC') }}",
+        "MISO_LOSS_COLUMN": "{{ var.value.get('aurum_miso_loss_column', 'MLC') }}"
+      }
+    },
+    {
+      "iso": "isone",
+      "dataset": "lmp",
+      "description": "ISO-NE day-ahead LMP via SeaTunnel",
+      "job_name": "isone_lmp_to_kafka",
+      "task_prefix": "isone_da",
+      "source_name": "isone_da_lmp",
+      "pool": "api_isone",
+      "watermark_policy": "hour",
+      "env": {
+        "ISONE_URL": "{{ var.value.get('aurum_isone_da_url') }}",
+        "ISONE_MARKET": "DAY_AHEAD",
+        "ISONE_INTERVAL_SECONDS": "3600",
+        "ISONE_TOPIC": "{{ var.value.get('aurum_isone_topic', 'aurum.iso.isone.lmp.v1') }}",
+        "ISONE_TIME_FORMAT": "{{ var.value.get('aurum_isone_time_format', 'yyyy-MM-dd HH:mm:ss') }}",
+        "ISONE_LOCATION_COLUMN": "{{ var.value.get('aurum_isone_location_column', 'LocationID') }}",
+        "ISONE_LMP_COLUMN": "{{ var.value.get('aurum_isone_lmp_column', 'LMP') }}",
+        "ISONE_ENERGY_COLUMN": "{{ var.value.get('aurum_isone_energy_column', 'EnergyComponent') }}",
+        "ISONE_CONGESTION_COLUMN": "{{ var.value.get('aurum_isone_congestion_column', 'CongestionComponent') }}",
+        "ISONE_LOSS_COLUMN": "{{ var.value.get('aurum_isone_loss_column', 'LossComponent') }}"
+      }
+    },
+    {
+      "iso": "pjm",
+      "dataset": "lmp",
+      "description": "PJM day-ahead LMP via SeaTunnel",
+      "job_name": "pjm_lmp_to_kafka",
+      "task_prefix": "pjm_da",
+      "source_name": "pjm_da_lmp",
+      "pool": "api_pjm",
+      "watermark_policy": "hour",
+      "env": {
+        "PJM_TOPIC": "{{ var.value.get('aurum_pjm_topic', 'aurum.iso.pjm.lmp.v1') }}",
+        "PJM_INTERVAL_START": "{{ data_interval_start.in_timezone('America/New_York').isoformat() }}",
+        "PJM_INTERVAL_END": "{{ data_interval_end.in_timezone('America/New_York').isoformat() }}",
+        "PJM_ROW_LIMIT": "{{ var.value.get('aurum_pjm_row_limit', '10000') }}",
+        "PJM_MARKET": "DAY_AHEAD",
+        "PJM_LOCATION_TYPE": "{{ var.value.get('aurum_pjm_location_type', 'NODE') }}",
+        "PJM_ENDPOINT": "{{ var.value.get('aurum_pjm_endpoint', 'https://api.pjm.com/api/v1/da_hrl_lmps') }}",
+        "PJM_SUBJECT": "{{ var.value.get('aurum_pjm_subject', 'aurum.iso.pjm.lmp.v1-value') }}",
+        "ISO_LOCATION_REGISTRY": "{{ var.value.get('aurum_iso_location_registry', 'config/iso_nodes.csv') }}"
+      }
+    }
+  ]
+}
+

@@ -3,12 +3,17 @@ from __future__ import annotations
 
 import os
 from datetime import datetime, timedelta
+import sys
 from typing import Any, Tuple
 
 from airflow import DAG
 from airflow.operators.bash import BashOperator
 from airflow.operators.empty import EmptyOperator
 from airflow.operators.python import PythonOperator
+
+_SRC_PATH = os.environ.get("AURUM_PYTHONPATH_ENTRY", "/opt/airflow/src")
+if _SRC_PATH and _SRC_PATH not in sys.path:
+    sys.path.insert(0, _SRC_PATH)
 
 from aurum.airflow_utils import build_failure_callback, build_preflight_callable
 from aurum.airflow_utils import iso as iso_utils
@@ -45,19 +50,8 @@ SOURCES = (
 )
 
 
-def build_miso_task(
-    task_prefix: str,
-    *,
-    market: str,
-    url_var: str,
-    interval_seconds: int,
-    source_name: str,
-    pool: str | None = None,
-) -> Tuple[BashOperator, BashOperator, PythonOperator]:
-    kafka_bootstrap = "{{ var.value.get('aurum_kafka_bootstrap', 'localhost:9092') }}"
-    schema_registry = "{{ var.value.get('aurum_schema_registry', 'http://localhost:8081') }}"
-
-    env_parts = [
+def _miso_env_entries(*, url_var: str, market: str, interval_seconds: int) -> list[str]:
+    return [
         f"MISO_URL=\"{{{{ var.value.get('{url_var}') }}}}\"",
         f"MISO_MARKET=\"{market}\"",
         "MISO_TOPIC=\"aurum.iso.miso.lmp.v1\"",
@@ -69,42 +63,7 @@ def build_miso_task(
         "MISO_LMP_COLUMN=\"{{ var.value.get('aurum_miso_lmp_column', 'LMP') }}\"",
         "MISO_CONGESTION_COLUMN=\"{{ var.value.get('aurum_miso_congestion_column', 'MCC') }}\"",
         "MISO_LOSS_COLUMN=\"{{ var.value.get('aurum_miso_loss_column', 'MLC') }}\"",
-        f"KAFKA_BOOTSTRAP_SERVERS='{kafka_bootstrap}'",
-        f"SCHEMA_REGISTRY_URL='{schema_registry}'",
     ]
-    env_line = " ".join(env_parts)
-
-    render = BashOperator(
-        task_id=f"{task_prefix}_render",
-        bash_command=iso_utils.build_render_command(
-            "miso_lmp_to_kafka",
-            env_assignments=f"AURUM_EXECUTE_SEATUNNEL=0 {env_line}",
-            bin_path=BIN_PATH,
-            pythonpath_entry=PYTHONPATH_ENTRY,
-            debug_dump_env=True,
-        ),
-        execution_timeout=timedelta(minutes=10),
-        pool=pool,
-    )
-
-    exec_task = BashOperator(
-        task_id=f"{task_prefix}_execute",
-        bash_command=iso_utils.build_k8s_command(
-            "miso_lmp_to_kafka",
-            bin_path=BIN_PATH,
-            pythonpath_entry=PYTHONPATH_ENTRY,
-            timeout=600,
-        ),
-        execution_timeout=timedelta(minutes=20),
-        pool=pool,
-    )
-
-    watermark = PythonOperator(
-        task_id=f"{task_prefix}_watermark",
-        python_callable=iso_utils.make_watermark_callable(source_name),
-    )
-
-    return render, exec_task, watermark
 
 
 with DAG(
@@ -140,22 +99,22 @@ with DAG(
         python_callable=lambda: iso_utils.register_sources(SOURCES),
     )
 
-    da_render, da_exec, da_watermark = build_miso_task(
+    da_render, da_exec, da_watermark = iso_utils.create_seatunnel_ingest_chain(
         "miso_da",
-        market="DAY_AHEAD",
-        url_var="aurum_miso_da_url",
-        interval_seconds=3600,
+        job_name="miso_lmp_to_kafka",
         source_name="miso_da_lmp",
+        env_entries=_miso_env_entries(url_var="aurum_miso_da_url", market="DAY_AHEAD", interval_seconds=3600),
         pool="api_miso",
+        watermark_policy="hour",
     )
 
-    rt_render, rt_exec, rt_watermark = build_miso_task(
+    rt_render, rt_exec, rt_watermark = iso_utils.create_seatunnel_ingest_chain(
         "miso_rt",
-        market="REAL_TIME",
-        url_var="aurum_miso_rt_url",
-        interval_seconds=300,
+        job_name="miso_lmp_to_kafka",
         source_name="miso_rt_lmp",
+        env_entries=_miso_env_entries(url_var="aurum_miso_rt_url", market="REAL_TIME", interval_seconds=300),
         pool="api_miso",
+        watermark_policy="hour",
     )
 
     end = EmptyOperator(task_id="end")
