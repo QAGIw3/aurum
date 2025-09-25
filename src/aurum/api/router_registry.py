@@ -40,12 +40,18 @@ def _try_import_router(module_path: str, *, attr: str = "router") -> APIRouter |
     return None
 
 
-def _build_specs(module_paths: Iterable[str]) -> list[RouterSpec]:
+def _build_specs(module_paths: Iterable[str], *, seen: set[str] | None = None) -> list[RouterSpec]:
+    """Build router specs for the provided module paths, de-duplicating entries."""
+
     specs: list[RouterSpec] = []
+    tracked = seen if seen is not None else set()
     for path in module_paths:
+        if path in tracked:
+            continue
         router = _try_import_router(path)
         if router is not None:
             specs.append(RouterSpec(router=router, name=path))
+            tracked.add(path)
     return specs
 
 
@@ -55,9 +61,11 @@ def get_v1_router_specs(_settings: AurumSettings) -> list[RouterSpec]:
         "aurum.api.scenarios.scenarios",
         "aurum.api.curves",
         "aurum.api.metadata",
+        "aurum.api.v1.ppa",
     )
 
-    specs = _build_specs(mandatory_modules)
+    seen: set[str] = set()
+    specs = _build_specs(mandatory_modules, seen=seen)
 
     optional_modules = {
         "AURUM_API_V1_SPLIT_EIA": "aurum.api.v1.eia",
@@ -69,9 +77,12 @@ def get_v1_router_specs(_settings: AurumSettings) -> list[RouterSpec]:
 
     for env_var, module_path in optional_modules.items():
         if os.getenv(env_var, "0") == "1":
+            if module_path in seen:
+                continue
             router = _try_import_router(module_path)
             if router is not None:
                 specs.append(RouterSpec(router=router, name=module_path))
+                seen.add(module_path)
 
     return specs
 

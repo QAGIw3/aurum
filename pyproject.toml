@@ -48,7 +48,7 @@ dependencies = [
 
     # Data processing
     "pandas==2.2.3",
-    "numpy==2.0.2",
+    "numpy>=1.21.6,<2.0.0",
 
     # Configuration
     "dynaconf==3.2.6",
@@ -61,11 +61,11 @@ dependencies = [
     # External service dependencies
     "requests==2.32.3",
     "requests-oauthlib==2.0.0",
-    "urllib3==2.2.3",
+    "urllib3>=1.25.4,<3",
     "pyarrow==18.0.0",
     "confluent-kafka[avro]==2.6.1",
     "fastavro==1.9.7",
-    "psycopg2-binary==2.9.10",
+    "psycopg2-binary==2.9.9",
     "great-expectations==0.18.19",
     "cryptography==44.0.0",
     "PyJWT==2.10.1",
@@ -120,7 +120,7 @@ api = [
     "httpx==0.28.1",
     "aiohttp==3.10.10",
     "pandas==2.2.3",
-    "numpy==2.0.2",
+    "numpy>=1.21.6,<2.0.0",
     "dynaconf==3.2.6",
     "python-dotenv==1.0.0",
     "click==8.1.7",
@@ -128,11 +128,11 @@ api = [
 ]
 worker = [
     "pandas==2.2.3",
-    "numpy==2.0.2",
+    "numpy>=1.21.6,<2.0.0",
     "pyarrow==18.0.0",
     "confluent-kafka[avro]==2.6.1",
     "fastavro==1.9.7",
-    "psycopg2-binary==2.9.10",
+    "psycopg2-binary==2.9.9",
     "asyncpg==0.30.0",
     "great-expectations==0.18.19",
     "python-dotenv==1.0.0",
@@ -149,16 +149,16 @@ worker = [
     "boto3-stubs==1.35.72",
     "requests==2.32.3",
     "requests-oauthlib==2.0.0",
-    "urllib3==2.2.3",
+    "urllib3>=1.25.4,<3",
     "asyncio==3.4.3",
 ]
 ingest = [
     "pandas==2.2.3",
-    "numpy==2.0.2",
+    "numpy>=1.21.6,<2.0.0",
     "pyarrow==18.0.0",
     "confluent-kafka[avro]==2.6.1",
     "fastavro==1.9.7",
-    "psycopg2-binary==2.9.10",
+    "psycopg2-binary==2.9.9",
     "asyncpg==0.30.0",
     "great-expectations==0.18.19",
     "python-dotenv==1.0.0",
@@ -175,7 +175,7 @@ ingest = [
     "boto3-stubs==1.35.72",
     "requests==2.32.3",
     "requests-oauthlib==2.0.0",
-    "urllib3==2.2.3",
+    "urllib3>=1.25.4,<3",
     "asyncio==3.4.3",
     "geopandas==1.0.1",
     "pyproj==3.6.1",

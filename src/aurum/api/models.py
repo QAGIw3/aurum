@@ -42,11 +42,11 @@ class Meta(AurumBaseModel):
     offset: Optional[int] = None
     limit: Optional[int] = None
 
-    @field_validator("next_cursor", "prev_cursor")
+    @field_validator("next_cursor", "prev_cursor)
     def validate_cursor_format(cls, v):
         """Validate cursor format (base64 encoded)."""
         if v is not None and len(v) > 1000:  # Reasonable cursor length limit
-            raise ValueError("Cursor too long")
+            raise ValueError("Cursor too long)
         return v
 
 
@@ -61,11 +61,11 @@ class ErrorEnvelope(AurumBaseModel):
     request_id: Optional[str] = None
     timestamp: datetime = Field(default_factory=datetime.utcnow)
 
-    @field_validator("context")
+    @field_validator("context)
     def validate_context(cls, v):
         """Ensure context is a dictionary if provided."""
         if v is not None and not isinstance(v, dict):
-            raise ValueError("Context must be a dictionary")
+            raise ValueError("Context must be a dictionary)
         return v
 
 
@@ -77,7 +77,7 @@ class ValidationErrorDetail(AurumBaseModel):
     code: Optional[str] = None
     constraint: Optional[str] = None
 
-    @field_validator("constraint")
+    @field_validator("constraint)
     def validate_constraint(cls, v):
         """Ensure constraint is a valid constraint type."""
         valid_constraints = {
@@ -85,7 +85,7 @@ class ValidationErrorDetail(AurumBaseModel):
             "pattern", "enum", "unique", "custom"
         }
         if v is not None and v not in valid_constraints:
-            raise ValueError(f"Invalid constraint type: {v}")
+            raise ValueError(f"Invalid constraint type: {v})
         return v
 
 
@@ -101,107 +101,107 @@ class ValidationErrorResponse(AurumBaseModel):
 # Request validation models
 class CurveQueryParams(AurumBaseModel):
     """Query parameters for curve data requests with comprehensive validation."""
-    asof: Optional[str] = Field(None, description="As-of date (YYYY-MM-DD)")
-    iso: Optional[str] = Field(None, max_length=10, description="ISO code")
-    market: Optional[str] = Field(None, max_length=50, description="Market identifier")
-    location: Optional[str] = Field(None, max_length=100, description="Location identifier")
-    product: Optional[str] = Field(None, max_length=50, description="Product identifier")
-    block: Optional[str] = Field(None, max_length=50, description="Block identifier")
-    limit: int = Field(DEFAULT_PAGE_SIZE, ge=1, le=MAX_PAGE_SIZE, description="Maximum results")
-    offset: int = Field(0, ge=0, description="Pagination offset")
-    cursor: Optional[str] = Field(None, max_length=MAX_CURSOR_LENGTH, description="Cursor for pagination")
-    since_cursor: Optional[str] = Field(None, max_length=MAX_CURSOR_LENGTH, description="Since cursor")
-    prev_cursor: Optional[str] = Field(None, max_length=MAX_CURSOR_LENGTH, description="Previous cursor")
+    asof: Optional[str] = Field(None, )
+    iso: Optional[str] = Field(None, max_length=10, )
+    market: Optional[str] = Field(None, max_length=50, )
+    location: Optional[str] = Field(None, max_length=100, )
+    product: Optional[str] = Field(None, max_length=50, )
+    block: Optional[str] = Field(None, max_length=50, )
+    limit: int = Field(DEFAULT_PAGE_SIZE, ge=1, le=MAX_PAGE_SIZE, )
+    offset: int = Field(0, ge=0, )
+    cursor: Optional[str] = Field(None, max_length=MAX_CURSOR_LENGTH, )
+    since_cursor: Optional[str] = Field(None, max_length=MAX_CURSOR_LENGTH, )
+    prev_cursor: Optional[str] = Field(None, max_length=MAX_CURSOR_LENGTH, )
 
-    @model_validator(mode="before")
+    @model_validator(mode="before)
     @classmethod
     def validate_pagination(cls, values: dict[str, Any]) -> dict[str, Any]:
         """Validate pagination parameters."""
-        cursor = values.get("cursor")
-        since_cursor = values.get("since_cursor")
-        prev_cursor = values.get("prev_cursor")
+        cursor = values.get("cursor)
+        since_cursor = values.get("since_cursor)
+        prev_cursor = values.get("prev_cursor)
         offset = values.get("offset", 0)
 
         # Cannot use cursor and offset together
         if cursor and offset > 0:
-            raise ValueError("Cannot use cursor and offset together")
+            raise ValueError("Cannot use cursor and offset together)
 
         # Cannot use multiple cursor types together
         cursor_count = sum([1 for c in [cursor, since_cursor, prev_cursor] if c is not None])
         if cursor_count > 1:
-            raise ValueError("Cannot use multiple cursor parameters together")
+            raise ValueError("Cannot use multiple cursor parameters together)
 
         return values
 
-    @field_validator("asof")
+    @field_validator("asof)
     def validate_asof_format(cls, v):
         """Validate asof date format."""
         if v is not None:
             try:
-                datetime.strptime(v, "%Y-%m-%d")
+                datetime.strptime(v, "%Y-%m-%d)
             except ValueError:
-                raise ValueError("asof must be in YYYY-MM-DD format")
+                raise ValueError("asof must be in YYYY-MM-DD format)
         return v
 
-    @field_validator("iso")
+    @field_validator("iso)
     def validate_iso_format(cls, v):
-        """Validate ISO code format."""
+        """Validate  format."""
         if v is not None and not v.isalpha():
-            raise ValueError("ISO code must contain only letters")
+            raise ValueError(" must contain only letters)
         return v.upper() if v else v
 
-    @field_validator("cursor", "since_cursor", "prev_cursor")
+    @field_validator("cursor", "since_cursor", "prev_cursor)
     def validate_cursor_length(cls, v):
         """Validate cursor length."""
         if v is not None and len(v) > 1000:
-            raise ValueError("Cursor too long (max 1000 characters)")
+            raise ValueError("Cursor too long (max 1000 characters))
         return v
 
 
 class CurveDiffQueryParams(AurumBaseModel):
     """Query parameters for curve difference requests."""
-    asof_a: str = Field(..., description="First comparison date (YYYY-MM-DD)")
-    asof_b: str = Field(..., description="Second comparison date (YYYY-MM-DD)")
-    iso: Optional[str] = Field(None, max_length=10, description="ISO code")
-    market: Optional[str] = Field(None, max_length=50, description="Market identifier")
-    location: Optional[str] = Field(None, max_length=100, description="Location identifier")
-    product: Optional[str] = Field(None, max_length=50, description="Product identifier")
-    block: Optional[str] = Field(None, max_length=50, description="Block identifier")
-    tenor_type: Optional[str] = Field(None, max_length=50, description="Tenor type")
-    limit: int = Field(DEFAULT_PAGE_SIZE, ge=1, le=MAX_PAGE_SIZE, description="Maximum results")
-    offset: int = Field(0, ge=0, description="Pagination offset")
+    asof_a: str = Field(..., )
+    asof_b: str = Field(..., )
+    iso: Optional[str] = Field(None, max_length=10, )
+    market: Optional[str] = Field(None, max_length=50, )
+    location: Optional[str] = Field(None, max_length=100, )
+    product: Optional[str] = Field(None, max_length=50, )
+    block: Optional[str] = Field(None, max_length=50, )
+    tenor_type: Optional[str] = Field(None, max_length=50, )
+    limit: int = Field(DEFAULT_PAGE_SIZE, ge=1, le=MAX_PAGE_SIZE, )
+    offset: int = Field(0, ge=0, )
 
-    @field_validator("asof_a", "asof_b")
+    @field_validator("asof_a", "asof_b)
     def validate_date_format(cls, v, values):
         """Validate date format."""
         try:
-            datetime.strptime(v, "%Y-%m-%d")
+            datetime.strptime(v, "%Y-%m-%d)
         except ValueError:
-            raise ValueError("Date must be in YYYY-MM-DD format")
+            raise ValueError("Date must be in YYYY-MM-DD format)
         return v
 
-    @model_validator(mode="before")
+    @model_validator(mode="before)
     @classmethod
     def validate_date_comparison(cls, values: dict[str, Any]) -> dict[str, Any]:
         """Ensure asof_a and asof_b are different dates."""
-        asof_a = values.get("asof_a")
-        asof_b = values.get("asof_b")
+        asof_a = values.get("asof_a)
+        asof_b = values.get("asof_b)
 
         if asof_a and asof_b:
-            date_a = datetime.strptime(asof_a, "%Y-%m-%d")
-            date_b = datetime.strptime(asof_b, "%Y-%m-%d")
+            date_a = datetime.strptime(asof_a, "%Y-%m-%d)
+            date_b = datetime.strptime(asof_b, "%Y-%m-%d)
 
             if date_a == date_b:
-                raise ValueError("asof_a and asof_b must be different dates")
+                raise ValueError("asof_a and asof_b must be different dates)
 
             # Check date range (max 365 days difference)
             days_diff = abs((date_b - date_a).days)
             if days_diff > 365:
-                raise ValueError(f"Date range too large: {days_diff} days. Maximum allowed: 365 days")
+                raise ValueError(f"Date range too large: {days_diff} days. Maximum allowed: 365 days)
 
         return values
 
-    @model_validator(mode="before")
+    @model_validator(mode="before)
     @classmethod
     def validate_dimension_filters(cls, values: dict[str, Any]) -> dict[str, Any]:
         """Ensure at least one dimension filter is provided."""
@@ -211,11 +211,11 @@ class CurveDiffQueryParams(AurumBaseModel):
         ])
 
         if dimension_count == 0:
-            raise ValueError("At least one dimension filter must be specified")
+            raise ValueError("At least one dimension filter must be specified)
 
         return values
 
-    @model_validator(mode="before")
+    @model_validator(mode="before)
     @classmethod
     def validate_dimension_combinations(cls, values: dict[str, Any]) -> dict[str, Any]:
         """Validate dimension combinations to prevent expensive queries."""
@@ -242,44 +242,44 @@ class ScenarioCreateRequest(AurumBaseModel):
     parameters: Dict[str, Any] = Field(default_factory=dict)
     tags: List[str] = Field(default_factory=list, max_items=50)
 
-    @field_validator("tenant_id")
+    @field_validator("tenant_id)
     def validate_tenant_id(cls, v):
         """Validate tenant ID format."""
         if not v or not v.strip():
-            raise ValueError("tenant_id cannot be empty")
+            raise ValueError("tenant_id cannot be empty)
         if not all(c.isalnum() or c in "_-." for c in v):
-            raise ValueError("tenant_id can only contain alphanumeric characters, underscore, hyphen, and dot")
+            raise ValueError("tenant_id can only contain alphanumeric characters, underscore, hyphen, and dot)
         return v.strip()
 
-    @field_validator("name")
+    @field_validator("name)
     def validate_scenario_name(cls, v):
         """Validate scenario name."""
         if not v or not v.strip():
-            raise ValueError("scenario name cannot be empty")
+            raise ValueError("scenario name cannot be empty)
         return v.strip()
 
-    @field_validator("tags")
+    @field_validator("tags)
     def validate_tags(cls, v):
         """Validate tags format."""
         for tag in v:
             if not tag or not tag.strip():
-                raise ValueError("Tags cannot be empty")
+                raise ValueError("Tags cannot be empty)
             if len(tag) > 100:
-                raise ValueError("Individual tag cannot exceed 100 characters")
+                raise ValueError("Individual tag cannot exceed 100 characters)
             if not all(c.isalnum() or c in "_-." for c in tag):
-                raise ValueError("Tags can only contain alphanumeric characters, underscore, hyphen, and dot")
+                raise ValueError("Tags can only contain alphanumeric characters, underscore, hyphen, and dot)
         return [tag.strip() for tag in v]
 
-    @field_validator("assumptions")
+    @field_validator("assumptions)
     def validate_assumptions(cls, v):
         """Validate assumptions structure."""
         for assumption in v:
             if not isinstance(assumption, dict):
-                raise ValueError("Each assumption must be a dictionary")
+                raise ValueError("Each assumption must be a dictionary)
             if "type" not in assumption:
-                raise ValueError("Each assumption must have a 'type' field")
+                raise ValueError("Each assumption must have a 'type' field)
             if not assumption["type"] or not assumption["type"].strip():
-                raise ValueError("Assumption type cannot be empty")
+                raise ValueError("Assumption type cannot be empty)
         return v
 
 
@@ -295,42 +295,42 @@ class CurvePoint(AurumBaseModel):
     ask: Optional[float] = None
     price_type: Optional[str] = Field(None, max_length=50)
 
-    @model_validator(mode="before")
+    @model_validator(mode="before)
     @classmethod
     def validate_prices(cls, values: dict[str, Any]) -> dict[str, Any]:
         """Ensure at least one price field is provided."""
-        mid = values.get("mid")
-        bid = values.get("bid")
-        ask = values.get("ask")
+        mid = values.get("mid)
+        bid = values.get("bid)
+        ask = values.get("ask)
 
         if mid is None and bid is None and ask is None:
-            raise ValueError("At least one price field (mid, bid, or ask) must be provided")
+            raise ValueError("At least one price field (mid, bid, or ask) must be provided)
 
         return values
 
-    @field_validator("mid", "bid", "ask")
+    @field_validator("mid", "bid", "ask)
     def validate_price_range(cls, v):
         """Validate price values are reasonable."""
         if v is not None:
             if not (-1e9 <= v <= 1e9):  # Reasonable price range
-                raise ValueError("Price must be between -1e9 and 1e9")
+                raise ValueError("Price must be between -1e9 and 1e9)
         return v
 
-    @field_validator("curve_key")
+    @field_validator("curve_key)
     def validate_curve_key_format(cls, v):
         """Validate curve key format."""
         if not v or not v.strip():
-            raise ValueError("Curve key cannot be empty")
+            raise ValueError("Curve key cannot be empty)
         # Allow alphanumeric, underscore, hyphen, dot
         if not all(c.isalnum() or c in "_-." for c in v):
-            raise ValueError("Curve key can only contain alphanumeric characters, underscore, hyphen, and dot")
+            raise ValueError("Curve key can only contain alphanumeric characters, underscore, hyphen, and dot)
         return v.strip()
 
-    @field_validator("tenor_label")
+    @field_validator("tenor_label)
     def validate_tenor_label_format(cls, v):
         """Validate tenor label format."""
         if not v or not v.strip():
-            raise ValueError("Tenor label cannot be empty")
+            raise ValueError("Tenor label cannot be empty)
         return v.strip()
 
 
@@ -339,11 +339,11 @@ class CurveResponse(AurumBaseModel):
     meta: Meta
     data: List[CurvePoint]
 
-    @field_validator("data")
+    @field_validator("data)
     def validate_data_not_empty(cls, v):
         """Ensure data is not empty."""
         if not v:
-            raise ValueError("Data cannot be empty")
+            raise ValueError("Data cannot be empty)
         return v
 
 
@@ -360,59 +360,59 @@ class CurveDiffPoint(AurumBaseModel):
     diff_abs: Optional[float] = None
     diff_pct: Optional[float] = None
 
-    @model_validator(mode="before")
+    @model_validator(mode="before)
     @classmethod
     def validate_dates(cls, values: dict[str, Any]) -> dict[str, Any]:
         """Ensure asof_a and asof_b are different dates."""
-        asof_a = values.get("asof_a")
-        asof_b = values.get("asof_b")
+        asof_a = values.get("asof_a)
+        asof_b = values.get("asof_b)
 
         if asof_a and asof_b and asof_a == asof_b:
-            raise ValueError("asof_a and asof_b must be different dates")
+            raise ValueError("asof_a and asof_b must be different dates)
 
         return values
 
-    @model_validator(mode="before")
+    @model_validator(mode="before)
     @classmethod
     def validate_prices(cls, values: dict[str, Any]) -> dict[str, Any]:
         """Ensure at least one price comparison is available."""
-        mid_a = values.get("mid_a")
-        mid_b = values.get("mid_b")
+        mid_a = values.get("mid_a)
+        mid_b = values.get("mid_b)
 
         if mid_a is None and mid_b is None:
-            raise ValueError("At least one price comparison (mid_a or mid_b) must be provided")
+            raise ValueError("At least one price comparison (mid_a or mid_b) must be provided)
 
         return values
 
-    @field_validator("mid_a", "mid_b")
+    @field_validator("mid_a", "mid_b)
     def validate_price_range(cls, v):
         """Validate price values are reasonable."""
         if v is not None:
             if not (-1e9 <= v <= 1e9):
-                raise ValueError("Price must be between -1e9 and 1e9")
+                raise ValueError("Price must be between -1e9 and 1e9)
         return v
 
-    @field_validator("diff_abs")
+    @field_validator("diff_abs)
     def validate_diff_abs(cls, v):
         """Validate absolute difference is reasonable."""
         if v is not None:
             if not (-1e10 <= v <= 1e10):
-                raise ValueError("Absolute difference must be between -1e10 and 1e10")
+                raise ValueError("Absolute difference must be between -1e10 and 1e10)
         return v
 
-    @field_validator("diff_pct")
+    @field_validator("diff_pct)
     def validate_diff_pct(cls, v):
         """Validate percentage difference is reasonable."""
         if v is not None:
             if not (-1000 <= v <= 1000):  # Allow up to 1000% change
-                raise ValueError("Percentage difference must be between -1000 and 1000")
+                raise ValueError("Percentage difference must be between -1000 and 1000)
         return v
 
-    @field_validator("curve_key", "tenor_label")
+    @field_validator("curve_key", "tenor_label)
     def validate_string_fields(cls, v):
         """Validate string fields are not empty."""
         if not v or not v.strip():
-            raise ValueError("Field cannot be empty")
+            raise ValueError("Field cannot be empty)
         return v.strip()
 
 
@@ -421,11 +421,11 @@ class CurveDiffResponse(AurumBaseModel):
     meta: Meta
     data: List[CurveDiffPoint]
 
-    @field_validator("data")
+    @field_validator("data)
     def validate_data_not_empty(cls, v):
         """Ensure data is not empty."""
         if not v:
-            raise ValueError("Data cannot be empty")
+            raise ValueError("Data cannot be empty)
         return v
 
 
@@ -504,21 +504,21 @@ class UnitsMappingResponse(AurumBaseModel):
 # Series-Curve Mapping models
 class SeriesCurveMappingCreate(AurumBaseModel):
     """Model for creating series-curve mappings."""
-    external_provider: str = Field(..., description="External data provider (FRED, EIA, etc.)")
-    external_series_id: str = Field(..., description="Provider-specific series identifier")
-    curve_key: str = Field(..., description="Internal curve key")
-    mapping_confidence: float = Field(1.0, ge=0.0, le=1.0, description="Mapping confidence score (0.0-1.0)")
-    mapping_method: str = Field("manual", description="How the mapping was determined (manual, automated, heuristic)")
-    mapping_notes: str | None = Field(None, description="Human-readable mapping rationale")
-    is_active: bool = Field(True, description="Whether this mapping is currently active")
+    external_provider: str = Field(..., )
+    external_series_id: str = Field(..., )
+    curve_key: str = Field(..., )
+    mapping_confidence: float = Field(1.0, ge=0.0, le=1.0, )
+    mapping_method: str = Field("manual", )
+    mapping_notes: str | None = Field(None, )
+    is_active: bool = Field(True, )
 
 
 class SeriesCurveMappingUpdate(AurumBaseModel):
     """Model for updating series-curve mappings."""
-    mapping_confidence: float | None = Field(None, ge=0.0, le=1.0, description="Updated mapping confidence score")
-    mapping_method: str | None = Field(None, description="Updated mapping method")
-    mapping_notes: str | None = Field(None, description="Updated mapping rationale")
-    is_active: bool | None = Field(None, description="Updated active status")
+    mapping_confidence: float | None = Field(None, ge=0.0, le=1.0, )
+    mapping_method: str | None = Field(None, )
+    mapping_notes: str | None = Field(None, )
+    is_active: bool | None = Field(None, )
 
 
 class SeriesCurveMappingOut(AurumBaseModel):
@@ -937,125 +937,125 @@ class CachePurgeResponse(AurumBaseModel):
 
 class ExternalProvider(AurumBaseModel):
     """External data provider."""
-    id: str = Field(..., description="Provider identifier")
-    name: str = Field(..., description="Provider name")
-    description: str = Field(..., description="Provider description")
-    base_url: Optional[str] = Field(None, description="Provider base URL")
-    last_updated: Optional[datetime] = Field(None, description="Last update timestamp")
-    series_count: Optional[int] = Field(None, description="Number of series from this provider")
+    id: str = Field(..., )
+    name: str = Field(..., )
+    description: str = Field(...)
+    base_url: Optional[str] = Field(None)
+    last_updated: Optional[datetime] = Field(None, )
+    series_count: Optional[int] = Field(None, )
 
 
 class ExternalSeries(AurumBaseModel):
     """External data series."""
-    id: str = Field(..., description="Series identifier")
-    provider_id: str = Field(..., description="Provider identifier")
-    name: str = Field(..., description="Series name")
-    frequency: str = Field(..., description="Series frequency")
-    description: str = Field(..., description="Series description")
-    units: Optional[str] = Field(None, description="Series units")
-    last_updated: Optional[datetime] = Field(None, description="Last update timestamp")
-    observation_count: Optional[int] = Field(None, description="Number of observations")
+    id: str = Field(..., )
+    provider_id: str = Field(..., )
+    name: str = Field(..., )
+    frequency: str = Field(..., )
+    description: str = Field(...)
+    units: Optional[str] = Field(None, )
+    last_updated: Optional[datetime] = Field(None, )
+    observation_count: Optional[int] = Field(None, )
 
 
 class ExternalObservation(AurumBaseModel):
     """External data observation."""
-    series_id: str = Field(..., description="Series identifier")
-    observation_date: str = Field(..., description="Observation date")
-    value: float = Field(..., description="Observation value")
-    observation_metadata: Optional[Dict[str, Any]] = Field(None, description="Additional observation metadata")
+    series_id: str = Field(..., )
+    observation_date: str = Field(..., )
+    value: float = Field(..., )
+    observation_metadata: Optional[Dict[str, Any]] = Field(None, )
 
 
 class ExternalProvidersResponse(AurumBaseModel):
     """Response for external providers list."""
-    data: List[ExternalProvider] = Field(..., description="List of providers")
-    meta: Meta = Field(..., description="Response metadata")
+    data: List[ExternalProvider] = Field(..., )
+    meta: Meta = Field(..., )
 
 
 class ExternalSeriesResponse(AurumBaseModel):
     """Response for external series list."""
-    data: List[ExternalSeries] = Field(..., description="List of series")
-    meta: Meta = Field(..., description="Response metadata")
+    data: List[ExternalSeries] = Field(..., )
+    meta: Meta = Field(..., )
 
 
 class ExternalObservationsResponse(AurumBaseModel):
     """Response for external series observations."""
-    data: List[ExternalObservation] = Field(..., description="List of observations")
-    meta: Meta = Field(..., description="Response metadata")
+    data: List[ExternalObservation] = Field(..., )
+    meta: Meta = Field(..., )
 
 
 class ExternalMetadataResponse(AurumBaseModel):
     """Response for external data metadata."""
-    providers: List[ExternalProvider] = Field(..., description="List of providers")
-    total_series: int = Field(..., description="Total number of external series")
-    last_updated: Optional[datetime] = Field(None, description="Last update timestamp")
+    providers: List[ExternalProvider] = Field(..., )
+    total_series: int = Field(..., )
+    last_updated: Optional[datetime] = Field(None, )
 
 
 # External data query parameters
 
 class ExternalSeriesQueryParams(AurumBaseModel):
     """Query parameters for external series requests."""
-    provider: Optional[str] = Field(None, description="Filter by provider")
-    frequency: Optional[str] = Field(None, description="Filter by frequency")
-    asof: Optional[str] = Field(None, description="As-of date filter")
-    limit: int = Field(DEFAULT_PAGE_SIZE, ge=1, le=MAX_PAGE_SIZE, description="Maximum results")
-    offset: int = Field(0, ge=0, description="Pagination offset")
-    cursor: Optional[str] = Field(None, description="Cursor for pagination")
+    provider: Optional[str] = Field(None, )
+    frequency: Optional[str] = Field(None, )
+    asof: Optional[str] = Field(None, )
+    limit: int = Field(DEFAULT_PAGE_SIZE, ge=1, le=MAX_PAGE_SIZE, )
+    offset: int = Field(0, ge=0, )
+    cursor: Optional[str] = Field(None, )
 
-    @field_validator("frequency")
+    @field_validator("frequency)
     def validate_frequency(cls, v):
         """Validate frequency values."""
         if v is not None and v not in ["daily", "weekly", "monthly", "quarterly", "yearly"]:
-            raise ValueError("Frequency must be one of: daily, weekly, monthly, quarterly, yearly")
+            raise ValueError("Frequency must be one of: daily, weekly, monthly, quarterly, yearly)
         return v
 
-    @field_validator("asof")
+    @field_validator("asof)
     def validate_asof_format(cls, v):
         """Validate asof date format."""
         if v is not None:
             try:
-                datetime.strptime(v, "%Y-%m-%d")
+                datetime.strptime(v, "%Y-%m-%d)
             except ValueError:
-                raise ValueError("asof must be in YYYY-MM-DD format")
+                raise ValueError("asof must be in YYYY-MM-DD format)
         return v
 
 
 class ExternalObservationsQueryParams(AurumBaseModel):
     """Query parameters for external observations requests."""
-    series_id: str = Field(..., description="Series identifier")
-    start_date: Optional[str] = Field(None, description="Start date for observations")
-    end_date: Optional[str] = Field(None, description="End date for observations")
-    frequency: Optional[str] = Field(None, description="Output frequency")
-    asof: Optional[str] = Field(None, description="As-of date")
-    limit: int = Field(MAX_PAGE_SIZE, ge=1, le=MAX_PAGE_SIZE, description="Maximum observations")
-    offset: int = Field(0, ge=0, description="Pagination offset")
-    cursor: Optional[str] = Field(None, description="Cursor for pagination")
-    format: str = Field("json", description="Response format")
+    series_id: str = Field(..., )
+    start_date: Optional[str] = Field(None, )
+    end_date: Optional[str] = Field(None, )
+    frequency: Optional[str] = Field(None, )
+    asof: Optional[str] = Field(None, )
+    limit: int = Field(MAX_PAGE_SIZE, ge=1, le=MAX_PAGE_SIZE, )
+    offset: int = Field(0, ge=0, )
+    cursor: Optional[str] = Field(None, )
+    format: str = Field("json", Response format)
 
-    @field_validator("frequency")
+    @field_validator("frequency)
     def validate_frequency(cls, v):
         """Validate frequency values."""
         if v is not None and v not in ["daily", "weekly", "monthly", "quarterly", "yearly"]:
-            raise ValueError("Frequency must be one of: daily, weekly, monthly, quarterly, yearly")
+            raise ValueError("Frequency must be one of: daily, weekly, monthly, quarterly, yearly)
         return v
 
-    @field_validator("start_date", "end_date")
+    @field_validator("start_date", "end_date)
     def validate_date_format(cls, v):
         """Validate date format."""
         if v is not None:
             try:
-                datetime.strptime(v, "%Y-%m-%d")
+                datetime.strptime(v, "%Y-%m-%d)
             except ValueError:
-                raise ValueError("Date must be in YYYY-MM-DD format")
+                raise ValueError("Date must be in YYYY-MM-DD format)
         return v
 
-    @field_validator("asof")
+    @field_validator("asof)
     def validate_asof_format(cls, v):
         """Validate asof date format."""
         if v is not None:
             try:
-                datetime.strptime(v, "%Y-%m-%d")
+                datetime.strptime(v, "%Y-%m-%d)
             except ValueError:
-                raise ValueError("asof must be in YYYY-MM-DD format")
+                raise ValueError("asof must be in YYYY-MM-DD format)
         return v
 
 
