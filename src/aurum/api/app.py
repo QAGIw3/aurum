@@ -19,6 +19,7 @@ import sys
 import types
 import logging
 import contextlib
+import os
 
 from fastapi import Depends, FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
@@ -59,26 +60,7 @@ from .versioning import (
     VersionStatus,
     DeprecationInfo
 )
-try:  # optional at import time for tooling
-    from .v2 import (
-        scenarios as v2_scenarios,
-        curves as v2_curves,
-        metadata as v2_metadata,
-        iso as v2_iso,
-        eia as v2_eia,
-        ppa as v2_ppa,
-        drought as v2_drought,
-        admin as v2_admin
-    )
-except Exception:  # pragma: no cover
-    v2_scenarios = None  # type: ignore
-    v2_curves = None  # type: ignore
-    v2_metadata = None  # type: ignore
-    v2_iso = None  # type: ignore
-    v2_eia = None  # type: ignore
-    v2_ppa = None  # type: ignore
-    v2_drought = None  # type: ignore
-    v2_admin = None  # type: ignore
+from .router_registry import get_v1_router_specs, get_v2_router_specs
 
 
 async def create_app(settings: AurumSettings | None = None) -> FastAPI:
@@ -168,8 +150,6 @@ async def create_app(settings: AurumSettings | None = None) -> FastAPI:
                 exc_info=True,
             )
 
-    import os as _os
-
     def _observability_admin_guard(
         principal=Depends(_routes._get_principal),
     ) -> None:
@@ -200,127 +180,30 @@ async def create_app(settings: AurumSettings | None = None) -> FastAPI:
 
         return yaml.dump(schema, default_flow_style=False, sort_keys=False)
 
-    import os as _os
-    if _os.getenv("AURUM_API_LIGHT_INIT", "0") != "1":
-        # Register v1 endpoints (deprecated) with deprecation headers
-        from . import scenarios, curves
+    if os.getenv("AURUM_API_LIGHT_INIT", "0") != "1":
+        v1_specs = get_v1_router_specs(settings)
 
-        # Deprecate v1 scenarios
-        v1_scenarios_router = scenarios.router
-        # Add deprecation middleware to v1 scenarios
-        @app.middleware("http")
-        async def add_v1_deprecation_headers(request: Request, call_next):
-            """Add deprecation headers to v1 endpoints."""
-            if request.url.path.startswith("/v1/"):
-                response = await call_next(request)
-                response.headers["X-API-Deprecation"] = "true"
-                response.headers["X-API-Version"] = "v1"
-                response.headers["X-API-Deprecation-Info"] = "v1 API is deprecated. Please migrate to v2."
-                response.headers["X-API-Sunset"] = "2025-12-31"
-                response.headers["X-API-Removed"] = "v3.0.0"
-                response.headers["X-API-Migration-Guide"] = "docs/migration-guide.md"
-                return response
-            return await call_next(request)
+        if v1_specs:
 
-        app.include_router(v1_scenarios_router)
+            @app.middleware("http")
+            async def add_v1_deprecation_headers(request: Request, call_next):
+                """Add deprecation headers to v1 endpoints."""
+                if request.url.path.startswith("/v1/"):
+                    response = await call_next(request)
+                    response.headers["X-API-Deprecation"] = "true"
+                    response.headers["X-API-Version"] = "v1"
+                    response.headers["X-API-Deprecation-Info"] = "v1 API is deprecated. Please migrate to v2."
+                    response.headers["X-API-Sunset"] = "2025-12-31"
+                    response.headers["X-API-Removed"] = "v3.0.0"
+                    response.headers["X-API-Migration-Guide"] = "docs/migration-guide.md"
+                    return response
+                return await call_next(request)
 
-        # Register v1 curves with deprecation headers
-        v1_curves_router = curves.router
-        app.include_router(v1_curves_router)
+        for spec in v1_specs:
+            app.include_router(spec.router, **spec.include_kwargs)
 
-        # Include v1 metadata router (keep available by default)
-        try:
-            from .metadata import router as v1_metadata_router
-            app.include_router(v1_metadata_router)
-        except Exception:
-            logging.getLogger(__name__).warning("Failed to include v1 Metadata router", exc_info=True)
-
-        # Optionally include split v1 EIA router (feature-flag)
-        import os as _os2
-        if _os2.getenv("AURUM_API_V1_SPLIT_EIA", "0") == "1":  # pragma: no cover - opt-in
-            try:
-                from .v1.eia import router as v1_eia_router
-                app.include_router(v1_eia_router)
-            except Exception:
-                logging.getLogger(__name__).warning("Failed to include v1 EIA router", exc_info=True)
-
-        # (Metadata router included by default above)
-
-        # Optionally include split v1 ISO router (feature-flag)
-        if _os2.getenv("AURUM_API_V1_SPLIT_ISO", "0") == "1":  # pragma: no cover - opt-in
-            try:
-                from .v1.iso import router as v1_iso_router
-                app.include_router(v1_iso_router)
-            except Exception:
-                logging.getLogger(__name__).warning("Failed to include v1 ISO router", exc_info=True)
-
-        # Optionally include split v1 PPA router (feature-flag)
-        if _os2.getenv("AURUM_API_V1_SPLIT_PPA", "0") == "1":  # pragma: no cover - opt-in
-            try:
-                from .v1.ppa import router as v1_ppa_router
-                app.include_router(v1_ppa_router)
-            except Exception:
-                logging.getLogger(__name__).warning("Failed to include v1 PPA router", exc_info=True)
-
-        # Optionally include split v1 Drought router (feature-flag)
-        if _os2.getenv("AURUM_API_V1_SPLIT_DROUGHT", "0") == "1":  # pragma: no cover - opt-in
-            try:
-                from .v1.drought import router as v1_drought_router
-                app.include_router(v1_drought_router)
-            except Exception:
-                logging.getLogger(__name__).warning("Failed to include v1 Drought router", exc_info=True)
-
-        # Optionally include split v1 Admin router (feature-flag)
-        if _os2.getenv("AURUM_API_V1_SPLIT_ADMIN", "0") == "1":  # pragma: no cover - opt-in
-            try:
-                from .v1.admin import router as v1_admin_router
-                app.include_router(v1_admin_router)
-            except Exception:
-                logging.getLogger(__name__).warning("Failed to include v1 Admin router", exc_info=True)
-
-        # Register v2 endpoints (new and improved)
-        from .v2 import (
-            scenarios as v2_scenarios,
-            curves as v2_curves,
-            metadata as v2_metadata,
-            iso as v2_iso,
-            eia as v2_eia,
-            ppa as v2_ppa,
-            drought as v2_drought,
-            admin as v2_admin
-        )
-
-        # Register v2 scenarios
-        v2_scenarios_router = v2_scenarios.router
-        app.include_router(v2_scenarios_router)
-
-        # Register v2 curves
-        v2_curves_router = v2_curves.router
-        app.include_router(v2_curves_router)
-
-        # Register v2 metadata
-        v2_metadata_router = v2_metadata.router
-        app.include_router(v2_metadata_router)
-
-        # Register v2 ISO
-        v2_iso_router = v2_iso.router
-        app.include_router(v2_iso_router)
-
-        # Register v2 EIA
-        v2_eia_router = v2_eia.router
-        app.include_router(v2_eia_router)
-
-        # Register v2 PPA
-        v2_ppa_router = v2_ppa.router
-        app.include_router(v2_ppa_router)
-
-        # Register v2 drought
-        v2_drought_router = v2_drought.router
-        app.include_router(v2_drought_router)
-
-        # Register v2 admin
-        v2_admin_router = v2_admin.router
-        app.include_router(v2_admin_router)
+        for spec in get_v2_router_specs(settings):
+            app.include_router(spec.router, **spec.include_kwargs)
 
     # Set up versioning with feature freeze
     await version_manager.register_version(
