@@ -1029,7 +1029,7 @@ class ExternalObservationsQueryParams(AurumBaseModel):
     limit: int = Field(MAX_PAGE_SIZE, ge=1, le=MAX_PAGE_SIZE, )
     offset: int = Field(0, ge=0, )
     cursor: Optional[str] = Field(None, )
-    format: str = Field("json", Response format)
+    format: str = Field("json", )
 
     @field_validator("frequency)
     def validate_frequency(cls, v):
