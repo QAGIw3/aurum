@@ -748,6 +748,19 @@ CURVE_CACHE_TTL = 120
 CURVE_DIFF_CACHE_TTL = 120
 CURVE_STRIP_CACHE_TTL = 120
 
+CURVE_CURSOR_FIELDS = [
+    "curve_key",
+    "tenor_label",
+    "contract_month",
+    "asof_date",
+    "price_type",
+]
+CURVE_DIFF_CURSOR_FIELDS = [
+    "curve_key",
+    "tenor_label",
+    "contract_month",
+]
+
 EIA_SERIES_CURSOR_FIELDS = ["series_id", "period_start", "period"]
 EIA_SERIES_MAX_LIMIT = 1000
 EIA_SERIES_CACHE_TTL = 120
@@ -762,20 +775,10 @@ from .http.pagination import (
     FROZEN_CURSOR_SCHEMAS,
     decode_cursor,
     encode_cursor,
+    extract_cursor_payload_from_row,
     extract_cursor_values,
     validate_cursor_schema,
 )
-
-# Legacy functions for backward compatibility - these will be deprecated
-def _encode_cursor(payload: dict) -> str:
-    """Legacy cursor encoding function - deprecated."""
-    return encode_cursor(payload)
-
-
-def _decode_cursor(token: str) -> CursorPayload:
-    """Legacy cursor decoding function - returns CursorPayload."""
-    return decode_cursor(token)
-
 
 def _resolve_tenant(request: Request, explicit: Optional[str]) -> str:
     # First priority: check request.state.tenant (set by auth middleware)
@@ -815,22 +818,6 @@ def _resolve_tenant_optional(request: Request, explicit: Optional[str]) -> Optio
         return header_tenant
 
     return explicit
-
-
-def _extract_cursor_payload(row: Dict[str, Any], fields: list[str]) -> Dict[str, Any]:
-    """Legacy function - use the hardened cursor system instead."""
-    payload: Dict[str, Any] = {}
-    for field in fields:
-        value = row.get(field)
-        if isinstance(value, date):
-            payload[field] = value.isoformat()
-        elif isinstance(value, datetime):
-            payload[field] = value.isoformat()
-        elif value is not None:
-            payload[field] = value
-        else:
-            payload[field] = None
-    return payload
 
 
 def create_cursor_from_row(row: Dict[str, Any], schema_name: str, direction: SortDirection = SortDirection.ASC) -> CursorPayload:
@@ -1193,7 +1180,7 @@ def list_curves(
 
     next_cursor = None
     if more and rows:
-        next_payload = _extract_cursor_payload(rows[-1], CURVE_CURSOR_FIELDS)
+        next_payload = extract_cursor_payload_from_row(rows[-1], CURVE_CURSOR_FIELDS)
         next_cursor_obj = Cursor(
             offset=effective_offset + len(rows),
             limit=effective_limit,
@@ -1206,7 +1193,7 @@ def list_curves(
     if rows:
         if descending:
             if cursor_before and more:
-                prev_payload = _extract_cursor_payload(rows[0], CURVE_CURSOR_FIELDS)
+                prev_payload = extract_cursor_payload_from_row(rows[0], CURVE_CURSOR_FIELDS)
                 prev_cursor_obj = Cursor(
                     offset=effective_offset,
                     limit=effective_limit,
@@ -1216,7 +1203,7 @@ def list_curves(
                 prev_cursor_value = prev_cursor_obj.to_string()
         else:
             if prev_token or forward_token or effective_offset > 0:
-                prev_payload = _extract_cursor_payload(rows[0], CURVE_CURSOR_FIELDS)
+                prev_payload = extract_cursor_payload_from_row(rows[0], CURVE_CURSOR_FIELDS)
                 prev_cursor_obj = Cursor(
                     offset=max(effective_offset - effective_limit, 0),
                     limit=effective_limit,
@@ -1430,8 +1417,8 @@ def list_curves_diff(
     next_cursor: str | None = None
     if len(rows) > effective_limit:
         rows = rows[:effective_limit]
-        next_payload = _extract_cursor_payload(rows[-1], CURVE_DIFF_CURSOR_FIELDS)
-        next_cursor = _encode_cursor(next_payload)
+        next_payload = extract_cursor_payload_from_row(rows[-1], CURVE_DIFF_CURSOR_FIELDS)
+        next_cursor = encode_cursor(next_payload)
 
     model = CurveDiffResponse(
         meta=Meta(request_id=request_id, query_time_ms=int(elapsed_ms), next_cursor=next_cursor),
@@ -1926,7 +1913,7 @@ def list_eia_series(
     prev_token = prev_cursor
     forward_token = cursor or since_cursor
     if prev_token:
-        payload = _decode_cursor(prev_token)
+        payload = decode_cursor(prev_token)
         before_payload = payload.get("before") if isinstance(payload, dict) else None
         if before_payload:
             cursor_before = before_payload
@@ -1942,7 +1929,7 @@ def list_eia_series(
             descending = True
             effective_offset = 0
     elif forward_token:
-        payload = _decode_cursor(forward_token)
+        payload = decode_cursor(forward_token)
         effective_offset, cursor_after = _normalise_cursor_input(payload)
 
     try:
@@ -1979,22 +1966,22 @@ def list_eia_series(
 
     next_cursor = None
     if more and rows:
-        next_payload = _extract_cursor_payload(rows[-1], EIA_SERIES_CURSOR_FIELDS)
-        next_cursor = _encode_cursor(next_payload)
+        next_payload = extract_cursor_payload_from_row(rows[-1], EIA_SERIES_CURSOR_FIELDS)
+        next_cursor = encode_cursor(next_payload)
 
     prev_cursor_value = None
     if rows:
         if descending:
             if cursor_before and more:
-                prev_payload = _extract_cursor_payload(rows[0], EIA_SERIES_CURSOR_FIELDS)
-                prev_cursor_value = _encode_cursor({"before": prev_payload})
+                prev_payload = extract_cursor_payload_from_row(rows[0], EIA_SERIES_CURSOR_FIELDS)
+                prev_cursor_value = encode_cursor({"before": prev_payload})
         else:
             if prev_token or forward_token or effective_offset > 0:
-                prev_payload = _extract_cursor_payload(rows[0], EIA_SERIES_CURSOR_FIELDS)
-                prev_cursor_value = _encode_cursor({"before": prev_payload})
+                prev_payload = extract_cursor_payload_from_row(rows[0], EIA_SERIES_CURSOR_FIELDS)
+                prev_cursor_value = encode_cursor({"before": prev_payload})
 
     if not rows and forward_token and prev_token is None and effective_offset > 0:
-        prev_cursor_value = _encode_cursor({"offset": max(effective_offset - effective_limit, 0)})
+        prev_cursor_value = encode_cursor({"offset": max(effective_offset - effective_limit, 0)})
 
     if format.lower() == "csv":
         cache_header = f"public, max-age={EIA_SERIES_CACHE_TTL}"
@@ -2222,7 +2209,7 @@ def list_strips(
     effective_offset = offset
     effective_cursor = cursor or since_cursor
     if effective_cursor:
-        payload = _decode_cursor(effective_cursor)
+        payload = decode_cursor(effective_cursor)
         effective_offset = int(payload.get("offset", 0))
 
     try:
@@ -2247,7 +2234,7 @@ def list_strips(
     next_cursor: str | None = None
     if len(rows) > effective_limit:
         rows = rows[:effective_limit]
-        next_cursor = _encode_cursor({"offset": effective_offset + effective_limit})
+        next_cursor = encode_cursor({"offset": effective_offset + effective_limit})
 
     model = CurveResponse(
         meta=Meta(request_id=request_id, query_time_ms=int(elapsed_ms), next_cursor=next_cursor),

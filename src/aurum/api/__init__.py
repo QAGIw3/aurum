@@ -15,7 +15,7 @@ else:
         "app": ("aurum.api.app", "app"),
         # Routers
         "health_router": ("aurum.api.health", "router"),
-        "curves_router": ("aurum.api.curves", "router"),
+        "curves_router": ("aurum.api.v1.curves", "router"),
         "metadata_router": ("aurum.api.metadata", "router"),
         "scenarios_router": ("aurum.api.scenarios.scenarios", "router"),
         "cache_analytics_router": ("aurum.api.cache.cache_analytics", "router"),

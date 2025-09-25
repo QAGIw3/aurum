@@ -4,7 +4,7 @@ import pytest
 from unittest.mock import AsyncMock, patch
 from fastapi.testclient import TestClient
 
-from aurum.api.curves import router
+from aurum.api.v1.curves import router
 from aurum.api.models import CurveResponse, CurvePoint
 from aurum.api.http import respond_with_etag
 
@@ -16,7 +16,7 @@ class TestCurvesETag:
         """Set up test client."""
         self.client = TestClient(router)
 
-    @patch('aurum.api.curves.get_service')
+    @patch('aurum.api.v1.curves.get_service')
     async def test_curves_etag_generation(self, mock_get_service):
         """Test that ETags are generated correctly for curve responses."""
         # Mock the service
@@ -46,7 +46,7 @@ class TestCurvesETag:
         assert len(etag) == 64  # SHA256 hex digest length
         assert all(c in "0123456789abcdef" for c in etag)
 
-    @patch('aurum.api.curves.get_service')
+    @patch('aurum.api.v1.curves.get_service')
     async def test_curves_etag_304_response(self, mock_get_service):
         """Test that 304 responses are returned for matching ETags."""
         # Mock the service
@@ -77,7 +77,7 @@ class TestCurvesETag:
         # Should return 304
         assert response2.status_code == 304
 
-    @patch('aurum.api.curves.get_service')
+    @patch('aurum.api.v1.curves.get_service')
     async def test_curves_offset_deprecation_headers(self, mock_get_service):
         """Test that deprecation headers are added when using offset parameter."""
         # Mock the service

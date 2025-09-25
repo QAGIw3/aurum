@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-import os
-
 import pytest
 
 from aurum.api.router_registry import get_v1_router_specs
@@ -20,9 +18,11 @@ def reset_split_flags(monkeypatch):
     ]
     for flag in flags:
         monkeypatch.delenv(flag, raising=False)
+    monkeypatch.setenv("AURUM_API_LIGHT_INIT", "1")
     yield
     for flag in flags:
         monkeypatch.delenv(flag, raising=False)
+    monkeypatch.delenv("AURUM_API_LIGHT_INIT", raising=False)
 
 
 def test_v1_router_specs_deduplicates_split_modules(monkeypatch, reset_split_flags):
@@ -35,8 +35,30 @@ def test_v1_router_specs_deduplicates_split_modules(monkeypatch, reset_split_fla
     assert len(ppa_specs) == 1
 
 
+def test_v1_router_specs_curves_default(monkeypatch, reset_split_flags):
+    settings = AurumSettings()
+
+    specs = get_v1_router_specs(settings)
+    names = [spec.name for spec in specs if spec.name]
+
+    assert "aurum.api.v1.curves" in names
+    assert "aurum.api.curves" not in names
+
+
+def test_v1_router_specs_curves_flag_is_ignored(monkeypatch, reset_split_flags):
+    monkeypatch.setenv("AURUM_API_V1_SPLIT_CURVES", "0")
+    settings = AurumSettings()
+
+    specs = get_v1_router_specs(settings)
+    names = [spec.name for spec in specs if spec.name]
+
+    assert "aurum.api.v1.curves" in names
+    assert "aurum.api.curves" not in names
+
+
 def test_v1_router_specs_unique_when_all_flags_enabled(monkeypatch, reset_split_flags):
     for flag in [
+        "AURUM_API_V1_SPLIT_CURVES",
         "AURUM_API_V1_SPLIT_EIA",
         "AURUM_API_V1_SPLIT_ISO",
         "AURUM_API_V1_SPLIT_PPA",

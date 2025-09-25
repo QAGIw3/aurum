@@ -10,6 +10,9 @@ Flags (all default to 0/off)
 - AURUM_API_V1_SPLIT_ISO=1
   - Includes src/aurum/api/v1/iso.py (LMP last-24h/hourly/daily/negative, JSON/CSV with ETag 304)
 
+- AURUM_API_V1_SPLIT_CURVES *(deprecated; v1 curves router now loads by default)*
+  - The split curves router (`src/aurum/api/v1/curves.py`) is always registered. This flag is retained for backwards compatibility but has no effect.
+
 - AURUM_API_V1_SPLIT_PPA=1 *(deprecated; router now enabled by default)*
   - v1 PPA router (`src/aurum/api/v1/ppa.py`) is always registered; the flag is retained for backwards compatibility but no longer required.
 

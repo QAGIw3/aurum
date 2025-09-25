@@ -3,6 +3,7 @@
 from datetime import date
 from typing import Any, Dict, List
 
+import importlib
 import importlib.util
 import pathlib
 import sys
@@ -27,6 +28,7 @@ if str(SRC_DIR) not in sys.path:
 
 import aurum  # noqa: E402
 from aurum.core.settings import AurumSettings  # noqa: E402
+from aurum.api.http import decode_cursor  # noqa: E402
 
 if "aurum.api" not in sys.modules:
     api_pkg = types.ModuleType("aurum.api")
@@ -37,13 +39,7 @@ if "aurum.api" not in sys.modules:
 def _load_api_module(name: str):
     if name in sys.modules:
         return sys.modules[name]
-    module_path = SRC_DIR / "aurum" / "api" / f"{name.split('.')[-1]}.py"
-    spec = importlib.util.spec_from_file_location(name, module_path)
-    if spec is None or spec.loader is None:
-        raise RuntimeError(f"Unable to load module {name} from {module_path}")
-    module = importlib.util.module_from_spec(spec)
-    sys.modules[name] = module
-    spec.loader.exec_module(module)
+    module = importlib.import_module(name)
     return module
 
 
@@ -157,6 +153,6 @@ def test_curves_cursor_parameters_passthrough(curves_client):
     assert second.status_code == 200
 
     assert len(calls) >= 2
-    decoded = routes._decode_cursor(next_cursor)
+    decoded = decode_cursor(next_cursor)
     assert calls[1]["cursor_after"] == decoded
     assert calls[1]["cursor_before"] is None

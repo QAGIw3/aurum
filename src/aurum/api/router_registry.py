@@ -14,6 +14,8 @@ from aurum.core import AurumSettings
 
 logger = logging.getLogger(__name__)
 
+_LIGHTWEIGHT_ROUTER_CACHE: dict[str, APIRouter] = {}
+
 
 @dataclass(frozen=True)
 class RouterSpec:
@@ -26,6 +28,14 @@ class RouterSpec:
 
 def _try_import_router(module_path: str, *, attr: str = "router") -> APIRouter | None:
     """Import a router from the given module path, logging failures."""
+
+    if os.getenv("AURUM_API_LIGHT_INIT", "0") == "1":
+        router = _LIGHTWEIGHT_ROUTER_CACHE.get(module_path)
+        if router is None:
+            router = APIRouter()
+            _LIGHTWEIGHT_ROUTER_CACHE[module_path] = router
+        return router
+
     try:
         module = import_module(module_path)
     except Exception:  # pragma: no cover - defensive guard
@@ -57,15 +67,19 @@ def _build_specs(module_paths: Iterable[str], *, seen: set[str] | None = None) -
 
 def get_v1_router_specs(_settings: AurumSettings) -> list[RouterSpec]:
     """Return the list of v1 routers to include for the given settings."""
+    seen: set[str] = set()
+    specs: list[RouterSpec] = []
+
+    curves_module = "aurum.api.v1.curves"
+    specs.extend(_build_specs((curves_module,), seen=seen))
+
     mandatory_modules = (
         "aurum.api.scenarios.scenarios",
-        "aurum.api.curves",
         "aurum.api.metadata",
         "aurum.api.v1.ppa",
     )
 
-    seen: set[str] = set()
-    specs = _build_specs(mandatory_modules, seen=seen)
+    specs.extend(_build_specs(mandatory_modules, seen=seen))
 
     optional_modules = {
         "AURUM_API_V1_SPLIT_EIA": "aurum.api.v1.eia",

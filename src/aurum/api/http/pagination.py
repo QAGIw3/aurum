@@ -11,9 +11,10 @@ from __future__ import annotations
 import base64
 import hashlib
 import json
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, Iterable, List, Mapping, Optional, Tuple
 from enum import Enum
 from dataclasses import dataclass
+from datetime import date, datetime
 
 from fastapi import HTTPException
 
@@ -342,6 +343,26 @@ def normalize_cursor_input(payload: Dict[str, Any]) -> Tuple[Optional[int], Opti
 
     # For future cursor-based pagination extensions
     return None, payload
+
+
+def extract_cursor_payload_from_row(
+    row: Mapping[str, Any] | Dict[str, Any],
+    fields: Iterable[str],
+) -> Dict[str, Any]:
+    """Serialize cursor fields from a result row into a JSON-safe payload."""
+
+    payload: Dict[str, Any] = {}
+    for field in fields:
+        if hasattr(row, "get"):
+            value = row.get(field)  # type: ignore[arg-type]
+        else:  # pragma: no cover - defensive for non-mapping rows
+            value = getattr(row, field, None)
+
+        if isinstance(value, (datetime, date)):
+            payload[field] = value.isoformat()
+        else:
+            payload[field] = value
+    return payload
 
 
 def create_pagination_metadata(
