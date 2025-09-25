@@ -12,9 +12,9 @@ from aurum.api.golden_query_cache import (
     GoldenQueryCache,
     QueryPattern,
     QueryType,
-    CacheInvalidationStrategy,
-    CacheEntry
+    CacheInvalidationStrategy
 )
+from aurum.api.cache.golden_query_cache import CacheEntry
 from aurum.api.cache import AsyncCache
 
 
