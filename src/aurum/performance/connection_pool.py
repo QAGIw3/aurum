@@ -1,4 +1,10 @@
-"""Connection pooling and resource optimization utilities."""
+"""Connection pooling and resource optimization utilities.
+
+Deprecated for API usage:
+    The API should rely on `aurum.api.database.trino_client` which provides
+    unified pooling, concurrency controls, and observability. This module
+    remains for non-API utilities and legacy scripts.
+"""
 
 from __future__ import annotations
 

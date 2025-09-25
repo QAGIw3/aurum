@@ -17,12 +17,15 @@ from __future__ import annotations
 import time
 from typing import Dict, List, Optional
 
-from fastapi import APIRouter, HTTPException, Query, Request, Response
+from fastapi import APIRouter, HTTPException, Query, Request, Response, Depends
 from pydantic import BaseModel, Field
 
 from ..http import respond_with_etag
 from ..container import get_service
 from ..async_service import AsyncScenarioService
+from ..deps import get_settings, get_cache_manager
+from aurum.core import AurumSettings
+from ..cache.cache import CacheManager
 from ..scenario_models import (
     ScenarioCreateRequest,
     ScenarioData,
@@ -71,11 +74,18 @@ async def list_scenarios_v2(
     cursor: Optional[str] = Query(None, description="Cursor for pagination"),
     limit: int = Query(10, ge=1, le=100, description="Maximum number of items to return"),
     name_filter: Optional[str] = Query(None, description="Filter by scenario name"),
+    settings: AurumSettings = Depends(get_settings),
+    cache_manager: Optional[CacheManager] = Depends(get_cache_manager),
 ) -> ScenarioListResponse:
     """List scenarios with enhanced pagination and error handling."""
     start_time = time.perf_counter()
 
     try:
+        # Touch DI (no behavior change in this PR)
+        if cache_manager is not None:
+            pass
+        if settings:
+            pass
         offset, effective_limit = resolve_pagination(
             cursor=cursor,
             limit=limit,
@@ -155,13 +165,20 @@ async def list_scenarios_v2(
 async def create_scenario_v2(
     request: Request,
     response: Response,
-    tenant_id: str = Query(..., description="Tenant ID"),
     scenario: ScenarioCreateRequest,
+    tenant_id: str = Query(..., description="Tenant ID"),
+    settings: AurumSettings = Depends(get_settings),
+    cache_manager: Optional[CacheManager] = Depends(get_cache_manager),
 ) -> ScenarioResponse:
     """Create a scenario with enhanced validation and error handling."""
     start_time = time.perf_counter()
 
     try:
+        # Touch DI (no behavior change)
+        if cache_manager is not None:
+            pass
+        if settings:
+            pass
         # Get scenario service
         service = await get_scenario_service()
 
@@ -207,11 +224,18 @@ async def get_scenario_v2(
     response: Response,
     scenario_id: str,
     tenant_id: str = Query(..., description="Tenant ID"),
+    settings: AurumSettings = Depends(get_settings),
+    cache_manager: Optional[CacheManager] = Depends(get_cache_manager),
 ) -> ScenarioResponse:
     """Get a scenario with enhanced error handling."""
     start_time = time.perf_counter()
 
     try:
+        # Touch DI (no behavior change)
+        if cache_manager is not None:
+            pass
+        if settings:
+            pass
         # Get scenario service
         service = await get_scenario_service()
 
@@ -257,11 +281,18 @@ async def create_scenario_run_v2(
     scenario_id: str,
     run: ScenarioRunCreateRequest,
     tenant_id: str = Query(..., description="Tenant ID"),
+    settings: AurumSettings = Depends(get_settings),
+    cache_manager: Optional[CacheManager] = Depends(get_cache_manager),
 ) -> ScenarioRunResponse:
     """Create a scenario run with enhanced validation and idempotency."""
     start_time = time.perf_counter()
 
     try:
+        # Touch DI (no behavior change)
+        if cache_manager is not None:
+            pass
+        if settings:
+            pass
         # Get scenario service
         service = await get_scenario_service()
 
@@ -282,13 +313,7 @@ async def create_scenario_run_v2(
         )
 
         # Add ETag for caching with Link headers
-        return respond_with_etag(
-            result,
-            request,
-            response,
-            next_cursor=next_cursor,
-            canonical_url=str(request.url)
-        )
+        return respond_with_etag(result, request, response, canonical_url=str(request.url))
 
     except HTTPException:
         raise
@@ -316,11 +341,18 @@ async def list_scenario_runs_v2(
     cursor: Optional[str] = Query(None, description="Cursor for pagination"),
     limit: int = Query(10, ge=1, le=100, description="Maximum number of items to return"),
     status_filter: Optional[ScenarioRunStatus] = Query(None, description="Filter by run status"),
+    settings: AurumSettings = Depends(get_settings),
+    cache_manager: Optional[CacheManager] = Depends(get_cache_manager),
 ) -> ScenarioRunListResponse:
     """List scenario runs with enhanced pagination and filtering."""
     start_time = time.perf_counter()
 
     try:
+        # Touch DI (no behavior change)
+        if cache_manager is not None:
+            pass
+        if settings:
+            pass
         # Get scenario service
         service = await get_scenario_service()
 

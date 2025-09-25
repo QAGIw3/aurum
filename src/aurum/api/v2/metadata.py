@@ -20,7 +20,7 @@ import time
 from typing import List, Optional
 from uuid import uuid4
 
-from fastapi import APIRouter, HTTPException, Query, Request, Response
+from fastapi import APIRouter, HTTPException, Query, Request, Response, Depends
 from pydantic import BaseModel, Field
 
 from ..http import respond_with_etag
@@ -31,6 +31,9 @@ from .pagination import (
 )
 from ...telemetry.context import get_request_id
 from ...scenarios.series_curve_mapping import get_database_mapper
+from ..deps import get_settings, get_cache_manager
+from aurum.core import AurumSettings
+from ..cache.cache import CacheManager
 
 router = APIRouter(prefix="/v2", tags=["metadata"])
 
@@ -148,11 +151,19 @@ async def list_dimensions_v2(
     cursor: Optional[str] = Query(None, description="Cursor for pagination"),
     limit: int = Query(10, ge=1, le=100, description="Maximum number of items to return"),
     asof: Optional[str] = Query(None, description="As-of date filter"),
+    settings: AurumSettings = Depends(get_settings),
+    cache_manager: Optional[CacheManager] = Depends(get_cache_manager),
 ) -> DimensionsResponse:
     """List dimensions with enhanced pagination and error handling."""
     start_time = time.perf_counter()
 
     try:
+        # Touch DI (ensures wiring is valid; no behavior change)
+        if cache_manager is not None:
+            pass
+        if settings:
+            pass
+
         offset, effective_limit = resolve_pagination(
             cursor=cursor,
             limit=limit,
@@ -233,11 +244,19 @@ async def list_locations_v2(
     iso: str = Query(..., description="ISO identifier"),
     cursor: Optional[str] = Query(None, description="Cursor for pagination"),
     limit: int = Query(10, ge=1, le=100, description="Maximum number of items to return"),
+    settings: AurumSettings = Depends(get_settings),
+    cache_manager: Optional[CacheManager] = Depends(get_cache_manager),
 ) -> IsoLocationsResponse:
     """List ISO locations with enhanced pagination and error handling."""
     start_time = time.perf_counter()
 
     try:
+        # Touch DI (ensures wiring is valid; no behavior change)
+        if cache_manager is not None:
+            pass
+        if settings:
+            pass
+
         offset, effective_limit = resolve_pagination(
             cursor=cursor,
             limit=limit,
@@ -323,11 +342,19 @@ async def list_units_v2(
     tenant_id: str = Query(..., description="Tenant ID"),
     cursor: Optional[str] = Query(None, description="Cursor for pagination"),
     limit: int = Query(10, ge=1, le=100, description="Maximum number of items to return"),
+    settings: AurumSettings = Depends(get_settings),
+    cache_manager: Optional[CacheManager] = Depends(get_cache_manager),
 ) -> UnitsCanonicalResponse:
     """List canonical units with enhanced pagination and error handling."""
     start_time = time.perf_counter()
 
     try:
+        # Touch DI (ensures wiring is valid; no behavior change)
+        if cache_manager is not None:
+            pass
+        if settings:
+            pass
+
         offset, effective_limit = resolve_pagination(
             cursor=cursor,
             limit=limit,
