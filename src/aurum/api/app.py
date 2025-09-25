@@ -25,13 +25,13 @@ from fastapi import Depends, FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.responses import JSONResponse
-from starlette.datastructures import MutableHeaders
 
 from aurum.core import AurumSettings
 from aurum.telemetry import configure_telemetry
 
 from aurum.performance.warehouse import WarehouseMaintenanceCoordinator
 from .cache.cache import AsyncCache, CacheBackend, CacheManager
+from .cache.global_manager import set_global_cache_manager
 from .cache.golden_query_cache import initialize_golden_query_cache
 from .features.feature_flags import initialize_feature_flags
 from .idempotency import initialize_idempotency_manager, IdempotencyConfig
@@ -42,8 +42,10 @@ from .auth import AuthMiddleware, OIDCConfig
 from .config import CacheConfig
 from .rate_limiting.ratelimit import RateLimitConfig, RateLimitMiddleware, ratelimit_admin_router
 from .runtime_config import router as runtime_config_router
-from .routes import METRICS_MIDDLEWARE, access_log_middleware, configure_routes, router
+from .routes import METRICS_MIDDLEWARE, configure_routes, router
 from .state import configure as configure_state
+from .health import router as health_router
+from .http.middleware import access_log_middleware, create_response_headers_middleware
 # Observability router is optional during docs generation/local import. If
 # dependencies are missing, skip registering the router rather than failing
 # import (keeps app importable for tooling like docs builders).
@@ -117,23 +119,10 @@ async def create_app(settings: AurumSettings | None = None) -> FastAPI:
         app.middleware("http")(METRICS_MIDDLEWARE)
 
     # Add response headers middleware for RFC 7807 compliance
-    async def response_headers_middleware(request: Request, call_next):
-        """Ensure all responses include X-Request-Id and X-API-Version headers."""
-        from ..telemetry.context import get_request_id
+    app.middleware("http")(create_response_headers_middleware(settings))
 
-        request_id = get_request_id()
-        response = await call_next(request)
-
-        # Add required headers if not already present
-        headers = MutableHeaders(response.headers)
-        if not headers.get("X-Request-Id"):
-            headers["X-Request-Id"] = request_id
-        if not headers.get("X-API-Version"):
-            headers["X-API-Version"] = settings.api.version
-
-        return response
-
-    app.middleware("http")(response_headers_middleware)
+    # Core health endpoints
+    app.include_router(health_router)
 
     # Optional external audit middleware (logs to audit/compliance/security channels)
     if settings.api.audit.enabled:
@@ -264,6 +253,9 @@ async def create_app(settings: AurumSettings | None = None) -> FastAPI:
             cache_service = AsyncCache(cache_cfg, backend=backend)
             app.state.cache_service = cache_service
             app.state.cache_manager = CacheManager(cache_service)
+            _routes.set_cache_manager(app.state.cache_manager)
+            # Transitional: publish a global CacheManager handle for service code
+            set_global_cache_manager(app.state.cache_manager)
             await initialize_golden_query_cache(cache_service)
 
             # Initialize idempotency manager
@@ -284,6 +276,8 @@ async def create_app(settings: AurumSettings | None = None) -> FastAPI:
             cache_service = None
             app.state.cache_service = None
             app.state.cache_manager = None
+            _routes.set_cache_manager(None)
+            set_global_cache_manager(None)
             logger.warning("Cache subsystem failed to initialize: %s", exc, exc_info=True)
 
         nonlocal maintenance_coordinator
@@ -313,6 +307,8 @@ async def create_app(settings: AurumSettings | None = None) -> FastAPI:
                 await cache_service.clear()
         app.state.cache_service = None
         app.state.cache_manager = None
+        _routes.set_cache_manager(None)
+        set_global_cache_manager(None)
 
     await version_manager.set_default_version("2.0.0")
 
@@ -367,7 +363,6 @@ __all__ = ["create_app", "app"]
 
 
 _ROUTE_EXPORTS = {
-    "_CACHE",
     "_metadata_cache_get_or_set",
     "_persist_ppa_valuation_records",
     "_get_principal",
