@@ -28,6 +28,7 @@ import random
 import time
 import threading
 from contextlib import asynccontextmanager
+import threading
 from datetime import datetime, timedelta
 from enum import Enum
 from typing import Any, Dict, List, Optional, Tuple, Union, AsyncIterator
@@ -501,6 +502,72 @@ class TrinoClient:
         )
 
         raise last_exception
+
+    # --- Synchronous convenience wrappers ---
+    def execute_query_sync(
+        self,
+        query: str,
+        params: Optional[Dict[str, Any]] = None,
+        tenant_id: Optional[str] = None,
+        *,
+        use_cache: bool = False,
+        cache_ttl_seconds: Optional[int] = None,
+        force_refresh: bool = False,
+    ) -> List[Dict[str, Any]]:
+        """Blocking wrapper around ``execute_query``.
+
+        Avoids using asyncio.run in API paths. If already inside a running
+        event loop, runs the coroutine in a dedicated thread-bound loop.
+        """
+        coro = self.execute_query(
+            query,
+            params=params,
+            tenant_id=tenant_id,
+            use_cache=use_cache,
+            cache_ttl_seconds=cache_ttl_seconds,
+            force_refresh=force_refresh,
+        )
+        try:
+            running = asyncio.get_running_loop()
+        except RuntimeError:
+            running = None
+
+        if running and running.is_running():
+            result_box: Dict[str, Any] = {}
+            error_box: Dict[str, BaseException] = {}
+
+            def _runner():
+                loop = asyncio.new_event_loop()
+                asyncio.set_event_loop(loop)
+                try:
+                    result_box["result"] = loop.run_until_complete(coro)
+                except BaseException as exc:  # propagate after join
+                    error_box["error"] = exc
+                finally:
+                    try:
+                        loop.stop()
+                    finally:
+                        loop.close()
+                        asyncio.set_event_loop(None)
+
+            t = threading.Thread(target=_runner, daemon=True)
+            t.start()
+            t.join()
+            if error_box:
+                raise error_box["error"]
+            return result_box.get("result", [])
+
+        # No running loop in this thread; create a short-lived loop
+        loop = asyncio.new_event_loop()
+        try:
+            asyncio.set_event_loop(loop)
+            return loop.run_until_complete(coro)
+        finally:
+            try:
+                loop.stop()
+            finally:
+                loop.close()
+                asyncio.set_event_loop(None)
 
     async def _execute_query_with_timeout(
         self,
