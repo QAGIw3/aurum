@@ -18,11 +18,14 @@ import time
 from typing import Any, AsyncIterator, Dict, List, Optional
 from uuid import uuid4
 
-from fastapi import APIRouter, HTTPException, Query, Request, Response
+from fastapi import APIRouter, HTTPException, Query, Request, Response, Depends
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
 from ..database import get_trino_client
+from ..deps import get_settings, get_cache_manager
+from aurum.core import AurumSettings
+from ..cache.cache import CacheManager
 from ..http import respond_with_etag, deprecation_warning_headers, csv_response
 from .pagination import (
     resolve_pagination,
@@ -61,11 +64,19 @@ async def get_curves_v2(
     cursor: Optional[str] = Query(None, description="Cursor for pagination"),
     limit: int = Query(10, ge=1, le=100, description="Maximum number of items to return"),
     name_filter: Optional[str] = Query(None, description="Filter by curve name"),
+    settings: AurumSettings = Depends(get_settings),
+    cache_manager: Optional[CacheManager] = Depends(get_cache_manager),
 ) -> CurveListResponse:
     """List curves with enhanced pagination and error handling."""
     start_time = time.perf_counter()
 
     try:
+        # Touch DI (ensures wiring is valid; no behavior change)
+        if cache_manager is not None:
+            pass
+        if settings:
+            pass
+
         # Get curve service
         service = await get_curve_service()
 
@@ -171,6 +182,7 @@ async def export_curves_v2(
     product: Optional[str] = None,
     block: Optional[str] = None,
     chunk_size: int = Query(1000, ge=100, le=5000, description="Number of rows per streamed chunk"),
+    settings: AurumSettings = Depends(get_settings),
 ) -> StreamingResponse:
     """Stream curve observations backed by Trino."""
 
