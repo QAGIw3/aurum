@@ -19,7 +19,7 @@ from aurum.api.models import (
     BulkScenarioRunDuplicate,
     ScenarioRunPriority,
 )
-from aurum.api.scenarios import router as scenarios_router
+from aurum.api.scenarios import scenarios_router
 from aurum.api.app import create_app
 
 
@@ -272,9 +272,8 @@ class TestBulkScenarioRunAPI:
         """Test successful bulk scenario run creation."""
         with patch("aurum.api.container.get_service", return_value=mock_service):
             response = client.post(
-                "/v1/scenarios/test-scenario-id/runs:bulk",
+                "/v1/scenarios/12345678-1234-5678-1234-567812345678/runs:bulk",
                 json={
-                    "scenario_id": "test-scenario-id",
                     "runs": [
                         {
                             "idempotency_key": "run-1",
@@ -292,6 +291,17 @@ class TestBulkScenarioRunAPI:
                 },
                 headers={"X-Aurum-Tenant": "test-tenant"}
             )
+
+        print(f"Response status: {response.status_code}")
+        print(f"Response body: {response.text}")
+
+        if response.status_code != 202:
+            print(f"Response headers: {dict(response.headers)}")
+            try:
+                error_detail = response.json()
+                print(f"Error detail: {error_detail}")
+            except:
+                print(f"Could not parse error response as JSON")
 
         assert response.status_code == 202
 

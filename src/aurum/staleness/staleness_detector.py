@@ -230,11 +230,21 @@ class StalenessDetector:
         # Trigger auto-remediation if configured
         if self.auto_remediation_manager:
             try:
-                await self.auto_remediation_manager.record_collector_failure(
-                    collector_name="staleness_detector",  # Using detector as collector name
-                    dataset=dataset,
-                    error_type="staleness"
-                )
+                # Note: auto_remediation_manager.record_collector_failure might be async
+                # but we're calling it from a non-async function, so we use asyncio.run()
+                import asyncio
+                if asyncio.iscoroutinefunction(self.auto_remediation_manager.record_collector_failure):
+                    asyncio.run(self.auto_remediation_manager.record_collector_failure(
+                        collector_name="staleness_detector",  # Using detector as collector name
+                        dataset=dataset,
+                        error_type="staleness"
+                    ))
+                else:
+                    self.auto_remediation_manager.record_collector_failure(
+                        collector_name="staleness_detector",  # Using detector as collector name
+                        dataset=dataset,
+                        error_type="staleness"
+                    )
                 results["remediations_triggered"] += 1
             except Exception as e:
                 self.logger.log(
@@ -288,17 +298,31 @@ class StalenessDetector:
         if self.auto_remediation_manager:
             try:
                 # Register collector if not already registered
-                await self.auto_remediation_manager.register_collector(
-                    collector_name="staleness_detector",
-                    dataset=dataset
-                )
+                import asyncio
+                if asyncio.iscoroutinefunction(self.auto_remediation_manager.register_collector):
+                    asyncio.run(self.auto_remediation_manager.register_collector(
+                        collector_name="staleness_detector",
+                        dataset=dataset
+                    ))
+                else:
+                    self.auto_remediation_manager.register_collector(
+                        collector_name="staleness_detector",
+                        dataset=dataset
+                    )
 
                 # Record critical failure
-                await self.auto_remediation_manager.record_collector_failure(
-                    collector_name="staleness_detector",
-                    dataset=dataset,
-                    error_type="critical_staleness"
-                )
+                if asyncio.iscoroutinefunction(self.auto_remediation_manager.record_collector_failure):
+                    asyncio.run(self.auto_remediation_manager.record_collector_failure(
+                        collector_name="staleness_detector",
+                        dataset=dataset,
+                        error_type="critical_staleness"
+                    ))
+                else:
+                    self.auto_remediation_manager.record_collector_failure(
+                        collector_name="staleness_detector",
+                        dataset=dataset,
+                        error_type="critical_staleness"
+                    )
                 results["remediations_triggered"] += 1
             except Exception as e:
                 self.logger.log(

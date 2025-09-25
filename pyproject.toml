@@ -314,6 +314,7 @@ markers = [
     "scenario_pipeline: Scenario pipeline tests",
     "asyncio: AsyncIO tests",
 ]
+asyncio_mode = "auto"
 
 [tool.coverage.run]
 source = ["src/aurum"]

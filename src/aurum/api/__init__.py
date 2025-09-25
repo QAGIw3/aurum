@@ -10,9 +10,9 @@ if _os.getenv("AURUM_API_LIGHT_INIT", "0") == "1":
     __all__: list[str] = []
 else:
     _EXPORTS: dict[str, tuple[str, str | None]] = {
-        # Application factory
+        # Application factory: export the module for testing convenience
         "create_app": ("aurum.api.app", "create_app"),
-        "app": ("aurum.api.app", "app"),
+        "app": ("aurum.api.app", None),
         # Routers
         "health_router": ("aurum.api.health", "router"),
         "curves_router": ("aurum.api.v1.curves", "router"),
@@ -105,6 +105,14 @@ else:
         "OptimizationSuggestion": ("aurum.api.database", "OptimizationSuggestion"),
         "QueryPerformanceLevel": ("aurum.api.database", "QueryPerformanceLevel"),
         "OptimizationType": ("aurum.api.database", "OptimizationType"),
+        # Trino client
+        "get_trino_client": ("aurum.api.database", "get_trino_client"),
+        "get_trino_client_by_catalog": ("aurum.api.database", "get_trino_client_by_catalog"),
+        "get_trino_raw_catalog_client": ("aurum.api.database", "get_trino_raw_catalog_client"),
+        "get_trino_market_catalog_client": ("aurum.api.database", "get_trino_market_catalog_client"),
+        "get_trino_catalog_config": ("aurum.api.database", "get_trino_catalog_config"),
+        "configure_trino_catalogs": ("aurum.api.database", "configure_trino_catalogs"),
+        "TrinoClientManager": ("aurum.api.database", "TrinoClientManager"),
         # Feature flags
         "get_feature_manager": ("aurum.api.features.feature_flags", "get_feature_manager"),
         "initialize_feature_flags": ("aurum.api.features.feature_flags", "initialize_feature_flags"),

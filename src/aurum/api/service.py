@@ -24,7 +24,6 @@ from aurum.core.pagination import Cursor as _Cursor
 from aurum.telemetry import get_tracer
 
 from .config import CacheConfig, TrinoConfig
-from .trino_client import get_trino_client
 from .query import (
     DIFF_ORDER_COLUMNS,
     build_curve_diff_query,
@@ -274,7 +273,8 @@ def _execute_trino_query(
     query: str,
     params: Optional[Dict[str, Any]] = None,
 ) -> List[Dict[str, Any]]:
-
+    # Local import to avoid heavy dependencies during module import in tests
+    from .database.trino_client import get_trino_client
     client = get_trino_client(trino_cfg)
     return client.execute_query_sync(query, params=params, use_cache=True)
 
@@ -667,6 +667,9 @@ def query_curves(
                 except Exception:
                     pass
             return cached_rows, 0.0
+
+    effective_limit = max(int(limit), 0)
+    effective_offset = max(int(offset), 0)
 
     tracer = get_tracer("aurum.api.service")
     with tracer.start_as_current_span("query_curves.execute") as span:

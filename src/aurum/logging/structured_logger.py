@@ -10,8 +10,11 @@ from datetime import datetime, timezone
 from enum import Enum
 from typing import Any, Dict, List, Optional
 
-from .kafka_sink import KafkaLogSink
-from .clickhouse_sink import ClickHouseLogSink
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:  # Avoid runtime circular imports
+    from .kafka_sink import KafkaLogSink
+    from .clickhouse_sink import ClickHouseLogSink
 
 
 class LogLevel(str, Enum):
@@ -112,8 +115,8 @@ class StructuredLogger:
     def __init__(
         self,
         source_name: str,
-        kafka_sink: Optional[KafkaLogSink] = None,
-        clickhouse_sink: Optional[ClickHouseLogSink] = None,
+        kafka_sink: Optional["KafkaLogSink"] = None,
+        clickhouse_sink: Optional["ClickHouseLogSink"] = None,
         dataset: Optional[str] = None
     ):
         """Initialize structured logger.
@@ -428,3 +431,9 @@ def create_logger(
         clickhouse_sink=clickhouse_sink if clickhouse_url else None,
         dataset=dataset
     )
+
+
+# Compatibility shim: many modules import get_logger from this module.
+def get_logger(name: str):  # pragma: no cover - trivial adapter
+    from aurum.observability.logging import get_logger as _get
+    return _get(name)

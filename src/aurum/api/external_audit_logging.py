@@ -21,7 +21,7 @@ import os
 import threading
 from pathlib import Path
 from datetime import datetime, timezone
-from typing import Dict, Any, Optional, List, Tuple
+from typing import Dict, Any, Optional, List, Tuple, Union
 from uuid import uuid4
 
 from fastapi import Request, Response
@@ -226,7 +226,7 @@ class ClickHouseAuditSink(AuditSink):
 class ExternalDataAuditLogger:
     """Enhanced audit logger for external data operations with compliance support."""
 
-    def __init__(self, config: ExternalAuditSettings | None = None):
+    def __init__(self, config: Optional[ExternalAuditSettings] = None):
         self.config = config or ExternalAuditSettings()
         self.audit_logger = logging.getLogger("audit.external_data")
         self.audit_logger.setLevel(logging.INFO)

@@ -9,8 +9,6 @@ from .trino_admin import router as trino_admin_router
 from .trino_client import (
     get_trino_client,
     get_trino_client_by_catalog,
-    get_trino_raw_catalog_client,
-    get_trino_market_catalog_client,
     get_trino_catalog_config,
     configure_trino_catalogs,
     TrinoClientManager,
@@ -75,8 +73,6 @@ __all__ = [
     # Trino client functions
     "get_trino_client",
     "get_trino_client_by_catalog",
-    "get_trino_raw_catalog_client",
-    "get_trino_market_catalog_client",
     "get_trino_catalog_config",
     "configure_trino_catalogs",
     "TrinoClientManager",

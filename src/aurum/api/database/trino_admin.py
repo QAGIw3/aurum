@@ -9,9 +9,9 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
 
 from aurum.telemetry.context import get_request_id
-from .routes import _get_principal, _require_admin
-from .trino_client import get_trino_client, get_trino_raw_catalog_client, get_trino_market_catalog_client
-from .state import get_settings
+from ..routes import _get_principal, _require_admin
+from .trino_client import get_trino_client
+from ..state import get_settings
 from .config import TrinoCatalogType, TrinoAccessLevel
 
 
@@ -373,14 +373,14 @@ async def trino_catalog_info(
     start_time = time.perf_counter()
 
     try:
-        from .trino_client import get_trino_catalog_config, get_trino_client_by_catalog
+        from .trino_client import get_trino_catalog_config
 
         # Validate catalog type
         if catalog_type not in [TrinoCatalogType.RAW.value, TrinoCatalogType.MARKET.value]:
             raise HTTPException(status_code=400, detail=f"Unknown catalog type: {catalog_type}")
 
         config = get_trino_catalog_config(catalog_type)
-        client = get_trino_client_by_catalog(catalog_type)
+        client = get_trino_client(catalog_type)
 
         # Get health status for this catalog
         health_status = await client.get_health_status()
@@ -438,14 +438,14 @@ async def validate_catalog_access(
     start_time = time.perf_counter()
 
     try:
-        from .trino_client import get_trino_client_by_catalog, get_trino_catalog_config
+        from .trino_client import get_trino_catalog_config
 
         # Validate catalog type
         if catalog_type not in [TrinoCatalogType.RAW.value, TrinoCatalogType.MARKET.value]:
             raise HTTPException(status_code=400, detail=f"Unknown catalog type: {catalog_type}")
 
         config = get_trino_catalog_config(catalog_type)
-        client = get_trino_client_by_catalog(catalog_type)
+        client = get_trino_client(catalog_type)
 
         # Validate the operation
         await client.validate_access(operation)

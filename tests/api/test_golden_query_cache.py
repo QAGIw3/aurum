@@ -778,7 +778,7 @@ class TestGoldenQueryErrorHandling:
                 await mock_cache.invalidate_dependencies(["test_table"])
                 mock_log.assert_called()  # Should log the error
 
-    def test_malformed_cache_entries(self):
+    async def test_malformed_cache_entries(self):
         """Test handling of malformed cache entries."""
         with patch("aurum.api.golden_query_cache.get_golden_query_cache") as mock_get_cache:
             mock_cache = AsyncMock()

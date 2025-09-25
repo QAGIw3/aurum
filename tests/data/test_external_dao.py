@@ -71,7 +71,7 @@ class TestExternalDAO:
         """Create ExternalDAO with mocked Trino client."""
         return ExternalDAO(trino_client=mock_trino_client)
 
-    def test_get_providers_success(self, dao, mock_trino_client):
+    async def test_get_providers_success(self, dao, mock_trino_client):
         """Test successful providers retrieval."""
         # Mock query result
         mock_trino_client.execute_query.return_value = [

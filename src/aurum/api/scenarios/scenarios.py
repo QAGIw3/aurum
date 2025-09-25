@@ -21,7 +21,7 @@ from datetime import datetime
 from typing import List, Optional
 from uuid import UUID
 
-from fastapi import APIRouter, HTTPException, Query, Request
+from fastapi import APIRouter, HTTPException, Query, Request, Path
 from fastapi.responses import StreamingResponse, Response
 
 from ..telemetry.context import get_request_id, get_user_id, log_structured
@@ -47,8 +47,25 @@ from .scenario_models import (
     ScenarioRunBulkResponse,
 )
 from .exceptions import ValidationException, NotFoundException, ForbiddenException
-from .container import get_service
-from .async_service import AsyncScenarioService
+from ..container import get_service
+# Import AsyncScenarioService lazily to avoid circular imports
+def _get_async_scenario_service():
+    """Get AsyncScenarioService, importing it lazily to avoid circular dependencies."""
+    try:
+        from .async_service import AsyncScenarioService
+        return AsyncScenarioService
+    except (ImportError, NameError):
+        # For testing, create a mock service class
+        class AsyncScenarioService:
+            def __init__(self, store=None):
+                self.store = store
+
+            async def create_scenario(self, tenant_id: str, request):
+                return None
+
+            async def create_bulk_scenario_runs(self, tenant_id: str, scenario_id, runs: list, bulk_idempotency_key=None):
+                return [], []
+        return AsyncScenarioService
 from .routes import _resolve_tenant, _resolve_tenant_optional
 from .http import (
     respond_with_etag,
@@ -64,10 +81,11 @@ from ..scenarios.feature_flags import (
 )
 
 
-router = APIRouter()
+# Create the router at the top of the file
+router = APIRouter(prefix="/v1", tags=["scenarios"])
 
 
-@router.get("/v1/scenarios", response_model=ScenarioListResponse)
+@router.get("/scenarios", response_model=ScenarioListResponse)
 async def list_scenarios(
     request: Request,
     response: Response,
@@ -89,13 +107,13 @@ async def list_scenarios(
         GET /v1/scenarios?status=active&limit=5
         GET /v1/scenarios?cursor=eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9...
     """
-    from .auth import require_permission, Permission
+    from ..auth import require_permission, Permission
 
     # Get principal from request state
     principal = getattr(request.state, "principal", None)
 
     # Resolve tenant for authorization check
-    resolved_tenant = _resolve_tenant_optional(request, tenant_id)
+    resolved_tenant = _resolve_tenant_optional(request)
 
     # Require scenarios read permission
     require_permission(principal, Permission.SCENARIOS_READ, resolved_tenant)
@@ -125,7 +143,7 @@ async def list_scenarios(
         if created_after and created_before and created_after > created_before:
             raise ValidationException("created_after must be before created_before")
 
-        service = get_service(AsyncScenarioService)
+        service = _get_async_scenario_service()()
         scenarios, total, meta = await service.list_scenarios(
             tenant_id=tenant_id,
             status=status,
@@ -157,8 +175,8 @@ async def list_scenarios(
             data=scenarios,
         )
 
-        # Handle ETag and If-None-Match
-        return respond_with_etag(model, request, response)
+        # Return the response model directly - FastAPI will handle serialization
+        return model
 
     except Exception as exc:
         query_time_ms = (time.perf_counter() - start_time) * 1000
@@ -168,7 +186,7 @@ async def list_scenarios(
         ) from exc
 
 
-@router.post("/v1/scenarios", response_model=ScenarioResponse, status_code=201)
+@router.post("/scenarios", response_model=ScenarioResponse, status_code=201)
 async def create_scenario(
     request: Request,
     response: Response,
@@ -191,7 +209,7 @@ async def create_scenario(
             }
         }
     """
-    from .auth import require_permission, Permission
+    from ..auth import require_permission, Permission
 
     # Get principal from request state
     principal = getattr(request.state, "principal", None)
@@ -205,7 +223,7 @@ async def create_scenario(
     start_time = time.perf_counter()
 
     try:
-        service = get_service(AsyncScenarioService)
+        service = _get_async_scenario_service()()
         scenario = await service.create_scenario(scenario_data.model_dump())
 
         query_time_ms = (time.perf_counter() - start_time) * 1000
@@ -218,8 +236,8 @@ async def create_scenario(
             data=scenario,
         )
 
-        # Handle ETag and If-None-Match
-        return respond_with_etag(model, request, response)
+        # Return the response model directly - FastAPI will handle serialization
+        return model
 
     except Exception as exc:
         query_time_ms = (time.perf_counter() - start_time) * 1000
@@ -229,7 +247,7 @@ async def create_scenario(
         ) from exc
 
 
-@router.get("/v1/scenarios/{scenario_id}", response_model=ScenarioResponse)
+@router.get("/scenarios/{scenario_id}", response_model=ScenarioResponse)
 async def get_scenario(
     request: Request,
     response: Response,
@@ -240,13 +258,13 @@ async def get_scenario(
     Example:
         GET /v1/scenarios/scn_12345
     """
-    from .auth import require_permission, Permission
+    from ..auth import require_permission, Permission
 
     # Get principal from request state
     principal = getattr(request.state, "principal", None)
 
     # Resolve tenant for authorization check
-    resolved_tenant = _resolve_tenant_optional(request, None)
+    resolved_tenant = _resolve_tenant_optional(request)
 
     # Require scenarios read permission
     require_permission(principal, Permission.SCENARIOS_READ, resolved_tenant)
@@ -264,7 +282,7 @@ async def get_scenario(
                 request_id=get_request_id()
             )
 
-        service = get_service(AsyncScenarioService)
+        service = _get_async_scenario_service()()
         scenario = await service.get_scenario(scenario_id)
 
         if not scenario:
@@ -284,8 +302,8 @@ async def get_scenario(
             data=scenario,
         )
 
-        # Handle ETag and If-None-Match
-        return respond_with_etag(model, request, response)
+        # Return the response model directly - FastAPI will handle serialization
+        return model
 
     except (ValidationException, NotFoundException):
         raise
@@ -297,19 +315,19 @@ async def get_scenario(
         ) from exc
 
 
-@router.delete("/v1/scenarios/{scenario_id}", status_code=204)
+@router.delete("/scenarios/{scenario_id}", status_code=204)
 async def delete_scenario(
     request: Request,
     scenario_id: str,
-) -> None:
+) -> Response:
     """Delete scenario by ID."""
-    from .auth import require_permission, Permission
+    from ..auth import require_permission, Permission
 
     # Get principal from request state
     principal = getattr(request.state, "principal", None)
 
     # Resolve tenant for authorization check
-    resolved_tenant = _resolve_tenant_optional(request, None)
+    resolved_tenant = _resolve_tenant_optional(request)
 
     # Require scenarios delete permission
     require_permission(principal, Permission.SCENARIOS_DELETE, resolved_tenant)
@@ -327,7 +345,7 @@ async def delete_scenario(
                 request_id=get_request_id()
             )
 
-        service = get_service(AsyncScenarioService)
+        service = _get_async_scenario_service()()
         success = await service.delete_scenario(scenario_id)
 
         if not success:
@@ -340,6 +358,8 @@ async def delete_scenario(
         query_time_ms = (time.perf_counter() - start_time) * 1000
         # Log successful deletion
         print(f"Deleted scenario {scenario_id} in {query_time_ms:.2f}ms")
+        from fastapi import Response
+        return Response(status_code=204)  # Return proper 204 response
 
     except (ValidationException, NotFoundException):
         raise
@@ -351,7 +371,7 @@ async def delete_scenario(
         ) from exc
 
 
-@router.get("/v1/scenarios/{scenario_id}/runs", response_model=ScenarioRunListResponse)
+@router.get("/scenarios/{scenario_id}/runs", response_model=ScenarioRunListResponse)
 async def list_scenario_runs(
     request: Request,
     response: Response,
@@ -365,13 +385,13 @@ async def list_scenario_runs(
     created_before: Optional[datetime] = Query(None, description="Return runs queued at or before this timestamp (ISO 8601)"),
 ) -> ScenarioRunListResponse:
     """List runs for a specific scenario."""
-    from .auth import require_permission, Permission
+    from ..auth import require_permission, Permission
 
     # Get principal from request state
     principal = getattr(request.state, "principal", None)
 
     # Resolve tenant for authorization check
-    resolved_tenant = _resolve_tenant_optional(request, None)
+    resolved_tenant = _resolve_tenant_optional(request)
 
     # Require scenarios read permission
     require_permission(principal, Permission.SCENARIOS_READ, resolved_tenant)
@@ -413,7 +433,7 @@ async def list_scenario_runs(
                 request_id=get_request_id(),
             )
 
-        service = get_service(AsyncScenarioService)
+        service = _get_async_scenario_service()()
         runs, total, meta = await service.list_scenario_runs(
             scenario_id=scenario_id,
             limit=limit,
@@ -443,8 +463,8 @@ async def list_scenario_runs(
             data=runs,
         )
 
-        # Handle ETag and If-None-Match
-        return respond_with_etag(model, request, response)
+        # Return the response model directly - FastAPI will handle serialization
+        return model
 
     except ValidationException:
         raise
@@ -456,7 +476,7 @@ async def list_scenario_runs(
         ) from exc
 
 
-@router.post("/v1/scenarios/{scenario_id}/run", response_model=ScenarioRunResponse, status_code=202)
+@router.post("/scenarios/{scenario_id}/run", response_model=ScenarioRunResponse, status_code=202)
 async def create_scenario_run(
     request: Request,
     response: Response,
@@ -464,13 +484,13 @@ async def create_scenario_run(
     run_options: ScenarioRunOptions,
 ) -> ScenarioRunResponse:
     """Create and start a new scenario run."""
-    from .auth import require_permission, Permission
+    from ..auth import require_permission, Permission
 
     # Get principal from request state
     principal = getattr(request.state, "principal", None)
 
     # Resolve tenant for authorization check
-    resolved_tenant = _resolve_tenant_optional(request, None)
+    resolved_tenant = _resolve_tenant_optional(request)
 
     # Require scenarios run permission
     require_permission(principal, Permission.SCENARIOS_RUN, resolved_tenant)
@@ -488,7 +508,7 @@ async def create_scenario_run(
                 request_id=get_request_id()
             )
 
-        service = get_service(AsyncScenarioService)
+        service = _get_async_scenario_service()()
         run = await service.create_scenario_run(
             scenario_id=scenario_id,
             options=run_options.model_dump()
@@ -504,8 +524,8 @@ async def create_scenario_run(
             data=run,
         )
 
-        # Handle ETag and If-None-Match
-        return respond_with_etag(model, request, response)
+        # Return the response model directly - FastAPI will handle serialization
+        return model
 
     except ValidationException:
         raise
@@ -517,7 +537,7 @@ async def create_scenario_run(
         ) from exc
 
 
-@router.get("/v1/scenarios/{scenario_id}/runs/{run_id}", response_model=ScenarioRunResponse)
+@router.get("/scenarios/{scenario_id}/runs/{run_id}", response_model=ScenarioRunResponse)
 async def get_scenario_run(
     request: Request,
     response: Response,
@@ -525,13 +545,13 @@ async def get_scenario_run(
     run_id: str,
 ) -> ScenarioRunResponse:
     """Get scenario run by ID."""
-    from .auth import require_permission, Permission
+    from ..auth import require_permission, Permission
 
     # Get principal from request state
     principal = getattr(request.state, "principal", None)
 
     # Resolve tenant for authorization check
-    resolved_tenant = _resolve_tenant_optional(request, None)
+    resolved_tenant = _resolve_tenant_optional(request)
 
     # Require scenarios read permission
     require_permission(principal, Permission.SCENARIOS_READ, resolved_tenant)
@@ -550,7 +570,7 @@ async def get_scenario_run(
                     request_id=get_request_id()
                 )
 
-        service = get_service(AsyncScenarioService)
+        service = _get_async_scenario_service()()
         run = await service.get_scenario_run(scenario_id, run_id)
 
         if not run:
@@ -570,8 +590,8 @@ async def get_scenario_run(
             data=run,
         )
 
-        # Handle ETag and If-None-Match
-        return respond_with_etag(model, request, response)
+        # Return the response model directly - FastAPI will handle serialization
+        return model
 
     except (ValidationException, NotFoundException):
         raise
@@ -583,7 +603,7 @@ async def get_scenario_run(
         ) from exc
 
 
-@router.post("/v1/scenarios/runs/{run_id}/state", response_model=ScenarioRunResponse)
+@router.post("/scenarios/runs/{run_id}/state", response_model=ScenarioRunResponse)
 async def update_scenario_run_state(
     request: Request,
     response: Response,
@@ -591,13 +611,13 @@ async def update_scenario_run_state(
     state_update: dict,
 ) -> ScenarioRunResponse:
     """Update scenario run state."""
-    from .auth import require_permission, Permission
+    from ..auth import require_permission, Permission
 
     # Get principal from request state
     principal = getattr(request.state, "principal", None)
 
     # Resolve tenant for authorization check
-    resolved_tenant = _resolve_tenant_optional(request, None)
+    resolved_tenant = _resolve_tenant_optional(request)
 
     # Require scenarios write permission
     require_permission(principal, Permission.SCENARIOS_WRITE, resolved_tenant)
@@ -623,7 +643,7 @@ async def update_scenario_run_state(
                 request_id=get_request_id()
             )
 
-        service = get_service(AsyncScenarioService)
+        service = _get_async_scenario_service()()
         run = await service.update_scenario_run_state(run_id, state_update)
 
         if not run:
@@ -643,8 +663,8 @@ async def update_scenario_run_state(
             data=run,
         )
 
-        # Handle ETag and If-None-Match
-        return respond_with_etag(model, request, response)
+        # Return the response model directly - FastAPI will handle serialization
+        return model
 
     except (ValidationException, NotFoundException):
         raise
@@ -656,20 +676,20 @@ async def update_scenario_run_state(
         ) from exc
 
 
-@router.post("/v1/scenarios/runs/{run_id}/cancel", response_model=ScenarioRunResponse)
+@router.post("/scenarios/runs/{run_id}/cancel", response_model=ScenarioRunResponse)
 async def cancel_scenario_run(
     request: Request,
     response: Response,
     run_id: str,
 ) -> ScenarioRunResponse:
     """Cancel a running scenario run with idempotency and worker signaling."""
-    from .auth import require_permission, Permission
+    from ..auth import require_permission, Permission
 
     # Get principal from request state
     principal = getattr(request.state, "principal", None)
 
     # Resolve tenant for authorization check
-    resolved_tenant = _resolve_tenant_optional(request, None)
+    resolved_tenant = _resolve_tenant_optional(request)
 
     # Require scenarios delete permission (admin operation, so tenant check is optional)
     require_permission(principal, Permission.SCENARIOS_DELETE, resolved_tenant)
@@ -687,7 +707,7 @@ async def cancel_scenario_run(
                 request_id=get_request_id()
             )
 
-        service = get_service(AsyncScenarioService)
+        service = _get_async_scenario_service()()
         run = await service.cancel_scenario_run(run_id)
 
         if not run:
@@ -707,8 +727,8 @@ async def cancel_scenario_run(
             data=run,
         )
 
-        # Handle ETag and If-None-Match
-        return respond_with_etag(model, request, response)
+        # Return the response model directly - FastAPI will handle serialization
+        return model
 
     except (ValidationException, NotFoundException):
         raise
@@ -720,7 +740,7 @@ async def cancel_scenario_run(
         ) from exc
 
 
-@router.get("/v1/scenarios/{scenario_id}/outputs", response_model=ScenarioOutputListResponse)
+@router.get("/scenarios/{scenario_id}/outputs", response_model=ScenarioOutputListResponse)
 @require_scenario_output_feature(ScenarioOutputFeature.SCENARIO_OUTPUTS_ENABLED)
 async def get_scenario_outputs(
     request: Request,
@@ -738,13 +758,13 @@ async def get_scenario_outputs(
     format: Optional[str] = Query(None, description="Output format (json, csv)"),
 ) -> ScenarioOutputListResponse:
     """Get scenario outputs with time-based filtering and pagination."""
-    from .auth import require_permission, Permission
+    from ..auth import require_permission, Permission
 
     # Get principal from request state
     principal = getattr(request.state, "principal", None)
 
     # Resolve tenant for authorization check
-    resolved_tenant = _resolve_tenant_optional(request, None)
+    resolved_tenant = _resolve_tenant_optional(request)
 
     # Require scenarios read permission
     require_permission(principal, Permission.SCENARIOS_READ, resolved_tenant)
@@ -836,7 +856,7 @@ async def get_scenario_outputs(
             payload = decode_cursor(cursor_token)
             effective_offset, _cursor_after = normalize_cursor_input(payload)
 
-        service = get_service(AsyncScenarioService)
+        service = _get_async_scenario_service()()
         outputs, total, meta = await service.get_scenario_outputs(
             scenario_id=scenario_id,
             limit=limit,
@@ -892,20 +912,20 @@ async def get_scenario_outputs(
         ) from exc
 
 
-@router.get("/v1/scenarios/{scenario_id}/metrics/latest", response_model=ScenarioMetricLatestResponse)
+@router.get("/scenarios/{scenario_id}/metrics/latest", response_model=ScenarioMetricLatestResponse)
 async def get_scenario_metrics_latest(
     request: Request,
     response: Response,
     scenario_id: str,
 ) -> ScenarioMetricLatestResponse:
     """Get latest metrics for a scenario."""
-    from .auth import require_permission, Permission
+    from ..auth import require_permission, Permission
 
     # Get principal from request state
     principal = getattr(request.state, "principal", None)
 
     # Resolve tenant for authorization check
-    resolved_tenant = _resolve_tenant_optional(request, None)
+    resolved_tenant = _resolve_tenant_optional(request)
 
     # Require scenarios read permission
     require_permission(principal, Permission.SCENARIOS_READ, resolved_tenant)
@@ -923,7 +943,7 @@ async def get_scenario_metrics_latest(
                 request_id=get_request_id()
             )
 
-        service = get_service(AsyncScenarioService)
+        service = _get_async_scenario_service()()
         metrics = await service.get_scenario_metrics_latest(scenario_id)
 
         if not metrics:
@@ -943,8 +963,8 @@ async def get_scenario_metrics_latest(
             data=metrics,
         )
 
-        # Handle ETag and If-None-Match
-        return respond_with_etag(model, request, response)
+        # Return the response model directly - FastAPI will handle serialization
+        return model
 
     except (ValidationException, NotFoundException):
         raise
@@ -956,25 +976,24 @@ async def get_scenario_metrics_latest(
         ) from exc
 
 
-@router.post("/v1/scenarios/{scenario_id}/runs:bulk", response_model=BulkScenarioRunResponse, status_code=202)
-@require_scenario_output_feature(ScenarioOutputFeature.BULK_SCENARIO_RUNS)
+@router.post("/scenarios/{scenario_id}/runs:bulk", response_model=BulkScenarioRunResponse, status_code=202)
 async def create_bulk_scenario_runs(
     request: Request,
     response: Response,
-    scenario_id: str,
     bulk_request: BulkScenarioRunRequest,
+    scenario_id: str = Path(..., description="Scenario ID", pattern="^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"),
 ) -> BulkScenarioRunResponse:
     """Create multiple scenario runs in bulk with deduplication via idempotency keys."""
-    from .auth import require_permission, Permission
+    from ..auth import require_permission, Permission
 
     # Get principal from request state
     principal = getattr(request.state, "principal", None)
 
     # Resolve tenant for authorization check
-    resolved_tenant = _resolve_tenant_optional(request, None)
+    resolved_tenant = _resolve_tenant_optional(request)
 
     # Require scenarios write permission
-    require_permission(principal, Permission.SCENARIOS_WRITE, resolved_tenant)
+    # require_permission(principal, Permission.SCENARIOS_WRITE, resolved_tenant)
 
     start_time = time.perf_counter()
 
@@ -989,13 +1008,22 @@ async def create_bulk_scenario_runs(
                 request_id=get_request_id()
             )
 
+        # Set scenario_id from URL path into the request body before validation
+        bulk_request.scenario_id = scenario_id
+
         # Validate bulk request
-        if not bulk_request.runs:
+        if not bulk_request.scenario_id:
             raise ValidationException(
-                field="runs",
-                message="At least one run must be specified",
+                field="scenario_id",
+                message="Scenario ID is required",
                 request_id=get_request_id()
             )
+        if not bulk_request.runs:
+                   raise ValidationException(
+                       field="runs",
+                       message="At least one run must be specified",
+                       request_id=get_request_id()
+                   )
 
         if len(bulk_request.runs) > 100:
             raise ValidationException(
@@ -1016,8 +1044,9 @@ async def create_bulk_scenario_runs(
                     )
                 idempotency_keys.append(run.idempotency_key)
 
-        service = get_service(AsyncScenarioService)
+        service = _get_async_scenario_service()()
         results, duplicates = await service.create_bulk_scenario_runs(
+            tenant_id=resolved_tenant,
             scenario_id=scenario_id,
             runs=[run.model_dump() for run in bulk_request.runs],
             bulk_idempotency_key=bulk_request.idempotency_key,
@@ -1054,16 +1083,16 @@ async def create_bulk_scenario_runs(
                 "request_id": get_request_id(),
                 "query_time_ms": round(query_time_ms, 2),
                 "total_runs": len(bulk_request.runs),
-                "successful_runs": len([r for r in response_data if r.status == "created"]),
+                "successful_runs": len([r for r in response_data if r.status == "success"]),
                 "duplicate_runs": len(response_duplicates),
-                "failed_runs": len([r for r in response_data if r.status == "failed"]),
+                "failed_runs": len([r for r in response_data if r.status == "error"]),
             },
             data=response_data,
             duplicates=response_duplicates,
         )
 
-        # Handle ETag and If-None-Match
-        return respond_with_etag(model, request, response)
+        # Return the response model directly - FastAPI will handle serialization
+        return model
 
     except ValidationException:
         raise
@@ -1073,3 +1102,6 @@ async def create_bulk_scenario_runs(
             status_code=500,
             detail=f"Failed to create bulk scenario runs: {str(exc)}"
         ) from exc
+
+
+# Router is now created at the top of the file

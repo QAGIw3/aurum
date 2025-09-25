@@ -41,6 +41,20 @@ class SimpleTrinoClient:
         self.config = config
         self._connection: Optional[trino.dbapi.Connection] = None
 
+    def execute_query_sync(
+        self,
+        sql: str,
+        params: Optional[Dict[str, Any]] = None,
+        use_cache: bool | None = None,
+    ) -> List[Dict[str, Any]]:
+        """Synchronous helper used by legacy service code paths."""
+
+        async def _run() -> List[Dict[str, Any]]:
+            return await self.query(sql, params)
+
+        # `asyncio.run` raises if called from a running loop; callers run in threadpool
+        return asyncio.run(_run())
+
     async def query(self, sql: str, params: Optional[Dict[str, Any]] = None) -> List[Dict[str, Any]]:
         """Execute a query and return results."""
         conn = await self._get_connection()
@@ -317,6 +331,39 @@ def get_trino_client(catalog: str = "iceberg"):
     return _client_manager.get_client(catalog)
 
 
+def get_default_trino_client():
+    """Get the default Trino client."""
+    return get_trino_client("iceberg")
+
+
+def get_trino_client_by_catalog(catalog: str):
+    """Get Trino client for specified catalog by catalog type."""
+    return _client_manager.get_client(catalog)
+
+def get_trino_catalog_config():
+    """Get Trino catalog configuration."""
+    # This is a placeholder implementation
+    # In a real implementation, this would return catalog configuration
+    return {}
+
+def configure_trino_catalogs(catalog_configs):
+    """Configure Trino catalogs."""
+    # This is a placeholder implementation
+    # In a real implementation, this would configure the catalogs
+    pass
+
+
+class TrinoClientManager:
+    """Manager for Trino clients."""
+
+    def __init__(self):
+        """Initialize the TrinoClientManager."""
+        pass
+
+    def get_client(self, catalog: str):
+        """Get a Trino client for the specified catalog."""
+        return create_trino_client(TrinoConfig())
+
 # Migration management functions
 def advance_db_migration_phase(phase: str = "hybrid") -> bool:
     """Advance database migration phase."""
@@ -356,10 +403,10 @@ __all__ = [
     "create_trino_client",
     "HybridTrinoClientManager",
     "get_trino_client",
+    "get_default_trino_client",
     "advance_db_migration_phase",
     "rollback_db_migration_phase",
     "get_db_migration_status",
     "DB_FEATURE_FLAGS",
     "DatabaseMigrationMetrics",
 ]
-

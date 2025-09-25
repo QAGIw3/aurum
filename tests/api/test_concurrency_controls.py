@@ -23,18 +23,18 @@ from aurum.api.concurrency_middleware import (
     create_concurrency_middleware,
 )
 from aurum.api.exceptions import ServiceUnavailableException
-from aurum.api.trino_client import (
-    TrinoClient,
-    TrinoClientManager,
-    CircuitBreaker,
-    CircuitBreakerState,
-    ConnectionPool,
-    RetryConfig,
-    TimeoutConfig,
+from aurum.api.database.trino_client import (
+    SimpleTrinoClient as TrinoClient,
+    HybridTrinoClientManager as TrinoClientManager,
     get_trino_client,
     get_default_trino_client,
 )
+from aurum.common.circuit_breaker import CircuitBreaker
+from aurum.staleness.auto_remediation import CircuitBreakerState
+from aurum.performance.connection_pool import ConnectionPool
+from aurum.external.collect.base import RetryConfig
 from aurum.api.config import TrinoConfig
+from aurum.api.database.config import TrinoConfig as DatabaseTrinoConfig
 
 
 class TestRequestLimits:

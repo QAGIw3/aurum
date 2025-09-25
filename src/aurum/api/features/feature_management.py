@@ -48,20 +48,20 @@ class FeatureFlagResponse(BaseModel):
 
 class FeatureFlagListResponse(BaseModel):
     """Response model for feature flag list."""
-    meta: Dict[str, any]
+    meta: Dict[str, Any]
     data: List[FeatureFlagResponse]
 
 
 class FeatureFlagDetailResponse(BaseModel):
     """Response model for detailed feature flag data."""
-    meta: Dict[str, any]
-    data: Dict[str, any]
+    meta: Dict[str, Any]
+    data: Dict[str, Any]
 
 
 class FeatureRuleRequest(BaseModel):
     """Request model for creating a feature rule."""
     name: str = Field(..., description="Rule name")
-    conditions: Dict[str, any] = Field(default_factory=dict, description="Rule conditions")
+    conditions: Dict[str, Any] = Field(default_factory=dict, description="Rule conditions")
     rollout_percentage: float = Field(100.0, description="Rollout percentage")
     user_segments: List[str] = Field([], description="User segments")
     required_flags: List[str] = Field([], description="Required flags")
@@ -88,8 +88,8 @@ class FeatureTagsUpdateRequest(BaseModel):
 
 class FeatureStatsResponse(BaseModel):
     """Response model for feature statistics."""
-    meta: Dict[str, any]
-    data: Dict[str, any]
+    meta: Dict[str, Any]
+    data: Dict[str, Any]
 
 
 class FeatureEvaluationRequest(BaseModel):
@@ -101,20 +101,20 @@ class FeatureEvaluationRequest(BaseModel):
 
 class FeatureEvaluationResponse(BaseModel):
     """Response model for feature evaluation."""
-    meta: Dict[str, any]
-    data: Dict[str, any]
+    meta: Dict[str, Any]
+    data: Dict[str, Any]
 
 
 class ABTestListResponse(BaseModel):
     """Response model for A/B test list."""
-    meta: Dict[str, any]
-    data: List[Dict[str, any]]
+    meta: Dict[str, Any]
+    data: List[Dict[str, Any]]
 
 
 class FeatureUsageResponse(BaseModel):
     """Response model for feature usage statistics."""
-    meta: Dict[str, any]
-    data: Dict[str, any]
+    meta: Dict[str, Any]
+    data: Dict[str, Any]
 
 
 router = APIRouter()
@@ -123,8 +123,8 @@ router = APIRouter()
 @router.post("/v1/admin/features", response_model=FeatureFlagDetailResponse)
 async def create_feature_flag(
     request: Request,
-    principal=Depends(_routes._get_principal),
     flag_data: FeatureFlagCreateRequest,
+    principal=Depends(_routes._get_principal),
 ) -> Dict[str, str]:
     """Create a new feature flag."""
     start_time = time.perf_counter()
@@ -179,11 +179,11 @@ async def create_feature_flag(
 @router.get("/v1/admin/features", response_model=FeatureFlagListResponse)
 async def list_feature_flags(
     request: Request,
-    principal=Depends(_routes._get_principal),
     status: Optional[str] = Query(None, description="Filter by status"),
     tag: Optional[str] = Query(None, description="Filter by tag"),
     page: int = Query(1, description="Page number", ge=1),
     limit: int = Query(50, description="Items per page", ge=1, le=100),
+    principal=Depends(_routes._get_principal),
 ) -> Dict[str, str]:
     """List all feature flags with optional filtering."""
     start_time = time.perf_counter()
@@ -273,8 +273,8 @@ async def list_feature_flags(
 @router.get("/v1/admin/features/{flag_key}")
 async def get_feature_flag(
     request: Request,
-    principal=Depends(_routes._get_principal),
     flag_key: str,
+    principal=Depends(_routes._get_principal),
 ) -> Dict[str, str]:
     """Get details for a specific feature flag."""
     start_time = time.perf_counter()
@@ -336,9 +336,9 @@ async def get_feature_flag(
 @router.put("/v1/admin/features/{flag_key}/status")
 async def update_feature_flag_status(
     request: Request,
-    principal=Depends(_routes._get_principal),
     flag_key: str,
     status: str = Body(..., description="New status"),
+    principal=Depends(_routes._get_principal),
 ) -> Dict[str, str]:
     """Update the status of a feature flag."""
     start_time = time.perf_counter()
@@ -383,9 +383,9 @@ async def update_feature_flag_status(
 @router.post("/v1/admin/features/{flag_key}/rules")
 async def add_feature_flag_rule(
     request: Request,
-    principal=Depends(_routes._get_principal),
     flag_key: str,
     rule_data: Dict = Body(..., description="Rule configuration"),
+    principal=Depends(_routes._get_principal),
 ) -> Dict[str, str]:
     """Add a rule to a feature flag."""
     start_time = time.perf_counter()
@@ -433,12 +433,12 @@ async def add_feature_flag_rule(
 @router.post("/v1/admin/features/{flag_key}/ab-test")
 async def configure_ab_test(
     request: Request,
-    principal=Depends(_routes._get_principal),
     flag_key: str,
     variants: Dict[str, float] = Body(..., description="Variant name to percentage mapping"),
     control_variant: str = Body("control", description="Control variant name"),
     track_events: List[str] = Body([], description="Events to track"),
     end_date: Optional[str] = Body(None, description="Test end date (ISO format)"),
+    principal=Depends(_routes._get_principal),
 ) -> Dict[str, str]:
     """Configure A/B testing for a feature flag."""
     start_time = time.perf_counter()
@@ -492,8 +492,8 @@ async def configure_ab_test(
 @router.delete("/v1/admin/features/{flag_key}")
 async def delete_feature_flag(
     request: Request,
-    principal=Depends(_routes._get_principal),
     flag_key: str,
+    principal=Depends(_routes._get_principal),
 ) -> Dict[str, str]:
     """Delete a feature flag."""
     start_time = time.perf_counter()
@@ -534,9 +534,9 @@ async def delete_feature_flag(
 @router.post("/v1/admin/features/{flag_key}/tags")
 async def update_feature_flag_tags(
     request: Request,
-    principal=Depends(_routes._get_principal),
     flag_key: str,
     tags: List[str] = Body(..., description="New tags list"),
+    principal=Depends(_routes._get_principal),
 ) -> Dict[str, str]:
     """Update tags for a feature flag."""
     start_time = time.perf_counter()
