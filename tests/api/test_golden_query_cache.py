@@ -14,7 +14,6 @@ from aurum.api.golden_query_cache import (
     QueryType,
     CacheInvalidationStrategy,
     QueryPattern,
-    CacheEntry,
     GoldenQueryCache,
     cache_golden_query,
     invalidate_on_write,
@@ -24,7 +23,9 @@ from aurum.api.golden_query_cache import (
     generate_cache_recommendations,
     initialize_golden_query_cache,
 )
-from aurum.api.cache import AsyncCache, CacheBackend, CacheConfig
+from aurum.api.cache.golden_query_cache import CacheEntry
+from aurum.api.cache import AsyncCache, CacheBackend
+from aurum.api.config import CacheConfig
 
 
 class TestQueryType:
