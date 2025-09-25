@@ -454,29 +454,17 @@ def query_eia_series(
         descending=descending,
     )
 
-    client = _maybe_redis_client(cache_cfg)
-    cache_key = None
     prefix = f"{cache_cfg.namespace}:" if cache_cfg.namespace else ""
-    if client is not None:
-        cache_key = f"{prefix}eia-series:{_cache_key({**params, 'sql': sql})}"
-        cached = client.get(cache_key)
-        if cached:  # pragma: no cover
-            data = json.loads(cached)
-            return data, 0.0
-
+    key = f"{prefix}eia-series:{_cache_key({**params, 'sql': sql})}"
     start_time = time.perf_counter()
-    rows: List[Dict[str, Any]] = _execute_trino_query(trino_cfg, sql)
+    manager = get_global_cache_manager()
+    rows: List[Dict[str, Any]] = cache_get_or_set_sync(
+        manager,
+        key,
+        lambda: _execute_trino_query(trino_cfg, sql),
+        cache_cfg.ttl_seconds,
+    )
     elapsed = (time.perf_counter() - start_time) * 1000.0
-
-    if client is not None and cache_key is not None:
-        try:  # pragma: no cover
-            client.setex(cache_key, cache_cfg.ttl_seconds, json.dumps(rows, default=str))
-            index_key = f"{prefix}eia-series:index"
-            client.sadd(index_key, cache_key)
-            client.expire(index_key, cache_cfg.ttl_seconds)
-        except Exception:
-            pass
-
     return rows, elapsed
 
 
@@ -763,17 +751,16 @@ def query_curves_diff(
         cursor_after=cursor_after,
     )
 
-    client = _maybe_redis_client(cache_cfg)
-    cache_key = None
-    if client is not None:
-        cache_key = f"curves-diff:{_cache_key({**params, 'sql': sql})}"
-        cached = client.get(cache_key)
-        if cached:  # pragma: no cover
-            data = json.loads(cached)
-            return data, 0.0
-
+    prefix = f"{cache_cfg.namespace}:" if cache_cfg.namespace else ""
+    key = f"{prefix}curves-diff:{_cache_key({**params, 'sql': sql})}"
     start = time.perf_counter()
-    rows: List[Dict[str, Any]] = _execute_trino_query(trino_cfg, sql)
+    manager = get_global_cache_manager()
+    rows: List[Dict[str, Any]] = cache_get_or_set_sync(
+        manager,
+        key,
+        lambda: _execute_trino_query(trino_cfg, sql),
+        cache_cfg.ttl_seconds,
+    )
     # Normalize fields
     for row in rows:
         row.pop("tenant_id", None)
@@ -784,12 +771,6 @@ def query_curves_diff(
             except json.JSONDecodeError:
                 row["attribution"] = None
     elapsed = (time.perf_counter() - start) * 1000.0
-
-    if client is not None and cache_key is not None:
-        try:  # pragma: no cover
-            client.setex(cache_key, cache_cfg.ttl_seconds, json.dumps(rows, default=str))
-        except Exception:
-            pass
 
     return rows, elapsed
 
@@ -2701,3 +2682,5 @@ async def invalidate_curve_cache(
             "deleted_keys": deleted_count,
         }
     )
+from .cache.global_manager import get_global_cache_manager
+from .cache.utils import cache_get_or_set_sync
