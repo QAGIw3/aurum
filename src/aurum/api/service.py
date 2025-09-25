@@ -264,8 +264,9 @@ def _execute_trino_query(
     query: str,
     params: Optional[Dict[str, Any]] = None,
 ) -> List[Dict[str, Any]]:
+    """Execute a Trino query using the unified client pool (blocking)."""
     client = get_trino_client(trino_cfg)
-    return asyncio.run(client.execute_query(query, params=params, use_cache=True))
+    return client.execute_query_sync(query, params=params, use_cache=True)
 
 
 def _build_sql(
