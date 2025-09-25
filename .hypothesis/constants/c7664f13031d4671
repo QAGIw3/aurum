@@ -1,0 +1,4 @@
+# file: /Users/mstudio/Library/Mobile Documents/com~apple~CloudDocs/dev/aurum/src/aurum/scenarios/models.py
+# hypothesis_version: 6.140.2
+
+[0.0, 1900, 2100, 'add', 'before', 'co2', 'coal', 'driver_type', 'fleet_change', 'fuel_curve', 'load_growth', 'natural_gas', 'oil', 'payload', 'policy', 'retire']

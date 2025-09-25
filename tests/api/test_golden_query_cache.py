@@ -753,7 +753,7 @@ class TestGoldenQueryErrorHandling:
 
             assert result == {"data": "computed"}
 
-    def test_invalid_query_patterns(self):
+    async def test_invalid_query_patterns(self):
         """Test handling of invalid query patterns."""
         with patch("aurum.api.golden_query_cache.get_golden_query_cache") as mock_get_cache:
             mock_cache = AsyncMock()

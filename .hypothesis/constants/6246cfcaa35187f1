@@ -1,0 +1,4 @@
+# file: /Users/mstudio/Library/Mobile Documents/com~apple~CloudDocs/dev/aurum/src/aurum/core/pagination.py
+# hypothesis_version: 6.140.2
+
+[3600, ',', ':', 'Cursor', 'CursorPage', 'OffsetPage', 'Paginator', 'ascii', 'data', 'filters', 'limit', 'offset', 'sig', 'timestamp', 'utf-8']

@@ -1,0 +1,4 @@
+# file: /Users/mstudio/Library/Mobile Documents/com~apple~CloudDocs/dev/aurum/src/aurum/core/enums.py
+# hypothesis_version: 6.140.2
+
+['2X16', 'AESO', 'AUD', 'BBL', 'CAD', 'CAISO', 'CHF', 'CUSTOM', 'CurrencyCode', 'CurrencyCode | None', 'DAY_AHEAD', 'DAY_AHEAD_EXANTE', 'DAY_AHEAD_EXPOST', 'DKK', 'ERCOT', 'EUR', 'FIFTEEN_MINUTE', 'FIVE_MINUTE', 'GAL', 'GBP', 'HOUR_AHEAD', 'ISONE', 'IsoCode', 'IsoCode | None', 'IsoMarket', 'IsoMarket | None', 'JPY', 'KG', 'LB', 'METRIC_TON', 'MISO', 'MMBtu', 'MWh', 'MXN', 'NOK', 'NYISO', 'NZD', 'OFF_PEAK', 'ON_PEAK', 'OTHER', 'PJM', 'PriceBlock', 'PriceBlock | None', 'REAL_TIME', 'REAL_TIME_EXANTE', 'REAL_TIME_EXPOST', 'SEK', 'SETTLEMENT', 'SHORT_TON', 'SPP', 'SUPER_OFF_PEAK', 'THERM', 'UNKNOWN', 'USD', 'UnitOfMeasure', 'UnitOfMeasure | None', 'kWh']

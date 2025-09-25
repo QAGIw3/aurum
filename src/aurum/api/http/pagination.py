@@ -23,6 +23,33 @@ MAX_PAGE_SIZE = 500
 MAX_CURSOR_LENGTH = 1000
 
 
+def _encode_value(value: Any) -> Any:
+    if isinstance(value, datetime):
+        return {"__cursor_type__": "datetime", "value": value.isoformat()}
+    if isinstance(value, date):
+        return {"__cursor_type__": "date", "value": value.isoformat()}
+    return value
+
+
+def _decode_value(value: Any) -> Any:
+    if isinstance(value, dict) and "__cursor_type__" in value:
+        marker = value.get("__cursor_type__")
+        payload = value.get("value")
+        if marker == "datetime" and isinstance(payload, str):
+            return datetime.fromisoformat(payload)
+        if marker == "date" and isinstance(payload, str):
+            return date.fromisoformat(payload)
+    return value
+
+
+def _encode_mapping(mapping: Mapping[str, Any]) -> Dict[str, Any]:
+    return {key: _encode_value(val) for key, val in mapping.items()}
+
+
+def _decode_mapping(mapping: Mapping[str, Any]) -> Dict[str, Any]:
+    return {key: _decode_value(val) for key, val in mapping.items()}
+
+
 class SortDirection(Enum):
     """Sort direction for cursor pagination."""
     ASC = "asc"
@@ -174,24 +201,28 @@ class CursorPayload:
     version: str = "v1"
 
     def __post_init__(self):
-        if self.schema_name not in FROZEN_CURSOR_SCHEMAS:
+        if self.schema_name not in FROZEN_CURSOR_SCHEMAS and self.schema_name != "legacy":
             raise ValueError(f"Unknown cursor schema: {self.schema_name}")
+
+        if self.schema_name == "legacy":
+            return
 
         schema = FROZEN_CURSOR_SCHEMAS[self.schema_name]
         if self.version != schema.version:
             raise ValueError(f"Schema version mismatch: expected {schema.version}, got {self.version}")
 
-        # Validate that we have values for required sort keys
-        sort_keys = [key.name for key in schema.sort_keys]
-        missing_keys = set(sort_keys) - set(self.values.keys())
-        if missing_keys:
+        if not self.values:
+            missing_keys = {key.name for key in schema.sort_keys}
             raise ValueError(f"Missing cursor values for keys: {missing_keys}")
+
+        for sort_key in schema.sort_keys:
+            self.values.setdefault(sort_key.name, None)
 
     def to_dict(self) -> Dict[str, Any]:
         """Convert to dictionary for encoding."""
         return {
             "schema": self.schema_name,
-            "values": self.values,
+            "values": _encode_mapping(self.values),
             "direction": self.direction.value,
             "version": self.version
         }
@@ -207,28 +238,35 @@ def encode_cursor(payload: Dict[str, Any], schema_name: Optional[str] = None) ->
     Returns:
         Base64-encoded cursor string
     """
-    # If payload is already a CursorPayload, use its schema
+    normalized: Dict[str, Any]
+
     if isinstance(payload, CursorPayload):
+        normalized = payload.to_dict()
         schema_name = payload.schema_name
-
-    # Create standardized payload
-    if schema_name and schema_name in FROZEN_CURSOR_SCHEMAS:
+    elif isinstance(payload, dict) and "schema" in payload and "values" in payload:
+        if schema_name and payload.get("schema") != schema_name:
+            raise ValueError(
+                f"Cursor payload schema '{payload.get('schema')}' does not match provided schema '{schema_name}'"
+            )
+        schema_name = payload.get("schema")
+        normalized = dict(payload)
+        if isinstance(normalized.get("values"), Mapping):
+            normalized["values"] = _encode_mapping(normalized["values"])
+    elif schema_name and schema_name in FROZEN_CURSOR_SCHEMAS:
         schema = FROZEN_CURSOR_SCHEMAS[schema_name]
-        direction = SortDirection.ASC
-        if len(schema.sort_keys) > 0:
-            direction = schema.sort_keys[0].direction
-
-        standardized_payload = CursorPayload(
+        direction = schema.sort_keys[0].direction if schema.sort_keys else SortDirection.ASC
+        normalized = CursorPayload(
             schema_name=schema_name,
             values=payload,
-            direction=direction
-        )
-        final_payload = standardized_payload.to_dict()
+            direction=direction,
+        ).to_dict()
     else:
-        # Legacy format for backward compatibility
-        final_payload = payload
+        if isinstance(payload, Mapping):
+            normalized = _encode_mapping(payload)
+        else:
+            normalized = payload
 
-    raw = json.dumps(final_payload, separators=(",", ":")).encode("utf-8")
+    raw = json.dumps(normalized, separators=(",", ":")).encode("utf-8")
     return base64.urlsafe_b64encode(raw).decode("ascii")
 
 
@@ -250,18 +288,21 @@ def decode_cursor(token: str) -> CursorPayload:
 
         # Check if this is a new standardized cursor
         if "schema" in payload_dict and "values" in payload_dict:
+            raw_values = payload_dict.get("values", {})
+            values = _decode_mapping(raw_values) if isinstance(raw_values, Mapping) else raw_values
             return CursorPayload(
                 schema_name=payload_dict["schema"],
-                values=payload_dict["values"],
+                values=values,
                 direction=SortDirection(payload_dict.get("direction", "asc")),
                 version=payload_dict.get("version", "v1")
             )
         else:
             # Legacy format - try to infer schema from payload
             # This is a fallback for backward compatibility
+            values = _decode_mapping(payload_dict) if isinstance(payload_dict, Mapping) else payload_dict
             return CursorPayload(
                 schema_name="legacy",  # Special schema for legacy cursors
-                values=payload_dict,
+                values=values,
                 direction=SortDirection.ASC
             )
     except Exception as exc:  # pragma: no cover

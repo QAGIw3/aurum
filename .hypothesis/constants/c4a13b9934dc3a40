@@ -1,0 +1,4 @@
+# file: /Users/mstudio/Library/Mobile Documents/com~apple~CloudDocs/dev/aurum/src/aurum/api/models/common.py
+# hypothesis_version: 6.140.2
+
+['Cursor too long', 'ErrorEnvelope', 'Meta', 'Validation Error', 'constraint', 'context', 'custom', 'enum', 'format', 'length', 'max', 'min', 'next_cursor', 'pattern', 'prev_cursor', 'required', 'type', 'unique']

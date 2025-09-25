@@ -60,6 +60,16 @@ else:  # pragma: no cover - metrics optional
     SCENARIO_CACHE_MISSES = None  # type: ignore[assignment]
     SCENARIO_CACHE_INVALIDATIONS = None  # type: ignore[assignment]
 
+# Generic service cache metrics (for non-ISO, non-scenario caches)
+if _PromCounter:
+    SERVICE_CACHE_COUNTER = _PromCounter(
+        "aurum_service_cache_events_total",
+        "Service cache events (hits/misses) by endpoint.",
+        ["endpoint", "event"],
+    )
+else:  # pragma: no cover
+    SERVICE_CACHE_COUNTER = None  # type: ignore[assignment]
+
 
 class _Singleflight:
     """Simple singleflight helper to deduplicate concurrent fetches."""
@@ -264,12 +274,7 @@ def _execute_trino_query(
     query: str,
     params: Optional[Dict[str, Any]] = None,
 ) -> List[Dict[str, Any]]:
-    """Execute a Trino query using the unified client pool (blocking).
 
-    This function is intentionally synchronous to support legacy v1 code paths
-    while routing execution through the shared TrinoClient without asyncio.run
-    in API modules. The client handles pooling and timeouts.
-    """
     client = get_trino_client(trino_cfg)
     return client.execute_query_sync(query, params=params, use_cache=True)
 
@@ -525,8 +530,7 @@ def query_eia_series_dimensions(
         f"FROM {_eia_series_base_table()}{where}"
     )
 
-    client = _maybe_redis_client(cache_cfg)
-    cache_key = None
+    manager = get_global_cache_manager()
     prefix = f"{cache_cfg.namespace}:" if cache_cfg.namespace else ""
     params = {
         "series_id": series_id,
@@ -539,12 +543,16 @@ def query_eia_series_dimensions(
         "canonical_currency": canonical_currency,
         "source": source,
     }
-    if client is not None:
-        cache_key = f"{prefix}eia-series-dimensions:{_cache_key({**params, 'sql': sql})}"
-        cached = client.get(cache_key)
-        if cached:  # pragma: no cover
-            payload = json.loads(cached)
-            return payload, 0.0
+    cache_key = f"{prefix}eia-series-dimensions:{_cache_key({**params, 'sql': sql})}"
+    if manager is not None:
+        cached_payload = cache_get_sync(manager, cache_key)
+        if cached_payload is not None:
+            if SERVICE_CACHE_COUNTER:
+                try:
+                    SERVICE_CACHE_COUNTER.labels(endpoint="eia_series_dimensions", event="hit").inc()
+                except Exception:
+                    pass
+            return cached_payload, 0.0
 
     start_time = time.perf_counter()
     results: Dict[str, List[str]] = {
@@ -581,14 +589,16 @@ def query_eia_series_dimensions(
         pass
     elapsed = (time.perf_counter() - start_time) * 1000.0
 
-    if client is not None and cache_key is not None:
-        try:  # pragma: no cover
-            client.setex(cache_key, cache_cfg.ttl_seconds, json.dumps(results, default=str))
-            index_key = f"{prefix}eia-series-dimensions:index"
-            client.sadd(index_key, cache_key)
-            client.expire(index_key, cache_cfg.ttl_seconds)
+    if manager is not None:
+        try:
+            cache_set_sync(manager, cache_key, results, cache_cfg.ttl_seconds)
+            if SERVICE_CACHE_COUNTER:
+                try:
+                    SERVICE_CACHE_COUNTER.labels(endpoint="eia_series_dimensions", event="miss").inc()
+                except Exception:
+                    pass
         except Exception:
-            pass
+            LOGGER.debug("CacheManager set failed for EIA series dimensions", exc_info=True)
 
     return results, elapsed
 
@@ -645,15 +655,18 @@ def query_curves(
         descending=descending,
     )
 
-    # try cache
-    client = _maybe_redis_client(cache_cfg)
-    cache_key = None
-    if client is not None:
-        cache_key = f"curves:{_cache_key({**params, 'sql': sql})}"
-        cached = client.get(cache_key)
-        if cached:  # pragma: no cover - integration path
-            data = json.loads(cached)
-            return data, 0.0
+    # try cache via CacheManager
+    manager = get_global_cache_manager()
+    cache_key = f"curves:{_cache_key({**params, 'sql': sql})}"
+    if manager is not None:
+        cached_rows = cache_get_sync(manager, cache_key)
+        if cached_rows is not None:
+            if SERVICE_CACHE_COUNTER:
+                try:
+                    SERVICE_CACHE_COUNTER.labels(endpoint="curves", event="hit").inc()
+                except Exception:
+                    pass
+            return cached_rows, 0.0
 
     tracer = get_tracer("aurum.api.service")
     with tracer.start_as_current_span("query_curves.execute") as span:
@@ -666,11 +679,16 @@ def query_curves(
         span.set_attribute("aurum.curves.elapsed_ms", elapsed)
         span.set_attribute("aurum.curves.row_count", len(rows))
 
-    if client is not None and cache_key is not None:
-        try:  # pragma: no cover - integration path
-            client.setex(cache_key, cache_cfg.ttl_seconds, json.dumps(rows, default=str))
+    if manager is not None:
+        try:
+            cache_set_sync(manager, cache_key, rows, cache_cfg.ttl_seconds)
+            if SERVICE_CACHE_COUNTER:
+                try:
+                    SERVICE_CACHE_COUNTER.labels(endpoint="curves", event="miss").inc()
+                except Exception:
+                    pass
         except Exception:
-            pass
+            LOGGER.debug("CacheManager set failed for curves", exc_info=True)
 
     return rows, elapsed
 
@@ -960,11 +978,13 @@ def query_scenario_outputs(
         descending=descending,
     )
 
+    manager = get_global_cache_manager()
     client = _maybe_redis_client(cache_cfg)
     cache_key = None
     singleflight_key = None
     prefix = f"{cache_cfg.namespace}:" if cache_cfg.namespace else ""
     if client is not None:
+        # Legacy Redis path for testing/compatibility
         version = _get_scenario_cache_version(client, cache_cfg.namespace, tenant_id)
         cache_key = f"{prefix}scenario-outputs:v{version}:{_cache_key({**params, 'sql': sql})}"
         cached = client.get(cache_key)
@@ -976,6 +996,16 @@ def query_scenario_outputs(
                 return data, 0.0
             except Exception:
                 LOGGER.debug("Failed to decode scenario outputs cache payload", exc_info=True)
+        singleflight_key = f"sf:{cache_key}"
+    elif manager is not None:
+        version_key = _scenario_cache_version_key(cache_cfg.namespace, tenant_id)
+        version_val = cache_get_sync(manager, version_key) or "1"
+        cache_key = f"{prefix}scenario-outputs:v{version_val}:{_cache_key({**params, 'sql': sql})}"
+        cached_payload = cache_get_sync(manager, cache_key)
+        if cached_payload is not None:
+            if SCENARIO_CACHE_HITS:
+                SCENARIO_CACHE_HITS.inc()
+            return cached_payload, 0.0
         singleflight_key = f"sf:{cache_key}"
     else:
         singleflight_key = f"sf:scenario-outputs:{tenant_id}:{scenario_id}:{hash(sql)}"
@@ -1008,14 +1038,20 @@ def query_scenario_outputs(
         span.set_attribute("aurum.curves_diff.elapsed_ms", elapsed)
         span.set_attribute("aurum.curves_diff.row_count", len(rows))
 
-        if client is not None and cache_key is not None:
-            try:  # pragma: no cover
-                client.setex(cache_key, cache_cfg.ttl_seconds, json.dumps(rows, default=str))
-                index_key = _scenario_cache_index_key(cache_cfg.namespace, tenant_id, scenario_id)
-                client.sadd(index_key, cache_key)
-                client.expire(index_key, cache_cfg.ttl_seconds)
-            except Exception:
-                LOGGER.debug("Failed to populate scenario cache", exc_info=True)
+        if cache_key is not None:
+            if client is not None:
+                try:  # pragma: no cover
+                    client.setex(cache_key, cache_cfg.ttl_seconds, json.dumps(rows, default=str))
+                    index_key = _scenario_cache_index_key(cache_cfg.namespace, tenant_id, scenario_id)
+                    client.sadd(index_key, cache_key)
+                    client.expire(index_key, cache_cfg.ttl_seconds)
+                except Exception:
+                    LOGGER.debug("Failed to populate scenario cache", exc_info=True)
+            elif manager is not None:
+                try:
+                    cache_set_sync(manager, cache_key, rows, cache_cfg.ttl_seconds)
+                except Exception:
+                    LOGGER.debug("CacheManager set failed for scenario outputs", exc_info=True)
 
         return rows, elapsed
 
@@ -1360,6 +1396,7 @@ def query_scenario_metrics_latest(
     )
     params["sql"] = sql
 
+    manager = get_global_cache_manager()
     client = _maybe_redis_client(cache_cfg)
     cache_key = None
     singleflight_key = None
@@ -1376,6 +1413,16 @@ def query_scenario_metrics_latest(
                 return data, 0.0
             except Exception:
                 LOGGER.debug("Failed to decode scenario metrics cache payload", exc_info=True)
+        singleflight_key = f"sf:{cache_key}"
+    elif manager is not None:
+        version_key = _scenario_cache_version_key(cache_cfg.namespace, tenant_id)
+        version_val = cache_get_sync(manager, version_key) or "1"
+        cache_key = f"{prefix}scenario-metrics:v{version_val}:{_cache_key(params)}"
+        cached_payload = cache_get_sync(manager, cache_key)
+        if cached_payload is not None:
+            if SCENARIO_CACHE_HITS:
+                SCENARIO_CACHE_HITS.inc()
+            return cached_payload, 0.0
         singleflight_key = f"sf:{cache_key}"
     else:
         singleflight_key = f"sf:scenario-metrics:{tenant_id}:{scenario_id}:{hash(sql)}"
@@ -1402,14 +1449,20 @@ def query_scenario_metrics_latest(
         rows: List[Dict[str, Any]] = _execute_trino_query(trino_cfg, sql)
         elapsed = (time.perf_counter() - start) * 1000.0
 
-        if client is not None and cache_key is not None:
-            try:  # pragma: no cover
-                client.setex(cache_key, cache_cfg.ttl_seconds, json.dumps(rows, default=str))
-                index_key = _scenario_metrics_cache_index_key(cache_cfg.namespace, tenant_id, scenario_id)
-                client.sadd(index_key, cache_key)
-                client.expire(index_key, cache_cfg.ttl_seconds)
-            except Exception:
-                LOGGER.debug("Failed to populate scenario metrics cache", exc_info=True)
+        if cache_key is not None:
+            if client is not None:
+                try:  # pragma: no cover
+                    client.setex(cache_key, cache_cfg.ttl_seconds, json.dumps(rows, default=str))
+                    index_key = _scenario_metrics_cache_index_key(cache_cfg.namespace, tenant_id, scenario_id)
+                    client.sadd(index_key, cache_key)
+                    client.expire(index_key, cache_cfg.ttl_seconds)
+                except Exception:
+                    LOGGER.debug("Failed to populate scenario metrics cache", exc_info=True)
+            elif manager is not None:
+                try:
+                    cache_set_sync(manager, cache_key, rows, cache_cfg.ttl_seconds)
+                except Exception:
+                    LOGGER.debug("CacheManager set failed for scenario metrics", exc_info=True)
 
         return rows, elapsed
 
@@ -1420,27 +1473,36 @@ def invalidate_scenario_outputs_cache(
     scenario_id: str,
 ) -> None:
     client = _maybe_redis_client(cache_cfg)
+    manager = get_global_cache_manager()
     _publish_cache_invalidation_event(tenant_id, scenario_id)
-    if client is None:
-        return
-    _bump_scenario_cache_version(client, cache_cfg.namespace, tenant_id)
-    index_key = _scenario_cache_index_key(cache_cfg.namespace, tenant_id, scenario_id)
-    metrics_index_key = _scenario_metrics_cache_index_key(cache_cfg.namespace, tenant_id, scenario_id)
-    try:  # pragma: no cover
-        members = client.smembers(index_key)
-        if members:
-            keys = [member.decode("utf-8") if isinstance(member, bytes) else member for member in members]
-            if keys:
-                client.delete(*keys)
-        client.delete(index_key)
-        metric_members = client.smembers(metrics_index_key)
-        if metric_members:
-            metric_keys = [member.decode("utf-8") if isinstance(member, bytes) else member for member in metric_members]
-            if metric_keys:
-                client.delete(*metric_keys)
-        client.delete(metrics_index_key)
-    except Exception:
-        return
+    # Prefer version bump via CacheManager when available; fallback to Redis
+    if manager is not None:
+        version_key = _scenario_cache_version_key(cache_cfg.namespace, tenant_id)
+        try:
+            current = cache_get_sync(manager, version_key)
+            next_val = str(int(current) + 1) if isinstance(current, (int, str)) and str(current).isdigit() else "2"
+            cache_set_sync(manager, version_key, next_val, cache_cfg.ttl_seconds)
+        except Exception:
+            LOGGER.debug("CacheManager version bump failed; attempting Redis path", exc_info=True)
+    if client is not None:
+        _bump_scenario_cache_version(client, cache_cfg.namespace, tenant_id)
+        index_key = _scenario_cache_index_key(cache_cfg.namespace, tenant_id, scenario_id)
+        metrics_index_key = _scenario_metrics_cache_index_key(cache_cfg.namespace, tenant_id, scenario_id)
+        try:  # pragma: no cover
+            members = client.smembers(index_key)
+            if members:
+                keys = [member.decode("utf-8") if isinstance(member, bytes) else member for member in members]
+                if keys:
+                    client.delete(*keys)
+            client.delete(index_key)
+            metric_members = client.smembers(metrics_index_key)
+            if metric_members:
+                metric_keys = [member.decode("utf-8") if isinstance(member, bytes) else member for member in metric_members]
+                if metric_keys:
+                    client.delete(*metric_keys)
+            client.delete(metrics_index_key)
+        except Exception:
+            return
 
 
 def _decode_member(member: Any) -> str:
@@ -1450,6 +1512,20 @@ def _decode_member(member: Any) -> str:
 
 
 def invalidate_eia_series_cache(cache_cfg: CacheConfig) -> Dict[str, int]:
+    """Invalidate EIA series caches. Prefer CacheManager; fallback to Redis sets.
+
+    Returns a dict of scope -> count invalidated (0 when using CacheManager).
+    """
+    manager = get_global_cache_manager()
+    if manager is not None:
+        try:
+            # Best-effort: use broad patterns to invalidate related keys
+            # Current CacheManager.invalidate_pattern clears all; keep scope keys for reporting
+            asyncio.run(manager.invalidate_pattern("eia-series"))  # type: ignore[arg-type]
+            return {"eia-series": 0, "eia-series-dimensions": 0}
+        except Exception:
+            LOGGER.debug("CacheManager invalidate_pattern failed; attempting Redis path", exc_info=True)
+
     client = _maybe_redis_client(cache_cfg)
     prefix = f"{cache_cfg.namespace}:" if cache_cfg.namespace else ""
     scopes = {
@@ -1492,6 +1568,13 @@ def invalidate_eia_series_cache(cache_cfg: CacheConfig) -> Dict[str, int]:
 
 
 def invalidate_dimensions_cache(cache_cfg: CacheConfig) -> int:
+    manager = get_global_cache_manager()
+    if manager is not None:
+        try:
+            asyncio.run(manager.invalidate_pattern("dimensions"))  # type: ignore[arg-type]
+            return 0
+        except Exception:
+            LOGGER.debug("CacheManager invalidate_pattern failed; attempting Redis path", exc_info=True)
     client = _maybe_redis_client(cache_cfg)
     if client is None:
         return 0
@@ -1529,10 +1612,18 @@ def invalidate_dimensions_cache(cache_cfg: CacheConfig) -> int:
 
 
 def invalidate_metadata_cache(cache_cfg: CacheConfig, prefixes: Sequence[str]) -> Dict[str, int]:
+    manager = get_global_cache_manager()
+    results: Dict[str, int] = {prefix: 0 for prefix in prefixes}
+    if manager is not None:
+        try:
+            for prefix in prefixes:
+                asyncio.run(manager.invalidate_pattern(f"metadata:{prefix}"))  # type: ignore[arg-type]
+            return results
+        except Exception:
+            LOGGER.debug("CacheManager metadata invalidate failed; attempting Redis path", exc_info=True)
     client = _maybe_redis_client(cache_cfg)
     namespace = cache_cfg.namespace or "aurum"
     index_key = f"{namespace}:metadata:index"
-    results: Dict[str, int] = {prefix: 0 for prefix in prefixes}
     if client is None:
         return results
     try:
@@ -1673,25 +1764,16 @@ def _cached_iso_lmp_query(
             return cached_rows, 0.0
         _record_iso_lmp_cache_event(operation, "memory", "miss")
 
-    client = None
+    manager = None
     if ttl > 0:
-        client = _maybe_redis_client(cfg)
-        if client is not None:
+        manager = get_global_cache_manager()
+        if manager is not None:
             try:
-                cached_blob = client.get(cache_key)
+                cached_payload = cache_get_sync(manager, cache_key)
             except Exception:
-                LOGGER.debug("ISO LMP Redis cache lookup failed", exc_info=True)
-                cached_blob = None
-            if cached_blob:
-                try:
-                    decoded = (
-                        cached_blob.decode("utf-8")
-                        if isinstance(cached_blob, (bytes, bytearray))
-                        else cached_blob
-                    )
-                    cached_payload = json.loads(decoded)
-                except (UnicodeDecodeError, json.JSONDecodeError):
-                    cached_payload = []
+                LOGGER.debug("ISO LMP CacheManager lookup failed", exc_info=True)
+                cached_payload = None
+            if cached_payload is not None:
                 _record_iso_lmp_cache_event(operation, "redis", "hit")
                 if memory_ttl > 0:
                     _ISO_LMP_MEMORY_CACHE.set(cache_key, cached_payload, memory_ttl)
@@ -1702,15 +1784,12 @@ def _cached_iso_lmp_query(
     rows, elapsed = _fetch_timescale_rows(sql, params)
     _record_iso_lmp_cache_event(operation, "database", "query")
 
-    if ttl > 0:
-        if client is None:
-            client = _maybe_redis_client(cfg)
-        if client is not None:
-            try:
-                client.setex(cache_key, ttl, json.dumps(rows, default=str))
-                _record_iso_lmp_cache_event(operation, "redis", "store")
-            except Exception:
-                LOGGER.debug("ISO LMP Redis cache population failed", exc_info=True)
+    if ttl > 0 and manager is not None:
+        try:
+            cache_set_sync(manager, cache_key, rows, ttl)
+            _record_iso_lmp_cache_event(operation, "redis", "store")
+        except Exception:
+            LOGGER.debug("ISO LMP CacheManager population failed", exc_info=True)
 
     if memory_ttl > 0:
         _ISO_LMP_MEMORY_CACHE.set(cache_key, rows, memory_ttl)
@@ -2100,8 +2179,7 @@ def query_dimensions(
 
     dims = ["asset_class", "iso", "location", "market", "product", "block", "tenor_type"]
 
-    client = _maybe_redis_client(cache_cfg)
-    cache_key = None
+    manager = get_global_cache_manager()
     prefix = f"{cache_cfg.namespace}:" if cache_cfg.namespace else ""
     params = {
         "asof": asof.isoformat() if asof else None,
@@ -2109,12 +2187,16 @@ def query_dimensions(
         "limit": per_dim_limit,
         "include_counts": include_counts,
     }
-    if client is not None:
-        cache_key = f"{prefix}dimensions:{_cache_key(params)}"
-        cached = client.get(cache_key)
-        if cached:  # pragma: no cover
-            payload = json.loads(cached)
-            return payload.get("values", {}), payload.get("counts")
+    cache_key = f"{prefix}dimensions:{_cache_key(params)}"
+    if manager is not None:
+        cached_payload = cache_get_sync(manager, cache_key)
+        if cached_payload is not None:
+            if SERVICE_CACHE_COUNTER:
+                try:
+                    SERVICE_CACHE_COUNTER.labels(endpoint="dimensions", event="hit").inc()
+                except Exception:
+                    pass
+            return cached_payload.get("values", {}), cached_payload.get("counts")
 
     results: Dict[str, List[str]] = {}
     counts: Dict[str, List[Dict[str, Any]]] | None = {} if include_counts else None
@@ -2158,18 +2240,16 @@ def query_dimensions(
             values = [row.get("value") for row in rows if row.get("value") is not None]
             results[dim] = values
 
-    if client is not None and cache_key is not None:
-        try:  # pragma: no cover
-            client.setex(
-                cache_key,
-                cache_cfg.ttl_seconds,
-                json.dumps({"values": results, "counts": counts}, default=str),
-            )
-            index_key = f"{prefix}dimensions:index"
-            client.sadd(index_key, cache_key)
-            client.expire(index_key, cache_cfg.ttl_seconds)
+    if manager is not None:
+        try:
+            cache_set_sync(manager, cache_key, {"values": results, "counts": counts}, cache_cfg.ttl_seconds)
+            if SERVICE_CACHE_COUNTER:
+                try:
+                    SERVICE_CACHE_COUNTER.labels(endpoint="dimensions", event="miss").inc()
+                except Exception:
+                    pass
         except Exception:
-            pass
+            LOGGER.debug("CacheManager set failed for dimensions", exc_info=True)
     return results, counts if include_counts else None
 
 
@@ -2689,4 +2769,4 @@ async def invalidate_curve_cache(
         }
     )
 from .cache.global_manager import get_global_cache_manager
-from .cache.utils import cache_get_or_set_sync
+from .cache.utils import cache_get_or_set_sync, cache_get_sync, cache_set_sync

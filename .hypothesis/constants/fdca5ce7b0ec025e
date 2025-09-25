@@ -1,0 +1,4 @@
+# file: /Users/mstudio/Library/Mobile Documents/com~apple~CloudDocs/dev/aurum/src/aurum/telemetry/context.py
+# hypothesis_version: 6.140.2
+
+[',', ':', '[REDACTED]', 'access_token', 'aurum.structured', 'aurum_correlation_id', 'aurum_request_id', 'aurum_session_id', 'aurum_tenant_id', 'aurum_user_id', 'authorization', 'client_secret', 'cookie', 'correlation_id', 'critical', 'debug', 'error', 'event', 'id_token', 'info', 'level', 'password', 'proxy-authorization', 'refresh_token', 'request_id', 'secret', 'session', 'session_id', 'set-cookie', 'span_id', 'tenant_id', 'timestamp', 'token', 'trace_id', 'unknown', 'user_id', 'warning', 'x-api-key', 'x-aurum-api-key']
