@@ -6,10 +6,11 @@ import hashlib
 import time
 from typing import Dict, List, Optional
 
-from fastapi import APIRouter, HTTPException, Query, Request, Body
+from fastapi import APIRouter, HTTPException, Query, Request, Body, Depends
 from pydantic import BaseModel, Field
 
 from ..telemetry.context import get_request_id
+from .. import routes as _routes
 from .feature_flags import (
     get_feature_manager,
     FeatureFlagStatus,

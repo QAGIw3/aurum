@@ -791,7 +791,7 @@ class TestGoldenQueryErrorHandling:
 
             assert result == {"data": "fresh"}
 
-    def test_expired_entries_cleanup(self):
+    async def test_expired_entries_cleanup(self):
         """Test cleanup of expired entries."""
         with patch("aurum.api.golden_query_cache.get_golden_query_cache") as mock_get_cache:
             mock_cache = AsyncMock()
