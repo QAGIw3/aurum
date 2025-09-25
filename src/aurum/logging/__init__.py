@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from .structured_logger import StructuredLogger, LogLevel, LogEvent
+from .structured_logger import StructuredLogger, LogLevel, LogEvent, create_logger
 from .kafka_sink import KafkaLogSink
 from .clickhouse_sink import ClickHouseLogSink
 from .metrics import LoggingMetrics
@@ -11,6 +11,7 @@ __all__ = [
     "StructuredLogger",
     "LogLevel",
     "LogEvent",
+    "create_logger",
     "KafkaLogSink",
     "ClickHouseLogSink",
     "LoggingMetrics"

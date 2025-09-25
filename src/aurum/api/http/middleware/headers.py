@@ -25,7 +25,8 @@ def create_response_headers_middleware(
         response = await call_next(request)
 
         headers = MutableHeaders(response.headers)
-        headers.setdefault("X-Request-Id", request_id)
+        if request_id:
+            headers.setdefault("X-Request-Id", request_id)
         headers.setdefault("X-API-Version", settings.api.version)
 
         return response

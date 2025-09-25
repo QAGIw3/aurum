@@ -313,6 +313,21 @@ class BaseScenarioStore:
     ) -> Optional[ScenarioRunRecord]:
         raise NotImplementedError
 
+    async def get_scenario_run_by_idempotency_key(
+        self, tenant_id: str, scenario_id: str, idempotency_key: str
+    ) -> Optional[ScenarioRunRecord]:
+        """Get a scenario run by its idempotency key.
+
+        Args:
+            tenant_id: Tenant identifier
+            scenario_id: Scenario identifier
+            idempotency_key: Idempotency key to look up
+
+        Returns:
+            The scenario run record if found, None otherwise
+        """
+        raise NotImplementedError
+
     def delete_scenario(
         self,
         scenario_id: str,
@@ -531,6 +546,25 @@ class InMemoryScenarioStore(BaseScenarioStore):
         except Exception:
             pass
         return record
+
+    async def get_scenario_run_by_idempotency_key(
+        self, tenant_id: str, scenario_id: str, idempotency_key: str
+    ) -> Optional[ScenarioRunRecord]:
+        """Get a scenario run by its idempotency key.
+
+        Args:
+            tenant_id: Tenant identifier
+            scenario_id: Scenario identifier
+            idempotency_key: Idempotency key to look up
+
+        Returns:
+            The scenario run record if found, None otherwise
+        """
+        if idempotency_key not in self._runs_by_idempotency:
+            return None
+
+        run_id = self._runs_by_idempotency[idempotency_key]
+        return self._runs.get(run_id)
 
     def create_ppa_contract(
         self,

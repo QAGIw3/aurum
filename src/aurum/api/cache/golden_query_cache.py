@@ -19,10 +19,28 @@ from functools import wraps
 
 from ..telemetry.context import get_correlation_id, get_tenant_id, log_structured
 from .cache import AsyncCache, CacheManager, CacheBackend
-from ..core import get_settings
+from aurum.core import get_settings
 
 
-class QueryType(Enum):
+def _load_settings():
+    """Load global settings or fall back to simplified settings.
+
+    Avoids forcing callers to pre-configure settings in lightweight contexts
+    (tests, small scripts) while keeping production strict by default.
+    """
+    try:
+        return get_settings()
+    except Exception:
+        try:
+            # Local import to avoid circulars and keep import time light
+            from aurum.core.settings import SimplifiedSettings  # type: ignore
+
+            return SimplifiedSettings()
+        except Exception:  # pragma: no cover - extreme fallback
+            raise
+
+
+class QueryType(str, Enum):
     """Types of queries that can be cached."""
     CURVE_DATA = "curve_data"
     CURVE_DIFF = "curve_diff"
@@ -108,7 +126,7 @@ class GoldenQueryCache:
         self._patterns: Dict[str, QueryPattern] = {}
         self._query_stats: Dict[str, Dict[str, Any]] = {}
         self._lock = asyncio.Lock()
-        self._settings = get_settings()
+        self._settings = _load_settings()
         self._default_ttl = max(60, self._settings.api.cache.cache_ttl_medium_frequency)
         self._query_ttl_overrides: Dict[str, int] = {}
 

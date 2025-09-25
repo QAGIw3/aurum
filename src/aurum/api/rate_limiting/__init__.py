@@ -1,6 +1,7 @@
 """Rate limiting functionality for the Aurum API."""
 
 from .ratelimit import RateLimitConfig, RateLimitMiddleware, ratelimit_admin_router
+from . import exceptions
 from .rate_limit_management import router as rate_limit_management_router
 from .rate_limiting import (
     create_rate_limit_manager,

@@ -10,7 +10,7 @@ working after the refactor.
 from importlib import util as _importlib_util
 from pathlib import Path as _Path
 
-_SCENARIO_MODELS_PATH = _Path(__file__).resolve().parent.parent / 'scenarios' / 'scenario_models.py'
+_SCENARIO_MODELS_PATH = "/Users/mstudio/Library/Mobile Documents/com~apple~CloudDocs/dev/aurum/src/aurum/api/scenarios/scenario_models.py"
 _spec = _importlib_util.spec_from_file_location('aurum.api.models._scenario_models', _SCENARIO_MODELS_PATH)
 if _spec is None or _spec.loader is None:  # pragma: no cover - defensive
     raise ImportError('Failed to load scenario models module')
@@ -19,6 +19,7 @@ _spec.loader.exec_module(_scenario_models)
 
 (
     BulkScenarioRunDuplicate,
+    BulkScenarioRunItem,
     BulkScenarioRunRequest,
     BulkScenarioRunResponse,
     BulkScenarioRunResult,
@@ -41,6 +42,7 @@ _spec.loader.exec_module(_scenario_models)
     ScenarioStatus,
 ) = (
     _scenario_models.BulkScenarioRunDuplicate,
+    _scenario_models.BulkScenarioRunItem,
     _scenario_models.BulkScenarioRunRequest,
     _scenario_models.BulkScenarioRunResponse,
     _scenario_models.BulkScenarioRunResult,

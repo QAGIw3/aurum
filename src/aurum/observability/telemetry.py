@@ -8,7 +8,7 @@ from contextlib import contextmanager
 from typing import Any, Dict, Optional, Union
 
 from opentelemetry import trace
-from opentelemetry.exporter.console import ConsoleSpanExporter
+from opentelemetry.sdk.trace.export import ConsoleSpanExporter
 from opentelemetry.exporter.otlp.proto.grpc.trace_exporter import OTLPSpanExporter
 from opentelemetry.sdk.resources import Resource
 from opentelemetry.sdk.trace import TracerProvider
@@ -16,7 +16,7 @@ from opentelemetry.sdk.trace.export import BatchSpanProcessor, SimpleSpanProcess
 from opentelemetry.trace import Status, StatusCode
 from opentelemetry.trace.span import Span
 
-from ..config import settings
+from aurum.core.settings import get_settings
 
 
 class DataPipelineTracer:
@@ -415,8 +415,8 @@ def get_data_pipeline_tracer() -> DataPipelineTracer:
     if _data_pipeline_tracer is None:
         _data_pipeline_tracer = DataPipelineTracer(
             service_name="aurum-data-pipeline",
-            otlp_endpoint=getattr(settings, 'OTLP_ENDPOINT', None),
-            enable_console_export=getattr(settings, 'OTLP_CONSOLE_EXPORT', False)
+            otlp_endpoint=getattr(get_settings(), 'otlp_endpoint', None),
+            enable_console_export=getattr(get_settings(), 'otlp_console_export', False)
         )
 
     return _data_pipeline_tracer

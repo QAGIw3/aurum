@@ -14,7 +14,6 @@ from aurum.api.golden_query_cache import (
     QueryType,
     CacheInvalidationStrategy,
     QueryPattern,
-    CacheEntry,
     GoldenQueryCache,
     cache_golden_query,
     invalidate_on_write,
@@ -24,7 +23,9 @@ from aurum.api.golden_query_cache import (
     generate_cache_recommendations,
     initialize_golden_query_cache,
 )
-from aurum.api.cache import AsyncCache, CacheBackend, CacheConfig
+from aurum.api.cache.golden_query_cache import CacheEntry
+from aurum.api.cache import AsyncCache, CacheBackend
+from aurum.api.config import CacheConfig
 
 
 class TestQueryType:
@@ -778,7 +779,7 @@ class TestGoldenQueryErrorHandling:
                 await mock_cache.invalidate_dependencies(["test_table"])
                 mock_log.assert_called()  # Should log the error
 
-    def test_malformed_cache_entries(self):
+    async def test_malformed_cache_entries(self):
         """Test handling of malformed cache entries."""
         with patch("aurum.api.golden_query_cache.get_golden_query_cache") as mock_get_cache:
             mock_cache = AsyncMock()
@@ -791,7 +792,7 @@ class TestGoldenQueryErrorHandling:
 
             assert result == {"data": "fresh"}
 
-    def test_expired_entries_cleanup(self):
+    async def test_expired_entries_cleanup(self):
         """Test cleanup of expired entries."""
         with patch("aurum.api.golden_query_cache.get_golden_query_cache") as mock_get_cache:
             mock_cache = AsyncMock()

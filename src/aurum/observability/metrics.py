@@ -1802,3 +1802,14 @@ __all__ = [
     "set_trino_request_queue_depth",
     "increment_trino_queue_rejections",
 ]
+
+
+# Lightweight compatibility shim for code importing a metrics client factory
+def get_metrics_client():  # pragma: no cover - trivial shim for tests
+    class _NullMetrics:
+        def __getattr__(self, name):
+            def _noop(*args, **kwargs):
+                return None
+            return _noop
+
+    return _NullMetrics()

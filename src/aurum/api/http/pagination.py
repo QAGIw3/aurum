@@ -19,7 +19,7 @@ from datetime import date, datetime
 from fastapi import HTTPException
 
 DEFAULT_PAGE_SIZE = 100
-MAX_PAGE_SIZE = 500
+MAX_PAGE_SIZE = 1000
 MAX_CURSOR_LENGTH = 1000
 
 

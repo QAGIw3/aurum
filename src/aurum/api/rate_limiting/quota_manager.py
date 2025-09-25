@@ -28,8 +28,8 @@ from typing import Any, Dict, List, Optional, Tuple, Union
 import redis
 from redis.exceptions import ConnectionError, TimeoutError
 
-from ..config import settings
-from ..observability.telemetry import get_api_telemetry
+from ...core.settings import get_settings
+from ...observability.telemetry import get_api_telemetry
 
 
 class APIQuotaExceeded(Exception):
@@ -110,10 +110,10 @@ class QuotaManager:
     def __init__(self, redis_client: Optional[redis.Redis] = None):
         """Initialize quota manager."""
         self.redis_client = redis_client or redis.Redis(
-            host=settings.REDIS_HOST,
-            port=settings.REDIS_PORT,
-            db=settings.REDIS_DB,
-            password=settings.REDIS_PASSWORD,
+            host=get_settings().redis_host,
+            port=get_settings().redis_port,
+            db=get_settings().redis_db,
+            password=get_settings().redis_password,
             decode_responses=True,
             socket_timeout=5,
             socket_connect_timeout=5,

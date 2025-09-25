@@ -68,7 +68,7 @@ _MODEL_EXPORTS = [
     "ScenarioStatus",
 ]
 
-__all__ = sorted(_MODEL_EXPORTS + ["ScenarioStore", "scenarios_router"])
+__all__ = sorted(_MODEL_EXPORTS + ["ScenarioStore", "scenarios_router", "require_permission"])
 
 
 def __getattr__(name: str) -> Any:
@@ -80,6 +80,10 @@ def __getattr__(name: str) -> Any:
         from .scenarios import router
 
         return router
+    if name == "require_permission":
+        from ..auth import require_permission
+
+        return require_permission
     raise AttributeError(f"module 'aurum.api.scenarios' has no attribute {name!r}")
 
 

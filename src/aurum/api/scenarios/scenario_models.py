@@ -238,7 +238,7 @@ class ScenarioMetricLatestResponse(AurumBaseModel):
 class BulkScenarioRunRequest(AurumBaseModel):
     """Request model for bulk scenario run submission."""
 
-    scenario_id: str = Field(..., description="Parent scenario ID")
+    scenario_id: Optional[str] = Field(None, description="Parent scenario ID")
     runs: List["BulkScenarioRunItem"] = Field(..., min_items=1, max_items=100, description="List of runs to create")
     idempotency_key: Optional[str] = Field(None, max_length=255, description="Idempotency key for deduplication")
 
@@ -280,7 +280,7 @@ class BulkScenarioRunResult(AurumBaseModel):
 
     index: int = Field(..., description="Index of the run in the request")
     idempotency_key: Optional[str] = Field(None, description="Idempotency key used")
-    run_id: str = Field(..., description="Created run ID")
+    run_id: Optional[str] = Field(None, description="Created run ID")
     status: str = Field(..., description="Status of the run creation")
     error: Optional[str] = Field(None, description="Error message if creation failed")
 
@@ -472,3 +472,12 @@ ScenarioList = ScenarioListResponse
 ScenarioRun = ScenarioRunData
 ScenarioRunList = ScenarioRunListResponse
 ScenarioOutput = ScenarioOutputResponse
+
+
+# Resolve forward references in Pydantic models
+BulkScenarioRunRequest.model_rebuild()
+BulkScenarioRunItem.model_rebuild()
+BulkScenarioRunResponse.model_rebuild()
+BulkScenarioRunResult.model_rebuild()
+BulkScenarioRunDuplicate.model_rebuild()
+ScenarioRunBulkResponse.model_rebuild()

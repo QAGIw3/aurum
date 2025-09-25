@@ -302,7 +302,7 @@ class QuotaManager:
                 alerts.append({
                     "dataset_id": dataset_id,
                     "alert_type": "records_quota_warning",
-                    "message": f"Records usage at {status['records_percent']".1f"}%",
+                    "message": f"Records usage at {status['records_percent']:.1f}%",
                     "current_usage": status["records_used"],
                     "limit": status["records_limit"],
                     "severity": "warning"

@@ -19,6 +19,7 @@ Quick links:
 - Contributing guide: CONTRIBUTING.md
  - Airflow guide: docs/airflow.md (variables: docs/airflow-variables.md)
  - Audit logging: docs/observability/audit-logging.md
+ - Fast local API tests: docs/testing-fast-local.md
 
 ## Repository layout
 
