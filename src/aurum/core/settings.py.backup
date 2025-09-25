@@ -1,0 +1,133 @@
+"""Simplified configuration system for Aurum services."""
+from __future__ import annotations
+
+import os
+from typing import Any, Dict, List, Mapping
+
+
+class SimplifiedSettings:
+    """Simplified, focused settings system."""
+
+    def __init__(self, env_prefix: str = "AURUM_"):
+        self.env_prefix = env_prefix
+        self._cache: Dict[str, Any] = {}
+        self._load_from_env()
+
+    def _load_from_env(self) -> None:
+        """Load configuration from environment variables."""
+        env = os.environ
+
+        # Core settings
+        self.environment = env.get(f"{self.env_prefix}ENV", "development")
+        self.debug = env.get(f"{self.env_prefix}DEBUG", "false").lower() in ("true", "1", "yes")
+        self.log_level = env.get(f"{self.env_prefix}LOG_LEVEL", "INFO")
+
+        # API settings
+        self.api_host = env.get(f"{self.env_prefix}API_HOST", "localhost")
+        self.api_port = int(env.get(f"{self.env_prefix}API_PORT", "8000"))
+        self.api_cors_origins = self._split_env_list(env.get(f"{self.env_prefix}API_CORS_ORIGINS", "*"))
+
+        # Database settings
+        self.database_url = env.get(f"{self.env_prefix}DATABASE_URL", "postgresql://localhost/aurum")
+        self.trino_host = env.get(f"{self.env_prefix}TRINO_HOST", "localhost")
+        self.trino_port = int(env.get(f"{self.env_prefix}TRINO_PORT", "8080"))
+        self.redis_url = env.get(f"{self.env_prefix}REDIS_URL", "redis://localhost:6379")
+
+        # Security settings
+        self.auth_enabled = env.get(f"{self.env_prefix}AUTH_ENABLED", "false").lower() in ("true", "1", "yes")
+        self.jwt_secret = env.get(f"{self.env_prefix}JWT_SECRET", "")
+        self.admin_emails = self._split_env_list(env.get(f"{self.env_prefix}ADMIN_EMAILS", ""))
+
+        # Performance settings
+        self.max_workers = int(env.get(f"{self.env_prefix}MAX_WORKERS", "4"))
+        self.request_timeout = float(env.get(f"{self.env_prefix}REQUEST_TIMEOUT", "30.0"))
+        self.cache_ttl = int(env.get(f"{self.env_prefix}CACHE_TTL", "300"))
+
+    def _split_env_list(self, value: str, separator: str = ",") -> List[str]:
+        """Split environment variable list."""
+        if not value or value == "*":
+            return []
+        return [item.strip() for item in value.split(separator) if item.strip()]
+
+    def get(self, key: str, default: Any = None) -> Any:
+        """Get setting value with optional default."""
+        return getattr(self, key, default)
+
+    def is_development(self) -> bool:
+        """Check if running in development mode."""
+        return self.environment.lower() in ("development", "dev", "local")
+
+    def is_production(self) -> bool:
+        """Check if running in production mode."""
+        return self.environment.lower() in ("production", "prod")
+
+    @classmethod
+    def from_env(cls, env_prefix: str = "AURUM_") -> "SimplifiedSettings":
+        """Create settings from environment."""
+        return cls(env_prefix=env_prefix)
+
+
+# Legacy compatibility - keep the old interface for now
+class AurumSettings(SimplifiedSettings):
+    """Legacy settings class for backward compatibility."""
+
+    def __init__(self, env_prefix: str = "AURUM_"):
+        super().__init__(env_prefix)
+
+        # Map old nested structure to new flat structure
+        self.api = self
+        self.data_backend = self
+        self.trino = self
+        self.redis = self
+        self.database = self
+        self.auth = self
+        self.messaging = self
+        self.telemetry = self
+        self.pagination = self
+
+    @classmethod
+    def from_env(
+        cls,
+        *,
+        vault_mapping: Mapping[str, Any] | None = None,
+        overrides: Mapping[str, Any] | None = None,
+    ) -> "AurumSettings":
+        """Legacy factory method with vault support."""
+        instance = cls()
+
+        # Apply vault mappings if provided
+        if vault_mapping:
+            for key, value in vault_mapping.items():
+                setattr(instance, key.lower(), value)
+
+        # Apply overrides
+        if overrides:
+            for key, value in overrides.items():
+                setattr(instance, key.lower(), value)
+
+        return instance
+
+
+# Global settings instance
+_settings_instance: AurumSettings | None = None
+
+
+def get_settings() -> AurumSettings:
+    """Return the configured settings instance, raising if unavailable."""
+    if _settings_instance is None:  # pragma: no cover - defensive guard
+        raise RuntimeError("AurumSettings have not been configured")
+    return _settings_instance
+
+
+def configure_settings(settings: AurumSettings) -> None:
+    """Configure the global settings instance."""
+    global _settings_instance
+    _settings_instance = settings
+
+
+__all__ = [
+    "AurumSettings",
+    "SimplifiedSettings",
+    "get_settings",
+    "configure_settings",
+]

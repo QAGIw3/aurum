@@ -1,10 +1,23 @@
-"""Enhanced DAG factory with TaskFlow API, shared defaults, and comprehensive configuration."""
+"""Feature-flagged DAG factory with consolidation support.
+
+Supports gradual migration from individual DAGs to consolidated patterns:
+- Legacy mode: Individual DAGs with custom logic
+- Consolidated mode: Reusable patterns with configuration-driven behavior
+- Feature flags control migration between modes
+
+Migration phases:
+1. Individual DAGs (current state)
+2. Consolidated factory with templates
+3. Single unified pipeline orchestrator
+"""
 
 from __future__ import annotations
 
 import os
+import logging
 from datetime import datetime, timedelta, timezone
 from typing import Any, Callable, Dict, List, Optional, Union
+from enum import Enum
 
 from airflow import DAG
 from airflow.operators.bash import BashOperator
@@ -60,15 +73,62 @@ VENV_PYTHON = os.environ.get("AURUM_VENV_PYTHON", ".venv/bin/python")
 BIN_PATH = os.environ.get("AURUM_BIN_PATH", ".venv/bin:$PATH")
 PYTHONPATH_ENTRY = os.environ.get("AURUM_PYTHONPATH_ENTRY", "/opt/airflow/src")
 
+# Feature flags for pipeline consolidation
+PIPELINE_FEATURE_FLAGS = {
+    "use_consolidated_dags": os.getenv("AURUM_USE_CONSOLIDATED_DAGS", "false").lower() == "true",
+    "pipeline_migration_phase": os.getenv("AURUM_PIPELINE_MIGRATION_PHASE", "1"),
+    "enable_dag_templates": os.getenv("AURUM_ENABLE_DAG_TEMPLATES", "false").lower() == "true",
+}
+
+# Data source types for consolidation
+class DataSourceType(str, Enum):
+    """Types of data sources supported by the factory."""
+    EIA = "eia"
+    FRED = "fred"
+    CPI = "cpi"
+    ISO = "iso"
+    NOAA = "noaa"
+    PUBLIC_FEEDS = "public_feeds"
+    VENDOR_CURVES = "vendor_curves"
+
+# Pipeline types for consolidation
+class PipelineType(str, Enum):
+    """Types of pipelines supported by the factory."""
+    BATCH_INGEST = "batch_ingest"
+    STREAM_INGEST = "stream_ingest"
+    TRANSFORM = "transform"
+    VALIDATE = "validate"
+    MONITOR = "monitor"
+
+def get_pipeline_migration_phase() -> str:
+    """Get current pipeline migration phase."""
+    return PIPELINE_FEATURE_FLAGS["pipeline_migration_phase"]
+
+def is_pipeline_consolidation_enabled() -> bool:
+    """Check if consolidated DAGs are enabled."""
+    return PIPELINE_FEATURE_FLAGS["use_consolidated_dags"]
+
+def log_pipeline_migration_status():
+    """Log current pipeline migration status."""
+    phase = get_pipeline_migration_phase()
+    consolidated = is_pipeline_consolidation_enabled()
+    logger = logging.getLogger(__name__)
+
+    logger.info(f"Pipeline Migration Status: Phase {phase}, Consolidated: {consolidated}")
+    logger.info(f"Template DAGs Enabled: {PIPELINE_FEATURE_FLAGS['enable_dag_templates']}")
+
 
 class DAGFactory:
-    """Enhanced DAG factory with TaskFlow API support and shared configurations."""
+    """Feature-flagged DAG factory with consolidation support."""
 
     def __init__(self, dag_id: str, **dag_kwargs):
         """Initialize DAG factory with base configuration."""
         self.dag_id = dag_id
         self.dag_config = DEFAULT_DAG_CONFIG.copy()
         self.dag_config.update(dag_kwargs)
+
+        # Log migration status
+        log_pipeline_migration_status()
 
         # Set default schedule if not provided
         if "schedule_interval" not in self.dag_config:
@@ -80,6 +140,173 @@ class DAGFactory:
 
         # Create the DAG
         self.dag = DAG(dag_id, **self.dag_config)
+
+    def create_consolidated_ingestion_dag(
+        self,
+        source_type: DataSourceType,
+        target_system: str = "timescale",
+        **kwargs
+    ) -> DAG:
+        """Create a consolidated ingestion DAG using feature flags.
+
+        Args:
+            source_type: Type of data source (EIA, FRED, etc.)
+            target_system: Target system (timescale, trino, iceberg)
+            **kwargs: Additional configuration options
+
+        Returns:
+            Configured DAG for the ingestion pipeline
+        """
+        if not is_pipeline_consolidation_enabled():
+            # Fall back to legacy individual DAG
+            return self._create_legacy_ingestion_dag(source_type, target_system, **kwargs)
+
+        # Create consolidated DAG
+        dag_name = f"consolidated_ingest_{source_type.value}_{target_system}"
+        desc = f"Consolidated ingestion from {source_type.value} to {target_system}"
+
+        # Configure based on source type
+        config_overrides = {}
+        if source_type == DataSourceType.EIA:
+            config_overrides.update({
+                "retries": 5,
+                "execution_timeout": timedelta(hours=6),
+                "pool": "api_eia",
+                "pool_slots": 1,
+                "sla": SLA_CONFIGS["high_frequency"],
+            })
+        elif source_type == DataSourceType.ISO:
+            config_overrides.update({
+                "retries": 3,
+                "execution_timeout": timedelta(minutes=45),
+                "pool": "api_iso",
+                "pool_slots": 2,
+                "sla": SLA_CONFIGS["medium_frequency"],
+            })
+        elif source_type == DataSourceType.NOAA:
+            config_overrides.update({
+                "retries": 2,
+                "execution_timeout": timedelta(minutes=30),
+                "pool": "api_noaa",
+                "pool_slots": 1,
+                "sla": SLA_CONFIGS["low_frequency"],
+            })
+
+        # Apply overrides
+        self.dag_config.update(config_overrides)
+        self.dag_config.update({
+            "dag_id": dag_name,
+            "description": desc,
+            "tags": ["aurum", "consolidated", source_type.value],
+        })
+
+        # Recreate DAG with new config
+        self.dag = DAG(dag_name, **self.dag_config)
+
+        with self.dag:
+            # Standard ingestion pipeline
+            start = EmptyOperator(task_id="start")
+            extract = self._create_extract_task(source_type)
+            validate = self._create_validate_task(source_type)
+            load = self._create_load_task(source_type, target_system)
+            end = EmptyOperator(task_id="end")
+
+            # Define task dependencies
+            start >> extract >> validate >> load >> end
+
+        return self.dag
+
+    def _create_legacy_ingestion_dag(
+        self,
+        source_type: DataSourceType,
+        target_system: str,
+        **kwargs
+    ) -> DAG:
+        """Create legacy individual ingestion DAG for backward compatibility."""
+        dag_name = f"legacy_ingest_{source_type.value}_{target_system}"
+        desc = f"Legacy individual ingestion from {source_type.value} to {target_system}"
+
+        self.dag_config.update({
+            "dag_id": dag_name,
+            "description": desc,
+            "tags": ["aurum", "legacy", "individual", source_type.value],
+        })
+
+        self.dag = DAG(dag_name, **self.dag_config)
+
+        with self.dag:
+            # Legacy specific implementation based on source
+            if source_type == DataSourceType.EIA:
+                self._create_eia_legacy_tasks()
+            elif source_type == DataSourceType.ISO:
+                self._create_iso_legacy_tasks()
+            elif source_type == DataSourceType.NOAA:
+                self._create_noaa_legacy_tasks()
+            else:
+                # Generic fallback
+                self._create_generic_legacy_tasks(source_type)
+
+        return self.dag
+
+    def _create_extract_task(self, source_type: DataSourceType) -> EmptyOperator:
+        """Create extraction task based on source type."""
+        return EmptyOperator(task_id=f"extract_{source_type.value}")
+
+    def _create_validate_task(self, source_type: DataSourceType) -> EmptyOperator:
+        """Create validation task based on source type."""
+        return EmptyOperator(task_id=f"validate_{source_type.value}")
+
+    def _create_load_task(self, source_type: DataSourceType, target_system: str) -> EmptyOperator:
+        """Create load task based on source type and target."""
+        return EmptyOperator(task_id=f"load_{source_type.value}_{target_system}")
+
+    def _create_eia_legacy_tasks(self):
+        """Create EIA-specific legacy tasks."""
+        start = EmptyOperator(task_id="start")
+        extract = BashOperator(
+            task_id="extract_eia_data",
+            bash_command="echo 'Extracting EIA data'",
+        )
+        validate = PythonOperator(
+            task_id="validate_eia_data",
+            python_callable=lambda: print("Validating EIA data"),
+        )
+        end = EmptyOperator(task_id="end")
+
+        start >> extract >> validate >> end
+
+    def _create_iso_legacy_tasks(self):
+        """Create ISO-specific legacy tasks."""
+        start = EmptyOperator(task_id="start")
+        extract = BashOperator(
+            task_id="extract_iso_data",
+            bash_command="echo 'Extracting ISO data'",
+        )
+        end = EmptyOperator(task_id="end")
+
+        start >> extract >> end
+
+    def _create_noaa_legacy_tasks(self):
+        """Create NOAA-specific legacy tasks."""
+        start = EmptyOperator(task_id="start")
+        extract = BashOperator(
+            task_id="extract_noaa_data",
+            bash_command="echo 'Extracting NOAA data'",
+        )
+        end = EmptyOperator(task_id="end")
+
+        start >> extract >> end
+
+    def _create_generic_legacy_tasks(self, source_type: DataSourceType):
+        """Create generic legacy tasks for unknown sources."""
+        start = EmptyOperator(task_id="start")
+        process = BashOperator(
+            task_id=f"process_{source_type.value}",
+            bash_command=f"echo 'Processing {source_type.value} data'",
+        )
+        end = EmptyOperator(task_id="end")
+
+        start >> process >> end
 
     def create_python_task(
         self,
