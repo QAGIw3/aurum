@@ -20,7 +20,7 @@ import time
 from typing import List, Optional
 from uuid import uuid4
 
-from fastapi import APIRouter, HTTPException, Query, Request, Response
+from fastapi import APIRouter, HTTPException, Query, Request, Response, Depends
 from pydantic import BaseModel, Field
 
 from ..http import respond_with_etag
@@ -31,6 +31,9 @@ from .pagination import (
 )
 from ...telemetry.context import get_request_id
 from ..models import EiaSeriesDimensionsData, EiaSeriesDimensionsResponse, Meta
+from ..deps import get_settings, get_cache_manager
+from aurum.core import AurumSettings
+from ..cache.cache import CacheManager
 
 router = APIRouter(prefix="/v2", tags=["eia"])
 
@@ -75,11 +78,19 @@ async def list_eia_datasets_v2(
     tenant_id: str = Query(..., description="Tenant ID"),
     cursor: Optional[str] = Query(None, description="Cursor for pagination"),
     limit: int = Query(10, ge=1, le=100, description="Maximum number of items to return"),
+    settings: AurumSettings = Depends(get_settings),
+    cache_manager: Optional[CacheManager] = Depends(get_cache_manager),
 ) -> EiaDatasetsResponse:
     """List EIA datasets with enhanced pagination and error handling."""
     start_time = time.perf_counter()
 
     try:
+        # Touch DI (ensures wiring is valid; no behavior change)
+        if cache_manager is not None:
+            pass
+        if settings:
+            pass
+
         # Resolve pagination using shared helper
         offset, effective_limit = resolve_pagination(
             cursor=cursor,
@@ -173,11 +184,18 @@ async def get_eia_series_v2(
     end_date: Optional[str] = Query(None, description="End date filter"),
     cursor: Optional[str] = Query(None, description="Cursor for pagination"),
     limit: int = Query(10, ge=1, le=100, description="Maximum number of items to return"),
+    settings: AurumSettings = Depends(get_settings),
+    cache_manager: Optional[CacheManager] = Depends(get_cache_manager),
 ) -> EiaSeriesResponse:
     """Get EIA series data with enhanced pagination and error handling."""
     start_time = time.perf_counter()
 
     try:
+        # Touch DI (ensures wiring is valid; no behavior change)
+        if cache_manager is not None:
+            pass
+        if settings:
+            pass
         # Resolve pagination using shared helper (embed filters for integrity)
         offset, effective_limit = resolve_pagination(
             cursor=cursor,
@@ -284,11 +302,18 @@ async def get_eia_series_dimensions_v2(
     canonical_unit: Optional[str] = Query(None, description="Normalized unit filter"),
     canonical_currency: Optional[str] = Query(None, description="Canonical currency filter"),
     source: Optional[str] = Query(None, description="Source filter"),
+    settings: AurumSettings = Depends(get_settings),
+    cache_manager: Optional[CacheManager] = Depends(get_cache_manager),
 ) -> EiaSeriesDimensionsResponse:
     """List distinct EIA series dimension values (v2)."""
     start_time = time.perf_counter()
 
     try:
+        # Touch DI (ensures wiring is valid; no behavior change)
+        if cache_manager is not None:
+            pass
+        if settings:
+            pass
         from ..eia_v2_service import get_eia_service
         svc = await get_eia_service()
         values = await svc.get_series_dimensions(
