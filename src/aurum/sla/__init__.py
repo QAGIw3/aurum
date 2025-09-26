@@ -5,7 +5,7 @@ from __future__ import annotations
 from .sla_monitor import SLAMonitor, SLAConfig, SLAViolation
 from .failure_callbacks import FailureCallbackManager, FailureCallback
 from .metrics_pusher import MetricsPusher, DAGMetrics
-from .alert_manager import AlertManager, AlertRule, AlertSeverity
+from .alert_manager import Alert, AlertChannel, AlertManager, AlertRule, AlertSeverity
 
 __all__ = [
     "SLAMonitor",
@@ -16,6 +16,8 @@ __all__ = [
     "MetricsPusher",
     "DAGMetrics",
     "AlertManager",
+    "Alert",
+    "AlertChannel",
     "AlertRule",
     "AlertSeverity"
 ]

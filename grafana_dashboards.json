@@ -1,0 +1,501 @@
+{
+  "dashboards": [
+    {
+      "title": "Aurum API Health & Performance",
+      "uid": "aurum-api-health",
+      "tags": ["aurum", "api", "performance"],
+      "timezone": "UTC",
+      "schemaVersion": 36,
+      "version": 1,
+      "panels": [
+        {
+          "type": "stat",
+          "title": "Active Requests",
+          "gridPos": { "h": 6, "w": 6, "x": 0, "y": 0 },
+          "targets": [
+            {
+              "expr": "aurum_api_active_requests",
+              "refId": "A",
+              "instant": true,
+              "datasource": "prometheus"
+            }
+          ],
+          "fieldConfig": {
+            "defaults": {
+              "color": {
+                "mode": "thresholds"
+              },
+              "mappings": [],
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  { "color": "green", "value": null },
+                  { "color": "yellow", "value": 80 },
+                  { "color": "red", "value": 100 }
+                ]
+              }
+            }
+          }
+        },
+        {
+          "type": "stat",
+          "title": "Request Duration (p95)",
+          "gridPos": { "h": 6, "w": 6, "x": 6, "y": 0 },
+          "targets": [
+            {
+              "expr": "histogram_quantile(0.95, rate(aurum_api_request_duration_seconds_bucket[5m]))",
+              "refId": "A",
+              "instant": true,
+              "datasource": "prometheus"
+            }
+          ],
+          "fieldConfig": {
+            "defaults": {
+              "color": {
+                "mode": "thresholds"
+              },
+              "mappings": [],
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  { "color": "green", "value": null },
+                  { "color": "yellow", "value": 1 },
+                  { "color": "red", "value": 5 }
+                ]
+              },
+              "unit": "s"
+            }
+          }
+        },
+        {
+          "type": "stat",
+          "title": "Rate Limited Requests",
+          "gridPos": { "h": 6, "w": 6, "x": 12, "y": 0 },
+          "targets": [
+            {
+              "expr": "rate(aurum_api_concurrency_requests_total{result=\"rate_limited\"}[5m])",
+              "refId": "A",
+              "instant": true,
+              "datasource": "prometheus"
+            }
+          ],
+          "fieldConfig": {
+            "defaults": {
+              "color": {
+                "mode": "thresholds"
+              },
+              "mappings": [],
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  { "color": "green", "value": null },
+                  { "color": "yellow", "value": 10 },
+                  { "color": "red", "value": 50 }
+                ]
+              }
+            }
+          }
+        },
+        {
+          "type": "stat",
+          "title": "Error Rate",
+          "gridPos": { "h": 6, "w": 6, "x": 18, "y": 0 },
+          "targets": [
+            {
+              "expr": "rate(aurum_api_concurrency_requests_total{result=\"error\"}[5m]) / rate(aurum_api_concurrency_requests_total[5m])",
+              "refId": "A",
+              "instant": true,
+              "datasource": "prometheus"
+            }
+          ],
+          "fieldConfig": {
+            "defaults": {
+              "color": {
+                "mode": "thresholds"
+              },
+              "mappings": [],
+              "thresholds": {
+                "mode": "percent",
+                "steps": [
+                  { "color": "green", "value": null },
+                  { "color": "yellow", "value": 1 },
+                  { "color": "red", "value": 5 }
+                ]
+              },
+              "unit": "percent"
+            }
+          }
+        },
+        {
+          "type": "graph",
+          "title": "Request Duration by Endpoint",
+          "gridPos": { "h": 8, "w": 12, "x": 0, "y": 6 },
+          "targets": [
+            {
+              "expr": "histogram_quantile(0.95, rate(aurum_api_request_duration_seconds_bucket{endpoint!~\"(/health|/ready|/metrics)\"}[5m]))",
+              "refId": "A",
+              "legendFormat": "{{endpoint}} {{method}}",
+              "datasource": "prometheus"
+            }
+          ],
+          "fieldConfig": {
+            "defaults": {
+              "unit": "s"
+            }
+          }
+        },
+        {
+          "type": "graph",
+          "title": "Requests by Result",
+          "gridPos": { "h": 8, "w": 12, "x": 12, "y": 6 },
+          "targets": [
+            {
+              "expr": "rate(aurum_api_concurrency_requests_total[5m])",
+              "refId": "A",
+              "legendFormat": "{{result}}",
+              "datasource": "prometheus"
+            }
+          ]
+        },
+        {
+          "type": "graph",
+          "title": "Concurrency Usage",
+          "gridPos": { "h": 8, "w": 12, "x": 0, "y": 14 },
+          "targets": [
+            {
+              "expr": "aurum_api_active_requests",
+              "refId": "A",
+              "legendFormat": "Active Requests",
+              "datasource": "prometheus"
+            },
+            {
+              "expr": "aurum_api_active_requests / 100 * 100",
+              "refId": "B",
+              "legendFormat": "Usage %",
+              "datasource": "prometheus"
+            }
+          ],
+          "fieldConfig": {
+            "defaults": {
+              "unit": "short"
+            }
+          }
+        },
+        {
+          "type": "graph",
+          "title": "Requests by Tenant",
+          "gridPos": { "h": 8, "w": 12, "x": 12, "y": 14 },
+          "targets": [
+            {
+              "expr": "rate(aurum_api_concurrency_requests_total[5m])",
+              "refId": "A",
+              "legendFormat": "{{tenant_id}}",
+              "datasource": "prometheus"
+            }
+          ]
+        }
+      ],
+      "time": {
+        "from": "now-6h",
+        "to": "now"
+      },
+      "refresh": "30s"
+    },
+    {
+      "title": "Aurum Rate Limiting",
+      "uid": "aurum-rate-limiting",
+      "tags": ["aurum", "rate-limiting", "security"],
+      "timezone": "UTC",
+      "schemaVersion": 36,
+      "version": 1,
+      "panels": [
+        {
+          "type": "stat",
+          "title": "Rate Limited Requests (5m)",
+          "gridPos": { "h": 6, "w": 6, "x": 0, "y": 0 },
+          "targets": [
+            {
+              "expr": "increase(aurum_api_concurrency_requests_total{result=\"rate_limited\"}[5m])",
+              "refId": "A",
+              "instant": true,
+              "datasource": "prometheus"
+            }
+          ]
+        },
+        {
+          "type": "stat",
+          "title": "Rejected Requests (5m)",
+          "gridPos": { "h": 6, "w": 6, "x": 6, "y": 0 },
+          "targets": [
+            {
+              "expr": "increase(aurum_api_concurrency_requests_total{result=\"rejected\"}[5m])",
+              "refId": "A",
+              "instant": true,
+              "datasource": "prometheus"
+            }
+          ]
+        },
+        {
+          "type": "graph",
+          "title": "Rate Limit Violations by Tenant",
+          "gridPos": { "h": 8, "w": 12, "x": 0, "y": 6 },
+          "targets": [
+            {
+              "expr": "increase(aurum_api_concurrency_requests_total{result=\"rate_limited\"}[1m])",
+              "refId": "A",
+              "legendFormat": "{{tenant_id}}",
+              "datasource": "prometheus"
+            }
+          ]
+        },
+        {
+          "type": "graph",
+          "title": "Rate Limit Violations by Endpoint",
+          "gridPos": { "h": 8, "w": 12, "x": 12, "y": 6 },
+          "targets": [
+            {
+              "expr": "increase(aurum_api_concurrency_requests_total{result=\"rate_limited\"}[1m])",
+              "refId": "A",
+              "legendFormat": "{{endpoint}}",
+              "datasource": "prometheus"
+            }
+          ]
+        },
+        {
+          "type": "graph",
+          "title": "Tenant Request Patterns",
+          "gridPos": { "h": 8, "w": 24, "x": 0, "y": 14 },
+          "targets": [
+            {
+              "expr": "rate(aurum_api_concurrency_requests_total{result!=\"rate_limited\"}[1m])",
+              "refId": "A",
+              "legendFormat": "{{tenant_id}}",
+              "datasource": "prometheus"
+            }
+          ]
+        }
+      ],
+      "time": {
+        "from": "now-1h",
+        "to": "now"
+      },
+      "refresh": "10s"
+    },
+    {
+      "title": "Aurum Trino Pool Health",
+      "uid": "aurum-trino-pool",
+      "tags": ["aurum", "trino", "database"],
+      "timezone": "UTC",
+      "schemaVersion": 36,
+      "version": 1,
+      "panels": [
+        {
+          "type": "stat",
+          "title": "Active Trino Connections",
+          "gridPos": { "h": 6, "w": 6, "x": 0, "y": 0 },
+          "targets": [
+            {
+              "expr": "trino_connection_pool_active_connections",
+              "refId": "A",
+              "instant": true,
+              "datasource": "prometheus"
+            }
+          ]
+        },
+        {
+          "type": "stat",
+          "title": "Trino Query Duration (p95)",
+          "gridPos": { "h": 6, "w": 6, "x": 6, "y": 0 },
+          "targets": [
+            {
+              "expr": "histogram_quantile(0.95, rate(trino_query_duration_seconds_bucket[5m]))",
+              "refId": "A",
+              "instant": true,
+              "datasource": "prometheus"
+            }
+          ],
+          "fieldConfig": {
+            "defaults": {
+              "unit": "s"
+            }
+          }
+        },
+        {
+          "type": "graph",
+          "title": "Trino Connection Pool Usage",
+          "gridPos": { "h": 8, "w": 12, "x": 0, "y": 6 },
+          "targets": [
+            {
+              "expr": "trino_connection_pool_active_connections",
+              "refId": "A",
+              "legendFormat": "Active",
+              "datasource": "prometheus"
+            },
+            {
+              "expr": "trino_connection_pool_idle_connections",
+              "refId": "B",
+              "legendFormat": "Idle",
+              "datasource": "prometheus"
+            },
+            {
+              "expr": "trino_connection_pool_max_connections",
+              "refId": "C",
+              "legendFormat": "Max",
+              "datasource": "prometheus"
+            }
+          ]
+        },
+        {
+          "type": "graph",
+          "title": "Trino Query Performance",
+          "gridPos": { "h": 8, "w": 12, "x": 12, "y": 6 },
+          "targets": [
+            {
+              "expr": "rate(trino_query_duration_seconds_sum[5m]) / rate(trino_query_duration_seconds_count[5m])",
+              "refId": "A",
+              "legendFormat": "Avg Duration",
+              "datasource": "prometheus"
+            },
+            {
+              "expr": "rate(trino_query_failed_total[5m])",
+              "refId": "B",
+              "legendFormat": "Failed Queries",
+              "datasource": "prometheus"
+            }
+          ]
+        }
+      ],
+      "time": {
+        "from": "now-1h",
+        "to": "now"
+      },
+      "refresh": "30s"
+    },
+    {
+      "title": "Aurum External Pipeline Health",
+      "uid": "aurum-external-pipeline",
+      "tags": ["aurum", "external", "pipeline"],
+      "timezone": "UTC",
+      "schemaVersion": 36,
+      "version": 1,
+      "panels": [
+        {
+          "type": "stat",
+          "title": "Pipeline Health Score",
+          "gridPos": { "h": 6, "w": 6, "x": 0, "y": 0 },
+          "targets": [
+            {
+              "expr": "external_pipeline_health_score",
+              "refId": "A",
+              "instant": true,
+              "datasource": "prometheus"
+            }
+          ],
+          "fieldConfig": {
+            "defaults": {
+              "color": {
+                "mode": "thresholds"
+              },
+              "thresholds": {
+                "mode": "percent",
+                "steps": [
+                  { "color": "red", "value": null },
+                  { "color": "yellow", "value": 70 },
+                  { "color": "green", "value": 90 }
+                ]
+              },
+              "unit": "percent"
+            }
+          }
+        },
+        {
+          "type": "stat",
+          "title": "Active Pipeline Jobs",
+          "gridPos": { "h": 6, "w": 6, "x": 6, "y": 0 },
+          "targets": [
+            {
+              "expr": "external_pipeline_active_jobs",
+              "refId": "A",
+              "instant": true,
+              "datasource": "prometheus"
+            }
+          ]
+        },
+        {
+          "type": "stat",
+          "title": "Data Freshness (hours)",
+          "gridPos": { "h": 6, "w": 6, "x": 12, "y": 0 },
+          "targets": [
+            {
+              "expr": "external_pipeline_data_freshness_hours",
+              "refId": "A",
+              "instant": true,
+              "datasource": "prometheus"
+            }
+          ]
+        },
+        {
+          "type": "graph",
+          "title": "Pipeline Job Status",
+          "gridPos": { "h": 8, "w": 12, "x": 0, "y": 6 },
+          "targets": [
+            {
+              "expr": "rate(external_pipeline_jobs_total{status=\"success\"}[5m])",
+              "refId": "A",
+              "legendFormat": "Success",
+              "datasource": "prometheus"
+            },
+            {
+              "expr": "rate(external_pipeline_jobs_total{status=\"failed\"}[5m])",
+              "refId": "B",
+              "legendFormat": "Failed",
+              "datasource": "prometheus"
+            },
+            {
+              "expr": "rate(external_pipeline_jobs_total{status=\"running\"}[5m])",
+              "refId": "C",
+              "legendFormat": "Running",
+              "datasource": "prometheus"
+            }
+          ]
+        },
+        {
+          "type": "graph",
+          "title": "Pipeline Job Duration",
+          "gridPos": { "h": 8, "w": 12, "x": 12, "y": 6 },
+          "targets": [
+            {
+              "expr": "histogram_quantile(0.95, rate(external_pipeline_job_duration_seconds_bucket[5m]))",
+              "refId": "A",
+              "legendFormat": "p95 Duration",
+              "datasource": "prometheus"
+            }
+          ],
+          "fieldConfig": {
+            "defaults": {
+              "unit": "s"
+            }
+          }
+        },
+        {
+          "type": "graph",
+          "title": "Data Sources Health",
+          "gridPos": { "h": 8, "w": 24, "x": 0, "y": 14 },
+          "targets": [
+            {
+              "expr": "external_data_source_health",
+              "refId": "A",
+              "legendFormat": "{{data_source}}",
+              "datasource": "prometheus"
+            }
+          ]
+        }
+      ],
+      "time": {
+        "from": "now-6h",
+        "to": "now"
+      },
+      "refresh": "1m"
+    }
+  ]
+}

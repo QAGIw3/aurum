@@ -18,7 +18,7 @@ from enum import Enum
 from typing import Any, Dict, List, Optional, Callable, Awaitable
 from abc import ABC, abstractmethod
 
-from ...observability.metrics import get_metrics_client
+from ..observability.metrics import get_metrics_client
 
 logger = logging.getLogger(__name__)
 
@@ -628,10 +628,11 @@ class CanaryDeployment:
         self._last_evaluation = datetime.now()
 
         logger.info(
+            
             f"Evaluation result: {'PASS' if evaluation_passed else 'FAIL'} "
-            f"(Success: {self.metrics.success_rate_percent".1f"}%, "
-            f"Latency: {self.metrics.avg_latency_ms".1f"}ms, "
-            f"Errors: {self.metrics.error_rate_percent".1f"}%, "
+            f"(Success: {self.metrics.success_rate_percent:.1f}%, "
+            f"Latency: {self.metrics.avg_latency_ms:.1f}ms, "
+            f"Errors: {self.metrics.error_rate_percent:.1f}%, "
             f"Health: {health_results['healthy']})"
         )
 

@@ -160,10 +160,13 @@ class ConnectionPool:
         self._initialized = False
         self._total_connections = 0
         self._active_connections = 0
+        self._closed = False
 
     async def get_connection(self):
         """Get a connection from the pool."""
         async with self._lock:
+            if self._closed:
+                raise ServiceUnavailableException("connection_pool", detail="Connection pool closed")
             if self._connections:
                 conn = self._connections.pop()
                 self._active_connections += 1
@@ -285,6 +288,15 @@ class ConnectionPool:
             if self._active_connections:
                 self._active_connections -= 1
 
+            if self._closed:
+                try:
+                    conn.close()
+                except Exception:  # noqa: BLE001
+                    pass
+                if self._total_connections:
+                    self._total_connections -= 1
+                return
+
             if len(self._connections) < self.max_idle:
                 self._connections.append(conn)
             else:
@@ -301,6 +313,11 @@ class ConnectionPool:
             self._connections.clear()
             self._total_connections = 0
             self._active_connections = 0
+            self._closed = True
+
+    async def close(self):
+        """Alias that mirrors close_all for compatibility."""
+        await self.close_all()
 
 
 class PerformanceMonitor:

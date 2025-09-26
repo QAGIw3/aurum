@@ -36,6 +36,8 @@ dependencies = [
     "opentelemetry-instrumentation==0.49b0",
     "opentelemetry-instrumentation-fastapi==0.49b0",
     "structlog==24.4.0",
+    "pyinstrument==4.7.2",
+    "yappi==1.5.0",
 
     # Security
     "python-jose[cryptography]==3.3.0",

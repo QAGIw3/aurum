@@ -7,7 +7,14 @@ import json
 from pathlib import Path
 from typing import Any, Iterable
 
-from trino import dbapi
+try:  # pragma: no cover - runtime optional dependency
+    from trino import dbapi
+except ImportError:  # pragma: no cover - fallback for test environments
+    class _StubDbapi:
+        def connect(self, *args, **kwargs):
+            raise RuntimeError("trino client not available; install the 'trino' package to use this script")
+
+    dbapi = _StubDbapi()
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 FIXTURE_DIR = REPO_ROOT / "testdata" / "external"

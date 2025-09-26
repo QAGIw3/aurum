@@ -8,12 +8,13 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from enum import Enum
 from typing import Any, Dict, List, Optional, Callable, Awaitable
 
-from ...observability.metrics import get_metrics_client
+from ..observability.metrics import get_metrics_client
 
 logger = logging.getLogger(__name__)
 
@@ -460,7 +461,7 @@ class HealthMonitor:
                 "deployment": report.deployment_name,
                 "severity": AlertSeverity.ERROR.value,
                 "type": "error_rate",
-                "message": f"Error rate is {report.error_rate_percent".1f"}%",
+                "message": f"Error rate is {report.error_rate_percent:.1f}%",
                 "details": {"error_rate": report.error_rate_percent},
                 "timestamp": report.timestamp.isoformat()
             })
@@ -470,7 +471,7 @@ class HealthMonitor:
                 "deployment": report.deployment_name,
                 "severity": AlertSeverity.WARNING.value,
                 "type": "latency",
-                "message": f"Average latency is {report.avg_latency_ms".1f"}ms",
+                "message": f"Average latency is {report.avg_latency_ms:.1f}ms",
                 "details": {"avg_latency": report.avg_latency_ms},
                 "timestamp": report.timestamp.isoformat()
             })

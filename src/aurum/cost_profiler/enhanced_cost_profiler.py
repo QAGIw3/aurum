@@ -257,7 +257,7 @@ class EnhancedCostProfiler:
         self.metrics.gauge("cost_profiler.active_queries", len(self.query_costs))
 
         logger.info(
-            f"Tracking query {query_id} with estimated cost ${estimated_cost_usd:.".2f"",
+            f"Tracking query {query_id} with estimated cost ${estimated_cost_usd:.2f}",
             "query_cost_tracking_started",
             query_id=query_id,
             dataset_name=dataset_name,
@@ -304,7 +304,7 @@ class EnhancedCostProfiler:
         self.metrics.histogram("cost_profiler.query_runtime_seconds", actual_runtime_seconds)
 
         logger.info(
-            f"Query {query_id} completed - Cost: ${actual_cost_usd:.".2f" Runtime: {actual_runtime_seconds:.2f}s",
+            f"Query {query_id} completed - Cost: ${actual_cost_usd:.2f} Runtime: {actual_runtime_seconds:.2f}s",
             "query_cost_tracking_completed",
             query_id=query_id,
             actual_cost_usd=actual_cost_usd,
@@ -439,7 +439,7 @@ class EnhancedCostProfiler:
             budget.last_updated = datetime.now().isoformat()
 
             logger.info(
-                f"Allocated ${cost_hint.budget_allocated:.".2f"budget for query {cost_hint.query_id}"
+                f"Allocated ${cost_hint.budget_allocated:.2f} budget for query {cost_hint.query_id}"
             )
 
             return True

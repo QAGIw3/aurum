@@ -405,7 +405,7 @@ class TrafficManager:
                     total_requests = stats["total_requests"]
                     if total_requests > 0:
                         canary_percent = (stats["canary_requests"] / total_requests) * 100
-                        logger.info(f"Canary traffic percentage: {canary_percent".1f"}%")
+                        logger.info(f"Canary traffic percentage: {canary_percent:.1f}%")
 
             except asyncio.CancelledError:
                 break

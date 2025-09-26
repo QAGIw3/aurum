@@ -31,6 +31,12 @@ try:
 except Exception:  # pragma: no cover
     instrumentation = None  # type: ignore
 
+try:
+    from . import profiling  # type: ignore
+    __all__.append("profiling")
+except Exception:  # pragma: no cover
+    profiling = None  # type: ignore
+
 # API endpoints are optional; failure to import should not block package import
 try:
     from . import api  # type: ignore

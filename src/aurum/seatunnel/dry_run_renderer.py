@@ -218,8 +218,16 @@ class DryRunRenderer:
         return "\n".join(lines).strip() + "\n"
 
 
+def render_template(template: Path | str) -> Dict[str, object]:
+    """Convenience helper that renders a template using the dry-run renderer."""
+
+    renderer = DryRunRenderer()
+    return renderer.render_template_dry_run(Path(template))
+
+
 __all__ = [
     "DryRunError",
     "DryRunRenderer",
     "_collect_placeholders",
+    "render_template",
 ]

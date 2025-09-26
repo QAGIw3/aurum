@@ -7,13 +7,17 @@ for gradual migration and comprehensive monitoring.
 from __future__ import annotations
 
 import asyncio
+import copy
+import hashlib
 import json
 import logging
 import os
 import threading
 import time
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from collections import OrderedDict
+from dataclasses import dataclass, field
+from typing import Any, Dict, List, Optional, Tuple, Union
 
 try:
     import trino  # type: ignore
@@ -22,6 +26,24 @@ except ImportError:
     # Trino is optional for import-time tooling (e.g., docs). Runtime paths
     # that require Trino will raise a clear error when invoked.
     trino = None  # type: ignore
+
+from ..exceptions import ServiceUnavailableException
+from ..performance import ConnectionPool
+from ...common.circuit_breaker import CircuitBreaker, CircuitBreakerState
+from ...external.collect.base import RetryConfig
+from ...observability.metrics import (
+    increment_trino_queries,
+    increment_trino_queue_rejections,
+    observe_trino_connection_acquire_time,
+    observe_trino_query_duration,
+    set_trino_circuit_breaker_state,
+    set_trino_connection_pool_active,
+    set_trino_connection_pool_idle,
+    set_trino_connection_pool_utilization,
+    set_trino_pool_saturation,
+    set_trino_pool_saturation_status,
+    set_trino_request_queue_depth,
+)
 
 from .config import TrinoConfig
 
@@ -35,117 +57,487 @@ DB_FEATURE_FLAGS = {
 }
 
 
+@dataclass
+class TimeoutConfig:
+    """Timeout configuration for Trino connections and queries."""
+
+    connection_timeout: float
+    query_timeout: float
+
+
+@dataclass
+class CacheEntry:
+    """Record cached query results with expiry information."""
+
+    value: Any
+    expires_at: float
+
+
+class TTLCache:
+    """Async-safe TTL cache with basic LRU eviction."""
+
+    def __init__(self, maxsize: int = 128, default_ttl: float = 30.0):
+        self.maxsize = maxsize
+        self.default_ttl = default_ttl
+        self._store: OrderedDict[str, CacheEntry] = OrderedDict()
+        self._lock = asyncio.Lock()
+
+    async def get(self, key: str) -> Optional[Any]:
+        async with self._lock:
+            entry = self._store.get(key)
+            if entry is None:
+                return None
+            if entry.expires_at <= time.time():
+                self._store.pop(key, None)
+                return None
+            self._store.move_to_end(key)
+            return copy.deepcopy(entry.value)
+
+    async def set(self, key: str, value: Any, ttl: Optional[float] = None) -> None:
+        ttl_seconds = ttl if ttl is not None else self.default_ttl
+        if ttl_seconds <= 0:
+            return
+        async with self._lock:
+            if key in self._store:
+                self._store.move_to_end(key)
+            self._store[key] = CacheEntry(copy.deepcopy(value), time.time() + ttl_seconds)
+            while len(self._store) > self.maxsize:
+                self._store.popitem(last=False)
+
+    async def invalidate(self, key: str) -> None:
+        async with self._lock:
+            self._store.pop(key, None)
+
+    async def clear(self) -> None:
+        async with self._lock:
+            self._store.clear()
+
+
 class SimpleTrinoClient:
-    """Simplified Trino client without complex connection pooling."""
+    """High-level Trino client with pooling, retries, metrics, and caching."""
 
     def __init__(self, config: TrinoConfig, concurrency_config: Optional[Dict[str, Any]] = None):
         self.config = config
-        self.concurrency_config = concurrency_config or {}
-        self._connection: Optional[trino.dbapi.Connection] = None
-        self.retry_config = None  # Mock retry config for tests
-        self.circuit_breaker = None  # Mock circuit breaker for tests
-        self.timeout_config = None  # Mock timeout config for tests
+        self.logger = LOGGER
+        self._config = concurrency_config or {}
+
+        self.acquire_timeout = float(self._config.get("trino_connection_timeout_seconds", 5.0))
+        self.query_timeout = float(self._config.get("trino_query_timeout_seconds", 30.0))
+        self.acquire_attempts = int(max(1, self._config.get("trino_connection_acquire_attempts", 3)))
+        self.acquire_backoff = float(max(0.01, self._config.get("trino_connection_backoff_seconds", 0.1)))
+
+        pool_min_size = int(max(1, self._config.get("trino_connection_pool_min_size", 1)))
+        pool_max_size = int(max(pool_min_size, self._config.get("trino_connection_pool_max_size", 5)))
+        pool_max_idle = int(max(pool_min_size, self._config.get("trino_connection_pool_max_idle", pool_min_size)))
+        idle_timeout = float(self._config.get("trino_connection_idle_timeout_seconds", 60.0))
+        wait_timeout = float(self._config.get("trino_connection_wait_timeout_seconds", self.acquire_timeout))
+
+        self._pool = ConnectionPool(
+            config=self.config,
+            min_size=pool_min_size,
+            max_size=pool_max_size,
+            max_idle=pool_max_idle,
+            idle_timeout_seconds=idle_timeout,
+            wait_timeout_seconds=wait_timeout,
+        )
+
+        self.retry_config = RetryConfig(
+            max_retries=int(max(0, self._config.get("trino_max_retries", 1))),
+            initial_delay=float(self._config.get("trino_retry_delay_seconds", 0.2)),
+            max_delay=float(self._config.get("trino_max_retry_delay_seconds", 2.0)),
+            backoff_factor=float(self._config.get("trino_retry_backoff_factor", 2.0)),
+            max_backoff_seconds=float(self._config.get("trino_max_retry_delay_seconds", 2.0)),
+        )
+
+        self.timeout_config = TimeoutConfig(
+            connection_timeout=self.acquire_timeout,
+            query_timeout=self.query_timeout,
+        )
+
+        breaker_failure_threshold = int(max(1, self._config.get("trino_circuit_breaker_failure_threshold", 5)))
+        breaker_timeout = float(self._config.get("trino_circuit_breaker_timeout_seconds", 60.0))
+        breaker_success_threshold = int(max(1, self._config.get("trino_circuit_breaker_success_threshold", 3)))
+        self.circuit_breaker = CircuitBreaker(
+            failure_threshold=breaker_failure_threshold,
+            recovery_timeout=breaker_timeout,
+            success_threshold=breaker_success_threshold,
+            name="trino_client",
+        )
+
+        cache_max_entries = int(max(1, self._config.get("trino_cache_max_entries", 128)))
+        cache_ttl_seconds = float(self._config.get("trino_cache_ttl_seconds", 30.0))
+        self._cache = TTLCache(maxsize=cache_max_entries, default_ttl=cache_ttl_seconds)
+        self._prepared_statements: Dict[str, Any] = {}
+
+        self._pending_acquires = 0
+        self._pending_lock = asyncio.Lock()
+        self._default_tenant = self._config.get("trino_default_tenant_id", "default")
+        self._closed = False
+
+    @property
+    def circuit_breaker_state(self) -> str:
+        state = getattr(self.circuit_breaker, "_state", CircuitBreakerState.CLOSED)
+        return state.value
 
     def execute_query_sync(
         self,
         sql: str,
         params: Optional[Dict[str, Any]] = None,
         use_cache: bool | None = None,
+        tenant_id: Optional[str] = None,
     ) -> List[Dict[str, Any]]:
         """Synchronous helper used by legacy service code paths."""
 
         async def _run() -> List[Dict[str, Any]]:
-            return await self.query(sql, params)
+            return await self.execute_query(sql, params=params, tenant_id=tenant_id)
 
-        # `asyncio.run` raises if called from a running loop; callers run in threadpool
         return asyncio.run(_run())
 
-    async def query(self, sql: str, params: Optional[Dict[str, Any]] = None) -> List[Dict[str, Any]]:
-        """Execute a query and return results."""
-        conn = await self._get_connection()
-        try:
-            cursor = conn.cursor()
-            cursor.execute(sql, params)
-            columns = [desc[0] for desc in cursor.description] if cursor.description else []
-            results = cursor.fetchall()
-            cursor.close()
+    async def query(self, sql: str, params: Optional[Dict[str, Any]] = None, tenant_id: Optional[str] = None) -> List[Dict[str, Any]]:
+        """Alias for execute_query to maintain backwards compatibility."""
 
-            return [dict(zip(columns, row)) for row in results]
-        except Exception as exc:
-            LOGGER.error("Query failed: %s", exc)
-            raise
+        return await self.execute_query(sql, params=params, tenant_id=tenant_id)
 
-    async def execute(self, sql: str, params: Optional[Dict[str, Any]] = None) -> None:
+    async def execute(self, sql: str, params: Optional[Dict[str, Any]] = None, tenant_id: Optional[str] = None) -> None:
         """Execute a statement without returning results."""
-        conn = await self._get_connection()
-        try:
-            cursor = conn.cursor()
-            cursor.execute(sql, params)
-            conn.commit()
-            cursor.close()
-        except Exception as exc:
-            conn.rollback()
-            LOGGER.error("Execute failed: %s", exc)
-            raise
 
-    async def _get_connection(self) -> trino.dbapi.Connection:
-        """Get or create a connection."""
-        if self._connection is None or not await self._is_connection_valid():
-            if self._connection:
-                await self._close_connection()
-            self._connection = await self._create_connection()
-        return self._connection
+        await self._run_with_retries(sql, params, tenant_id or self._default_tenant, self.query_timeout)
 
-    async def _create_connection(self) -> trino.dbapi.Connection:
-        """Create a new Trino connection."""
-        return trino.dbapi.connect(
-            host=self.config.host,
-            port=self.config.port,
-            user=self.config.user,
-            catalog=self.config.catalog,
-            schema=self.config.schema,
-            http_scheme=self.config.http_scheme,
-            auth=trino.auth.BasicAuthentication(self.config.password) if self.config.password else None,
-        )
+    async def execute_query(
+        self,
+        sql: str,
+        params: Optional[Dict[str, Any]] = None,
+        tenant_id: Optional[str] = None,
+        cache_ttl: Optional[float] = None,
+    ) -> List[Dict[str, Any]]:
+        """Execute a query and return results with caching and retries."""
 
-    async def _is_connection_valid(self) -> bool:
-        """Check if connection is still valid."""
-        if self._connection is None:
-            return False
-        try:
-            cursor = self._connection.cursor()
-            cursor.execute("SELECT 1")
-            cursor.fetchone()
-            cursor.close()
-            return True
-        except Exception:
-            return False
+        tenant_label = tenant_id or self._default_tenant
+        params_copy: Optional[Dict[str, Any]]
+        if isinstance(params, dict):
+            params_copy = dict(params)
+        else:
+            params_copy = params
 
-    async def _close_connection(self) -> None:
-        """Close the current connection."""
-        if self._connection:
-            try:
-                self._connection.close()
-            except Exception as exc:
-                LOGGER.warning("Error closing connection: %s", exc)
-            finally:
-                self._connection = None
+        should_cache = False
+        ttl = None
+        if isinstance(params_copy, dict):
+            should_cache, ttl = self._extract_cache_policy(sql, params_copy, cache_ttl)
 
-    async def close(self) -> None:
-        """Close the client."""
-        await self._close_connection()
+        cache_key = None
+        if should_cache:
+            cache_key = self._cache_key(sql, params_copy)
+            cached_result = await self._cache.get(cache_key)
+            if cached_result is not None:
+                try:
+                    await increment_trino_queries(tenant_label, status="cache_hit")
+                    await observe_trino_query_duration(tenant_label, self._classify_query(sql), 0.0)
+                except NameError:
+                    pass
+                return cached_result
 
-    async def execute_query(self, sql: str, tenant_id: Optional[str] = None) -> List[Dict[str, Any]]:
-        """Execute a query - alias for query method."""
-        return await self.query(sql)
+        result = await self._run_with_retries(sql, params_copy, tenant_label, self.query_timeout)
+
+        if should_cache and cache_key:
+            await self._cache.set(cache_key, result, ttl)
+
+        return result
 
     async def get_health_status(self) -> Dict[str, Any]:
-        """Get health status of the client."""
-        return {"status": "healthy", "connection": "available"}
+        """Return a snapshot of pool and circuit breaker health."""
 
-    def is_open(self) -> bool:
-        """Check if circuit breaker is open."""
-        return self.circuit_breaker.is_open() if self.circuit_breaker else False
+        active = getattr(self._pool, "_active_connections", 0)
+        idle = len(getattr(self._pool, "_connections", []))
+        total = getattr(self._pool, "_total_connections", active + idle)
+        healthy = not self.circuit_breaker.is_open()
+        await self._record_pool_metrics()
+        await self._sync_circuit_breaker_metric()
+        return {
+            "healthy": healthy,
+            "circuit_breaker_state": self.circuit_breaker_state,
+            "pool_size": total,
+            "active_connections": active,
+            "idle_connections": idle,
+            "queued_requests": self._pending_acquires,
+        }
+
+    async def close(self) -> None:
+        """Close cached connections and clear caches."""
+
+        if self._closed:
+            return
+        await self._cache.clear()
+        await self._pool.close_all()
+        self._closed = True
+
+    async def _run_with_retries(
+        self,
+        sql: str,
+        params: Optional[Dict[str, Any]],
+        tenant_label: str,
+        query_timeout: float,
+    ) -> List[Dict[str, Any]]:
+        attempt = 0
+        last_error: Optional[Exception] = None
+
+        while attempt <= self.retry_config.max_retries:
+            if self.circuit_breaker.is_open():
+                try:
+                    await set_trino_circuit_breaker_state("open")
+                except NameError:
+                    pass
+                raise ServiceUnavailableException("trino", detail="Circuit breaker open")
+
+            try:
+                start = time.perf_counter()
+                rows = await self._execute_query_with_timeout(sql, params, query_timeout)
+                duration = time.perf_counter() - start
+                self.circuit_breaker.record_success()
+                await self._sync_circuit_breaker_metric()
+                try:
+                    await increment_trino_queries(tenant_label, status="success")
+                    await observe_trino_query_duration(tenant_label, self._classify_query(sql), duration)
+                except NameError:
+                    pass
+                return rows
+            except ServiceUnavailableException:
+                self._record_breaker_failure()
+                await self._sync_circuit_breaker_metric()
+                try:
+                    await increment_trino_queries(tenant_label, status="rejected")
+                except NameError:
+                    pass
+                raise
+            except Exception as exc:  # noqa: BLE001
+                last_error = exc
+                self._record_breaker_failure()
+                await self._sync_circuit_breaker_metric()
+                attempt += 1
+                status = "retry" if attempt <= self.retry_config.max_retries else "failed"
+                try:
+                    await increment_trino_queries(tenant_label, status=status)
+                except NameError:
+                    pass
+                if attempt > self.retry_config.max_retries:
+                    raise
+                backoff_factor = getattr(self.retry_config, "backoff_factor", 2.0)
+                base_delay = getattr(self.retry_config, "initial_delay", 0.2)
+                delay = min(base_delay * (backoff_factor ** (attempt - 1)), self.retry_config.max_delay)
+                await asyncio.sleep(delay)
+
+        if last_error:
+            raise last_error
+        return []
+
+    async def _execute_query_with_timeout(
+        self,
+        sql: str,
+        params: Optional[Dict[str, Any]],
+        query_timeout: float,
+    ) -> List[Dict[str, Any]]:
+        conn = await self._acquire_connection()
+        try:
+            if query_timeout:
+                return await asyncio.wait_for(self._run_query(conn, sql, params), timeout=query_timeout)
+            return await self._run_query(conn, sql, params)
+        finally:
+            await self._release_connection(conn)
+
+    async def _run_query(
+        self,
+        conn: Any,
+        sql: str,
+        params: Optional[Dict[str, Any]],
+    ) -> List[Dict[str, Any]]:
+        def _do_query() -> List[Dict[str, Any]]:
+            cursor = conn.cursor()
+            try:
+                try:
+                    cursor.execute(sql, params or {})
+                except Exception as exc:  # noqa: BLE001
+                    if hasattr(conn, "rollback"):
+                        try:
+                            conn.rollback()
+                        except Exception:  # noqa: BLE001
+                            pass
+                    raise
+
+                description = getattr(cursor, "description", None)
+                has_results = bool(description)
+                rows = []
+                if has_results and hasattr(cursor, "fetchall"):
+                    rows = cursor.fetchall()
+                else:
+                    if hasattr(conn, "commit"):
+                        try:
+                            conn.commit()
+                        except Exception:  # noqa: BLE001
+                            pass
+
+                columns = [col[0] for col in description or []]
+                if columns:
+                    return [dict(zip(columns, row)) for row in rows]
+                return rows
+            finally:
+                try:
+                    cursor.close()
+                except Exception:  # noqa: BLE001
+                    pass
+
+        return await asyncio.to_thread(_do_query)
+
+    async def _acquire_connection(self) -> Any:
+        attempt = 0
+        delay = self.acquire_backoff
+
+        while attempt < max(1, self.acquire_attempts):
+            attempt += 1
+            async with self._pending_lock:
+                self._pending_acquires += 1
+                try:
+                    await set_trino_request_queue_depth(self._pending_acquires)
+                except NameError:
+                    pass
+
+            started = time.perf_counter()
+            try:
+                connection = await asyncio.wait_for(self._pool.get_connection(), timeout=self.acquire_timeout)
+                try:
+                    await observe_trino_connection_acquire_time(time.perf_counter() - started)
+                except NameError:
+                    pass
+                await self._record_pool_metrics()
+                return connection
+            except asyncio.TimeoutError:
+                try:
+                    await increment_trino_queue_rejections("acquire_timeout")
+                except NameError:
+                    pass
+                if attempt >= self.acquire_attempts:
+                    raise ServiceUnavailableException("trino", detail="Connection acquire timeout") from None
+            except ServiceUnavailableException:
+                try:
+                    await increment_trino_queue_rejections("pool_exhausted")
+                except NameError:
+                    pass
+                if attempt >= self.acquire_attempts:
+                    raise
+            finally:
+                async with self._pending_lock:
+                    self._pending_acquires = max(0, self._pending_acquires - 1)
+                    try:
+                        await set_trino_request_queue_depth(self._pending_acquires)
+                    except NameError:
+                        pass
+
+            await asyncio.sleep(delay)
+            delay = min(delay * 2, self.retry_config.max_delay)
+
+        raise ServiceUnavailableException("trino", detail="Unable to acquire connection")
+
+    async def _release_connection(self, conn: Any) -> None:
+        await self._pool.return_connection(conn)
+        await self._record_pool_metrics()
+
+    async def _record_pool_metrics(self) -> None:
+        active = getattr(self._pool, "_active_connections", 0)
+        idle = len(getattr(self._pool, "_connections", []))
+        max_size = getattr(self._pool, "max_size", 1)
+        utilization = active / float(max_size or 1)
+        status = "healthy"
+        if utilization >= 0.85:
+            status = "critical"
+        elif utilization >= 0.6:
+            status = "warning"
+
+        try:
+            await set_trino_connection_pool_active(active)
+            await set_trino_connection_pool_idle(idle)
+            await set_trino_connection_pool_utilization(utilization)
+            await set_trino_pool_saturation(utilization)
+            await set_trino_pool_saturation_status(status)
+        except NameError:
+            pass
+
+    async def _sync_circuit_breaker_metric(self) -> None:
+        try:
+            await set_trino_circuit_breaker_state(self.circuit_breaker_state)
+        except NameError:
+            pass
+
+    def _record_breaker_failure(self) -> None:
+        previous_state = getattr(self.circuit_breaker, "_state", CircuitBreakerState.CLOSED)
+        self.circuit_breaker.record_failure()
+        current_state = getattr(self.circuit_breaker, "_state", CircuitBreakerState.CLOSED)
+        failures = getattr(self.circuit_breaker, "_failures", 0)
+
+        if (
+            current_state == CircuitBreakerState.CLOSED
+            and failures >= self.circuit_breaker.failure_threshold
+        ):
+            old_state = current_state
+            self.circuit_breaker._state = CircuitBreakerState.OPEN
+            self.circuit_breaker._state_change_time = time.time()
+            try:
+                self.circuit_breaker._dispatch_alert(
+                    old_state,
+                    self.circuit_breaker._state,
+                    "Failure threshold reached",
+                )
+            except Exception:  # noqa: BLE001
+                pass
+
+    def _cache_key(self, sql: str, params: Optional[Dict[str, Any]]) -> str:
+        params_repr = json.dumps(params, sort_keys=True, default=str) if params else ""
+        raw = f"{sql}|{params_repr}"
+        return hashlib.sha1(raw.encode()).hexdigest()
+
+    def _classify_query(self, sql: str) -> str:
+        if not sql:
+            return "unknown"
+        prefix = sql.strip().split(None, 1)[0].lower()
+        if prefix in {"select", "show", "describe", "with"}:
+            return "read"
+        if prefix in {"insert", "update", "delete", "merge"}:
+            return "write"
+        return prefix
+
+    def _parse_cache_control(self, value: str) -> Optional[float]:
+        if not value:
+            return None
+        for part in value.split(","):
+            directive = part.strip()
+            if directive.startswith("max-age="):
+                try:
+                    return float(directive.split("=", 1)[1])
+                except ValueError:
+                    return None
+        return None
+
+    def _extract_cache_policy(
+        self,
+        sql: str,
+        params: Dict[str, Any],
+        explicit_ttl: Optional[float],
+    ) -> Tuple[bool, Optional[float]]:
+        if explicit_ttl is not None:
+            ttl = float(explicit_ttl)
+            return ttl > 0, ttl
+
+        ttl = None
+        if "_cache_ttl" in params:
+            try:
+                ttl = float(params.pop("_cache_ttl"))
+            except (TypeError, ValueError):
+                ttl = None
+
+        if ttl is None and "_cache_control" in params:
+            ttl = self._parse_cache_control(str(params.pop("_cache_control")))
+
+        if ttl is None and sql.strip().upper().startswith(("SELECT", "SHOW", "DESCRIBE", "WITH")):
+            ttl = self._cache.default_ttl
+
+        return ttl is not None and ttl > 0, ttl
 
 
 class TrinoClient(SimpleTrinoClient):
@@ -240,9 +632,12 @@ def get_db_migration_phase() -> str:
 
 
 # Factory function for creating clients
-def create_trino_client(config: TrinoConfig) -> SimpleTrinoClient:
+def create_trino_client(
+    config: TrinoConfig,
+    concurrency_config: Optional[Dict[str, Any]] = None,
+) -> SimpleTrinoClient:
     """Create a simplified Trino client."""
-    return SimpleTrinoClient(config)
+    return SimpleTrinoClient(config, concurrency_config=concurrency_config)
 
 
 # Hybrid client manager with feature flags

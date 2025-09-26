@@ -16,7 +16,7 @@ from typing import Any, Dict, List, Optional, Callable, Awaitable
 from .deployment_manager import CanaryDeploymentManager, CanaryConfig, get_deployment_manager
 from .traffic_manager import TrafficManager, get_traffic_manager, TrafficEndpoint
 from .health_monitor import get_health_monitor
-from ...observability.metrics import get_metrics_client
+from ..observability.metrics import get_metrics_client
 
 logger = logging.getLogger(__name__)
 

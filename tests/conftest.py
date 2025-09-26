@@ -9,6 +9,15 @@ for path in (ROOT, SRC):
     if path_str not in sys.path:
         sys.path.insert(0, path_str)
 
+# Ensure standard library logging package can discover test submodules under tests/logging
+import logging as _logging
+
+_logging_test_dir = ROOT / "tests" / "logging"
+if hasattr(_logging, "__path__"):
+    test_dir_str = str(_logging_test_dir)
+    if _logging_test_dir.exists() and test_dir_str not in _logging.__path__:
+        _logging.__path__.append(test_dir_str)  # type: ignore[attr-defined]
+
 # Ensure older pytest-asyncio style decorator remains available
 try:
     import pytest

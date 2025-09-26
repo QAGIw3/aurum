@@ -10,36 +10,38 @@ from datetime import datetime, timedelta
 from aurum.telemetry.context import correlation_context, get_request_id
 
 
+@pytest.fixture(scope="session")
+async def api_client() -> AsyncGenerator[httpx.AsyncClient, None]:
+    """Create authenticated API client for testing."""
+    async with httpx.AsyncClient(
+        base_url="http://api:8000",
+        timeout=30.0
+    ) as client:
+        # Wait for API to be ready
+        for _ in range(60):
+            try:
+                response = await client.get("/health")
+                if response.status_code == 200:
+                    break
+            except Exception:
+                pass
+            await asyncio.sleep(2)
+        else:
+            pytest.fail("API service did not become ready")
+
+        yield client
+
+
+@pytest.fixture(scope="session")
+async def kafka_client() -> AsyncGenerator[Dict[str, Any], None]:
+    """Create Kafka client for testing."""
+    # This would be a proper Kafka client for testing
+    # For now, we'll use a mock or direct API calls
+    yield {"type": "test"}
+
+
 class TestScenarioE2E:
     """End-to-end scenario API tests with RLS and tenancy."""
-
-    @pytest.fixture(scope="session")
-    async def api_client() -> AsyncGenerator[httpx.AsyncClient, None]:
-        """Create authenticated API client for testing."""
-        async with httpx.AsyncClient(
-            base_url="http://api:8000",
-            timeout=30.0
-        ) as client:
-            # Wait for API to be ready
-            for i in range(60):
-                try:
-                    response = await client.get("/health")
-                    if response.status_code == 200:
-                        break
-                except Exception:
-                    pass
-                await asyncio.sleep(2)
-            else:
-                pytest.fail("API service did not become ready")
-
-            yield client
-
-    @pytest.fixture(scope="session")
-    async def kafka_client() -> AsyncGenerator[Dict[str, Any], None]:
-        """Create Kafka client for testing."""
-        # This would be a proper Kafka client for testing
-        # For now, we'll use a mock or direct API calls
-        yield {"type": "test"}
 
     async def test_scenario_lifecycle_e2e(
         self,

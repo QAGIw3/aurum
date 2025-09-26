@@ -39,13 +39,13 @@ class PipelineConfig:
 
     # Kafka configuration
     kafka_bootstrap_servers: str
+    timescale_connection: str
     kafka_topic_prefix: str = "aurum.iso"
 
     # Schema registry
     schema_registry_url: Optional[str] = None
 
     # Storage configuration
-    timescale_connection: str
     iceberg_catalog: str = "nessie"
     iceberg_warehouse: str = "s3://aurum/curated/iceberg"
 

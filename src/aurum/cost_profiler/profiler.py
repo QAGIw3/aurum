@@ -184,6 +184,8 @@ class DatasetProfile:
 
         return total_metrics
 
+
+
     def get_performance_summary(self) -> Dict[str, Any]:
         """Get performance summary for this dataset.
 
@@ -262,6 +264,10 @@ class ProfilerConfig:
     # Data source specific settings
     data_source_configs: Dict[str, Dict[str, Any]] = field(default_factory=dict)
 
+
+# Maintain backwards compatibility with the historic name exposed via
+# ``aurum.cost_profiler``.
+ProfileMetrics = PerformanceMetrics
 
 class CostProfiler:
     """Main cost profiler for data ingestion pipelines."""

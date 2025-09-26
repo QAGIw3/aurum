@@ -28,11 +28,11 @@ class CanaryConfig:
     name: str
     source: str
     dataset: str
+    api_endpoint: str
     schedule: str = "0 */6 * * *"  # Every 6 hours
     enabled: bool = True
 
     # API configuration
-    api_endpoint: str
     api_params: Dict[str, Any] = field(default_factory=dict)
     expected_response_format: str = "json"  # json, csv, xml
     expected_fields: List[str] = field(default_factory=list)
