@@ -1,0 +1,4 @@
+# file: /Users/mstudio/Library/Mobile Documents/com~apple~CloudDocs/dev/aurum/src/aurum/api/rate_limiting/quota_manager.py
+# hypothesis_version: 6.140.2
+
+[0.1, 1.5, 2.0, 3.0, 30.0, 45.0, 1000.0, 100, 115, 120, 200, 295, 300, 600, 1000, 1800, 3600, 5000, 7200, 10000, 86400, 100000, 172800, '%Y%m%d', ':', 'Authorization', 'Bearer', 'EIA', 'FRED', 'GET', 'NOAA', 'User-Agent', 'World Bank', 'X-API-Key', 'active', 'allowed', 'api.quota_remaining', 'api_key', 'api_name', 'burst', 'current_usage', 'daily_cap', 'daily_exceeded', 'daily_remaining', 'daily_reset', 'data', 'day', 'eia', 'endpoint', 'features', 'fred', 'headers', 'hour', 'is_processing', 'limits', 'message', 'method', 'minute', 'no_active_keys', 'no_keys', 'noaa', 'observations', 'ok', 'priority', 'queue_size', 'queued', 'quota', 'quota_remaining', 'reason', 'remaining', 'response', 'rps', 'rps_exceeded', 'rps_remaining', 'rps_reset', 'status', 'status_code', 'timestamp', 'unavailable', 'world_bank']

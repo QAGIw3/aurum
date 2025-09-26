@@ -1,0 +1,4 @@
+# file: /Users/mstudio/Library/Mobile Documents/com~apple~CloudDocs/dev/aurum/src/aurum/reference/calendars.py
+# hypothesis_version: 6.140.2
+
+['-', 'BlockRule', 'Calendar', 'CalendarBlock', 'blocks', 'calendars.yml', 'config', 'expand_block_range', 'get_calendars', 'holidays', 'hours', 'hours_for_block', 'rules', 'timezone', 'utf-8', 'weekdays']

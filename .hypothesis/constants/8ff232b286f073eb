@@ -1,0 +1,4 @@
+# file: /Users/mstudio/Library/Mobile Documents/com~apple~CloudDocs/dev/aurum/src/aurum/reference/curve_schema.py
+# hypothesis_version: 6.140.2
+
+['ASK', 'BID', 'CALENDAR', 'CURVE_ENUMS', 'CUSTOM', 'CurveAssetClass', 'CurveField', 'CurvePriceType', 'CurveTenorType', 'INDEX', 'LAST', 'MID', 'MONTHLY', 'Pricing as-of date', 'QUARTER', 'SEASON', 'SETTLE', 'STRIP', 'Workbook sheet name', '_ingest_ts', 'ask', 'asof_date', 'asset_class', 'bid', 'block', 'carbon', 'contract_month', 'currency', 'curve_key', 'date', 'double', 'gas', 'iso', 'location', 'market', 'mid', 'other', 'per_unit', 'power', 'price_type', 'product', 'region', 'renewable', 'sheet_name', 'source_file', 'spark_location', 'storage', 'string', 'tenor_label', 'tenor_type', 'timestamp', 'units_raw', 'value', 'version_hash']

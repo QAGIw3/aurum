@@ -15,7 +15,7 @@ from typing import Dict, List, Optional, Set, Tuple, Any
 from collections import defaultdict
 import threading
 
-from ...observability.metrics import get_metrics_client
+from ..observability.metrics import get_metrics_client
 
 logger = logging.getLogger(__name__)
 
@@ -322,7 +322,7 @@ class QuotaManager:
                 alerts.append({
                     "dataset_id": dataset_id,
                     "alert_type": "requests_quota_warning",
-                    "message": f"Requests usage at {status['requests_percent']".1f"}%",
+                    "message": f"Requests usage at {status['requests_percent']:.1f}%",
                     "current_usage": status["requests_used"],
                     "limit": status["requests_limit"],
                     "severity": "warning"

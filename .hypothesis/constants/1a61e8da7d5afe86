@@ -1,0 +1,4 @@
+# file: /Users/mstudio/Library/Mobile Documents/com~apple~CloudDocs/dev/aurum/src/aurum/api/database/optimization.py
+# hypothesis_version: 6.140.2
+
+[0.5, 404, 500, 1000, '-', '_', 'confidence', 'created_at', 'data', 'description', 'effort', 'filters', 'impact', 'implemented', 'message', 'meta', 'min_impact', 'priority_score', 'query_hash', 'query_time_ms', 'request_id', 'suggestion_id', 'suggestion_type', 'title', 'total_suggestions']

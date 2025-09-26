@@ -78,6 +78,10 @@ class TestConcurrencyController:
 
     async def test_acquire_slot_global_limit(self, controller):
         """Test acquiring slots within global limit."""
+        controller = ConcurrencyController(
+            RequestLimits(max_concurrent_requests=5, max_requests_per_tenant=5)
+        )
+
         slots = []
         for i in range(5):
             slot = await controller.acquire_slot(tenant_id="tenant1", request_id=f"req-{i}")

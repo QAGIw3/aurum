@@ -3,5 +3,6 @@
 from __future__ import annotations
 
 from .scenarios.scenario_models import *  # noqa: F401,F403
+from aurum.scenarios.models import DriverType, ScenarioAssumption
 
 __all__ = [name for name in globals().keys() if not name.startswith("_")]

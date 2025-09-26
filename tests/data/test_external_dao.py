@@ -71,6 +71,7 @@ class TestExternalDAO:
         """Create ExternalDAO with mocked Trino client."""
         return ExternalDAO(trino_client=mock_trino_client)
 
+    @pytest.mark.asyncio
     async def test_get_providers_success(self, dao, mock_trino_client):
         """Test successful providers retrieval."""
         # Mock query result
@@ -100,6 +101,7 @@ class TestExternalDAO:
         assert "limit" in call_args[1][0]  # First keyword arg is params
         assert call_args[1][0]["limit"] == 100
 
+    @pytest.mark.asyncio
     async def test_get_providers_with_pagination(self, dao, mock_trino_client):
         """Test providers retrieval with pagination."""
         cursor = PaginationCursor(
@@ -120,6 +122,7 @@ class TestExternalDAO:
         assert params["cursor_provider_id"] == "fred"
         assert params["cursor_last_updated"] == datetime.fromisoformat("2025-01-21T10:30:00")
 
+    @pytest.mark.asyncio
     async def test_get_providers_large_limit_warning(self, dao, mock_trino_client):
         """Test warning for large result sets."""
         mock_trino_client.execute_query.return_value = []
@@ -131,7 +134,8 @@ class TestExternalDAO:
             mock_logger.warning.assert_called_once()
             assert "Large result set requested" in mock_logger.warning.call_args[0][0]
 
-    def test_get_series_success(self, dao, mock_trino_client):
+    @pytest.mark.asyncio
+    async def test_get_series_success(self, dao, mock_trino_client):
         """Test successful series retrieval."""
         mock_trino_client.execute_query.return_value = [
             {
@@ -158,7 +162,8 @@ class TestExternalDAO:
         assert params["provider"] == "fred"
         assert params["frequency"] == "monthly"
 
-    def test_get_series_with_filters(self, dao, mock_trino_client):
+    @pytest.mark.asyncio
+    async def test_get_series_with_filters(self, dao, mock_trino_client):
         """Test series retrieval with multiple filters."""
         mock_trino_client.execute_query.return_value = []
 
@@ -174,7 +179,8 @@ class TestExternalDAO:
         assert params["frequency"] == "monthly"
         assert params["asof"] == "2024-12-31"
 
-    def test_get_observations_success(self, dao, mock_trino_client):
+    @pytest.mark.asyncio
+    async def test_get_observations_success(self, dao, mock_trino_client):
         """Test successful observations retrieval."""
         mock_trino_client.execute_query.side_effect = [
             # First call to check series exists
@@ -198,14 +204,16 @@ class TestExternalDAO:
         assert observations[0]["value"] == 21538.032
         assert observations[0]["metadata"] == {"seasonal_adjustment": "SAAR"}
 
-    def test_get_observations_series_not_found(self, dao, mock_trino_client):
+    @pytest.mark.asyncio
+    async def test_get_observations_series_not_found(self, dao, mock_trino_client):
         """Test observations retrieval for non-existent series."""
         mock_trino_client.execute_query.return_value = []  # Series doesn't exist
 
         with pytest.raises(Exception):  # Should raise NotFoundException
             await dao.get_observations("INVALID:SERIES")
 
-    def test_get_observations_with_date_filters(self, dao, mock_trino_client):
+    @pytest.mark.asyncio
+    async def test_get_observations_with_date_filters(self, dao, mock_trino_client):
         """Test observations retrieval with date filters."""
         mock_trino_client.execute_query.side_effect = [
             [{"exists_check": 1}],  # Series exists
@@ -223,7 +231,8 @@ class TestExternalDAO:
         assert params["start_date"] == "2020-01-01"
         assert params["end_date"] == "2024-01-01"
 
-    def test_get_observations_large_limit_warning(self, dao, mock_trino_client):
+    @pytest.mark.asyncio
+    async def test_get_observations_large_limit_warning(self, dao, mock_trino_client):
         """Test warning for very large observations result sets."""
         mock_trino_client.execute_query.side_effect = [
             [{"exists_check": 1}],
@@ -236,7 +245,8 @@ class TestExternalDAO:
             mock_logger.warning.assert_called_once()
             assert "Very large observations result set requested" in mock_logger.warning.call_args[0][0]
 
-    def test_get_metadata_success(self, dao, mock_trino_client):
+    @pytest.mark.asyncio
+    async def test_get_metadata_success(self, dao, mock_trino_client):
         """Test successful metadata retrieval."""
         mock_trino_client.execute_query.side_effect = [
             # First call for providers
@@ -263,7 +273,8 @@ class TestExternalDAO:
         assert metadata["total_series"] == 54321
         assert metadata["last_updated"] == "2025-01-21T10:30:00"
 
-    def test_get_metadata_with_provider_filter(self, dao, mock_trino_client):
+    @pytest.mark.asyncio
+    async def test_get_metadata_with_provider_filter(self, dao, mock_trino_client):
         """Test metadata retrieval with provider filter."""
         mock_trino_client.execute_query.side_effect = [
             [{"provider_id": "fred", "name": "FRED", "description": "Test", "base_url": "https://test.com", "last_updated": "2025-01-21T10:30:00", "series_count": 100}],
@@ -335,7 +346,8 @@ class TestExternalDAOIntegration:
     """Test ExternalDAO with real Trino client (if available)."""
 
     @pytest.mark.integration
-    def test_get_trino_client(self):
+    @pytest.mark.asyncio
+    async def test_get_trino_client(self):
         """Test getting Trino client instance."""
         dao = ExternalDAO()
 
@@ -348,7 +360,8 @@ class TestExternalDAOIntegration:
             pytest.skip("Trino client not available")
 
     @pytest.mark.integration
-    def test_dao_with_real_client(self):
+    @pytest.mark.asyncio
+    async def test_dao_with_real_client(self):
         """Test DAO with real Trino client (integration test)."""
         dao = ExternalDAO()
 

@@ -16,6 +16,18 @@ from airflow.utils.task_group import TaskGroup
 
 from aurum.airflow_utils import build_failure_callback, metrics
 
+try:  # Optional in test environments
+    from aurum.db import update_ingest_watermark as _update_ingest_watermark
+except Exception:  # pragma: no cover - db package may be unavailable in tests
+    _update_ingest_watermark = None
+
+if _update_ingest_watermark is not None:
+    update_ingest_watermark = _update_ingest_watermark
+else:
+
+    def update_ingest_watermark(*args, **kwargs):  # type: ignore[no-redef]
+        raise RuntimeError("update_ingest_watermark is unavailable in this environment")
+
 
 @dataclass
 class DatasetConfig:
@@ -36,6 +48,10 @@ class DatasetConfig:
     canonical_currency: Optional[str] = None
     canonical_unit: Optional[str] = None
     unit_conversion: Optional[str] = None
+    seasonal_adjustment: Optional[str] = None
+    area: Optional[str] = None
+    units: Optional[str] = None
+    unit_code: Optional[str] = None
     area_expr: Optional[str] = None
     sector_expr: Optional[str] = None
     description_expr: Optional[str] = None
@@ -78,6 +94,10 @@ class DatasetConfig:
             canonical_currency=data.get("canonical_currency"),
             canonical_unit=data.get("canonical_unit"),
             unit_conversion=data.get("unit_conversion"),
+             seasonal_adjustment=data.get("seasonal_adjustment"),
+            area=data.get("area"),
+            units=data.get("units"),
+            unit_code=data.get("unit_code"),
             area_expr=data.get("area_expr"),
             sector_expr=data.get("sector_expr"),
             description_expr=data.get("description_expr"),
@@ -125,7 +145,7 @@ class SeaTunnelTaskBuilder:
         set_env("EIA_SERIES_ID", config.series_id or "MULTI_SERIES")
         set_env("EIA_SERIES_ID_EXPR", config.series_id_expr or "series_id", quote=False)
         set_env("EIA_FREQUENCY", config.frequency or "OTHER")
-        set_env("EIA_SEASONAL_ADJUSTMENT", config.get("seasonal_adjustment", "UNKNOWN"))
+        set_env("EIA_SEASONAL_ADJUSTMENT", config.seasonal_adjustment or "UNKNOWN")
         set_env("EIA_AREA_EXPR", config.area_expr or "CAST(NULL AS STRING)")
         set_env("EIA_SECTOR_EXPR", config.sector_expr or "CAST(NULL AS STRING)")
         set_env("EIA_DESCRIPTION_EXPR", config.description_expr or "CAST(NULL AS STRING)")
@@ -170,7 +190,7 @@ class SeaTunnelTaskBuilder:
         # Core FRED variables
         set_env("FRED_SERIES_ID", config.series_id or "DGS10")
         set_env("FRED_FREQUENCY", config.frequency or "DAILY")
-        set_env("FRED_SEASONAL_ADJ", config.get("seasonal_adjustment", "NSA"))
+        set_env("FRED_SEASONAL_ADJ", config.seasonal_adjustment or "NSA")
         set_env("FRED_START_DATE", "{{ data_interval_start | ds }}")
         set_env("FRED_END_DATE", "{{ data_interval_start | ds }}")
         set_env("FRED_UNITS", config.default_units or "Percent")
@@ -204,10 +224,10 @@ class SeaTunnelTaskBuilder:
         # Core CPI variables
         set_env("CPI_SERIES_ID", config.series_id or "CPIAUCSL")
         set_env("CPI_FREQUENCY", config.frequency or "MONTHLY")
-        set_env("CPI_SEASONAL_ADJ", config.get("seasonal_adjustment", "SA"))
+        set_env("CPI_SEASONAL_ADJ", config.seasonal_adjustment or "SA")
         set_env("CPI_START_DATE", "{{ data_interval_start | ds }}")
         set_env("CPI_END_DATE", "{{ data_interval_start | ds }}")
-        set_env("CPI_AREA", config.get("area", "US_CITY_AVERAGE"))
+        set_env("CPI_AREA", config.area or "US_CITY_AVERAGE")
         set_env("CPI_UNITS", config.default_units or "Index 1982-1984=100")
         set_env("CPI_SOURCE", "FRED")
 
@@ -242,8 +262,8 @@ class SeaTunnelTaskBuilder:
         set_env("NOAA_GHCND_DATASET", "GHCND")
         set_env("NOAA_GHCND_LIMIT", str(config.page_limit), quote=False)
         set_env("NOAA_GHCND_STATION_LIMIT", "1000")
-        set_env("NOAA_GHCND_UNIT_CODE", config.get("unit_code", "unknown"))
-        set_env("NOAA_GHCND_UNITS", config.get("units", "metric"))
+        set_env("NOAA_GHCND_UNIT_CODE", config.unit_code or "unknown")
+        set_env("NOAA_GHCND_UNITS", config.units or "metric")
 
         # Windowing
         if config.window_hours is not None:
@@ -395,7 +415,6 @@ class WatermarkBuilder:
         def _update_watermark(**context):
             logical_date = context["logical_date"]
             try:
-                from aurum.db import update_ingest_watermark
                 update_ingest_watermark(source_name, "logical_date", logical_date, policy=policy)
                 metrics.record_watermark_success(source_name, logical_date)
             except Exception as e:

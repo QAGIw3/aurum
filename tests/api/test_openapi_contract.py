@@ -16,5 +16,13 @@ GET_SCHEMA = SCHEMA.include(method="GET")
 @settings(max_examples=5, deadline=None)
 def test_openapi_contract(case) -> None:
     """Fuzz basic GET endpoints to ensure schema conformance."""
-    response = case.call_asgi()
+    # Schemathesis 4.x removed the dedicated ``call_asgi`` helper in favour of
+    # a unified ``call`` method that honours the transport bound to the schema.
+    # Older versions still expose ``call_asgi`` so keep a compatibility bridge
+    # for developers that haven't upgraded yet.
+    call = getattr(case, "call_asgi", None)
+    if call is None:
+        response = case.call()
+    else:  # pragma: no cover - exercised under legacy Schemathesis
+        response = call()
     case.validate_response(response)

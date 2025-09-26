@@ -1,0 +1,4 @@
+# file: /Users/mstudio/Library/Mobile Documents/com~apple~CloudDocs/dev/aurum/src/aurum/api/http/middleware/access.py
+# hypothesis_version: 6.140.2
+
+[1000.0, 500, 'X-Aurum-Tenant', 'X-Correlation-Id', 'X-Request-Id', 'X-Span-Id', 'X-Trace-Id', 'aurum-api', 'aurum.api.access', 'aurum.correlation_id', 'aurum.request_id', 'aurum.tenant_id', 'aurum.user_id', 'body', 'correlation_id', 'error', 'http.correlation_id', 'http.request_id', 'http_request_failed', 'info', 'is_recording', 'principal', 'request_id', 'session_id', 'sub', 'tenant', 'tenant_id', 'unknown', 'user-agent', 'user_id', 'x-aurum-tenant', 'x-correlation-id', 'x-request-id', 'x-user-id']

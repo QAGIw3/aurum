@@ -1,0 +1,4 @@
+# file: /Users/mstudio/Library/Mobile Documents/com~apple~CloudDocs/dev/aurum/src/aurum/common/circuit_breaker.py
+# hypothesis_version: 6.140.2
+
+[60.0, 1000, 'CLOSED', 'CircuitBreaker', 'CircuitBreakerConfig', 'HALF_OPEN', 'Manual force close', 'Manual force open', 'OPEN', '_initialized', 'circuit_breaker', 'default', 'failure_threshold', 'failures', 'get_circuit_breaker', 'last_failure_time', 'last_success_time', 'name', 'new_state', 'old_state', 'reason', 'recovery_timeout', 'state', 'state_change_time', 'success_threshold', 'successes', 'timestamp', 'type', 'uptime_seconds']

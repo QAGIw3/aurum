@@ -158,6 +158,9 @@ if PROMETHEUS_AVAILABLE:  # pragma: no branch - simplify instrumentation when av
         ["mapping_type"],
     )
 
+    # Great Expectations metrics
+    GE_VALIDATION_RUNS = GE_VALIDATION_DURATION = GE_VALIDATION_EXPECTATIONS = GE_VALIDATION_QUALITY_SCORE = None
+    GE_VALIDATION_COUNTER = None
     # Rate limiting metrics
     RATE_LIMIT_REQUESTS = Counter(
         "aurum_rate_limit_requests_total",
@@ -497,6 +500,8 @@ if PROMETHEUS_AVAILABLE:  # pragma: no branch - simplify instrumentation when av
         "Great Expectations validation runs",
         ["dataset", "suite", "status"],
     )
+    # Backwards compatibility alias used by older code paths/tests
+    GE_VALIDATION_COUNTER = GE_VALIDATION_RUNS
     GE_VALIDATION_DURATION = Histogram(
         "aurum_ge_validation_duration_seconds",
         "Great Expectations validation duration",
@@ -1742,6 +1747,7 @@ __all__ = [
     "GE_VALIDATION_DURATION",
     "GE_VALIDATION_EXPECTATIONS",
     "GE_VALIDATION_QUALITY_SCORE",
+    "GE_VALIDATION_COUNTER",
     "increment_ge_validation_runs",
     "observe_ge_validation_duration",
     "increment_ge_validation_expectations",

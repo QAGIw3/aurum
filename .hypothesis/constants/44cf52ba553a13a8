@@ -1,0 +1,4 @@
+# file: /Users/mstudio/Library/Mobile Documents/com~apple~CloudDocs/dev/aurum/src/aurum/api/database/health.py
+# hypothesis_version: 6.140.2
+
+[0.1, 0.5, 1.0, 2.0, 5.0, 100.0, 500, 1000, '/v1/admin/db/alerts', '/v1/admin/db/health', '1.0s', '10%', '35%', '80%', 'High slow query rate', 'Time range in hours', 'actions', 'alerts', 'average_query_time', 'avg_time', 'caching', 'category', 'connection_pool', 'critical', 'current_value', 'data', 'database_monitor', 'description', 'effort', 'excellent', 'fair', 'good', 'health_issues', 'health_score', 'high', 'impact', 'indexing', 'info', 'issues', 'level', 'medium', 'message', 'meta', 'performance_metrics', 'performance_score', 'performance_summary', 'poor', 'priority', 'query_hash', 'query_optimization', 'query_time_ms', 'recommendations', 'request_id', 'slow_query_rate', 'status', 'threshold', 'time_range_hours', 'title', 'top_patterns', 'top_suggestions', 'total_alerts', 'type', 'warning']

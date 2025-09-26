@@ -1,0 +1,4 @@
+# file: /Users/mstudio/Library/Mobile Documents/com~apple~CloudDocs/dev/aurum/src/aurum/api/container.py
+# hypothesis_version: 6.140.2
+
+['ICacheProvider', 'IDataBackend', 'ServiceDescriptor', 'ServiceLifetime', 'ServiceScope', 'T', 'create_scope', 'get_container', 'get_service', 'register_service', 'scoped', 'singleton', 'transient']

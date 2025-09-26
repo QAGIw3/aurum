@@ -1,0 +1,4 @@
+# file: /Users/mstudio/Library/Mobile Documents/com~apple~CloudDocs/dev/aurum/src/aurum/drought/fetcher.py
+# hypothesis_version: 6.140.2
+
+[0.5, 120, 206, 401, 403, 429, 500, 502, 503, 504, 1024, '.part', 'Accept-Ranges', 'AssetDownloadResult', 'AssetFetcher', 'Content-Length', 'GET', 'HEAD', 'HttpAsset', 'Range', 'ab', 'bytes', 'http://', 'https://', 'path', 'rb', 'sha256', 'status', 'status_code', 'url', 'wb']

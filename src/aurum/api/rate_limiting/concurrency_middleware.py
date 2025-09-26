@@ -28,7 +28,7 @@ except ImportError:
         def labels(self, **kwargs): return self
 
 from ..telemetry.context import get_request_id, log_structured
-from .exceptions import ServiceUnavailableException
+from ..exceptions import ServiceUnavailableException
 
 
 @dataclass
@@ -123,7 +123,14 @@ class ConcurrencyController:
             self._active_requests += 1
             if tenant_id:
                 self.limits._tenant_requests[tenant_id] += 1
-                self.limits._tenant_request_times[tenant_id].append(start_time)
+
+                cutoff_time = start_time - 60.0  # Track last minute of activity
+                recent_times = [
+                    t for t in self.limits._tenant_request_times[tenant_id]
+                    if t > cutoff_time
+                ]
+                recent_times.append(start_time)
+                self.limits._tenant_request_times[tenant_id] = recent_times
 
         return ConcurrencySlot(
             controller=self,

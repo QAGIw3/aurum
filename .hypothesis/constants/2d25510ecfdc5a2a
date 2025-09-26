@@ -1,0 +1,4 @@
+# file: /Users/mstudio/Library/Mobile Documents/com~apple~CloudDocs/dev/aurum/src/aurum/api/app.py
+# hypothesis_version: 6.140.2
+
+[0.0, 200, 500, '*', ',', ', ', '/v1', '/v1/curves', '/v1/curves/diff', '0', '1', 'AURUM_API_LIGHT_INIT', 'Accept', 'Accept-Encoding', 'Content-Encoding', 'Content-Length', 'GZipMiddleware', 'Vary', '_aurum_gzip_patched', '_content', '_encoding', '_text', 'accept-encoding', 'api_migration_phase', 'cls', 'cors_origins', 'curve_key', 'curves', 'datasets', 'fallback', 'false', 'groups', 'gzip', 'gzip, ', 'gzip_min_bytes', 'http', 'kwargs', 'metadata', 'mid', 'minimum_size', 'options', 'router', 'true', 'use_simplified_api', 'utf-8', 'yes']

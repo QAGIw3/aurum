@@ -1,0 +1,4 @@
+# file: /Users/mstudio/Library/Mobile Documents/com~apple~CloudDocs/dev/aurum/src/aurum/api/scenarios/http.py
+# hypothesis_version: 6.140.2
+
+[200, 'data', 'decode_cursor', 'encode_cursor', 'etag', 'limit', 'offset', 'respond_with_etag', 'status_code', 'utf-8']

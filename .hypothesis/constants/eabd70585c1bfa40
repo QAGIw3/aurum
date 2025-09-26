@@ -1,0 +1,4 @@
+# file: /Users/mstudio/Library/Mobile Documents/com~apple~CloudDocs/dev/aurum/src/aurum/api/database/trino_client.py
+# hypothesis_version: 6.140.2
+
+[-1000, 1000, 8080, '.aurum', '1', 'DB_FEATURE_FLAGS', 'DB_MIGRATION_PHASE', 'Execute failed: %s', 'Query failed: %s', 'SELECT 1', 'SimpleTrinoClient', 'USE_SIMPLE_DB_CLIENT', 'aurum', 'available', 'connection', 'create_trino_client', 'db_migration', 'default', 'errors', 'false', 'get_trino_client', 'has_simple_clients', 'healthy', 'http', 'hybrid', 'iceberg', 'legacy', 'legacy_calls', 'localhost', 'migration_phase', 'monitoring_enabled', 'performance_ms', 'r', 'simplified', 'simplified_calls', 'status', 'true', 'using_simple', 'w', 'yes']

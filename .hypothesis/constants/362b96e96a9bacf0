@@ -1,0 +1,4 @@
+# file: /Users/mstudio/Library/Mobile Documents/com~apple~CloudDocs/dev/aurum/src/aurum/observability/telemetry.py
+# hypothesis_version: 6.140.2
+
+[400, 1000, 'GET', 'api.endpoint', 'api.key_used', 'api.name', 'api.quota_exceeded', 'api.rate_limit_reset', 'api_error', 'aurum-data-pipeline', 'batch.job.name', 'batch_size', 'consume', 'data_quality.table', 'expectations_failed', 'http.duration_ms', 'http.method', 'http.status_code', 'http.url', 'http.user_agent', 'kafka', 'kafka.batch_size', 'kafka.message_count', 'message_count', 'messaging.operation', 'messaging.source', 'messaging.system', 'otlp_console_export', 'otlp_endpoint', 'processing_time_ms', 'produce', 'quota_exceeded', 'records_evaluated', 'records_processed', 'records_written', 'seatunnel.job.name', 'seatunnel.stage.name', 'seatunnel.stage.type', 'service.name', 'status_code', 'success_rate', 'topic', 'validation.run.table', 'validation_failed', 'validation_passed']

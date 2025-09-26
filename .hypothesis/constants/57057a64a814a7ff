@@ -1,0 +1,4 @@
+# file: /Users/mstudio/Library/Mobile Documents/com~apple~CloudDocs/dev/aurum/src/aurum/api/exceptions.py
+# hypothesis_version: 6.140.2
+
+[400, 403, 404, 500, 503, '.', 'Access denied', 'HTTPException', 'InternalServerError', 'Validation error', 'ValueError', 'admin', 'code', 'cursor', 'errors', 'field', 'field_errors', 'input', 'loc', 'metrics', 'model', 'module', 'msg', 'operation', 'parameter', 'region', 'required_role', 'resource_id', 'resource_type', 'service', 'tenant_id', 'type']

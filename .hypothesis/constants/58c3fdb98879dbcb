@@ -1,0 +1,4 @@
+# file: /Users/mstudio/Library/Mobile Documents/com~apple~CloudDocs/dev/aurum/src/aurum/api/database/performance.py
+# hypothesis_version: 6.140.2
+
+[0.0, 250.0, 500, 1000, '1h', 'calls', 'data', 'mean_time', 'mean_time_ms', 'meta', 'query', 'query_time_ms', 'request_id', 'rows', 'shared_blks_hit', 'shared_blks_read', 'shared_blocks_hit', 'shared_blocks_read', 'time_range', 'total_time', 'total_time_ms']

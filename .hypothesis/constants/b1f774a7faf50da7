@@ -1,0 +1,4 @@
+# file: /Users/mstudio/Library/Mobile Documents/com~apple~CloudDocs/dev/aurum/src/aurum/api/query.py
+# hypothesis_version: 6.140.2
+
+[' AND ', ' AND (', ' OR ', ' ORDER BY ', ' WHERE ', "'", "''", ')', ', ', '.', '<', '>', 'ASC', "DATE '0001-01-01'", 'DESC', 'a', 'asof_date', 'asset_class', 'block', 'contract_month', 'curve_key', 'ingest_ts', 'iso', 'location', 'market', 'microseconds', 'period_end', 'period_start', 'price_type', 'product', 't', 'tenor_label', 'tenor_type']

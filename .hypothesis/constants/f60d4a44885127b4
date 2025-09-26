@@ -1,0 +1,4 @@
+# file: /Users/mstudio/Library/Mobile Documents/com~apple~CloudDocs/dev/aurum/src/aurum/api/database/query_analysis.py
+# hypothesis_version: 6.140.2
+
+[500, 1000, '+00:00', 'Filter by endpoint', 'Sort criteria', 'Z', 'avg_time', 'data', 'endpoint', 'endpoints', 'error_count', 'error_message', 'error_rate', 'execution_time', 'filters', 'first_seen', 'last_seen', 'max_time', 'meta', 'min_executions', 'min_time', 'pattern_text', 'performance_level', 'performance_score', 'query_hash', 'query_text', 'query_time_ms', 'request_id', 'result_count', 'since', 'sort_by', 'tenant_id', 'timestamp', 'total_executions', 'total_patterns', 'total_slow_queries', 'total_time', 'user_id']

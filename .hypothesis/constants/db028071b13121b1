@@ -1,0 +1,4 @@
+# file: /Users/mstudio/Library/Mobile Documents/com~apple~CloudDocs/dev/aurum/src/aurum/api/health.py
+# hypothesis_version: 6.140.2
+
+[503, '/health', '/health/live', '/healthz', '/live', '/livez', '/ready', '/readyz', 'alive', 'checks', 'disabled', 'error', 'health_check', 'healthy', 'live_check', 'ok', 'readiness_check', 'ready', 'redis', 'request_id', 'router', 'schema_registry', 'schema_registry_url', 'status', 'timescale', 'trino', 'unavailable']

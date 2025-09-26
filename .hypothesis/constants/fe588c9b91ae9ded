@@ -1,0 +1,4 @@
+# file: /Users/mstudio/Library/Mobile Documents/com~apple~CloudDocs/dev/aurum/src/aurum/observability/tracing.py
+# hypothesis_version: 6.140.2
+
+[3600, 'Unknown error', 'api', 'api_request', 'async_operation', 'attributes', 'aurum', 'cache', 'cache_type', 'cancelled', 'children', 'component', 'current_span_id', 'current_trace_id', 'database', 'duration', 'end_time', 'endpoint', 'error', 'error_count', 'error_message', 'events', 'external', 'internal', 'memory', 'method', 'name', 'ok', 'operation', 'request', 'request_id', 'root_span', 'root_spans', 'service', 'span.type', 'span_count', 'span_id', 'span_type', 'start_time', 'status', 'success', 'table', 'tags', 'timestamp', 'total_duration', 'trace_attributes', 'trace_id']

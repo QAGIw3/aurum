@@ -1,0 +1,4 @@
+# file: /Users/mstudio/Library/Mobile Documents/com~apple~CloudDocs/dev/aurum/src/aurum/reference/eia_catalog.py
+# hypothesis_version: 6.140.2
+
+['browser_date_format', 'browser_frequency', 'browser_total', 'config', 'data_columns', 'datasets', 'default_date_format', 'default_frequency', 'description', 'eia_catalog.json', 'end_period', 'facets', 'frequencies', 'name', 'path', 'start_period', 'utf-8', 'warnings']

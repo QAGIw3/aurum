@@ -40,6 +40,7 @@ _spec.loader.exec_module(_scenario_models)
     ScenarioRunResponse,
     ScenarioRunStatus,
     ScenarioStatus,
+    ScenarioCreateRequest,
 ) = (
     _scenario_models.BulkScenarioRunDuplicate,
     _scenario_models.BulkScenarioRunItem,
@@ -63,6 +64,7 @@ _spec.loader.exec_module(_scenario_models)
     _scenario_models.ScenarioRunResponse,
     _scenario_models.ScenarioRunStatus,
     _scenario_models.ScenarioStatus,
+    getattr(_scenario_models, "ScenarioCreateRequest", _scenario_models.CreateScenarioRequest),
 )
 
 from .admin import (
@@ -228,6 +230,7 @@ __all__ = [
     "BulkScenarioRunResult",
     "BulkScenarioRunDuplicate",
     "ScenarioRunBulkResponse",
+    "ScenarioCreateRequest",
     # PPA
     "PpaValuationRequest",
     "PpaMetric",
