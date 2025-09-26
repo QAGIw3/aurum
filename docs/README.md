@@ -11,6 +11,14 @@ This directory contains developer and operator documentation for the Aurum platf
 - Kubernetes developer flow: k8s-dev.md
 - Onboarding checklist: onboarding.md
 
+## Development Roadmap & Planning
+
+- **Development Roadmap 2024-2025**: [development-roadmap-2024.md](development-roadmap-2024.md) - Strategic development plan and phased approach
+- **Implementation Guide**: [roadmap-implementation-guide.md](roadmap-implementation-guide.md) - Practical templates and patterns for execution  
+- **Metrics Dashboard**: [roadmap-metrics-dashboard.md](roadmap-metrics-dashboard.md) - KPIs, tracking, and success criteria
+- **Current Refactor Plan**: [refactor-plan.md](refactor-plan.md) - Existing architectural refactoring initiative
+- **Ingestion & Scenarios Roadmap**: [roadmap-ingestion-scenarios.md](roadmap-ingestion-scenarios.md) - Data pipeline and scenario engine evolution
+
 ## API
 
 - API index and examples: api/README.md
