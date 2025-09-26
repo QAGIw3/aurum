@@ -1483,6 +1483,73 @@ def create_concurrency_middleware(
     )
 
 
+def _resolve_concurrency_controller(request: Request) -> Union[ConcurrencyController, DistributedConcurrencyController]:
+    controller = getattr(getattr(request.app, "state", object()), "concurrency_controller", None)
+    if controller is None:
+        raise HTTPException(status_code=503, detail="Concurrency controller disabled")
+    return controller
+
+
+async def _collect_controller_stats(
+    controller: Union[ConcurrencyController, DistributedConcurrencyController],
+) -> Dict[str, Any]:
+    raw_stats = await controller.get_stats()
+
+    if "tenant_active" in raw_stats and "tenant_queue" in raw_stats:
+        data = {
+            "active_total": raw_stats.get("active_total", raw_stats.get("active_requests", 0)),
+            "global_queue_depth": raw_stats.get("global_queue_depth", 0),
+            "tenant_active": raw_stats.get("tenant_active", {}),
+            "tenant_queue": raw_stats.get("tenant_queue", {}),
+        }
+        if "global_limit" in raw_stats:
+            data["global_limit"] = raw_stats["global_limit"]
+        return data
+
+    tenants = raw_stats.get("tenants", {})
+    tenant_active = {
+        tenant: details.get("active", 0)
+        for tenant, details in tenants.items()
+    }
+    tenant_queue = {
+        tenant: details.get("queued", 0)
+        for tenant, details in tenants.items()
+    }
+    return {
+        "active_total": raw_stats.get("active_requests", 0),
+        "global_limit": raw_stats.get("global_limit"),
+        "global_queue_depth": sum(tenant_queue.values()),
+        "tenant_active": tenant_active,
+        "tenant_queue": tenant_queue,
+    }
+
+
+local_diagnostics_router = APIRouter(prefix="/v1/admin/concurrency", tags=["Concurrency"])
+
+
+@local_diagnostics_router.get("/local/stats", summary="In-process concurrency statistics")
+async def local_concurrency_stats(request: Request) -> Dict[str, Any]:
+    controller = _resolve_concurrency_controller(request)
+    try:
+        stats = await _collect_controller_stats(controller)
+    except HTTPException:
+        raise
+    except Exception as exc:
+        LOGGER.exception("failed_to_collect_concurrency_stats", exc_info=exc)
+        raise HTTPException(status_code=503, detail="Failed to collect concurrency stats") from exc
+
+    return {
+        "meta": {"request_id": get_request_id()},
+        "data": stats,
+    }
+
+
+@local_diagnostics_router.get("/local/health", summary="In-process concurrency health")
+async def local_concurrency_health(request: Request) -> Dict[str, str]:
+    _resolve_concurrency_controller(request)
+    return {"status": "ok"}
+
+
 def create_concurrency_middleware_from_settings(
     app,
     *,
