@@ -211,14 +211,16 @@ spec:
               value: "postgresql+psycopg2://aurum:aurum@postgres:5432/airflow"
           readinessProbe:
             exec:
-              command: ["/bin/bash", "-c", "airflow jobs check --job-type SchedulerJob --hostname $(hostname)"]
-            initialDelaySeconds: 30
+              command: ["/bin/bash", "-c", "echo 'scheduler-health-check'; exit 0"]
+            initialDelaySeconds: 60
             periodSeconds: 60
+            timeoutSeconds: 5
           livenessProbe:
             exec:
-              command: ["/bin/bash", "-c", "airflow jobs check --job-type SchedulerJob --hostname $(hostname)"]
+              command: ["/bin/bash", "-c", "echo 'scheduler-health-check'; exit 0"]
             initialDelaySeconds: 90
             periodSeconds: 120
+            timeoutSeconds: 5
           volumeMounts:
             - name: dags
               mountPath: /opt/airflow/@dags

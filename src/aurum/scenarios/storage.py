@@ -781,6 +781,105 @@ class ScenarioStore:
             "updated_at": row["updated_at"],
         } for row in rows]
 
+    # === CONCURRENCY OVERRIDE OPERATIONS ===
+
+    async def get_concurrency_override(
+        self,
+        tenant_id: Optional[str] = None,
+    ) -> Optional[Dict[str, Any]]:
+        """Return the concurrency override configuration for a tenant if present."""
+
+        current_tenant_id = get_tenant_id() if tenant_id is None else tenant_id
+
+        async with self.get_connection() as conn:
+            row = await conn.fetchrow(
+                """
+                SELECT configuration, enabled, created_at, updated_at
+                FROM concurrency_override
+                WHERE tenant_id = $1
+                """,
+                current_tenant_id,
+            )
+
+        if not row:
+            return None
+
+        configuration = json.loads(row["configuration"]) if row["configuration"] else {}
+        return {
+            "tenant_id": current_tenant_id,
+            "configuration": configuration,
+            "enabled": row["enabled"],
+            "created_at": row["created_at"],
+            "updated_at": row["updated_at"],
+        }
+
+    async def set_concurrency_override(
+        self,
+        tenant_id: str,
+        configuration: Dict[str, Any],
+        *,
+        enabled: bool = True,
+    ) -> Dict[str, Any]:
+        """Create or update the concurrency override for a tenant."""
+
+        payload = json.dumps(configuration or {})
+        now = datetime.utcnow()
+
+        async with self.get_connection() as conn:
+            await conn.execute(
+                """
+                INSERT INTO concurrency_override (tenant_id, configuration, enabled, updated_at)
+                VALUES ($1, $2, $3, $4)
+                ON CONFLICT (tenant_id) DO UPDATE
+                SET configuration = EXCLUDED.configuration,
+                    enabled = EXCLUDED.enabled,
+                    updated_at = EXCLUDED.updated_at
+                """,
+                tenant_id,
+                payload,
+                enabled,
+                now,
+            )
+
+        log_structured(
+            "info",
+            "concurrency_override_updated",
+            tenant_id=tenant_id,
+            enabled=enabled,
+            configuration_keys=sorted(configuration.keys()),
+        )
+
+        return await self.get_concurrency_override(tenant_id) or {
+            "tenant_id": tenant_id,
+            "configuration": configuration,
+            "enabled": enabled,
+        }
+
+    async def list_concurrency_overrides(self) -> List[Dict[str, Any]]:
+        """List all tenant concurrency overrides."""
+
+        async with self.get_connection() as conn:
+            rows = await conn.fetch(
+                """
+                SELECT tenant_id, configuration, enabled, created_at, updated_at
+                FROM concurrency_override
+                ORDER BY tenant_id
+                """,
+            )
+
+        results: List[Dict[str, Any]] = []
+        for row in rows:
+            results.append(
+                {
+                    "tenant_id": row["tenant_id"],
+                    "configuration": json.loads(row["configuration"]) if row["configuration"] else {},
+                    "enabled": row["enabled"],
+                    "created_at": row["created_at"],
+                    "updated_at": row["updated_at"],
+                }
+            )
+        return results
+
     # === SCHEMA V2 OPERATIONS ===
 
     # Curve Family Operations

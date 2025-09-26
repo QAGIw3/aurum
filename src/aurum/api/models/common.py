@@ -94,9 +94,36 @@ class ValidationErrorResponse(AurumBaseModel):
     timestamp: datetime = Field(default_factory=datetime.utcnow)
 
 
+class TooManyRequestsError(ErrorEnvelope):
+    """429 response when tenant queues exceed configured capacity."""
+
+    error: str = "TooManyRequests"
+    queue_depth: int = Field(ge=0)
+    retry_after_seconds: int = Field(ge=0)
+
+
+class QueueServiceUnavailableError(ErrorEnvelope):
+    """503 response when queue wait exceeded configured timeout."""
+
+    error: str = "ServiceUnavailable"
+    queue_depth: int = Field(ge=0)
+    retry_after_seconds: int = Field(ge=0)
+
+
+class RequestTimeoutError(ErrorEnvelope):
+    """504 response when request execution exceeds timeout budget."""
+
+    error: str = "GatewayTimeout"
+    timeout_seconds: int = Field(ge=0)
+    retry_after_seconds: Optional[int] = Field(default=None, ge=0)
+
+
 __all__ = [
     "Meta",
     "ErrorEnvelope",
     "ValidationErrorDetail",
     "ValidationErrorResponse",
+    "TooManyRequestsError",
+    "QueueServiceUnavailableError",
+    "RequestTimeoutError",
 ]

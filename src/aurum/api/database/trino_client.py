@@ -29,7 +29,12 @@ except ImportError:
 
 from ..exceptions import ServiceUnavailableException
 from ..performance import ConnectionPool
-from ..telemetry.context import log_structured
+from ..telemetry.context import (
+    get_correlation_id,
+    get_request_id,
+    get_tenant_id,
+    log_structured,
+)
 from ...common.circuit_breaker import CircuitBreaker, CircuitBreakerState
 from ...external.collect.base import RetryConfig
 from ...observability.metrics import (
@@ -44,9 +49,16 @@ from ...observability.metrics import (
     set_trino_pool_saturation,
     set_trino_pool_saturation_status,
     set_trino_request_queue_depth,
+    increment_trino_hot_cache_hits,
+    increment_trino_hot_cache_misses,
+    set_trino_prepared_cache_entries,
+    TRINO_PREPARED_CACHE_ENTRIES,
+    TRINO_PREPARED_CACHE_EVICTIONS,
 )
+from ...observability.enhanced_tracing import get_current_trace_context
 
 from .config import TrinoConfig
+from ...core.settings import get_settings
 
 LOGGER = logging.getLogger(__name__)
 
@@ -184,6 +196,14 @@ class SimpleTrinoClient:
         self._hot_cache_max = int(max(1, self._config.get("trino_hot_query_cache_size", 32)))
         self._hot_results: OrderedDict[str, Any] = OrderedDict()
         self._hot_cache_lock = _create_lock()
+        self._metrics_label = str(self._config.get("trino_metrics_label", "default"))
+        self._enable_hot_cache = bool(self._config.get("trino_hot_query_cache_enabled", True))
+        self._enable_trace_tagging = bool(self._config.get("trino_trace_tagging_enabled", True))
+        self._enable_prepared_metrics = bool(self._config.get("trino_prepared_cache_metrics_enabled", True))
+        if not self._enable_hot_cache:
+            self._hot_cache_max = 0
+        if not self._enable_hot_cache:
+            self._hot_results.clear()
 
         self._pending_acquires = 0
         self._pending_lock = _create_lock()
@@ -253,21 +273,29 @@ class SimpleTrinoClient:
                 try:
                     await increment_trino_queries(tenant_label, status="cache_hit")
                     await observe_trino_query_duration(tenant_label, self._classify_query(sql), 0.0)
-                except NameError:
+                except Exception:
                     pass
                 return cached_result
 
-        if query_type == "read":
+        if query_type == "read" and self._enable_hot_cache:
             hot_key = self._cache_key(sql, params_copy)
             hot_result = await self._get_hot_result(hot_key)
             if hot_result is not None:
                 try:
                     await increment_trino_queries(tenant_label, status="hot_cache_hit")
                     await observe_trino_query_duration(tenant_label, query_type, 0.0)
-                except NameError:
+                except Exception:
+                    pass
+                try:
+                    await increment_trino_hot_cache_hits(tenant_label)
+                except Exception:
                     pass
                 return hot_result
-        else:
+            try:
+                await increment_trino_hot_cache_misses(tenant_label)
+            except Exception:
+                pass
+        elif self._enable_hot_cache:
             await self._clear_hot_cache()
 
         result = await self._run_with_retries(sql, params_copy, tenant_label, self.query_timeout)
@@ -275,7 +303,7 @@ class SimpleTrinoClient:
         if should_cache and cache_key:
             await self._cache.set(cache_key, result, ttl)
 
-        if query_type == "read" and hot_key:
+        if query_type == "read" and hot_key and self._enable_hot_cache:
             await self._store_hot_result(hot_key, result)
 
         return result
@@ -307,6 +335,11 @@ class SimpleTrinoClient:
         await self._clear_hot_cache()
         with self._prepared_lock:
             self._prepared_statements.clear()
+            if self._enable_prepared_metrics and TRINO_PREPARED_CACHE_ENTRIES is not None:
+                try:
+                    TRINO_PREPARED_CACHE_ENTRIES.set(0)
+                except Exception:
+                    pass
         await self._pool.close_all()
         self._closed = True
 
@@ -324,20 +357,20 @@ class SimpleTrinoClient:
             if self.circuit_breaker.is_open():
                 try:
                     await set_trino_circuit_breaker_state("open")
-                except NameError:
+                except Exception:
                     pass
                 raise ServiceUnavailableException("trino", detail="Circuit breaker open")
 
             try:
                 start = time.perf_counter()
-                rows = await self._execute_query_with_timeout(sql, params, query_timeout)
+                rows = await self._execute_query_with_timeout(sql, params, query_timeout, tenant_label)
                 duration = time.perf_counter() - start
                 self.circuit_breaker.record_success()
                 await self._sync_circuit_breaker_metric()
                 try:
                     await increment_trino_queries(tenant_label, status="success")
                     await observe_trino_query_duration(tenant_label, self._classify_query(sql), duration)
-                except NameError:
+                except Exception:
                     pass
                 return rows
             except ServiceUnavailableException as exc:
@@ -349,7 +382,7 @@ class SimpleTrinoClient:
                     status = "timeout"
                 try:
                     await increment_trino_queries(tenant_label, status=status)
-                except NameError:
+                except Exception:
                     pass
                 raise
             except Exception as exc:  # noqa: BLE001
@@ -360,7 +393,7 @@ class SimpleTrinoClient:
                 status = "retry" if attempt <= self.retry_config.max_retries else "failed"
                 try:
                     await increment_trino_queries(tenant_label, status=status)
-                except NameError:
+                except Exception:
                     pass
                 if attempt > self.retry_config.max_retries:
                     raise
@@ -378,13 +411,17 @@ class SimpleTrinoClient:
         sql: str,
         params: Optional[Dict[str, Any]],
         query_timeout: float,
+        tenant_label: str,
     ) -> List[Dict[str, Any]]:
         conn = await self._acquire_connection()
         try:
             try:
                 if query_timeout:
-                    return await asyncio.wait_for(self._run_query(conn, sql, params), timeout=query_timeout)
-                return await self._run_query(conn, sql, params)
+                    return await asyncio.wait_for(
+                        self._run_query(conn, sql, params, tenant_label),
+                        timeout=query_timeout,
+                    )
+                return await self._run_query(conn, sql, params, tenant_label)
             except asyncio.TimeoutError as exc:
                 try:
                     cancel = getattr(conn, "cancel", None)
@@ -407,8 +444,11 @@ class SimpleTrinoClient:
         conn: Any,
         sql: str,
         params: Optional[Dict[str, Any]],
+        tenant_label: str,
     ) -> List[Dict[str, Any]]:
-        def _do_query() -> List[Dict[str, Any]]:
+        context_info = self._build_query_context(tenant_label)
+
+        def _do_query(context: Dict[str, Optional[str]]) -> List[Dict[str, Any]]:
             cursor = conn.cursor()
             try:
                 prepared = None
@@ -416,6 +456,10 @@ class SimpleTrinoClient:
                 if isinstance(params, dict) and self._is_select_query(sql):
                     prepared = self._maybe_prepare_statement(conn, cursor, sql)
 
+                header_previous: Dict[str, Optional[str]] = {}
+                if self._enable_trace_tagging:
+                    header_previous = self._apply_connection_context(conn, context)
+                start_time = time.perf_counter()
                 try:
                     if prepared is not None and hasattr(cursor, "execute_prepared"):
                         cursor.execute_prepared(prepared, bind_params)
@@ -430,6 +474,9 @@ class SimpleTrinoClient:
                         except Exception:  # noqa: BLE001
                             pass
                     raise
+                finally:
+                    if self._enable_trace_tagging:
+                        self._restore_connection_headers(conn, header_previous)
 
                 description = getattr(cursor, "description", None)
                 has_results = bool(description)
@@ -444,6 +491,25 @@ class SimpleTrinoClient:
                             pass
 
                 columns = [col[0] for col in description or []]
+                duration = time.perf_counter() - start_time
+                query_id = None
+                stats = getattr(cursor, "stats", None)
+                if isinstance(stats, dict):
+                    query_id = stats.get("queryId") or stats.get("query_id")
+                elif hasattr(cursor, "query_id"):
+                    query_id = getattr(cursor, "query_id")
+                if query_id:
+                    log_structured(
+                        "info",
+                        "trino_query_completed",
+                        query_id=query_id,
+                        tenant=context.get("tenant"),
+                        request_id=context.get("request_id"),
+                        correlation_id=context.get("correlation_id"),
+                        traceparent=context.get("traceparent"),
+                        duration_seconds=round(duration, 6),
+                        catalog=self.config.catalog,
+                    )
                 if columns:
                     return [dict(zip(columns, row)) for row in rows]
                 return rows
@@ -453,7 +519,7 @@ class SimpleTrinoClient:
                 except Exception:  # noqa: BLE001
                     pass
 
-        return await asyncio.to_thread(_do_query)
+        return await asyncio.to_thread(_do_query, context_info)
 
     async def _acquire_connection(self) -> Any:
         attempt = 0
@@ -465,7 +531,7 @@ class SimpleTrinoClient:
                 self._pending_acquires += 1
                 try:
                     await set_trino_request_queue_depth(self._pending_acquires)
-                except NameError:
+                except Exception:
                     pass
 
             started = time.perf_counter()
@@ -473,21 +539,21 @@ class SimpleTrinoClient:
                 connection = await asyncio.wait_for(self._pool.get_connection(), timeout=self.acquire_timeout)
                 try:
                     await observe_trino_connection_acquire_time(time.perf_counter() - started)
-                except NameError:
+                except Exception:
                     pass
                 await self._record_pool_metrics()
                 return connection
             except asyncio.TimeoutError:
                 try:
                     await increment_trino_queue_rejections("acquire_timeout")
-                except NameError:
+                except Exception:
                     pass
                 if attempt >= self.acquire_attempts:
                     raise ServiceUnavailableException("trino", detail="Connection acquire timeout") from None
             except ServiceUnavailableException:
                 try:
                     await increment_trino_queue_rejections("pool_exhausted")
-                except NameError:
+                except Exception:
                     pass
                 if attempt >= self.acquire_attempts:
                     raise
@@ -496,7 +562,7 @@ class SimpleTrinoClient:
                     self._pending_acquires = max(0, self._pending_acquires - 1)
                     try:
                         await set_trino_request_queue_depth(self._pending_acquires)
-                    except NameError:
+                    except Exception:
                         pass
 
             await asyncio.sleep(delay)
@@ -525,13 +591,13 @@ class SimpleTrinoClient:
             await set_trino_connection_pool_utilization(utilization)
             await set_trino_pool_saturation(utilization)
             await set_trino_pool_saturation_status(status)
-        except NameError:
+        except Exception:
             pass
 
     async def _sync_circuit_breaker_metric(self) -> None:
         try:
             await set_trino_circuit_breaker_state(self.circuit_breaker_state)
-        except NameError:
+        except Exception:
             pass
 
     def _record_breaker_failure(self) -> None:
@@ -589,6 +655,8 @@ class SimpleTrinoClient:
         return self._classify_query(sql) == "read"
 
     async def _get_hot_result(self, key: str) -> Optional[List[Dict[str, Any]]]:
+        if not self._enable_hot_cache:
+            return None
         async with self._hot_cache_lock:
             result = self._hot_results.get(key)
             if result is None:
@@ -597,6 +665,8 @@ class SimpleTrinoClient:
             return copy.deepcopy(result)
 
     async def _store_hot_result(self, key: str, value: List[Dict[str, Any]]) -> None:
+        if not self._enable_hot_cache:
+            return
         async with self._hot_cache_lock:
             self._hot_results[key] = copy.deepcopy(value)
             self._hot_results.move_to_end(key)
@@ -604,9 +674,85 @@ class SimpleTrinoClient:
                 self._hot_results.popitem(last=False)
 
     async def _clear_hot_cache(self) -> None:
+        if not self._enable_hot_cache:
+            return
         async with self._hot_cache_lock:
             if self._hot_results:
                 self._hot_results.clear()
+
+    def _total_prepared_entries_locked(self) -> int:
+        return sum(len(cache) for cache in self._prepared_statements.values())
+
+    def _update_prepared_cache_metrics_locked(self) -> None:
+        if not self._enable_prepared_metrics or TRINO_PREPARED_CACHE_ENTRIES is None:
+            return
+        try:
+            TRINO_PREPARED_CACHE_ENTRIES.set(self._total_prepared_entries_locked())
+        except Exception:
+            pass
+
+    def _build_query_context(self, tenant_label: str) -> Dict[str, Optional[str]]:
+        tenant = get_tenant_id(default=tenant_label) or tenant_label
+        request_id = get_request_id()
+        correlation_id = get_correlation_id()
+        traceparent: Optional[str] = None
+        try:
+            trace_context = get_current_trace_context()
+        except Exception:
+            trace_context = None
+        if trace_context is not None:
+            traceparent = trace_context.to_traceparent()
+        return {
+            "tenant": tenant,
+            "tenant_label": tenant_label,
+            "request_id": request_id,
+            "correlation_id": correlation_id,
+            "traceparent": traceparent,
+        }
+
+    def _apply_connection_context(self, conn: Any, context: Dict[str, Optional[str]]) -> Dict[str, Optional[str]]:
+        session = getattr(conn, "_http_session", None)
+        if session is None or not hasattr(session, "headers"):
+            return {}
+        headers = session.headers
+        overrides: Dict[str, str] = {}
+        tenant = context.get("tenant")
+        traceparent = context.get("traceparent")
+        if traceparent:
+            overrides["X-Trino-Trace-Token"] = traceparent
+        if tenant:
+            existing_tags = headers.get("X-Trino-Client-Tags")
+            tag_set = {tag.strip() for tag in existing_tags.split(",") if tag.strip()} if existing_tags else set()
+            tag_set.add(f"tenant:{tenant}")
+            overrides["X-Trino-Client-Tags"] = ",".join(sorted(tag_set))
+        info_payload = {
+            "request_id": context.get("request_id"),
+            "correlation_id": context.get("correlation_id"),
+            "tenant": tenant,
+            "traceparent": traceparent,
+        }
+        info_payload = {k: v for k, v in info_payload.items() if v}
+        if info_payload:
+            overrides["X-Trino-Client-Info"] = json.dumps(info_payload, separators=(",", ":"))
+
+        previous: Dict[str, Optional[str]] = {}
+        for key, value in overrides.items():
+            previous[key] = headers.get(key)
+            headers[key] = value
+        return previous
+
+    def _restore_connection_headers(self, conn: Any, previous: Dict[str, Optional[str]]) -> None:
+        if not previous:
+            return
+        session = getattr(conn, "_http_session", None)
+        if session is None or not hasattr(session, "headers"):
+            return
+        headers = session.headers
+        for key, value in previous.items():
+            if value is None:
+                headers.pop(key, None)
+            else:
+                headers[key] = value
 
     def _maybe_prepare_statement(self, conn: Any, cursor: Any, sql: str) -> Optional[Any]:
         if not hasattr(cursor, "prepare"):
@@ -624,6 +770,13 @@ class SimpleTrinoClient:
             cache.move_to_end(sql)
             while len(cache) > self._prepared_statement_max:
                 cache.popitem(last=False)
+                if self._enable_prepared_metrics and TRINO_PREPARED_CACHE_EVICTIONS is not None:
+                    try:
+                        TRINO_PREPARED_CACHE_EVICTIONS.inc()
+                    except Exception:
+                        pass
+            if self._enable_prepared_metrics:
+                self._update_prepared_cache_metrics_locked()
             return prepared
 
     def _invalidate_prepared_statement(self, conn: Any, sql: str) -> None:
@@ -635,6 +788,8 @@ class SimpleTrinoClient:
             cache.pop(sql, None)
             if not cache:
                 self._prepared_statements.pop(conn_id, None)
+            if self._enable_prepared_metrics:
+                self._update_prepared_cache_metrics_locked()
 
     def _extract_cache_policy(
         self,
@@ -999,6 +1154,30 @@ def get_trino_client(
     concurrency_config: Optional[Dict[str, Any]] = None,
 ):
     """Get a Trino client for the specified catalog or configuration."""
+
+    if concurrency_config is None:
+        try:
+            settings = get_settings()
+        except Exception:
+            settings = None
+        if settings is not None:
+            trino_settings = getattr(settings, "trino", None)
+            if trino_settings is not None:
+                inferred_config: Dict[str, Any] = {}
+                if hasattr(trino_settings, "hot_cache_enabled"):
+                    inferred_config["trino_hot_query_cache_enabled"] = bool(getattr(trino_settings, "hot_cache_enabled"))
+                if hasattr(trino_settings, "prepared_cache_metrics_enabled"):
+                    inferred_config["trino_prepared_cache_metrics_enabled"] = bool(
+                        getattr(trino_settings, "prepared_cache_metrics_enabled")
+                    )
+                if hasattr(trino_settings, "trace_tagging_enabled"):
+                    inferred_config["trino_trace_tagging_enabled"] = bool(
+                        getattr(trino_settings, "trace_tagging_enabled")
+                    )
+                if hasattr(trino_settings, "metrics_label"):
+                    inferred_config["trino_metrics_label"] = getattr(trino_settings, "metrics_label")
+                if inferred_config:
+                    concurrency_config = inferred_config
 
     return _client_manager.get_client(catalog, concurrency_config=concurrency_config)
 

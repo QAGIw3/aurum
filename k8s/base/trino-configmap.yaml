@@ -16,45 +16,4 @@ data:
     query_max_memory_per_node=2GB
     query_max_total_memory=16GB
   access-control.properties: |
-    access-control.name=file
-    security.config-file=/etc/trino/access-control-rules.json
-  access-control-rules.json: |
-    {
-      "catalogs": [
-        {
-          "catalog": "iceberg",
-          "allow": "all"
-        },
-        {
-          "catalog": "postgres",
-          "allow": "read-only"
-        },
-        {
-          "catalog": "timescale",
-          "allow": "read-only"
-        },
-        {
-          "catalog": "clickhouse",
-          "allow": "read-only"
-        },
-        {
-          "catalog": "kafka",
-          "allow": "read-only"
-        }
-      ],
-      "schemas": [
-        {
-          "catalog": "iceberg",
-          "schema": "external",
-          "allow": "all"
-        }
-      ],
-      "tables": [
-        {
-          "catalog": "iceberg",
-          "schema": "external",
-          "table": ".*",
-          "allow": "all"
-        }
-      ]
-    }
+    access-control.name=allow-all

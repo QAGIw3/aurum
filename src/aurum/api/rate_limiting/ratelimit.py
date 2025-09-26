@@ -35,7 +35,11 @@ from fastapi import APIRouter, Query, HTTPException
 
 from .config import CacheConfig
 from .quota_manager import TenantQuotaManager
-from ..telemetry.context import get_request_id
+from ..telemetry.context import (
+    TenantIdValidationError,
+    extract_tenant_id_from_headers,
+    get_request_id,
+)
 from ...observability.metric_helpers import get_counter, get_gauge, get_histogram
 
 
@@ -393,10 +397,10 @@ class RateLimitMiddleware:
 
         # Third priority: check X-Aurum-Tenant header
         if tenant is None:
-            raw_tenant = request.headers.get("X-Aurum-Tenant")
-            if raw_tenant:
-                stripped_tenant = raw_tenant.strip()
-                tenant = stripped_tenant or None
+            try:
+                tenant = extract_tenant_id_from_headers(request.headers)
+            except TenantIdValidationError as exc:
+                raise HTTPException(status_code=400, detail=str(exc)) from exc
 
         header_identifier: Optional[str] = None
         if self.rl_cfg.identifier_header:

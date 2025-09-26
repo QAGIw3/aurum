@@ -18,11 +18,12 @@ import logging
 import os
 import gzip
 
-from fastapi import Depends, FastAPI
+from fastapi import Depends, FastAPI, HTTPException, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.responses import JSONResponse
 from starlette.datastructures import MutableHeaders
+from fastapi.exceptions import HTTPException as FastAPIHTTPException
 
 try:
     from .database.trino_client import HybridTrinoClientManager
@@ -87,11 +88,112 @@ _patch_testclient_for_gzip()
 
 from aurum.core import AurumSettings
 from aurum.telemetry import configure_telemetry
+from aurum.api.models.common import (
+    QueueServiceUnavailableError,
+    RequestTimeoutError,
+    TooManyRequestsError,
+)
+from aurum.api.exceptions import handle_api_exception
+
+try:  # pragma: no cover - optional dependency
+    from prometheus_client import CONTENT_TYPE_LATEST, CollectorRegistry, generate_latest
+    from prometheus_client import multiprocess
+except ImportError:  # pragma: no cover - handled gracefully at runtime
+    CONTENT_TYPE_LATEST = "text/plain; charset=utf-8"
+    CollectorRegistry = None  # type: ignore[assignment]
+    generate_latest = None  # type: ignore[assignment]
+    multiprocess = None  # type: ignore[assignment]
 # Feature flags for API migration
 API_FEATURE_FLAGS = {
     "use_simplified_api": os.getenv("AURUM_USE_SIMPLIFIED_API", "false").lower() == "true",
     "api_migration_phase": os.getenv("AURUM_API_MIGRATION_PHASE", "1"),
 }
+
+
+LOGGER = logging.getLogger(__name__)
+
+
+def _response_schema(model) -> dict:
+    return model.model_json_schema()
+
+
+GLOBAL_ERROR_RESPONSES = {
+    429: {
+        "description": "Too many requests queued for this tenant.",
+        "content": {
+            "application/json": {
+                "schema": _response_schema(TooManyRequestsError),
+            }
+        },
+        "headers": {
+            "Retry-After": {
+                "description": "Seconds until requests may be retried.",
+                "schema": {"type": "integer", "minimum": 0},
+            },
+            "X-Queue-Depth": {
+                "description": "Current estimated queue depth for the tenant.",
+                "schema": {"type": "integer", "minimum": 0},
+            },
+        },
+    },
+    503: {
+        "description": "Request timed out while waiting for capacity.",
+        "content": {
+            "application/json": {
+                "schema": _response_schema(QueueServiceUnavailableError),
+            }
+        },
+        "headers": {
+            "Retry-After": {
+                "description": "Seconds until requests may be retried.",
+                "schema": {"type": "integer", "minimum": 0},
+            },
+            "X-Queue-Depth": {
+                "description": "Current estimated queue depth for the tenant.",
+                "schema": {"type": "integer", "minimum": 0},
+            },
+        },
+    },
+    504: {
+        "description": "Request exceeded the configured execution timeout.",
+        "content": {
+            "application/json": {
+                "schema": _response_schema(RequestTimeoutError),
+            }
+        },
+        "headers": {
+            "Retry-After": {
+                "description": "Seconds until the client should retry.",
+                "schema": {"type": "integer", "minimum": 0},
+            },
+            "X-Timeout-Seconds": {
+                "description": "Configured request timeout threshold in seconds.",
+                "schema": {"type": "integer", "minimum": 0},
+            },
+        },
+    },
+}
+
+
+async def _api_exception_handler(request: Request, exc: Exception) -> JSONResponse:
+    """Translate arbitrary exceptions into JSON error envelopes."""
+
+    http_exc = handle_api_exception(request, exc)
+    if isinstance(http_exc, FastAPIHTTPException):
+        detail = http_exc.detail
+        if not isinstance(detail, dict):
+            detail = {"error": http_exc.__class__.__name__, "message": str(detail)}
+        headers = getattr(http_exc, "headers", None) or {}
+        return JSONResponse(status_code=http_exc.status_code, content=detail, headers=headers)
+
+    LOGGER.error("Unhandled exception escaped API", exc_info=exc)
+    return JSONResponse(
+        status_code=500,
+        content={
+            "error": "InternalServerError",
+            "message": "Unhandled exception",
+        },
+    )
 
 
 def _register_trino_lifecycle(app: FastAPI) -> None:
@@ -130,6 +232,51 @@ def _register_trino_lifecycle(app: FastAPI) -> None:
             _TRINO_ATEXIT_REGISTERED = True
         except Exception:  # pragma: no cover - best effort cleanup
             pass
+
+
+def _register_metrics_endpoint(app: FastAPI, settings: AurumSettings) -> None:
+    """Register Prometheus metrics endpoint with optional multiprocess support."""
+
+    metrics_cfg = getattr(settings.api, "metrics", None)
+    if metrics_cfg is None or not getattr(metrics_cfg, "enabled", False):
+        return
+
+    metrics_path = getattr(metrics_cfg, "path", "/metrics") or "/metrics"
+    if not metrics_path.startswith("/"):
+        metrics_path = f"/{metrics_path}"
+
+    existing_routes = [
+        route for route in list(app.router.routes)
+        if getattr(route, "path", None) == metrics_path
+    ]
+    for route in existing_routes:
+        try:
+            app.router.routes.remove(route)
+        except ValueError:  # pragma: no cover - defensive
+            continue
+
+    @app.get(metrics_path)
+    async def prometheus_metrics() -> Response:  # type: ignore[override]
+        if generate_latest is None:
+            raise HTTPException(status_code=503, detail="Prometheus instrumentation not available")
+
+        registry = None
+        multiproc_dir = os.getenv("PROMETHEUS_MULTIPROC_DIR")
+        if multiproc_dir and multiprocess and CollectorRegistry is not None:
+            registry = CollectorRegistry()
+            try:
+                multiprocess.MultiProcessCollector(registry)
+            except Exception as exc:  # pragma: no cover - unlikely but defensive
+                LOGGER.warning("prometheus_multiprocess_init_failed", exc_info=exc)
+                registry = None
+
+        try:
+            payload = generate_latest(registry) if registry is not None else generate_latest()
+        except Exception as exc:  # pragma: no cover - guard against collector errors
+            LOGGER.warning("prometheus_generate_latest_failed", exc_info=exc)
+            raise HTTPException(status_code=500, detail="Failed to render metrics") from exc
+
+        return Response(content=payload, media_type=CONTENT_TYPE_LATEST)
 
 # Migration metrics for API layer
 class ApiMigrationMetrics:
@@ -231,9 +378,11 @@ def _create_simplified_app(settings: AurumSettings, logger: logging.Logger) -> F
         title=settings.api.api_title,
         version=settings.api.version,
         default_response_class=JSONResponse,
-        timeout=settings.api.request_timeout_seconds
+        timeout=settings.api.request_timeout_seconds,
+        responses=GLOBAL_ERROR_RESPONSES,
     )
     app.state.settings = settings
+    app.add_exception_handler(Exception, _api_exception_handler)
     _register_trino_lifecycle(app)
     # Configure shared API state for modules that rely on it
     try:
@@ -281,6 +430,12 @@ def _create_simplified_app(settings: AurumSettings, logger: logging.Logger) -> F
         app.include_router(scenarios_router)
     except Exception as e:
         logger.warning(f"Failed to load scenarios router: {e}")
+
+    try:
+        from .runtime_config import router as runtime_config_router
+        app.include_router(runtime_config_router)
+    except Exception as e:
+        logger.warning(f"Failed to load runtime config router: {e}")
 
     # Basic route registration (honor light init flag)
     if os.getenv("AURUM_API_LIGHT_INIT", "0") == "1":
@@ -329,6 +484,8 @@ def _create_simplified_app(settings: AurumSettings, logger: logging.Logger) -> F
     except Exception:
         pass
 
+    _register_metrics_endpoint(app, settings)
+
     return app
 
 def _create_legacy_app(settings: AurumSettings, logger: logging.Logger) -> FastAPI:
@@ -339,9 +496,11 @@ def _create_legacy_app(settings: AurumSettings, logger: logging.Logger) -> FastA
         title=settings.api.api_title,
         version=settings.api.version,
         default_response_class=JSONResponse,
-        timeout=settings.api.request_timeout_seconds
+        timeout=settings.api.request_timeout_seconds,
+        responses=GLOBAL_ERROR_RESPONSES,
     )
     app.state.settings = settings
+    app.add_exception_handler(Exception, _api_exception_handler)
     _register_trino_lifecycle(app)
     # Configure shared API state for modules that rely on it
     try:
@@ -389,6 +548,12 @@ def _create_legacy_app(settings: AurumSettings, logger: logging.Logger) -> FastA
         app.include_router(scenarios_router)
     except Exception as e:
         logger.warning(f"Failed to load scenarios router: {e}")
+
+    try:
+        from .runtime_config import router as runtime_config_router
+        app.include_router(runtime_config_router)
+    except Exception as e:
+        logger.warning(f"Failed to load runtime config router: {e}")
 
     # Basic route registration (honor light init flag)
     if os.getenv("AURUM_API_LIGHT_INIT", "0") == "1":
@@ -443,6 +608,8 @@ def _create_legacy_app(settings: AurumSettings, logger: logging.Logger) -> FastA
                 setattr(mi, "options", getattr(mi, "kwargs"))
     except Exception:
         pass
+
+    _register_metrics_endpoint(app, settings)
 
     return app
 
