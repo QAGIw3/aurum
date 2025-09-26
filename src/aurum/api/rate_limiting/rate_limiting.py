@@ -12,7 +12,7 @@ from typing import Any, Dict, List, Optional, Tuple, Union
 from collections import defaultdict, deque
 
 from ..telemetry.context import get_request_id
-from .ratelimit import RateLimitMiddleware, ratelimit_admin_router
+from .sliding_window import RateLimitMiddleware, ratelimit_admin_router
 from ..cache.cache import AsyncCache, CacheManager
 
 
