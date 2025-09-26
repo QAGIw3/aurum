@@ -166,5 +166,5 @@ spec:
           port: 9000
         - protocol: TCP
           port: 8123
-        - protocol: HTTP
+        - protocol: TCP
           port: 8123

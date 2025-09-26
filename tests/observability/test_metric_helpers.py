@@ -13,7 +13,6 @@ from aurum.observability.metric_helpers import (
 from aurum.api.rate_limiting.concurrency_middleware import (
     ConcurrencyMiddleware,
     create_concurrency_controller,
-    create_rate_limiter,
     create_timeout_controller,
 )
 
@@ -54,13 +53,11 @@ async def test_concurrency_middleware_reuses_metric_collectors():
     middleware_one = ConcurrencyMiddleware(
         noop_app,
         create_concurrency_controller(),
-        create_rate_limiter(),
         create_timeout_controller(),
     )
     middleware_two = ConcurrencyMiddleware(
         noop_app,
         create_concurrency_controller(),
-        create_rate_limiter(),
         create_timeout_controller(),
     )
 

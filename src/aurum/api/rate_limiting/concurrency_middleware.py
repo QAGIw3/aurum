@@ -11,9 +11,12 @@ from typing import Any, Awaitable, Callable, ClassVar, Deque, Dict, List, Option
 from collections import defaultdict, deque
 from dataclasses import dataclass, field
 
+from fastapi import APIRouter, HTTPException, Request
+
 from ..telemetry.context import (
     TenantIdValidationError,
     extract_tenant_id_from_headers,
+    get_request_id,
     log_structured,
 )
 from ..exceptions import ServiceUnavailableException
@@ -854,59 +857,6 @@ class DistributedConcurrencyController:
                 for tenant in tenant_keys
             },
         }
-
-
-class RateLimiter:
-    """Rate limiter for API endpoints."""
-
-    def __init__(self):
-        self._requests: Dict[str, List[float]] = defaultdict(list)
-        self._lock = _create_lock()
-
-    async def check_rate_limit(
-        self,
-        identifier: str,
-        max_requests: float,
-        window_seconds: float = 60.0
-    ) -> bool:
-        """Check if request is within rate limits."""
-        now = time.perf_counter()
-
-        async with self._lock:
-            # Clean old requests
-            cutoff = now - window_seconds
-            self._requests[identifier] = [
-                req_time for req_time in self._requests[identifier]
-                if req_time > cutoff
-            ]
-
-            # Check rate limit
-            if len(self._requests[identifier]) >= max_requests:
-                return False
-
-            # Add current request
-            self._requests[identifier].append(now)
-            return True
-
-    async def get_remaining_requests(
-        self,
-        identifier: str,
-        max_requests: float,
-        window_seconds: float = 60.0
-    ) -> int:
-        """Get remaining requests for rate limit."""
-        now = time.perf_counter()
-
-        async with self._lock:
-            cutoff = now - window_seconds
-            self._requests[identifier] = [
-                req_time for req_time in self._requests[identifier]
-                if req_time > cutoff
-            ]
-
-            return max(0, int(max_requests - len(self._requests[identifier])))
-
-
 class TimeoutController:
     """Controls request timeouts and exposes retry hints."""
 
@@ -989,7 +939,6 @@ class ConcurrencyMiddleware:
         self,
         app,
         concurrency_controller: Union[ConcurrencyController, DistributedConcurrencyController],
-        rate_limiter: RateLimiter,
         timeout_controller: TimeoutController,
         exclude_paths: Optional[Set[str]] = None,
         offload_predicate: Optional[Callable[[Dict[str, Any]], Optional[OffloadInstruction]]] = None,
@@ -998,7 +947,6 @@ class ConcurrencyMiddleware:
     ):
         self.app = app
         self.concurrency_controller = concurrency_controller
-        self.rate_limiter = rate_limiter
         self.timeout_controller = timeout_controller
         self.exclude_paths = exclude_paths or {"/health", "/ready", "/metrics"}
         self.offload_predicate = offload_predicate
@@ -1148,47 +1096,6 @@ class ConcurrencyMiddleware:
                 return
 
             tenant_label = tenant_id or ANONYMOUS_TENANT
-
-            # Check rate limits (fixed window per-tenant)
-            if not await self.rate_limiter.check_rate_limit(
-                tenant_label,
-                max_requests=100,
-                window_seconds=60.0,
-            ):
-                retry_seconds = 60
-                retry_headers = self.timeout_controller.get_retry_after_header(retry_seconds)
-
-                async def send_rate_limited() -> None:
-                    await send({
-                        "type": "http.response.start",
-                        "status": 429,
-                        "headers": [
-                            (k.encode(), v.encode())
-                            for k, v in {
-                                **retry_headers,
-                                "Content-Type": "application/json",
-                                "X-Request-Id": request_id or "unknown",
-                                "X-Queue-Depth": "0",
-                            }.items()
-                        ],
-                    })
-
-                    error_response = TooManyRequestsError(
-                        message="Rate limit exceeded",
-                        request_id=request_id,
-                        queue_depth=0,
-                        retry_after_seconds=int(retry_seconds),
-                        context={"tenant_id": tenant_id},
-                    )
-
-                    await send({
-                        "type": "http.response.body",
-                        "body": error_response.model_dump_json().encode("utf-8"),
-                    })
-
-                self.concurrency_requests.labels(result="rate_limited").inc()
-                await send_rate_limited()
-                return
 
             # Predicate-based async offload (before acquiring slot)
             if self.offload_predicate is not None:
@@ -1546,13 +1453,6 @@ def create_concurrency_controller(
     if backend is not None:
         return DistributedConcurrencyController(limits, backend)
     return ConcurrencyController(limits)
-
-
-def create_rate_limiter() -> RateLimiter:
-    """Create a rate limiter."""
-    return RateLimiter()
-
-
 def create_timeout_controller(default_timeout: float = 30.0) -> TimeoutController:
     """Create a timeout controller."""
     return TimeoutController(default_timeout=default_timeout)
@@ -1561,7 +1461,6 @@ def create_timeout_controller(default_timeout: float = 30.0) -> TimeoutControlle
 def create_concurrency_middleware(
     app,
     concurrency_controller: Optional[ConcurrencyController] = None,
-    rate_limiter: Optional[RateLimiter] = None,
     timeout_controller: Optional[TimeoutController] = None,
     offload_predicate: Optional[Callable[[Dict[str, Any]], Optional[OffloadInstruction]]] = None,
     backpressure_threshold: float = 0.0,
@@ -1571,16 +1470,12 @@ def create_concurrency_middleware(
     if concurrency_controller is None:
         concurrency_controller = create_concurrency_controller()
 
-    if rate_limiter is None:
-        rate_limiter = create_rate_limiter()
-
     if timeout_controller is None:
         timeout_controller = create_timeout_controller()
 
     return ConcurrencyMiddleware(
         app=app,
         concurrency_controller=concurrency_controller,
-        rate_limiter=rate_limiter,
         timeout_controller=timeout_controller,
         offload_predicate=offload_predicate,
         backpressure_threshold=backpressure_threshold,
@@ -1593,7 +1488,6 @@ def create_concurrency_middleware_from_settings(
     *,
     settings: Optional[AurumSettings] = None,
     overrides: Optional[Dict[str, Any]] = None,
-    rate_limiter: Optional[RateLimiter] = None,
     timeout_controller: Optional[TimeoutController] = None,
     offload_predicate: Optional[Callable[[Dict[str, Any]], Optional[OffloadInstruction]]] = None,
 ):
@@ -1707,8 +1601,6 @@ def create_concurrency_middleware_from_settings(
         **controller_kwargs,
     )
 
-    rate_limiter = rate_limiter or create_rate_limiter()
-
     timeout_controller = timeout_controller or create_timeout_controller(
         default_timeout=limits.max_request_duration_seconds,
     )
@@ -1732,7 +1624,6 @@ def create_concurrency_middleware_from_settings(
     return ConcurrencyMiddleware(
         app=app,
         concurrency_controller=concurrency_controller,
-        rate_limiter=rate_limiter,
         timeout_controller=timeout_controller,
         offload_predicate=offload_predicate,
         backpressure_threshold=backpressure_threshold,

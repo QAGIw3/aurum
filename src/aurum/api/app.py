@@ -25,6 +25,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.responses import JSONResponse
 from starlette.datastructures import MutableHeaders
+from starlette.types import ASGIApp
 from fastapi.exceptions import HTTPException as FastAPIHTTPException
 
 try:
@@ -89,6 +90,7 @@ def _patch_testclient_for_gzip() -> None:
 _patch_testclient_for_gzip()
 
 from aurum.core import AurumSettings
+from aurum.core.settings import get_flag_env
 from aurum.telemetry import configure_telemetry
 from aurum.api.models.common import (
     QueueServiceUnavailableError,
@@ -102,6 +104,12 @@ from aurum.api.rate_limiting.concurrency_middleware import (
     create_concurrency_middleware_from_settings,
 )
 from aurum.api.rate_limiting.redis_concurrency import diagnostics_router
+from aurum.api.rate_limiting.sliding_window import (
+    RateLimitConfig,
+    RateLimitMiddleware,
+    ratelimit_admin_router,
+)
+from aurum.api.rate_limiting.config import CacheConfig
 from aurum.api.offload import offload_router
 
 try:  # pragma: no cover - optional dependency
@@ -114,8 +122,12 @@ except ImportError:  # pragma: no cover - handled gracefully at runtime
     multiprocess = None  # type: ignore[assignment]
 # Feature flags for API migration
 API_FEATURE_FLAGS = {
-    "use_simplified_api": os.getenv("AURUM_USE_SIMPLIFIED_API", "false").lower() == "true",
-    "api_migration_phase": os.getenv("AURUM_API_MIGRATION_PHASE", "1"),
+    "use_simplified_api": get_flag_env(
+        "AURUM_USE_SIMPLIFIED_API",
+        default="false",
+    ).lower()
+    in ("true", "1", "yes"),
+    "api_migration_phase": get_flag_env("AURUM_API_MIGRATION_PHASE", default="1"),
 }
 
 
@@ -470,6 +482,19 @@ def _install_concurrency_middleware(
     return wrapped
 
 
+def _install_rate_limit_middleware(app: ASGIApp, settings: AurumSettings) -> ASGIApp:
+    """Wrap the app with sliding-window rate limiting."""
+
+    try:
+        cache_cfg = CacheConfig.from_settings(settings)
+        rl_cfg = RateLimitConfig.from_settings(settings)
+    except Exception as exc:  # pragma: no cover - rate limiting is optional
+        LOGGER.warning("rate_limit_middleware_setup_failed", exc_info=exc)
+        return app
+
+    return RateLimitMiddleware(app, cache_cfg, rl_cfg)
+
+
 def create_app(settings: Optional[AurumSettings] = None) -> FastAPI:
     """Create and configure an Aurum FastAPI application instance.
 
@@ -602,6 +627,7 @@ def _create_simplified_app(settings: AurumSettings, logger: logging.Logger) -> F
         logger.warning(f"Failed to load runtime config router: {e}")
 
     app.include_router(diagnostics_router)
+    app.include_router(ratelimit_admin_router)
     app.include_router(offload_router)
 
     # Basic route registration (honor light init flag)
@@ -653,7 +679,8 @@ def _create_simplified_app(settings: AurumSettings, logger: logging.Logger) -> F
 
     _register_metrics_endpoint(app, settings)
 
-    return _install_concurrency_middleware(app, settings)
+    app_with_concurrency = _install_concurrency_middleware(app, settings)
+    return _install_rate_limit_middleware(app_with_concurrency, settings)
 
 def _create_legacy_app(settings: AurumSettings, logger: logging.Logger) -> FastAPI:
     """Create legacy API with full feature set."""
@@ -723,6 +750,7 @@ def _create_legacy_app(settings: AurumSettings, logger: logging.Logger) -> FastA
         logger.warning(f"Failed to load runtime config router: {e}")
 
     app.include_router(diagnostics_router)
+    app.include_router(ratelimit_admin_router)
     app.include_router(offload_router)
 
     # Basic route registration (honor light init flag)
@@ -781,7 +809,8 @@ def _create_legacy_app(settings: AurumSettings, logger: logging.Logger) -> FastA
 
     _register_metrics_endpoint(app, settings)
 
-    return _install_concurrency_middleware(app, settings)
+    app_with_concurrency = _install_concurrency_middleware(app, settings)
+    return _install_rate_limit_middleware(app_with_concurrency, settings)
 
 
 # Admin groups configuration

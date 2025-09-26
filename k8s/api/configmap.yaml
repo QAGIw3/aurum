@@ -35,3 +35,9 @@ data:
   AURUM_OTEL_SERVICE_NAME: aurum-api
   AURUM_OTEL_EXPORTER_ENDPOINT: http://jaeger-collector.aurum-dev.svc.cluster.local:4317
   AURUM_OTEL_EXPORTER_INSECURE: "true"
+  AURUM_API_METRICS_ENABLED: "1"
+  AURUM_API_METRICS_PATH: "/metrics"
+  AURUM_DISABLE_MIGRATION_MONITORING: "1"
+  AURUM_API_CONCURRENCY_REDIS_ENABLED: "1"
+  AURUM_API_CONCURRENCY_REDIS_URL: "redis://redis.aurum-dev.svc.cluster.local:6379/0"
+  AURUM_API_CONCURRENCY_REDIS_NAMESPACE: "aurum:api:concurrency"

@@ -17,13 +17,11 @@ from aurum.api.concurrency_middleware import (
     ConcurrencyController,
     ConcurrencySlot,
     ConcurrencyRejected,
-    RateLimiter,
     TimeoutController,
     TimeoutHandle,
     ConcurrencyMiddleware,
     RequestLimits,
     create_concurrency_controller,
-    create_rate_limiter,
     create_timeout_controller,
     create_concurrency_middleware,
     create_concurrency_middleware_from_settings,
@@ -465,57 +463,6 @@ class TestConcurrencyController:
             await light_slot.release()
             heavy_slot = await asyncio.wait_for(heavy_task, timeout=0.5)
             await heavy_slot.release()
-
-
-class TestRateLimiter:
-    """Test rate limiter functionality."""
-
-    @pytest.fixture
-    def rate_limiter(self):
-        return RateLimiter()
-
-    async def test_rate_limit_check(self, rate_limiter):
-        """Test rate limit checking."""
-        identifier = "test-client"
-
-        # Should allow requests within limit
-        for i in range(10):
-            allowed = await rate_limiter.check_rate_limit(identifier, max_requests=10, window_seconds=1.0)
-            assert allowed
-
-        # Should reject requests over limit
-        allowed = await rate_limiter.check_rate_limit(identifier, max_requests=10, window_seconds=1.0)
-        assert not allowed
-
-    async def test_rate_limit_cleanup(self, rate_limiter):
-        """Test cleanup of old requests."""
-        identifier = "test-client"
-
-        # Add old request
-        old_time = time.perf_counter() - 120  # 2 minutes ago
-        async with rate_limiter._lock:
-            rate_limiter._requests[identifier].append(old_time)
-
-        # Check rate limit - should clean old requests
-        allowed = await rate_limiter.check_rate_limit(identifier, max_requests=10, window_seconds=60.0)
-        assert allowed
-
-        # Should have only 1 request (the new one)
-        async with rate_limiter._lock:
-            assert len(rate_limiter._requests[identifier]) == 1
-
-    async def test_remaining_requests(self, rate_limiter):
-        """Test getting remaining requests."""
-        identifier = "test-client"
-
-        # Make some requests
-        for i in range(3):
-            await rate_limiter.check_rate_limit(identifier, max_requests=5, window_seconds=60.0)
-
-        remaining = await rate_limiter.get_remaining_requests(identifier, max_requests=5, window_seconds=60.0)
-        assert remaining == 2
-
-
 class TestTimeoutController:
     """Test timeout controller."""
 
@@ -1400,13 +1347,11 @@ class TestConcurrencyMiddleware:
     @pytest.fixture
     def middleware(self, app):
         concurrency_controller = create_concurrency_controller(max_concurrent_requests=10)
-        rate_limiter = create_rate_limiter()
         timeout_controller = create_timeout_controller()
 
         return ConcurrencyMiddleware(
             app=app,
             concurrency_controller=concurrency_controller,
-            rate_limiter=rate_limiter,
             timeout_controller=timeout_controller,
         )
 
@@ -1517,7 +1462,6 @@ class TestConcurrencyMiddleware:
         middleware = create_concurrency_middleware(
             app=never_called_app,
             concurrency_controller=create_concurrency_controller(),
-            rate_limiter=create_rate_limiter(),
             timeout_controller=create_timeout_controller(),
             offload_predicate=offload_predicate,
         )
@@ -1584,7 +1528,6 @@ class TestConcurrencyMiddleware:
         constrained_middleware = ConcurrencyMiddleware(
             app=blocking_app,
             concurrency_controller=controller,
-            rate_limiter=create_rate_limiter(),
             timeout_controller=create_timeout_controller(),
         )
 
@@ -1657,7 +1600,6 @@ class TestConcurrencyMiddleware:
         overflow_middleware = ConcurrencyMiddleware(
             app=blocking_app,
             concurrency_controller=controller,
-            rate_limiter=create_rate_limiter(),
             timeout_controller=create_timeout_controller(),
         )
 
@@ -1729,7 +1671,6 @@ class TestConcurrencyMiddleware:
         slow_middleware = ConcurrencyMiddleware(
             app=slow_app,
             concurrency_controller=create_concurrency_controller(),
-            rate_limiter=create_rate_limiter(),
             timeout_controller=timeout_controller,
         )
 
@@ -1837,13 +1778,11 @@ class TestIntegrationScenarios:
     @pytest.fixture
     def middleware(self, app):
         concurrency_controller = create_concurrency_controller(max_concurrent_requests=10)
-        rate_limiter = create_rate_limiter()
         timeout_controller = create_timeout_controller()
 
         return ConcurrencyMiddleware(
             app=app,
             concurrency_controller=concurrency_controller,
-            rate_limiter=rate_limiter,
             timeout_controller=timeout_controller,
         )
 
@@ -1900,26 +1839,6 @@ class TestIntegrationScenarios:
         with pytest.raises(ServiceUnavailableException):
             await client.execute_query("SELECT 1", tenant_id="test")
 
-    async def test_rate_limit_with_tenant_isolation(self):
-        """Test rate limiting with tenant isolation."""
-        rate_limiter = RateLimiter()
-
-        # Make requests for different tenants
-        tenant1_identifier = "tenant1"
-        tenant2_identifier = "tenant2"
-
-        # Fill rate limit for tenant1
-        for i in range(10):
-            await rate_limiter.check_rate_limit(tenant1_identifier, max_requests=10, window_seconds=1.0)
-
-        # tenant1 should be rate limited
-        allowed = await rate_limiter.check_rate_limit(tenant1_identifier, max_requests=10, window_seconds=1.0)
-        assert not allowed
-
-        # tenant2 should still be allowed
-        allowed = await rate_limiter.check_rate_limit(tenant2_identifier, max_requests=10, window_seconds=1.0)
-        assert allowed
-
     async def test_timeout_with_early_cancellation(self):
         """Test timeout cancellation."""
         timeout_controller = TimeoutController()
@@ -1945,7 +1864,6 @@ class TestIntegrationScenarios:
         middleware = create_concurrency_middleware(
             app=failing_app,
             concurrency_controller=create_concurrency_controller(),
-            rate_limiter=create_rate_limiter(),
             timeout_controller=create_timeout_controller(),
         )
 
@@ -2011,7 +1929,6 @@ class TestIntegrationScenarios:
         middleware = create_concurrency_middleware(
             app=simple_app,
             concurrency_controller=create_concurrency_controller(max_concurrent_requests=3),
-            rate_limiter=create_rate_limiter(),
             timeout_controller=create_timeout_controller(),
         )
 
@@ -2077,6 +1994,16 @@ class TestDatabaseMigrationMetrics:
         assert data["simplified_calls"] == 1
         assert data["legacy_calls"] == 1
         assert data["errors"] == 1
+        assert metrics.is_monitoring_enabled() is True
+
+    def test_database_migration_metrics_lowercase_flag(self, tmp_path, monkeypatch):
+        upper = trino_module.DB_FEATURE_FLAGS["ENABLE_DB_MIGRATION_MONITORING"]
+        monkeypatch.delenv(upper, raising=False)
+        monkeypatch.setenv(upper.lower(), "true")
+        monkeypatch.setenv("HOME", str(tmp_path))
+
+        metrics = trino_module.DatabaseMigrationMetrics()
+
         assert metrics.is_monitoring_enabled() is True
 
 

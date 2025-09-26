@@ -63,6 +63,8 @@ spec:
               valueFrom:
                 fieldRef:
                   fieldPath: metadata.namespace
+            - name: AURUM_METRICS_DIR
+              value: /tmp/aurum
           startupProbe:
             httpGet:
               path: /ready

@@ -29,6 +29,10 @@ The Aurum codebase has been refactored to support incremental migration with:
 
 ### 1. Enable Migration Monitoring
 
+> **Note:** Migration environment variables now use uppercase `AURUM_*` names. The
+> previous lowercase forms remain supported for backward compatibility, but new
+> deployments should prefer the uppercase variants shown below.
+
 ```bash
 export AURUM_ENABLE_MIGRATION_MONITORING=1
 export AURUM_USE_SIMPLIFIED_SETTINGS=1
