@@ -102,6 +102,7 @@ from aurum.api.rate_limiting.concurrency_middleware import (
     ConcurrencyMiddleware,
     OffloadInstruction,
     create_concurrency_middleware_from_settings,
+    local_diagnostics_router,
 )
 from aurum.api.rate_limiting.redis_concurrency import diagnostics_router
 from aurum.api.rate_limiting.sliding_window import (
@@ -627,6 +628,7 @@ def _create_simplified_app(settings: AurumSettings, logger: logging.Logger) -> F
         logger.warning(f"Failed to load runtime config router: {e}")
 
     app.include_router(diagnostics_router)
+    app.include_router(local_diagnostics_router)
     app.include_router(ratelimit_admin_router)
     app.include_router(offload_router)
 
@@ -750,6 +752,7 @@ def _create_legacy_app(settings: AurumSettings, logger: logging.Logger) -> FastA
         logger.warning(f"Failed to load runtime config router: {e}")
 
     app.include_router(diagnostics_router)
+    app.include_router(local_diagnostics_router)
     app.include_router(ratelimit_admin_router)
     app.include_router(offload_router)
 
