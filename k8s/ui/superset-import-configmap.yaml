@@ -9,9 +9,6 @@ data:
     import os
     from superset.app import create_app
     from superset import db
-    from superset.models.dashboard import Dashboard
-    from superset.models.slice import Slice
-    from superset.connectors.sqla.models import SqlaTable
 
     DATASETS = [
       ("public", "iso_lmp_last_24h"),
@@ -22,6 +19,10 @@ data:
 
     app = create_app()
     with app.app_context():
+      # Import models inside the application context
+      from superset.models.dashboard import Dashboard
+      from superset.models.slice import Slice
+      from superset.connectors.sqla.models import SqlaTable
       # Find Timescale DB
       from superset.models.core import Database
       dbobj = db.session.query(Database).filter_by(database_name=os.environ.get("SUPERSET_TIMESCALE_NAME", "Timescale")).first()

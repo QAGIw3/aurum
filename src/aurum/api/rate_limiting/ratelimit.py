@@ -36,42 +36,33 @@ from fastapi import APIRouter, Query, HTTPException
 from .config import CacheConfig
 from .quota_manager import TenantQuotaManager
 from ..telemetry.context import get_request_id
+from ...observability.metric_helpers import get_counter, get_gauge, get_histogram
 
-try:  # pragma: no cover - optional metric dependency
-    from prometheus_client import Counter, Gauge, Histogram  # type: ignore
-except Exception:  # pragma: no cover
-    Counter, Gauge, Histogram = None, None, None  # type: ignore
 
-if Counter is not None:  # pragma: no cover - metrics optional in tests
-    RATE_LIMIT_EVENTS = Counter(
-        "aurum_api_ratelimit_total",
-        "Rate limit decisions",
-        ["result", "path", "tenant_id"],
-    )
+RATE_LIMIT_EVENTS = get_counter(
+    "aurum_api_ratelimit_total",
+    "Rate limit decisions",
+    ["result", "path", "tenant_id"],
+)
 
-    RATE_LIMIT_ACTIVE_WINDOWS = Gauge(
-        "aurum_api_ratelimit_active_windows",
-        "Number of active rate limit windows",
-        ["path", "tenant_id"],
-    )
+RATE_LIMIT_ACTIVE_WINDOWS = get_gauge(
+    "aurum_api_ratelimit_active_windows",
+    "Number of active rate limit windows",
+    ["path", "tenant_id"],
+)
 
-    RATE_LIMIT_REQUESTS_PER_WINDOW = Histogram(
-        "aurum_api_ratelimit_requests_per_window",
-        "Number of requests in current window",
-        ["path", "tenant_id"],
-        buckets=[0, 1, 2, 5, 10, 20, 50, 100, 200, 500],
-    )
+RATE_LIMIT_REQUESTS_PER_WINDOW = get_histogram(
+    "aurum_api_ratelimit_requests_per_window",
+    "Number of requests in current window",
+    ["path", "tenant_id"],
+    buckets=[0, 1, 2, 5, 10, 20, 50, 100, 200, 500],
+)
 
-    RATE_LIMIT_BLOCK_DURATION = Histogram(
-        "aurum_api_ratelimit_block_duration_seconds",
-        "Duration of rate limit blocks",
-        buckets=[0.1, 1, 5, 10, 30, 60, 300, 600],
-    )
-else:  # pragma: no cover
-    RATE_LIMIT_EVENTS = None
-    RATE_LIMIT_ACTIVE_WINDOWS = None
-    RATE_LIMIT_REQUESTS_PER_WINDOW = None
-    RATE_LIMIT_BLOCK_DURATION = None
+RATE_LIMIT_BLOCK_DURATION = get_histogram(
+    "aurum_api_ratelimit_block_duration_seconds",
+    "Duration of rate limit blocks",
+    buckets=[0.1, 1, 5, 10, 30, 60, 300, 600],
+)
 
 
 def _record_metric(result: str, path: str = "", tenant_id: str = "", request_count: int = 0) -> None:

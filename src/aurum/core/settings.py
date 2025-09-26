@@ -273,6 +273,24 @@ class SimplifiedSettings:
                 logger.warning("Invalid float for %s=%r; using default %s", key, raw, default)
         return default
 
+    @staticmethod
+    def _get_bool_from_env(env: Mapping[str, str], keys: Iterable[str], default: bool) -> bool:
+        """Read the first boolean-like value from the provided environment keys."""
+
+        truthy = {"true", "1", "yes", "on"}
+        falsy = {"false", "0", "no", "off"}
+        for key in keys:
+            raw = env.get(key)
+            if raw is None:
+                continue
+            lowered = raw.strip().lower()
+            if lowered in truthy:
+                return True
+            if lowered in falsy:
+                return False
+            logger.warning("Invalid boolean for %s=%r; using default %s", key, raw, default)
+        return default
+
     def _load_from_env(self) -> None:
         """Load configuration from environment variables."""
         env = os.environ
@@ -406,6 +424,140 @@ class SimplifiedSettings:
         api_metrics_enabled = env.get(f"{self.env_prefix}API_METRICS_ENABLED", "false").lower() in ("true", "1", "yes")
         api_metrics_path = env.get(f"{self.env_prefix}API_METRICS_PATH", "/metrics")
 
+        # Concurrency controls
+        concurrency_enabled = self._get_bool_from_env(
+            env,
+            [f"{self.env_prefix}API_CONCURRENCY_ENABLED"],
+            True,
+        )
+        concurrency_defaults = {
+            "max_concurrent_requests": self._get_int_from_env(
+                env,
+                [f"{self.env_prefix}API_CONCURRENCY_MAX_CONCURRENT_REQUESTS"],
+                100,
+            ),
+            "max_requests_per_second": self._get_float_from_env(
+                env,
+                [f"{self.env_prefix}API_CONCURRENCY_MAX_REQUESTS_PER_SECOND"],
+                10.0,
+            ),
+            "max_request_duration_seconds": self._get_float_from_env(
+                env,
+                [f"{self.env_prefix}API_CONCURRENCY_MAX_REQUEST_DURATION_SECONDS"],
+                float(self.api_request_timeout_seconds),
+            ),
+            "max_requests_per_tenant": self._get_int_from_env(
+                env,
+                [f"{self.env_prefix}API_CONCURRENCY_MAX_REQUESTS_PER_TENANT"],
+                20,
+            ),
+            "tenant_burst_limit": self._get_int_from_env(
+                env,
+                [f"{self.env_prefix}API_CONCURRENCY_TENANT_BURST_LIMIT"],
+                50,
+            ),
+            "tenant_queue_limit": self._get_int_from_env(
+                env,
+                [f"{self.env_prefix}API_CONCURRENCY_TENANT_QUEUE_LIMIT"],
+                64,
+            ),
+            "queue_timeout_seconds": self._get_float_from_env(
+                env,
+                [f"{self.env_prefix}API_CONCURRENCY_QUEUE_TIMEOUT_SECONDS"],
+                2.0,
+            ),
+            "burst_refill_per_second": self._get_float_from_env(
+                env,
+                [f"{self.env_prefix}API_CONCURRENCY_BURST_REFILL_PER_SECOND"],
+                0.5,
+            ),
+            "slow_start_initial_limit": self._get_int_from_env(
+                env,
+                [f"{self.env_prefix}API_CONCURRENCY_SLOW_START_INITIAL_LIMIT"],
+                2,
+            ),
+            "slow_start_step_seconds": self._get_float_from_env(
+                env,
+                [f"{self.env_prefix}API_CONCURRENCY_SLOW_START_STEP_SECONDS"],
+                3.0,
+            ),
+            "slow_start_step_size": self._get_int_from_env(
+                env,
+                [f"{self.env_prefix}API_CONCURRENCY_SLOW_START_STEP_SIZE"],
+                1,
+            ),
+            "slow_start_cooldown_seconds": self._get_float_from_env(
+                env,
+                [f"{self.env_prefix}API_CONCURRENCY_SLOW_START_COOLDOWN_SECONDS"],
+                30.0,
+            ),
+        }
+
+        concurrency_field_casts = {
+            "max_requests_per_tenant": int,
+            "tenant_queue_limit": int,
+            "tenant_burst_limit": int,
+            "queue_timeout_seconds": float,
+            "burst_refill_per_second": float,
+            "slow_start_initial_limit": int,
+            "slow_start_step_seconds": float,
+            "slow_start_step_size": int,
+            "slow_start_cooldown_seconds": float,
+            "max_request_duration_seconds": float,
+            "max_requests_per_second": float,
+        }
+
+        tenant_overrides_raw = env.get(
+            f"{self.env_prefix}API_CONCURRENCY_TENANT_OVERRIDES",
+            "",
+        )
+        tenant_overrides: Dict[str, Dict[str, Any]] = {}
+        if tenant_overrides_raw:
+            try:
+                overrides_payload = json.loads(tenant_overrides_raw)
+            except json.JSONDecodeError:
+                logger.warning(
+                    "Invalid JSON for %sAPI_CONCURRENCY_TENANT_OVERRIDES; ignoring overrides",
+                    self.env_prefix,
+                )
+                overrides_payload = {}
+
+            if isinstance(overrides_payload, dict):
+                for tenant_key, override in overrides_payload.items():
+                    if not isinstance(override, dict):
+                        logger.warning(
+                            "Tenant override for %s must be an object; skipping",
+                            tenant_key,
+                        )
+                        continue
+                    normalized: Dict[str, Any] = {}
+                    for field_name, value in override.items():
+                        caster = concurrency_field_casts.get(field_name)
+                        if caster is None:
+                            continue
+                        try:
+                            normalized[field_name] = caster(value)
+                        except (TypeError, ValueError):
+                            logger.warning(
+                                "Invalid override value %r for %s on tenant %s; skipping",
+                                value,
+                                field_name,
+                                tenant_key,
+                            )
+                    if normalized:
+                        tenant_overrides[str(tenant_key)] = normalized
+            elif tenant_overrides_raw:
+                logger.warning(
+                    "Tenant overrides must decode to a JSON object; received %r",
+                    overrides_payload,
+                )
+
+        concurrency_namespace = SimpleNamespace(
+            enabled=concurrency_enabled,
+            tenant_overrides=tenant_overrides,
+            **concurrency_defaults,
+        )
+
         # Database settings
         self.database_url = env.get(f"{self.env_prefix}DATABASE_URL", "postgresql://localhost/aurum")
         self.trino_host = env.get(f"{self.env_prefix}TRINO_HOST", "localhost")
@@ -483,6 +635,7 @@ class SimplifiedSettings:
             gzip_min_bytes=self.gzip_min_bytes,
             cache=SimpleNamespace(**api_cache_defaults),
             metrics=SimpleNamespace(enabled=api_metrics_enabled, path=api_metrics_path),
+            concurrency=concurrency_namespace,
             rate_limit=SimpleNamespace(enabled=False, tenant_overrides={}),
         )
 

@@ -143,4 +143,3 @@
   compression = "gzip"
   auth.username = "default"
   skip_unknown_fields = true
-  strategy = "insert"

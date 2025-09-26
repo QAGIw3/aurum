@@ -26,11 +26,4 @@ data:
     iceberg.rest-catalog.uri=http://nessie.aurum-dev.svc.cluster.local:19121/api/v1
     iceberg.security=read_only
     iceberg.file-format=PARQUET
-    iceberg.new-table-format-version=2
-    iceberg.merge-on-read-mode=merge-on-read
     iceberg.compression-codec=ZSTD
-    s3.endpoint=http://minio.aurum-dev.svc.cluster.local:9000
-    s3.path-style-access=true
-    s3.aws-access-key=${ENV:AWS_ACCESS_KEY_ID}
-    s3.aws-secret-key=${ENV:AWS_SECRET_ACCESS_KEY}
-    s3.region=us-east-1
