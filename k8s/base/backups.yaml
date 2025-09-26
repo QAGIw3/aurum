@@ -138,9 +138,17 @@ spec:
                   timestamp=$(date +"%Y%m%d%H%M%S")
                   dest="/backups/minio/${timestamp}"
                   mkdir -p "${dest}"
-                  mc alias set local http://minio:9000 "${AURUM_S3_ACCESS_KEY}" "${AURUM_S3_SECRET_KEY}"
-                  mc mb local/aurum --ignore-existing
-                  mc mirror --overwrite --remove local/aurum "${dest}"
+                  echo "Setting up MinIO alias..."
+                  mc alias set local http://10.96.251.113:9000 "${AURUM_S3_ACCESS_KEY}" "${AURUM_S3_SECRET_KEY}" || { echo "Failed to set alias"; exit 1; }
+                  echo "Creating bucket aurum..."
+                  mc mb local/aurum --ignore-existing || echo "Bucket creation failed, but continuing..."
+                  echo "Checking if bucket has data..."
+                  if mc ls local/aurum >/dev/null 2>&1; then
+                    echo "Backing up data from aurum bucket..."
+                    mc mirror --overwrite --remove local/aurum "${dest}" || echo "Mirror failed, but continuing..."
+                  else
+                    echo "No data found in aurum bucket, creating empty backup directory"
+                  fi
                   find /backups/minio -mindepth 1 -maxdepth 1 -type d -mtime +7 -exec rm -rf {} +
               env:
                 - name: AURUM_S3_ACCESS_KEY

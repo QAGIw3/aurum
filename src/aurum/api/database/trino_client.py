@@ -58,12 +58,79 @@ from ...observability.metrics import (
 from ...observability.enhanced_tracing import get_current_trace_context
 
 from .config import TrinoConfig, TrinoCatalogConfig, TrinoCatalogType, TrinoAccessLevel
-from ...core.settings import get_settings
+from ...core.settings import AurumSettings, get_settings
 
 LOGGER = logging.getLogger(__name__)
 
 _catalog_configs: Dict[str, TrinoCatalogConfig] = {}
 _catalog_trino_configs: Dict[str, TrinoConfig] = {}
+
+_BOOL_CONCURRENCY_KEYS = {
+    "trino_hot_query_cache_enabled",
+    "trino_prepared_cache_metrics_enabled",
+    "trino_trace_tagging_enabled",
+}
+
+
+def _infer_concurrency_config_from_settings(settings: AurumSettings) -> Dict[str, Any]:
+    """Extract Trino concurrency defaults from application settings."""
+
+    inferred: Dict[str, Any] = {}
+
+    def _set(key: str, value: Any) -> None:
+        if value is None:
+            return
+        if key in _BOOL_CONCURRENCY_KEYS:
+            inferred[key] = bool(value)
+        else:
+            inferred[key] = value
+
+    trino_cfg = getattr(settings, "trino", None)
+    if trino_cfg is not None:
+        _set("trino_hot_query_cache_enabled", getattr(trino_cfg, "hot_cache_enabled", None))
+        _set(
+            "trino_prepared_cache_metrics_enabled",
+            getattr(trino_cfg, "prepared_cache_metrics_enabled", None),
+        )
+        _set("trino_trace_tagging_enabled", getattr(trino_cfg, "trace_tagging_enabled", None))
+        _set("trino_metrics_label", getattr(trino_cfg, "metrics_label", None))
+        _set("trino_default_tenant_id", getattr(trino_cfg, "default_tenant_id", None))
+
+    api_cfg = getattr(settings, "api", None)
+    concurrency_cfg = getattr(api_cfg, "concurrency", None) if api_cfg is not None else None
+    if concurrency_cfg is not None:
+        attr_map = {
+            "trino_connection_timeout_seconds": "trino_connection_timeout_seconds",
+            "trino_query_timeout_seconds": "trino_query_timeout_seconds",
+            "trino_connection_acquire_attempts": "trino_connection_acquire_attempts",
+            "trino_connection_backoff_seconds": "trino_connection_backoff_seconds",
+            "trino_connection_pool_min_size": "trino_connection_pool_min_size",
+            "trino_connection_pool_max_size": "trino_connection_pool_max_size",
+            "trino_connection_pool_max_idle": "trino_connection_pool_max_idle",
+            "trino_connection_idle_timeout_seconds": "trino_connection_idle_timeout_seconds",
+            "trino_connection_wait_timeout_seconds": "trino_connection_wait_timeout_seconds",
+            "trino_max_retries": "trino_max_retries",
+            "trino_retry_delay_seconds": "trino_retry_delay_seconds",
+            "trino_max_retry_delay_seconds": "trino_max_retry_delay_seconds",
+            "trino_retry_backoff_factor": "trino_retry_backoff_factor",
+            "trino_circuit_breaker_failure_threshold": "trino_circuit_breaker_failure_threshold",
+            "trino_circuit_breaker_timeout_seconds": "trino_circuit_breaker_timeout_seconds",
+            "trino_circuit_breaker_success_threshold": "trino_circuit_breaker_success_threshold",
+            "trino_cache_max_entries": "trino_cache_max_entries",
+            "trino_cache_ttl_seconds": "trino_cache_ttl_seconds",
+            "trino_hot_query_cache_size": "trino_hot_query_cache_size",
+            "trino_prepared_statement_cache_size": "trino_prepared_statement_cache_size",
+            "trino_hot_query_cache_enabled": "trino_hot_query_cache_enabled",
+            "trino_prepared_cache_metrics_enabled": "trino_prepared_cache_metrics_enabled",
+            "trino_trace_tagging_enabled": "trino_trace_tagging_enabled",
+            "trino_metrics_label": "trino_metrics_label",
+        }
+
+        for attr_name, key in attr_map.items():
+            if hasattr(concurrency_cfg, attr_name):
+                _set(key, getattr(concurrency_cfg, attr_name))
+
+    return inferred
 
 
 def _create_lock() -> asyncio.Lock:
@@ -1170,31 +1237,27 @@ def get_trino_client(
 ):
     """Get a Trino client for the specified catalog or configuration."""
 
-    if concurrency_config is None:
-        try:
-            settings = get_settings()
-        except Exception:
-            settings = None
-        if settings is not None:
-            trino_settings = getattr(settings, "trino", None)
-            if trino_settings is not None:
-                inferred_config: Dict[str, Any] = {}
-                if hasattr(trino_settings, "hot_cache_enabled"):
-                    inferred_config["trino_hot_query_cache_enabled"] = bool(getattr(trino_settings, "hot_cache_enabled"))
-                if hasattr(trino_settings, "prepared_cache_metrics_enabled"):
-                    inferred_config["trino_prepared_cache_metrics_enabled"] = bool(
-                        getattr(trino_settings, "prepared_cache_metrics_enabled")
-                    )
-                if hasattr(trino_settings, "trace_tagging_enabled"):
-                    inferred_config["trino_trace_tagging_enabled"] = bool(
-                        getattr(trino_settings, "trace_tagging_enabled")
-                    )
-                if hasattr(trino_settings, "metrics_label"):
-                    inferred_config["trino_metrics_label"] = getattr(trino_settings, "metrics_label")
-                if inferred_config:
-                    concurrency_config = inferred_config
+    inferred_defaults: Dict[str, Any] = {}
+    try:
+        settings = get_settings()
+    except Exception:
+        settings = None
+    else:
+        inferred_defaults = _infer_concurrency_config_from_settings(settings)
 
-    return _client_manager.get_client(catalog, concurrency_config=concurrency_config)
+    effective_config: Optional[Dict[str, Any]]
+    if concurrency_config is None:
+        effective_config = inferred_defaults or None
+    else:
+        # Preserve caller-provided overrides while layering in defaults from settings.
+        if inferred_defaults:
+            merged: Dict[str, Any] = dict(inferred_defaults)
+            merged.update(concurrency_config)
+            effective_config = merged
+        else:
+            effective_config = dict(concurrency_config)
+
+    return _client_manager.get_client(catalog, concurrency_config=effective_config)
 
 
 def get_default_trino_client():

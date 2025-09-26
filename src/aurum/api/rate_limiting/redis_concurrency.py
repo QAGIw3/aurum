@@ -259,7 +259,10 @@ diagnostics_router = APIRouter(prefix="/v1/admin/concurrency", tags=["Concurrenc
 def _require_backend(request: Request) -> RedisConcurrencyBackend:
     backend = getattr(getattr(request.app, "state", None), "concurrency_backend", None)
     if not isinstance(backend, RedisConcurrencyBackend):
-        raise HTTPException(status_code=404, detail="Distributed concurrency backend is not configured")
+        raise HTTPException(
+            status_code=503,
+            detail="Distributed concurrency backend is disabled",
+        )
     return backend
 
 

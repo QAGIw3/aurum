@@ -237,7 +237,7 @@ class RateLimitMiddleware:
         self.cache_cfg = cache_cfg
         self.rl_cfg = rl_cfg
         self._redis = _redis_client(cache_cfg)
-        self._tenant_quota = TenantQuotaManager(self._redis)
+        self._tenant_quota = TenantQuotaManager(self._redis) if self._redis is not None else None
         self._memory_windows: dict[str, Deque[float]] = {}
         self._window_seconds = 1.0
 

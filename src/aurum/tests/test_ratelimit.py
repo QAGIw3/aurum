@@ -51,7 +51,11 @@ _load_module("aurum.core.pagination", PACKAGE_ROOT / "core" / "pagination.py")
 _load_module("aurum.core.settings", PACKAGE_ROOT / "core" / "settings.py")
 _load_module("aurum.core", PACKAGE_ROOT / "core" / "__init__.py", package=True)
 _load_module("aurum.api.config", PACKAGE_ROOT / "api" / "config.py")
-ratelimit_module = _load_module("aurum.api.ratelimit", PACKAGE_ROOT / "api" / "ratelimit.py")
+_load_module("aurum.api.rate_limiting", PACKAGE_ROOT / "api" / "rate_limiting" / "__init__.py", package=True)
+ratelimit_module = _load_module(
+    "aurum.api.rate_limiting.sliding_window",
+    PACKAGE_ROOT / "api" / "rate_limiting" / "sliding_window.py",
+)
 RateLimitConfig = ratelimit_module.RateLimitConfig
 RateLimitMiddleware = ratelimit_module.RateLimitMiddleware
 

@@ -13,9 +13,11 @@ Migration phases:
 
 import atexit
 import contextlib
+import fnmatch
 import json
 import logging
 import os
+import re
 import gzip
 
 from fastapi import Depends, FastAPI, HTTPException, Request, Response
@@ -310,13 +312,18 @@ def log_api_migration_status():
     logger.info(f"API Migration Metrics: Legacy calls: {ApiMigrationMetrics.legacy_calls}, "
                 f"Simplified calls: {ApiMigrationMetrics.simplified_calls}")
 
-from typing import Any, Callable, Dict, Optional
+from typing import Any, Callable, Dict, Optional, Union
 
 
 def _build_offload_predicate(
     settings: AurumSettings,
 ) -> Optional[Callable[[Dict[str, Any]], Optional[OffloadInstruction]]]:
-    """Construct dispatch predicate for concurrency offloading."""
+    """Construct dispatch predicate for concurrency offloading.
+
+    Supports exact, prefix, glob, and regex path matching along with per-route
+    method lists so operators can describe entire groups of endpoints without
+    enumerating every route individually.
+    """
 
     concurrency_cfg = getattr(getattr(settings, "api", None), "concurrency", None)
     if concurrency_cfg is None:
@@ -331,45 +338,112 @@ def _build_offload_predicate(
         if not isinstance(entry, dict):
             LOGGER.warning("invalid_offload_route_entry", extra={"entry": entry})
             continue
+
         try:
-            path = str(entry["path"]).rstrip("/") or "/"
-            method = str(entry.get("method", "POST")).upper()
+            raw_path = str(entry["path"]).strip()
+            normalized_path = raw_path.rstrip("/") or "/"
             job_name = str(entry["job"])
         except (KeyError, TypeError, ValueError):
             LOGGER.warning("invalid_offload_route_config", extra={"entry": entry})
             continue
 
+        raw_methods = entry.get("methods")
+        if raw_methods is None:
+            raw_methods = entry.get("method", "POST")
+        methods: tuple[str, ...]
+        if isinstance(raw_methods, str):
+            methods = (raw_methods.upper(),)
+        else:
+            try:
+                methods = tuple(
+                    str(item).upper()
+                    for item in raw_methods
+                    if str(item).strip()
+                )
+            except Exception:
+                LOGGER.warning("invalid_offload_route_methods", extra={"entry": entry})
+                continue
+        if not methods:
+            methods = ("POST",)
+
+        match_type = str(entry.get("match", "exact") or "exact").lower()
+        pattern = normalized_path
+        compiled_regex = None
+        if match_type == "regex":
+            try:
+                compiled_regex = re.compile(pattern)
+            except re.error as exc:
+                LOGGER.warning(
+                    "invalid_offload_route_regex",
+                    extra={"pattern": pattern, "error": str(exc)},
+                )
+                continue
+        elif match_type not in {"exact", "prefix", "glob"}:
+            LOGGER.warning(
+                "invalid_offload_route_match",
+                extra={"match": match_type, "entry": entry},
+            )
+            match_type = "exact"
+
+        response_headers = entry.get("response_headers")
+        if response_headers is not None and not isinstance(response_headers, dict):
+            LOGGER.warning("invalid_offload_response_headers", extra={"entry": entry})
+            response_headers = None
+
         normalized.append(
             {
-                "path": path,
-                "method": method,
+                "pattern": pattern,
+                "match": match_type,
+                "compiled": compiled_regex,
+                "methods": tuple(methods),
                 "job": job_name,
                 "queue": entry.get("queue"),
                 "status_url": entry.get("status_url", "/v1/admin/offload/{task_id}"),
+                "response_headers": response_headers,
             }
         )
 
     if not normalized:
         return None
 
+    def _matches(route: Dict[str, Any], request_path: str) -> bool:
+        match_type = route["match"]
+        pattern = route["pattern"]
+        if match_type == "exact":
+            return request_path == pattern
+        if match_type == "prefix":
+            return request_path.startswith(pattern)
+        if match_type == "glob":
+            return fnmatch.fnmatch(request_path, pattern)
+        if match_type == "regex" and route["compiled"] is not None:
+            return bool(route["compiled"].search(request_path))
+        return False
+
     def predicate(request_info: Dict[str, Any]) -> Optional[OffloadInstruction]:
-        path = str(request_info.get("path", "")).rstrip("/") or "/"
-        method = str(request_info.get("method", "")).upper()
+        request_path = str(request_info.get("path", "")).rstrip("/") or "/"
+        request_method = str(request_info.get("method", "")).upper()
         for route in normalized:
-            if path == route["path"] and method == route["method"]:
-                payload = {
-                    "path": path,
-                    "method": method,
-                    "headers": request_info.get("headers", {}),
-                    "query_string": request_info.get("query_string"),
-                    "client": request_info.get("client"),
-                }
-                return OffloadInstruction(
-                    job_name=route["job"],
-                    payload=payload,
-                    queue=route.get("queue"),
-                    status_url=route.get("status_url"),
-                )
+            allowed_methods = route["methods"]
+            if allowed_methods and "*" not in allowed_methods and request_method not in allowed_methods:
+                continue
+            if not _matches(route, request_path):
+                continue
+
+            payload = {
+                "path": request_path,
+                "method": request_method,
+                "headers": request_info.get("headers", {}),
+                "query_string": request_info.get("query_string"),
+                "client": request_info.get("client"),
+            }
+
+            return OffloadInstruction(
+                job_name=route["job"],
+                payload=payload,
+                queue=route.get("queue"),
+                status_url=route.get("status_url"),
+                response_headers=route.get("response_headers"),
+            )
         return None
 
     return predicate
@@ -378,7 +452,7 @@ def _build_offload_predicate(
 def _install_concurrency_middleware(
     app: FastAPI,
     settings: AurumSettings,
-) -> FastAPI | ConcurrencyMiddleware:
+) -> Union[FastAPI, ConcurrencyMiddleware]:
     """Wrap the app with concurrency middleware when enabled in configuration."""
 
     offload_predicate = _build_offload_predicate(settings)
