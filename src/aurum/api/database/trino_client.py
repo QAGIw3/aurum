@@ -29,6 +29,7 @@ except ImportError:
 
 from ..exceptions import ServiceUnavailableException
 from ..performance import ConnectionPool
+from ..telemetry.context import log_structured
 from ...common.circuit_breaker import CircuitBreaker, CircuitBreakerState
 from ...external.collect.base import RetryConfig
 from ...observability.metrics import (
@@ -177,7 +178,12 @@ class SimpleTrinoClient:
         cache_max_entries = int(max(1, self._config.get("trino_cache_max_entries", 128)))
         cache_ttl_seconds = float(self._config.get("trino_cache_ttl_seconds", 30.0))
         self._cache = TTLCache(maxsize=cache_max_entries, default_ttl=cache_ttl_seconds)
-        self._prepared_statements: Dict[str, Any] = {}
+        self._prepared_statement_max = int(max(1, self._config.get("trino_prepared_statement_cache_size", 64)))
+        self._prepared_statements: Dict[int, "OrderedDict[str, Any]"] = {}
+        self._prepared_lock = threading.Lock()
+        self._hot_cache_max = int(max(1, self._config.get("trino_hot_query_cache_size", 32)))
+        self._hot_results: OrderedDict[str, Any] = OrderedDict()
+        self._hot_cache_lock = _create_lock()
 
         self._pending_acquires = 0
         self._pending_lock = _create_lock()
@@ -212,6 +218,9 @@ class SimpleTrinoClient:
         """Execute a statement without returning results."""
 
         await self._run_with_retries(sql, params, tenant_id or self._default_tenant, self.query_timeout)
+        if not self._is_select_query(sql):
+            await self._cache.clear()
+            await self._clear_hot_cache()
 
     async def execute_query(
         self,
@@ -229,12 +238,14 @@ class SimpleTrinoClient:
         else:
             params_copy = params
 
+        query_type = self._classify_query(sql)
         should_cache = False
         ttl = None
         if isinstance(params_copy, dict):
             should_cache, ttl = self._extract_cache_policy(sql, params_copy, cache_ttl)
 
         cache_key = None
+        hot_key = None
         if should_cache:
             cache_key = self._cache_key(sql, params_copy)
             cached_result = await self._cache.get(cache_key)
@@ -246,10 +257,26 @@ class SimpleTrinoClient:
                     pass
                 return cached_result
 
+        if query_type == "read":
+            hot_key = self._cache_key(sql, params_copy)
+            hot_result = await self._get_hot_result(hot_key)
+            if hot_result is not None:
+                try:
+                    await increment_trino_queries(tenant_label, status="hot_cache_hit")
+                    await observe_trino_query_duration(tenant_label, query_type, 0.0)
+                except NameError:
+                    pass
+                return hot_result
+        else:
+            await self._clear_hot_cache()
+
         result = await self._run_with_retries(sql, params_copy, tenant_label, self.query_timeout)
 
         if should_cache and cache_key:
             await self._cache.set(cache_key, result, ttl)
+
+        if query_type == "read" and hot_key:
+            await self._store_hot_result(hot_key, result)
 
         return result
 
@@ -277,6 +304,9 @@ class SimpleTrinoClient:
         if self._closed:
             return
         await self._cache.clear()
+        await self._clear_hot_cache()
+        with self._prepared_lock:
+            self._prepared_statements.clear()
         await self._pool.close_all()
         self._closed = True
 
@@ -310,11 +340,15 @@ class SimpleTrinoClient:
                 except NameError:
                     pass
                 return rows
-            except ServiceUnavailableException:
+            except ServiceUnavailableException as exc:
                 self._record_breaker_failure()
                 await self._sync_circuit_breaker_metric()
+                detail = getattr(exc, "detail", "") or ""
+                status = "rejected"
+                if "timeout" in detail.lower():
+                    status = "timeout"
                 try:
-                    await increment_trino_queries(tenant_label, status="rejected")
+                    await increment_trino_queries(tenant_label, status=status)
                 except NameError:
                     pass
                 raise
@@ -347,9 +381,24 @@ class SimpleTrinoClient:
     ) -> List[Dict[str, Any]]:
         conn = await self._acquire_connection()
         try:
-            if query_timeout:
-                return await asyncio.wait_for(self._run_query(conn, sql, params), timeout=query_timeout)
-            return await self._run_query(conn, sql, params)
+            try:
+                if query_timeout:
+                    return await asyncio.wait_for(self._run_query(conn, sql, params), timeout=query_timeout)
+                return await self._run_query(conn, sql, params)
+            except asyncio.TimeoutError as exc:
+                try:
+                    cancel = getattr(conn, "cancel", None)
+                    if callable(cancel):
+                        cancel()
+                except Exception:  # noqa: BLE001
+                    pass
+                log_structured(
+                    "warning",
+                    "trino_query_timeout",
+                    sql=sql[:200] if sql else "",
+                    timeout_seconds=query_timeout,
+                )
+                raise ServiceUnavailableException("trino", detail="Query timed out") from exc
         finally:
             await self._release_connection(conn)
 
@@ -362,9 +411,19 @@ class SimpleTrinoClient:
         def _do_query() -> List[Dict[str, Any]]:
             cursor = conn.cursor()
             try:
+                prepared = None
+                bind_params = params or {}
+                if isinstance(params, dict) and self._is_select_query(sql):
+                    prepared = self._maybe_prepare_statement(conn, cursor, sql)
+
                 try:
-                    cursor.execute(sql, params or {})
+                    if prepared is not None and hasattr(cursor, "execute_prepared"):
+                        cursor.execute_prepared(prepared, bind_params)
+                    else:
+                        cursor.execute(sql, bind_params)
                 except Exception as exc:  # noqa: BLE001
+                    if prepared is not None:
+                        self._invalidate_prepared_statement(conn, sql)
                     if hasattr(conn, "rollback"):
                         try:
                             conn.rollback()
@@ -523,6 +582,59 @@ class SimpleTrinoClient:
                 except ValueError:
                     return None
         return None
+
+    def _is_select_query(self, sql: str) -> bool:
+        if not sql:
+            return False
+        return self._classify_query(sql) == "read"
+
+    async def _get_hot_result(self, key: str) -> Optional[List[Dict[str, Any]]]:
+        async with self._hot_cache_lock:
+            result = self._hot_results.get(key)
+            if result is None:
+                return None
+            self._hot_results.move_to_end(key)
+            return copy.deepcopy(result)
+
+    async def _store_hot_result(self, key: str, value: List[Dict[str, Any]]) -> None:
+        async with self._hot_cache_lock:
+            self._hot_results[key] = copy.deepcopy(value)
+            self._hot_results.move_to_end(key)
+            while len(self._hot_results) > self._hot_cache_max:
+                self._hot_results.popitem(last=False)
+
+    async def _clear_hot_cache(self) -> None:
+        async with self._hot_cache_lock:
+            if self._hot_results:
+                self._hot_results.clear()
+
+    def _maybe_prepare_statement(self, conn: Any, cursor: Any, sql: str) -> Optional[Any]:
+        if not hasattr(cursor, "prepare"):
+            return None
+        conn_id = id(conn)
+        with self._prepared_lock:
+            cache = self._prepared_statements.setdefault(conn_id, OrderedDict())
+            prepared = cache.get(sql)
+            if prepared is None:
+                try:
+                    prepared = cursor.prepare(sql)
+                except Exception:  # noqa: BLE001
+                    return None
+                cache[sql] = prepared
+            cache.move_to_end(sql)
+            while len(cache) > self._prepared_statement_max:
+                cache.popitem(last=False)
+            return prepared
+
+    def _invalidate_prepared_statement(self, conn: Any, sql: str) -> None:
+        conn_id = id(conn)
+        with self._prepared_lock:
+            cache = self._prepared_statements.get(conn_id)
+            if not cache:
+                return
+            cache.pop(sql, None)
+            if not cache:
+                self._prepared_statements.pop(conn_id, None)
 
     def _extract_cache_policy(
         self,

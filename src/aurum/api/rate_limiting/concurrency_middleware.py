@@ -3,34 +3,15 @@
 from __future__ import annotations
 
 import asyncio
+import copy
 import time
-from typing import Any, Callable, Deque, Dict, List, Optional, Set, Tuple
+from typing import Any, Callable, ClassVar, Deque, Dict, List, Optional, Set, Tuple
 from collections import defaultdict, deque
 from dataclasses import dataclass, field
 
-try:
-    from prometheus_client import Counter, Histogram, Gauge, REGISTRY
-    PROMETHEUS_AVAILABLE = True
-except ImportError:
-    PROMETHEUS_AVAILABLE = False
-    # Fallback when prometheus is not available
-    class Counter:
-        def __init__(self, *args, **kwargs): pass
-        def inc(self, *args, **kwargs): pass
-        def labels(self, **kwargs): return self
-
-    class Histogram:
-        def __init__(self, *args, **kwargs): pass
-        def observe(self, *args, **kwargs): pass
-        def labels(self, **kwargs): return self
-
-    class Gauge:
-        def __init__(self, *args, **kwargs): pass
-        def set(self, *args, **kwargs): pass
-        def labels(self, **kwargs): return self
-
 from ..telemetry.context import log_structured
 from ..exceptions import ServiceUnavailableException
+from ...core.settings import AurumSettings, get_settings
 try:
     from ...observability.profiling import ProfileAsyncContext
 except ImportError:  # pragma: no cover - optional profiling dependency
@@ -45,6 +26,12 @@ except ImportError:  # pragma: no cover - optional profiling dependency
 
         async def __aexit__(self, exc_type, exc, tb):
             return False
+
+from ...observability.metric_helpers import (
+    get_counter,
+    get_gauge,
+    get_histogram,
+)
 
 
 def _create_lock() -> asyncio.Lock:
@@ -72,9 +59,91 @@ class RequestLimits:
     slow_start_step_seconds: float = 3.0
     slow_start_step_size: int = 1
     slow_start_cooldown_seconds: float = 30.0
+    tenant_overrides: Dict[str, Dict[str, Any]] = field(default_factory=dict)
 
     _tenant_requests: Dict[str, int] = field(default_factory=lambda: defaultdict(int))
     _tenant_request_times: Dict[str, List[float]] = field(default_factory=lambda: defaultdict(list))
+
+    TENANT_SCOPED_FIELDS: ClassVar[Tuple[str, ...]] = (
+        "max_requests_per_tenant",
+        "tenant_burst_limit",
+        "tenant_queue_limit",
+        "queue_timeout_seconds",
+        "burst_refill_per_second",
+        "slow_start_initial_limit",
+        "slow_start_step_seconds",
+        "slow_start_step_size",
+        "slow_start_cooldown_seconds",
+        "max_request_duration_seconds",
+        "max_requests_per_second",
+    )
+
+    def _resolve_override(self, tenant_key: Optional[str], field_name: str) -> Optional[Any]:
+        if tenant_key is None:
+            return None
+
+        direct = self.tenant_overrides.get(tenant_key)
+        if isinstance(direct, dict) and field_name in direct:
+            return direct[field_name]
+
+        wildcard = self.tenant_overrides.get("*")
+        if isinstance(wildcard, dict) and field_name in wildcard:
+            return wildcard[field_name]
+
+        return None
+
+    def get_value(self, field_name: str, tenant_key: Optional[str] = None) -> Any:
+        """Return a limit value, honoring tenant-specific overrides when present."""
+
+        override = self._resolve_override(tenant_key, field_name)
+        if override is not None:
+            return override
+        return getattr(self, field_name)
+
+    def resolve_for_tenant(self, tenant_key: Optional[str]) -> Dict[str, Any]:
+        """Resolve tenant-scoped limits for the provided tenant key."""
+
+        return {
+            field_name: self.get_value(field_name, tenant_key)
+            for field_name in self.TENANT_SCOPED_FIELDS
+        }
+
+    def validate(self) -> None:
+        """Validate base and override limits to guard against misconfiguration."""
+
+        if self.max_concurrent_requests <= 0:
+            raise ValueError("max_concurrent_requests must be positive")
+        if self.max_requests_per_tenant <= 0:
+            raise ValueError("max_requests_per_tenant must be positive")
+
+        for tenant, override in self.tenant_overrides.items():
+            if not isinstance(override, dict):
+                raise ValueError(f"Tenant override for '{tenant}' must be a mapping")
+            for field_name, value in override.items():
+                if field_name not in self.TENANT_SCOPED_FIELDS:
+                    continue
+                if field_name in {"max_requests_per_tenant", "tenant_queue_limit", "slow_start_initial_limit", "slow_start_step_size"}:
+                    if int(value) <= 0:
+                        raise ValueError(
+                            f"Tenant override '{field_name}' for '{tenant}' must be positive"
+                        )
+
+
+REQUEST_LIMIT_FIELD_NAMES: Tuple[str, ...] = (
+    "max_concurrent_requests",
+    "max_requests_per_second",
+    "max_request_duration_seconds",
+    "max_requests_per_tenant",
+    "tenant_burst_limit",
+    "tenant_queue_limit",
+    "queue_timeout_seconds",
+    "burst_refill_per_second",
+    "slow_start_initial_limit",
+    "slow_start_step_seconds",
+    "slow_start_step_size",
+    "slow_start_cooldown_seconds",
+    "tenant_overrides",
+)
 
 
 @dataclass(frozen=True)
@@ -142,69 +211,12 @@ class TenantState:
 
 ANONYMOUS_TENANT = "anonymous"
 
-
-_METRIC_CACHE: Dict[Tuple[str, str, Tuple[str, ...]], Any] = {}
-
-
-def _metric_key(metric_type: str, name: str, labelnames: Optional[List[str]]) -> Tuple[str, str, Tuple[str, ...]]:
-    labels = tuple(labelnames or ())
-    return (metric_type, name, labels)
-
-
-def _get_counter(name: str, documentation: str, labelnames: Optional[List[str]] = None) -> Counter:
-    if not PROMETHEUS_AVAILABLE:
-        return Counter(name, documentation, labelnames or [])  # type: ignore[arg-type]
-    key = _metric_key("counter", name, labelnames)
-    metric = _METRIC_CACHE.get(key)
-    if metric is None:
-        existing = REGISTRY._names_to_collectors.get(name)  # type: ignore[attr-defined]
-        if existing is not None:
-            metric = existing
-        else:
-            metric = Counter(name, documentation, labelnames or [])
-        _METRIC_CACHE[key] = metric
-    return metric
-
-
-def _get_histogram(name: str, documentation: str, labelnames: Optional[List[str]] = None) -> Histogram:
-    if not PROMETHEUS_AVAILABLE:
-        return Histogram(name, documentation, labelnames or [])  # type: ignore[arg-type]
-    key = _metric_key("histogram", name, labelnames)
-    metric = _METRIC_CACHE.get(key)
-    if metric is None:
-        existing = REGISTRY._names_to_collectors.get(name)  # type: ignore[attr-defined]
-        if existing is not None:
-            metric = existing
-        else:
-            metric = Histogram(name, documentation, labelnames or [])
-        _METRIC_CACHE[key] = metric
-    return metric
-
-
-def _get_gauge(name: str, documentation: str, labelnames: Optional[List[str]] = None) -> Gauge:
-    if not PROMETHEUS_AVAILABLE:
-        return Gauge(name, documentation, labelnames or [])  # type: ignore[arg-type]
-    key = _metric_key("gauge", name, labelnames)
-    metric = _METRIC_CACHE.get(key)
-    if metric is None:
-        existing = REGISTRY._names_to_collectors.get(name)  # type: ignore[attr-defined]
-        if existing is not None:
-            metric = existing
-        else:
-            metric = Gauge(name, documentation, labelnames or [])
-        _METRIC_CACHE[key] = metric
-    return metric
-
-
 class ConcurrencyController:
     """Controls concurrency limits with fairness, bursts, and slow-start."""
 
     def __init__(self, limits: RequestLimits):
         self.limits = limits
-        if self.limits.max_requests_per_tenant <= 0:
-            raise ValueError("max_requests_per_tenant must be positive")
-        if self.limits.max_concurrent_requests <= 0:
-            raise ValueError("max_concurrent_requests must be positive")
+        self.limits.validate()
 
         self._lock = _create_lock()
         self._tenant_states: Dict[str, TenantState] = {}
@@ -215,6 +227,7 @@ class ConcurrencyController:
         self._queue_depth_observer: Optional[Callable[[str, int], None]] = None
         self._active_observer: Optional[Callable[[int], None]] = None
         self._tenant_active_observer: Optional[Callable[[str, int], None]] = None
+        self._global_queue_observer: Optional[Callable[[int], None]] = None
 
     def register_metrics_observer(
         self,
@@ -222,12 +235,17 @@ class ConcurrencyController:
         queue_depth: Optional[Callable[[str, int], None]] = None,
         active: Optional[Callable[[int], None]] = None,
         tenant_active: Optional[Callable[[str, int], None]] = None,
+        global_queue: Optional[Callable[[int], None]] = None,
     ) -> None:
         """Register callbacks to receive queue and activity updates."""
 
         self._queue_depth_observer = queue_depth
         self._active_observer = active
         self._tenant_active_observer = tenant_active
+        self._global_queue_observer = global_queue
+
+    def _tenant_limits(self, tenant_key: str) -> Dict[str, Any]:
+        return self.limits.resolve_for_tenant(tenant_key)
 
     async def acquire_slot(
         self,
@@ -243,8 +261,9 @@ class ConcurrencyController:
         async with self._lock:
             state = self._get_tenant_state(tenant_key)
             now = time.perf_counter()
-            self._refill_burst_tokens(state, now)
-            allowed = self._current_allowed_capacity(state, now)
+            tenant_limits = self._tenant_limits(tenant_key)
+            self._refill_burst_tokens(tenant_key, state, now, tenant_limits)
+            allowed = self._current_allowed_capacity(tenant_key, state, now, tenant_limits)
 
             if (
                 self._active_requests < self.limits.max_concurrent_requests
@@ -257,18 +276,17 @@ class ConcurrencyController:
                     granted_at=now,
                     request_id=request_id,
                     queued_at=queued_at,
+                    tenant_limits=tenant_limits,
                 )
                 return slot
 
-            if (
-                self.limits.tenant_queue_limit > 0
-                and len(state.waiters) >= self.limits.tenant_queue_limit
-            ):
+            tenant_queue_limit = max(0, int(tenant_limits["tenant_queue_limit"]))
+            if tenant_queue_limit > 0 and len(state.waiters) >= tenant_queue_limit:
                 raise ConcurrencyRejected(
                     reason="tenant_queue_full",
                     status_code=429,
                     tenant_id=tenant_id,
-                    retry_after=self.limits.queue_timeout_seconds,
+                    retry_after=tenant_limits["queue_timeout_seconds"],
                     queue_depth=len(state.waiters),
                 )
 
@@ -286,7 +304,8 @@ class ConcurrencyController:
                 state.enqueued = True
             state.last_activity = now
 
-        timeout = max(0.0, self.limits.queue_timeout_seconds)
+        tenant_limits = self._tenant_limits(tenant_key)
+        timeout = max(0.0, tenant_limits["queue_timeout_seconds"])
         try:
             slot: ConcurrencySlot = await asyncio.wait_for(waiter_future, timeout=timeout)
             return slot
@@ -299,7 +318,7 @@ class ConcurrencyController:
                 reason="queue_timeout",
                 status_code=503,
                 tenant_id=tenant_id,
-                retry_after=self.limits.queue_timeout_seconds,
+                retry_after=tenant_limits["queue_timeout_seconds"],
                 queue_depth=queue_depth,
             ) from exc
         except asyncio.CancelledError:
@@ -336,18 +355,23 @@ class ConcurrencyController:
             state.last_activity = now
             state.last_slow_start_reset = now
             state.last_slow_start_increment = now
+            tenant_limits = self._tenant_limits(tenant_key)
             state.slow_start_cap = min(
-                self.limits.max_requests_per_tenant,
-                max(1, self.limits.slow_start_initial_limit),
+                tenant_limits["max_requests_per_tenant"],
+                max(1, tenant_limits["slow_start_initial_limit"]),
             )
             self._tenant_states[tenant_key] = state
         return state
 
-    def _refill_burst_tokens(self, state: TenantState, now: float) -> None:
-        burst_capacity = max(
-            0,
-            self.limits.tenant_burst_limit - self.limits.max_requests_per_tenant,
-        )
+    def _refill_burst_tokens(
+        self,
+        tenant_key: str,
+        state: TenantState,
+        now: float,
+        tenant_limits: Optional[Dict[str, Any]] = None,
+    ) -> None:
+        limits = tenant_limits or self._tenant_limits(tenant_key)
+        burst_capacity = max(0, limits["tenant_burst_limit"] - limits["max_requests_per_tenant"])
         if burst_capacity <= 0:
             state.burst_tokens = 0.0
             state.last_refill = now
@@ -359,33 +383,47 @@ class ConcurrencyController:
 
         state.burst_tokens = min(
             burst_capacity,
-            state.burst_tokens + elapsed * max(0.0, self.limits.burst_refill_per_second),
+            state.burst_tokens + elapsed * max(0.0, limits["burst_refill_per_second"]),
         )
         state.last_refill = now
 
-    def _maybe_reset_slow_start(self, state: TenantState, now: float) -> None:
-        if now - state.last_activity >= self.limits.slow_start_cooldown_seconds:
+    def _maybe_reset_slow_start(
+        self,
+        tenant_key: str,
+        state: TenantState,
+        now: float,
+        tenant_limits: Optional[Dict[str, Any]] = None,
+    ) -> None:
+        limits = tenant_limits or self._tenant_limits(tenant_key)
+        if now - state.last_activity >= limits["slow_start_cooldown_seconds"]:
             state.slow_start_cap = min(
-                self.limits.max_requests_per_tenant,
-                max(1, self.limits.slow_start_initial_limit),
+                limits["max_requests_per_tenant"],
+                max(1, limits["slow_start_initial_limit"]),
             )
             state.last_slow_start_reset = now
             state.last_slow_start_increment = now
 
-    def _current_allowed_capacity(self, state: TenantState, now: float) -> int:
-        base_limit = self.limits.max_requests_per_tenant
-        self._maybe_reset_slow_start(state, now)
+    def _current_allowed_capacity(
+        self,
+        tenant_key: str,
+        state: TenantState,
+        now: float,
+        tenant_limits: Optional[Dict[str, Any]] = None,
+    ) -> int:
+        limits = tenant_limits or self._tenant_limits(tenant_key)
+        base_limit = limits["max_requests_per_tenant"]
+        self._maybe_reset_slow_start(tenant_key, state, now, limits)
 
         if (
             state.slow_start_cap < base_limit
-            and now - state.last_slow_start_increment >= self.limits.slow_start_step_seconds
+            and now - state.last_slow_start_increment >= limits["slow_start_step_seconds"]
         ):
-            increment = max(1, self.limits.slow_start_step_size)
+            increment = max(1, limits["slow_start_step_size"])
             state.slow_start_cap = min(base_limit, state.slow_start_cap + increment)
             state.last_slow_start_increment = now
 
         allowed = min(base_limit, max(1, state.slow_start_cap))
-        burst_capacity = max(0, self.limits.tenant_burst_limit - base_limit)
+        burst_capacity = max(0, limits["tenant_burst_limit"] - base_limit)
 
         if burst_capacity > 0 and state.slow_start_cap >= base_limit:
             allowed += min(int(state.burst_tokens), burst_capacity)
@@ -401,12 +439,14 @@ class ConcurrencyController:
         granted_at: float,
         request_id: Optional[str],
         queued_at: float,
+        tenant_limits: Optional[Dict[str, Any]] = None,
     ) -> "ConcurrencySlot":
+        limits = tenant_limits or self._tenant_limits(tenant_key)
         state.active += 1
         self._active_requests += 1
         state.last_activity = granted_at
 
-        base_limit = self.limits.max_requests_per_tenant
+        base_limit = limits["max_requests_per_tenant"]
         if state.active > base_limit:
             state.burst_tokens = max(0.0, state.burst_tokens - 1.0)
 
@@ -453,8 +493,9 @@ class ConcurrencyController:
                 self._queue_depth_update(tenant_key, 0)
                 continue
 
-            self._refill_burst_tokens(state, now)
-            allowed = self._current_allowed_capacity(state, now)
+            tenant_limits = self._tenant_limits(tenant_key)
+            self._refill_burst_tokens(tenant_key, state, now, tenant_limits)
+            allowed = self._current_allowed_capacity(tenant_key, state, now, tenant_limits)
 
             if state.active >= allowed:
                 # Tenant cannot progress right now; rotate to keep fairness
@@ -484,10 +525,16 @@ class ConcurrencyController:
                     granted_at=granted_at,
                     request_id=waiter.request_id,
                     queued_at=waiter.enqueued_at,
+                    tenant_limits=tenant_limits,
                 )
                 waiter.future.set_result(slot)
                 granted_any = True
-                allowed = self._current_allowed_capacity(state, granted_at)
+                allowed = self._current_allowed_capacity(
+                    tenant_key,
+                    state,
+                    granted_at,
+                    tenant_limits,
+                )
 
             if state.waiters:
                 self._waiting_tenants.append(tenant_key)
@@ -540,6 +587,9 @@ class ConcurrencyController:
     def _queue_depth_update(self, tenant_key: str, depth: int) -> None:
         if self._queue_depth_observer:
             self._queue_depth_observer(tenant_key, depth)
+        if self._global_queue_observer:
+            total_depth = sum(len(state.waiters) for state in self._tenant_states.values())
+            self._global_queue_observer(total_depth)
 
 
 class ConcurrencySlot:
@@ -748,44 +798,59 @@ class ConcurrencyMiddleware:
         self.offload_predicate = offload_predicate
 
         # Metrics (graceful degradation if prometheus not available)
-        self.concurrency_requests = _get_counter(
+        self.concurrency_requests = get_counter(
             "aurum_api_concurrency_requests_total",
             "Total concurrency-controlled requests",
             ["result"],
         )
-        self.request_duration = _get_histogram(
+        self.request_duration = get_histogram(
             "aurum_api_request_duration_seconds",
             "Request duration in seconds",
             ["endpoint", "method"],
         )
-        self.active_requests = _get_gauge(
+        self.active_requests = get_gauge(
             "aurum_api_active_requests",
             "Number of active requests",
         )
-        self.acquire_latency = _get_histogram(
+        self.acquire_latency = get_histogram(
             "aurum_api_concurrency_acquire_seconds",
             "Time spent waiting to acquire a concurrency slot",
             ["tenant"],
         )
-        self.rejections = _get_counter(
+        self.queue_wait_time = get_histogram(
+            "aurum_api_tenant_queue_wait_seconds",
+            "Observed queue wait durations per tenant",
+            ["tenant"],
+        )
+        self.rejections = get_counter(
             "aurum_api_concurrency_rejections_total",
             "Rejected requests by reason",
             ["reason", "tenant"],
         )
-        self.tenant_queue_depth = _get_gauge(
+        self.tenant_queue_depth = get_gauge(
             "aurum_api_tenant_queue_depth",
             "Depth of the tenant-specific concurrency queue",
             ["tenant"],
         )
-        self.tenant_active = _get_gauge(
+        self.tenant_active = get_gauge(
             "aurum_api_tenant_active_requests",
             "Number of active in-flight requests per tenant",
             ["tenant"],
+        )
+        self.global_queue_depth = get_gauge(
+            "aurum_api_global_queue_depth",
+            "Total queued requests across all tenants",
         )
 
         def _queue_observer(tenant: str, depth: int) -> None:
             try:
                 self.tenant_queue_depth.labels(tenant=tenant).set(depth)
+            except Exception:
+                pass
+
+        def _global_queue_observer(total: int) -> None:
+            try:
+                self.global_queue_depth.set(total)
             except Exception:
                 pass
 
@@ -805,6 +870,7 @@ class ConcurrencyMiddleware:
             queue_depth=_queue_observer,
             active=_active_observer,
             tenant_active=_tenant_active_observer,
+            global_queue=_global_queue_observer,
         )
 
     async def __call__(self, scope, receive, send):
@@ -971,6 +1037,7 @@ class ConcurrencyMiddleware:
             queue_wait_seconds = getattr(concurrency_slot, "queue_wait_seconds", 0.0)
             try:
                 self.acquire_latency.labels(tenant=tenant_label).observe(queue_wait_seconds)
+                self.queue_wait_time.labels(tenant=tenant_label).observe(queue_wait_seconds)
             except Exception:
                 pass
 
@@ -1040,12 +1107,18 @@ class ConcurrencyMiddleware:
             self.concurrency_requests.labels(result="rejected").inc()
 
             status_code = rejection.status_code
+            queue_depth_value = (
+                int(rejection.queue_depth)
+                if rejection.queue_depth is not None
+                else 0
+            )
             response_headers = {
                 "Content-Type": "application/json",
                 "X-Request-Id": request_id or "unknown",
             }
             if rejection.retry_after:
                 response_headers["Retry-After"] = str(int(max(1, round(rejection.retry_after))))
+            response_headers["X-Queue-Depth"] = str(max(0, queue_depth_value))
 
             message_map = {
                 "tenant_queue_full": "Per-tenant concurrency queue is full",
@@ -1057,7 +1130,7 @@ class ConcurrencyMiddleware:
                 "reason": rejection.reason,
                 "request_id": request_id,
                 "tenant_id": tenant_id,
-                "queue_depth": rejection.queue_depth,
+                "queue_depth": queue_depth_value,
             }
 
             log_structured(
@@ -1066,7 +1139,7 @@ class ConcurrencyMiddleware:
                 request_id=request_id,
                 tenant_id=tenant_id,
                 reason=rejection.reason,
-                queue_depth=rejection.queue_depth,
+                queue_depth=queue_depth_value,
                 status=status_code,
             )
 
@@ -1226,6 +1299,65 @@ def create_concurrency_middleware(
 
     if timeout_controller is None:
         timeout_controller = create_timeout_controller()
+
+    return ConcurrencyMiddleware(
+        app=app,
+        concurrency_controller=concurrency_controller,
+        rate_limiter=rate_limiter,
+        timeout_controller=timeout_controller,
+        offload_predicate=offload_predicate,
+    )
+
+
+def create_concurrency_middleware_from_settings(
+    app,
+    *,
+    settings: Optional[AurumSettings] = None,
+    overrides: Optional[Dict[str, Any]] = None,
+    rate_limiter: Optional[RateLimiter] = None,
+    timeout_controller: Optional[TimeoutController] = None,
+    offload_predicate: Optional[Callable[[Dict[str, Any]], Optional[OffloadInstruction]]] = None,
+):
+    """Build concurrency middleware using configuration derived from settings.
+
+    When concurrency controls are disabled via settings, the original app is
+    returned unchanged to support feature-flagged rollouts.
+    """
+
+    active_settings = settings or get_settings()
+    concurrency_config = getattr(getattr(active_settings, "api", None), "concurrency", None)
+    if concurrency_config is None:
+        raise ValueError("Settings object does not expose api.concurrency configuration")
+
+    if getattr(concurrency_config, "enabled", True) is False:
+        return app
+
+    limit_kwargs: Dict[str, Any] = {}
+    for field_name in REQUEST_LIMIT_FIELD_NAMES:
+        if hasattr(concurrency_config, field_name):
+            limit_kwargs[field_name] = getattr(concurrency_config, field_name)
+
+    limit_kwargs.setdefault("tenant_overrides", {})
+    limit_kwargs["tenant_overrides"] = copy.deepcopy(limit_kwargs["tenant_overrides"])
+
+    if overrides:
+        overrides_copy = dict(overrides)
+        override_tenants = overrides_copy.pop("tenant_overrides", None)
+        limit_kwargs.update(overrides_copy)
+        if override_tenants:
+            merged_overrides = copy.deepcopy(limit_kwargs.get("tenant_overrides", {}))
+            for tenant, values in override_tenants.items():
+                merged_overrides[tenant] = values
+            limit_kwargs["tenant_overrides"] = merged_overrides
+
+    limits = RequestLimits(**limit_kwargs)
+    concurrency_controller = ConcurrencyController(limits)
+
+    rate_limiter = rate_limiter or create_rate_limiter()
+
+    timeout_controller = timeout_controller or create_timeout_controller(
+        default_timeout=limits.max_request_duration_seconds,
+    )
 
     return ConcurrencyMiddleware(
         app=app,

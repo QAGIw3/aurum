@@ -101,6 +101,35 @@ Aurum's observability system is built on several key components:
 - `aurum_alerts_suppressed_total`: Alerts suppressed
 - `aurum_alert_processing_duration_seconds`: Alert processing time
 
+## Dashboard Assets
+
+Grafana dashboards that pair with the metrics above live under
+`docs/observability/grafana/`. Each JSON file is a self-contained dashboard:
+
+- `api_concurrency_overview.json` – queue depth, tenant activity, slow-start
+  progression, and rejection counters.
+- `trino_pool_health.json` – connection pool utilization, breaker state, hot
+  query cache hit rates, and latency histograms.
+
+To import a dashboard:
+
+1. In Grafana, navigate to **Dashboards → Import**.
+2. Upload the JSON file or paste its contents and select the Prometheus data
+   source that scrapes the Aurum services.
+
+For scripted environments we recommend committing the JSON to the existing
+Grafana provisioning repo or using `grafana-toolkit`:
+
+```bash
+grafana-toolkit dashboard import \
+  --grafana-url https://grafana.internal \
+  --api-key $GRAFANA_API_KEY \
+  --file docs/observability/grafana/api_concurrency_overview.json
+```
+
+Remember to version-control any edits made in Grafana by exporting the updated
+JSON back into this directory so the dashboards stay in sync with production.
+
 ## Service Level Objectives (SLOs)
 
 ### Default SLOs

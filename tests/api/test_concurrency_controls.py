@@ -3,11 +3,15 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 import json
 import time
+from typing import Any, Dict, List, Optional, Tuple
 from unittest.mock import AsyncMock, MagicMock, Mock, patch
 
 import pytest
+
+import aurum.api.rate_limiting.concurrency_middleware as concurrency_module
 
 from aurum.api.concurrency_middleware import (
     ConcurrencyController,
@@ -22,6 +26,7 @@ from aurum.api.concurrency_middleware import (
     create_rate_limiter,
     create_timeout_controller,
     create_concurrency_middleware,
+    create_concurrency_middleware_from_settings,
 )
 from aurum.api.exceptions import ServiceUnavailableException
 from aurum.api.database import trino_client as trino_module
@@ -37,6 +42,91 @@ from aurum.api.performance import ConnectionPool
 from aurum.external.collect.base import RetryConfig
 from aurum.api.config import TrinoConfig
 from aurum.api.database.config import TrinoConfig as DatabaseTrinoConfig
+from aurum.core.settings import SimplifiedSettings
+import aurum.api.app as app_module
+
+
+class FakeClock:
+    """Simple helper to control perf_counter monotonic time in tests."""
+
+    def __init__(self, start: float = 0.0):
+        self._value = start
+
+    def now(self) -> float:
+        return self._value
+
+    def advance(self, delta: float) -> None:
+        self._value += delta
+
+
+class StubPrepared:
+    """Represents a prepared statement tracked by the stub connection."""
+
+    def __init__(self, sql: str):
+        self.sql = sql
+        self.executions: List[Dict[str, Any]] = []
+
+
+class StubCursor:
+    """Stub DB-API cursor supporting prepare/execute interfaces."""
+
+    def __init__(self, connection: "StubConnection"):
+        self.connection = connection
+        self.description = None
+        self.prepare_calls = 0
+        self.execute_calls: List[Tuple[str, str, Dict[str, Any]]] = []
+
+    def prepare(self, sql: str):
+        self.prepare_calls += 1
+        prepared = StubPrepared(sql)
+        self.connection.prepared_statements.append(prepared)
+        return prepared
+
+    def execute_prepared(self, prepared: StubPrepared, params: Dict[str, Any]) -> None:
+        prepared.executions.append(dict(params))
+        self.execute_calls.append(("prepared", prepared.sql, dict(params)))
+        self.description = [("value", None, None, None, None, None, None)]
+
+    def execute(self, sql: str, params: Dict[str, Any]) -> None:
+        self.execute_calls.append(("direct", sql, dict(params)))
+        if sql.strip().lower().startswith(("select", "with", "show", "describe")):
+            self.description = [("value", None, None, None, None, None, None)]
+        else:
+            self.description = None
+
+    def fetchall(self):
+        return self.connection.next_rows()
+
+    def close(self) -> None:  # pragma: no cover - no-op cleanup
+        pass
+
+
+class StubConnection:
+    """Stub connection tracking prepared statements and cancellations."""
+
+    def __init__(self):
+        self.cursors: List[StubCursor] = []
+        self.prepared_statements: List[StubPrepared] = []
+        self.cancelled = False
+        self._counter = 0
+
+    def cursor(self) -> StubCursor:
+        cursor = StubCursor(self)
+        self.cursors.append(cursor)
+        return cursor
+
+    def next_rows(self):
+        self._counter += 1
+        return [(self._counter,)]
+
+    def rollback(self) -> None:  # pragma: no cover - no-op for stub
+        pass
+
+    def commit(self) -> None:  # pragma: no cover - no-op for stub
+        pass
+
+    def cancel(self) -> None:
+        self.cancelled = True
 
 
 class TestRequestLimits:
@@ -87,6 +177,65 @@ class TestRequestLimits:
         assert limits.slow_start_step_size == 2
         assert limits.slow_start_cooldown_seconds == 10.0
 
+
+class TestConcurrencySettingsIntegration:
+    """Ensure settings wiring exposes concurrency controls."""
+
+    def test_simplified_settings_loads_concurrency_from_env(self, monkeypatch):
+        overrides = {
+            "tenant-alpha": {
+                "tenant_queue_limit": 7,
+                "queue_timeout_seconds": 9.5,
+                "slow_start_step_size": 4,
+            }
+        }
+
+        monkeypatch.setenv("AURUM_API_CONCURRENCY_ENABLED", "false")
+        monkeypatch.setenv("AURUM_API_CONCURRENCY_MAX_CONCURRENT_REQUESTS", "42")
+        monkeypatch.setenv("AURUM_API_CONCURRENCY_QUEUE_TIMEOUT_SECONDS", "3.5")
+        monkeypatch.setenv("AURUM_API_CONCURRENCY_MAX_REQUEST_DURATION_SECONDS", "12.25")
+        monkeypatch.setenv("AURUM_API_CONCURRENCY_TENANT_OVERRIDES", json.dumps(overrides))
+
+        settings = SimplifiedSettings()
+        concurrency = settings.api.concurrency
+
+        assert concurrency.enabled is False
+        assert concurrency.max_concurrent_requests == 42
+        assert concurrency.queue_timeout_seconds == pytest.approx(3.5)
+        assert concurrency.max_request_duration_seconds == pytest.approx(12.25)
+        assert concurrency.tenant_overrides["tenant-alpha"]["tenant_queue_limit"] == 7
+        assert concurrency.tenant_overrides["tenant-alpha"]["queue_timeout_seconds"] == pytest.approx(9.5)
+        assert concurrency.tenant_overrides["tenant-alpha"]["slow_start_step_size"] == 4
+
+    def test_factory_builds_middleware_from_settings(self, monkeypatch):
+        tenant_overrides = {"tenant-beta": {"tenant_queue_limit": 2}}
+
+        monkeypatch.setenv("AURUM_API_CONCURRENCY_ENABLED", "true")
+        monkeypatch.setenv("AURUM_API_CONCURRENCY_MAX_CONCURRENT_REQUESTS", "5")
+        monkeypatch.setenv("AURUM_API_CONCURRENCY_MAX_REQUESTS_PER_TENANT", "3")
+        monkeypatch.setenv("AURUM_API_CONCURRENCY_TENANT_OVERRIDES", json.dumps(tenant_overrides))
+
+        settings = SimplifiedSettings()
+
+        async def noop_app(scope, receive, send):
+            return None
+
+        middleware = create_concurrency_middleware_from_settings(noop_app, settings=settings)
+        assert isinstance(middleware, ConcurrencyMiddleware)
+        assert middleware.concurrency_controller.limits.max_concurrent_requests == 5
+        assert middleware.concurrency_controller.limits.max_requests_per_tenant == 3
+        assert middleware.concurrency_controller.limits.tenant_overrides["tenant-beta"]["tenant_queue_limit"] == 2
+
+    def test_factory_returns_app_when_disabled(self, monkeypatch):
+        monkeypatch.setenv("AURUM_API_CONCURRENCY_ENABLED", "false")
+
+        settings = SimplifiedSettings()
+
+        async def noop_app(scope, receive, send):
+            return None
+
+        middleware = create_concurrency_middleware_from_settings(noop_app, settings=settings)
+        assert middleware is noop_app
 
 class TestConcurrencyController:
     """Test concurrency controller."""
@@ -222,6 +371,93 @@ class TestConcurrencyController:
         assert exc_info.value.status_code == 503
 
         await slot.release()
+
+    def test_slow_start_increment_advances_with_time(self, monkeypatch):
+        fake_clock = FakeClock()
+        monkeypatch.setattr(concurrency_module.time, "perf_counter", fake_clock.now)
+
+        limits = RequestLimits(
+            max_concurrent_requests=5,
+            max_requests_per_tenant=3,
+            tenant_queue_limit=5,
+            slow_start_initial_limit=1,
+            slow_start_step_seconds=0.4,
+            slow_start_step_size=1,
+            slow_start_cooldown_seconds=10.0,
+        )
+        controller = ConcurrencyController(limits)
+
+        tenant_key = "tenant-test"
+        state = controller._get_tenant_state(tenant_key)
+
+        initial_allowed = controller._current_allowed_capacity(tenant_key, state, fake_clock.now())
+        assert initial_allowed == 1
+
+        fake_clock.advance(0.5)
+        bumped_allowed = controller._current_allowed_capacity(tenant_key, state, fake_clock.now())
+        assert bumped_allowed >= 2
+
+    def test_slow_start_cooldown_resets_cap(self, monkeypatch):
+        fake_clock = FakeClock()
+        monkeypatch.setattr(concurrency_module.time, "perf_counter", fake_clock.now)
+
+        limits = RequestLimits(
+            max_concurrent_requests=5,
+            max_requests_per_tenant=4,
+            tenant_queue_limit=4,
+            slow_start_initial_limit=2,
+            slow_start_step_seconds=0.5,
+            slow_start_step_size=1,
+            slow_start_cooldown_seconds=1.0,
+        )
+        controller = ConcurrencyController(limits)
+        tenant_key = "tenant-reset"
+        state = controller._get_tenant_state(tenant_key)
+
+        fake_clock.advance(0.6)
+        controller._current_allowed_capacity(tenant_key, state, fake_clock.now())
+        state.slow_start_cap = limits.max_requests_per_tenant
+        state.last_activity = fake_clock.now()
+
+        fake_clock.advance(1.2)
+        controller._maybe_reset_slow_start(tenant_key, state, fake_clock.now())
+
+        assert state.slow_start_cap == max(1, limits.slow_start_initial_limit)
+
+    @pytest.mark.asyncio
+    async def test_round_robin_prevents_starvation_under_load(self):
+        limits = RequestLimits(
+            max_concurrent_requests=1,
+            max_requests_per_tenant=1,
+            tenant_queue_limit=4,
+            queue_timeout_seconds=1.0,
+            slow_start_initial_limit=1,
+            slow_start_step_seconds=5.0,
+        )
+        controller = ConcurrencyController(limits)
+
+        first_slot = await controller.acquire_slot(tenant_id="heavy", request_id="heavy-1")
+
+        heavy_task = asyncio.create_task(controller.acquire_slot(tenant_id="heavy", request_id="heavy-2"))
+        light_task = asyncio.create_task(controller.acquire_slot(tenant_id="light", request_id="light-1"))
+
+        await asyncio.sleep(0)
+
+        await first_slot.release()
+
+        done, pending = await asyncio.wait({heavy_task, light_task}, return_when=asyncio.FIRST_COMPLETED, timeout=0.5)
+        assert done, "At least one waiter should be granted capacity"
+
+        if heavy_task in done:
+            heavy_slot = heavy_task.result()
+            await heavy_slot.release()
+            light_slot = await asyncio.wait_for(light_task, timeout=0.5)
+            await light_slot.release()
+        else:
+            light_slot = light_task.result()
+            await light_slot.release()
+            heavy_slot = await asyncio.wait_for(heavy_task, timeout=0.5)
+            await heavy_slot.release()
 
 
 class TestRateLimiter:
@@ -534,6 +770,158 @@ class TestTrinoClient:
             "trino_connection_pool_max_size": 3,
             "max_concurrent_trino_connections": 5,
         }
+
+    @pytest.fixture(autouse=True)
+    def _patch_trino_metrics(self, monkeypatch):
+        async def async_noop(*args, **kwargs):
+            return None
+
+        for name in (
+            "increment_trino_queries",
+            "increment_trino_queue_rejections",
+            "observe_trino_connection_acquire_time",
+            "observe_trino_query_duration",
+            "set_trino_circuit_breaker_state",
+            "set_trino_connection_pool_active",
+            "set_trino_connection_pool_idle",
+            "set_trino_connection_pool_utilization",
+            "set_trino_pool_saturation",
+            "set_trino_pool_saturation_status",
+            "set_trino_request_queue_depth",
+        ):
+            monkeypatch.setattr(trino_module, name, async_noop)
+
+    @pytest.mark.asyncio
+    async def test_prepared_statement_reuse(self, trino_config, concurrency_config, monkeypatch):
+        concurrency_config.update({
+            "trino_prepared_statement_cache_size": 4,
+            "trino_hot_query_cache_size": 8,
+        })
+        client = TrinoClient(trino_config, concurrency_config)
+
+        stub_conn = StubConnection()
+        acquire_calls = 0
+
+        async def acquire():
+            nonlocal acquire_calls
+            acquire_calls += 1
+            return stub_conn
+
+        async def release(_conn):
+            return None
+
+        monkeypatch.setattr(client, "_acquire_connection", acquire)
+        monkeypatch.setattr(client, "_release_connection", release)
+
+        result_one = await client.execute_query(
+            "SELECT value FROM demo WHERE id = %(id)s",
+            params={"id": 1},
+            cache_ttl=0,
+        )
+        result_two = await client.execute_query(
+            "SELECT value FROM demo WHERE id = %(id)s",
+            params={"id": 2},
+            cache_ttl=0,
+        )
+
+        assert [row["value"] for row in result_one] == [1]
+        assert [row["value"] for row in result_two] == [2]
+        assert acquire_calls == 2
+        assert stub_conn.cursors[0].prepare_calls == 1
+        assert stub_conn.cursors[1].prepare_calls == 0
+        assert stub_conn.prepared_statements[0].executions == [{"id": 1}, {"id": 2}]
+
+    @pytest.mark.asyncio
+    async def test_hot_query_cache_hits_and_invalidation(self, trino_config, concurrency_config, monkeypatch):
+        concurrency_config.update({
+            "trino_prepared_statement_cache_size": 2,
+            "trino_hot_query_cache_size": 2,
+        })
+        client = TrinoClient(trino_config, concurrency_config)
+
+        stub_conn = StubConnection()
+        acquire_calls = 0
+
+        async def acquire():
+            nonlocal acquire_calls
+            acquire_calls += 1
+            return stub_conn
+
+        async def release(_conn):
+            return None
+
+        monkeypatch.setattr(client, "_acquire_connection", acquire)
+        monkeypatch.setattr(client, "_release_connection", release)
+
+        first = await client.execute_query(
+            "SELECT value FROM demo WHERE id = %(id)s",
+            params={"id": 1},
+            cache_ttl=0,
+        )
+        second = await client.execute_query(
+            "SELECT value FROM demo WHERE id = %(id)s",
+            params={"id": 1},
+            cache_ttl=0,
+        )
+
+        assert acquire_calls == 1  # hot cache served the second call
+        assert first == second
+        third = await client.execute_query(
+            "SELECT value FROM demo WHERE id = %(id)s",
+            params={"id": 2},
+            cache_ttl=0,
+        )
+        assert acquire_calls == 2  # new params trigger execution
+        assert third[0]["value"] == 2
+
+        before_update_calls = acquire_calls
+        await client.execute("UPDATE demo SET value = value + 1")
+        assert acquire_calls == before_update_calls + 1
+        fourth = await client.execute_query(
+            "SELECT value FROM demo WHERE id = %(id)s",
+            params={"id": 1},
+            cache_ttl=0,
+        )
+        assert acquire_calls == before_update_calls + 2  # cache invalidated by write
+        assert fourth[0]["value"] == 3
+
+    @pytest.mark.asyncio
+    async def test_query_timeout_cancels_connection(self, trino_config, concurrency_config, monkeypatch):
+        concurrency_config["trino_hot_query_cache_size"] = 1
+        client = TrinoClient(trino_config, concurrency_config)
+
+        stub_conn = StubConnection()
+
+        async def acquire():
+            return stub_conn
+
+        async def release(_conn):
+            return None
+
+        monkeypatch.setattr(client, "_acquire_connection", acquire)
+        monkeypatch.setattr(client, "_release_connection", release)
+
+        async def slow_run_query(_conn, _sql, _params):
+            await asyncio.sleep(0.05)
+            return []
+
+        monkeypatch.setattr(client, "_run_query", slow_run_query)
+        client.query_timeout = 0.01
+
+        events: List[Tuple[str, str, Dict[str, Any]]] = []
+
+        monkeypatch.setattr(
+            trino_module,
+            "log_structured",
+            lambda level, event, **payload: events.append((level, event, payload)),
+        )
+
+        with pytest.raises(ServiceUnavailableException) as exc_info:
+            await client.execute_query("SELECT value FROM demo", cache_ttl=0)
+
+        assert "timed out" in str(getattr(exc_info.value, "detail", exc_info.value))
+        assert stub_conn.cancelled is True
+        assert any(event == "trino_query_timeout" for _, event, _ in events)
 
     @pytest.fixture
     def trino_client(self, trino_config, concurrency_config):
@@ -1119,6 +1507,21 @@ class TestConcurrencyMiddleware:
 
         assert 503 in rejected_statuses
 
+        rejection_headers = None
+        for call in second_send.call_args_list:
+            message = call[0][0]
+            if message["type"] == "http.response.start" and message["status"] == 503:
+                rejection_headers = {
+                    k.decode(): v.decode() for k, v in message["headers"]
+                }
+                break
+
+        assert rejection_headers is not None
+        assert "Retry-After" in rejection_headers
+        assert rejection_headers["Retry-After"].isdigit()
+        assert "X-Queue-Depth" in rejection_headers
+        assert rejection_headers["X-Queue-Depth"].isdigit()
+
         gate.set()
         await first_task
 
@@ -1181,6 +1584,21 @@ class TestConcurrencyMiddleware:
 
         assert 429 in statuses
 
+        overflow_headers = None
+        for call in third_send.call_args_list:
+            message = call[0][0]
+            if message["type"] == "http.response.start" and message["status"] == 429:
+                overflow_headers = {
+                    k.decode(): v.decode() for k, v in message["headers"]
+                }
+                break
+
+        assert overflow_headers is not None
+        assert "Retry-After" in overflow_headers
+        assert overflow_headers["Retry-After"].isdigit()
+        assert "X-Queue-Depth" in overflow_headers
+        assert overflow_headers["X-Queue-Depth"].isdigit()
+
         gate.set()
         await first_task
         await second_task
@@ -1230,6 +1648,67 @@ class TestConcurrencyMiddleware:
                     break
 
         assert timeout_call is not None
+
+
+class TestAppLifecycle:
+    """Ensure application lifecycle hooks close Trino clients."""
+
+    @pytest.mark.asyncio
+    async def test_trino_manager_shutdown_invoked(self, monkeypatch):
+        close_started = asyncio.Event()
+        release_close = asyncio.Event()
+
+        class StubManager:
+            def __init__(self):
+                self.close_all_calls = 0
+                self.close_all_sync_calls = 0
+
+            @classmethod
+            def get_instance(cls):
+                return instance
+
+            async def close_all(self):
+                self.close_all_calls += 1
+                close_started.set()
+                await release_close.wait()
+
+            def close_all_sync(self):
+                self.close_all_sync_calls += 1
+
+        instance = StubManager()
+
+        monkeypatch.setattr(app_module, "HybridTrinoClientManager", StubManager)
+        monkeypatch.setattr(app_module, "_TRINO_ATEXIT_REGISTERED", False)
+        registered_handlers: List[Any] = []
+        monkeypatch.setattr(app_module.atexit, "register", lambda fn: registered_handlers.append(fn))
+        monkeypatch.setattr(app_module, "configure_telemetry", lambda *args, **kwargs: None)
+        monkeypatch.setenv("AURUM_API_LIGHT_INIT", "1")
+
+        original_include_router = app_module.FastAPI.include_router
+
+        def _noop_include_router(self, *args, **kwargs):  # pragma: no cover - testing shim
+            return None
+
+        monkeypatch.setattr(app_module.FastAPI, "include_router", _noop_include_router)
+
+        settings = SimplifiedSettings()
+        logger = logging.getLogger("test-lifecycle")
+        app = app_module._create_simplified_app(settings, logger)
+
+        lifespan_cm = app.router.lifespan_context(app)
+        await lifespan_cm.__aenter__()
+
+        shutdown_task = asyncio.create_task(lifespan_cm.__aexit__(None, None, None))
+        await asyncio.wait_for(close_started.wait(), timeout=1.0)
+        assert not shutdown_task.done()
+        release_close.set()
+        await shutdown_task
+
+        assert instance.close_all_calls == 1
+        assert registered_handlers and instance.close_all_sync in registered_handlers
+
+        # Restore include_router to avoid side effects on other tests
+        monkeypatch.setattr(app_module.FastAPI, "include_router", original_include_router)
 
 
 class TestIntegrationScenarios:

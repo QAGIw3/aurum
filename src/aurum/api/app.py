@@ -11,6 +11,7 @@ Migration phases:
 3. Minimal configuration
 """
 
+import atexit
 import contextlib
 import json
 import logging
@@ -22,6 +23,13 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.responses import JSONResponse
 from starlette.datastructures import MutableHeaders
+
+try:
+    from .database.trino_client import HybridTrinoClientManager
+except Exception:  # pragma: no cover - optional dependency for tests without DB stack
+    HybridTrinoClientManager = None  # type: ignore[misc]
+
+_TRINO_ATEXIT_REGISTERED = False
 
 
 def _patch_testclient_for_gzip() -> None:
@@ -84,6 +92,44 @@ API_FEATURE_FLAGS = {
     "use_simplified_api": os.getenv("AURUM_USE_SIMPLIFIED_API", "false").lower() == "true",
     "api_migration_phase": os.getenv("AURUM_API_MIGRATION_PHASE", "1"),
 }
+
+
+def _register_trino_lifecycle(app: FastAPI) -> None:
+    """Ensure Trino clients are gracefully closed with the application."""
+
+    if HybridTrinoClientManager is None:  # pragma: no cover - optional dependency
+        return
+
+    previous_lifespan = getattr(app.router, "lifespan_context", None)
+
+    @contextlib.asynccontextmanager
+    async def _trino_lifespan(_app: FastAPI):
+        manager = HybridTrinoClientManager.get_instance()
+        try:
+            yield
+        finally:
+            await manager.close_all()
+
+    if previous_lifespan is None:
+        app.router.lifespan_context = _trino_lifespan
+    else:
+        @contextlib.asynccontextmanager
+        async def _chained_lifespan(_app: FastAPI):
+            async with previous_lifespan(_app):
+                async with _trino_lifespan(_app):
+                    yield
+
+        app.router.lifespan_context = _chained_lifespan
+
+    manager = HybridTrinoClientManager.get_instance()
+
+    global _TRINO_ATEXIT_REGISTERED
+    if not _TRINO_ATEXIT_REGISTERED:
+        try:
+            atexit.register(manager.close_all_sync)
+            _TRINO_ATEXIT_REGISTERED = True
+        except Exception:  # pragma: no cover - best effort cleanup
+            pass
 
 # Migration metrics for API layer
 class ApiMigrationMetrics:
@@ -188,6 +234,7 @@ def _create_simplified_app(settings: AurumSettings, logger: logging.Logger) -> F
         timeout=settings.api.request_timeout_seconds
     )
     app.state.settings = settings
+    _register_trino_lifecycle(app)
     # Configure shared API state for modules that rely on it
     try:
         from .state import configure as _configure_state
@@ -295,6 +342,7 @@ def _create_legacy_app(settings: AurumSettings, logger: logging.Logger) -> FastA
         timeout=settings.api.request_timeout_seconds
     )
     app.state.settings = settings
+    _register_trino_lifecycle(app)
     # Configure shared API state for modules that rely on it
     try:
         from .state import configure as _configure_state
