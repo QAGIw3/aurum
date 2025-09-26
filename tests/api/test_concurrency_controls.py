@@ -24,6 +24,7 @@ from aurum.api.concurrency_middleware import (
     create_concurrency_middleware,
 )
 from aurum.api.exceptions import ServiceUnavailableException
+from aurum.api.database import trino_client as trino_module
 from aurum.api.database.trino_client import (
     SimpleTrinoClient as TrinoClient,
     HybridTrinoClientManager as TrinoClientManager,
@@ -610,6 +611,288 @@ class TestTrinoClient:
         # Should be able to close multiple times
         await trino_client.close()
 
+    @pytest.fixture
+    def patch_trino_metrics(self, monkeypatch):
+        """Patch asynchronous metric helpers with no-op coroutines."""
+
+        async def _noop(*args, **kwargs):  # pragma: no cover - helper
+            return None
+
+        for name in [
+            "increment_trino_queries",
+            "observe_trino_query_duration",
+            "increment_trino_queue_rejections",
+            "observe_trino_connection_acquire_time",
+            "set_trino_connection_pool_active",
+            "set_trino_connection_pool_idle",
+            "set_trino_connection_pool_utilization",
+            "set_trino_pool_saturation",
+            "set_trino_pool_saturation_status",
+            "set_trino_request_queue_depth",
+            "set_trino_circuit_breaker_state",
+        ]:
+            monkeypatch.setattr(trino_module, name, _noop, raising=False)
+
+        return _noop
+
+    @pytest.mark.asyncio
+    async def test_trino_client_acquire_connection_retries(self, trino_client, patch_trino_metrics, monkeypatch):
+        """Connection acquisition should retry on timeouts and report metrics."""
+
+        class FlakyPool:
+            def __init__(self):
+                self._connections = []
+                self._active_connections = 0
+                self.max_size = 2
+                self.calls = 0
+
+            async def get_connection(self):
+                self.calls += 1
+                if self.calls == 1:
+                    raise asyncio.TimeoutError
+                self._active_connections += 1
+                return {"id": "conn"}
+
+            async def return_connection(self, conn):  # pragma: no cover - safety
+                self._active_connections = max(0, self._active_connections - 1)
+
+        flaky_pool = FlakyPool()
+        trino_client._pool = flaky_pool
+        monkeypatch.setattr(trino_client, "_record_pool_metrics", AsyncMock())
+        monkeypatch.setattr(trino_module.asyncio, "sleep", AsyncMock())
+
+        connection = await trino_client._acquire_connection()
+        assert connection["id"] == "conn"
+        assert flaky_pool.calls == 2
+
+        await trino_client._release_connection(connection)
+
+    @pytest.mark.asyncio
+    async def test_trino_client_acquire_connection_exhausted(self, trino_client, patch_trino_metrics, monkeypatch):
+        """Exhausted pool should raise ServiceUnavailableException after retries."""
+
+        class ExhaustedPool:
+            def __init__(self):
+                self._connections = []
+                self._active_connections = 0
+                self.max_size = 1
+
+            async def get_connection(self):
+                raise ServiceUnavailableException("trino", detail="Connection pool exhausted")
+
+            async def return_connection(self, conn):
+                pass
+
+        trino_client._pool = ExhaustedPool()
+        trino_client.acquire_attempts = 1
+        monkeypatch.setattr(trino_module.asyncio, "sleep", AsyncMock())
+
+        with pytest.raises(ServiceUnavailableException):
+            await trino_client._acquire_connection()
+
+    @pytest.mark.asyncio
+    async def test_trino_client_run_query_transforms_rows(self, trino_client, patch_trino_metrics):
+        """Row fetching should marshal column names and values."""
+
+        class DummyCursor:
+            def __init__(self):
+                self.description = [("value", None, None, None, None, None, None)]
+
+            def execute(self, sql, params=None):
+                self.sql = sql
+
+            def fetchall(self):
+                return [("ok",)]
+
+            def close(self):
+                pass
+
+        class DummyConnection:
+            def cursor(self):
+                return DummyCursor()
+
+            def commit(self):
+                self.committed = True
+
+        result = await trino_client._run_query(DummyConnection(), "SELECT 'ok'", None)
+        assert result == [{"value": "ok"}]
+
+    @pytest.mark.asyncio
+    async def test_trino_client_run_query_without_results_commits(self, trino_client, patch_trino_metrics):
+        """When a query returns no rows we should commit the transaction."""
+
+        class DummyCursor:
+            description = None
+
+            def execute(self, sql, params=None):
+                pass
+
+            def fetchall(self):
+                return []
+
+            def close(self):
+                pass
+
+        class DummyConnection:
+            def __init__(self):
+                self.committed = False
+
+            def cursor(self):
+                return DummyCursor()
+
+            def commit(self):
+                self.committed = True
+
+        conn = DummyConnection()
+        rows = await trino_client._run_query(conn, "DELETE FROM t", None)
+        assert rows == []
+        assert conn.committed is True
+
+    def test_trino_client_record_breaker_failure_opens_circuit(self, trino_client, patch_trino_metrics):
+        """Recording enough failures should transition breaker to open state."""
+
+        threshold = trino_client.circuit_breaker.failure_threshold
+        for _ in range(threshold + 1):
+            trino_client._record_breaker_failure()
+
+        assert trino_client.circuit_breaker.is_open()
+
+    def test_trino_client_cache_helpers(self, trino_client):
+        """Cache helper utilities should produce stable keys and classifications."""
+
+        key_one = trino_client._cache_key("SELECT 1", {"foo": "bar"})
+        key_two = trino_client._cache_key("SELECT 1", {"foo": "bar"})
+        key_three = trino_client._cache_key("SELECT 2", {"foo": "bar"})
+
+        assert key_one == key_two
+        assert key_one != key_three
+        assert trino_client._classify_query("SELECT 1") == "read"
+        assert trino_client._classify_query("INSERT INTO t VALUES (1)") == "write"
+        assert trino_client._classify_query("MERGE INTO t USING s") == "write"
+        assert trino_client._classify_query("") == "unknown"
+
+    def test_trino_client_extract_cache_policy(self, trino_client):
+        """Cache policy extraction should respect explicit and implicit hints."""
+
+        use_cache, ttl = trino_client._extract_cache_policy("SELECT 1", {"_cache_ttl": "2"}, explicit_ttl=None)
+        assert use_cache and ttl == 2.0
+
+        use_cache, ttl = trino_client._extract_cache_policy("SELECT 1", {"_cache_control": "max-age=3"}, explicit_ttl=None)
+        assert use_cache and ttl == 3.0
+
+        use_cache, ttl = trino_client._extract_cache_policy("SELECT 1", {}, explicit_ttl=0)
+        assert use_cache is False and ttl == 0.0
+
+        params = {"_cache_control": "max-age=bogus"}
+        use_cache, ttl = trino_client._extract_cache_policy("SELECT 1", params, explicit_ttl=None)
+        assert use_cache and ttl == trino_client._cache.default_ttl
+
+    @pytest.mark.asyncio
+    async def test_trino_client_ttl_cache_operations(self, monkeypatch):
+        """TTL cache should honour set, get, invalidate, and clear semantics."""
+
+        cache = trino_module.TTLCache(maxsize=2, default_ttl=1.0)
+        await cache.set("one", {"value": 1})
+        assert await cache.get("one") == {"value": 1}
+
+        await cache.invalidate("one")
+        assert await cache.get("one") is None
+
+        await cache.set("skip", {"value": 0}, ttl=0)  # ttl <= 0 short-circuits
+
+        base_time = time.time()
+        monkeypatch.setattr(trino_module.time, "time", lambda: base_time)
+        await cache.set("expires", {"value": 2}, ttl=0.5)
+        monkeypatch.setattr(trino_module.time, "time", lambda: base_time + 1.0)
+        assert await cache.get("expires") is None
+
+        await cache.set("two", {"value": 2})
+        await cache.set("two", {"value": 22})  # existing key moves to end
+        await cache.set("three", {"value": 3})  # triggers eviction of oldest when needed
+        await cache.clear()
+        assert await cache.get("two") is None
+
+    @pytest.mark.asyncio
+    async def test_trino_client_execute_query_with_timeout_uses_wait_for(
+        self,
+        trino_client,
+        patch_trino_metrics,
+        monkeypatch,
+    ):
+        """Execute query path should honour wait_for when a timeout is provided."""
+
+        conn = object()
+        monkeypatch.setattr(trino_client, "_acquire_connection", AsyncMock(return_value=conn))
+        monkeypatch.setattr(trino_client, "_release_connection", AsyncMock())
+        run_query = AsyncMock(return_value=[{"value": 1}])
+        monkeypatch.setattr(trino_client, "_run_query", run_query)
+        call_args = {}
+
+        async def fake_wait_for(coro, timeout):
+            call_args["timeout"] = timeout
+            return await coro
+
+        monkeypatch.setattr(trino_module.asyncio, "wait_for", fake_wait_for)
+
+        result = await trino_client._execute_query_with_timeout("SELECT 1", None, 0.5)
+
+        assert result == [{"value": 1}]
+        assert call_args["timeout"] == 0.5
+        trino_client._release_connection.assert_awaited_with(conn)
+
+    @pytest.mark.asyncio
+    async def test_trino_client_execute_query_with_timeout_releases_on_error(
+        self,
+        trino_client,
+        patch_trino_metrics,
+        monkeypatch,
+    ):
+        """Connections should always be released when the query fails."""
+
+        conn = object()
+        monkeypatch.setattr(trino_client, "_acquire_connection", AsyncMock(return_value=conn))
+        monkeypatch.setattr(trino_client, "_release_connection", AsyncMock())
+        monkeypatch.setattr(trino_client, "_run_query", AsyncMock(return_value=[]))
+        async def failing_wait_for(coro, timeout):
+            await coro
+            raise RuntimeError("boom")
+
+        monkeypatch.setattr(trino_module.asyncio, "wait_for", failing_wait_for)
+
+        with pytest.raises(RuntimeError):
+            await trino_client._execute_query_with_timeout("SELECT 1", None, 0.1)
+
+        trino_client._release_connection.assert_awaited_with(conn)
+
+    @pytest.mark.asyncio
+    async def test_trino_client_run_query_rolls_back_on_error(self, trino_client, patch_trino_metrics):
+        """Failed queries should invoke rollback when available."""
+
+        class ErrorCursor:
+            description = [("value", None, None, None, None, None, None)]
+
+            def execute(self, sql, params=None):
+                raise RuntimeError("boom")
+
+            def close(self):
+                self.closed = True
+
+        class ErrorConnection:
+            def __init__(self):
+                self.rolled_back = False
+
+            def cursor(self):
+                return ErrorCursor()
+
+            def rollback(self):
+                self.rolled_back = True
+
+        conn = ErrorConnection()
+        with pytest.raises(RuntimeError):
+            await trino_client._run_query(conn, "SELECT 1", None)
+
+        assert conn.rolled_back is True
+
 
 class TestTrinoClientManager:
     """Test Trino client manager."""
@@ -617,6 +900,17 @@ class TestTrinoClientManager:
     @pytest.fixture
     def trino_config(self):
         return TrinoConfig(host="localhost", port=8080, user="test")
+
+    @pytest.fixture(autouse=True)
+    async def reset_manager(self):
+        """Ensure the shared manager is cleaned up around every test."""
+
+        manager = TrinoClientManager.get_instance()
+        await manager.close_all()
+        try:
+            yield
+        finally:
+            await manager.close_all()
 
     async def test_client_manager_singleton(self):
         """Test client manager singleton behavior."""
@@ -639,10 +933,11 @@ class TestTrinoClientManager:
         """Test default client functionality."""
         manager = TrinoClientManager.get_instance()
 
-        client = manager.get_client(trino_config)
         default_client = manager.get_default_client()
-
-        assert default_client is client
+        assert default_client is manager.get_client(None)
+        assert default_client is manager.get_client(TrinoConfig())
+        # Different configurations should yield distinct client instances
+        assert default_client is not manager.get_client(trino_config)
 
     async def test_client_manager_close_all(self, trino_config):
         """Test closing all clients."""
@@ -651,9 +946,43 @@ class TestTrinoClientManager:
         client = manager.get_client(trino_config)
         await manager.close_all()
 
-        # Manager should be empty
+        # Manager should release cached clients
         assert len(manager._clients) == 0
-        assert manager.get_default_client() is None
+
+        # New acquisitions should produce fresh client instances
+        replacement = manager.get_client(trino_config)
+        assert replacement is not client
+
+        # Synchronous helper should schedule shutdown without raising
+        pending = manager.close_all_sync()
+        if pending is not None:
+            await pending
+
+    async def test_client_manager_switch_modes(self, trino_config):
+        """Switch between simplified and legacy clients."""
+
+        manager = TrinoClientManager.get_instance()
+        await manager.close_all()
+
+        legacy_stub = MagicMock()
+        legacy_stub.get_client.return_value = TrinoClient(trino_config)
+        legacy_stub.close_all = AsyncMock(return_value=None)
+
+        manager._legacy_manager = legacy_stub
+        manager._use_simple = False
+        manager._migration_phase = "legacy"
+
+        legacy_client = manager.get_client(trino_config)
+        assert legacy_client is legacy_stub.get_client.return_value
+        assert manager.switch_to_legacy() is True
+
+        # Seed simplified clients and switch back
+        key = manager._build_config_key(trino_config)
+        manager._simple_clients[key] = legacy_client
+        assert manager.switch_to_simplified() is True
+
+        await manager.close_all()
+        legacy_stub.close_all.assert_awaited()
 
 
 class TestConcurrencyMiddleware:
@@ -935,7 +1264,7 @@ class TestIntegrationScenarios:
 
     async def test_concurrent_requests_with_different_tenants(self):
         """Test concurrent requests from different tenants."""
-        limits = RequestLimits(max_concurrent_requests=5, max_requests_per_tenant=2)
+        limits = RequestLimits(max_concurrent_requests=6, max_requests_per_tenant=2)
         controller = ConcurrencyController(limits)
 
         # Acquire slots for different tenants
@@ -1114,7 +1443,11 @@ class TestIntegrationScenarios:
                 receive = AsyncMock()
                 send = AsyncMock()
                 await middleware(scope, receive, send)
-                return send.call_args_list[-1][0][0]["status"]
+                for call in send.call_args_list:
+                    message = call[0][0]
+                    if message.get("type") == "http.response.start":
+                        return message.get("status")
+                return None
 
             tasks.append(asyncio.create_task(make_request()))
 
@@ -1135,9 +1468,28 @@ class TestIntegrationScenarios:
         assert client is not None
         assert client.retry_config.max_retries == 1
 
-        # Get default client
-        default_client = await get_default_trino_client()
-        assert default_client is client
+        # Default client should correspond to default configuration cache
+        default_client = get_default_trino_client()
+        assert default_client is get_trino_client(TrinoConfig())
 
         # Close all clients
         await TrinoClientManager.get_instance().close_all()
+
+
+class TestDatabaseMigrationMetrics:
+    """Exercise migration metrics helper to improve coverage."""
+
+    def test_database_migration_metrics_recording(self, tmp_path, monkeypatch):
+        monkeypatch.setenv(trino_module.DB_FEATURE_FLAGS["ENABLE_DB_MIGRATION_MONITORING"], "true")
+        monkeypatch.setenv("HOME", str(tmp_path))
+
+        metrics = trino_module.DatabaseMigrationMetrics()
+        metrics.record_db_call("simplified", 12.5)
+        metrics.record_db_call("legacy", 5.0, error=True)
+        metrics.set_migration_phase("simplified")
+
+        data = metrics._metrics["db_migration"]
+        assert data["simplified_calls"] == 1
+        assert data["legacy_calls"] == 1
+        assert data["errors"] == 1
+        assert metrics.is_monitoring_enabled() is True

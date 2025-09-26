@@ -13,7 +13,6 @@ import os
 import re
 import sys
 from pathlib import Path
-from string import Template
 from typing import Dict, Iterable, List, Mapping, Optional, Set, Tuple
 from urllib.parse import urlparse
 
@@ -25,7 +24,7 @@ ENV_ALIAS_MAP: Dict[str, Tuple[str, ...]] = {
     "AURUM_TIMESCALE_PASSWORD": ("TIMESCALE_PASSWORD",),
 }
 
-_PLACEHOLDER_PATTERN = re.compile(r"\$\{([A-Z0-9_]+)\}")
+_PLACEHOLDER_PATTERN = re.compile(r"\$\{([A-Z0-9_.]+)(?::-(.*?))?\}")
 
 
 class RendererError(RuntimeError):
@@ -81,7 +80,7 @@ def _validate_env_value(name: str, value: str) -> None:
 
 
 def _collect_placeholders(template: str) -> Set[str]:
-    return set(_PLACEHOLDER_PATTERN.findall(template))
+    return {match.group(1) for match in _PLACEHOLDER_PATTERN.finditer(template)}
 
 
 def render_template(
@@ -95,20 +94,26 @@ def render_template(
     env = dict(env or os.environ)
 
     raw_template = template_path.read_text(encoding="utf-8")
-    placeholders = _collect_placeholders(raw_template)
-
     required_set = set(required_vars)
     missing_required: List[str] = []
     missing_optional: List[str] = []
     context: Dict[str, str] = {}
 
-    for placeholder in sorted(placeholders):
+    for match in _PLACEHOLDER_PATTERN.finditer(raw_template):
+        placeholder = match.group(1)
+        default_value = match.group(2)
+
         value, source_name = _resolve_env_value(placeholder, env)
         if value is None or value == "":
+            if default_value is not None:
+                context.setdefault(placeholder, default_value)
+                continue
+
             if placeholder in required_set:
                 missing_required.append(placeholder)
             else:
                 missing_optional.append(placeholder)
+                context.setdefault(placeholder, "")
             continue
 
         if placeholder in ENV_ALIAS_MAP:
@@ -127,22 +132,21 @@ def render_template(
     if missing_required:
         raise RendererError(
             "Missing required environment variables for job "
-            f"'{job}': {', '.join(missing_required)}"
+            f"'{job}': {', '.join(sorted(set(missing_required)))}"
         )
 
-    if missing_optional:
+    def _replacement(match: re.Match[str]) -> str:
+        name = match.group(1)
+        default = match.group(2)
+        if name in context:
+            return context[name]
+        if default is not None:
+            return default
         raise RendererError(
-            f"Template for job '{job}' references variables that were not provided: "
-            f"{', '.join(missing_optional)}. Export them or provide defaults."
+            f"Failed to render job '{job}'; missing value for {name}"
         )
 
-    try:
-        rendered = Template(raw_template).substitute(context)
-    except KeyError as exc:
-        missing_key = exc.args[0]
-        raise RendererError(
-            f"Failed to render job '{job}'; missing value for {missing_key}"
-        ) from None
+    rendered = _PLACEHOLDER_PATTERN.sub(_replacement, raw_template)
 
     # Double-check no unresolved placeholders remain (defensive safeguard).
     unresolved = _collect_placeholders(rendered)

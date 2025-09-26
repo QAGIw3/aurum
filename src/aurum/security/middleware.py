@@ -3,16 +3,16 @@
 from __future__ import annotations
 
 import time
-from typing import Any, Dict, List, Optional, Callable
+from typing import Any, List, Optional
 
-from fastapi import Request, Response, HTTPException
+from fastapi import HTTPException, Request, Response
 from fastapi.security import HTTPAuthorizationCredentials
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.types import ASGIApp
 
 from ..telemetry.context import get_request_id, log_structured, request_id_context
-from .auth import AuthorizationManager, get_auth_manager
 from .audit import log_security_event
+from .auth import AuthorizationManager, get_auth_manager
 from .validation import SecurityHeaders, validate_and_sanitize_query_params
 
 

@@ -11,7 +11,6 @@ from __future__ import annotations
 import json
 import os
 import re
-import textwrap
 from dataclasses import dataclass
 from hashlib import sha256
 from pathlib import Path
@@ -64,6 +63,42 @@ class DryRunResult:
         return payload
 
 
+def _default_template_dirs() -> List[Path]:
+    """Return candidate template directories in priority order."""
+
+    candidates: List[Path] = []
+    repo_fallback: Path | None = None
+    if TEMPLATE_DIR:
+        template_dir = Path(TEMPLATE_DIR)
+        candidates.append(template_dir)
+        if not template_dir.exists():
+            repo_fallback = Path(__file__).resolve().parents[3] / "seatunnel" / "jobs" / "templates"
+    else:
+        template_dir = Path(__file__).resolve().parent / "templates"
+        candidates.append(template_dir)
+        repo_fallback = Path(__file__).resolve().parents[3] / "seatunnel" / "jobs" / "templates"
+
+    if repo_fallback is not None:
+        candidates.append(repo_fallback)
+
+    seen: List[Path] = []
+    for candidate in candidates:
+        if candidate not in seen:
+            seen.append(candidate)
+    return seen
+
+
+def _resolve_template_name(path: Path) -> str:
+    """Normalise template file names to omit known suffixes."""
+
+    name = path.name
+    if name.endswith(".conf.tmpl"):
+        return name[:-len(".conf.tmpl")]
+    if name.endswith(".tmpl"):
+        return name[:-len(".tmpl")]
+    return path.stem
+
+
 class DryRunRenderer:
     """Render SeaTunnel templates without executing the engine."""
 
@@ -87,9 +122,18 @@ class DryRunRenderer:
         },
     }
 
-    def __init__(self) -> None:
+    def __init__(self, *, template_dirs: Sequence[Path] | None = None, fail_on_missing: bool = False) -> None:
         self.template_hashes: Dict[str, str] = {}
+        self._configured_template_dirs: Sequence[Path] | None = tuple(Path(item) for item in template_dirs) if template_dirs else None
+        self.fail_on_missing = fail_on_missing
         self._load_hashes()
+
+    # ---------------------------------------------------------------- helpers
+    def _template_dirs(self) -> List[Path]:
+        configured = self._configured_template_dirs
+        if configured is not None:
+            return [Path(item) for item in configured]
+        return [Path(item) for item in _default_template_dirs()]
 
     # ------------------------------------------------------------------ hashes
     def _hash_file(self, path: Path) -> str:
@@ -101,7 +145,7 @@ class DryRunRenderer:
 
     def _get_template_hash(self, path: Path) -> str:
         digest = self._hash_file(path)
-        self.template_hashes[path.stem] = digest
+        self.template_hashes[_resolve_template_name(path)] = digest
         self._save_hashes()
         return digest
 
@@ -125,11 +169,14 @@ class DryRunRenderer:
         return self._SAMPLE_ENV.get(template_name, {}).copy()
 
     def _get_required_vars(self, template_name: str) -> List[str]:
-        template_path = TEMPLATE_DIR / f"{template_name}.conf.tmpl"
-        if not template_path.exists():
-            return []
-        placeholders = _collect_placeholders(template_path.read_text(encoding="utf-8"))
-        return sorted(placeholders)
+        suffixes = (".conf.tmpl", ".tmpl")
+        for base in self._template_dirs():
+            for suffix in suffixes:
+                template_path = base / f"{template_name}{suffix}"
+                if template_path.exists():
+                    placeholders = _collect_placeholders(template_path.read_text(encoding="utf-8"))
+                    return sorted(placeholders)
+        return []
 
     # -------------------------------------------------------------- rendering
     def render_template_dry_run(self, template_path: Path) -> Dict[str, object]:
@@ -147,8 +194,10 @@ class DryRunRenderer:
             else:
                 env_values[name] = value
 
+        template_name = _resolve_template_name(template_path)
+
         result = DryRunResult(
-            template=template_path.stem,
+            template=template_name,
             rendered=not missing,
             placeholders=placeholders,
             missing_variables=missing,
@@ -162,16 +211,25 @@ class DryRunRenderer:
             self._get_template_hash(template_path)
         else:
             result.error = "Missing required variables: " + ", ".join(sorted(missing))
+            if self.fail_on_missing:
+                raise DryRunError(result.error)
 
         return result.to_dict()
 
     def render_all_templates(self) -> List[Dict[str, object]]:
-        if not TEMPLATE_DIR.exists():
+        available_dirs = [base for base in self._template_dirs() if base.exists()]
+        if not available_dirs:
             raise DryRunError("Template directory not found")
 
         results: List[Dict[str, object]] = []
-        for path in sorted(TEMPLATE_DIR.glob("*.conf.tmpl")):
-            results.append(self.render_template_dry_run(path))
+        seen: Set[str] = set()
+        for base in available_dirs:
+            for path in sorted(base.glob("*.conf.tmpl")):
+                template_name = _resolve_template_name(path)
+                if template_name in seen:
+                    continue
+                seen.add(template_name)
+                results.append(self.render_template_dry_run(path))
         return results
 
     # -------------------------------------------------------------- reporting

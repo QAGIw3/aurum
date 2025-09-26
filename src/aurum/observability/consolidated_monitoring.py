@@ -11,14 +11,12 @@ Migration phases:
 3. Predictive monitoring and alerting
 """
 
-import os
 import logging
-import asyncio
-from typing import Dict, Any, List, Optional, Union
-from enum import Enum
+import os
 from dataclasses import dataclass, field
-from datetime import datetime, timedelta
-import json
+from datetime import datetime
+from enum import Enum
+from typing import Any, Dict, List
 
 # Feature flags for monitoring consolidation
 MONITORING_FEATURE_FLAGS = {

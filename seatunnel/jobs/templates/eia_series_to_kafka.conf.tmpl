@@ -85,7 +85,15 @@ transform {
         period                                                     AS period,
         ${EIA_PERIOD_START_EXPR}                                     AS period_start,
         ${EIA_PERIOD_END_EXPR}                                       AS period_end,
-        '${EIA_FREQUENCY}'                                         AS frequency,
+        CASE UPPER('${EIA_FREQUENCY}')
+          WHEN 'HOURLY' THEN 'HOURLY'
+          WHEN 'DAILY' THEN 'DAILY'
+          WHEN 'WEEKLY' THEN 'WEEKLY'
+          WHEN 'MONTHLY' THEN 'MONTHLY'
+          WHEN 'QUARTERLY' THEN 'QUARTERLY'
+          WHEN 'ANNUAL' THEN 'ANNUAL'
+          ELSE UPPER('${EIA_FREQUENCY}')
+        END                                                        AS frequency,
         CASE
           WHEN value IS NULL OR value = '' THEN NULL
           ELSE CAST(value AS DOUBLE)

@@ -4,19 +4,20 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from collections.abc import Awaitable
 from datetime import datetime, timedelta
 from enum import Enum
-from typing import Any, Dict, List, Optional, Callable, Awaitable
+from typing import Any, Callable, Dict, List, Optional
 
 from .metrics import (
+    PROMETHEUS_AVAILABLE,
     increment_slo_compliance,
     observe_slo_violation_duration,
     set_slo_availability,
+    set_slo_error_rate,
     set_slo_latency_p50,
     set_slo_latency_p95,
     set_slo_latency_p99,
-    set_slo_error_rate,
-    PROMETHEUS_AVAILABLE,
 )
 
 logger = logging.getLogger(__name__)

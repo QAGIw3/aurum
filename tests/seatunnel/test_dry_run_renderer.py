@@ -11,6 +11,7 @@ from aurum.seatunnel.dry_run_renderer import (
     DryRunError,
     DryRunRenderer,
     _collect_placeholders,
+    _resolve_template_name,
     render_template,
 )
 
@@ -111,7 +112,7 @@ sink {
             }):
                 result = renderer.render_template_dry_run(template_path)
 
-            assert result["template"] == template_path.stem
+            assert result["template"] == _resolve_template_name(template_path)
             assert result["rendered"] is True
             assert "content" in result
             assert result["content_length"] > 0
@@ -143,7 +144,7 @@ source {
         try:
             result = renderer.render_template_dry_run(template_path)
 
-            assert result["template"] == template_path.stem
+            assert result["template"] == _resolve_template_name(template_path)
             assert result["rendered"] is False
             assert "error" in result
 
@@ -181,12 +182,13 @@ sink {
             template_path.write_text(template_content)
 
             with patch("aurum.seatunnel.dry_run_renderer.TEMPLATE_DIR", template_dir):
+                scoped_renderer = DryRunRenderer(template_dirs=[template_dir])
                 with patch.dict("os.environ", {
                     "TEST_URL": "https://example.com",
                     "AURUM_KAFKA_BOOTSTRAP_SERVERS": "localhost:9092",
                     "TEST_TOPIC": "test.topic",
                 }):
-                    results = renderer.render_all_templates()
+                    results = scoped_renderer.render_all_templates()
 
             assert len(results) == 1
             assert results[0]["template"] == "test_template"
@@ -256,12 +258,11 @@ sink {
 
         # Test missing template directory
         with patch("aurum.seatunnel.dry_run_renderer.TEMPLATE_DIR", Path("/nonexistent")):
+            scoped_renderer = DryRunRenderer(template_dirs=[Path("/nonexistent")])
             with pytest.raises(DryRunError, match="Template directory not found"):
-                renderer.render_all_templates()
+                scoped_renderer.render_all_templates()
 
         # Test template not found
-        with patch("aurum.seatunnel.dry_run_renderer.TEMPLATE_DIR", Path("/tmp")):
-            nonexistent_path = Path("/tmp/nonexistent.conf.tmpl")
-            with pytest.raises(DryRunError, match="Template not found"):
-                # This would be caught by the file existence check in main
-                pass
+        nonexistent_path = Path("/tmp/nonexistent.conf.tmpl")
+        with pytest.raises(DryRunError, match="Template not found"):
+            renderer.render_template_dry_run(nonexistent_path)

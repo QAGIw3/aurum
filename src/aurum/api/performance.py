@@ -20,6 +20,16 @@ from .exceptions import ServiceUnavailableException
 from .config import TrinoConfig
 
 
+def _create_lock() -> asyncio.Lock:
+    """Create an asyncio.Lock ensuring an event loop is initialized."""
+
+    try:
+        asyncio.get_event_loop()
+    except RuntimeError:
+        asyncio.set_event_loop(asyncio.new_event_loop())
+    return asyncio.Lock()
+
+
 @dataclass
 class QueryBatch:
     """Batch of similar queries to execute together."""
@@ -156,7 +166,7 @@ class ConnectionPool:
         self.idle_timeout_seconds = idle_timeout_seconds
         self.wait_timeout_seconds = wait_timeout_seconds
         self._connections: List[Any] = []
-        self._lock = asyncio.Lock()
+        self._lock = _create_lock()
         self._initialized = False
         self._total_connections = 0
         self._active_connections = 0
@@ -328,7 +338,7 @@ class PerformanceMonitor:
         self.cache_hits = 0
         self.cache_misses = 0
         self.total_queries = 0
-        self._lock = asyncio.Lock()
+        self._lock = _create_lock()
 
     async def record_query(
         self,

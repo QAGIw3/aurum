@@ -10,10 +10,14 @@ from typing import Dict, List, Union
 try:  # pragma: no cover - optional dependency
     from prometheus_client import (
         CONTENT_TYPE_LATEST as _PROM_CONTENT_TYPE,
+    )
+    from prometheus_client import (
+        REGISTRY,
         Counter,
         Gauge,
         Histogram,
-        REGISTRY,
+    )
+    from prometheus_client import (
         generate_latest as _prom_generate_latest,
     )
 except ImportError:  # pragma: no cover - Prometheus not installed

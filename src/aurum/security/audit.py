@@ -5,11 +5,15 @@ from __future__ import annotations
 import json
 import logging
 from datetime import datetime
-from typing import Any, Dict, Optional
 from pathlib import Path
+from typing import Any, Dict, Optional
 
-from ..telemetry.context import get_request_id, get_correlation_id, get_tenant_id, log_structured
-
+from ..telemetry.context import (
+    get_correlation_id,
+    get_request_id,
+    get_tenant_id,
+    log_structured,
+)
 
 # Audit logger
 AUDIT_LOGGER = logging.getLogger("aurum.security.audit")

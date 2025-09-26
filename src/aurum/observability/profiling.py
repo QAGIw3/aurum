@@ -7,7 +7,7 @@ import functools
 import os
 import time
 from contextlib import asynccontextmanager, contextmanager
-from typing import Any, Callable, Dict, Optional, Union
+from typing import Any, Callable, Dict, Optional
 
 try:
     import pyinstrument

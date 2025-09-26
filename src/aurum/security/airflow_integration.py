@@ -4,18 +4,18 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from contextlib import asynccontextmanager
-from datetime import datetime, timedelta
-from typing import Dict, List, Optional, Any, Union
 import os
+from contextlib import asynccontextmanager
+from datetime import datetime
+from typing import Any, Dict, List, Optional
 
+from ..logging import create_logger
 from .secrets_rotation_manager import (
     SecretsRotationManager,
-    TokenType,
     TokenInstance,
-    get_secrets_rotation_manager
+    TokenType,
+    get_secrets_rotation_manager,
 )
-from ..logging import StructuredLogger, LogLevel, create_logger
 
 logger = logging.getLogger(__name__)
 

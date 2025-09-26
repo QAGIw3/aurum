@@ -4,17 +4,15 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import time
 import uuid
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from enum import Enum
-from typing import Dict, List, Optional, Any, Callable, Awaitable
-import json
+from typing import Any, Dict, List, Optional
 
-from .vault_client import VaultConfig, VaultCredentialProvider
+from ..logging import LogLevel, create_logger
 from ..observability.metrics import get_metrics_client
-from ..logging import StructuredLogger, LogLevel, create_logger
+from .vault_client import VaultConfig, VaultCredentialProvider
 
 logger = logging.getLogger(__name__)
 

@@ -17,6 +17,7 @@ from .transforms import (
     DataQualityTransform,
     AssertionTransform
 )
+from .generate_assertion_config import AssertionConfigGenerator
 
 __all__ = [
     "SchemaAssertion",
@@ -29,5 +30,6 @@ __all__ = [
     "FieldPresenceTransform",
     "FieldTypeTransform",
     "DataQualityTransform",
-    "AssertionTransform"
+    "AssertionTransform",
+    "AssertionConfigGenerator",
 ]
