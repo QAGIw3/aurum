@@ -3,18 +3,18 @@
 from __future__ import annotations
 
 import re
-from typing import Any, Dict, List, Optional, Set, Union
 from dataclasses import dataclass
 from enum import Enum
+from typing import Any, Dict, List, Optional, Set
 
-from fastapi import HTTPException, Request, Depends
-from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
-from pydantic import BaseModel, Field
 import jwt
+from fastapi import HTTPException, Request
+from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
+from pydantic import BaseModel, Field
 
-from ..telemetry.context import get_request_id, get_tenant_id, log_structured
-from .audit import log_auth_success, log_auth_failure, log_access_denied
-from .validation import SafeIdentifier, SecurityHeaders
+from ..telemetry.context import get_tenant_id, log_structured
+from .audit import log_access_denied, log_auth_failure, log_auth_success
+from .validation import SafeIdentifier
 
 
 class Permission(str, Enum):

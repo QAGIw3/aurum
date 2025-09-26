@@ -14,19 +14,18 @@ comprehensive lineage metadata for the entire data platform.
 from __future__ import annotations
 
 import asyncio
-import json
 import logging
+import threading
 import time
 import uuid
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
-from typing import Dict, List, Optional, Any, Callable, Awaitable, ContextManager
 from functools import wraps
-import threading
+from typing import Any, ContextManager, Dict, List, Optional
 
-from .openlineage_emitter import OpenLineageEmitter, OpenLineageEvent
-from ..logging import StructuredLogger, LogLevel, create_logger
+from ..logging import LogLevel, create_logger
+from .openlineage_emitter import OpenLineageEmitter
 
 logger = logging.getLogger(__name__)
 

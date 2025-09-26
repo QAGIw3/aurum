@@ -6,15 +6,12 @@ API keys, database credentials, and other sensitive configuration.
 
 from __future__ import annotations
 
-import asyncio
-import json
 import logging
 import os
 import time
 import uuid
-from dataclasses import dataclass, field
-from pathlib import Path
-from typing import Any, Dict, List, Optional, Union
+from dataclasses import dataclass
+from typing import Any, Dict, Optional
 
 try:
     import hvac
@@ -173,7 +170,7 @@ class VaultCredentialProvider:
 
         elif self.config.enable_kubernetes_auth:
             # Kubernetes authentication
-            with open(self.config.kubernetes_token_path, 'r') as f:
+            with open(self.config.kubernetes_token_path) as f:
                 jwt_token = f.read().strip()
 
             auth_response = self.client.auth_kubernetes(

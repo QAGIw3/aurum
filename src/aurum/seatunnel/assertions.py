@@ -178,11 +178,8 @@ class FieldAssertion:
                 result.passed = False
                 result.message = f"Required field {field_path} is missing"
             elif not self.allow_null:
-                result.passed = False
-                result.message = f"Field {field_path} is null but nulls are not allowed"
-        elif self.allow_null and field_value is None:
-            result.passed = False
-            result.message = f"Field {field_path} is null but nulls are not allowed"
+                # Optional fields missing are acceptable; only flag when explicit null disallowed
+                result.passed = True
 
         return result
 
@@ -197,7 +194,11 @@ class FieldAssertion:
         )
 
         if field_value is None:
-            return result  # Skip type checking for null values
+            if self.allow_null or not self.required:
+                return result
+            result.passed = False
+            result.message = f"Field {field_path} is null but nulls are not allowed"
+            return result
 
         if not self.expected_type:
             return result  # No type specified
@@ -301,7 +302,10 @@ class FieldAssertion:
         try:
             if not self.custom_validator(field_value, record):
                 result.passed = False
-                result.message = self.custom_message or f"Field {field_path} failed custom validation"
+                base_message = self.custom_message or f"Field {field_path} failed custom validation"
+                if "custom validation" not in base_message.lower():
+                    base_message = f"{base_message} (custom validation failed)"
+                result.message = base_message
         except Exception as e:
             result.passed = False
             result.message = f"Field {field_path} custom validation error: {e}"
@@ -630,12 +634,25 @@ class DataQualityChecker:
                 })
                 overall_passed = False
 
+        total_failed = sum(
+            result.get("failed_assertions", 0)
+            for result in all_results
+            if isinstance(result, dict)
+        )
+        total_passed = sum(
+            result.get("passed_assertions", 0)
+            for result in all_results
+            if isinstance(result, dict)
+        )
+
         # Generate summary
         summary = {
             "total_records": len(records),
             "assertions_run": len(all_results),
             "overall_passed": overall_passed,
             "assertion_results": all_results,
+            "failed_assertions": total_failed,
+            "passed_assertions": total_passed,
             "timestamp": datetime.now().isoformat()
         }
 

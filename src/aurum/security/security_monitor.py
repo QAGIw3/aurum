@@ -2,20 +2,16 @@
 
 from __future__ import annotations
 
-import asyncio
-import hashlib
 import logging
 from collections import defaultdict, deque
+from dataclasses import dataclass
 from datetime import datetime, timedelta
 from enum import Enum
-from typing import Any, Dict, List, Optional, Callable, Awaitable
-from dataclasses import dataclass, field
+from typing import Any, Dict, List, Optional
 
 from aurum.observability.metrics import (
-    increment_alerts_fired,
-    increment_alerts_suppressed,
-    observe_alert_processing_duration,
     PROMETHEUS_AVAILABLE,
+    increment_alerts_fired,
 )
 
 logger = logging.getLogger(__name__)

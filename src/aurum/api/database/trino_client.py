@@ -16,7 +16,7 @@ import threading
 import time
 from pathlib import Path
 from collections import OrderedDict
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, fields
 from typing import Any, Dict, List, Optional, Tuple, Union
 
 try:
@@ -49,6 +49,16 @@ from .config import TrinoConfig
 
 LOGGER = logging.getLogger(__name__)
 
+
+def _create_lock() -> asyncio.Lock:
+    """Create asyncio locks even when no loop is yet running."""
+
+    try:
+        asyncio.get_event_loop()
+    except RuntimeError:
+        asyncio.set_event_loop(asyncio.new_event_loop())
+    return asyncio.Lock()
+
 # Feature flags for database migration
 DB_FEATURE_FLAGS = {
     "USE_SIMPLE_DB_CLIENT": "aurum_use_simple_db_client",
@@ -80,7 +90,7 @@ class TTLCache:
         self.maxsize = maxsize
         self.default_ttl = default_ttl
         self._store: OrderedDict[str, CacheEntry] = OrderedDict()
-        self._lock = asyncio.Lock()
+        self._lock = _create_lock()
 
     async def get(self, key: str) -> Optional[Any]:
         async with self._lock:
@@ -170,7 +180,7 @@ class SimpleTrinoClient:
         self._prepared_statements: Dict[str, Any] = {}
 
         self._pending_acquires = 0
-        self._pending_lock = asyncio.Lock()
+        self._pending_lock = _create_lock()
         self._default_tenant = self._config.get("trino_default_tenant_id", "default")
         self._closed = False
 
@@ -644,135 +654,241 @@ def create_trino_client(
 class HybridTrinoClientManager:
     """Hybrid Trino client manager that can use either simplified or legacy clients."""
 
-    _instance = None
+    _instance: Optional["HybridTrinoClientManager"] = None
     _lock = threading.Lock()
 
     def __init__(self):
         self._legacy_manager = None
         self._simple_clients: Dict[str, SimpleTrinoClient] = {}
+        # Backwards-compatible alias for legacy tests that inspect _clients
+        self._clients = self._simple_clients
+        self._client_configs: Dict[str, TrinoConfig] = {}
+        self._client_settings: Dict[str, Optional[Dict[str, Any]]] = {}
+        self._manager_lock = threading.Lock()
         self._migration_phase = get_db_migration_phase()
         self._use_simple = is_db_feature_enabled(DB_FEATURE_FLAGS["USE_SIMPLE_DB_CLIENT"])
 
     @classmethod
-    def get_instance(cls):
+    def get_instance(cls) -> "HybridTrinoClientManager":
         """Get singleton instance of HybridTrinoClientManager."""
+
         if cls._instance is None:
             with cls._lock:
                 if cls._instance is None:
                     cls._instance = cls()
         return cls._instance
 
+    def _build_config_key(self, config: TrinoConfig) -> str:
+        """Create a stable cache key for a Trino configuration."""
+
+        return "|".join(
+            [
+                str(getattr(config, "host", "")),
+                str(getattr(config, "port", "")),
+                str(getattr(config, "http_scheme", "")),
+                str(getattr(config, "catalog", "")),
+                str(getattr(config, "schema", "")),
+                str(getattr(config, "user", "")),
+            ]
+        )
+
+    def _normalize_request(
+        self,
+        catalog_or_config: Union[str, TrinoConfig, Dict[str, Any], None],
+    ) -> Tuple[str, TrinoConfig]:
+        """Normalize inputs to a configuration cache key and TrinoConfig."""
+
+        if catalog_or_config is None:
+            config = TrinoConfig()
+        elif isinstance(catalog_or_config, TrinoConfig):
+            config = catalog_or_config
+        elif isinstance(catalog_or_config, dict):
+            allowed_keys = {field.name for field in fields(TrinoConfig)}
+            filtered = {k: v for k, v in catalog_or_config.items() if k in allowed_keys}
+            config = TrinoConfig(**filtered)
+        elif isinstance(catalog_or_config, str):
+            config = TrinoConfig(catalog=catalog_or_config)
+        elif all(hasattr(catalog_or_config, attr) for attr in ("host", "port", "user", "catalog", "schema", "http_scheme")):
+            # Accept duck-typed config objects
+            config = TrinoConfig(
+                host=getattr(catalog_or_config, "host"),
+                port=getattr(catalog_or_config, "port"),
+                user=getattr(catalog_or_config, "user"),
+                http_scheme=getattr(catalog_or_config, "http_scheme"),
+                catalog=getattr(catalog_or_config, "catalog"),
+                schema=getattr(catalog_or_config, "schema"),
+                password=getattr(catalog_or_config, "password", None),
+            )
+        else:
+            raise TypeError(
+                "catalog_or_config must be a catalog string, TrinoConfig, dict, or object with TrinoConfig attributes"
+            )
+
+        key = self._build_config_key(config)
+        return key, config
+
+    def _ensure_simple_client(
+        self,
+        key: str,
+        config: TrinoConfig,
+        concurrency_config: Optional[Dict[str, Any]] = None,
+    ) -> SimpleTrinoClient:
+        """Create or fetch a simplified Trino client for the given config."""
+
+        with self._manager_lock:
+            client = self._simple_clients.get(key)
+            if client is None:
+                client = create_trino_client(config, concurrency_config=concurrency_config)
+                self._simple_clients[key] = client
+                self._client_configs[key] = config
+                self._client_settings[key] = copy.deepcopy(concurrency_config) if concurrency_config else None
+            elif concurrency_config is not None and self._client_settings.get(key) != concurrency_config:
+                # Preserve original configuration but surface a helpful log for mismatched reuse
+                LOGGER.debug(
+                    "Ignoring updated concurrency configuration for existing Trino client",
+                    extra={
+                        "client_key": key,
+                        "requested_config": concurrency_config,
+                        "existing_config": self._client_settings.get(key),
+                    },
+                )
+        return client
+
     def _get_legacy_manager(self):
         """Get or create legacy Trino client manager."""
+
         if self._legacy_manager is None:
-            # Import legacy manager - simplified for demo
             from types import SimpleNamespace
+
+            outer = self
 
             class LegacyManagerStub(SimpleNamespace):
                 def __init__(self):
-                    self._clients = {}
+                    super().__init__()
+                    self._clients: Dict[str, SimpleTrinoClient] = {}
 
-                def get_client(self, catalog: str):
-                    # Return a mock client for demo
-                    if catalog not in self._clients:
-                        config = TrinoConfig(
-                            host="localhost",
-                            port=8080,
-                            user="aurum",
-                            catalog=catalog,
-                            schema="default",
-                            http_scheme="http"
-                        )
-                        self._clients[catalog] = create_trino_client(config)
-                    return self._clients[catalog]
+                def get_client(
+                    self,
+                    catalog_or_config: Union[str, TrinoConfig, Dict[str, Any], None],
+                    concurrency_config: Optional[Dict[str, Any]] = None,
+                ):
+                    key, config = outer._normalize_request(catalog_or_config)
+                    client = self._clients.get(key)
+                    if client is None:
+                        client = create_trino_client(config, concurrency_config=concurrency_config)
+                        self._clients[key] = client
+                    return client
 
-                def close_all(self):
-                    for client in self._clients.values():
-                        asyncio.run(client.close())
+                async def close_all(self) -> None:
+                    if not self._clients:
+                        return
+                    clients = list(self._clients.values())
                     self._clients.clear()
+                    await asyncio.gather(*(client.close() for client in clients), return_exceptions=True)
 
             self._legacy_manager = LegacyManagerStub()
         return self._legacy_manager
 
-    def get_client(self, catalog: str):
+    def get_client(
+        self,
+        catalog_or_config: Union[str, TrinoConfig, Dict[str, Any], None] = None,
+        concurrency_config: Optional[Dict[str, Any]] = None,
+    ) -> SimpleTrinoClient:
         """Get a Trino client based on feature flags."""
+
+        key, config = self._normalize_request(catalog_or_config)
         start_time = time.time()
 
         if self._use_simple or self._migration_phase in ("simplified", "hybrid"):
-            # Use simplified client
-            if catalog not in self._simple_clients:
-                config = TrinoConfig(
-                    host="localhost",
-                    port=8080,
-                    user="aurum",
-                    catalog=catalog,
-                    schema="default",
-                    http_scheme="http"
-                )
-                self._simple_clients[catalog] = create_trino_client(config)
-
-            client = self._simple_clients[catalog]
+            client = self._ensure_simple_client(key, config, concurrency_config)
             client_type = "simplified"
         else:
-            # Use legacy client
             legacy_manager = self._get_legacy_manager()
-            client = legacy_manager.get_client(catalog)
+            try:
+                if concurrency_config is not None:
+                    client = legacy_manager.get_client(config, concurrency_config=concurrency_config)
+                else:
+                    client = legacy_manager.get_client(config)
+            except TypeError:
+                client = legacy_manager.get_client(getattr(config, "catalog", config))
             client_type = "legacy"
 
-        # Record metrics
         duration_ms = (time.time() - start_time) * 1000
         _db_migration_metrics.record_db_call(client_type, duration_ms)
 
         return client
 
-    def close_all(self):
-        """Close all clients."""
-        for client in self._simple_clients.values():
-            asyncio.run(client.close())
-        self._simple_clients.clear()
+    async def close_all(self) -> None:
+        """Close all managed clients asynchronously."""
+
+        with self._manager_lock:
+            simple_clients = list(self._simple_clients.values())
+            self._simple_clients.clear()
+            self._client_configs.clear()
+            self._client_settings.clear()
+
+        if simple_clients:
+            await asyncio.gather(*(client.close() for client in simple_clients), return_exceptions=True)
 
         if self._legacy_manager:
-            self._legacy_manager.close_all()
+            maybe_coro = self._legacy_manager.close_all()
+            if asyncio.iscoroutine(maybe_coro):
+                await maybe_coro
+
+    def close_all_sync(self) -> Optional[asyncio.Task]:
+        """Close clients from synchronous code without double-running event loops."""
+
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            asyncio.run(self.close_all())
+            return None
+        else:
+            return loop.create_task(self.close_all())
 
     def switch_to_simplified(self) -> bool:
         """Switch to simplified clients."""
-        if self._simple_clients:
-            self._use_simple = True
-            LOGGER.info("Switched to simplified Trino clients")
-            return True
-        return False
+
+        self._use_simple = True
+        LOGGER.info("Switched to simplified Trino clients")
+        return True
 
     def switch_to_legacy(self) -> bool:
         """Switch to legacy clients."""
-        if self._legacy_manager:
-            self._use_simple = False
-            LOGGER.info("Switched to legacy Trino clients")
-            return True
-        return False
 
-    def get_default_client(self) -> SimpleTrinoClient:
-        """Get the default Trino client."""
-        return self.get_client("iceberg")
+        if self._legacy_manager is None:
+            LOGGER.warning("No legacy manager initialized; staying on simplified clients")
+            return False
+        self._use_simple = False
+        LOGGER.info("Switched to legacy Trino clients")
+        return True
 
-    async def close_all(self) -> None:
-        """Close all clients."""
-        # Close simple clients
-        for client in self._simple_clients.values():
-            await client.close()
-        self._simple_clients.clear()
+    def get_default_client(self) -> Optional[SimpleTrinoClient]:
+        """Get the default Trino client if it has been initialized."""
 
-        # Close legacy manager if exists
-        if self._legacy_manager:
-            self._legacy_manager.close_all()
+        key, config = self._normalize_request(None)
+        if self._use_simple or self._migration_phase in ("simplified", "hybrid"):
+            with self._manager_lock:
+                client = self._simple_clients.get(key)
+            if client is not None:
+                return client
+            return self._ensure_simple_client(key, config)
+
+        legacy_manager = self._get_legacy_manager()
+        return legacy_manager.get_client(config)
 
 
 # Global instance for backward compatibility
 _client_manager = HybridTrinoClientManager()
 
 
-def get_trino_client(catalog: str = "iceberg"):
-    """Get a Trino client for the specified catalog."""
-    return _client_manager.get_client(catalog)
+def get_trino_client(
+    catalog: Union[str, TrinoConfig, Dict[str, Any], None] = "iceberg",
+    concurrency_config: Optional[Dict[str, Any]] = None,
+):
+    """Get a Trino client for the specified catalog or configuration."""
+
+    return _client_manager.get_client(catalog, concurrency_config=concurrency_config)
 
 
 def get_default_trino_client():

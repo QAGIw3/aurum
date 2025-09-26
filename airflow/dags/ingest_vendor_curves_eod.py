@@ -346,6 +346,7 @@ def emit_openlineage_events(**context: Any) -> None:
     vendor_tasks = os.getenv("AURUM_VENDOR_TASK_IDS", "parse_pw,parse_eugp,parse_rp").split(",")
     input_files: set[str] = set()
     total_rows = 0
+    total_quarantine = 0
     if ti:
         for task_id in vendor_tasks:
             task_name = task_id.strip()
@@ -565,6 +566,7 @@ def merge_branch(**context: Any) -> None:
     ti = context.get("ti")
     vendor_tasks = {"pw": "parse_pw", "eugp": "parse_eugp", "rp": "parse_rp"}
     total_rows = 0
+total_quarantine = 0
     if ti:
         for vendor, task_id in vendor_tasks.items():
             rows = ti.xcom_pull(task_ids=task_id, key="rows")

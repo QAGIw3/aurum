@@ -8,7 +8,6 @@ from typing import Any, Dict, Optional
 from confluent_kafka import Producer
 from confluent_kafka.avro import AvroProducer
 from confluent_kafka.schema_registry import SchemaRegistryClient
-from confluent_kafka.schema_registry.avro import AvroSerializer
 
 from .structured_logger import LogEvent
 
@@ -37,6 +36,8 @@ class KafkaLogSink:
         """
         self.topic = topic
         self.use_avro = use_avro
+        avro_enabled = bool(use_avro and schema_registry_url)
+        self._avro_enabled = avro_enabled
 
         # Kafka configuration
         kafka_config = {
@@ -49,7 +50,7 @@ class KafkaLogSink:
             'compression.type': 'lz4',  # Good balance of speed and compression
         }
 
-        if use_avro and schema_registry_url:
+        if avro_enabled:
             # Schema Registry configuration
             schema_registry_config = {
                 'url': schema_registry_url,
@@ -95,35 +96,21 @@ class KafkaLogSink:
                     ]
                 }
 
-            # Create Avro serializers
-            key_serializer = AvroSerializer(
-                schema_registry_client,
-                json.dumps(key_schema)
-            )
-            value_serializer = AvroSerializer(
-                schema_registry_client,
-                json.dumps(value_schema)
-            )
-
             # Avro producer configuration
             avro_config = kafka_config.copy()
             avro_config.update({
-                'key.serializer': key_serializer,
-                'value.serializer': value_serializer,
                 'schema.registry.url': schema_registry_url,
             })
 
-            self.producer = AvroProducer(avro_config)
+            self.producer = AvroProducer(
+                avro_config,
+                default_key_schema=json.dumps(key_schema),
+                default_value_schema=json.dumps(value_schema),
+            )
 
         else:
             # JSON producer configuration
-            json_config = kafka_config.copy()
-            json_config.update({
-                'key.serializer': 'org.apache.kafka.common.serialization.StringSerializer',
-                'value.serializer': 'org.apache.kafka.common.serialization.StringSerializer',
-            })
-
-            self.producer = Producer(json_config)
+            self.producer = Producer(kafka_config)
 
     def emit(self, event: LogEvent) -> None:
         """Emit log event to Kafka.
@@ -144,8 +131,8 @@ class KafkaLogSink:
         try:
             self.producer.produce(
                 topic=self.topic,
-                key=key if self.use_avro else json.dumps(key),
-                value=value if self.use_avro else json.dumps(value, default=str),
+                key=key if self._avro_enabled else json.dumps(key, default=str).encode(),
+                value=value if self._avro_enabled else json.dumps(value, default=str).encode(),
                 callback=self._delivery_callback
             )
 

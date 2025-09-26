@@ -167,12 +167,14 @@ class StructuredLogger:
             bytes_processed=kwargs.get("bytes_processed"),
             error_code=kwargs.get("error_code"),
             error_message=kwargs.get("error_message"),
-            metadata=kwargs.get("metadata", {})
+            metadata=dict(kwargs.get("metadata", {}))
         )
 
         # Add job/task IDs if available
         event.job_id = kwargs.get("job_id")
         event.task_id = kwargs.get("task_id")
+
+        event.metadata.setdefault("session_id", self.session_id)
 
         used_keys = {"hostname","container_id","thread_id","duration_ms","records_processed","bytes_processed","error_code","error_message","metadata","job_id","task_id",}
         for k, v in kwargs.items():
@@ -258,9 +260,10 @@ class StructuredLogger:
         """
         quality_score = records_valid / records_processed if records_processed > 0 else 0
 
+        percentage = quality_score * 100
         self.log(
-            LogLevel.INFO if quality_score > 0.95 else LogLevel.WARN,
-            f"Data quality: {quality_score:.2%} ({records_valid}/{records_processed} valid)",
+            LogLevel.INFO if quality_score >= 0.95 else LogLevel.WARN,
+            f"Data quality: {percentage:.1f}% ({records_valid}/{records_processed} valid)",
             event_type="data_quality",
             records_processed=records_processed,
             records_valid=records_valid,

@@ -5,13 +5,15 @@ from __future__ import annotations
 import logging
 import time
 from contextlib import contextmanager
-from typing import Any, Dict, Optional, Union
+from typing import Any, Dict, Optional
 
 from opentelemetry import trace
 from opentelemetry.sdk.trace.export import ConsoleSpanExporter
 
 try:  # Opentelemetry OTLP exporter is optional in local/test envs
-    from opentelemetry.exporter.otlp.proto.grpc.trace_exporter import OTLPSpanExporter  # type: ignore
+    from opentelemetry.exporter.otlp.proto.grpc.trace_exporter import (
+        OTLPSpanExporter,  # type: ignore
+    )
 except ImportError:  # pragma: no cover - exercised when exporters not installed
     OTLPSpanExporter = None  # type: ignore[assignment]
 from opentelemetry.sdk.resources import Resource
@@ -21,7 +23,6 @@ from opentelemetry.trace import Status, StatusCode
 from opentelemetry.trace.span import Span
 
 from aurum.core.settings import get_settings
-
 
 logger = logging.getLogger(__name__)
 

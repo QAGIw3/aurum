@@ -8,13 +8,14 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import time
-from dataclasses import dataclass, field
+from collections.abc import Awaitable
+from dataclasses import dataclass
 from datetime import datetime, timedelta
-from typing import Dict, List, Optional, Callable, Awaitable
 from enum import Enum
+from typing import Callable, Dict, List, Optional
 
 import psutil
+
 from ...observability.metrics import get_metrics_client
 
 logger = logging.getLogger(__name__)

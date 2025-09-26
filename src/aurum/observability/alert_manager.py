@@ -5,15 +5,16 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+from collections.abc import Awaitable
 from datetime import datetime, timedelta
 from enum import Enum
-from typing import Any, Dict, List, Optional, Callable, Awaitable
+from typing import Any, Callable, Dict, List, Optional
 
 from .metrics import (
+    PROMETHEUS_AVAILABLE,
     increment_alerts_fired,
     increment_alerts_suppressed,
     observe_alert_processing_duration,
-    PROMETHEUS_AVAILABLE,
 )
 
 logger = logging.getLogger(__name__)

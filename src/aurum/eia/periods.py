@@ -228,8 +228,8 @@ def build_sql_period_expressions(
     if upper == "HOURLY":
         base_ts = (
             "COALESCE(" \
-            "CAST(UNIX_TIMESTAMP(to_timestamp(" + col + ", 'yyyy-MM-dd''T''HH:mm:ssXXX')) * 1000000 AS BIGINT)," \
-            "CAST(UNIX_TIMESTAMP(to_timestamp(SUBSTR(" + col + ", 1, 19), 'yyyy-MM-dd''T''HH:mm:ss')) * 1000000 AS BIGINT))"
+            "CAST(UNIX_TIMESTAMP(SUBSTR(" + col + ", 1, 19), 'yyyy-MM-dd''T''HH:mm:ss') * 1000000 AS BIGINT)," \
+            "CAST(UNIX_TIMESTAMP(" + col + ", 'yyyy-MM-dd''T''HH:mm:ssXXX') * 1000000 AS BIGINT))"
         )
         start = base_ts
         end = f"({base_ts} + 3600 * 1000000)"

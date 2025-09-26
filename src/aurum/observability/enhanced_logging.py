@@ -22,8 +22,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Any, Dict, Optional
 
-from ..telemetry.context import get_request_id, get_correlation_id
-
+from ..telemetry.context import get_correlation_id, get_request_id
 
 # Context variables for logging
 log_context: ContextVar[Dict[str, Any]] = ContextVar("log_context", default={})

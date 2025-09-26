@@ -4,13 +4,15 @@ from __future__ import annotations
 
 import asyncio
 import time
-from typing import Any, Callable, Deque, Dict, List, Optional, Set
+from typing import Any, Callable, Deque, Dict, List, Optional, Set, Tuple
 from collections import defaultdict, deque
 from dataclasses import dataclass, field
 
 try:
-    from prometheus_client import Counter, Histogram, Gauge
+    from prometheus_client import Counter, Histogram, Gauge, REGISTRY
+    PROMETHEUS_AVAILABLE = True
 except ImportError:
+    PROMETHEUS_AVAILABLE = False
     # Fallback when prometheus is not available
     class Counter:
         def __init__(self, *args, **kwargs): pass
@@ -29,7 +31,30 @@ except ImportError:
 
 from ..telemetry.context import log_structured
 from ..exceptions import ServiceUnavailableException
-from ...observability.profiling import ProfileAsyncContext
+try:
+    from ...observability.profiling import ProfileAsyncContext
+except ImportError:  # pragma: no cover - optional profiling dependency
+    class ProfileAsyncContext:  # type: ignore[override]
+        """No-op async context manager used when profiling is unavailable."""
+
+        def __init__(self, *args, **kwargs):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return False
+
+
+def _create_lock() -> asyncio.Lock:
+    """Create an asyncio.Lock with a guaranteed event loop."""
+
+    try:
+        asyncio.get_event_loop()
+    except RuntimeError:
+        asyncio.set_event_loop(asyncio.new_event_loop())
+    return asyncio.Lock()
 
 
 @dataclass
@@ -118,6 +143,59 @@ class TenantState:
 ANONYMOUS_TENANT = "anonymous"
 
 
+_METRIC_CACHE: Dict[Tuple[str, str, Tuple[str, ...]], Any] = {}
+
+
+def _metric_key(metric_type: str, name: str, labelnames: Optional[List[str]]) -> Tuple[str, str, Tuple[str, ...]]:
+    labels = tuple(labelnames or ())
+    return (metric_type, name, labels)
+
+
+def _get_counter(name: str, documentation: str, labelnames: Optional[List[str]] = None) -> Counter:
+    if not PROMETHEUS_AVAILABLE:
+        return Counter(name, documentation, labelnames or [])  # type: ignore[arg-type]
+    key = _metric_key("counter", name, labelnames)
+    metric = _METRIC_CACHE.get(key)
+    if metric is None:
+        existing = REGISTRY._names_to_collectors.get(name)  # type: ignore[attr-defined]
+        if existing is not None:
+            metric = existing
+        else:
+            metric = Counter(name, documentation, labelnames or [])
+        _METRIC_CACHE[key] = metric
+    return metric
+
+
+def _get_histogram(name: str, documentation: str, labelnames: Optional[List[str]] = None) -> Histogram:
+    if not PROMETHEUS_AVAILABLE:
+        return Histogram(name, documentation, labelnames or [])  # type: ignore[arg-type]
+    key = _metric_key("histogram", name, labelnames)
+    metric = _METRIC_CACHE.get(key)
+    if metric is None:
+        existing = REGISTRY._names_to_collectors.get(name)  # type: ignore[attr-defined]
+        if existing is not None:
+            metric = existing
+        else:
+            metric = Histogram(name, documentation, labelnames or [])
+        _METRIC_CACHE[key] = metric
+    return metric
+
+
+def _get_gauge(name: str, documentation: str, labelnames: Optional[List[str]] = None) -> Gauge:
+    if not PROMETHEUS_AVAILABLE:
+        return Gauge(name, documentation, labelnames or [])  # type: ignore[arg-type]
+    key = _metric_key("gauge", name, labelnames)
+    metric = _METRIC_CACHE.get(key)
+    if metric is None:
+        existing = REGISTRY._names_to_collectors.get(name)  # type: ignore[attr-defined]
+        if existing is not None:
+            metric = existing
+        else:
+            metric = Gauge(name, documentation, labelnames or [])
+        _METRIC_CACHE[key] = metric
+    return metric
+
+
 class ConcurrencyController:
     """Controls concurrency limits with fairness, bursts, and slow-start."""
 
@@ -128,7 +206,7 @@ class ConcurrencyController:
         if self.limits.max_concurrent_requests <= 0:
             raise ValueError("max_concurrent_requests must be positive")
 
-        self._lock = asyncio.Lock()
+        self._lock = _create_lock()
         self._tenant_states: Dict[str, TenantState] = {}
         self._waiting_tenants: Deque[str] = deque()
         self._active_requests = 0
@@ -529,7 +607,7 @@ class RateLimiter:
 
     def __init__(self):
         self._requests: Dict[str, List[float]] = defaultdict(list)
-        self._lock = asyncio.Lock()
+        self._lock = _create_lock()
 
     async def check_rate_limit(
         self,
@@ -581,7 +659,7 @@ class TimeoutController:
     def __init__(self, default_timeout: float = 30.0):
         self.default_timeout = default_timeout
         self._active_timeouts: Set[str] = set()
-        self._lock = asyncio.Lock()
+        self._lock = _create_lock()
 
     async def create_timeout(
         self,
@@ -670,39 +748,39 @@ class ConcurrencyMiddleware:
         self.offload_predicate = offload_predicate
 
         # Metrics (graceful degradation if prometheus not available)
-        self.concurrency_requests = Counter(
+        self.concurrency_requests = _get_counter(
             "aurum_api_concurrency_requests_total",
             "Total concurrency-controlled requests",
-            ["result"]
+            ["result"],
         )
-        self.request_duration = Histogram(
+        self.request_duration = _get_histogram(
             "aurum_api_request_duration_seconds",
             "Request duration in seconds",
-            ["endpoint", "method"]
+            ["endpoint", "method"],
         )
-        self.active_requests = Gauge(
+        self.active_requests = _get_gauge(
             "aurum_api_active_requests",
-            "Number of active requests"
+            "Number of active requests",
         )
-        self.acquire_latency = Histogram(
+        self.acquire_latency = _get_histogram(
             "aurum_api_concurrency_acquire_seconds",
             "Time spent waiting to acquire a concurrency slot",
-            ["tenant"]
+            ["tenant"],
         )
-        self.rejections = Counter(
+        self.rejections = _get_counter(
             "aurum_api_concurrency_rejections_total",
             "Rejected requests by reason",
-            ["reason", "tenant"]
+            ["reason", "tenant"],
         )
-        self.tenant_queue_depth = Gauge(
+        self.tenant_queue_depth = _get_gauge(
             "aurum_api_tenant_queue_depth",
             "Depth of the tenant-specific concurrency queue",
-            ["tenant"]
+            ["tenant"],
         )
-        self.tenant_active = Gauge(
+        self.tenant_active = _get_gauge(
             "aurum_api_tenant_active_requests",
             "Number of active in-flight requests per tenant",
-            ["tenant"]
+            ["tenant"],
         )
 
         def _queue_observer(tenant: str, depth: int) -> None:
@@ -899,7 +977,6 @@ class ConcurrencyMiddleware:
             # Create timeout handle for the request lifecycle
             timeout_handle = await self.timeout_controller.create_timeout(
                 request_id or "unknown",
-                timeout_seconds=30.0,
             )
 
             async def wrapped_send(message):

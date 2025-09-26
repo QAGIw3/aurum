@@ -2,6 +2,14 @@ import sys
 from pathlib import Path
 from typing import Optional, Any
 
+try:  # pragma: no cover - compatibility shim for older pytest-asyncio
+    from _pytest.fixtures import FixtureDef
+
+    if not hasattr(FixtureDef, "unittest"):
+        FixtureDef.unittest = False  # type: ignore[attr-defined]
+except Exception:
+    pass
+
 ROOT = Path(__file__).resolve().parents[1]
 SRC = ROOT / "src"
 for path in (ROOT, SRC):

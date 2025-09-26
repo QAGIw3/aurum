@@ -2,42 +2,28 @@
 
 from __future__ import annotations
 
-import asyncio
 import functools
 import time
-from typing import Any, Awaitable, Callable, Optional, TypeVar
+from collections.abc import Awaitable
+from typing import Callable, TypeVar
 
-from ..telemetry.context import get_request_id, get_tenant_id, get_user_id
+from ..telemetry.context import get_request_id
 from .metrics import (
     increment_api_requests,
-    observe_api_latency,
-    increment_cache_hits,
-    increment_cache_misses,
-    observe_query_duration,
-    increment_rate_limit_requests,
-    increment_rate_limit_rejected,
-    observe_rate_limit_latency,
-    set_worker_active_tasks,
-    observe_worker_task_duration,
-    set_worker_queue_size,
-    increment_worker_errors,
-    increment_ingestion_records,
-    observe_ingestion_latency,
-    set_ingestion_backlog,
-    increment_ingestion_checkpoints,
-    increment_cache_operations,
-    set_cache_size,
-    increment_cache_evictions,
-    increment_cache_ttl_expired,
-    set_db_connections_active,
-    set_db_connections_idle,
-    set_db_connections_total,
-    observe_db_connection_pool_wait,
-    increment_business_transactions,
-    observe_business_value,
     increment_business_errors,
+    increment_business_transactions,
+    increment_cache_operations,
+    increment_ingestion_records,
+    increment_rate_limit_requests,
+    increment_worker_errors,
+    observe_api_latency,
+    observe_business_value,
+    observe_ingestion_latency,
+    observe_query_duration,
+    observe_worker_task_duration,
+    set_worker_active_tasks,
 )
-from .tracing import trace_span, get_current_trace_id, get_current_span_id
+from .tracing import trace_span
 
 T = TypeVar("T")
 

@@ -6,9 +6,15 @@ import json
 import logging
 import sys
 import traceback
-from typing import Any, Dict, Optional
+from typing import Any, Dict
 
-from ..telemetry.context import get_request_id, get_tenant_id, get_user_id, get_correlation_id, get_session_id
+from ..telemetry.context import (
+    get_correlation_id,
+    get_request_id,
+    get_session_id,
+    get_tenant_id,
+    get_user_id,
+)
 
 
 class JsonFormatter(logging.Formatter):
@@ -65,7 +71,7 @@ class ContextFilter(logging.Filter):
 
             # Add trace information if available
             try:
-                from .tracing import get_current_trace_id, get_current_span_id
+                from .tracing import get_current_span_id, get_current_trace_id
 
                 trace_id = get_current_trace_id()
                 span_id = get_current_span_id()

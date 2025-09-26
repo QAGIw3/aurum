@@ -36,6 +36,7 @@ class ClickHouseLogSink:
 
         # Batch storage
         self.batch: List[Dict[str, Any]] = []
+        self._pending_flush: List[Dict[str, Any]] = []
         self.last_flush = time.time()
 
         # Ensure table exists
@@ -87,12 +88,17 @@ class ClickHouseLogSink:
             event: Log event to emit
         """
         # Add to batch
-        self.batch.append(event.to_dict())
+        record = event.to_dict()
+        self.batch.append(record)
+        history_limit = max(1, self.batch_size) * 10
+        if len(self.batch) > history_limit:
+            self.batch = self.batch[-history_limit:]
+        self._pending_flush.append(record)
 
         # Check if we should flush
         now = time.time()
         should_flush = (
-            len(self.batch) >= self.batch_size or
+            len(self._pending_flush) >= self.batch_size or
             now - self.last_flush >= self.flush_interval_seconds
         )
 
@@ -101,13 +107,13 @@ class ClickHouseLogSink:
 
     def flush(self) -> None:
         """Flush batched logs to ClickHouse."""
-        if not self.batch:
+        if not self._pending_flush:
             return
 
         # Prepare batch insert
         batch_data = "\n".join(
             json.dumps(record, default=str)
-            for record in self.batch
+            for record in self._pending_flush
         )
 
         insert_sql = f"""
@@ -125,7 +131,7 @@ class ClickHouseLogSink:
             response.raise_for_status()
 
             # Clear batch on success
-            self.batch.clear()
+            self._pending_flush.clear()
             self.last_flush = time.time()
 
         except Exception as e:

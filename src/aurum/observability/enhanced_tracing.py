@@ -323,7 +323,7 @@ class EnhancedTraceCollector:
                     return TraceContext(
                         trace_id=span_context.trace_id,
                         span_id=span_context.span_id,
-                        trace_flags=f"{span_context.trace_flags"02x"}"
+                        trace_flags=f"{span_context.trace_flags:02x}"
                     )
 
         # Fallback to manual extraction

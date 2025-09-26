@@ -9,13 +9,12 @@ from collections import defaultdict
 from contextlib import asynccontextmanager
 from contextvars import ContextVar, Token
 from dataclasses import dataclass, field
-from typing import Any, Dict, List, Optional, Union
+from typing import Any, Dict, List, Optional
 
+from ..telemetry import OTEL_AVAILABLE, get_tracer
 from ..telemetry.context import get_request_id
-from ..telemetry import get_tracer, OTEL_AVAILABLE
 
 if OTEL_AVAILABLE:
-    from opentelemetry import trace
     from opentelemetry.trace.status import Status, StatusCode
 
 
@@ -80,7 +79,7 @@ class Span:
                     )
 
                 self._otel_span.end()
-            except Exception as e:
+            except Exception:
                 # Silently handle OpenTelemetry errors to avoid breaking application
                 pass
 

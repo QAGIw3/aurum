@@ -6,10 +6,10 @@ import asyncio
 import time
 from collections import defaultdict, deque
 from dataclasses import dataclass, field
-from typing import Dict, List, Optional, Set, Tuple
 from enum import Enum
+from typing import Dict, List, Optional, Set, Tuple
 
-from ..telemetry.context import get_request_id, get_tenant_id, log_structured
+from ..telemetry.context import log_structured
 from .audit import log_rate_limit_violation
 
 

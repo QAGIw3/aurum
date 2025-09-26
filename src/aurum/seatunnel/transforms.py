@@ -121,14 +121,24 @@ class DataQualityTransform:
         select_clauses = ["*"]
         where_clauses = []
 
+        score_components: List[str] = []
+
         for field_assertion in schema_assertion.field_assertions:
             field_name = field_assertion.field_name
 
             # Add field presence check
             if field_assertion.required:
-                select_clauses.append(f"CASE WHEN {field_name} IS NOT NULL THEN 1 ELSE 0 END as {field_name}_present")
+                presence_column = f"{field_name}_present"
+                select_clauses.append(
+                    f"CASE WHEN {field_name} IS NOT NULL THEN 1 ELSE 0 END as {presence_column}"
+                )
+                score_components.append(presence_column)
             else:
-                select_clauses.append(f"CASE WHEN {field_name} IS NULL OR {field_name} IS NOT NULL THEN 1 ELSE 0 END as {field_name}_present")
+                presence_column = f"{field_name}_present"
+                select_clauses.append(
+                    f"CASE WHEN {field_name} IS NULL OR {field_name} IS NOT NULL THEN 1 ELSE 0 END as {presence_column}"
+                )
+                score_components.append(presence_column)
 
             # Add type validation if specified
             if field_assertion.expected_type:
@@ -142,21 +152,46 @@ class DataQualityTransform:
                 }
 
                 type_check = type_checks.get(field_assertion.expected_type.lower(), "TRUE")
-                select_clauses.append(f"CASE WHEN {field_name} IS NULL OR {type_check} THEN 1 ELSE 0 END as {field_name}_type_valid")
+                type_column = f"{field_name}_type_valid"
+                select_clauses.append(
+                    f"CASE WHEN {field_name} IS NULL OR {type_check} THEN 1 ELSE 0 END as {type_column}"
+                )
+                score_components.append(type_column)
 
             # Add value range checks for numeric fields
             if isinstance(field_assertion.min_value, (int, float)):
-                select_clauses.append(f"CASE WHEN {field_name} IS NULL OR {field_name} >= {field_assertion.min_value} THEN 1 ELSE 0 END as {field_name}_min_valid")
+                min_column = f"{field_name}_min_valid"
+                select_clauses.append(
+                    f"CASE WHEN {field_name} IS NULL OR {field_name} >= {field_assertion.min_value} THEN 1 ELSE 0 END as {min_column}"
+                )
+                score_components.append(min_column)
 
             if isinstance(field_assertion.max_value, (int, float)):
-                select_clauses.append(f"CASE WHEN {field_name} IS NULL OR {field_name} <= {field_assertion.max_value} THEN 1 ELSE 0 END as {field_name}_max_valid")
+                max_column = f"{field_name}_max_valid"
+                select_clauses.append(
+                    f"CASE WHEN {field_name} IS NULL OR {field_name} <= {field_assertion.max_value} THEN 1 ELSE 0 END as {max_column}"
+                )
+                score_components.append(max_column)
 
         # Build complete SQL
-        sql = f"""
-            SELECT
-                {', '.join(select_clauses)}
-            FROM input_table
-        """
+        sql_lines = ["SELECT", "    " + ",\n    ".join(select_clauses)]
+
+        if score_components:
+            numerator = " + ".join(score_components)
+            denominator = len(score_components)
+            score_expr = f"({numerator}) * 1.0 / {denominator}"
+            sql_lines.append(f"    , {score_expr} as data_quality_score")
+            sql_lines.append(
+                "    , CASE "
+                "WHEN " + score_expr + " >= 0.95 THEN 'A' "
+                "WHEN " + score_expr + " >= 0.85 THEN 'B' "
+                "WHEN " + score_expr + " >= 0.70 THEN 'C' "
+                "ELSE 'D' END as quality_grade"
+            )
+
+        sql_lines.append("FROM input_table")
+
+        sql = "\n".join(sql_lines)
 
         transform = {
             "plugin_name": "Sql",
