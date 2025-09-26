@@ -3,12 +3,17 @@ from __future__ import annotations
 
 import os
 from datetime import datetime, timedelta
+import sys
 from typing import Any, Tuple
 
 from airflow import DAG
 from airflow.operators.bash import BashOperator
 from airflow.operators.empty import EmptyOperator
 from airflow.operators.python import PythonOperator
+
+_SRC_PATH = os.environ.get("AURUM_PYTHONPATH_ENTRY", "/opt/airflow/src")
+if _SRC_PATH and _SRC_PATH not in sys.path:
+    sys.path.insert(0, _SRC_PATH)
 
 from aurum.airflow_utils import build_failure_callback, build_preflight_callable
 from aurum.airflow_utils import iso as iso_utils
@@ -45,19 +50,8 @@ SOURCES = (
 )
 
 
-def build_isone_lmp_task(
-    task_prefix: str,
-    *,
-    market: str,
-    url_var: str,
-    interval_seconds: int,
-    source_name: str,
-    pool: str | None = None,
-) -> Tuple[BashOperator, BashOperator, PythonOperator]:
-    kafka_bootstrap = "{{ var.value.get('aurum_kafka_bootstrap', 'localhost:9092') }}"
-    schema_registry = "{{ var.value.get('aurum_schema_registry', 'http://localhost:8081') }}"
-
-    env_parts = [
+def _isone_env_entries(*, url_var: str, market: str, interval_seconds: int) -> list[str]:
+    return [
         f"ISONE_URL=\"{{{{ var.value.get('{url_var}') }}}}\"",
         f"ISONE_MARKET=\"{market}\"",
         "ISONE_TOPIC=\"aurum.iso.isone.lmp.v1\"",
@@ -68,42 +62,7 @@ def build_isone_lmp_task(
         "ISONE_ENERGY_COLUMN=\"{{ var.value.get('aurum_isone_energy_column', 'EnergyComponent') }}\"",
         "ISONE_CONGESTION_COLUMN=\"{{ var.value.get('aurum_isone_congestion_column', 'CongestionComponent') }}\"",
         "ISONE_LOSS_COLUMN=\"{{ var.value.get('aurum_isone_loss_column', 'LossComponent') }}\"",
-        f"KAFKA_BOOTSTRAP_SERVERS='{kafka_bootstrap}'",
-        f"SCHEMA_REGISTRY_URL='{schema_registry}'",
     ]
-    env_line = " ".join(env_parts)
-
-    render = BashOperator(
-        task_id=f"{task_prefix}_render",
-        bash_command=iso_utils.build_render_command(
-            "isone_lmp_to_kafka",
-            env_assignments=f"AURUM_EXECUTE_SEATUNNEL=0 {env_line}",
-            bin_path=BIN_PATH,
-            pythonpath_entry=PYTHONPATH_ENTRY,
-            debug_dump_env=True,
-        ),
-        execution_timeout=timedelta(minutes=10),
-        pool=pool,
-    )
-
-    exec_task = BashOperator(
-        task_id=f"{task_prefix}_execute",
-        bash_command=iso_utils.build_k8s_command(
-            "isone_lmp_to_kafka",
-            bin_path=BIN_PATH,
-            pythonpath_entry=PYTHONPATH_ENTRY,
-            timeout=600,
-        ),
-        execution_timeout=timedelta(minutes=20),
-        pool=pool,
-    )
-
-    watermark = PythonOperator(
-        task_id=f"{task_prefix}_watermark",
-        python_callable=iso_utils.make_watermark_callable(source_name),
-    )
-
-    return render, exec_task, watermark
 
 
 with DAG(
@@ -139,22 +98,22 @@ with DAG(
         python_callable=lambda: iso_utils.register_sources(SOURCES),
     )
 
-    da_render, da_exec, da_watermark = build_isone_lmp_task(
+    da_render, da_exec, da_watermark = iso_utils.create_seatunnel_ingest_chain(
         "isone_da",
-        market="DAY_AHEAD",
-        url_var="aurum_isone_da_url",
-        interval_seconds=3600,
+        job_name="isone_lmp_to_kafka",
         source_name="isone_da_lmp",
+        env_entries=_isone_env_entries(url_var="aurum_isone_da_url", market="DAY_AHEAD", interval_seconds=3600),
         pool="api_isone",
+        watermark_policy="hour",
     )
 
-    rt_render, rt_exec, rt_watermark = build_isone_lmp_task(
+    rt_render, rt_exec, rt_watermark = iso_utils.create_seatunnel_ingest_chain(
         "isone_rt",
-        market="REAL_TIME",
-        url_var="aurum_isone_rt_url",
-        interval_seconds=300,
+        job_name="isone_lmp_to_kafka",
         source_name="isone_rt_lmp",
+        env_entries=_isone_env_entries(url_var="aurum_isone_rt_url", market="REAL_TIME", interval_seconds=300),
         pool="api_isone",
+        watermark_policy="hour",
     )
 
     end = EmptyOperator(task_id="end")

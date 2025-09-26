@@ -3,12 +3,17 @@ from __future__ import annotations
 
 import os
 from datetime import datetime, timedelta
+import sys
 from typing import Tuple
 
 from airflow import DAG
 from airflow.operators.bash import BashOperator
 from airflow.operators.empty import EmptyOperator
 from airflow.operators.python import PythonOperator
+
+_SRC_PATH = os.environ.get("AURUM_PYTHONPATH_ENTRY", "/opt/airflow/src")
+if _SRC_PATH and _SRC_PATH not in sys.path:
+    sys.path.insert(0, _SRC_PATH)
 
 from aurum.airflow_utils import build_failure_callback, build_preflight_callable
 from aurum.airflow_utils import iso as iso_utils
@@ -53,47 +58,20 @@ def build_asm_task(
     source_name: str,
     pool: str | None = None,
 ) -> Tuple[BashOperator, BashOperator, PythonOperator]:
-    env_parts = [
-        f"MISO_ASM_URL='{{{{ var.value.get('{url_var}') }}}}'",
-        f"MISO_ASM_MARKET='{market}'",
-        "MISO_ASM_TOPIC='{{ var.value.get('aurum_miso_asm_topic', 'aurum.iso.miso.asm.v1') }}'",
-        "MISO_ASM_SUBJECT='{{ var.value.get('aurum_miso_asm_subject', 'aurum.iso.miso.asm.v1-value') }}'",
-        "KAFKA_BOOTSTRAP_SERVERS='{{ var.value.get('aurum_kafka_bootstrap', 'kafka:9092') }}'",
-        "SCHEMA_REGISTRY_URL='{{ var.value.get('aurum_schema_registry', 'http://localhost:8081') }}'",
+    env_entries = [
+        f"MISO_ASM_URL=\"{{{{ var.value.get('{url_var}') }}}}\"",
+        f"MISO_ASM_MARKET=\"{market}\"",
+        "MISO_ASM_TOPIC=\"{{ var.value.get('aurum_miso_asm_topic', 'aurum.iso.miso.asm.v1') }}\"",
+        "MISO_ASM_SUBJECT=\"{{ var.value.get('aurum_miso_asm_subject', 'aurum.iso.miso.asm.v1-value') }}\"",
     ]
-    env_line = " ".join(env_parts)
-
-    render = BashOperator(
-        task_id=f"{task_prefix}_render",
-        bash_command=iso_utils.build_render_command(
-            "miso_asm_to_kafka",
-            env_assignments=f"AURUM_EXECUTE_SEATUNNEL=0 {env_line}",
-            bin_path=BIN_PATH,
-            pythonpath_entry=PYTHONPATH_ENTRY,
-            debug_dump_env=True,
-        ),
-        execution_timeout=timedelta(minutes=10),
+    return iso_utils.create_seatunnel_ingest_chain(
+        task_prefix,
+        job_name="miso_asm_to_kafka",
+        source_name=source_name,
+        env_entries=env_entries,
         pool=pool,
+        watermark_policy="hour",
     )
-
-    exec_task = BashOperator(
-        task_id=f"{task_prefix}_execute",
-        bash_command=iso_utils.build_k8s_command(
-            "miso_asm_to_kafka",
-            bin_path=BIN_PATH,
-            pythonpath_entry=PYTHONPATH_ENTRY,
-            timeout=600,
-        ),
-        execution_timeout=timedelta(minutes=20),
-        pool=pool,
-    )
-
-    watermark = PythonOperator(
-        task_id=f"{task_prefix}_watermark",
-        python_callable=iso_utils.make_watermark_callable(source_name),
-    )
-
-    return render, exec_task, watermark
 
 
 with DAG(

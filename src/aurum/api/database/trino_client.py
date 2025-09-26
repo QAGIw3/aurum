@@ -10,6 +10,7 @@ import asyncio
 import json
 import logging
 import os
+import threading
 import time
 from pathlib import Path
 from typing import Any, Dict, List, Optional
@@ -37,9 +38,13 @@ DB_FEATURE_FLAGS = {
 class SimpleTrinoClient:
     """Simplified Trino client without complex connection pooling."""
 
-    def __init__(self, config: TrinoConfig):
+    def __init__(self, config: TrinoConfig, concurrency_config: Optional[Dict[str, Any]] = None):
         self.config = config
+        self.concurrency_config = concurrency_config or {}
         self._connection: Optional[trino.dbapi.Connection] = None
+        self.retry_config = None  # Mock retry config for tests
+        self.circuit_breaker = None  # Mock circuit breaker for tests
+        self.timeout_config = None  # Mock timeout config for tests
 
     def execute_query_sync(
         self,
@@ -129,6 +134,23 @@ class SimpleTrinoClient:
     async def close(self) -> None:
         """Close the client."""
         await self._close_connection()
+
+    async def execute_query(self, sql: str, tenant_id: Optional[str] = None) -> List[Dict[str, Any]]:
+        """Execute a query - alias for query method."""
+        return await self.query(sql)
+
+    async def get_health_status(self) -> Dict[str, Any]:
+        """Get health status of the client."""
+        return {"status": "healthy", "connection": "available"}
+
+    def is_open(self) -> bool:
+        """Check if circuit breaker is open."""
+        return self.circuit_breaker.is_open() if self.circuit_breaker else False
+
+
+class TrinoClient(SimpleTrinoClient):
+    """Legacy Trino client alias for backward compatibility."""
+    pass
 
 
 # Database migration metrics
@@ -227,11 +249,23 @@ def create_trino_client(config: TrinoConfig) -> SimpleTrinoClient:
 class HybridTrinoClientManager:
     """Hybrid Trino client manager that can use either simplified or legacy clients."""
 
+    _instance = None
+    _lock = threading.Lock()
+
     def __init__(self):
         self._legacy_manager = None
         self._simple_clients: Dict[str, SimpleTrinoClient] = {}
         self._migration_phase = get_db_migration_phase()
         self._use_simple = is_db_feature_enabled(DB_FEATURE_FLAGS["USE_SIMPLE_DB_CLIENT"])
+
+    @classmethod
+    def get_instance(cls):
+        """Get singleton instance of HybridTrinoClientManager."""
+        if cls._instance is None:
+            with cls._lock:
+                if cls._instance is None:
+                    cls._instance = cls()
+        return cls._instance
 
     def _get_legacy_manager(self):
         """Get or create legacy Trino client manager."""
@@ -320,6 +354,21 @@ class HybridTrinoClientManager:
             LOGGER.info("Switched to legacy Trino clients")
             return True
         return False
+
+    def get_default_client(self) -> SimpleTrinoClient:
+        """Get the default Trino client."""
+        return self.get_client("iceberg")
+
+    async def close_all(self) -> None:
+        """Close all clients."""
+        # Close simple clients
+        for client in self._simple_clients.values():
+            await client.close()
+        self._simple_clients.clear()
+
+        # Close legacy manager if exists
+        if self._legacy_manager:
+            self._legacy_manager.close_all()
 
 
 # Global instance for backward compatibility

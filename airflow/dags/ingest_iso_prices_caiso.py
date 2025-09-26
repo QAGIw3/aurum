@@ -3,12 +3,17 @@ from __future__ import annotations
 
 import os
 from datetime import timedelta
+import sys
 from typing import Any
 
 from airflow import DAG
 from airflow.operators.bash import BashOperator
 from airflow.operators.empty import EmptyOperator
 from airflow.operators.python import PythonOperator
+
+_SRC_PATH = os.environ.get("AURUM_PYTHONPATH_ENTRY", "/opt/airflow/src")
+if _SRC_PATH and _SRC_PATH not in sys.path:
+    sys.path.insert(0, _SRC_PATH)
 
 from aurum.airflow_utils import build_failure_callback, build_preflight_callable
 from aurum.airflow_utils import iso as iso_utils
@@ -101,43 +106,19 @@ with DAG(
         pool="api_caiso",
     )
 
-    kafka_bootstrap = "{{ var.value.get('aurum_kafka_bootstrap', 'localhost:9092') }}"
-    schema_registry = "{{ var.value.get('aurum_schema_registry', 'http://localhost:8081') }}"
-
-    seatunnel_command = iso_utils.build_render_command(
+    render_task, exec_k8s, caiso_watermark = iso_utils.create_seatunnel_ingest_chain(
+        "caiso_lmp",
         job_name="caiso_lmp_to_kafka",
-        env_assignments=(
-            f"AURUM_EXECUTE_SEATUNNEL=0 CAISO_INPUT_JSON={staging_path} "
-            f"KAFKA_BOOTSTRAP_SERVERS='{kafka_bootstrap}' "
-            f"SCHEMA_REGISTRY_URL='{schema_registry}'"
-        ),
-        bin_path=BIN_PATH,
-        pythonpath_entry=PYTHONPATH_ENTRY,
-    )
-
-    seatunnel_task = BashOperator(
-        task_id="caiso_lmp_seatunnel",
-        bash_command=seatunnel_command,
-        execution_timeout=timedelta(minutes=15),
-    )
-    exec_k8s = BashOperator(
-        task_id="caiso_execute_k8s",
-        bash_command=iso_utils.build_k8s_command(
-            "caiso_lmp_to_kafka",
-            bin_path=BIN_PATH,
-            pythonpath_entry=PYTHONPATH_ENTRY,
-            timeout=600,
-        ),
-        execution_timeout=timedelta(minutes=20),
+        source_name="caiso_prc_lmp",
+        env_entries=[
+            f"CAISO_INPUT_JSON={staging_path}",
+        ],
+        pool="api_caiso",
+        watermark_policy="hour",
     )
 
     end = EmptyOperator(task_id="end")
 
-    caiso_watermark = PythonOperator(
-        task_id="caiso_watermark",
-        python_callable=iso_utils.make_watermark_callable("caiso_prc_lmp"),
-    )
-
-    start >> preflight >> register_sources >> stage_caiso >> seatunnel_task >> exec_k8s >> caiso_watermark >> end
+    start >> preflight >> register_sources >> stage_caiso >> render_task >> exec_k8s >> caiso_watermark >> end
 
     dag.on_failure_callback = build_failure_callback(source="aurum.airflow.ingest_iso_prices_caiso")

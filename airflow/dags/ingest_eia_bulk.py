@@ -5,6 +5,7 @@ import json
 import os
 import subprocess
 from datetime import datetime, timedelta, timezone
+import sys
 from pathlib import Path
 from typing import Any
 
@@ -23,23 +24,30 @@ CONFIG_PATH = Path(__file__).resolve().parents[2] / "config" / "eia_bulk_dataset
 MANIFEST_SCRIPT = Path(__file__).resolve().parents[2] / "scripts" / "eia" / "bulk_manifest.py"
 MANIFEST_OUTPUT = Path(__file__).resolve().parents[2] / "artifacts" / "eia_bulk_manifest.json"
 
-DEFAULT_ARGS: dict[str, Any] = {
-    "owner": "aurum-data",
-    "depends_on_past": False,
-    "email_on_failure": True,
-    "email": ["aurum-ops@example.com", "data-team@aurum.com", "energy-team@aurum.com"],
-    "retries": 5,
-    "retry_delay": timedelta(minutes=15),
-    "retry_exponential_backoff": True,
-    "max_retry_delay": timedelta(minutes=60),
-    "execution_timeout": timedelta(hours=8),
-    "sla": timedelta(hours=48),
-    "pool": "api_eia",
-    "pool_slots": 1,
-    "on_failure_callback": None,
-    "on_success_callback": None,
-    "on_retry_callback": None,
-}
+_SRC_PATH = os.environ.get("AURUM_PYTHONPATH_ENTRY", "/opt/airflow/src")
+if _SRC_PATH and _SRC_PATH not in sys.path:
+    sys.path.insert(0, _SRC_PATH)
+
+from aurum.airflow_utils import build_default_args
+from aurum.airflow_utils import iso as iso_utils
+
+DEFAULT_ARGS: dict[str, Any] = build_default_args(
+    owner="aurum-data",
+    depends_on_past=False,
+    email_on_failure=True,
+    email=("aurum-ops@example.com", "data-team@aurum.com", "energy-team@aurum.com"),
+    retries=5,
+    retry_delay=timedelta(minutes=15),
+    retry_exponential_backoff=True,
+    max_retry_delay=timedelta(minutes=60),
+    execution_timeout=timedelta(hours=8),
+    sla=timedelta(hours=48),
+    pool="api_eia",
+    pool_slots=1,
+    on_failure_callback=None,
+    on_success_callback=None,
+    on_retry_callback=None,
+)
 
 
 def _shell_quote(value: str) -> str:
@@ -236,11 +244,7 @@ def _update_watermark(source_name: str, logical_date: datetime) -> None:
 
 
 def _make_watermark_callable(source_name: str):
-    def _call(**context: Any) -> None:
-        logical_date: datetime = context["logical_date"]
-        _update_watermark(source_name, logical_date)
-
-    return _call
+    return iso_utils.make_watermark_callable(source_name)
 
 
 with DAG(

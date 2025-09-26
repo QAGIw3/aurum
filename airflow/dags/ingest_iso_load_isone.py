@@ -3,12 +3,17 @@ from __future__ import annotations
 
 import os
 from datetime import datetime, timedelta
+import sys
 from typing import Any, Tuple
 
 from airflow import DAG
 from airflow.operators.bash import BashOperator
 from airflow.operators.empty import EmptyOperator
 from airflow.operators.python import PythonOperator
+
+_SRC_PATH = os.environ.get("AURUM_PYTHONPATH_ENTRY", "/opt/airflow/src")
+if _SRC_PATH and _SRC_PATH not in sys.path:
+    sys.path.insert(0, _SRC_PATH)
 
 from aurum.airflow_utils import build_failure_callback, build_preflight_callable
 from aurum.airflow_utils import iso as iso_utils
@@ -53,11 +58,8 @@ def build_isone_load_task(
     interval_seconds: int,
     source_name: str,
     pool: str | None = None,
-) -> Tuple[BashOperator, BashOperator, PythonOperator]:
-    kafka_bootstrap = "{{ var.value.get('aurum_kafka_bootstrap', 'localhost:9092') }}"
-    schema_registry = "{{ var.value.get('aurum_schema_registry', 'http://localhost:8081') }}"
-
-    env_parts = [
+):
+    env_entries = [
         f"ISONE_URL=\"{{{{ var.value.get('{url_var}') }}}}\"",
         f"ISONE_DATA_TYPE=\"{data_type}\"",
         f"ISONE_TOPIC=\"aurum.iso.isone.{data_type}.v1\"",
@@ -65,42 +67,15 @@ def build_isone_load_task(
         "ISONE_TIME_FORMAT=\"{{ var.value.get('aurum_isone_time_format', 'yyyy-MM-dd HH:mm:ss') }}\"",
         "ISONE_LOCATION_COLUMN=\"{{ var.value.get('aurum_isone_location_column', 'LocationID') }}\"",
         f"ISONE_VALUE_COLUMN=\"{{{{ var.value.get('aurum_isone_{data_type}_column', '{data_type}') }}}}\"",
-        f"KAFKA_BOOTSTRAP_SERVERS='{kafka_bootstrap}'",
-        f"SCHEMA_REGISTRY_URL='{schema_registry}'",
     ]
-    env_line = " ".join(env_parts)
-
-    render = BashOperator(
-        task_id=f"{task_prefix}_render",
-        bash_command=iso_utils.build_render_command(
-            f"isone_{data_type}_to_kafka",
-            env_assignments=f"AURUM_EXECUTE_SEATUNNEL=0 {env_line}",
-            bin_path=BIN_PATH,
-            pythonpath_entry=PYTHONPATH_ENTRY,
-            debug_dump_env=True,
-        ),
-        execution_timeout=timedelta(minutes=10),
+    return iso_utils.create_seatunnel_ingest_chain(
+        task_prefix,
+        job_name=f"isone_{data_type}_to_kafka",
+        source_name=source_name,
+        env_entries=env_entries,
         pool=pool,
+        watermark_policy="hour" if interval_seconds < 3600 else "day",
     )
-
-    exec_task = BashOperator(
-        task_id=f"{task_prefix}_execute",
-        bash_command=iso_utils.build_k8s_command(
-            f"isone_{data_type}_to_kafka",
-            bin_path=BIN_PATH,
-            pythonpath_entry=PYTHONPATH_ENTRY,
-            timeout=600,
-        ),
-        execution_timeout=timedelta(minutes=20),
-        pool=pool,
-    )
-
-    watermark = PythonOperator(
-        task_id=f"{task_prefix}_watermark",
-        python_callable=iso_utils.make_watermark_callable(source_name),
-    )
-
-    return render, exec_task, watermark
 
 
 with DAG(

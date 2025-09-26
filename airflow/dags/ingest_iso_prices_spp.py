@@ -3,12 +3,17 @@ from __future__ import annotations
 
 import os
 from datetime import datetime, timedelta, timezone
+import sys
 from typing import Any, Tuple
 
 from airflow import DAG
 from airflow.operators.bash import BashOperator
 from airflow.operators.empty import EmptyOperator
 from airflow.operators.python import PythonOperator
+
+_SRC_PATH = os.environ.get("AURUM_PYTHONPATH_ENTRY", "/opt/airflow/src")
+if _SRC_PATH and _SRC_PATH not in sys.path:
+    sys.path.insert(0, _SRC_PATH)
 
 from aurum.airflow_utils import build_failure_callback, build_preflight_callable
 from aurum.airflow_utils import iso as iso_utils
@@ -103,50 +108,20 @@ def build_pipeline(
         pool="api_spp",
     )
 
-    kafka_bootstrap = "{{ var.value.get('aurum_kafka_bootstrap', 'localhost:9092') }}"
-    schema_registry = "{{ var.value.get('aurum_schema_registry', 'http://localhost:8081') }}"
-
-    env_line = (
-        f"AURUM_EXECUTE_SEATUNNEL=0 SPP_INPUT_JSON={staging_path} "
-        f"KAFKA_BOOTSTRAP_SERVERS='{kafka_bootstrap}' "
-        f"SCHEMA_REGISTRY_URL='{schema_registry}'"
-    )
-    extra_lines = [
-        "export ISO_LMP_SCHEMA_PATH=/opt/airflow/scripts/kafka/schemas/iso.lmp.v1.avsc",
-    ]
-    seatunnel_command = iso_utils.build_render_command(
+    render_task, run_k8s_task, watermark_task = iso_utils.create_seatunnel_ingest_chain(
+        f"spp_{prefix}",
         job_name="spp_lmp_to_kafka",
-        env_assignments=env_line,
-        bin_path=BIN_PATH,
-        pythonpath_entry=PYTHONPATH_ENTRY,
-        debug_dump_env=True,
-        extra_lines=extra_lines,
+        source_name=source_name,
+        env_entries=[
+            f"SPP_INPUT_JSON={staging_path}",
+            # Retain schema path if template needs it
+            "ISO_LMP_SCHEMA_PATH=/opt/airflow/scripts/kafka/schemas/iso.lmp.v1.avsc",
+        ],
+        pool="api_spp",
+        watermark_policy="hour",
     )
 
-    seatunnel_task = BashOperator(
-        task_id=f"spp_{prefix}_seatunnel",
-        bash_command=seatunnel_command,
-        execution_timeout=timedelta(minutes=15),
-    )
-
-    run_k8s_command = iso_utils.build_k8s_command(
-        "spp_lmp_to_kafka",
-        bin_path=BIN_PATH,
-        pythonpath_entry=PYTHONPATH_ENTRY,
-        timeout=600,
-    )
-    run_k8s_task = BashOperator(
-        task_id=f"spp_{prefix}_execute_k8s",
-        bash_command=run_k8s_command,
-        execution_timeout=timedelta(minutes=20),
-    )
-
-    watermark_task = PythonOperator(
-        task_id=f"spp_{prefix}_watermark",
-        python_callable=iso_utils.make_watermark_callable(source_name),
-    )
-
-    return stage_task, seatunnel_task, run_k8s_task, watermark_task
+    return stage_task, render_task, run_k8s_task, watermark_task
 
 
 with DAG(

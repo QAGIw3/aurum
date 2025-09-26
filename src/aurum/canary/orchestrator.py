@@ -292,7 +292,7 @@ class CanaryDeploymentOrchestrator:
 
         if error_rate > context.max_error_rate_percent:
             logger.warning(
-                f"High error rate detected: {error_rate".1f"}% > {context.max_error_rate_percent}%"
+                f"High error rate detected: {error_rate:.1f}% > {context.max_error_rate_percent}%"
             )
             return DeploymentDecision.ROLLBACK
 

@@ -184,3 +184,83 @@ __all__ = [
     "build_render_command",
     "build_k8s_command",
 ]
+
+
+def create_seatunnel_ingest_chain(
+    task_prefix: str,
+    *,
+    job_name: str,
+    source_name: str,
+    env_entries: Iterable[str],
+    pool: str | None = None,
+    queue: str | None = None,
+    pre_lines: Iterable[str] | None = None,
+    extra_lines: Iterable[str] | None = None,
+    render_timeout_minutes: int = 10,
+    execute_timeout_minutes: int = 20,
+    k8s_timeout_seconds: int = 600,
+    watermark_policy: str = "exact",
+):
+    """Create a standard render/execute/watermark task chain for a SeaTunnel job.
+
+    Returns a tuple of (render_task, execute_task, watermark_task).
+    """
+    # Import Airflow operators lazily to avoid import issues in non-Airflow contexts
+    from datetime import timedelta
+    from airflow.operators.bash import BashOperator
+    from airflow.operators.python import PythonOperator
+
+    bin_path = os.environ.get("AURUM_BIN_PATH", ".venv/bin:$PATH")
+    pythonpath_entry = os.environ.get("AURUM_PYTHONPATH_ENTRY", "/opt/airflow/src")
+
+    kafka_bootstrap = "{{ var.value.get('aurum_kafka_bootstrap', 'localhost:9092') }}"
+    schema_registry = "{{ var.value.get('aurum_schema_registry', 'http://localhost:8081') }}"
+
+    env_line = " ".join(
+        list(env_entries)
+        + [
+            f"KAFKA_BOOTSTRAP_SERVERS='{kafka_bootstrap}'",
+            f"SCHEMA_REGISTRY_URL='{schema_registry}'",
+        ]
+    )
+
+    # If CeleryExecutor is used, routing to a Celery queue can be helpful.
+    # Default to using the pool name as the queue if queue is not explicitly set.
+    task_queue = queue or pool
+
+    render = BashOperator(
+        task_id=f"{task_prefix}_render",
+        bash_command=build_render_command(
+            job_name,
+            env_assignments=f"AURUM_EXECUTE_SEATUNNEL=0 {env_line}",
+            bin_path=bin_path,
+            pythonpath_entry=pythonpath_entry,
+            debug_dump_env=True,
+            pre_lines=pre_lines,
+            extra_lines=extra_lines,
+        ),
+        execution_timeout=timedelta(minutes=render_timeout_minutes),
+        **({"pool": pool} if pool else {}),
+        **({"queue": task_queue} if task_queue else {}),
+    )
+
+    execute = BashOperator(
+        task_id=f"{task_prefix}_execute",
+        bash_command=build_k8s_command(
+            job_name,
+            bin_path=bin_path,
+            pythonpath_entry=pythonpath_entry,
+            timeout=k8s_timeout_seconds,
+            extra_lines=extra_lines,
+        ),
+        execution_timeout=timedelta(minutes=execute_timeout_minutes),
+        **({"pool": pool} if pool else {}),
+        **({"queue": task_queue} if task_queue else {}),
+    )
+
+    watermark = PythonOperator(
+        task_id=f"{task_prefix}_watermark",
+        python_callable=make_watermark_callable(source_name, policy=watermark_policy),
+    )
+
+    return render, execute, watermark

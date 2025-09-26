@@ -31,7 +31,7 @@ from aurum.api.database.trino_client import (
 )
 from aurum.common.circuit_breaker import CircuitBreaker
 from aurum.staleness.auto_remediation import CircuitBreakerState
-from aurum.performance.connection_pool import ConnectionPool
+from aurum.api.performance import ConnectionPool
 from aurum.external.collect.base import RetryConfig
 from aurum.api.config import TrinoConfig
 from aurum.api.database.config import TrinoConfig as DatabaseTrinoConfig
@@ -253,7 +253,7 @@ class TestCircuitBreaker:
 
     @pytest.fixture
     def circuit_breaker(self):
-        return CircuitBreaker(failure_threshold=3, timeout_seconds=1.0)
+        return CircuitBreaker(failure_threshold=3, recovery_timeout=1.0)
 
     def test_circuit_breaker_initial_state(self, circuit_breaker):
         """Test initial circuit breaker state."""
@@ -753,6 +753,33 @@ class TestConcurrencyMiddleware:
 
 class TestIntegrationScenarios:
     """Test integration scenarios for concurrency controls."""
+
+    @pytest.fixture
+    def app(self):
+        async def mock_app(scope, receive, send):
+            await send({
+                "type": "http.response.start",
+                "status": 200,
+                "headers": [(b"content-type", b"application/json")]
+            })
+            await send({
+                "type": "http.response.body",
+                "body": b'{"message": "success"}'
+            })
+        return mock_app
+
+    @pytest.fixture
+    def middleware(self, app):
+        concurrency_controller = create_concurrency_controller(max_concurrent_requests=10)
+        rate_limiter = create_rate_limiter()
+        timeout_controller = create_timeout_controller()
+
+        return ConcurrencyMiddleware(
+            app=app,
+            concurrency_controller=concurrency_controller,
+            rate_limiter=rate_limiter,
+            timeout_controller=timeout_controller,
+        )
 
     async def test_concurrent_requests_with_different_tenants(self):
         """Test concurrent requests from different tenants."""

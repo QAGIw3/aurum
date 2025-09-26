@@ -3,12 +3,17 @@ from __future__ import annotations
 
 import os
 from datetime import datetime, timedelta
+import sys
 from typing import Any
 
 from airflow import DAG
 from airflow.operators.bash import BashOperator
 from airflow.operators.empty import EmptyOperator
 from airflow.operators.python import PythonOperator
+
+_SRC_PATH = os.environ.get("AURUM_PYTHONPATH_ENTRY", "/opt/airflow/src")
+if _SRC_PATH and _SRC_PATH not in sys.path:
+    sys.path.insert(0, _SRC_PATH)
 
 from aurum.airflow_utils import build_failure_callback, build_preflight_callable
 from aurum.airflow_utils import iso as iso_utils
@@ -83,57 +88,31 @@ with DAG(
         f"{VENV_PYTHON} scripts/secrets/pull_vault_env.py {mapping_flags} --format shell)\" || true"
     )
 
-    kafka_bootstrap = "{{ var.value.get('aurum_kafka_bootstrap', 'localhost:9092') }}"
-    schema_registry = "{{ var.value.get('aurum_schema_registry', 'http://localhost:8081') }}"
-
-    env_lines = [
-        "export PJM_TOPIC=\"{{ var.value.get('aurum_pjm_topic', 'aurum.iso.pjm.lmp.v1') }}\"",
-        # PJM Data Miner expects interval times in EPT (Eastern). Use Airflow TZ conversion.
-        "export PJM_INTERVAL_START=\"{{ data_interval_start.in_timezone('America/New_York').isoformat() }}\"",
-        "export PJM_INTERVAL_END=\"{{ data_interval_end.in_timezone('America/New_York').isoformat() }}\"",
-        "export PJM_ROW_LIMIT=\"{{ var.value.get('aurum_pjm_row_limit', '10000') }}\"",
-        "export PJM_MARKET=\"{{ var.value.get('aurum_pjm_market', 'DAY_AHEAD') }}\"",
-        "export PJM_LOCATION_TYPE=\"{{ var.value.get('aurum_pjm_location_type', 'NODE') }}\"",
-        "export PJM_ENDPOINT=\"{{ var.value.get('aurum_pjm_endpoint', 'https://api.pjm.com/api/v1/da_hrl_lmps') }}\"",
-        "export AURUM_KAFKA_BOOTSTRAP_SERVERS=\"" + kafka_bootstrap + "\"",
-        "export AURUM_SCHEMA_REGISTRY_URL=\"" + schema_registry + "\"",
-        # Optional subject override
-        "export PJM_SUBJECT=\"{{ var.value.get('aurum_pjm_subject', 'aurum.iso.pjm.lmp.v1-value') }}\"",
-        # Optional registry path for enrichment
-        "export ISO_LOCATION_REGISTRY=\"{{ var.value.get('aurum_iso_location_registry', 'config/iso_nodes.csv') }}\"",
+    env_entries = [
+        "PJM_TOPIC=\"{{ var.value.get('aurum_pjm_topic', 'aurum.iso.pjm.lmp.v1') }}\"",
+        # EPT (Eastern) time window for PJM Data Miner
+        "PJM_INTERVAL_START=\"{{ data_interval_start.in_timezone('America/New_York').isoformat() }}\"",
+        "PJM_INTERVAL_END=\"{{ data_interval_end.in_timezone('America/New_York').isoformat() }}\"",
+        "PJM_ROW_LIMIT=\"{{ var.value.get('aurum_pjm_row_limit', '10000') }}\"",
+        "PJM_MARKET=\"{{ var.value.get('aurum_pjm_market', 'DAY_AHEAD') }}\"",
+        "PJM_LOCATION_TYPE=\"{{ var.value.get('aurum_pjm_location_type', 'NODE') }}\"",
+        "PJM_ENDPOINT=\"{{ var.value.get('aurum_pjm_endpoint', 'https://api.pjm.com/api/v1/da_hrl_lmps') }}\"",
+        # Optional subject override and registry enrichment
+        "PJM_SUBJECT=\"{{ var.value.get('aurum_pjm_subject', 'aurum.iso.pjm.lmp.v1-value') }}\"",
+        "ISO_LOCATION_REGISTRY=\"{{ var.value.get('aurum_iso_location_registry', 'config/iso_nodes.csv') }}\"",
+        # Duplicate AURUM_* vars if templates expect them
+        "AURUM_KAFKA_BOOTSTRAP_SERVERS=\"{{ var.value.get('aurum_kafka_bootstrap', 'localhost:9092') }}\"",
+        "AURUM_SCHEMA_REGISTRY_URL=\"{{ var.value.get('aurum_schema_registry', 'http://localhost:8081') }}\"",
     ]
 
-    render_cmd = iso_utils.build_render_command(
+    render, exec_k8s, watermark = iso_utils.create_seatunnel_ingest_chain(
+        "pjm_da",
         job_name="pjm_lmp_to_kafka",
-        env_assignments="AURUM_EXECUTE_SEATUNNEL=0",
-        bin_path=BIN_PATH,
-        pythonpath_entry=PYTHONPATH_ENTRY,
-        debug_dump_env=True,
-        pre_lines=[pull_cmd, *env_lines],
-    )
-
-    render = BashOperator(
-        task_id="pjm_da_render",
-        bash_command=render_cmd,
-        execution_timeout=timedelta(minutes=10),
+        source_name="pjm_da_lmp",
+        env_entries=env_entries,
         pool="api_pjm",
-    )
-
-    exec_k8s = BashOperator(
-        task_id="pjm_da_execute_k8s",
-        bash_command=iso_utils.build_k8s_command(
-            "pjm_lmp_to_kafka",
-            bin_path=BIN_PATH,
-            pythonpath_entry=PYTHONPATH_ENTRY,
-            timeout=600,
-        ),
-        execution_timeout=timedelta(minutes=20),
-        pool="api_pjm",
-    )
-
-    watermark = PythonOperator(
-        task_id="pjm_da_watermark",
-        python_callable=iso_utils.make_watermark_callable("pjm_da_lmp"),
+        pre_lines=[pull_cmd],
+        watermark_policy="hour",
     )
 
     end = EmptyOperator(task_id="end")
@@ -141,4 +120,3 @@ with DAG(
     start >> preflight >> register_sources >> render >> exec_k8s >> watermark >> end
 
     dag.on_failure_callback = build_failure_callback(source="aurum.airflow.ingest_iso_prices_pjm")
-

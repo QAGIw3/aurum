@@ -32,12 +32,9 @@ sys.modules.setdefault("aurum.api.models", models_stub)
 
 import aurum.api.scenario_models  # preload to avoid circular imports during tests
 
-from aurum.api.scenario_service import (
-    ScenarioRecord,
-    ScenarioRunRecord,
+from aurum.api.scenarios.scenario_models import (
     ScenarioStatus,
     ScenarioRunStatus,
-    _scenario_request_payload,
 )
 from aurum.schema_registry.codegen import get_model
 from aurum.scenarios import DriverType, ScenarioAssumption

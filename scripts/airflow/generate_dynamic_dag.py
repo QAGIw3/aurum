@@ -12,7 +12,7 @@ from typing import List
 REPO_ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(REPO_ROOT / "src"))
 
-from aurum.airflow_factory import create_dynamic_ingestion_dag
+# Note: dynamic generation below does not require aurum.airflow_factory.
 
 
 def main() -> int:
@@ -34,26 +34,43 @@ def main() -> int:
     args = parser.parse_args()
 
     try:
-        # Create the DAG
-        dag = create_dynamic_ingestion_dag(
-            config_files=args.config_files,
-            dag_id=args.dag_id
-        )
+        # Load datasets from config files (minimal schema: {"datasets": [{...}]})
+        import json
+        from typing import Any, Dict, List
 
-        # Generate DAG file content
-        dag_content = f"""
+        datasets: List[Dict[str, Any]] = []
+        for cfg_path in args.config_files:
+            raw = json.loads(Path(cfg_path).read_text(encoding="utf-8"))
+            items = raw.get("datasets", [])
+            if isinstance(items, list):
+                datasets.extend(items)
+
+        # Consider only ISO-related entries when present
+        iso_like = [
+            ds for ds in datasets
+            if isinstance(ds, dict) and (
+                ds.get("type") in {"iso_price", "iso_metrics", "iso"} or ds.get("iso")
+            )
+        ]
+
+        cfg_list_literal = ",\n        ".join([json.dumps(ds, ensure_ascii=False) for ds in iso_like])
+
+        # Generate DAG file content using a placeholder template to avoid f-string brace issues
+        files_list = "\n".join([f"#   - {p}" for p in args.config_files])
+        tmpl = r"""
 from datetime import datetime, timedelta
 from airflow import DAG
-from airflow.operators.bash import BashOperator
 from airflow.operators.empty import EmptyOperator
 from airflow.operators.python import PythonOperator
 
-from aurum.airflow_utils import build_failure_callback, build_preflight_callable, metrics
+from aurum.airflow_utils import build_failure_callback, build_preflight_callable
+from aurum.airflow_utils import iso as iso_utils
 
-# Generated DAG from {', '.join(args.config_files)}
+# Generated DAG from:
+__FILES__
 # DO NOT EDIT MANUALLY - Regenerate with: python3 scripts/airflow/generate_dynamic_dag.py
 
-DEFAULT_ARGS = {{
+DEFAULT_ARGS = {
     "owner": "aurum-data",
     "depends_on_past": False,
     "email_on_failure": True,
@@ -63,36 +80,89 @@ DEFAULT_ARGS = {{
     "retry_exponential_backoff": True,
     "max_retry_delay": timedelta(minutes=60),
     "execution_timeout": timedelta(minutes=45),
-}}
+}
+
+DATASETS = [
+__CFG_LIST__
+]
 
 with DAG(
-    dag_id="{args.dag_id}",
-    description="Dynamic data ingestion DAG generated from configuration",
+    dag_id="__DAG_ID__",
+    description="Dynamic ISO ingestion DAG generated from configuration",
     default_args=DEFAULT_ARGS,
-    schedule_interval="{args.schedule}",
+    schedule_interval="__SCHEDULE__",
     start_date=datetime(2024, 1, 1),
-    catchup={str(args.catchup).lower()},
-    max_active_runs={args.max_active_runs},
-    tags=["aurum", "ingestion", "dynamic"],
+    catchup=__CATCHUP__,
+    max_active_runs=__MAX_ACTIVE_RUNS__,
+    tags=["aurum", "ingestion", "dynamic", "iso"],
 ) as dag:
-
-    # Create tasks based on configuration files
-    # This DAG is dynamically generated from:
-    # {chr(10).join([f'#   - {f}' for f in args.config_files])}
-
-    # TODO: Implement task creation logic here
-    # For now, create placeholder tasks
-
     start = EmptyOperator(task_id="start")
     end = EmptyOperator(task_id="end")
 
-    # Placeholder task - replace with actual dynamic task creation
-    placeholder = EmptyOperator(task_id="dynamic_ingestion_placeholder")
+    preflight = PythonOperator(
+        task_id="preflight",
+        python_callable=build_preflight_callable(
+            required_variables=("aurum_kafka_bootstrap", "aurum_schema_registry"),
+        ),
+    )
 
-    start >> placeholder >> end
+    # Register sources best-effort
+    sources = []
+    for ds in DATASETS:
+        iso_code = (ds.get("iso") or "").lower()
+        dataset = (ds.get("dataset") or "").lower()
+        src_name = ds.get("source_name") or (f"iso.{iso_code}.{dataset}" if iso_code and dataset else ds.get("name", "unknown"))
+        sources.append(
+            iso_utils.IngestSource(
+                name=src_name,
+                description=ds.get("description", src_name),
+                schedule=ds.get("schedule"),
+                target=ds.get("topic"),
+            )
+        )
+    register_sources = PythonOperator(
+        task_id="register_sources",
+        python_callable=lambda: iso_utils.register_sources(tuple(sources)),
+    )
 
-    dag.on_failure_callback = build_failure_callback(source="aurum.airflow.{args.dag_id}")
+    tails = []
+    for ds in DATASETS:
+        iso_code = (ds.get("iso") or "").lower()
+        dataset = (ds.get("dataset") or "").lower()
+        job_name = ds.get("job_name") or ("{}_{}_to_kafka".format(iso_code, dataset))
+        task_prefix = ds.get("task_prefix") or job_name
+        source_name = ds.get("source_name") or ("iso.{}.{}".format(iso_code, dataset))
+        pool = ds.get("pool")
+        env_map = ds.get("env", {})
+        env_entries = [f"{k}=\"{v}\"" for k, v in env_map.items()]
+        render, execute, watermark = iso_utils.create_seatunnel_ingest_chain(
+            task_prefix,
+            job_name=job_name,
+            source_name=source_name,
+            env_entries=env_entries,
+            pool=pool,
+            watermark_policy=ds.get("watermark_policy", "hour"),
+        )
+        preflight >> register_sources >> render >> execute >> watermark
+        tails.append(watermark)
+
+    if tails:
+        tails >> end
+    else:
+        register_sources >> end
+
+    dag.on_failure_callback = build_failure_callback(source="aurum.airflow.__DAG_ID__")
 """
+
+        dag_content = (
+            tmpl
+            .replace("__FILES__", files_list)
+            .replace("__CFG_LIST__", cfg_list_literal)
+            .replace("__DAG_ID__", args.dag_id)
+            .replace("__SCHEDULE__", args.schedule)
+            .replace("__CATCHUP__", "True" if args.catchup else "False")
+            .replace("__MAX_ACTIVE_RUNS__", str(args.max_active_runs))
+        )
 
         # Write to file or stdout
         if args.output:
