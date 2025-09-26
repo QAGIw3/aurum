@@ -19,6 +19,7 @@ from abc import ABC, abstractmethod
 
 from .staleness_monitor import StalenessLevel, DatasetStaleness, SLOConfig
 from ..logging import StructuredLogger, LogLevel, create_logger
+from ..common.circuit_breaker import CircuitBreakerState
 
 logger = logging.getLogger(__name__)
 
@@ -34,13 +35,6 @@ class RemediationAction(str, Enum):
     CREATE_INCIDENT = "create_incident"
     SLO_BREACH_REMEDIATION = "slo_breach_remediation"
     EMERGENCY_RECOVERY = "emergency_recovery"
-
-
-class CircuitBreakerState(str, Enum):
-    """Circuit breaker states for data collectors."""
-    CLOSED = "closed"        # Normal operation
-    OPEN = "open"           # Failing, rejecting calls
-    HALF_OPEN = "half_open" # Testing recovery
 
 
 @dataclass

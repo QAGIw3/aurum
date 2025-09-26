@@ -288,7 +288,7 @@ class TestValidator:
                     test_name="data_quality",
                     issue_type="HIGH_NULL_RATE",
                     severity=ValidationSeverity.WARNING,
-                    message=f"Field {field} has high null rate: {null_rate".2%"}",
+                    message=f"Field {field} has high null rate: {null_rate:.2%}",
                     details={"field": field, "null_count": count, "null_rate": null_rate}
                 ))
 
@@ -385,7 +385,7 @@ class TestValidator:
             f"- Tests validated: {len(results)}",
             f"- Passed: {sum(1 for r in results if r.passed)}",
             f"- Failed: {sum(1 for r in results if not r.passed)}",
-            f"- Overall success rate: {sum(1 for r in results if r.passed) / len(results) * 100".1f"}%",
+            f"- Overall success rate: {sum(1 for r in results if r.passed) / len(results) * 100:.1f}%",
             ""
         ]
 
@@ -434,7 +434,7 @@ class TestValidator:
                 "## Metrics",
                 "",
                 f"- Total records processed: {total_records}",
-                f"- Average quality score: {avg_quality".1f"}",
+                f"- Average quality score: {avg_quality:.1f}",
                 f"- Critical issues: {sum(1 for r in results if r.has_critical_issues())}",
                 ""
             ])

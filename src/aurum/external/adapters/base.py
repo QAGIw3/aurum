@@ -15,6 +15,7 @@ from pathlib import Path
 import json
 import os
 import hashlib
+from aurum.iso.base import IsoDataType
 
 try:  # Python 3.9+
     from zoneinfo import ZoneInfo  # type: ignore

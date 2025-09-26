@@ -227,11 +227,12 @@ class TestStructuredLogging:
                 log_structured("info", "test_event", custom_field="custom_value")
 
                 call_args = mock_info.call_args[0][0]
-            log_data = json.loads(call_args)
+                log_data = json.loads(call_args)
 
-            assert log_data["correlation_id"] == "test-corr-123"
-            assert log_data["tenant_id"] == "test-tenant-123"
-            assert log_data["user_id"] == "test-user-123"
+                assert log_data["correlation_id"] == "test-corr-123"
+                assert log_data["tenant_id"] == "test-tenant-123"
+                assert log_data["user_id"] == "test-user-123"
+                assert log_data["custom_field"] == "custom_value"
 
     def test_redact_sensitive_data_helper(self):
         """Ensure direct helper usage redacts nested sensitive keys."""
@@ -255,7 +256,6 @@ class TestStructuredLogging:
             trace_id, span_id = get_trace_span_ids()
             assert trace_id is None
             assert span_id is None
-                assert log_data["custom_field"] == "custom_value"
 
     def test_log_structured_filters_none_values(self):
         """Test that structured logging filters out None values."""

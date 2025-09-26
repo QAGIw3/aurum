@@ -16,7 +16,7 @@ from typing import Any, Dict, List, Optional, Callable, Awaitable
 from .deployment_manager import CanaryDeploymentManager, CanaryConfig, get_deployment_manager
 from .traffic_manager import TrafficManager, get_traffic_manager, TrafficEndpoint
 from .health_monitor import get_health_monitor
-from ...observability.metrics import get_metrics_client
+from ..observability.metrics import get_metrics_client
 
 logger = logging.getLogger(__name__)
 
@@ -298,13 +298,13 @@ class CanaryDeploymentOrchestrator:
 
         if avg_latency > context.max_latency_ms:
             logger.warning(
-                f"High latency detected: {avg_latency".1f"}ms > {context.max_latency_ms}ms"
+                f"High latency detected: {avg_latency:.1f}ms > {context.max_latency_ms}ms"
             )
             return DeploymentDecision.ROLLBACK
 
         if success_rate < context.min_success_rate_percent:
             logger.warning(
-                f"Low success rate detected: {success_rate".1f"}% < {context.min_success_rate_percent}%"
+                f"Low success rate detected: {success_rate:.1f}% < {context.min_success_rate_percent}%"
             )
             return DeploymentDecision.ROLLBACK
 

@@ -14,7 +14,41 @@ from datetime import datetime, timedelta
 from typing import Dict, List, Optional, Any, Callable
 from enum import Enum
 import aiohttp
-import aiofiles
+
+try:  # pragma: no cover - optional dependency
+    import aiofiles  # type: ignore
+except ImportError:  # pragma: no cover - provide minimal fallback for tests
+    class _AsyncFileWrapper:
+        def __init__(self, path: Path | str, mode: str = "r", **kwargs: Any) -> None:
+            self._path = str(path)
+            self._mode = mode
+            self._loop: asyncio.AbstractEventLoop | None = None
+            self._file = None
+
+        async def __aenter__(self):
+            self._loop = asyncio.get_event_loop()
+            self._file = await self._loop.run_in_executor(None, open, self._path, self._mode)
+            return _AsyncFileProxy(self._file, self._loop)
+
+        async def __aexit__(self, exc_type, exc, tb) -> None:
+            if self._file is not None and self._loop is not None:
+                await self._loop.run_in_executor(None, self._file.close)
+
+    class _AsyncFileProxy:
+        def __init__(self, file_obj, loop: asyncio.AbstractEventLoop) -> None:
+            self._file = file_obj
+            self._loop = loop
+
+        async def write(self, data: bytes) -> None:
+            await self._loop.run_in_executor(None, self._file.write, data)
+
+        async def read(self, size: int = -1) -> bytes:
+            return await self._loop.run_in_executor(None, self._file.read, size)
+
+    class aiofiles:  # type: ignore
+        @staticmethod
+        def open(path: Path | str, mode: str = "r", **kwargs: Any):
+            return _AsyncFileWrapper(path, mode, **kwargs)
 from urllib.parse import urlparse
 
 from ..logging import StructuredLogger, LogLevel, create_logger

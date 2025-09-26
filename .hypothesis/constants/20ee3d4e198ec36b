@@ -1,0 +1,4 @@
+# file: /Users/mstudio/Library/Mobile Documents/com~apple~CloudDocs/dev/aurum/src/aurum/reference/__init__.py
+# hypothesis_version: 6.140.2
+
+['BlockRule', 'CURVE_ENUMS', 'Calendar', 'CalendarBlock', 'CurveAssetClass', 'CurveField', 'CurvePriceType', 'CurveTenorType', 'UnitsMapper', 'get_calendars', 'hours_for_block', 'infer_default_units', 'map_units']

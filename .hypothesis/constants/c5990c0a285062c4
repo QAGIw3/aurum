@@ -1,0 +1,4 @@
+# file: /Users/mstudio/Library/Mobile Documents/com~apple~CloudDocs/dev/aurum/src/aurum/observability/logging.py
+# hypothesis_version: 6.140.2
+
+['_', 'api', 'args', 'aurum.api', 'aurum.business', 'aurum.cache', 'aurum.database', 'aurum.performance', 'aurum.security', 'business', 'cache', 'component', 'correlation_id', 'created', 'database', 'duration', 'error', 'error_code', 'exc_info', 'exc_text', 'exception', 'external', 'filename', 'funcName', 'function', 'info', 'level', 'levelname', 'levelno', 'line', 'lineno', 'logger', 'message', 'metadata', 'metric', 'module', 'msecs', 'msg', 'name', 'operation', 'pathname', 'performance', 'process', 'processName', 'relativeCreated', 'request', 'request_id', 'security', 'session_id', 'span_id', 'stack_info', 'stack_trace', 'tenant_id', 'thread', 'threadName', 'timestamp', 'trace_id', 'user_id', 'warning']

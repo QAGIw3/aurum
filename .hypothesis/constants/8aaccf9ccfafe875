@@ -1,0 +1,4 @@
+# file: /Users/mstudio/Library/Mobile Documents/com~apple~CloudDocs/dev/aurum/src/aurum/api/ppa_utils.py
+# hypothesis_version: 6.140.2
+
+['0.000001', '_ingest_ts', 'asof_date', 'cashflow', 'curve_key', 'f', 'irr', 'metric', 'npv', 'period_end', 'period_start', 'ppa_contract_id', 'scenario_id', 'tenant_id', 'utf-8', 'value', 'version_hash']

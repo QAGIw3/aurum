@@ -1,0 +1,4 @@
+# file: /Users/mstudio/Library/Mobile Documents/com~apple~CloudDocs/dev/aurum/src/aurum/drought/catalog.py
+# hypothesis_version: 6.140.2
+
+['%Y%m%d', '%Y-%m-%d', '%Y-%m-%dT%H:%M:%S', '%Y-%m-%dT%H:%M:%SZ', 'DroughtCatalog', 'EPSG:4326', 'FoundationalBucket', 'LatencyWindow', 'RasterIndexDataset', 'RegionSet', 'VectorLayer', '__dict__', 'assets', 'crs', 'data', 'dataset', 'description', 'discovery', 'formats', 'foundational_buckets', 'gcs_path', 'generated_at', 'geometry_source', 'geotiff', 'geotiff_template', 'http', 'https', 'indices', 'info', 'info_template', 'items', 'latency_days', 'layer', 'legend', 'legend_template', 'license', 'load_catalog', 'max', 'min', 'name', 'notes', 'provider', 'raster_indices', 'region_sets', 'region_type', 'rows', 'source_url', 'table_url', 'template', 'timescales', 'update_frequency', 'validDate', 'valid_date_field', 'vector_layers', 'xyz', 'xyz_template', 'zoom_levels']

@@ -69,8 +69,8 @@ class CaisoTestDataGenerator(TestDataGenerator):
     def generate_lmp_data(self, start_time: datetime = None) -> List[Dict[str, Any]]:
         """Generate CAISO LMP test data."""
         timestamps = self.generate_timestamp_range(start_time)
-        locations = [f"TH_NP15_GEN-APND_{i"03d"}" for i in range(1, 6)]
-        locations += [f"TH_SP15_GEN-APND_{i"03d"}" for i in range(1, 6)]
+        locations = [f"TH_NP15_GEN-APND_{i:03d}" for i in range(1, 6)]
+        locations += [f"TH_SP15_GEN-APND_{i:03d}" for i in range(1, 6)]
 
         data = []
         for timestamp in timestamps:

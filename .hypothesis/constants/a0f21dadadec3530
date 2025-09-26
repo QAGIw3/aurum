@@ -1,0 +1,4 @@
+# file: /Users/mstudio/Library/Mobile Documents/com~apple~CloudDocs/dev/aurum/src/aurum/logging/structured_logger.py
+# hypothesis_version: 6.140.2
+
+[0.95, 100, 400, 1000, 'ClickHouseLogSink', 'DEBUG', 'ERROR', 'FATAL', 'GET', 'INFO', 'KafkaLogSink', 'LogEvent', 'WARN', 'api_call', 'aurum.ops.logs', 'aurum_logs', 'batch_progress', 'bytes_processed', 'container_id', 'data_quality', 'dataset', 'duration_ms', 'error', 'error_code', 'error_message', 'event_type', 'generic', 'hostname', 'job_id', 'level', 'message', 'metadata', 'operation_end', 'operation_failure', 'operation_start', 'operation_success', 'records_processed', 'session_id', 'source_name', 'task_id', 'thread_id', 'timestamp']

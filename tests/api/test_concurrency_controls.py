@@ -12,6 +12,7 @@ import pytest
 from aurum.api.concurrency_middleware import (
     ConcurrencyController,
     ConcurrencySlot,
+    ConcurrencyRejected,
     RateLimiter,
     TimeoutController,
     TimeoutHandle,
@@ -48,6 +49,13 @@ class TestRequestLimits:
         assert limits.max_request_duration_seconds == 30.0
         assert limits.max_requests_per_tenant == 20
         assert limits.tenant_burst_limit == 50
+        assert limits.tenant_queue_limit == 64
+        assert limits.queue_timeout_seconds == 2.0
+        assert limits.burst_refill_per_second == 0.5
+        assert limits.slow_start_initial_limit == 2
+        assert limits.slow_start_step_seconds == 3.0
+        assert limits.slow_start_step_size == 1
+        assert limits.slow_start_cooldown_seconds == 30.0
 
     def test_request_limits_custom_values(self):
         """Test custom request limits."""
@@ -56,13 +64,27 @@ class TestRequestLimits:
             max_requests_per_second=5.0,
             max_request_duration_seconds=60.0,
             max_requests_per_tenant=10,
-            tenant_burst_limit=25
+            tenant_burst_limit=25,
+            tenant_queue_limit=10,
+            queue_timeout_seconds=0.5,
+            burst_refill_per_second=1.5,
+            slow_start_initial_limit=3,
+            slow_start_step_seconds=1.0,
+            slow_start_step_size=2,
+            slow_start_cooldown_seconds=10.0,
         )
         assert limits.max_concurrent_requests == 50
         assert limits.max_requests_per_second == 5.0
         assert limits.max_request_duration_seconds == 60.0
         assert limits.max_requests_per_tenant == 10
         assert limits.tenant_burst_limit == 25
+        assert limits.tenant_queue_limit == 10
+        assert limits.queue_timeout_seconds == 0.5
+        assert limits.burst_refill_per_second == 1.5
+        assert limits.slow_start_initial_limit == 3
+        assert limits.slow_start_step_seconds == 1.0
+        assert limits.slow_start_step_size == 2
+        assert limits.slow_start_cooldown_seconds == 10.0
 
 
 class TestConcurrencyController:
@@ -70,46 +92,47 @@ class TestConcurrencyController:
 
     @pytest.fixture
     def limits(self):
-        return RequestLimits(max_concurrent_requests=5, max_requests_per_tenant=2)
+        return RequestLimits(
+            max_concurrent_requests=2,
+            max_requests_per_tenant=2,
+            tenant_queue_limit=4,
+            queue_timeout_seconds=0.4,
+        )
 
     @pytest.fixture
     def controller(self, limits):
         return ConcurrencyController(limits)
 
-    async def test_acquire_slot_global_limit(self, controller):
-        """Test acquiring slots within global limit."""
-        slots = []
-        for i in range(5):
-            slot = await controller.acquire_slot(tenant_id="tenant1", request_id=f"req-{i}")
-            slots.append(slot)
+    async def test_acquire_slot_allows_waiting_tenants(self, controller):
+        """Ensure queued tenants eventually receive capacity without starvation."""
 
-        # Should not be able to acquire more than max concurrent
-        with pytest.raises(ServiceUnavailableException):
-            await controller.acquire_slot(tenant_id="tenant2", request_id="req-6")
+        first = await controller.acquire_slot(tenant_id="tenantA", request_id="req-a1")
+        second = await controller.acquire_slot(tenant_id="tenantA", request_id="req-a2")
 
-        # Clean up
-        for slot in slots:
-            await slot.release()
+        waiter_a = asyncio.create_task(
+            controller.acquire_slot(tenant_id="tenantA", request_id="req-a3")
+        )
+        waiter_b = asyncio.create_task(
+            controller.acquire_slot(tenant_id="tenantB", request_id="req-b1")
+        )
 
-    async def test_acquire_slot_tenant_limit(self, controller):
-        """Test acquiring slots within tenant limit."""
-        # Acquire max per tenant
-        slots = []
-        for i in range(2):
-            slot = await controller.acquire_slot(tenant_id="tenant1", request_id=f"req-{i}")
-            slots.append(slot)
+        await asyncio.sleep(0)  # allow tasks to queue
 
-        # Should not be able to acquire more for same tenant
-        with pytest.raises(ServiceUnavailableException):
-            await controller.acquire_slot(tenant_id="tenant1", request_id="req-3")
+        assert not waiter_a.done()
+        assert not waiter_b.done()
 
-        # Should be able to acquire for different tenant
-        slot = await controller.acquire_slot(tenant_id="tenant2", request_id="req-4")
-        slots.append(slot)
+        await first.release()
+        await second.release()
 
-        # Clean up
-        for slot in slots:
-            await slot.release()
+        slot_a3 = await asyncio.wait_for(waiter_a, timeout=1.0)
+        slot_b1 = await asyncio.wait_for(waiter_b, timeout=1.0)
+
+        assert slot_a3.tenant_id == "tenantA"
+        assert slot_b1.tenant_id == "tenantB"
+        assert slot_b1.queue_wait_seconds >= 0.0
+
+        await slot_a3.release()
+        await slot_b1.release()
 
     async def test_slot_release(self, controller):
         """Test slot release functionality."""
@@ -138,12 +161,64 @@ class TestConcurrencyController:
 
     async def test_tenant_request_cleanup(self, controller):
         """Test cleanup of old tenant request times."""
-        # Add old request times
         old_time = time.perf_counter() - 120  # 2 minutes ago
         controller.limits._tenant_request_times["tenant1"] = [old_time]
 
         slot = await controller.acquire_slot(tenant_id="tenant1", request_id="req-1")
-        assert len(controller.limits._tenant_request_times["tenant1"]) == 1  # Old entry should be cleaned
+        assert len(controller.limits._tenant_request_times["tenant1"]) == 1
+
+        await slot.release()
+
+    async def test_tenant_queue_limit_enforced(self):
+        """Tenant queue limits should reject excessive bursts with 429."""
+        limits = RequestLimits(
+            max_concurrent_requests=1,
+            max_requests_per_tenant=1,
+            tenant_queue_limit=1,
+            queue_timeout_seconds=0.5,
+        )
+        controller = ConcurrencyController(limits)
+
+        first = await controller.acquire_slot(tenant_id="tenantA", request_id="req-1")
+        waiter = asyncio.create_task(
+            controller.acquire_slot(tenant_id="tenantA", request_id="req-2")
+        )
+        await asyncio.sleep(0)
+
+        with pytest.raises(ConcurrencyRejected) as exc_info:
+            await controller.acquire_slot(tenant_id="tenantA", request_id="req-3")
+
+        assert exc_info.value.reason == "tenant_queue_full"
+        assert exc_info.value.status_code == 429
+
+        await first.release()
+        slot_two = await waiter
+        assert slot_two.queue_wait_seconds >= 0.0
+        await slot_two.release()
+
+    async def test_queue_timeout_returns_503(self):
+        """Requests should time out if capacity never frees."""
+        limits = RequestLimits(
+            max_concurrent_requests=1,
+            max_requests_per_tenant=1,
+            tenant_queue_limit=4,
+            queue_timeout_seconds=0.05,
+        )
+        controller = ConcurrencyController(limits)
+
+        slot = await controller.acquire_slot(tenant_id="tenantA", request_id="req-1")
+
+        waiter = asyncio.create_task(
+            controller.acquire_slot(tenant_id="tenantB", request_id="req-2")
+        )
+
+        await asyncio.sleep(0.2)
+
+        with pytest.raises(ConcurrencyRejected) as exc_info:
+            await waiter
+
+        assert exc_info.value.reason == "queue_timeout"
+        assert exc_info.value.status_code == 503
 
         await slot.release()
 
@@ -663,46 +738,123 @@ class TestConcurrencyMiddleware:
 
     async def test_middleware_concurrency_control(self, middleware):
         """Test middleware concurrency control."""
+        gate = asyncio.Event()
+
+        async def blocking_app(scope, receive, send):
+            await gate.wait()
+            await send({
+                "type": "http.response.start",
+                "status": 200,
+                "headers": [(b"content-type", b"application/json")],
+            })
+            await send({
+                "type": "http.response.body",
+                "body": b"{}",
+            })
+
+        controller = create_concurrency_controller(
+            max_concurrent_requests=1,
+            max_requests_per_tenant=1,
+            tenant_queue_limit=1,
+            queue_timeout_seconds=0.05,
+        )
+        constrained_middleware = ConcurrencyMiddleware(
+            app=blocking_app,
+            concurrency_controller=controller,
+            rate_limiter=create_rate_limiter(),
+            timeout_controller=create_timeout_controller(),
+        )
+
         scope = {
             "type": "http",
             "path": "/api/test",
             "method": "GET",
-            "headers": [(b"x-aurum-tenant", b"test-tenant")]
+            "headers": [(b"x-aurum-tenant", b"tenant-a")],
         }
 
-        # Acquire max concurrent requests
-        tasks = []
-        for i in range(10):
-            async def make_request():
-                receive = AsyncMock()
-                send = AsyncMock()
-                await middleware(scope, receive, send)
-                return send
+        first_send = AsyncMock()
+        first_task = asyncio.create_task(
+            constrained_middleware(scope, AsyncMock(), first_send)
+        )
 
-            tasks.append(make_request())
+        await asyncio.sleep(0.01)
 
-        # Start all requests
-        pending_tasks = [asyncio.create_task(task) for task in tasks]
+        second_send = AsyncMock()
+        await constrained_middleware(scope, AsyncMock(), second_send)
 
-        # Try one more request - should be rejected
-        receive = AsyncMock()
-        send = AsyncMock()
+        rejected_statuses = [
+            call[0][0]["status"]
+            for call in second_send.call_args_list
+            if call[0][0]["type"] == "http.response.start"
+        ]
 
-        await middleware(scope, receive, send)
+        assert 503 in rejected_statuses
 
-        # Check for rejection
-        rejected_call = None
-        for call in send.call_args_list:
-            if call[0][0]["type"] == "http.response.start":
-                if call[0][0]["status"] == 503:
-                    rejected_call = call
-                    break
+        gate.set()
+        await first_task
 
-        # Cancel pending tasks
-        for task in pending_tasks:
-            task.cancel()
+    async def test_middleware_queue_overflow_returns_429(self):
+        """Queue overflow should surface as HTTP 429."""
 
-        assert rejected_call is not None
+        gate = asyncio.Event()
+
+        async def blocking_app(scope, receive, send):
+            await gate.wait()
+            await send({
+                "type": "http.response.start",
+                "status": 200,
+                "headers": [(b"content-type", b"application/json")],
+            })
+            await send({
+                "type": "http.response.body",
+                "body": b"{}",
+            })
+
+        controller = create_concurrency_controller(
+            max_concurrent_requests=1,
+            max_requests_per_tenant=1,
+            tenant_queue_limit=1,
+            queue_timeout_seconds=0.5,
+        )
+        overflow_middleware = ConcurrencyMiddleware(
+            app=blocking_app,
+            concurrency_controller=controller,
+            rate_limiter=create_rate_limiter(),
+            timeout_controller=create_timeout_controller(),
+        )
+
+        scope = {
+            "type": "http",
+            "path": "/api/test",
+            "method": "GET",
+            "headers": [(b"x-aurum-tenant", b"tenant-a")],
+        }
+
+        first_task = asyncio.create_task(
+            overflow_middleware(scope, AsyncMock(), AsyncMock())
+        )
+        await asyncio.sleep(0.01)
+
+        second_task_send = AsyncMock()
+        second_task = asyncio.create_task(
+            overflow_middleware(scope, AsyncMock(), second_task_send)
+        )
+        await asyncio.sleep(0.01)
+
+        third_send = AsyncMock()
+        await overflow_middleware(scope, AsyncMock(), third_send)
+
+        statuses = [
+            call[0][0]["status"]
+            for call in third_send.call_args_list
+            if call[0][0]["type"] == "http.response.start"
+        ]
+
+        assert 429 in statuses
+
+        gate.set()
+        await first_task
+        await second_task
 
     async def test_middleware_timeout_control(self, middleware):
         """Test middleware timeout control."""

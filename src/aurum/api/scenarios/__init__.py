@@ -68,7 +68,9 @@ _MODEL_EXPORTS = [
     "ScenarioStatus",
 ]
 
-__all__ = sorted(_MODEL_EXPORTS + ["ScenarioStore", "scenarios_router", "require_permission"])
+__all__ = sorted(
+    _MODEL_EXPORTS + ["ScenarioStore", "scenarios_router", "router", "require_permission"]
+)
 
 
 def __getattr__(name: str) -> Any:
@@ -76,7 +78,7 @@ def __getattr__(name: str) -> Any:
         from .scenario_service import STORE
 
         return STORE
-    if name == "scenarios_router":
+    if name in {"scenarios_router", "router"}:
         from .scenarios import router
 
         return router

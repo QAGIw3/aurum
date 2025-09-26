@@ -14,7 +14,7 @@ from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional, Set, Tuple
 from pathlib import Path
 
-from ...observability.metrics import get_metrics_client
+from aurum.observability.metrics import get_metrics_client
 
 logger = logging.getLogger(__name__)
 

@@ -1,0 +1,4 @@
+# file: /Users/mstudio/Library/Mobile Documents/com~apple~CloudDocs/dev/aurum/src/aurum/api/database/connections.py
+# hypothesis_version: 6.140.2
+
+[0.0, 1.0, 10.0, 500, 1000, '(\\w+)\\s*=\\s*\\?', '/v1/admin/db/indexes', 'Filter by table name', 'active', 'active_connections', 'avg_execution_time', 'backends', 'columns', 'connections', 'data', 'error', 'idle', 'idle_connections', 'impact_score', 'index_suggestions', 'max', 'max_connections', 'meta', 'pool_utilization', 'query_pattern', 'query_time_ms', 'queue_capacity', 'queue_depth', 'queue_utilization', 'redundant_indexes', 'request_id', 'request_queue_depth', 'summary', 'table', 'total', 'total_connections', 'total_executions', 'total_suggestions', 'trino', 'unknown', 'unused_indexes', 'utilization', 'where']

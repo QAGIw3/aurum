@@ -3,10 +3,12 @@
 from __future__ import annotations
 
 from .assertions import (
+    AssertionType,
     SchemaAssertion,
     FieldAssertion,
     AssertionResult,
     AssertionError,
+    AssertionSeverity,
     DataQualityChecker
 )
 from .transforms import (
@@ -22,6 +24,8 @@ __all__ = [
     "AssertionResult",
     "AssertionError",
     "DataQualityChecker",
+    "AssertionType",
+    "AssertionSeverity",
     "FieldPresenceTransform",
     "FieldTypeTransform",
     "DataQualityTransform",

@@ -7,7 +7,11 @@ robust validation of scenario-related data structures.
 import json
 from datetime import datetime, timezone
 from typing import Any, Dict, List
-from hypothesis import given, strategies as st, settings, assume
+
+import pytest
+from hypothesis import assume, given, settings, strategies as st
+
+pytest.importorskip("hypothesis.extra.pydantic")
 from hypothesis.extra.pydantic import pydantic_conforms_to
 
 from aurum.api.scenario_models import (

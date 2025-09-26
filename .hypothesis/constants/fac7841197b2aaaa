@@ -1,0 +1,4 @@
+# file: /Users/mstudio/Library/Mobile Documents/com~apple~CloudDocs/dev/aurum/src/aurum/api/health_checks.py
+# hypothesis_version: 6.140.2
+
+[5.0, 200, 1000, 'SELECT 1', 'check_redis_ready', 'check_trino_ready', 'connectivity', 'disabled', 'error', 'healthy', 'ok', 'sample_query_result', 'schema_check_time_ms', 'schema_tables_found', 'status', 'subjects_count', 'total_check_time_ms', 'total_count', 'unavailable']

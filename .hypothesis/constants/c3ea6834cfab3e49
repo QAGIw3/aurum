@@ -1,0 +1,4 @@
+# file: /Users/mstudio/Library/Mobile Documents/com~apple~CloudDocs/dev/aurum/src/aurum/api/cache/cache.py
+# hypothesis_version: 6.140.2
+
+['0B', '6379', ':', 'aurum', 'backend', 'cluster', 'hybrid', 'memory', 'memory_entries', 'memory_size_bytes', 'redis', 'redis_used_memory', 'request_id', 'used_memory', 'used_memory_human']

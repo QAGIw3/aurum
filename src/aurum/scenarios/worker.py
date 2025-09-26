@@ -8,10 +8,13 @@ operational safety (circuit breakers, poison‑pill detection), performance
 metrics, and graceful shutdown semantics suitable for container orchestration.
 """
 
+import asyncio
+import contextlib
 import hashlib
 import logging
 import os
 import signal
+import sys
 import threading
 import time
 from dataclasses import dataclass, field
@@ -39,6 +42,77 @@ DEFAULT_TENOR_WEIGHTS = {
     "QUARTER": 1.05,
     "CALENDAR": 1.08,
 }
+
+
+class _AsyncContextAdapter:
+    """Wrap an async context manager so it can be used with ``with``."""
+
+    def __init__(self, context_manager):
+        self._context_manager = context_manager
+        self._loop: asyncio.AbstractEventLoop | None = None
+        self._entered = False
+        self._value = None
+
+    def __enter__(self):
+        self._loop = asyncio.new_event_loop()
+        try:
+            self._value = self._loop.run_until_complete(self._context_manager.__aenter__())
+            self._entered = True
+            return self._value
+        except Exception:
+            if self._loop is not None:
+                self._loop.run_until_complete(
+                    self._context_manager.__aexit__(*sys.exc_info())
+                )
+                self._loop.close()
+            raise
+
+    def __exit__(self, exc_type, exc, tb):
+        if not self._entered or self._loop is None:
+            return False
+        try:
+            return self._loop.run_until_complete(
+                self._context_manager.__aexit__(exc_type, exc, tb)
+            )
+        finally:
+            self._loop.close()
+
+
+def _as_sync_context(context):
+    if context is None:
+        return contextlib.nullcontext()
+    if hasattr(context, "__aenter__"):
+        return _AsyncContextAdapter(context)
+    return context
+
+
+@contextlib.contextmanager
+def _lineage_scope(*, component: str, job_name: str, **kwargs):
+    """Yield a lineage context if OpenLineage integration is available."""
+
+    try:
+        from aurum.observability.openlineage_integration import get_lineage_manager
+    except Exception:  # pragma: no cover - optional dependency
+        yield None
+        return
+
+    manager_factory = get_lineage_manager()
+    if manager_factory is None:
+        yield None
+        return
+
+    with _as_sync_context(manager_factory) as manager:
+        if manager is None or not hasattr(manager, "lineage_context"):
+            yield None
+            return
+
+        context_cm = manager.lineage_context(
+            component=component,
+            job_name=job_name,
+            **kwargs,
+        )
+        with _as_sync_context(context_cm) as context_value:
+            yield context_value
 TENOR_ORDER = ["MONTHLY", "QUARTER", "CALENDAR"]
 FUEL_CURVE_WEIGHTS = {
     "natural_gas": 0.004,
@@ -1453,77 +1527,82 @@ def run_worker():  # pragma: no cover - integration entrypoint
                             break
                         attempts += 1
                         try:
-                            # Add OpenLineage tracking for scenario processing
-                            from aurum.observability.openlineage_integration import get_lineage_manager
-
-                            async with get_lineage_manager() as lineage_manager:
-                                async with lineage_manager.lineage_context(
-                                    component="scenario_worker",
-                                    job_name=f"scenario_{scenario_req.scenario_id}_{run_id}",
-                                    inputs=[
-                                        {"type": "scenario", "name": scenario_req.scenario_id},
-                                        {"type": "market_data", "name": "curve_data"}
-                                    ],
-                                    outputs=[
-                                        {"type": "iceberg", "name": "scenario_output"},
-                                        {"type": "kafka", "name": "aurum.scenario.output.v1"}
-                                    ],
-                                    metadata={
-                                        "scenario_id": scenario_req.scenario_id,
-                                        "run_id": run_id,
-                                        "tenant_id": scenario_req.tenant_id,
-                                        "driver_type": getattr(scenario_req, 'driver_type', 'unknown'),
-                                        "asof_date": str(scenario_req.asof_date or date.today())
-                                    }
-                                ) as lineage_context:
-                                    scenario = ScenarioStore.get_scenario(
-                                        scenario_req.scenario_id,
-                                        tenant_id=scenario_req.tenant_id,
+                            with _lineage_scope(
+                                component="scenario_worker",
+                                job_name=f"scenario_{scenario_req.scenario_id}_{run_id}",
+                                inputs=[
+                                    {"type": "scenario", "name": scenario_req.scenario_id},
+                                    {"type": "market_data", "name": "curve_data"},
+                                ],
+                                outputs=[
+                                    {"type": "iceberg", "name": "scenario_output"},
+                                    {"type": "kafka", "name": "aurum.scenario.output.v1"},
+                                ],
+                                metadata={
+                                    "scenario_id": scenario_req.scenario_id,
+                                    "run_id": run_id,
+                                    "tenant_id": scenario_req.tenant_id,
+                                    "driver_type": getattr(scenario_req, "driver_type", "unknown"),
+                                    "asof_date": str(scenario_req.asof_date or date.today()),
+                                },
+                            ) as lineage_context:
+                                scenario = ScenarioStore.get_scenario(
+                                    scenario_req.scenario_id,
+                                    tenant_id=scenario_req.tenant_id,
+                                )
+                                if scenario is None:
+                                    raise RuntimeError(
+                                        f"Scenario {scenario_req.scenario_id} not found for tenant {scenario_req.tenant_id}"
                                     )
-                                    if scenario is None:
-                                        raise RuntimeError(
-                                            f"Scenario {scenario_req.scenario_id} not found for tenant {scenario_req.tenant_id}"
-                                        )
 
-                                    outputs = _build_outputs(
-                                        scenario,
-                                        scenario_req,
-                                        run_id=run_id,
-                                        run_record=run_record,
-                                        settings=settings,
-                                    )
-                            # Add nested OpenLineage tracking for Iceberg writing
-                            from aurum.observability.openlineage_integration import get_lineage_manager
+                                outputs = _build_outputs(
+                                    scenario,
+                                    scenario_req,
+                                    run_id=run_id,
+                                    run_record=run_record,
+                                    settings=settings,
+                                )
+
                             from aurum.api.database.trino_client import get_trino_client
 
-                            async with get_lineage_manager() as lineage_manager:
-                                async with lineage_manager.lineage_context(
-                                    component="iceberg_writer",
-                                    job_name=f"scenario_output_{run_id}",
-                                    parent_run_id=f"scenario_{scenario_req.scenario_id}_{run_id}",
-                                    inputs=[{"type": "scenario_outputs", "name": "memory"}],
-                                    outputs=[{"type": "iceberg", "name": "scenario_output"}],
-                                    metadata={
-                                        "run_id": run_id,
-                                        "scenario_id": scenario_req.scenario_id,
-                                        "output_count": len(outputs)
-                                    }
-                                ) as iceberg_lineage_context:
-                                    if not _publish_outputs(
-                                        outputs,
-                                        scenario_req=scenario_req,
-                                        run_id=run_id,
-                                        producer=prod,
-                                        value_schema=value_schema,
-                                        output_topic=output_topic,
-                                        request_id=request_id,
-                                    ):
-                                        cancelled = True
-                                        break
+                            with _lineage_scope(
+                                component="iceberg_writer",
+                                job_name=f"scenario_output_{run_id}",
+                                parent_run_id=f"scenario_{scenario_req.scenario_id}_{run_id}",
+                                inputs=[{"type": "scenario_outputs", "name": "memory"}],
+                                outputs=[{"type": "iceberg", "name": "scenario_output"}],
+                                metadata={
+                                    "run_id": run_id,
+                                    "scenario_id": scenario_req.scenario_id,
+                                    "output_count": len(outputs),
+                                },
+                            ) as iceberg_lineage_context:
+                                if not _publish_outputs(
+                                    outputs,
+                                    scenario_req=scenario_req,
+                                    run_id=run_id,
+                                    producer=prod,
+                                    value_schema=value_schema,
+                                    output_topic=output_topic,
+                                    request_id=request_id,
+                                ):
+                                    cancelled = True
+                                    break
 
-                                    iceberg_lineage_context.execution_time_seconds = time.perf_counter() - process_start
+                                iceberg_settings = CacheConfig.load_from_env()
+                                with get_trino_client() as trino_client:
+                                    write_scenario_output(
+                                        trino_client=trino_client,
+                                        scenario_outputs=outputs,
+                                        iceberg_settings=iceberg_settings,
+                                    )
 
-                                    # Set execution time in lineage context
+                                if iceberg_lineage_context is not None:
+                                    iceberg_lineage_context.execution_time_seconds = (
+                                        time.perf_counter() - process_start
+                                    )
+
+                                if lineage_context is not None:
                                     lineage_context.execution_time_seconds = time.perf_counter() - process_start
 
                             _maybe_update_run_state(

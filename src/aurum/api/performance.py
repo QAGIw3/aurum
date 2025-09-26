@@ -16,6 +16,7 @@ except ImportError:
     trino = None
 
 from ..telemetry.context import get_request_id, log_structured
+from .exceptions import ServiceUnavailableException
 from .config import TrinoConfig
 
 
@@ -157,19 +158,29 @@ class ConnectionPool:
         self._connections: List[Any] = []
         self._lock = asyncio.Lock()
         self._initialized = False
+        self._total_connections = 0
+        self._active_connections = 0
+        self._closed = False
 
     async def get_connection(self):
         """Get a connection from the pool."""
         async with self._lock:
+            if self._closed:
+                raise ServiceUnavailableException("connection_pool", detail="Connection pool closed")
             if self._connections:
-                return self._connections.pop()
+                conn = self._connections.pop()
+                self._active_connections += 1
+                return conn
 
             # Initialize pool if not already done
             if not self._initialized:
                 await self._initialize_pool()
                 self._initialized = True
 
-            # Create new connection
+            # Create new connection if capacity allows
+            if self._total_connections >= self.max_size:
+                raise ServiceUnavailableException("connection_pool", detail="Connection pool exhausted")
+
             loop = asyncio.get_event_loop()
 
             def _create_connection():
@@ -214,7 +225,10 @@ class ConnectionPool:
 
                     return MockConnection()
 
-            return await loop.run_in_executor(None, _create_connection)
+            conn = await loop.run_in_executor(None, _create_connection)
+            self._total_connections += 1
+            self._active_connections += 1
+            return conn
 
     async def _initialize_pool(self):
         """Initialize the connection pool with minimum connections."""
@@ -266,15 +280,30 @@ class ConnectionPool:
         for _ in range(self.min_size):
             conn = await loop.run_in_executor(None, _create_connection)
             self._connections.append(conn)
+            self._total_connections += 1
 
     async def return_connection(self, conn):
         """Return a connection to the pool."""
         async with self._lock:
-            if len(self._connections) < self.max_size:
+            if self._active_connections:
+                self._active_connections -= 1
+
+            if self._closed:
+                try:
+                    conn.close()
+                except Exception:  # noqa: BLE001
+                    pass
+                if self._total_connections:
+                    self._total_connections -= 1
+                return
+
+            if len(self._connections) < self.max_idle:
                 self._connections.append(conn)
             else:
                 # Close excess connections
                 conn.close()
+                if self._total_connections:
+                    self._total_connections -= 1
 
     async def close_all(self):
         """Close all connections in the pool."""
@@ -282,6 +311,13 @@ class ConnectionPool:
             for conn in self._connections:
                 conn.close()
             self._connections.clear()
+            self._total_connections = 0
+            self._active_connections = 0
+            self._closed = True
+
+    async def close(self):
+        """Alias that mirrors close_all for compatibility."""
+        await self.close_all()
 
 
 class PerformanceMonitor:

@@ -1,0 +1,4 @@
+# file: /Users/mstudio/Library/Mobile Documents/com~apple~CloudDocs/dev/aurum/src/aurum/api/scenarios/feature_flags.py
+# hypothesis_version: 6.140.2
+
+['1', '1.0.0', 'bulk_scenario_runs', 'development', 'environment', 'false', 'get_feature_context', 'is_feature_enabled', 'output_caching', 'output_compression', 'paginated_outputs', 'streaming_outputs', 'true', 'version', 'yes']

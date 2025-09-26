@@ -16,17 +16,6 @@ from .manager import (
     RetryPolicy,
     SliceProcessingError
 )
-from .monitor import (
-    SliceMonitor,
-    SliceMetrics,
-    OperationMetrics
-)
-from .scheduler import (
-    SliceScheduler,
-    SchedulingConfig,
-    ScheduleResult
-)
-
 __all__ = [
     "SliceClient",
     "SliceConfig",
@@ -38,10 +27,4 @@ __all__ = [
     "SliceProcessingResult",
     "RetryPolicy",
     "SliceProcessingError",
-    "SliceMonitor",
-    "SliceMetrics",
-    "OperationMetrics",
-    "SliceScheduler",
-    "SchedulingConfig",
-    "ScheduleResult"
 ]

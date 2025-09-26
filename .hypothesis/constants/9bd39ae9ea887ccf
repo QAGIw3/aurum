@@ -1,0 +1,4 @@
+# file: /Users/mstudio/Library/Mobile Documents/com~apple~CloudDocs/dev/aurum/src/aurum/logging/kafka_sink.py
+# hypothesis_version: 6.140.2
+
+[5.0, 100, 10000, 30000, 'LogEvent', 'LogKey', 'acks', 'all', 'basic.auth.user.info', 'bootstrap.servers', 'bytes_processed', 'compression.type', 'container_id', 'dataset', 'default', 'delivery.timeout.ms', 'double', 'duration_ms', 'error_code', 'error_message', 'event_type', 'fields', 'hostname', 'job_id', 'key.serializer', 'level', 'long', 'lz4', 'map', 'message', 'metadata', 'name', 'null', 'record', 'records_processed', 'request.timeout.ms', 'retries', 'retry.backoff.ms', 'schema.registry.url', 'source_name', 'string', 'task_id', 'thread_id', 'timestamp', 'type', 'unknown', 'url', 'value.serializer', 'values']

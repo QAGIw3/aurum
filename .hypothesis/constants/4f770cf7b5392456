@@ -1,0 +1,4 @@
+# file: /Users/mstudio/Library/Mobile Documents/com~apple~CloudDocs/dev/aurum/src/aurum/reference/units.py
+# hypothesis_version: 6.140.2
+
+['APAC', 'CA', 'CAD', 'EU', 'EUA', 'EUR', 'GBP', 'MWh', 'NBP', 'TTF', 'UK', 'US', 'USD', 'UnitRecord', 'UnitsMapper', 'config', 'currency', 'infer_default_units', 'map_units', 'per_unit', 'units_map.csv', 'units_raw', 'utf-8']

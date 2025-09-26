@@ -1,0 +1,4 @@
+# file: /Users/mstudio/Library/Mobile Documents/com~apple~CloudDocs/dev/aurum/src/aurum/observability/instrumentation.py
+# hypothesis_version: 6.140.2
+
+[200, 500, 'ApiEndpointTracer', 'CacheOperationTracer', 'GET', 'T', '_', 'api_endpoint', 'cache', 'cache_', 'cache_type', 'database', 'dataset', 'duration_seconds', 'endpoint', 'error', 'error_type', 'external_call', 'hit', 'ingestion', 'instrument_ingestion', 'memory', 'method', 'miss', 'operation', 'request_id', 'service', 'source', 'status', 'success', 'table', 'task_type', 'worker_task', 'worker_type']

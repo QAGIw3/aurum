@@ -11,7 +11,8 @@ import asyncio
 import threading
 import time
 from dataclasses import dataclass, field
-from typing import Any, Dict, Optional, Callable
+from enum import Enum
+from typing import Any, Dict, Optional, Callable, List
 
 from ..observability.metrics import get_metrics_client
 from ..logging.structured_logger import get_logger
@@ -25,6 +26,14 @@ class CircuitBreakerConfig:
     success_threshold: int = 3  # Successes needed in HALF_OPEN to close
     alert_callback: Optional[Callable] = None  # Called when circuit opens/closes
     name: str = "default"  # Circuit breaker name for metrics
+
+
+class CircuitBreakerState(str, Enum):
+    """Valid circuit breaker states."""
+
+    CLOSED = "closed"
+    OPEN = "open"
+    HALF_OPEN = "half_open"
 
 
 @dataclass
@@ -46,7 +55,7 @@ class CircuitBreaker:
     _successes: int = field(default=0, init=False)
     _last_failure_time: Optional[float] = field(default=None, init=False)
     _last_success_time: Optional[float] = field(default=None, init=False)
-    _state: str = field(default="CLOSED", init=False)
+    _state: CircuitBreakerState = field(default=CircuitBreakerState.CLOSED, init=False)
     _state_change_time: Optional[float] = field(default=None, init=False)
     _lock: threading.Lock = field(default_factory=threading.Lock, init=False)
 
@@ -63,7 +72,7 @@ class CircuitBreaker:
 
     def _update_metrics(self):
         """Update Prometheus metrics for this circuit breaker."""
-        state_value = 1 if self._state == "CLOSED" else 0
+        state_value = 1 if self._state == CircuitBreakerState.CLOSED else 0
         self._metrics.gauge(f"circuit_breaker_state_{self.name}", state_value)
         self._metrics.gauge(f"circuit_breaker_failures_{self.name}", self._failures)
         self._metrics.gauge(f"circuit_breaker_successes_{self.name}", self._successes)
@@ -73,15 +82,20 @@ class CircuitBreaker:
             duration = time.time() - self._state_change_time
             self._metrics.histogram(f"circuit_breaker_state_duration_{self.name}", duration)
 
-    async def _trigger_alert(self, old_state: str, new_state: str, reason: str):
+    async def _trigger_alert(
+        self,
+        old_state: CircuitBreakerState,
+        new_state: CircuitBreakerState,
+        reason: str,
+    ):
         """Trigger an alert for state changes."""
         if self.alert_callback:
             try:
                 await self.alert_callback({
                     "type": "circuit_breaker_alert",
                     "circuit_breaker": self.name,
-                    "old_state": old_state,
-                    "new_state": new_state,
+                    "old_state": old_state.value,
+                    "new_state": new_state.value,
                     "reason": reason,
                     "failures": self._failures,
                     "successes": self._successes,
@@ -91,26 +105,44 @@ class CircuitBreaker:
                 self._logger.error(f"Failed to send circuit breaker alert: {e}")
 
         self._logger.warning(
-            f"Circuit breaker {self.name} state change: {old_state} -> {new_state} ({reason})"
+            "Circuit breaker %s state change: %s -> %s (%s)",
+            self.name,
+            old_state.value,
+            new_state.value,
+            reason,
         )
+
+    def _dispatch_alert(
+        self,
+        old_state: CircuitBreakerState,
+        new_state: CircuitBreakerState,
+        reason: str,
+    ) -> None:
+        """Schedule or synchronously run the alert coroutine depending on loop state."""
+
+        coro = self._trigger_alert(old_state, new_state, reason)
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            asyncio.run(coro)
+        else:
+            loop.create_task(coro)
 
     def is_open(self) -> bool:
         """Return True if the breaker is OPEN and requests should be short-circuited."""
         with self._lock:
-            if self._state == "OPEN":
+            if self._state == CircuitBreakerState.OPEN:
                 if (self._last_failure_time is not None and
                     time.time() - self._last_failure_time > self.recovery_timeout):
                     # Transition to HALF_OPEN after timeout
                     old_state = self._state
-                    self._state = "HALF_OPEN"
+                    self._state = CircuitBreakerState.HALF_OPEN
                     self._state_change_time = time.time()
                     self._update_metrics()
 
                     # Schedule alert
                     if old_state != self._state:
-                        asyncio.create_task(
-                            self._trigger_alert(old_state, self._state, "Recovery timeout elapsed")
-                        )
+                        self._dispatch_alert(old_state, self._state, "Recovery timeout elapsed")
                     return False
                 return True
             return False
@@ -122,10 +154,21 @@ class CircuitBreaker:
             self._successes += 1
             self._last_success_time = time.time()
 
-            if self._state == "HALF_OPEN":
+            if self._state == CircuitBreakerState.OPEN:
+                # Allow manual reset when successes are recorded while open
+                self._state = CircuitBreakerState.CLOSED
+                self._failures = 0
+                self._successes = 0
+                self._state_change_time = time.time()
+                self._update_metrics()
+
+                if old_state != self._state:
+                    self._dispatch_alert(old_state, self._state, "Manual recovery success")
+
+            elif self._state == CircuitBreakerState.HALF_OPEN:
                 if self._successes >= self.success_threshold:
                     # Transition to CLOSED after sufficient successes
-                    self._state = "CLOSED"
+                    self._state = CircuitBreakerState.CLOSED
                     self._failures = 0
                     self._successes = 0
                     self._state_change_time = time.time()
@@ -133,10 +176,12 @@ class CircuitBreaker:
 
                     # Schedule alert
                     if old_state != self._state:
-                        asyncio.create_task(
-                            self._trigger_alert(old_state, self._state, f"Success threshold reached: {self._successes}")
+                        self._dispatch_alert(
+                            old_state,
+                            self._state,
+                            f"Success threshold reached: {self._successes}",
                         )
-            elif self._state == "CLOSED":
+            elif self._state == CircuitBreakerState.CLOSED:
                 # Reset failure count on success in CLOSED state
                 if self._failures > 0:
                     self._failures = max(0, self._failures - 1)
@@ -148,31 +193,35 @@ class CircuitBreaker:
             self._failures += 1
             self._last_failure_time = time.time()
 
-            if self._state == "CLOSED" and self._failures >= self.failure_threshold:
+            if self._state == CircuitBreakerState.CLOSED and self._failures > self.failure_threshold:
                 # Transition to OPEN
-                self._state = "OPEN"
+                self._state = CircuitBreakerState.OPEN
                 self._state_change_time = time.time()
                 self._update_metrics()
 
                 # Schedule alert
                 if old_state != self._state:
-                    asyncio.create_task(
-                        self._trigger_alert(old_state, self._state, f"Failure threshold reached: {self._failures}")
+                    self._dispatch_alert(
+                        old_state,
+                        self._state,
+                        f"Failure threshold reached: {self._failures}",
                     )
-            elif self._state == "HALF_OPEN":
+            elif self._state == CircuitBreakerState.HALF_OPEN:
                 # Transition back to OPEN on failure in HALF_OPEN
-                self._state = "OPEN"
+                self._state = CircuitBreakerState.OPEN
                 self._successes = 0
                 self._state_change_time = time.time()
                 self._update_metrics()
 
                 # Schedule alert
                 if old_state != self._state:
-                    asyncio.create_task(
-                        self._trigger_alert(old_state, self._state, "Failure in half-open state")
+                    self._dispatch_alert(
+                        old_state,
+                        self._state,
+                        "Failure in half-open state",
                     )
 
-    def get_state(self) -> str:
+    def get_state(self) -> CircuitBreakerState:
         """Get current circuit breaker state."""
         with self._lock:
             return self._state
@@ -182,7 +231,7 @@ class CircuitBreaker:
         with self._lock:
             return {
                 "name": self.name,
-                "state": self._state,
+                "state": self._state.value,
                 "failures": self._failures,
                 "successes": self._successes,
                 "failure_threshold": self.failure_threshold,
@@ -198,31 +247,27 @@ class CircuitBreaker:
         """Manually force the circuit breaker to open."""
         with self._lock:
             old_state = self._state
-            if self._state != "OPEN":
-                self._state = "OPEN"
+            if self._state != CircuitBreakerState.OPEN:
+                self._state = CircuitBreakerState.OPEN
                 self._state_change_time = time.time()
                 self._update_metrics()
 
                 # Schedule alert
-                asyncio.create_task(
-                    self._trigger_alert(old_state, self._state, "Manual force open")
-                )
+                self._dispatch_alert(old_state, self._state, "Manual force open")
 
     async def force_close(self) -> None:
         """Manually force the circuit breaker to close."""
         with self._lock:
             old_state = self._state
-            if self._state != "CLOSED":
-                self._state = "CLOSED"
+            if self._state != CircuitBreakerState.CLOSED:
+                self._state = CircuitBreakerState.CLOSED
                 self._failures = 0
                 self._successes = 0
                 self._state_change_time = time.time()
                 self._update_metrics()
 
                 # Schedule alert
-                asyncio.create_task(
-                    self._trigger_alert(old_state, self._state, "Manual force close")
-                )
+                self._dispatch_alert(old_state, self._state, "Manual force close")
 
 
 class CircuitBreakerRegistry:
@@ -280,8 +325,9 @@ class CircuitBreakerRegistry:
     def get_open_breakers(self) -> List[str]:
         """Get names of currently open circuit breakers."""
         return [
-            name for name, breaker in self._breakers.items()
-            if breaker.get_state() == "OPEN"
+            name
+            for name, breaker in self._breakers.items()
+            if breaker.get_state() == CircuitBreakerState.OPEN
         ]
 
     def get_breaker_by_name(self, name: str) -> Optional[CircuitBreaker]:

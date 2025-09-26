@@ -1,0 +1,4 @@
+# file: /Users/mstudio/Library/Mobile Documents/com~apple~CloudDocs/dev/aurum/src/aurum/api/rate_limiting/concurrency_middleware.py
+# hypothesis_version: 6.140.2
+
+[b'x-aurum-tenant', b'x-request-id', 0.0, 10.0, 30.0, 60.0, 100, 202, 429, 500, 504, '/health', '/metrics', '/ready', 'Content-Type', 'GatewayTimeout', 'InternalServerError', 'Rate limit exceeded', 'RateLimitExceeded', 'Retry-After', 'X-Request-Id', 'X-Timeout-Seconds', 'accepted', 'active_requests', 'anonymous', 'application/json', 'body', 'client', 'concurrency_control', 'endpoint', 'error', 'global_available', 'global_limit', 'headers', 'http', 'http.response.body', 'http.response.start', 'ignore', 'info', 'message', 'method', 'offloaded', 'path', 'query_string', 'rate_limited', 'rejected', 'request_completed', 'request_id', 'result', 'retry_after', 'status', 'status_url', 'task_id', 'tenants', 'timeout_seconds', 'type', 'unknown', 'warning']

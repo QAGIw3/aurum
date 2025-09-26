@@ -157,7 +157,33 @@ if PROMETHEUS_AVAILABLE:  # pragma: no branch - simplify instrumentation when av
         "External to curve mapping counter",
         ["mapping_type"],
     )
+    EXTERNAL_PIPELINE_HEALTH = Gauge(
+        "aurum_external_pipeline_health_score",
+        "Health score for external pipeline components",
+        ["component"],
+    )
+    EXTERNAL_PIPELINE_SLA_VIOLATIONS = Counter(
+        "aurum_external_pipeline_sla_violations_total",
+        "External pipeline SLA violations",
+        ["rule", "target"],
+    )
+    EXTERNAL_DATA_FRESHNESS = Gauge(
+        "aurum_external_data_freshness_hours",
+        "External data freshness in hours",
+        ["provider", "dataset"],
+    )
+    EXTERNAL_DATA_QUALITY_SCORE = Gauge(
+        "aurum_external_data_quality_score",
+        "External data quality score",
+        ["provider", "dataset", "metric"],
+    )
 
+    # Great Expectations metrics
+    GE_VALIDATION_RUNS = GE_VALIDATION_DURATION = GE_VALIDATION_EXPECTATIONS = GE_VALIDATION_QUALITY_SCORE = None
+    GE_VALIDATION_COUNTER = None
+    GE_VALIDATION_LATENCY = None
+    GE_VALIDATION_SUCCESS = None
+    GE_VALIDATION_FAILURES = None
     # Rate limiting metrics
     RATE_LIMIT_REQUESTS = Counter(
         "aurum_rate_limit_requests_total",
@@ -497,12 +523,15 @@ if PROMETHEUS_AVAILABLE:  # pragma: no branch - simplify instrumentation when av
         "Great Expectations validation runs",
         ["dataset", "suite", "status"],
     )
+    # Backwards compatibility alias used by older code paths/tests
+    GE_VALIDATION_COUNTER = GE_VALIDATION_RUNS
     GE_VALIDATION_DURATION = Histogram(
         "aurum_ge_validation_duration_seconds",
         "Great Expectations validation duration",
         ["dataset", "suite"],
         buckets=(0.1, 0.5, 1.0, 2.0, 5.0, 10.0, 30.0, 60.0, 300.0),
     )
+    GE_VALIDATION_LATENCY = GE_VALIDATION_DURATION
     GE_VALIDATION_EXPECTATIONS = Counter(
         "aurum_ge_validation_expectations_total",
         "Great Expectations validation expectations",
@@ -511,6 +540,16 @@ if PROMETHEUS_AVAILABLE:  # pragma: no branch - simplify instrumentation when av
     GE_VALIDATION_QUALITY_SCORE = Gauge(
         "aurum_ge_validation_quality_score",
         "Great Expectations validation quality score",
+        ["dataset", "suite"],
+    )
+    GE_VALIDATION_SUCCESS = Counter(
+        "aurum_ge_validation_success_total",
+        "Successful Great Expectations validations",
+        ["dataset", "suite"],
+    )
+    GE_VALIDATION_FAILURES = Counter(
+        "aurum_ge_validation_failures_total",
+        "Failed Great Expectations validations",
         ["dataset", "suite"],
     )
 
@@ -630,6 +669,10 @@ else:  # pragma: no cover - Prometheus not present
     EXTERNAL_CACHE_HIT_COUNTER = EXTERNAL_CACHE_MISS_COUNTER = None
     EXTERNAL_DAO_QUERY_COUNTER = EXTERNAL_DAO_LATENCY = None
     EXTERNAL_CURVE_MAPPING_COUNTER = None
+    EXTERNAL_PIPELINE_HEALTH = None
+    EXTERNAL_PIPELINE_SLA_VIOLATIONS = None
+    EXTERNAL_DATA_FRESHNESS = None
+    EXTERNAL_DATA_QUALITY_SCORE = None
     # Rate limiting metrics
     RATE_LIMIT_REQUESTS = RATE_LIMIT_REJECTED = RATE_LIMIT_LATENCY = None
     # Worker metrics
@@ -642,6 +685,15 @@ else:  # pragma: no cover - Prometheus not present
     DB_CONNECTIONS_ACTIVE = DB_CONNECTIONS_IDLE = DB_CONNECTIONS_TOTAL = DB_CONNECTION_POOL_WAIT = None
     # Business metrics
     BUSINESS_TRANSACTIONS = BUSINESS_VALUE = BUSINESS_ERRORS = None
+    # Great Expectations metrics (kept as sentinel None objects for import compatibility)
+    GE_VALIDATION_RUNS = None
+    GE_VALIDATION_DURATION = None
+    GE_VALIDATION_EXPECTATIONS = None
+    GE_VALIDATION_QUALITY_SCORE = None
+    GE_VALIDATION_COUNTER = None
+    GE_VALIDATION_LATENCY = None
+    GE_VALIDATION_SUCCESS = None
+    GE_VALIDATION_FAILURES = None
     CONTENT_TYPE_LATEST = "text/plain; version=0.0.4; charset=utf-8"
 
     def generate_latest():  # type: ignore[misc]
@@ -1619,6 +1671,7 @@ __all__ = [
     "CONTENT_TYPE_LATEST",
     "generate_latest",
     "get_metrics_collector",
+    "get_metrics_client",
     "increment_api_requests",
     "observe_api_latency",
     "set_active_connections",
@@ -1626,6 +1679,11 @@ __all__ = [
     "increment_cache_misses",
     "observe_query_duration",
     "set_queue_size",
+    # External pipeline metrics
+    "EXTERNAL_PIPELINE_HEALTH",
+    "EXTERNAL_PIPELINE_SLA_VIOLATIONS",
+    "EXTERNAL_DATA_FRESHNESS",
+    "EXTERNAL_DATA_QUALITY_SCORE",
     # Rate limiting metrics
     "RATE_LIMIT_REQUESTS",
     "RATE_LIMIT_REJECTED",
@@ -1742,6 +1800,10 @@ __all__ = [
     "GE_VALIDATION_DURATION",
     "GE_VALIDATION_EXPECTATIONS",
     "GE_VALIDATION_QUALITY_SCORE",
+    "GE_VALIDATION_COUNTER",
+    "GE_VALIDATION_LATENCY",
+    "GE_VALIDATION_SUCCESS",
+    "GE_VALIDATION_FAILURES",
     "increment_ge_validation_runs",
     "observe_ge_validation_duration",
     "increment_ge_validation_expectations",

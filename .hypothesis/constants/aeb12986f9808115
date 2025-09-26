@@ -1,0 +1,4 @@
+# file: /Users/mstudio/Library/Mobile Documents/com~apple~CloudDocs/dev/aurum/src/aurum/api/scenarios/scenarios.py
+# hypothesis_version: 6.140.2
+
+[100, 201, 202, 204, 500, 1000, '+00:00', '/scenarios', '/v1', 'Filter by status', 'Filter by tag', 'Filter by tenant', 'Filter runs by state', 'Maximum value filter', 'Minimum value filter', 'Scenario ID', 'Z', 'count', 'created_after', 'created_at', 'duplicate_runs', 'end_time', 'error', 'existing_run_id', 'existing_status', 'failed_runs', 'feature', 'idempotency_key', 'index', 'limit', 'min_value', 'next_cursor', 'offset', 'principal', 'query_time_ms', 'request_id', 'run_id', 'runs', 'scenario', 'scenario_id', 'scenario_metrics', 'scenario_run', 'scenarios', 'start_time', 'state', 'state_update', 'status', 'success', 'successful_runs', 'tags', 'total', 'total_runs', 'warning']
