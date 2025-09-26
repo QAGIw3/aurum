@@ -10,6 +10,7 @@ from unittest.mock import AsyncMock
 
 import aurum.api.runtime_config as runtime_config
 import aurum.api.app as app_module
+import aurum.api.routes as routes
 from aurum.core.settings import SimplifiedSettings
 
 
@@ -83,7 +84,7 @@ def scenario_store(monkeypatch: pytest.MonkeyPatch) -> StubScenarioStore:
 
 
 def _settings_stub() -> SimpleNamespace:
-    rate_limit_ns = SimpleNamespace(tenant_overrides={}, daily_cap=100000)
+    rate_limit_ns = SimpleNamespace(tenant_overrides={}, daily_cap=100000, overrides={})
     concurrency_ns = SimpleNamespace(tenant_overrides={})
     api = SimpleNamespace(rate_limit=rate_limit_ns, concurrency=concurrency_ns)
     return SimpleNamespace(api=api)
@@ -137,6 +138,8 @@ def test_runtime_config_router_is_registered(monkeypatch: pytest.MonkeyPatch) ->
     monkeypatch.setattr(app_module, "configure_telemetry", lambda *args, **kwargs: None, raising=False)
     monkeypatch.setattr(app_module, "_register_metrics_endpoint", lambda app, settings: None, raising=False)
     monkeypatch.setattr(app_module, "_register_trino_lifecycle", lambda app: None, raising=False)
+    monkeypatch.setattr(app_module, "_install_rate_limit_middleware", lambda app, settings: app, raising=False)
+    monkeypatch.setattr(app_module, "_install_concurrency_middleware", lambda app, settings: app, raising=False)
     monkeypatch.setattr(app_module, "HybridTrinoClientManager", type("_Stub", (), {"get_instance": classmethod(lambda cls: None)}))
 
     settings = SimplifiedSettings()
@@ -145,3 +148,22 @@ def test_runtime_config_router_is_registered(monkeypatch: pytest.MonkeyPatch) ->
     paths = {route.path for route in app.router.routes}
     assert "/v1/admin/config/concurrency/{tenant_id}" in paths
     assert "/v1/admin/config/ratelimit/{tenant_id}" in paths
+
+
+
+def test_migration_health_requires_admin(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(runtime_config, "validate_migration_health", lambda: {"healthy": True, "issues": []}, raising=False)
+    monkeypatch.setattr(routes, "ADMIN_GROUPS", {"aurum-admins"}, raising=False)
+
+    app = FastAPI()
+    app.include_router(runtime_config.router)
+    client = TestClient(app)
+
+    app.dependency_overrides[runtime_config._get_principal] = lambda: {"groups": ["viewer"]}
+    response = client.get("/v1/admin/migration/health")
+    assert response.status_code == 403
+
+    app.dependency_overrides[runtime_config._get_principal] = lambda: {"groups": ["aurum-admins"]}
+    response_ok = client.get("/v1/admin/migration/health")
+    assert response_ok.status_code == 200
+    assert response_ok.json() == {"data": {"healthy": True, "issues": []}}

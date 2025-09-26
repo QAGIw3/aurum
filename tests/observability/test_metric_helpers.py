@@ -43,6 +43,24 @@ def test_metric_helpers_reuse_same_collector():
     assert counter_one is counter_two
 
 
+def test_metric_cache_reset_creates_new_collectors():
+    """Clearing the cache should drop existing collectors."""
+
+    counter_one = get_counter(
+        "aurum_metric_helper_cache_test_total",
+        "Ensures cache clears",
+        ["outcome"],
+    )
+    clear_metric_cache()
+    counter_two = get_counter(
+        "aurum_metric_helper_cache_test_total",
+        "Ensures cache clears",
+        ["outcome"],
+    )
+
+    assert counter_one is not counter_two
+
+
 @pytest.mark.asyncio
 async def test_concurrency_middleware_reuses_metric_collectors():
     """Multiple middleware instances should not register duplicate collectors."""

@@ -89,8 +89,8 @@ async def list_ppa_contracts_v2(
             filters={"counterparty_filter": counterparty_filter},
         )
 
-        from ..ppa_v2_service import get_ppa_service
-        svc = await get_ppa_service()
+        from ..services import PpaService
+        svc = PpaService()
         paginated_data = await svc.list_contracts(
             tenant_id=tenant_id,
             offset=offset,
@@ -230,8 +230,8 @@ async def list_ppa_valuations_v2(
             filters={"contract_id": contract_id, "start_date": start_date, "end_date": end_date},
         )
 
-        from ..ppa_v2_service import get_ppa_service
-        svc = await get_ppa_service()
+        from ..services import PpaService
+        svc = PpaService()
         paginated_data = await svc.list_valuations(
             tenant_id=tenant_id,
             contract_id=contract_id,

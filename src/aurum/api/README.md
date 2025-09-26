@@ -57,7 +57,7 @@ This package hosts the FastAPI surface for Aurum as well as the supporting infra
 ## Ongoing Refactor Checklist
 
 - [x] Router registry abstraction in place and covered by unit tests.
-- [ ] Extract remaining v1 domains (curves, metadata, ISO, drought, admin) into dedicated modules.
+- [x] Extract remaining v1 domains (curves, metadata, ISO, drought, admin) into dedicated modules.
 - [ ] Decompose `service.py` into per-domain services/DAOs (tracked in `docs/refactor/api-refactor-roadmap.md`).
 - [ ] Introduce middleware registry to complement router registry.
 - [ ] Replace implicit globals with dependency-injected collaborators.

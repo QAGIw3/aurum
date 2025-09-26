@@ -174,6 +174,7 @@ Observability and limits:
 - Add `include_counts=true` to `/v1/metadata/dimensions` to receive per-dimension frequencies alongside values.
 - Traefik + OAuth2 forward-auth wiring is documented in `docs/auth/oidc-forward-auth.md` (includes docker compose and Kubernetes notes).
 - Pagination returns `meta.next_cursor`; supply it as either `cursor` or `since_cursor` on subsequent requests to resume iteration and avoid duplicate rows.
+ - Admin route guard: enable `AURUM_API_ADMIN_GUARD_ENABLED=1` to enforce admin permission checks on `/v1/admin/*` and `/v2/admin/*` routes. When enabled, unauthenticated/anonymous requests receive `403`.
 
 ### Vendor Parser CLI
 
@@ -488,3 +489,7 @@ Generate representative datasets for load tests via `python scripts/parsers/gene
 Set `AURUM_WRITE_ICEBERG=1` or pass `--write-iceberg` to publish parsed rows directly into the configured Iceberg table (requires `pip install "aurum[iceberg]"`).
 
 Environment variables: `AURUM_LAKEFS_ENDPOINT`, `AURUM_LAKEFS_ACCESS_KEY`, `AURUM_LAKEFS_SECRET_KEY`, and `AURUM_LAKEFS_REPO` must be exported when enabling lakeFS integration.
+
+### Router/service façade pattern
+
+v2 routers now depend on domain-specific façade classes under `src/aurum/api/services` (e.g., `MetadataService`, `IsoService`, `EiaService`, `PpaService`, `CurvesService`). The façades forward to the v2 service implementations and keep the HTTP layer decoupled from storage/DAO details. When adding new endpoints, import from `aurum.api.services` instead of module-level services.

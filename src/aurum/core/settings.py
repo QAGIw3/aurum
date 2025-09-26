@@ -9,6 +9,8 @@ from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, Dict, Iterable, List, Mapping, Optional
 
+print(f"DEBUG: Loading settings.py - AURUM_ENABLE_MIGRATION_MONITORING = {os.getenv('AURUM_ENABLE_MIGRATION_MONITORING', 'NOT_SET')}")
+
 # Setup logging
 logger = logging.getLogger(__name__)
 
@@ -37,11 +39,21 @@ FEATURE_FLAGS = {
 
 
 def get_flag_env(flag_name: str, *, default: str = "") -> str:
-    """Return environment value for ``flag_name`` with lowercase fallback."""
+    """Return environment value for ``flag_name`` with lowercase fallback.
+
+    Emits a deprecation warning when the lowercase variant is used.
+    """
 
     value = os.getenv(flag_name)
     if value is None:
-        value = os.getenv(flag_name.lower())
+        lower_key = flag_name.lower()
+        value = os.getenv(lower_key)
+        if value is not None:
+            logger.warning(
+                "Using deprecated lowercase environment variable %s; prefer %s",
+                lower_key,
+                flag_name,
+            )
     return value if value is not None else default
 
 
@@ -56,15 +68,37 @@ class MigrationMetrics:
     """Track migration metrics and health."""
 
     def __init__(self):
-        metrics_dir = os.getenv("AURUM_METRICS_DIR", str(Path.home() / ".aurum"))
-        self.metrics_file = Path(metrics_dir) / "migration_metrics.json"
-        try:
-            self.metrics_file.parent.mkdir(parents=True, exist_ok=True)
-        except OSError:
-            # If we can't create the directory (read-only filesystem), create a dummy metrics object
+        # Check if migration monitoring is enabled at the very beginning
+        if not is_feature_enabled(FEATURE_FLAGS["ENABLE_MIGRATION_MONITORING"]):
             self._metrics = self._default_metrics()
+            self.metrics_file = None
             return
-        self._load_metrics()
+
+        try:
+            metrics_dir = os.getenv("AURUM_METRICS_DIR", str(Path.home() / ".aurum"))
+            self.metrics_file = Path(metrics_dir) / "migration_metrics.json"
+
+            # Try to create the directory and handle read-only filesystems
+            try:
+                self.metrics_file.parent.mkdir(parents=True, exist_ok=True)
+            except OSError as e:
+                # If we can't create the directory (read-only filesystem), create a dummy metrics object
+                logger.debug(f"Cannot create metrics directory {self.metrics_file.parent}: {e}")
+                self._metrics = self._default_metrics()
+                self.metrics_file = None
+                return
+
+            try:
+                self._load_metrics()
+            except OSError as e:
+                # If we can't load metrics (read-only filesystem), use default metrics
+                logger.debug(f"Cannot load metrics from {self.metrics_file}: {e}")
+                self._metrics = self._default_metrics()
+        except Exception as e:
+            # If anything fails during initialization, use default metrics
+            logger.debug(f"MigrationMetrics initialization failed: {e}")
+            self._metrics = self._default_metrics()
+            self.metrics_file = None
 
     def _load_metrics(self):
         """Load metrics from file."""
@@ -176,16 +210,26 @@ def _init_migration_metrics():
     """Initialize migration metrics lazily."""
     global _migration_metrics
     if _migration_metrics is None:
+        # Check if migration monitoring is enabled before initializing
+        if not is_feature_enabled(FEATURE_FLAGS["ENABLE_MIGRATION_MONITORING"]):
+            _migration_metrics = None
+            return
+
         try:
             _migration_metrics = MigrationMetrics()
-        except OSError:
-            # If we can't create the metrics file (read-only filesystem), keep it None
+        except Exception:
+            # If we can't create the metrics file (any error), keep it None
             _migration_metrics = None
 
 
 def is_feature_enabled(flag: str) -> bool:
-    """Check if a feature flag is enabled."""
-    value = get_flag_env(flag, default="false").lower()
+    """Check if a feature flag is enabled.
+
+    Defaults to enabled for the simplified settings flag to complete migration.
+    """
+    # Prefer default enabled for simplified settings roll-out
+    default_value = "true" if flag == FEATURE_FLAGS.get("USE_SIMPLIFIED_SETTINGS") else "false"
+    value = get_flag_env(flag, default=default_value).lower()
     return value in ("true", "1", "yes")
 
 
@@ -195,6 +239,7 @@ def get_migration_phase(component: str = "settings") -> str:
         FEATURE_FLAGS["SETTINGS_MIGRATION_PHASE"],
         default="legacy",
     )
+    # Only set migration phase if metrics are already initialized to avoid triggering initialization during module import
     if _migration_metrics is not None:
         _migration_metrics.set_migration_phase("settings_migration", phase)
     return phase
@@ -283,7 +328,7 @@ class SimplifiedSettings:
         start_time = self._current_time_ms()
         self._load_from_env()
         duration = self._current_time_ms() - start_time
-        if _migration_metrics is not None:
+        if get_migration_metrics() is not None:
             _migration_metrics.record_settings_call("simplified", duration)
 
     def _current_time_ms(self) -> float:
@@ -775,6 +820,23 @@ class SimplifiedSettings:
             metrics=SimpleNamespace(enabled=api_metrics_enabled, path=api_metrics_path),
             concurrency=concurrency_namespace,
             rate_limit=SimpleNamespace(enabled=False, tenant_overrides={}),
+            admin_guard_enabled=self._get_bool_from_env(
+                env,
+                [f"{self.env_prefix}API_ADMIN_GUARD_ENABLED"],
+                False,
+            ),
+            dimensions_table_trino=env.get(
+                f"{self.env_prefix}API_DIMENSIONS_TABLE_TRINO",
+                "iceberg.market.curve_observation",
+            ),
+            dimensions_table_clickhouse=env.get(
+                f"{self.env_prefix}API_DIMENSIONS_TABLE_CLICKHOUSE",
+                "aurum.curve_observation",
+            ),
+            dimensions_table_timescale=env.get(
+                f"{self.env_prefix}API_DIMENSIONS_TABLE_TIMESCALE",
+                "market.curve_observation",
+            ),
         )
 
         if isinstance(self.api.cache, SimpleNamespace):
@@ -886,10 +948,41 @@ class SimplifiedSettings:
             connection_pool_acquire_timeout_seconds=pool_acquire_timeout,
         )
 
+        offload_enabled = self._get_bool_from_env(
+            env,
+            [f"{self.env_prefix}API_OFFLOAD_ENABLED"],
+            False,
+        )
+        default_stub = self.environment.lower() in {"development", "dev", "local"}
+        offload_use_stub = self._get_bool_from_env(
+            env,
+            [f"{self.env_prefix}API_OFFLOAD_USE_STUB"],
+            default_stub or not offload_enabled,
+        )
+        offload_broker = env.get(
+            f"{self.env_prefix}API_OFFLOAD_CELERY_BROKER_URL",
+            env.get("AURUM_CELERY_BROKER_URL", "redis://localhost:6379/0"),
+        )
+        offload_backend = env.get(
+            f"{self.env_prefix}API_OFFLOAD_CELERY_RESULT_BACKEND",
+            env.get("AURUM_CELERY_RESULT_BACKEND", "redis://localhost:6379/1"),
+        )
+        offload_default_queue = env.get(
+            f"{self.env_prefix}API_OFFLOAD_DEFAULT_QUEUE",
+            env.get("AURUM_CELERY_TASK_DEFAULT_QUEUE", "default"),
+        )
+
         self.telemetry = SimpleNamespace(service_name=self.service_name)
         self.auth = SimpleNamespace(enabled=self.auth_enabled)
         self.pagination = SimpleNamespace(default_page_size=100, max_page_size=1000)
         self.messaging = SimpleNamespace(enabled=False)
+        self.async_offload = SimpleNamespace(
+            enabled=offload_enabled,
+            use_stub=offload_use_stub,
+            broker_url=offload_broker,
+            result_backend=offload_backend,
+            default_queue=offload_default_queue,
+        )
 
     def _split_env_list(self, value: str, separator: str = ",") -> List[str]:
         """Split environment variable list."""
@@ -932,7 +1025,7 @@ class HybridAurumSettings:
         duration = self._current_time_ms() - start_time
 
         # Record metrics
-        if _migration_metrics is not None:
+        if get_migration_metrics() is not None:
             _migration_metrics.record_settings_call(
                 "simplified" if self._use_simplified else "legacy",
                 duration
@@ -999,6 +1092,7 @@ class HybridAurumSettings:
                 "messaging",
                 "telemetry",
                 "pagination",
+                "async_offload",
             ):
                 setattr(self, attr, getattr(self._simplified_settings, attr, None))
 
@@ -1102,14 +1196,15 @@ def configure_settings(settings: AurumSettings) -> None:
 
 def get_migration_metrics() -> Optional[MigrationMetrics]:
     """Get the global migration metrics instance."""
-    if _migration_metrics is None:
+    # Only initialize migration metrics if not during module import
+    if _migration_metrics is None and not _is_module_importing():
         _init_migration_metrics()
     return _migration_metrics
 
 
 def log_migration_status() -> None:
     """Log current migration status."""
-    if _migration_metrics is not None:
+    if get_migration_metrics() is not None:
         status = _migration_metrics.get_migration_status()
         logger.info("Migration Status", extra={"migration": status})
 
@@ -1121,9 +1216,10 @@ def log_migration_status() -> None:
 
 def validate_migration_health() -> Dict[str, Any]:
     """Validate migration health and return status."""
-    if _migration_metrics is None:
+    migration_metrics = get_migration_metrics()
+    if migration_metrics is None:
         return {"healthy": True, "issues": [], "monitoring_disabled": True}
-    metrics = _migration_metrics._metrics
+    metrics = migration_metrics._metrics
     health = {"healthy": True, "issues": []}
 
     # Check settings migration
@@ -1147,7 +1243,7 @@ def advance_migration_phase(component: str = "settings", phase: str = "hybrid") 
     """Advance migration phase for a component."""
     if component == "settings":
         _set_flag_env(FEATURE_FLAGS["SETTINGS_MIGRATION_PHASE"], phase)
-        if _migration_metrics is not None:
+        if get_migration_metrics() is not None:
             _migration_metrics.set_migration_phase("settings_migration", phase)
         logger.info(f"Advanced settings migration to phase: {phase}")
         return True

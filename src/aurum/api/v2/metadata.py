@@ -32,6 +32,7 @@ from .pagination import (
 from ...telemetry.context import get_request_id
 from ...scenarios.series_curve_mapping import get_database_mapper
 from ..deps import get_settings, get_cache_manager
+from ..services import MetadataService
 from aurum.core import AurumSettings
 from ..cache.cache import CacheManager
 
@@ -171,8 +172,7 @@ async def list_dimensions_v2(
             filters={"asof": asof},
         )
 
-        from ..metadata_v2_service import get_metadata_service
-        svc = await get_metadata_service()
+        svc = MetadataService()
         paginated_data, total_count = await svc.list_dimensions(asof=asof, offset=offset, limit=effective_limit)
 
         next_cursor = build_next_cursor(
@@ -264,8 +264,7 @@ async def list_locations_v2(
             filters={"iso": iso},
         )
 
-        from ..metadata_v2_service import get_metadata_service
-        svc = await get_metadata_service()
+        svc = MetadataService()
         paginated_data, total_count = await svc.list_locations(iso=iso, offset=offset, limit=effective_limit)
 
         next_cursor = build_next_cursor(
@@ -362,8 +361,7 @@ async def list_units_v2(
             filters=None,
         )
 
-        from ..metadata_v2_service import get_metadata_service
-        svc = await get_metadata_service()
+        svc = MetadataService()
         paginated_data, total_count = await svc.list_units(offset=offset, limit=effective_limit)
 
         next_cursor = build_next_cursor(
@@ -438,8 +436,7 @@ async def list_calendars_v2(
             filters=None,
         )
 
-        from ..metadata_v2_service import get_metadata_service
-        svc = await get_metadata_service()
+        svc = MetadataService()
         paginated_data, total_count = await svc.list_calendars(offset=offset, limit=effective_limit)
 
         next_cursor = build_next_cursor(

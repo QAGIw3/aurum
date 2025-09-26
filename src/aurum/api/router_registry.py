@@ -98,6 +98,30 @@ def get_v1_router_specs(_settings: AurumSettings) -> list[RouterSpec]:
                 specs.append(RouterSpec(router=router, name=module_path))
                 seen.add(module_path)
 
+    supplemental_modules: tuple[tuple[str, Mapping[str, Any]], ...] = (
+        ("aurum.api.handlers.external", {}),
+        ("aurum.api.database.performance", {"prefix": "/v1/admin/db", "tags": ["Database"]}),
+        ("aurum.api.database.query_analysis", {"prefix": "/v1/admin/db", "tags": ["Database"]}),
+        ("aurum.api.database.optimization", {"prefix": "/v1/admin/db", "tags": ["Database"]}),
+        ("aurum.api.database.connections", {"prefix": "/v1/admin/db", "tags": ["Database"]}),
+        ("aurum.api.database.health", {"prefix": "/v1/admin/db", "tags": ["Database"]}),
+        ("aurum.api.database.trino_admin", {"prefix": "/v1/admin/trino", "tags": ["Trino"]}),
+    )
+
+    for module_path, include_kwargs in supplemental_modules:
+        if module_path in seen:
+            continue
+        router = _try_import_router(module_path)
+        if router is not None:
+            specs.append(
+                RouterSpec(
+                    router=router,
+                    include_kwargs=dict(include_kwargs),
+                    name=module_path,
+                )
+            )
+            seen.add(module_path)
+
     return specs
 
 

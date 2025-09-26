@@ -41,6 +41,7 @@ from ..telemetry.context import (
     get_request_id,
 )
 from ...observability.metric_helpers import get_counter, get_gauge, get_histogram
+import threading
 
 
 RATE_LIMIT_EVENTS = get_counter(
@@ -95,6 +96,13 @@ def _record_metric(result: str, path: str = "", tenant_id: str = "", request_cou
 
     except Exception:
         pass
+
+
+# Lightweight in-memory counters for admin status endpoints
+_COUNTERS_LOCK = threading.Lock()
+_ALLOWED_TOTAL = 0
+_BLOCKED_TOTAL = 0
+_ACTIVE_WINDOWS_ESTIMATE = 0
 
 
 @dataclass(frozen=True)
@@ -245,6 +253,8 @@ class RateLimitMiddleware:
         if scope["type"] != "http":
             await self.app(scope, receive, send)
             return
+        scope = dict(scope)
+        scope["app"] = self.app
         request = Request(scope)
         metrics_path = "/metrics"
         settings = getattr(request.app.state, "settings", None)
@@ -260,6 +270,9 @@ class RateLimitMiddleware:
         rps, burst = await self.rl_cfg.limits_for_path(path, tenant_id)
 
         if self.rl_cfg.is_whitelisted(identifier, tenant_id, header_identifier, client_ip):
+            # Count as allowed
+            with _COUNTERS_LOCK:
+                globals()['_ALLOWED_TOTAL'] += 1
             await self.app(scope, receive, send)
             return
 
@@ -283,6 +296,8 @@ class RateLimitMiddleware:
             result = self._tenant_quota.check_and_consume(tenant_id, rps=rps, burst=burst, daily_cap=daily_cap)
             if not result.get("allowed", False):
                 reset_seconds = int(result.get("daily_reset") if result.get("reason") == "daily_exceeded" else result.get("rps_reset", 1))
+                with _COUNTERS_LOCK:
+                    globals()['_BLOCKED_TOTAL'] += 1
                 await self._reject(scope, receive, send, remaining=0, reset=reset_seconds)
                 return
             remaining = int(result.get("rps_remaining", 0))
@@ -293,6 +308,8 @@ class RateLimitMiddleware:
             key = self._rate_key(path, identifier)
             allowed, remaining, reset = await self._allow(key, rps=rps, burst=burst)
             if not allowed:
+                with _COUNTERS_LOCK:
+                    globals()['_BLOCKED_TOTAL'] += 1
                 await self._reject(scope, receive, send, remaining=0, reset=reset)
                 return
 
@@ -310,6 +327,9 @@ class RateLimitMiddleware:
             await send(message)
 
         await self.app(scope, receive, send_with_headers)
+        # Count as allowed on successful pass-through
+        with _COUNTERS_LOCK:
+            globals()['_ALLOWED_TOTAL'] += 1
 
     async def _allow(self, key: str, *, rps: int, burst: int) -> Tuple[bool, int, int]:
         limit_total = rps + burst
@@ -461,14 +481,20 @@ async def get_ratelimit_status(
     """Get current rate limiting status and active windows."""
     # This would integrate with actual rate limit state tracking
     # For now, return basic information
+    # Provide coarse in-memory counters as a starting point
+    with _COUNTERS_LOCK:
+        allowed = int(globals().get('_ALLOWED_TOTAL', 0))
+        blocked = int(globals().get('_BLOCKED_TOTAL', 0))
+        active = int(globals().get('_ACTIVE_WINDOWS_ESTIMATE', 0))
+
     return {
         "meta": {
             "request_id": get_request_id(),
         },
         "data": {
-            "active_windows": 0,  # Would be populated from actual state
-            "blocked_requests": 0,  # Would be populated from metrics
-            "allowed_requests": 0,  # Would be populated from metrics
+            "active_windows": active,
+            "blocked_requests": blocked,
+            "allowed_requests": allowed,
             "filters": {
                 "tenant_id": tenant_id,
                 "path": path,
@@ -484,6 +510,11 @@ async def get_ratelimit_metrics(
     """Get rate limiting metrics."""
     # In a real implementation, this would expose Prometheus metrics
     # or provide a structured view of rate limiting statistics
+    with _COUNTERS_LOCK:
+        allowed = int(globals().get('_ALLOWED_TOTAL', 0))
+        blocked = int(globals().get('_BLOCKED_TOTAL', 0))
+        active = int(globals().get('_ACTIVE_WINDOWS_ESTIMATE', 0))
+
     return {
         "meta": {
             "request_id": get_request_id(),
@@ -491,9 +522,9 @@ async def get_ratelimit_metrics(
         "data": {
             "tenant_id": tenant_id,
             "metrics": {
-                "requests_blocked": 0,
-                "requests_allowed": 0,
-                "active_rate_limits": 0,
+                "requests_blocked": blocked,
+                "requests_allowed": allowed,
+                "active_rate_limits": active,
                 "average_window_utilization": 0.0,
             }
         }

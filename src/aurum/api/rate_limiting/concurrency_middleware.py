@@ -1286,6 +1286,18 @@ class ConcurrencyMiddleware:
                 response_headers["Retry-After"] = str(retry_after_seconds)
             response_headers["X-Queue-Depth"] = str(max(0, queue_depth_value))
 
+            try:
+                limits = self.concurrency_controller.limits.resolve_for_tenant(tenant_label)
+                queue_limit = int(limits.get("tenant_queue_limit", 0) or 0)
+                if queue_limit > 0:
+                    ratio = min(1.0, queue_depth_value / queue_limit)
+                else:
+                    ratio = 0.0
+            except Exception:
+                ratio = 0.0
+
+            response_headers[self.backpressure_header] = f"{ratio:.2f}"
+
             message_map = {
                 "tenant_queue_full": "Per-tenant concurrency queue is full",
                 "queue_timeout": "Timed out waiting for available capacity",

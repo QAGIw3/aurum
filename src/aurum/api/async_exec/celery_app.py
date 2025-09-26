@@ -19,9 +19,18 @@ def get_celery_app() -> Celery:
     if _celery_app is not None:
         return _celery_app
 
-    broker_url = os.getenv("AURUM_CELERY_BROKER_URL", "redis://localhost:6379/0")
-    result_backend = os.getenv("AURUM_CELERY_RESULT_BACKEND", "redis://localhost:6379/1")
-    default_queue = os.getenv("AURUM_CELERY_TASK_DEFAULT_QUEUE", "default")
+    broker_url = os.getenv(
+        "AURUM_API_OFFLOAD_CELERY_BROKER_URL",
+        os.getenv("AURUM_CELERY_BROKER_URL", "redis://localhost:6379/0"),
+    )
+    result_backend = os.getenv(
+        "AURUM_API_OFFLOAD_CELERY_RESULT_BACKEND",
+        os.getenv("AURUM_CELERY_RESULT_BACKEND", "redis://localhost:6379/1"),
+    )
+    default_queue = os.getenv(
+        "AURUM_API_OFFLOAD_DEFAULT_QUEUE",
+        os.getenv("AURUM_CELERY_TASK_DEFAULT_QUEUE", "default"),
+    )
 
     app = Celery("aurum-api", broker=broker_url, backend=result_backend)
 
@@ -39,4 +48,3 @@ def get_celery_app() -> Celery:
 
     _celery_app = app
     return app
-

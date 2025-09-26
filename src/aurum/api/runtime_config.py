@@ -31,6 +31,7 @@ from .telemetry.context import (
 )
 from .routes import _get_principal, _require_admin
 from aurum.core import AurumSettings
+from aurum.core.settings import validate_migration_health
 from ..observability.metrics import increment_runtime_override_updates
 
 
@@ -715,3 +716,14 @@ async def get_tenant_concurrency_override(
             request_id=request_id,
         )
         raise HTTPException(status_code=500, detail=f"Failed to retrieve concurrency overrides: {str(exc)}") from exc
+
+
+@router.get("/v1/admin/migration/health")
+async def get_migration_health(
+    principal: dict = Depends(_get_principal),
+) -> Dict[str, Any]:
+    """Return migration health information for administrators."""
+
+    _require_admin(principal)
+    status = validate_migration_health()
+    return {"data": status}
