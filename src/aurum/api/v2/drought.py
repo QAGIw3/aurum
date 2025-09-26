@@ -103,8 +103,8 @@ async def get_drought_indices_v2(
             },
         )
 
-        from ..drought_v2_service import get_drought_service
-        svc = await get_drought_service()
+        from ..services import DroughtService
+        svc = DroughtService()
         paginated_data = await svc.list_indices(
             dataset=dataset,
             index=index,
@@ -257,8 +257,8 @@ async def get_drought_usdm_v2(
             },
         )
 
-        from ..drought_v2_service import get_drought_service
-        svc = await get_drought_service()
+        from ..services import DroughtService
+        svc = DroughtService()
         paginated_data = await svc.list_usdm(
             region_type=region_type,
             region_id=region_id,

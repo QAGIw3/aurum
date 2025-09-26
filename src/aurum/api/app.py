@@ -25,6 +25,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.responses import JSONResponse
 from starlette.datastructures import MutableHeaders
+from starlette.types import ASGIApp
 from fastapi.exceptions import HTTPException as FastAPIHTTPException
 
 try:
@@ -89,6 +90,7 @@ def _patch_testclient_for_gzip() -> None:
 _patch_testclient_for_gzip()
 
 from aurum.core import AurumSettings
+from aurum.core.settings import get_flag_env
 from aurum.telemetry import configure_telemetry
 from aurum.api.models.common import (
     QueueServiceUnavailableError,
@@ -100,9 +102,23 @@ from aurum.api.rate_limiting.concurrency_middleware import (
     ConcurrencyMiddleware,
     OffloadInstruction,
     create_concurrency_middleware_from_settings,
+    local_diagnostics_router,
 )
 from aurum.api.rate_limiting.redis_concurrency import diagnostics_router
+from aurum.api.rate_limiting.sliding_window import (
+    RateLimitConfig,
+    RateLimitMiddleware,
+    ratelimit_admin_router,
+)
+from aurum.api.rate_limiting.config import CacheConfig
 from aurum.api.offload import offload_router
+from aurum.api.router_registry import RouterSpec, get_v1_router_specs, get_v2_router_specs
+from aurum.api.routes import configure_routes
+from .app_lifecycle import register_trino_lifecycle as _register_trino_lifecycle
+from .app_lifecycle import register_metrics_endpoint as _register_metrics_endpoint
+from .app_offload import build_offload_predicate as _build_offload_predicate
+from .middleware.registry import apply_middleware_stack
+from .middleware.admin_guard import AdminRouteGuard
 
 try:  # pragma: no cover - optional dependency
     from prometheus_client import CONTENT_TYPE_LATEST, CollectorRegistry, generate_latest
@@ -114,8 +130,12 @@ except ImportError:  # pragma: no cover - handled gracefully at runtime
     multiprocess = None  # type: ignore[assignment]
 # Feature flags for API migration
 API_FEATURE_FLAGS = {
-    "use_simplified_api": os.getenv("AURUM_USE_SIMPLIFIED_API", "false").lower() == "true",
-    "api_migration_phase": os.getenv("AURUM_API_MIGRATION_PHASE", "1"),
+    "use_simplified_api": get_flag_env(
+        "AURUM_USE_SIMPLIFIED_API",
+        default="false",
+    ).lower()
+    in ("true", "1", "yes"),
+    "api_migration_phase": get_flag_env("AURUM_API_MIGRATION_PHASE", default="1"),
 }
 
 
@@ -206,86 +226,21 @@ async def _api_exception_handler(request: Request, exc: Exception) -> JSONRespon
 
 
 def _register_trino_lifecycle(app: FastAPI) -> None:
-    """Ensure Trino clients are gracefully closed with the application."""
-
-    if HybridTrinoClientManager is None:  # pragma: no cover - optional dependency
-        return
-
-    previous_lifespan = getattr(app.router, "lifespan_context", None)
-
-    @contextlib.asynccontextmanager
-    async def _trino_lifespan(_app: FastAPI):
-        manager = HybridTrinoClientManager.get_instance()
-        try:
-            yield
-        finally:
-            await manager.close_all()
-
-    if previous_lifespan is None:
-        app.router.lifespan_context = _trino_lifespan
-    else:
-        @contextlib.asynccontextmanager
-        async def _chained_lifespan(_app: FastAPI):
-            async with previous_lifespan(_app):
-                async with _trino_lifespan(_app):
-                    yield
-
-        app.router.lifespan_context = _chained_lifespan
-
-    manager = HybridTrinoClientManager.get_instance()
-
-    global _TRINO_ATEXIT_REGISTERED
-    if not _TRINO_ATEXIT_REGISTERED:
-        try:
-            atexit.register(manager.close_all_sync)
-            _TRINO_ATEXIT_REGISTERED = True
-        except Exception:  # pragma: no cover - best effort cleanup
-            pass
+    # Delegates to extracted lifecycle helper for clarity
+    try:
+        from .app_lifecycle import register_trino_lifecycle as _impl
+        _impl(app)
+    except Exception:
+        pass
 
 
 def _register_metrics_endpoint(app: FastAPI, settings: AurumSettings) -> None:
-    """Register Prometheus metrics endpoint with optional multiprocess support."""
-
-    metrics_cfg = getattr(settings.api, "metrics", None)
-    if metrics_cfg is None or not getattr(metrics_cfg, "enabled", False):
-        return
-
-    metrics_path = getattr(metrics_cfg, "path", "/metrics") or "/metrics"
-    if not metrics_path.startswith("/"):
-        metrics_path = f"/{metrics_path}"
-
-    existing_routes = [
-        route for route in list(app.router.routes)
-        if getattr(route, "path", None) == metrics_path
-    ]
-    for route in existing_routes:
-        try:
-            app.router.routes.remove(route)
-        except ValueError:  # pragma: no cover - defensive
-            continue
-
-    @app.get(metrics_path)
-    async def prometheus_metrics() -> Response:  # type: ignore[override]
-        if generate_latest is None:
-            raise HTTPException(status_code=503, detail="Prometheus instrumentation not available")
-
-        registry = None
-        multiproc_dir = os.getenv("PROMETHEUS_MULTIPROC_DIR")
-        if multiproc_dir and multiprocess and CollectorRegistry is not None:
-            registry = CollectorRegistry()
-            try:
-                multiprocess.MultiProcessCollector(registry)
-            except Exception as exc:  # pragma: no cover - unlikely but defensive
-                LOGGER.warning("prometheus_multiprocess_init_failed", exc_info=exc)
-                registry = None
-
-        try:
-            payload = generate_latest(registry) if registry is not None else generate_latest()
-        except Exception as exc:  # pragma: no cover - guard against collector errors
-            LOGGER.warning("prometheus_generate_latest_failed", exc_info=exc)
-            raise HTTPException(status_code=500, detail="Failed to render metrics") from exc
-
-        return Response(content=payload, media_type=CONTENT_TYPE_LATEST)
+    # Delegates to extracted lifecycle helper for clarity
+    try:
+        from .app_lifecycle import register_metrics_endpoint as _impl
+        _impl(app, settings)
+    except Exception:
+        pass
 
 # Migration metrics for API layer
 class ApiMigrationMetrics:
@@ -470,6 +425,54 @@ def _install_concurrency_middleware(
     return wrapped
 
 
+def _install_rate_limit_middleware(app: ASGIApp, settings: AurumSettings) -> ASGIApp:
+    """Wrap the app with sliding-window rate limiting."""
+
+    try:
+        cache_cfg = CacheConfig.from_settings(settings)
+        rl_cfg = RateLimitConfig.from_settings(settings)
+    except Exception as exc:  # pragma: no cover - rate limiting is optional
+        LOGGER.warning("rate_limit_middleware_setup_failed", exc_info=exc)
+        return app
+
+    return RateLimitMiddleware(app, cache_cfg, rl_cfg)
+
+
+def _register_versioned_routers(app: FastAPI, settings: AurumSettings, logger: logging.Logger) -> bool:
+    """Register v1 and v2 routers discovered via the router registry.
+
+    Returns True when at least one router was included successfully.
+    """
+
+    def _include(spec: RouterSpec) -> None:
+        include_kwargs = dict(spec.include_kwargs)
+        try:
+            app.include_router(spec.router, **include_kwargs)
+        except Exception as exc:  # pragma: no cover - defensive guard
+            name = spec.name or getattr(spec.router, "prefix", "<unknown>")
+            logger.warning("Failed to include router '%s'", name, exc_info=exc)
+        else:
+            included_specs.append(spec)
+
+    try:
+        v1_specs = get_v1_router_specs(settings)
+    except Exception as exc:  # pragma: no cover - discovery failures should not crash
+        logger.warning("v1_router_discovery_failed", exc_info=exc)
+        v1_specs = []
+
+    try:
+        v2_specs = get_v2_router_specs(settings)
+    except Exception as exc:  # pragma: no cover - discovery failures should not crash
+        logger.warning("v2_router_discovery_failed", exc_info=exc)
+        v2_specs = []
+
+    included_specs: list[RouterSpec] = []
+    for spec in (*v1_specs, *v2_specs):
+        _include(spec)
+
+    return bool(included_specs)
+
+
 def create_app(settings: Optional[AurumSettings] = None) -> FastAPI:
     """Create and configure an Aurum FastAPI application instance.
 
@@ -548,6 +551,7 @@ def _create_simplified_app(settings: AurumSettings, logger: logging.Logger) -> F
     app.state.settings = settings
     app.add_exception_handler(Exception, _api_exception_handler)
     _register_trino_lifecycle(app)
+    configure_routes(settings)
     # Configure shared API state for modules that rely on it
     try:
         from .state import configure as _configure_state
@@ -558,28 +562,12 @@ def _create_simplified_app(settings: AurumSettings, logger: logging.Logger) -> F
     # Essential telemetry
     configure_telemetry(settings.telemetry.service_name, fastapi_app=app, enable_psycopg=True)
 
-    # Essential middleware - configure CORS from settings
-    cors_origins = getattr(settings.api, "cors_origins", []) or []
-    allow_origins = cors_origins if cors_origins else ["*"]
-
-    app.add_middleware(
-        CORSMiddleware,
-        allow_origins=allow_origins,
-        allow_credentials=True,
-        allow_methods=["*"],
-        allow_headers=["*"],
-    )
-    # Configure GZip with threshold from settings; 0 disables gzip
-    gzip_min = int(getattr(settings.api, "gzip_min_bytes", 500) or 0)
-    if gzip_min > 0:
-        app.add_middleware(GZipMiddleware, minimum_size=gzip_min)
-        # Ensure tests can introspect minimum_size via Middleware.options
-        try:  # pragma: no cover - compatibility shim
-            mi = app.user_middleware[-1]
-            if getattr(mi, "cls", None).__name__ == "GZipMiddleware" and not hasattr(mi, "options"):
-                setattr(mi, "options", {"minimum_size": gzip_min})
-        except Exception:
-            pass
+    # Apply the registered middleware stack (CORS, GZip, concurrency, rate limiting)
+    # Add an admin guard first to protect admin endpoints uniformly
+    # Introduce admin guard (configurable via settings)
+    admin_guard_enabled = bool(getattr(getattr(settings, "api", None), "admin_guard_enabled", False))
+    app.add_middleware(AdminRouteGuard, enabled=admin_guard_enabled)
+    wrapped_app = apply_middleware_stack(app, settings)
 
     # Core health endpoints
     try:
@@ -602,18 +590,15 @@ def _create_simplified_app(settings: AurumSettings, logger: logging.Logger) -> F
         logger.warning(f"Failed to load runtime config router: {e}")
 
     app.include_router(diagnostics_router)
+    app.include_router(local_diagnostics_router)
+    app.include_router(ratelimit_admin_router)
     app.include_router(offload_router)
 
     # Basic route registration (honor light init flag)
     if os.getenv("AURUM_API_LIGHT_INIT", "0") == "1":
         _include_fallback_routes(app, logger)
     else:
-        try:
-            from . import routes
-            if hasattr(routes, 'router'):
-                app.include_router(routes.router)
-        except Exception as e:
-            logger.warning(f"Failed to load routes: {e}")
+        if not _register_versioned_routers(app, settings, logger):
             _include_fallback_routes(app, logger)
 
     # Normalize Accept-Encoding so "*" implies gzip support for middleware
@@ -653,7 +638,8 @@ def _create_simplified_app(settings: AurumSettings, logger: logging.Logger) -> F
 
     _register_metrics_endpoint(app, settings)
 
-    return _install_concurrency_middleware(app, settings)
+    # Return the wrapped ASGI app so servers can run the full stack
+    return wrapped_app
 
 def _create_legacy_app(settings: AurumSettings, logger: logging.Logger) -> FastAPI:
     """Create legacy API with full feature set."""
@@ -669,6 +655,7 @@ def _create_legacy_app(settings: AurumSettings, logger: logging.Logger) -> FastA
     app.state.settings = settings
     app.add_exception_handler(Exception, _api_exception_handler)
     _register_trino_lifecycle(app)
+    configure_routes(settings)
     # Configure shared API state for modules that rely on it
     try:
         from .state import configure as _configure_state
@@ -722,27 +709,21 @@ def _create_legacy_app(settings: AurumSettings, logger: logging.Logger) -> FastA
     except Exception as e:
         logger.warning(f"Failed to load runtime config router: {e}")
 
+    # Admin guard (configurable)
+    admin_guard_enabled = bool(getattr(getattr(settings, "api", None), "admin_guard_enabled", False))
+    app.add_middleware(AdminRouteGuard, enabled=admin_guard_enabled)
+
     app.include_router(diagnostics_router)
+    app.include_router(local_diagnostics_router)
+    app.include_router(ratelimit_admin_router)
     app.include_router(offload_router)
 
     # Basic route registration (honor light init flag)
     if os.getenv("AURUM_API_LIGHT_INIT", "0") == "1":
         _include_fallback_routes(app, logger)
     else:
-        try:
-            from . import routes
-            if hasattr(routes, 'router'):
-                app.include_router(routes.router)
-        except Exception as e:
-            logger.warning(f"Failed to load routes: {e}")
-            try:
-                from . import v1
-                if hasattr(v1, 'curves'):
-                    app.include_router(v1.curves.router, prefix="/v1")
-                if hasattr(v1, 'metadata'):
-                    app.include_router(v1.metadata.router, prefix="/v1")
-            except Exception:
-                _include_fallback_routes(app, logger)
+        if not _register_versioned_routers(app, settings, logger):
+            _include_fallback_routes(app, logger)
 
     # Normalize Accept-Encoding so "*" implies gzip support for middleware
     @app.middleware("http")
@@ -781,7 +762,8 @@ def _create_legacy_app(settings: AurumSettings, logger: logging.Logger) -> FastA
 
     _register_metrics_endpoint(app, settings)
 
-    return _install_concurrency_middleware(app, settings)
+    app_with_concurrency = _install_concurrency_middleware(app, settings)
+    return _install_rate_limit_middleware(app_with_concurrency, settings)
 
 
 # Admin groups configuration

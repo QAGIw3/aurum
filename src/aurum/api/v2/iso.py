@@ -78,9 +78,9 @@ async def get_lmp_last_24h_v2(
             filters={"iso": iso},
         )
 
-        # Get LMP service
-        from ..iso_v2_service import get_iso_service
-        svc = await get_iso_service()
+        # Get LMP service via façade
+        from ..services import IsoService
+        svc = IsoService()
         paginated_data = await svc.lmp_last_24h(iso=iso, offset=offset, limit=effective_limit)
 
         # Create cursors and envelope
@@ -172,8 +172,8 @@ async def get_lmp_hourly_v2(
             filters={"iso": iso, "date": date},
         )
 
-        from ..iso_v2_service import get_iso_service
-        svc = await get_iso_service()
+        from ..services import IsoService
+        svc = IsoService()
         paginated_data = await svc.lmp_hourly(iso=iso, date=date, offset=offset, limit=effective_limit)
 
         has_more = len(paginated_data) == effective_limit

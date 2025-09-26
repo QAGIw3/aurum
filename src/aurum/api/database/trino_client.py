@@ -152,12 +152,24 @@ def _get_base_trino_config() -> TrinoConfig:
         return TrinoConfig()
     return TrinoConfig.from_settings(settings)
 
-# Feature flags for database migration
+# Feature flags for database migration (uppercase primary, lowercase fallback)
 DB_FEATURE_FLAGS = {
-    "USE_SIMPLE_DB_CLIENT": "aurum_use_simple_db_client",
-    "ENABLE_DB_MIGRATION_MONITORING": "aurum_enable_db_migration_monitoring",
-    "DB_MIGRATION_PHASE": "aurum_db_migration_phase",  # "legacy", "hybrid", "simplified"
+    "USE_SIMPLE_DB_CLIENT": "AURUM_USE_SIMPLE_DB_CLIENT",
+    "ENABLE_DB_MIGRATION_MONITORING": "AURUM_ENABLE_DB_MIGRATION_MONITORING",
+    "DB_MIGRATION_PHASE": "AURUM_DB_MIGRATION_PHASE",  # "legacy", "hybrid", "simplified"
 }
+
+
+def _get_db_flag_env(flag_name: str, default: str = "") -> str:
+    value = os.getenv(flag_name)
+    if value is None:
+        value = os.getenv(flag_name.lower())
+    return value if value is not None else default
+
+
+def _set_db_flag_env(flag_name: str, value: str) -> None:
+    os.environ[flag_name] = value
+    os.environ[flag_name.lower()] = value
 
 
 @dataclass
@@ -964,7 +976,11 @@ class DatabaseMigrationMetrics:
 
     def is_monitoring_enabled(self) -> bool:
         """Check if database migration monitoring is enabled."""
-        return os.getenv(DB_FEATURE_FLAGS["ENABLE_DB_MIGRATION_MONITORING"], "false").lower() in ("true", "1", "yes")
+        value = _get_db_flag_env(
+            DB_FEATURE_FLAGS["ENABLE_DB_MIGRATION_MONITORING"],
+            default="false",
+        )
+        return value.lower() in ("true", "1", "yes")
 
     def set_migration_phase(self, phase: str):
         """Set migration phase for database layer."""
@@ -978,12 +994,15 @@ _db_migration_metrics = DatabaseMigrationMetrics()
 
 def is_db_feature_enabled(flag: str) -> bool:
     """Check if a database feature flag is enabled."""
-    return os.getenv(flag, "false").lower() in ("true", "1", "yes")
+    return _get_db_flag_env(flag, default="false").lower() in ("true", "1", "yes")
 
 
 def get_db_migration_phase() -> str:
     """Get current database migration phase."""
-    phase = os.getenv(DB_FEATURE_FLAGS["DB_MIGRATION_PHASE"], "legacy")
+    phase = _get_db_flag_env(
+        DB_FEATURE_FLAGS["DB_MIGRATION_PHASE"],
+        default="legacy",
+    )
     _db_migration_metrics.set_migration_phase(phase)
     return phase
 
@@ -1358,7 +1377,7 @@ _client_manager = TrinoClientManager.get_instance()
 # Migration management functions
 def advance_db_migration_phase(phase: str = "hybrid") -> bool:
     """Advance database migration phase."""
-    os.environ[DB_FEATURE_FLAGS["DB_MIGRATION_PHASE"]] = phase
+    _set_db_flag_env(DB_FEATURE_FLAGS["DB_MIGRATION_PHASE"], phase)
     _db_migration_metrics.set_migration_phase(phase)
     LOGGER.info(f"Advanced database migration to phase: {phase}")
     return True

@@ -22,8 +22,8 @@ from fastapi import APIRouter, HTTPException, Query, Request, Response, Depends
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
-from ..database import get_trino_client
 from ..deps import get_settings, get_cache_manager
+from ..services import CurvesService
 from aurum.core import AurumSettings
 from ..cache.cache import CacheManager
 from ..http import respond_with_etag, deprecation_warning_headers, csv_response
@@ -32,8 +32,6 @@ from .pagination import (
     build_next_cursor,
     build_pagination_envelope,
 )
-from ..query import build_curve_export_query
-from ..curves import get_curve_service
 from ...telemetry.context import get_request_id
 
 router = APIRouter(prefix="/v2", tags=["curves"])
@@ -77,8 +75,8 @@ async def get_curves_v2(
         if settings:
             pass
 
-        # Get curve service
-        service = await get_curve_service()
+        # Get curve service façade
+        service = CurvesService()
 
         # Resolve pagination using hardened utilities (embeds filters for integrity)
         offset, effective_limit = resolve_pagination(
@@ -186,21 +184,18 @@ async def export_curves_v2(
 ) -> StreamingResponse:
     """Stream curve observations backed by Trino."""
 
-    query = build_curve_export_query(
-        asof=asof,
-        iso=iso,
-        market=market,
-        location=location,
-        product=product,
-        block=block,
-    )
-
-    client = get_trino_client()
-
+    svc = CurvesService()
     async def row_stream() -> AsyncIterator[Dict[str, Any]]:
-        async for chunk in client.stream_query(query, chunk_size=chunk_size):
-            for row in chunk:
-                yield row
+        async for row in svc.stream_curve_export(
+            asof=asof,
+            iso=iso,
+            market=market,
+            location=location,
+            product=product,
+            block=block,
+            chunk_size=chunk_size,
+        ):
+            yield row
 
     request_id = get_request_id() or str(uuid4())
     fieldnames = [
@@ -240,11 +235,9 @@ async def get_curve_diff_v2(
     start_time = time.perf_counter()
 
     try:
-        # Get curve service
-        service = await get_curve_service()
-
-        # Get curve diff
-        curve_diff = await service.get_curve_diff(
+        # Get curve diff via façade
+        svc = CurvesService()
+        curve_diff = await svc.get_curve_diff(
             curve_id=curve_id,
             from_timestamp=from_timestamp,
             to_timestamp=to_timestamp

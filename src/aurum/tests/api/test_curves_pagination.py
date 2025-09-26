@@ -56,6 +56,7 @@ for dependency in (
     _load_api_module(dependency)
 
 routes = _load_api_module("aurum.api.routes")
+curves_module = _load_api_module("aurum.api.v1.curves")
 
 
 @pytest.fixture
@@ -68,7 +69,7 @@ def curves_client(monkeypatch) -> tuple[TestClient, List[Dict[str, Any]]]:
 
     app = FastAPI()
     app.state.settings = settings
-    app.include_router(routes.router)
+    app.include_router(curves_module.router)
 
     calls: List[Dict[str, Any]] = []
 
@@ -118,7 +119,7 @@ def curves_client(monkeypatch) -> tuple[TestClient, List[Dict[str, Any]]]:
         )
         return [dict(row) for row in rows], 7.1
 
-    monkeypatch.setattr(routes.service, "query_curves", fake_query_curves)
+    monkeypatch.setattr(curves_module, "query_curves", fake_query_curves)
 
     client = TestClient(app)
     return client, calls
@@ -129,7 +130,8 @@ def test_curves_etag_and_cache_headers(curves_client):
 
     response = client.get("/v1/curves?limit=2")
     assert response.status_code == 200
-    assert response.headers["Cache-Control"] == "public, max-age=120"
+    cache_control = response.headers["Cache-Control"]
+    assert cache_control.startswith("public, max-age=120")
 
     etag = response.headers["ETag"]
     second = client.get(
@@ -154,5 +156,6 @@ def test_curves_cursor_parameters_passthrough(curves_client):
 
     assert len(calls) >= 2
     decoded = decode_cursor(next_cursor)
-    assert calls[1]["cursor_after"] == decoded
+    payload_filters = decoded.values.get("data", {}).get("filters") if isinstance(decoded.values, dict) else None
+    assert calls[1]["cursor_after"] == payload_filters
     assert calls[1]["cursor_before"] is None

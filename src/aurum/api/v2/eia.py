@@ -99,8 +99,8 @@ async def list_eia_datasets_v2(
             filters=None,
         )
 
-        from ..eia_v2_service import get_eia_service
-        svc = await get_eia_service()
+        from ..services import EiaService
+        svc = EiaService()
         paginated_data, total_count = await svc.list_datasets(offset=offset, limit=effective_limit)
 
         # Create cursors and pagination envelope
@@ -204,8 +204,8 @@ async def get_eia_series_v2(
             filters={"series_id": series_id, "start_date": start_date, "end_date": end_date},
         )
 
-        from ..eia_v2_service import get_eia_service
-        svc = await get_eia_service()
+        from ..services import EiaService
+        svc = EiaService()
         series_points = await svc.get_series(
             series_id=series_id,
             start_date=start_date,
@@ -314,8 +314,8 @@ async def get_eia_series_dimensions_v2(
             pass
         if settings:
             pass
-        from ..eia_v2_service import get_eia_service
-        svc = await get_eia_service()
+        from ..services import EiaService
+        svc = EiaService()
         values = await svc.get_series_dimensions(
             series_id=series_id,
             frequency=frequency,
