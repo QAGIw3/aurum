@@ -656,4 +656,4 @@ async def reset_tenant_daily_usage(tenant_id: str) -> Dict[str, Any]:
     return {"meta": {"request_id": get_request_id()}, "data": {"tenant_id": tenant_id, "reset_day": day_str}}
 
 
-__all__ = ["RateLimitConfig", "RateLimitMiddleware"]
+__all__ = ["RateLimitConfig", "RateLimitMiddleware", "ratelimit_admin_router"]
