@@ -31,6 +31,12 @@ test: ## Run tests
 unit-test: ## Run unit test subset
 	pytest -m "unit" -q
 
+test-services: ## Run service layer tests
+	pytest tests/api/test_services_*.py -v
+
+test-services-coverage: ## Run service layer tests with coverage
+	pytest tests/api/test_services_*.py --cov=src/aurum/api/services --cov-report=term-missing --cov-report=html -v
+
 lint: ## Run linting
 	black --check src/ tests/
 	isort --check-only src/ tests/
