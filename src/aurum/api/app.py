@@ -13,16 +13,19 @@ Migration phases:
 
 import atexit
 import contextlib
+import fnmatch
 import json
 import logging
 import os
+import re
 import gzip
 
-from fastapi import Depends, FastAPI
+from fastapi import Depends, FastAPI, HTTPException, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.responses import JSONResponse
 from starlette.datastructures import MutableHeaders
+from fastapi.exceptions import HTTPException as FastAPIHTTPException
 
 try:
     from .database.trino_client import HybridTrinoClientManager
@@ -87,11 +90,119 @@ _patch_testclient_for_gzip()
 
 from aurum.core import AurumSettings
 from aurum.telemetry import configure_telemetry
+from aurum.api.models.common import (
+    QueueServiceUnavailableError,
+    RequestTimeoutError,
+    TooManyRequestsError,
+)
+from aurum.api.exceptions import handle_api_exception
+from aurum.api.rate_limiting.concurrency_middleware import (
+    ConcurrencyMiddleware,
+    OffloadInstruction,
+    create_concurrency_middleware_from_settings,
+)
+from aurum.api.rate_limiting.redis_concurrency import diagnostics_router
+from aurum.api.offload import offload_router
+
+try:  # pragma: no cover - optional dependency
+    from prometheus_client import CONTENT_TYPE_LATEST, CollectorRegistry, generate_latest
+    from prometheus_client import multiprocess
+except ImportError:  # pragma: no cover - handled gracefully at runtime
+    CONTENT_TYPE_LATEST = "text/plain; charset=utf-8"
+    CollectorRegistry = None  # type: ignore[assignment]
+    generate_latest = None  # type: ignore[assignment]
+    multiprocess = None  # type: ignore[assignment]
 # Feature flags for API migration
 API_FEATURE_FLAGS = {
     "use_simplified_api": os.getenv("AURUM_USE_SIMPLIFIED_API", "false").lower() == "true",
     "api_migration_phase": os.getenv("AURUM_API_MIGRATION_PHASE", "1"),
 }
+
+
+LOGGER = logging.getLogger(__name__)
+
+
+def _response_schema(model) -> dict:
+    return model.model_json_schema()
+
+
+GLOBAL_ERROR_RESPONSES = {
+    429: {
+        "description": "Too many requests queued for this tenant.",
+        "content": {
+            "application/json": {
+                "schema": _response_schema(TooManyRequestsError),
+            }
+        },
+        "headers": {
+            "Retry-After": {
+                "description": "Seconds until requests may be retried.",
+                "schema": {"type": "integer", "minimum": 0},
+            },
+            "X-Queue-Depth": {
+                "description": "Current estimated queue depth for the tenant.",
+                "schema": {"type": "integer", "minimum": 0},
+            },
+        },
+    },
+    503: {
+        "description": "Request timed out while waiting for capacity.",
+        "content": {
+            "application/json": {
+                "schema": _response_schema(QueueServiceUnavailableError),
+            }
+        },
+        "headers": {
+            "Retry-After": {
+                "description": "Seconds until requests may be retried.",
+                "schema": {"type": "integer", "minimum": 0},
+            },
+            "X-Queue-Depth": {
+                "description": "Current estimated queue depth for the tenant.",
+                "schema": {"type": "integer", "minimum": 0},
+            },
+        },
+    },
+    504: {
+        "description": "Request exceeded the configured execution timeout.",
+        "content": {
+            "application/json": {
+                "schema": _response_schema(RequestTimeoutError),
+            }
+        },
+        "headers": {
+            "Retry-After": {
+                "description": "Seconds until the client should retry.",
+                "schema": {"type": "integer", "minimum": 0},
+            },
+            "X-Timeout-Seconds": {
+                "description": "Configured request timeout threshold in seconds.",
+                "schema": {"type": "integer", "minimum": 0},
+            },
+        },
+    },
+}
+
+
+async def _api_exception_handler(request: Request, exc: Exception) -> JSONResponse:
+    """Translate arbitrary exceptions into JSON error envelopes."""
+
+    http_exc = handle_api_exception(request, exc)
+    if isinstance(http_exc, FastAPIHTTPException):
+        detail = http_exc.detail
+        if not isinstance(detail, dict):
+            detail = {"error": http_exc.__class__.__name__, "message": str(detail)}
+        headers = getattr(http_exc, "headers", None) or {}
+        return JSONResponse(status_code=http_exc.status_code, content=detail, headers=headers)
+
+    LOGGER.error("Unhandled exception escaped API", exc_info=exc)
+    return JSONResponse(
+        status_code=500,
+        content={
+            "error": "InternalServerError",
+            "message": "Unhandled exception",
+        },
+    )
 
 
 def _register_trino_lifecycle(app: FastAPI) -> None:
@@ -131,6 +242,51 @@ def _register_trino_lifecycle(app: FastAPI) -> None:
         except Exception:  # pragma: no cover - best effort cleanup
             pass
 
+
+def _register_metrics_endpoint(app: FastAPI, settings: AurumSettings) -> None:
+    """Register Prometheus metrics endpoint with optional multiprocess support."""
+
+    metrics_cfg = getattr(settings.api, "metrics", None)
+    if metrics_cfg is None or not getattr(metrics_cfg, "enabled", False):
+        return
+
+    metrics_path = getattr(metrics_cfg, "path", "/metrics") or "/metrics"
+    if not metrics_path.startswith("/"):
+        metrics_path = f"/{metrics_path}"
+
+    existing_routes = [
+        route for route in list(app.router.routes)
+        if getattr(route, "path", None) == metrics_path
+    ]
+    for route in existing_routes:
+        try:
+            app.router.routes.remove(route)
+        except ValueError:  # pragma: no cover - defensive
+            continue
+
+    @app.get(metrics_path)
+    async def prometheus_metrics() -> Response:  # type: ignore[override]
+        if generate_latest is None:
+            raise HTTPException(status_code=503, detail="Prometheus instrumentation not available")
+
+        registry = None
+        multiproc_dir = os.getenv("PROMETHEUS_MULTIPROC_DIR")
+        if multiproc_dir and multiprocess and CollectorRegistry is not None:
+            registry = CollectorRegistry()
+            try:
+                multiprocess.MultiProcessCollector(registry)
+            except Exception as exc:  # pragma: no cover - unlikely but defensive
+                LOGGER.warning("prometheus_multiprocess_init_failed", exc_info=exc)
+                registry = None
+
+        try:
+            payload = generate_latest(registry) if registry is not None else generate_latest()
+        except Exception as exc:  # pragma: no cover - guard against collector errors
+            LOGGER.warning("prometheus_generate_latest_failed", exc_info=exc)
+            raise HTTPException(status_code=500, detail="Failed to render metrics") from exc
+
+        return Response(content=payload, media_type=CONTENT_TYPE_LATEST)
+
 # Migration metrics for API layer
 class ApiMigrationMetrics:
     legacy_calls = 0
@@ -156,7 +312,162 @@ def log_api_migration_status():
     logger.info(f"API Migration Metrics: Legacy calls: {ApiMigrationMetrics.legacy_calls}, "
                 f"Simplified calls: {ApiMigrationMetrics.simplified_calls}")
 
-from typing import Any, Dict, Optional
+from typing import Any, Callable, Dict, Optional, Union
+
+
+def _build_offload_predicate(
+    settings: AurumSettings,
+) -> Optional[Callable[[Dict[str, Any]], Optional[OffloadInstruction]]]:
+    """Construct dispatch predicate for concurrency offloading.
+
+    Supports exact, prefix, glob, and regex path matching along with per-route
+    method lists so operators can describe entire groups of endpoints without
+    enumerating every route individually.
+    """
+
+    concurrency_cfg = getattr(getattr(settings, "api", None), "concurrency", None)
+    if concurrency_cfg is None:
+        return None
+
+    routes = getattr(concurrency_cfg, "offload_routes", None)
+    if not routes:
+        return None
+
+    normalized: list[dict[str, Any]] = []
+    for entry in routes:
+        if not isinstance(entry, dict):
+            LOGGER.warning("invalid_offload_route_entry", extra={"entry": entry})
+            continue
+
+        try:
+            raw_path = str(entry["path"]).strip()
+            normalized_path = raw_path.rstrip("/") or "/"
+            job_name = str(entry["job"])
+        except (KeyError, TypeError, ValueError):
+            LOGGER.warning("invalid_offload_route_config", extra={"entry": entry})
+            continue
+
+        raw_methods = entry.get("methods")
+        if raw_methods is None:
+            raw_methods = entry.get("method", "POST")
+        methods: tuple[str, ...]
+        if isinstance(raw_methods, str):
+            methods = (raw_methods.upper(),)
+        else:
+            try:
+                methods = tuple(
+                    str(item).upper()
+                    for item in raw_methods
+                    if str(item).strip()
+                )
+            except Exception:
+                LOGGER.warning("invalid_offload_route_methods", extra={"entry": entry})
+                continue
+        if not methods:
+            methods = ("POST",)
+
+        match_type = str(entry.get("match", "exact") or "exact").lower()
+        pattern = normalized_path
+        compiled_regex = None
+        if match_type == "regex":
+            try:
+                compiled_regex = re.compile(pattern)
+            except re.error as exc:
+                LOGGER.warning(
+                    "invalid_offload_route_regex",
+                    extra={"pattern": pattern, "error": str(exc)},
+                )
+                continue
+        elif match_type not in {"exact", "prefix", "glob"}:
+            LOGGER.warning(
+                "invalid_offload_route_match",
+                extra={"match": match_type, "entry": entry},
+            )
+            match_type = "exact"
+
+        response_headers = entry.get("response_headers")
+        if response_headers is not None and not isinstance(response_headers, dict):
+            LOGGER.warning("invalid_offload_response_headers", extra={"entry": entry})
+            response_headers = None
+
+        normalized.append(
+            {
+                "pattern": pattern,
+                "match": match_type,
+                "compiled": compiled_regex,
+                "methods": tuple(methods),
+                "job": job_name,
+                "queue": entry.get("queue"),
+                "status_url": entry.get("status_url", "/v1/admin/offload/{task_id}"),
+                "response_headers": response_headers,
+            }
+        )
+
+    if not normalized:
+        return None
+
+    def _matches(route: Dict[str, Any], request_path: str) -> bool:
+        match_type = route["match"]
+        pattern = route["pattern"]
+        if match_type == "exact":
+            return request_path == pattern
+        if match_type == "prefix":
+            return request_path.startswith(pattern)
+        if match_type == "glob":
+            return fnmatch.fnmatch(request_path, pattern)
+        if match_type == "regex" and route["compiled"] is not None:
+            return bool(route["compiled"].search(request_path))
+        return False
+
+    def predicate(request_info: Dict[str, Any]) -> Optional[OffloadInstruction]:
+        request_path = str(request_info.get("path", "")).rstrip("/") or "/"
+        request_method = str(request_info.get("method", "")).upper()
+        for route in normalized:
+            allowed_methods = route["methods"]
+            if allowed_methods and "*" not in allowed_methods and request_method not in allowed_methods:
+                continue
+            if not _matches(route, request_path):
+                continue
+
+            payload = {
+                "path": request_path,
+                "method": request_method,
+                "headers": request_info.get("headers", {}),
+                "query_string": request_info.get("query_string"),
+                "client": request_info.get("client"),
+            }
+
+            return OffloadInstruction(
+                job_name=route["job"],
+                payload=payload,
+                queue=route.get("queue"),
+                status_url=route.get("status_url"),
+                response_headers=route.get("response_headers"),
+            )
+        return None
+
+    return predicate
+
+
+def _install_concurrency_middleware(
+    app: FastAPI,
+    settings: AurumSettings,
+) -> Union[FastAPI, ConcurrencyMiddleware]:
+    """Wrap the app with concurrency middleware when enabled in configuration."""
+
+    offload_predicate = _build_offload_predicate(settings)
+
+    try:
+        wrapped = create_concurrency_middleware_from_settings(
+            app,
+            settings=settings,
+            offload_predicate=offload_predicate,
+        )
+    except Exception as exc:  # pragma: no cover - middleware install is optional
+        LOGGER.warning("concurrency_middleware_setup_failed", exc_info=exc)
+        return app
+
+    return wrapped
 
 
 def create_app(settings: Optional[AurumSettings] = None) -> FastAPI:
@@ -231,9 +542,11 @@ def _create_simplified_app(settings: AurumSettings, logger: logging.Logger) -> F
         title=settings.api.api_title,
         version=settings.api.version,
         default_response_class=JSONResponse,
-        timeout=settings.api.request_timeout_seconds
+        timeout=settings.api.request_timeout_seconds,
+        responses=GLOBAL_ERROR_RESPONSES,
     )
     app.state.settings = settings
+    app.add_exception_handler(Exception, _api_exception_handler)
     _register_trino_lifecycle(app)
     # Configure shared API state for modules that rely on it
     try:
@@ -281,6 +594,15 @@ def _create_simplified_app(settings: AurumSettings, logger: logging.Logger) -> F
         app.include_router(scenarios_router)
     except Exception as e:
         logger.warning(f"Failed to load scenarios router: {e}")
+
+    try:
+        from .runtime_config import router as runtime_config_router
+        app.include_router(runtime_config_router)
+    except Exception as e:
+        logger.warning(f"Failed to load runtime config router: {e}")
+
+    app.include_router(diagnostics_router)
+    app.include_router(offload_router)
 
     # Basic route registration (honor light init flag)
     if os.getenv("AURUM_API_LIGHT_INIT", "0") == "1":
@@ -329,7 +651,9 @@ def _create_simplified_app(settings: AurumSettings, logger: logging.Logger) -> F
     except Exception:
         pass
 
-    return app
+    _register_metrics_endpoint(app, settings)
+
+    return _install_concurrency_middleware(app, settings)
 
 def _create_legacy_app(settings: AurumSettings, logger: logging.Logger) -> FastAPI:
     """Create legacy API with full feature set."""
@@ -339,9 +663,11 @@ def _create_legacy_app(settings: AurumSettings, logger: logging.Logger) -> FastA
         title=settings.api.api_title,
         version=settings.api.version,
         default_response_class=JSONResponse,
-        timeout=settings.api.request_timeout_seconds
+        timeout=settings.api.request_timeout_seconds,
+        responses=GLOBAL_ERROR_RESPONSES,
     )
     app.state.settings = settings
+    app.add_exception_handler(Exception, _api_exception_handler)
     _register_trino_lifecycle(app)
     # Configure shared API state for modules that rely on it
     try:
@@ -389,6 +715,15 @@ def _create_legacy_app(settings: AurumSettings, logger: logging.Logger) -> FastA
         app.include_router(scenarios_router)
     except Exception as e:
         logger.warning(f"Failed to load scenarios router: {e}")
+
+    try:
+        from .runtime_config import router as runtime_config_router
+        app.include_router(runtime_config_router)
+    except Exception as e:
+        logger.warning(f"Failed to load runtime config router: {e}")
+
+    app.include_router(diagnostics_router)
+    app.include_router(offload_router)
 
     # Basic route registration (honor light init flag)
     if os.getenv("AURUM_API_LIGHT_INIT", "0") == "1":
@@ -444,7 +779,9 @@ def _create_legacy_app(settings: AurumSettings, logger: logging.Logger) -> FastA
     except Exception:
         pass
 
-    return app
+    _register_metrics_endpoint(app, settings)
+
+    return _install_concurrency_middleware(app, settings)
 
 
 # Admin groups configuration

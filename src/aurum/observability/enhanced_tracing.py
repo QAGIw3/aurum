@@ -30,7 +30,7 @@ TRACEPARENT_REGEX = re.compile(
 current_trace_id: ContextVar[Optional[str]] = ContextVar("current_trace_id", default=None)
 current_span_id: ContextVar[Optional[str]] = ContextVar("current_span_id", default=None)
 current_traceparent: ContextVar[Optional[str]] = ContextVar("current_traceparent", default=None)
-trace_attributes: ContextVar[Dict[str, Any]] = ContextVar("trace_attributes", default_factory=dict)
+trace_attributes: ContextVar[Optional[Dict[str, Any]]] = ContextVar("trace_attributes", default=None)
 
 
 @dataclass
@@ -213,7 +213,7 @@ class EnhancedTraceCollector:
 
         # Inherit attributes from parent context
         try:
-            inherited_attributes = trace_attributes.get()
+            inherited_attributes = trace_attributes.get() or {}
             span.attributes.update(inherited_attributes)
         except LookupError:
             inherited_attributes = {}

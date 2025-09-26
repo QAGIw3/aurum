@@ -27,6 +27,7 @@ from aurum.api.concurrency_middleware import (
     create_timeout_controller,
     create_concurrency_middleware,
     create_concurrency_middleware_from_settings,
+    DistributedConcurrencyController,
 )
 from aurum.api.exceptions import ServiceUnavailableException
 from aurum.api.database import trino_client as trino_module
@@ -44,6 +45,12 @@ from aurum.api.config import TrinoConfig
 from aurum.api.database.config import TrinoConfig as DatabaseTrinoConfig
 from aurum.core.settings import SimplifiedSettings
 import aurum.api.app as app_module
+from aurum.api.rate_limiting.redis_concurrency import (
+    RedisConcurrencyBackend,
+    RedisConcurrencyConfig,
+)
+
+fakeredis_aioredis = pytest.importorskip("fakeredis.aioredis")
 
 
 class FakeClock:
@@ -1453,6 +1460,105 @@ class TestConcurrencyMiddleware:
 
         assert rate_limited_call is not None
 
+    async def test_middleware_rejects_invalid_tenant_header(self, middleware):
+        """Middleware should reject malformed tenant identifiers."""
+        scope = {
+            "type": "http",
+            "path": "/api/test",
+            "method": "GET",
+            "headers": [(b"x-aurum-tenant", b"Bad Tenant!")],
+        }
+
+        receive = AsyncMock()
+        send = AsyncMock()
+        await middleware(scope, receive, send)
+
+        start_message = None
+        for call in send.call_args_list:
+            message = call[0][0]
+            if message["type"] == "http.response.start":
+                start_message = message
+                break
+
+        assert start_message is not None
+        assert start_message["status"] == 400
+
+    async def test_offload_predicate_short_circuits_with_stub(self, monkeypatch):
+        """When the offload predicate triggers the request is accepted immediately."""
+
+        async def never_called_app(scope, receive, send):  # pragma: no cover - should not run
+            raise AssertionError("handler executed despite offload")
+
+        task_ids: list[str] = []
+
+        def fake_run_job(name: str, payload: Dict[str, Any], *, queue: Optional[str] = None) -> str:
+            assert name == "demo-job"
+            assert payload == {"foo": "bar"}
+            task_id = "dev-task"
+            task_ids.append(task_id)
+            return task_id
+
+        monkeypatch.setattr(
+            "aurum.api.async_exec.run_job_async",
+            fake_run_job,
+            raising=False,
+        )
+
+        def offload_predicate(request_info: Dict[str, Any]) -> Optional[concurrency_module.OffloadInstruction]:
+            assert request_info["path"] == "/api/offload"
+            return concurrency_module.OffloadInstruction(
+                job_name="demo-job",
+                payload={"foo": "bar"},
+                queue="low",
+                response_headers={"X-Offload": "true"},
+                status_url="https://jobs.example/tasks/{task_id}",
+            )
+
+        middleware = create_concurrency_middleware(
+            app=never_called_app,
+            concurrency_controller=create_concurrency_controller(),
+            rate_limiter=create_rate_limiter(),
+            timeout_controller=create_timeout_controller(),
+            offload_predicate=offload_predicate,
+        )
+
+        scope = {
+            "type": "http",
+            "path": "/api/offload",
+            "method": "POST",
+            "headers": [
+                (b"x-aurum-tenant", b"tenant-one"),
+                (b"x-request-id", b"req-42"),
+            ],
+        }
+        receive = AsyncMock()
+        send = AsyncMock()
+
+        await middleware(scope, receive, send)
+
+        start_message = next(
+            call[0][0]
+            for call in send.call_args_list
+            if call[0][0]["type"] == "http.response.start"
+        )
+        assert start_message["status"] == 202
+        header_pairs = {key.decode(): value.decode() for key, value in start_message["headers"]}
+        assert header_pairs["Content-Type"] == "application/json"
+        assert header_pairs["X-Request-Id"] == "req-42"
+        assert header_pairs["X-Offload"] == "true"
+
+        body_message = next(
+            call[0][0]
+            for call in send.call_args_list
+            if call[0][0]["type"] == "http.response.body"
+        )
+        payload = json.loads(body_message["body"].decode())
+        assert payload["status"] == "accepted"
+        assert payload["task_id"] == "dev-task"
+        assert payload["request_id"] == "req-42"
+        assert payload["status_url"] == "https://jobs.example/tasks/dev-task"
+        assert task_ids == ["dev-task"]
+
     async def test_middleware_concurrency_control(self, middleware):
         """Test middleware concurrency control."""
         gate = asyncio.Event()
@@ -1972,3 +2078,102 @@ class TestDatabaseMigrationMetrics:
         assert data["legacy_calls"] == 1
         assert data["errors"] == 1
         assert metrics.is_monitoring_enabled() is True
+
+
+class TestDistributedConcurrencyController:
+    """Tests covering the Redis-backed distributed concurrency controller."""
+
+    @pytest.mark.asyncio
+    async def test_distributed_controller_acquire_and_release(self):
+        redis_client = fakeredis_aioredis.FakeRedis()
+        backend = RedisConcurrencyBackend(
+            redis_client,
+            config=RedisConcurrencyConfig(url="redis://fake"),
+        )
+        limits = RequestLimits(
+            max_concurrent_requests=1,
+            max_requests_per_tenant=1,
+            tenant_queue_limit=5,
+            queue_timeout_seconds=0.5,
+        )
+        controller = DistributedConcurrencyController(limits, backend)
+
+        slot_one = await controller.acquire_slot(tenant_id="tenant-a", request_id="req-1")
+        assert isinstance(slot_one, ConcurrencySlot)
+        assert slot_one.queue_wait_seconds == pytest.approx(0.0, abs=0.05)
+
+        waiter = asyncio.create_task(controller.acquire_slot(tenant_id="tenant-a", request_id="req-2"))
+        await asyncio.sleep(0)
+        stats = await backend.get_stats()
+        assert stats["tenant_queue"].get("tenant-a") == 1
+
+        await slot_one.release()
+        slot_two = await waiter
+        assert slot_two.tenant_id == "tenant-a"
+        await slot_two.release()
+
+        stats = await backend.get_stats()
+        assert stats["tenant_queue"].get("tenant-a", 0) == 0
+        assert stats["tenant_active"].get("tenant-a", 0) == 0
+
+    @pytest.mark.asyncio
+    async def test_distributed_controller_timeout(self):
+        redis_client = fakeredis_aioredis.FakeRedis()
+        backend = RedisConcurrencyBackend(
+            redis_client,
+            config=RedisConcurrencyConfig(url="redis://fake"),
+        )
+        limits = RequestLimits(
+            max_concurrent_requests=1,
+            max_requests_per_tenant=1,
+            tenant_queue_limit=2,
+            queue_timeout_seconds=0.05,
+        )
+        controller = DistributedConcurrencyController(limits, backend)
+
+        slot = await controller.acquire_slot(tenant_id="tenant-b", request_id="req-1")
+
+        async def _second():
+            return await controller.acquire_slot(tenant_id="tenant-b", request_id="req-2")
+
+        waiter = asyncio.create_task(_second())
+        await asyncio.sleep(0.01)
+
+        with pytest.raises(ConcurrencyRejected) as exc_info:
+            await waiter
+        rejection = exc_info.value
+        assert rejection.status_code == 503
+        assert rejection.reason == "queue_timeout"
+
+        await slot.release()
+
+    @pytest.mark.asyncio
+    async def test_distributed_controller_queue_full(self):
+        redis_client = fakeredis_aioredis.FakeRedis()
+        backend = RedisConcurrencyBackend(
+            redis_client,
+            config=RedisConcurrencyConfig(url="redis://fake"),
+        )
+        limits = RequestLimits(
+            max_concurrent_requests=1,
+            max_requests_per_tenant=1,
+            tenant_queue_limit=1,
+            queue_timeout_seconds=0.2,
+        )
+        controller = DistributedConcurrencyController(limits, backend)
+
+        slot = await controller.acquire_slot(tenant_id="tenant-c", request_id="req-1")
+        queued = asyncio.create_task(controller.acquire_slot(tenant_id="tenant-c", request_id="req-2"))
+        await asyncio.sleep(0.01)
+
+        async def _overfill():
+            await controller.acquire_slot(tenant_id="tenant-c", request_id="req-3")
+
+        with pytest.raises(ConcurrencyRejected) as exc_info:
+            await _overfill()
+        assert exc_info.value.status_code == 429
+        assert exc_info.value.reason == "tenant_queue_full"
+
+        await slot.release()
+        slot_two = await queued
+        await slot_two.release()

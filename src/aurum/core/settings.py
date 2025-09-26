@@ -491,6 +491,7 @@ class SimplifiedSettings:
                 [f"{self.env_prefix}API_CONCURRENCY_SLOW_START_COOLDOWN_SECONDS"],
                 30.0,
             ),
+            "offload_routes": [],
         }
 
         concurrency_field_casts = {
@@ -552,9 +553,78 @@ class SimplifiedSettings:
                     overrides_payload,
                 )
 
+        redis_url_default = env.get(f"{self.env_prefix}REDIS_URL", "redis://localhost:6379")
+        redis_namespace_default = env.get(f"{self.env_prefix}REDIS_NAMESPACE", "aurum")
+        offload_routes_raw = env.get(f"{self.env_prefix}API_CONCURRENCY_OFFLOAD_ROUTES", "")
+        if offload_routes_raw:
+            try:
+                routes = json.loads(offload_routes_raw)
+                if isinstance(routes, list):
+                    concurrency_defaults["offload_routes"] = routes
+                else:
+                    logger.warning("Offload routes must decode to a JSON array; ignoring configuration")
+            except json.JSONDecodeError:
+                logger.warning("Invalid JSON for %sAPI_CONCURRENCY_OFFLOAD_ROUTES; ignoring", self.env_prefix)
+
+        concurrency_redis_enabled = self._get_bool_from_env(
+            env,
+            [f"{self.env_prefix}API_CONCURRENCY_REDIS_ENABLED"],
+            False,
+        )
+        concurrency_redis_url = env.get(
+            f"{self.env_prefix}API_CONCURRENCY_REDIS_URL",
+            redis_url_default,
+        )
+        concurrency_redis_namespace = env.get(
+            f"{self.env_prefix}API_CONCURRENCY_REDIS_NAMESPACE",
+            f"{redis_namespace_default}:api:concurrency",
+        )
+        concurrency_redis_poll = self._get_float_from_env(
+            env,
+            [f"{self.env_prefix}API_CONCURRENCY_REDIS_POLL_INTERVAL_SECONDS"],
+            0.05,
+        )
+        concurrency_redis_stale = self._get_float_from_env(
+            env,
+            [f"{self.env_prefix}API_CONCURRENCY_REDIS_QUEUE_STALE_SECONDS"],
+            concurrency_defaults["queue_timeout_seconds"],
+        )
+        concurrency_redis_ttl = self._get_float_from_env(
+            env,
+            [f"{self.env_prefix}API_CONCURRENCY_REDIS_QUEUE_TTL_SECONDS"],
+            max(concurrency_redis_stale * 10.0, 30.0),
+        )
+        concurrency_backpressure_threshold = self._get_float_from_env(
+            env,
+            [f"{self.env_prefix}API_CONCURRENCY_BACKPRESSURE_RATIO_THRESHOLD"],
+            0.0,
+        )
+        concurrency_backpressure_header = env.get(
+            f"{self.env_prefix}API_CONCURRENCY_BACKPRESSURE_HEADER",
+            "X-Backpressure",
+        )
+        concurrency_redis_username = env.get(
+            f"{self.env_prefix}API_CONCURRENCY_REDIS_USERNAME",
+            env.get(f"{self.env_prefix}REDIS_USERNAME"),
+        )
+        concurrency_redis_password = env.get(
+            f"{self.env_prefix}API_CONCURRENCY_REDIS_PASSWORD",
+            env.get(f"{self.env_prefix}REDIS_PASSWORD"),
+        )
+
         concurrency_namespace = SimpleNamespace(
             enabled=concurrency_enabled,
             tenant_overrides=tenant_overrides,
+            redis_enabled=concurrency_redis_enabled,
+            redis_url=concurrency_redis_url,
+            redis_namespace=concurrency_redis_namespace,
+            redis_poll_interval_seconds=concurrency_redis_poll,
+            redis_queue_stale_seconds=concurrency_redis_stale,
+            redis_queue_ttl_seconds=concurrency_redis_ttl,
+            redis_username=concurrency_redis_username,
+            redis_password=concurrency_redis_password,
+            backpressure_ratio_threshold=concurrency_backpressure_threshold,
+            backpressure_header=concurrency_backpressure_header,
             **concurrency_defaults,
         )
 
@@ -568,6 +638,22 @@ class SimplifiedSettings:
         self.trino_catalog = env.get(f"{self.env_prefix}TRINO_CATALOG", "iceberg")
         self.trino_schema = env.get(f"{self.env_prefix}TRINO_SCHEMA", "market")
         self.trino_http_scheme = env.get(f"{self.env_prefix}TRINO_HTTP_SCHEME", "http")
+        self.trino_hot_cache_enabled = self._get_bool_from_env(
+            env,
+            [f"{self.env_prefix}TRINO_HOT_CACHE_ENABLED"],
+            True,
+        )
+        self.trino_prepared_cache_metrics_enabled = self._get_bool_from_env(
+            env,
+            [f"{self.env_prefix}TRINO_PREPARED_CACHE_METRICS_ENABLED"],
+            True,
+        )
+        self.trino_trace_tagging_enabled = self._get_bool_from_env(
+            env,
+            [f"{self.env_prefix}TRINO_TRACE_TAGGING_ENABLED"],
+            True,
+        )
+        self.trino_metrics_label = env.get(f"{self.env_prefix}TRINO_METRICS_LABEL", "default")
         default_cache_ttl = int(env.get(f"{self.env_prefix}CACHE_TTL", "300"))
         self.database_timescale_dsn = env.get(f"{self.env_prefix}TIMESCALE_DSN", self.database_url)
         self.database_eia_series_base_table = env.get(f"{self.env_prefix}EIA_SERIES_BASE_TABLE", "iceberg.market.eia_series")
@@ -673,6 +759,10 @@ class SimplifiedSettings:
             http_scheme=self.trino_http_scheme,
             catalog=self.trino_catalog,
             database_schema=self.trino_schema,
+            hot_cache_enabled=self.trino_hot_cache_enabled,
+            prepared_cache_metrics_enabled=self.trino_prepared_cache_metrics_enabled,
+            trace_tagging_enabled=self.trino_trace_tagging_enabled,
+            metrics_label=self.trino_metrics_label,
         )
 
         backend_type_value = env.get(f"{self.env_prefix}API_BACKEND", DataBackendType.TRINO.value)

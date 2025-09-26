@@ -12,6 +12,7 @@ from typing import Any, Dict, List, Optional, Tuple, Union
 from collections import defaultdict, deque
 
 from ..telemetry.context import get_request_id
+from .sliding_window import RateLimitMiddleware, ratelimit_admin_router
 from ..cache.cache import AsyncCache, CacheManager
 
 
@@ -393,90 +394,6 @@ class RateLimitManager:
     async def cleanup(self) -> int:
         """Clean up expired rate limit states."""
         return await self.storage.cleanup_expired()
-
-
-class RateLimitMiddleware:
-    """FastAPI middleware for rate limiting."""
-
-    def __init__(self, rate_limit_manager: RateLimitManager):
-        self.rate_limit_manager = rate_limit_manager
-
-    async def __call__(self, request: Any, call_next: Any) -> Any:
-        """Apply rate limiting to request."""
-        # Extract user/tenant identifier
-        identifier = self._get_identifier(request)
-        tier = self._get_tier(request)
-        endpoint = str(request.url.path)
-        user_agent = request.headers.get("user-agent", "")
-
-        # Check rate limit
-        result = await self.rate_limit_manager.check_rate_limit(
-            identifier=identifier,
-            tier=tier,
-            endpoint=endpoint,
-            user_agent=user_agent
-        )
-
-        # Add rate limit headers
-        response = await call_next(request)
-
-        if hasattr(response, 'headers'):
-            headers = result.to_headers()
-            for key, value in headers.items():
-                response.headers[key] = value
-
-        # If rate limited, return 429
-        if not result.allowed:
-            from fastapi import HTTPException
-            raise HTTPException(
-                status_code=429,
-                detail={
-                    "error": "Rate limit exceeded",
-                    "retry_after": result.retry_after,
-                    "quota": result.quota.requests_per_minute if result.quota else None,
-                    "tier": result.tier.value if result.tier else None,
-                    "request_id": get_request_id(),
-                }
-            )
-
-        return response
-
-    def _get_identifier(self, request: Any) -> str:
-        """Extract user/tenant identifier from request."""
-        # Try API key first
-        api_key = request.headers.get("x-api-key")
-        if api_key:
-            return f"apikey:{api_key}"
-
-        # Try authorization header
-        auth_header = request.headers.get("authorization")
-        if auth_header and auth_header.startswith("Bearer "):
-            return f"bearer:{auth_header[7:]}"
-
-        # Try tenant ID
-        tenant_id = request.headers.get("x-tenant-id")
-        if tenant_id:
-            return f"tenant:{tenant_id}"
-
-        # Try user ID
-        user_id = request.headers.get("x-user-id")
-        if user_id:
-            return f"user:{user_id}"
-
-        # Fallback to IP address
-        client_ip = getattr(request, 'client', None)
-        if client_ip:
-            return f"ip:{client_ip.host}"
-
-        return "anonymous"
-
-    def _get_tier(self, request: Any) -> QuotaTier:
-        """Extract tier from request headers."""
-        tier_header = request.headers.get("x-tier", "free")
-        try:
-            return QuotaTier(tier_header.lower())
-        except ValueError:
-            return QuotaTier.FREE
 
 
 def create_rate_limit_manager(storage_backend: str = "memory") -> RateLimitManager:

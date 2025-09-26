@@ -4,13 +4,25 @@ from __future__ import annotations
 
 import asyncio
 import copy
+import json
+import logging
 import time
-from typing import Any, Callable, ClassVar, Deque, Dict, List, Optional, Set, Tuple
+from typing import Any, Awaitable, Callable, ClassVar, Deque, Dict, List, Optional, Set, Tuple, Union
 from collections import defaultdict, deque
 from dataclasses import dataclass, field
 
-from ..telemetry.context import log_structured
+from ..telemetry.context import (
+    TenantIdValidationError,
+    extract_tenant_id_from_headers,
+    log_structured,
+)
 from ..exceptions import ServiceUnavailableException
+from ..models.common import (
+    ErrorEnvelope,
+    QueueServiceUnavailableError,
+    RequestTimeoutError,
+    TooManyRequestsError,
+)
 from ...core.settings import AurumSettings, get_settings
 try:
     from ...observability.profiling import ProfileAsyncContext
@@ -32,6 +44,19 @@ from ...observability.metric_helpers import (
     get_gauge,
     get_histogram,
 )
+from .redis_concurrency import (
+    RedisConcurrencyBackend,
+    RedisConcurrencyConfig,
+    RedisUnavailable,
+)
+
+try:  # pragma: no cover - optional redis dependency
+    import redis.asyncio as redis_async  # type: ignore
+except ImportError:  # pragma: no cover
+    redis_async = None  # type: ignore
+
+
+LOGGER = logging.getLogger(__name__)
 
 
 def _create_lock() -> asyncio.Lock:
@@ -462,6 +487,16 @@ class ConcurrencyController:
         self._notify_active_locked()
         self._notify_tenant_active(tenant_key, state.active)
 
+        tenant_queue_depth = len(state.waiters)
+        global_queue_depth = sum(len(s.waiters) for s in self._tenant_states.values())
+        queue_limit = int(limits.get("tenant_queue_limit", 0))
+        backpressure_ratio = 0.0
+        if queue_limit > 0:
+            backpressure_ratio = min(1.0, tenant_queue_depth / max(1, queue_limit))
+        if self.limits.max_concurrent_requests:
+            global_ratio = global_queue_depth / max(1, self.limits.max_concurrent_requests)
+            backpressure_ratio = max(backpressure_ratio, global_ratio)
+
         slot = ConcurrencySlot(
             controller=self,
             tenant_id=tenant_id,
@@ -469,6 +504,9 @@ class ConcurrencyController:
             acquire_time=granted_at,
             queued_at=queued_at,
             request_id=request_id,
+            tenant_queue_depth=tenant_queue_depth,
+            global_queue_depth=global_queue_depth,
+            backpressure_ratio=backpressure_ratio,
         )
         return slot
 
@@ -604,6 +642,10 @@ class ConcurrencySlot:
         acquire_time: float,
         queued_at: float,
         request_id: Optional[str],
+        release_callback: Optional[Callable[["ConcurrencySlot"], Awaitable[None]]] = None,
+        tenant_queue_depth: int = 0,
+        global_queue_depth: int = 0,
+        backpressure_ratio: float = 0.0,
     ):
         self.controller = controller
         self.tenant_id = tenant_id
@@ -614,11 +656,26 @@ class ConcurrencySlot:
         self.queue_wait_seconds = max(0.0, acquire_time - queued_at)
         self.request_id = request_id
         self._released = False
+        self._release_callback = release_callback
+        self.tenant_queue_depth = tenant_queue_depth
+        self.global_queue_depth = global_queue_depth
+        self.backpressure_ratio = backpressure_ratio
 
     async def release(self) -> None:
         """Release the concurrency slot back to the controller."""
 
         if self._released:
+            return
+
+        if self._release_callback is not None:
+            await self._release_callback(self)
+        else:
+            await self._release_local()
+
+        self._released = True
+
+    async def _release_local(self) -> None:
+        if self.controller is None:
             return
 
         async with self.controller._lock:
@@ -643,13 +700,160 @@ class ConcurrencySlot:
 
             self.controller._dispatch_locked(time.perf_counter())
 
-        self._released = True
-
     async def __aenter__(self) -> "ConcurrencySlot":
         return self
 
     async def __aexit__(self, exc_type, exc_val, exc_tb) -> None:
         await self.release()
+
+
+class DistributedConcurrencyController:
+    """Redis-backed controller coordinating concurrency across replicas."""
+
+    def __init__(
+        self,
+        limits: RequestLimits,
+        backend: RedisConcurrencyBackend,
+    ) -> None:
+        self.limits = limits
+        self.backend = backend
+        self.backend.register_observers(
+            queue_depth=self._queue_depth_update,
+            active=self._active_update,
+            tenant_active=self._tenant_active_update,
+            global_queue=self._global_queue_update,
+        )
+        self._queue_depth_observer: Optional[Callable[[str, int], None]] = None
+        self._active_observer: Optional[Callable[[int], None]] = None
+        self._tenant_active_observer: Optional[Callable[[str, int], None]] = None
+        self._global_queue_observer: Optional[Callable[[int], None]] = None
+
+    # Observer plumbing ------------------------------------------------
+    def register_metrics_observer(
+        self,
+        *,
+        queue_depth: Optional[Callable[[str, int], None]] = None,
+        active: Optional[Callable[[int], None]] = None,
+        tenant_active: Optional[Callable[[str, int], None]] = None,
+        global_queue: Optional[Callable[[int], None]] = None,
+    ) -> None:
+        self._queue_depth_observer = queue_depth
+        self._active_observer = active
+        self._tenant_active_observer = tenant_active
+        self._global_queue_observer = global_queue
+
+    def _queue_depth_update(self, tenant_key: str, depth: int) -> None:
+        if self._queue_depth_observer:
+            try:
+                self._queue_depth_observer(tenant_key, depth)
+            except Exception:  # pragma: no cover - metrics best effort
+                pass
+
+    def _active_update(self, active_total: int) -> None:
+        if self._active_observer:
+            try:
+                self._active_observer(active_total)
+            except Exception:  # pragma: no cover
+                pass
+
+    def _tenant_active_update(self, tenant_key: str, value: int) -> None:
+        if self._tenant_active_observer:
+            try:
+                self._tenant_active_observer(tenant_key, value)
+            except Exception:  # pragma: no cover
+                pass
+
+    def _global_queue_update(self, depth: int) -> None:
+        if self._global_queue_observer:
+            try:
+                self._global_queue_observer(depth)
+            except Exception:  # pragma: no cover
+                pass
+
+    # Core API ---------------------------------------------------------
+    async def acquire_slot(
+        self,
+        tenant_id: Optional[str] = None,
+        request_id: Optional[str] = None,
+    ) -> "ConcurrencySlot":
+        tenant_key = tenant_id or ANONYMOUS_TENANT
+        tenant_limits = self.limits.resolve_for_tenant(tenant_key)
+
+        try:
+            result = await self.backend.acquire_slot(
+                tenant_key=tenant_key,
+                tenant_id=tenant_id,
+                request_id=request_id,
+                max_global=self.limits.max_concurrent_requests,
+                tenant_limit=int(tenant_limits["max_requests_per_tenant"]),
+                tenant_queue_limit=int(tenant_limits["tenant_queue_limit"]),
+                queue_timeout_seconds=float(tenant_limits["queue_timeout_seconds"]),
+            )
+        except OverflowError as exc:
+            queue_depth = int(exc.args[0]) if exc.args else int(tenant_limits["tenant_queue_limit"])
+            raise ConcurrencyRejected(
+                reason="tenant_queue_full",
+                status_code=429,
+                tenant_id=tenant_id,
+                retry_after=float(tenant_limits["queue_timeout_seconds"]),
+                queue_depth=queue_depth,
+            ) from exc
+        except TimeoutError as exc:
+            queue_depth = int(exc.args[0]) if exc.args else 0
+            raise ConcurrencyRejected(
+                reason="queue_timeout",
+                status_code=503,
+                tenant_id=tenant_id,
+                retry_after=float(tenant_limits["queue_timeout_seconds"]),
+                queue_depth=queue_depth,
+            ) from exc
+
+        acquire_perf = float(result.get("acquire_perf", time.perf_counter()))
+        queued_perf = float(result.get("queued_perf", acquire_perf))
+        tenant_queue_depth = int(result.get("tenant_queue_depth", 0))
+        global_queue_depth = int(result.get("global_queue_depth", 0))
+        queue_limit = max(1, int(tenant_limits.get("tenant_queue_limit", 1)) or 1)
+        backpressure_ratio = 0.0
+        if queue_limit > 0:
+            backpressure_ratio = min(1.0, tenant_queue_depth / queue_limit)
+        if self.limits.max_concurrent_requests:
+            global_ratio = global_queue_depth / float(self.limits.max_concurrent_requests)
+            backpressure_ratio = max(backpressure_ratio, global_ratio)
+
+        async def _release(slot: "ConcurrencySlot") -> None:
+            await self.backend.release(tenant_key=tenant_key)
+
+        slot = ConcurrencySlot(
+            controller=None,  # release handled by callback
+            tenant_id=tenant_id,
+            tenant_key=tenant_key,
+            acquire_time=acquire_perf,
+            queued_at=queued_perf,
+            request_id=request_id,
+            release_callback=_release,
+            tenant_queue_depth=tenant_queue_depth,
+            global_queue_depth=global_queue_depth,
+            backpressure_ratio=backpressure_ratio,
+        )
+        slot.queue_wait_seconds = max(0.0, acquire_perf - queued_perf)
+        return slot
+
+    async def get_stats(self) -> Dict[str, Any]:
+        stats = await self.backend.get_stats()
+        tenant_active = stats.get("tenant_active", {})
+        tenant_queue = stats.get("tenant_queue", {})
+        tenant_keys = sorted(set(tenant_active.keys()) | set(tenant_queue.keys()))
+        return {
+            "active_requests": stats.get("active_total", 0),
+            "global_limit": self.limits.max_concurrent_requests,
+            "tenants": {
+                tenant: {
+                    "active": tenant_active.get(tenant, 0),
+                    "queued": tenant_queue.get(tenant, 0),
+                }
+                for tenant in tenant_keys
+            },
+        }
 
 
 class RateLimiter:
@@ -784,11 +988,13 @@ class ConcurrencyMiddleware:
     def __init__(
         self,
         app,
-        concurrency_controller: ConcurrencyController,
+        concurrency_controller: Union[ConcurrencyController, DistributedConcurrencyController],
         rate_limiter: RateLimiter,
         timeout_controller: TimeoutController,
         exclude_paths: Optional[Set[str]] = None,
         offload_predicate: Optional[Callable[[Dict[str, Any]], Optional[OffloadInstruction]]] = None,
+        backpressure_threshold: float = 0.0,
+        backpressure_header: str = "X-Backpressure",
     ):
         self.app = app
         self.concurrency_controller = concurrency_controller
@@ -796,6 +1002,8 @@ class ConcurrencyMiddleware:
         self.timeout_controller = timeout_controller
         self.exclude_paths = exclude_paths or {"/health", "/ready", "/metrics"}
         self.offload_predicate = offload_predicate
+        self.backpressure_threshold = max(0.0, backpressure_threshold)
+        self.backpressure_header = backpressure_header or "X-Backpressure"
 
         # Metrics (graceful degradation if prometheus not available)
         self.concurrency_requests = get_counter(
@@ -897,16 +1105,48 @@ class ConcurrencyMiddleware:
         handled_successfully = False
 
         try:
-            # Extract request ID and tenant ID from headers
-            headers = dict(scope.get("headers", []))
-            request_id = next(
-                (v.decode() for k, v in headers.items() if k == b"x-request-id"),
-                None,
-            )
-            tenant_id = next(
-                (v.decode() for k, v in headers.items() if k == b"x-aurum-tenant"),
-                None,
-            )
+            raw_headers = scope.get("headers", [])
+
+            request_id = None
+            for key, value in raw_headers:
+                key_text = key.decode("latin-1").lower() if isinstance(key, bytes) else str(key).lower()
+                if key_text == "x-request-id":
+                    request_id = (
+                        value.decode("utf-8", errors="ignore")
+                        if isinstance(value, bytes)
+                        else str(value)
+                    )
+                    break
+
+            try:
+                tenant_id = extract_tenant_id_from_headers(raw_headers)
+            except TenantIdValidationError as exc:
+                self.concurrency_requests.labels(result="error").inc()
+                error_payload = ErrorEnvelope(
+                    error="InvalidTenantId",
+                    message=str(exc),
+                    request_id=request_id,
+                )
+                log_structured(
+                    "warning",
+                    "invalid_tenant_header",
+                    request_id=request_id,
+                    detail=str(exc),
+                )
+                await send({
+                    "type": "http.response.start",
+                    "status": 400,
+                    "headers": [
+                        (b"content-type", b"application/json"),
+                        (b"x-request-id", (request_id or "unknown").encode("utf-8")),
+                    ],
+                })
+                await send({
+                    "type": "http.response.body",
+                    "body": error_payload.model_dump_json().encode("utf-8"),
+                })
+                return
+
             tenant_label = tenant_id or ANONYMOUS_TENANT
 
             # Check rate limits (fixed window per-tenant)
@@ -928,20 +1168,22 @@ class ConcurrencyMiddleware:
                                 **retry_headers,
                                 "Content-Type": "application/json",
                                 "X-Request-Id": request_id or "unknown",
+                                "X-Queue-Depth": "0",
                             }.items()
                         ],
                     })
 
-                    error_response = {
-                        "error": "RateLimitExceeded",
-                        "message": "Rate limit exceeded",
-                        "retry_after": retry_seconds,
-                        "request_id": request_id,
-                    }
+                    error_response = TooManyRequestsError(
+                        message="Rate limit exceeded",
+                        request_id=request_id,
+                        queue_depth=0,
+                        retry_after_seconds=int(retry_seconds),
+                        context={"tenant_id": tenant_id},
+                    )
 
                     await send({
                         "type": "http.response.body",
-                        "body": str(error_response).encode(),
+                        "body": error_response.model_dump_json().encode("utf-8"),
                     })
 
                 self.concurrency_requests.labels(result="rate_limited").inc()
@@ -1013,7 +1255,7 @@ class ConcurrencyMiddleware:
 
                             await send({
                                 "type": "http.response.body",
-                                "body": str(body).encode(),
+                                "body": json.dumps(body).encode("utf-8"),
                             })
 
                         self.concurrency_requests.labels(result="offloaded").inc()
@@ -1065,6 +1307,7 @@ class ConcurrencyMiddleware:
                     timeout_headers = self.timeout_controller.get_timeout_header(
                         timeout_handle.timeout_seconds,
                     )
+                    timeout_headers["Retry-After"] = str(int(timeout_handle.timeout_seconds * 2))
 
                     await send({
                         "type": "http.response.start",
@@ -1079,18 +1322,32 @@ class ConcurrencyMiddleware:
                         ],
                     })
 
-                    timeout_response = {
-                        "error": "GatewayTimeout",
-                        "message": "Request timeout exceeded",
-                        "timeout_seconds": timeout_handle.timeout_seconds,
-                        "request_id": request_id,
-                    }
+                    timeout_response = RequestTimeoutError(
+                        message="Request timeout exceeded",
+                        timeout_seconds=int(timeout_handle.timeout_seconds),
+                        retry_after_seconds=int(timeout_handle.timeout_seconds * 2),
+                        request_id=request_id,
+                    )
 
                     await send({
                         "type": "http.response.body",
-                        "body": str(timeout_response).encode(),
+                        "body": timeout_response.model_dump_json().encode("utf-8"),
                     })
                     return
+
+                if (
+                    message["type"] == "http.response.start"
+                    and self.backpressure_threshold > 0.0
+                    and concurrency_slot is not None
+                ):
+                    ratio = getattr(concurrency_slot, "backpressure_ratio", 0.0)
+                    if ratio >= self.backpressure_threshold:
+                        headers_list = list(message.get("headers") or [])
+                        headers_list.append(
+                            (self.backpressure_header.encode("ascii"), f"{ratio:.2f}".encode("ascii"))
+                        )
+                        message = dict(message)
+                        message["headers"] = headers_list
 
                 await send(message)
 
@@ -1116,22 +1373,44 @@ class ConcurrencyMiddleware:
                 "Content-Type": "application/json",
                 "X-Request-Id": request_id or "unknown",
             }
-            if rejection.retry_after:
-                response_headers["Retry-After"] = str(int(max(1, round(rejection.retry_after))))
+            retry_after_seconds = 0
+            if rejection.retry_after is not None:
+                retry_after_seconds = int(max(1, round(rejection.retry_after)))
+                response_headers["Retry-After"] = str(retry_after_seconds)
             response_headers["X-Queue-Depth"] = str(max(0, queue_depth_value))
 
             message_map = {
                 "tenant_queue_full": "Per-tenant concurrency queue is full",
                 "queue_timeout": "Timed out waiting for available capacity",
             }
-            payload = {
-                "error": "TooManyRequests" if status_code == 429 else "ServiceUnavailable",
-                "message": message_map.get(rejection.reason, "Concurrency capacity unavailable"),
-                "reason": rejection.reason,
+            message_text = message_map.get(rejection.reason, "Concurrency capacity unavailable")
+            envelope_kwargs = {
+                "message": message_text,
                 "request_id": request_id,
-                "tenant_id": tenant_id,
                 "queue_depth": queue_depth_value,
+                "retry_after_seconds": retry_after_seconds,
+                "context": {
+                    "tenant_id": tenant_id,
+                    "reason": rejection.reason,
+                },
             }
+
+            if status_code == 429:
+                payload_model: ErrorEnvelope = TooManyRequestsError(**envelope_kwargs)
+            elif status_code == 503:
+                payload_model = QueueServiceUnavailableError(**envelope_kwargs)
+            else:
+                fallback_context = dict(envelope_kwargs["context"])
+                fallback_context.update(
+                    queue_depth=queue_depth_value,
+                    retry_after_seconds=retry_after_seconds,
+                )
+                payload_model = ErrorEnvelope(
+                    error="ConcurrencyRejected",
+                    message=message_text,
+                    request_id=request_id,
+                    context=fallback_context,
+                )
 
             log_structured(
                 "warning",
@@ -1152,7 +1431,7 @@ class ConcurrencyMiddleware:
             })
             await send({
                 "type": "http.response.body",
-                "body": str(payload).encode(),
+                "body": payload_model.model_dump_json().encode("utf-8"),
             })
             return
 
@@ -1160,32 +1439,29 @@ class ConcurrencyMiddleware:
             # Handle concurrency/rate limit errors
             self.concurrency_requests.labels(result="rejected").inc()
 
-            # Send error response
-            async def send_error(response):
-                await send({
-                    "type": "http.response.start",
-                    "status": exc.status_code,
-                    "headers": [
-                        (k.encode(), v.encode())
-                        for k, v in {
-                            "Content-Type": "application/json",
-                            "X-Request-Id": request_id or "unknown"
-                        }.items()
-                    ]
-                })
+            payload = ErrorEnvelope(
+                error=exc.__class__.__name__,
+                message=exc.detail,
+                code=getattr(exc, "code", None),
+                context=getattr(exc, "context", None),
+                request_id=request_id,
+            )
 
-                error_detail = {
-                    "error": exc.__class__.__name__,
-                    "message": exc.detail,
-                    "request_id": request_id,
-                }
-
-                await send({
-                    "type": "http.response.body",
-                    "body": str(error_detail).encode(),
-                })
-
-            await send_error(exc)
+            await send({
+                "type": "http.response.start",
+                "status": exc.status_code,
+                "headers": [
+                    (k.encode(), v.encode())
+                    for k, v in {
+                        "Content-Type": "application/json",
+                        "X-Request-Id": request_id or "unknown",
+                    }.items()
+                ],
+            })
+            await send({
+                "type": "http.response.body",
+                "body": payload.model_dump_json().encode("utf-8"),
+            })
             return
 
         except Exception as exc:
@@ -1202,31 +1478,27 @@ class ConcurrencyMiddleware:
             )
 
             # Send error response
-            async def send_error_response():
-                await send({
-                    "type": "http.response.start",
-                    "status": 500,
-                    "headers": [
-                        (k.encode(), v.encode())
-                        for k, v in {
-                            "Content-Type": "application/json",
-                            "X-Request-Id": request_id or "unknown"
-                        }.items()
-                    ]
-                })
+            payload = ErrorEnvelope(
+                error="InternalServerError",
+                message="Internal server error",
+                request_id=request_id,
+            )
 
-                error_detail = {
-                    "error": "InternalServerError",
-                    "message": "Internal server error",
-                    "request_id": request_id,
-                }
-
-                await send({
-                    "type": "http.response.body",
-                    "body": str(error_detail).encode(),
-                })
-
-            await send_error_response()
+            await send({
+                "type": "http.response.start",
+                "status": 500,
+                "headers": [
+                    (k.encode(), v.encode())
+                    for k, v in {
+                        "Content-Type": "application/json",
+                        "X-Request-Id": request_id or "unknown",
+                    }.items()
+                ],
+            })
+            await send({
+                "type": "http.response.body",
+                "body": payload.model_dump_json().encode("utf-8"),
+            })
             return
 
         finally:
@@ -1261,8 +1533,9 @@ def create_concurrency_controller(
     max_concurrent_requests: int = 100,
     max_requests_per_tenant: int = 20,
     tenant_burst_limit: int = 50,
+    backend: Optional[RedisConcurrencyBackend] = None,
     **overrides: Any,
-) -> ConcurrencyController:
+) -> Union[ConcurrencyController, DistributedConcurrencyController]:
     """Create a concurrency controller with default limits."""
     limits = RequestLimits(
         max_concurrent_requests=max_concurrent_requests,
@@ -1270,6 +1543,8 @@ def create_concurrency_controller(
         tenant_burst_limit=tenant_burst_limit,
         **overrides,
     )
+    if backend is not None:
+        return DistributedConcurrencyController(limits, backend)
     return ConcurrencyController(limits)
 
 
@@ -1289,6 +1564,8 @@ def create_concurrency_middleware(
     rate_limiter: Optional[RateLimiter] = None,
     timeout_controller: Optional[TimeoutController] = None,
     offload_predicate: Optional[Callable[[Dict[str, Any]], Optional[OffloadInstruction]]] = None,
+    backpressure_threshold: float = 0.0,
+    backpressure_header: str = "X-Backpressure",
 ) -> ConcurrencyMiddleware:
     """Create concurrency middleware with all components."""
     if concurrency_controller is None:
@@ -1306,6 +1583,8 @@ def create_concurrency_middleware(
         rate_limiter=rate_limiter,
         timeout_controller=timeout_controller,
         offload_predicate=offload_predicate,
+        backpressure_threshold=backpressure_threshold,
+        backpressure_header=backpressure_header,
     )
 
 
@@ -1351,7 +1630,82 @@ def create_concurrency_middleware_from_settings(
             limit_kwargs["tenant_overrides"] = merged_overrides
 
     limits = RequestLimits(**limit_kwargs)
-    concurrency_controller = ConcurrencyController(limits)
+
+    backend: Optional[RedisConcurrencyBackend] = None
+    if getattr(concurrency_config, "redis_enabled", False):
+        redis_url = getattr(concurrency_config, "redis_url", None) or getattr(
+            getattr(active_settings, "redis", None),
+            "url",
+            None,
+        )
+        redis_namespace = getattr(
+            concurrency_config,
+            "redis_namespace",
+            None,
+        ) or f"{getattr(getattr(active_settings, 'redis', None), 'namespace', 'aurum')}:api:concurrency"
+        poll_interval = float(getattr(concurrency_config, "redis_poll_interval_seconds", 0.05))
+        stale_seconds = float(
+            getattr(
+                concurrency_config,
+                "redis_queue_stale_seconds",
+                getattr(concurrency_config, "queue_timeout_seconds", limits.queue_timeout_seconds),
+            )
+        )
+        queue_ttl_seconds = float(
+            getattr(
+                concurrency_config,
+                "redis_queue_ttl_seconds",
+                max(stale_seconds * 10.0, limits.queue_timeout_seconds * 5.0),
+            )
+        )
+
+        if redis_async is None:
+            LOGGER.warning(
+                "Redis-backed concurrency requested but redis.asyncio is unavailable; falling back to in-process controller",
+            )
+        elif not redis_url:
+            LOGGER.warning(
+                "Redis-backed concurrency requested but no redis URL configured; falling back to in-process controller",
+            )
+        else:
+            try:
+                redis_kwargs: Dict[str, Any] = {}
+                username = getattr(concurrency_config, "redis_username", None)
+                password = getattr(concurrency_config, "redis_password", None)
+                if username:
+                    redis_kwargs["username"] = username
+                if password:
+                    redis_kwargs["password"] = password
+
+                redis_client = redis_async.from_url(
+                    redis_url,
+                    decode_responses=False,
+                    **redis_kwargs,
+                )
+                backend_config = RedisConcurrencyConfig(
+                    url=redis_url,
+                    namespace=redis_namespace,
+                    poll_interval_seconds=poll_interval,
+                    queue_stale_after_seconds=stale_seconds,
+                    queue_ttl_seconds=queue_ttl_seconds,
+                )
+                backend = RedisConcurrencyBackend(
+                    redis_client,
+                    config=backend_config,
+                )
+                backend_config.validate()
+            except RedisUnavailable:
+                LOGGER.warning(
+                    "Redis dependency missing despite enabled configuration; using in-process controller",
+                )
+            except Exception:
+                LOGGER.exception("Failed to initialize Redis concurrency backend; using in-process controller")
+
+    controller_kwargs = dict(limit_kwargs)
+    concurrency_controller = create_concurrency_controller(
+        backend=backend,
+        **controller_kwargs,
+    )
 
     rate_limiter = rate_limiter or create_rate_limiter()
 
@@ -1359,10 +1713,28 @@ def create_concurrency_middleware_from_settings(
         default_timeout=limits.max_request_duration_seconds,
     )
 
+    backpressure_threshold = float(
+        getattr(concurrency_config, "backpressure_ratio_threshold", 0.0)
+    )
+    backpressure_header = getattr(
+        concurrency_config,
+        "backpressure_header",
+        "X-Backpressure",
+    )
+
+    app_state = getattr(app, "state", None)
+    if backend is not None and app_state is not None:
+        setattr(app_state, "concurrency_backend", backend)
+    if app_state is not None:
+        setattr(app_state, "concurrency_controller", concurrency_controller)
+        setattr(app_state, "concurrency_limits", limits)
+
     return ConcurrencyMiddleware(
         app=app,
         concurrency_controller=concurrency_controller,
         rate_limiter=rate_limiter,
         timeout_controller=timeout_controller,
         offload_predicate=offload_predicate,
+        backpressure_threshold=backpressure_threshold,
+        backpressure_header=backpressure_header,
     )

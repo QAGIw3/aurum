@@ -43,8 +43,9 @@ class DummyRateLimitConfig:
     overrides: Dict[str, Tuple[int, int]]
     identifier_header: Optional[str]
     whitelist: Tuple[str, ...]
+    daily_cap: int = 100_000
 
-    def limits_for_path(self, path: str) -> Tuple[int, int]:
+    async def limits_for_path(self, path: str, tenant: Optional[str] = None) -> Tuple[int, int]:
         for prefix, limits in self.overrides.items():
             if path.startswith(prefix):
                 return limits
@@ -60,13 +61,19 @@ class DummyRateLimitConfig:
         return any(candidate in whitelist_set for candidate in candidates)
 
 
+def _load_rate_limit_module():
+    """Return the canonical rate limiting module for tests."""
+
+    return importlib.import_module("aurum.api.rate_limiting.sliding_window")
+
+
 def _build_app(rl_cfg: DummyRateLimitConfig):
     pytest.importorskip("fastapi", reason="fastapi not installed")
     from starlette.applications import Starlette
     from starlette.responses import JSONResponse
     from starlette.routing import Route
 
-    RateLimitMiddleware = importlib.import_module("aurum.api.ratelimit").RateLimitMiddleware
+    RateLimitMiddleware = _load_rate_limit_module().RateLimitMiddleware
 
     async def handler(request):
         return JSONResponse({"ok": True})
@@ -81,7 +88,7 @@ def test_rate_limit_returns_429(monkeypatch: pytest.MonkeyPatch):
 
     rl_cfg = DummyRateLimitConfig(rps=1, burst=0, overrides={}, identifier_header=None, whitelist=())
     app = _build_app(rl_cfg)
-    rl_module = importlib.import_module("aurum.api.ratelimit")
+    rl_module = _load_rate_limit_module()
     monkeypatch.setattr(rl_module.time, "time", lambda: 1_000_000)
 
     client = TestClient(app)
@@ -99,7 +106,7 @@ def test_rate_limit_counts_per_client_ip(monkeypatch: pytest.MonkeyPatch):
 
     rl_cfg = DummyRateLimitConfig(rps=1, burst=0, overrides={}, identifier_header=None, whitelist=())
     app = _build_app(rl_cfg)
-    rl_module = importlib.import_module("aurum.api.ratelimit")
+    rl_module = _load_rate_limit_module()
     monkeypatch.setattr(rl_module.time, "time", lambda: 2_000_000)
 
     client = TestClient(app)
@@ -119,7 +126,7 @@ def test_rate_limit_whitelist(monkeypatch: pytest.MonkeyPatch):
         whitelist=("vip-client",),
     )
     app = _build_app(rl_cfg)
-    rl_module = importlib.import_module("aurum.api.ratelimit")
+    rl_module = _load_rate_limit_module()
     monkeypatch.setattr(rl_module.time, "time", lambda: 4_000_000)
 
     client = TestClient(app)
@@ -140,7 +147,7 @@ def test_rate_limit_combines_tenant_and_header(monkeypatch: pytest.MonkeyPatch):
         whitelist=(),
     )
     app = _build_app(rl_cfg)
-    rl_module = importlib.import_module("aurum.api.ratelimit")
+    rl_module = _load_rate_limit_module()
     monkeypatch.setattr(rl_module.time, "time", lambda: 5_000_000)
 
     client = TestClient(app)

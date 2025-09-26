@@ -6,13 +6,22 @@ latency low while handling heavy computations out-of-band.
 """
 from __future__ import annotations
 
-from .celery_app import get_celery_app
-from .tasks import (
-    JOB_REGISTRY,
-    register_job,
-    run_job_async,
-    fetch_job_result,
-)
+try:  # pragma: no cover - exercised implicitly via import
+    from .celery_app import get_celery_app  # type: ignore
+    from .tasks import (  # type: ignore
+        JOB_REGISTRY,
+        register_job,
+        run_job_async,
+        fetch_job_result,
+    )
+except Exception:  # pragma: no cover - when Celery is unavailable
+    from .stub import (  # type: ignore
+        JOB_REGISTRY,
+        get_celery_app,
+        register_job,
+        run_job_async,
+        fetch_job_result,
+    )
 
 __all__ = [
     "get_celery_app",
@@ -21,4 +30,3 @@ __all__ = [
     "run_job_async",
     "fetch_job_result",
 ]
-

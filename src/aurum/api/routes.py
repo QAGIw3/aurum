@@ -3,6 +3,7 @@ from __future__ import annotations
 """FastAPI application exposing curve endpoints."""
 
 import base64
+import os
 import hashlib
 import json
 import math
@@ -95,6 +96,12 @@ from aurum.observability.metrics import (
     TILE_FETCH_LATENCY,
     generate_latest,
 )
+try:  # pragma: no cover - optional dependency
+    from prometheus_client import CollectorRegistry as _CollectorRegistry
+    from prometheus_client import multiprocess as _prom_multiprocess
+except ImportError:  # pragma: no cover
+    _CollectorRegistry = None  # type: ignore[assignment]
+    _prom_multiprocess = None  # type: ignore[assignment]
 from .auth import AuthMiddleware, OIDCConfig
 from aurum.core import AurumSettings
 from aurum.core.pagination import Cursor
@@ -488,7 +495,15 @@ _METRICS_PATH = METRICS_PATH
 def metrics():
     if not _METRICS_ENABLED:
         raise HTTPException(status_code=503, detail="metrics_unavailable")
-    data = generate_latest()
+    registry = None
+    multiproc_dir = os.getenv("PROMETHEUS_MULTIPROC_DIR")
+    if multiproc_dir and _CollectorRegistry is not None and _prom_multiprocess is not None:
+        registry = _CollectorRegistry()
+        try:
+            _prom_multiprocess.MultiProcessCollector(registry)
+        except Exception:  # pragma: no cover - defensive fallback
+            registry = None
+    data = generate_latest(registry) if registry is not None else generate_latest()
     return Response(content=data, media_type=CONTENT_TYPE_LATEST)
 
 

@@ -380,6 +380,11 @@ if PROMETHEUS_AVAILABLE:  # pragma: no branch - simplify instrumentation when av
         ["method", "path", "status"],
         buckets=(100, 500, 1000, 5000, 10000, 50000, 100000, 500000, 1000000),
     )
+    RUNTIME_OVERRIDE_UPDATES = Counter(
+        "aurum_runtime_override_updates_total",
+        "Runtime override update attempts",
+        ["resource_type", "result"],
+    )
 
     # Database Connection Pool Metrics (Enhanced)
     DB_POOL_CONNECTIONS_CREATED = Counter(
@@ -475,6 +480,24 @@ if PROMETHEUS_AVAILABLE:  # pragma: no branch - simplify instrumentation when av
         "aurum_trino_queue_rejections_total",
         "Total Trino queue rejections due to backpressure",
         ["reason"],
+    )
+    TRINO_PREPARED_CACHE_ENTRIES = Gauge(
+        "aurum_trino_prepared_cache_entries",
+        "Total prepared statement cache entries held by clients",
+    )
+    TRINO_PREPARED_CACHE_EVICTIONS = Counter(
+        "aurum_trino_prepared_cache_evictions_total",
+        "Prepared statement cache evictions from capacity limits",
+    )
+    TRINO_HOT_CACHE_HITS = Counter(
+        "aurum_trino_hot_cache_hits_total",
+        "Hot query cache hits by tenant",
+        ["tenant"],
+    )
+    TRINO_HOT_CACHE_MISSES = Counter(
+        "aurum_trino_hot_cache_misses_total",
+        "Hot query cache misses by tenant",
+        ["tenant"],
     )
 
     # Cache Performance Metrics (Enhanced)
@@ -687,6 +710,11 @@ else:  # pragma: no cover - Prometheus not present
     CACHE_OPERATIONS = CACHE_SIZE = CACHE_EVICTIONS = CACHE_TTL_EXPIRED = None
     # Database connection pool metrics
     DB_CONNECTIONS_ACTIVE = DB_CONNECTIONS_IDLE = DB_CONNECTIONS_TOTAL = DB_CONNECTION_POOL_WAIT = None
+    TRINO_PREPARED_CACHE_ENTRIES = None
+    TRINO_PREPARED_CACHE_EVICTIONS = None
+    TRINO_HOT_CACHE_HITS = None
+    TRINO_HOT_CACHE_MISSES = None
+    RUNTIME_OVERRIDE_UPDATES = None
     # Business metrics
     BUSINESS_TRANSACTIONS = BUSINESS_VALUE = BUSINESS_ERRORS = None
     # Great Expectations metrics (kept as sentinel None objects for import compatibility)
@@ -704,6 +732,22 @@ else:  # pragma: no cover - Prometheus not present
         raise RuntimeError("prometheus_client is not installed")
 
     METRICS_MIDDLEWARE = None
+
+
+    async def set_trino_prepared_cache_entries(count: int) -> None:
+        return None
+
+
+    async def increment_trino_prepared_cache_evictions(amount: int = 1) -> None:
+        return None
+
+
+    async def increment_trino_hot_cache_hits(tenant: str) -> None:
+        return None
+
+
+    async def increment_trino_hot_cache_misses(tenant: str) -> None:
+        return None
 
 
 class MetricsCollector:
@@ -1662,6 +1706,56 @@ async def increment_trino_queue_rejections(reason: str) -> None:
         pass
 
 
+async def increment_runtime_override_updates(resource_type: str, result: str = "success") -> None:
+    """Increment runtime override update counter."""
+    if RUNTIME_OVERRIDE_UPDATES is None:
+        return
+    try:
+        RUNTIME_OVERRIDE_UPDATES.labels(resource_type=resource_type, result=result).inc()
+    except Exception:
+        pass
+
+
+async def set_trino_prepared_cache_entries(count: int) -> None:
+    """Set prepared statement cache entry count."""
+    if TRINO_PREPARED_CACHE_ENTRIES is None:
+        return
+    try:
+        TRINO_PREPARED_CACHE_ENTRIES.set(count)
+    except Exception:
+        pass
+
+
+async def increment_trino_prepared_cache_evictions(amount: int = 1) -> None:
+    """Increment prepared statement cache eviction counter."""
+    if TRINO_PREPARED_CACHE_EVICTIONS is None:
+        return
+    try:
+        TRINO_PREPARED_CACHE_EVICTIONS.inc(amount)
+    except Exception:
+        pass
+
+
+async def increment_trino_hot_cache_hits(tenant: str) -> None:
+    """Record a hot cache hit for the provided tenant."""
+    if TRINO_HOT_CACHE_HITS is None:
+        return
+    try:
+        TRINO_HOT_CACHE_HITS.labels(tenant=tenant or "unknown").inc()
+    except Exception:
+        pass
+
+
+async def increment_trino_hot_cache_misses(tenant: str) -> None:
+    """Record a hot cache miss for the provided tenant."""
+    if TRINO_HOT_CACHE_MISSES is None:
+        return
+    try:
+        TRINO_HOT_CACHE_MISSES.labels(tenant=tenant or "unknown").inc()
+    except Exception:
+        pass
+
+
 __all__ = [
     "MetricPoint",
     "MetricType",
@@ -1757,13 +1851,15 @@ __all__ = [
     "API_REQUESTS_TOTAL",
     "API_REQUEST_DURATION",
     "API_REQUEST_DURATION_PERCENTILES",
-    "API_REQUEST_SIZE",
-    "API_RESPONSE_SIZE",
+   "API_REQUEST_SIZE",
+   "API_RESPONSE_SIZE",
+    "RUNTIME_OVERRIDE_UPDATES",
     "increment_api_requests",
     "observe_api_request_duration",
     "observe_api_request_duration_percentile",
     "observe_api_request_size",
     "observe_api_response_size",
+    "increment_runtime_override_updates",
     # Enhanced Database Connection Pool Metrics
     "DB_POOL_CONNECTIONS_CREATED",
     "DB_POOL_CONNECTIONS_DESTROYED",
@@ -1856,6 +1952,10 @@ __all__ = [
     "TRINO_POOL_SATURATION_STATUS",
     "TRINO_REQUEST_QUEUE_DEPTH",
     "TRINO_QUEUE_REJECTIONS",
+    "TRINO_PREPARED_CACHE_ENTRIES",
+    "TRINO_PREPARED_CACHE_EVICTIONS",
+    "TRINO_HOT_CACHE_HITS",
+    "TRINO_HOT_CACHE_MISSES",
     "increment_trino_queries",
     "observe_trino_query_duration",
     "set_trino_connection_pool_active",
@@ -1867,6 +1967,10 @@ __all__ = [
     "set_trino_pool_saturation_status",
     "set_trino_request_queue_depth",
     "increment_trino_queue_rejections",
+    "set_trino_prepared_cache_entries",
+    "increment_trino_prepared_cache_evictions",
+    "increment_trino_hot_cache_hits",
+    "increment_trino_hot_cache_misses",
 ]
 
 

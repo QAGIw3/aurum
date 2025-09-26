@@ -1,6 +1,6 @@
 """Rate limiting functionality for the Aurum API."""
 
-from .ratelimit import RateLimitConfig, RateLimitMiddleware, ratelimit_admin_router
+from .sliding_window import RateLimitConfig, RateLimitMiddleware, ratelimit_admin_router
 from . import exceptions
 from .rate_limit_management import router as rate_limit_management_router
 from .rate_limiting import (
@@ -19,6 +19,7 @@ from .rate_limiting import (
 )
 from .quota_manager import APIQuotaExceeded, TenantQuotaManager
 from .concurrency_middleware import ConcurrencyMiddleware
+from .redis_concurrency import diagnostics_router
 
 __all__ = [
     # Core Rate Limiting
@@ -45,4 +46,5 @@ __all__ = [
     "TenantQuotaManager",
     # Concurrency
     "ConcurrencyMiddleware",
+    "diagnostics_router",
 ]
