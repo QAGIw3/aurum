@@ -491,6 +491,7 @@ class SimplifiedSettings:
                 [f"{self.env_prefix}API_CONCURRENCY_SLOW_START_COOLDOWN_SECONDS"],
                 30.0,
             ),
+            "offload_routes": [],
         }
 
         concurrency_field_casts = {
@@ -554,6 +555,17 @@ class SimplifiedSettings:
 
         redis_url_default = env.get(f"{self.env_prefix}REDIS_URL", "redis://localhost:6379")
         redis_namespace_default = env.get(f"{self.env_prefix}REDIS_NAMESPACE", "aurum")
+        offload_routes_raw = env.get(f"{self.env_prefix}API_CONCURRENCY_OFFLOAD_ROUTES", "")
+        if offload_routes_raw:
+            try:
+                routes = json.loads(offload_routes_raw)
+                if isinstance(routes, list):
+                    concurrency_defaults["offload_routes"] = routes
+                else:
+                    logger.warning("Offload routes must decode to a JSON array; ignoring configuration")
+            except json.JSONDecodeError:
+                logger.warning("Invalid JSON for %sAPI_CONCURRENCY_OFFLOAD_ROUTES; ignoring", self.env_prefix)
+
         concurrency_redis_enabled = self._get_bool_from_env(
             env,
             [f"{self.env_prefix}API_CONCURRENCY_REDIS_ENABLED"],

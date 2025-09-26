@@ -12,7 +12,7 @@ from fastapi import Request
 
 from aurum.api.cache.cache import CacheManager
 from aurum.core import AurumSettings
-from aurum.api import state as _state
+from aurum.core.settings import get_settings as _core_get_settings
 
 
 def get_settings(request: Request) -> AurumSettings:
@@ -20,14 +20,14 @@ def get_settings(request: Request) -> AurumSettings:
 
     Preference order:
     1) request.app.state.settings (if configured by the app factory)
-    2) aurum.api.state.get_settings() (configured during startup)
+    2) aurum.core.settings.get_settings() (configured during startup)
     """
-    settings = getattr(getattr(request, "app", None), "state", None)
-    if settings is not None:
-        maybe = getattr(settings, "settings", None)
+    settings_state = getattr(getattr(request, "app", None), "state", None)
+    if settings_state is not None:
+        maybe = getattr(settings_state, "settings", None)
         if isinstance(maybe, AurumSettings):
             return maybe
-    return _state.get_settings()
+    return _core_get_settings()
 
 
 def get_cache_manager(request: Request) -> Optional[CacheManager]:
@@ -55,4 +55,3 @@ __all__ = [
     "get_principal",
     "get_tenant_id",
 ]
-

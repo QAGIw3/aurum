@@ -17,6 +17,12 @@ from ..telemetry.context import (
     log_structured,
 )
 from ..exceptions import ServiceUnavailableException
+from ..models.common import (
+    ErrorEnvelope,
+    QueueServiceUnavailableError,
+    RequestTimeoutError,
+    TooManyRequestsError,
+)
 from ...core.settings import AurumSettings, get_settings
 try:
     from ...observability.profiling import ProfileAsyncContext
@@ -1116,11 +1122,11 @@ class ConcurrencyMiddleware:
                 tenant_id = extract_tenant_id_from_headers(raw_headers)
             except TenantIdValidationError as exc:
                 self.concurrency_requests.labels(result="error").inc()
-                error_payload = {
-                    "error": "InvalidTenantId",
-                    "message": str(exc),
-                    "request_id": request_id,
-                }
+                error_payload = ErrorEnvelope(
+                    error="InvalidTenantId",
+                    message=str(exc),
+                    request_id=request_id,
+                )
                 log_structured(
                     "warning",
                     "invalid_tenant_header",
@@ -1137,7 +1143,7 @@ class ConcurrencyMiddleware:
                 })
                 await send({
                     "type": "http.response.body",
-                    "body": json.dumps(error_payload).encode("utf-8"),
+                    "body": error_payload.model_dump_json().encode("utf-8"),
                 })
                 return
 
@@ -1162,20 +1168,22 @@ class ConcurrencyMiddleware:
                                 **retry_headers,
                                 "Content-Type": "application/json",
                                 "X-Request-Id": request_id or "unknown",
+                                "X-Queue-Depth": "0",
                             }.items()
                         ],
                     })
 
-                    error_response = {
-                        "error": "RateLimitExceeded",
-                        "message": "Rate limit exceeded",
-                        "retry_after_seconds": retry_seconds,
-                        "request_id": request_id,
-                    }
+                    error_response = TooManyRequestsError(
+                        message="Rate limit exceeded",
+                        request_id=request_id,
+                        queue_depth=0,
+                        retry_after_seconds=int(retry_seconds),
+                        context={"tenant_id": tenant_id},
+                    )
 
                     await send({
                         "type": "http.response.body",
-                        "body": json.dumps(error_response).encode("utf-8"),
+                        "body": error_response.model_dump_json().encode("utf-8"),
                     })
 
                 self.concurrency_requests.labels(result="rate_limited").inc()
@@ -1314,17 +1322,16 @@ class ConcurrencyMiddleware:
                         ],
                     })
 
-                    timeout_response = {
-                        "error": "GatewayTimeout",
-                        "message": "Request timeout exceeded",
-                        "timeout_seconds": timeout_handle.timeout_seconds,
-                        "request_id": request_id,
-                        "retry_after_seconds": int(timeout_handle.timeout_seconds * 2),
-                    }
+                    timeout_response = RequestTimeoutError(
+                        message="Request timeout exceeded",
+                        timeout_seconds=int(timeout_handle.timeout_seconds),
+                        retry_after_seconds=int(timeout_handle.timeout_seconds * 2),
+                        request_id=request_id,
+                    )
 
                     await send({
                         "type": "http.response.body",
-                        "body": json.dumps(timeout_response).encode("utf-8"),
+                        "body": timeout_response.model_dump_json().encode("utf-8"),
                     })
                     return
 
@@ -1376,9 +1383,9 @@ class ConcurrencyMiddleware:
                 "tenant_queue_full": "Per-tenant concurrency queue is full",
                 "queue_timeout": "Timed out waiting for available capacity",
             }
-            payload = {
-                "error": "TooManyRequests" if status_code == 429 else "ServiceUnavailable",
-                "message": message_map.get(rejection.reason, "Concurrency capacity unavailable"),
+            message_text = message_map.get(rejection.reason, "Concurrency capacity unavailable")
+            envelope_kwargs = {
+                "message": message_text,
                 "request_id": request_id,
                 "queue_depth": queue_depth_value,
                 "retry_after_seconds": retry_after_seconds,
@@ -1387,6 +1394,23 @@ class ConcurrencyMiddleware:
                     "reason": rejection.reason,
                 },
             }
+
+            if status_code == 429:
+                payload_model: ErrorEnvelope = TooManyRequestsError(**envelope_kwargs)
+            elif status_code == 503:
+                payload_model = QueueServiceUnavailableError(**envelope_kwargs)
+            else:
+                fallback_context = dict(envelope_kwargs["context"])
+                fallback_context.update(
+                    queue_depth=queue_depth_value,
+                    retry_after_seconds=retry_after_seconds,
+                )
+                payload_model = ErrorEnvelope(
+                    error="ConcurrencyRejected",
+                    message=message_text,
+                    request_id=request_id,
+                    context=fallback_context,
+                )
 
             log_structured(
                 "warning",
@@ -1407,7 +1431,7 @@ class ConcurrencyMiddleware:
             })
             await send({
                 "type": "http.response.body",
-                "body": json.dumps(payload).encode("utf-8"),
+                "body": payload_model.model_dump_json().encode("utf-8"),
             })
             return
 
@@ -1415,32 +1439,29 @@ class ConcurrencyMiddleware:
             # Handle concurrency/rate limit errors
             self.concurrency_requests.labels(result="rejected").inc()
 
-            # Send error response
-            async def send_error(response):
-                await send({
-                    "type": "http.response.start",
-                    "status": exc.status_code,
-                    "headers": [
-                        (k.encode(), v.encode())
-                        for k, v in {
-                            "Content-Type": "application/json",
-                            "X-Request-Id": request_id or "unknown"
-                        }.items()
-                    ]
-                })
+            payload = ErrorEnvelope(
+                error=exc.__class__.__name__,
+                message=exc.detail,
+                code=getattr(exc, "code", None),
+                context=getattr(exc, "context", None),
+                request_id=request_id,
+            )
 
-                error_detail = {
-                    "error": exc.__class__.__name__,
-                    "message": exc.detail,
-                    "request_id": request_id,
-                }
-
-                await send({
-                    "type": "http.response.body",
-                    "body": json.dumps(error_detail).encode("utf-8"),
-                })
-
-            await send_error(exc)
+            await send({
+                "type": "http.response.start",
+                "status": exc.status_code,
+                "headers": [
+                    (k.encode(), v.encode())
+                    for k, v in {
+                        "Content-Type": "application/json",
+                        "X-Request-Id": request_id or "unknown",
+                    }.items()
+                ],
+            })
+            await send({
+                "type": "http.response.body",
+                "body": payload.model_dump_json().encode("utf-8"),
+            })
             return
 
         except Exception as exc:
@@ -1457,31 +1478,27 @@ class ConcurrencyMiddleware:
             )
 
             # Send error response
-            async def send_error_response():
-                await send({
-                    "type": "http.response.start",
-                    "status": 500,
-                    "headers": [
-                        (k.encode(), v.encode())
-                        for k, v in {
-                            "Content-Type": "application/json",
-                            "X-Request-Id": request_id or "unknown"
-                        }.items()
-                    ]
-                })
+            payload = ErrorEnvelope(
+                error="InternalServerError",
+                message="Internal server error",
+                request_id=request_id,
+            )
 
-                error_detail = {
-                    "error": "InternalServerError",
-                    "message": "Internal server error",
-                    "request_id": request_id,
-                }
-
-                await send({
-                    "type": "http.response.body",
-                    "body": json.dumps(error_detail).encode("utf-8"),
-                })
-
-            await send_error_response()
+            await send({
+                "type": "http.response.start",
+                "status": 500,
+                "headers": [
+                    (k.encode(), v.encode())
+                    for k, v in {
+                        "Content-Type": "application/json",
+                        "X-Request-Id": request_id or "unknown",
+                    }.items()
+                ],
+            })
+            await send({
+                "type": "http.response.body",
+                "body": payload.model_dump_json().encode("utf-8"),
+            })
             return
 
         finally:
@@ -1676,6 +1693,7 @@ def create_concurrency_middleware_from_settings(
                     redis_client,
                     config=backend_config,
                 )
+                backend_config.validate()
             except RedisUnavailable:
                 LOGGER.warning(
                     "Redis dependency missing despite enabled configuration; using in-process controller",
@@ -1703,6 +1721,13 @@ def create_concurrency_middleware_from_settings(
         "backpressure_header",
         "X-Backpressure",
     )
+
+    app_state = getattr(app, "state", None)
+    if backend is not None and app_state is not None:
+        setattr(app_state, "concurrency_backend", backend)
+    if app_state is not None:
+        setattr(app_state, "concurrency_controller", concurrency_controller)
+        setattr(app_state, "concurrency_limits", limits)
 
     return ConcurrencyMiddleware(
         app=app,

@@ -13,6 +13,7 @@ from aurum.api.database.config import TrinoConfig
 import aurum.observability.metrics as metrics
 from aurum.telemetry.context import correlation_context, request_id_context
 from aurum.observability.enhanced_tracing import TraceContext, current_traceparent
+from aurum.api.exceptions import ServiceUnavailableException
 
 
 pytestmark = pytest.mark.asyncio
@@ -94,10 +95,15 @@ def _ensure_metrics(monkeypatch: pytest.MonkeyPatch):
     async def fake_increment_misses(tenant: str) -> None:
         counter_misses.labels(tenant=tenant or "unknown").inc()
 
+    async def fake_set_breaker(state: str) -> None:
+        return None
+
+    monkeypatch.setattr(metrics, "set_trino_circuit_breaker_state", fake_set_breaker, raising=False)
     monkeypatch.setattr(metrics, "set_trino_prepared_cache_entries", fake_set_entries, raising=False)
     monkeypatch.setattr(metrics, "increment_trino_prepared_cache_evictions", fake_increment_evictions, raising=False)
     monkeypatch.setattr(metrics, "increment_trino_hot_cache_hits", fake_increment_hits, raising=False)
     monkeypatch.setattr(metrics, "increment_trino_hot_cache_misses", fake_increment_misses, raising=False)
+    monkeypatch.setattr(trino_module, "set_trino_circuit_breaker_state", fake_set_breaker, raising=False)
     monkeypatch.setattr(trino_module, "set_trino_prepared_cache_entries", fake_set_entries, raising=False)
     monkeypatch.setattr(trino_module, "increment_trino_prepared_cache_evictions", fake_increment_evictions, raising=False)
     monkeypatch.setattr(trino_module, "increment_trino_hot_cache_hits", fake_increment_hits, raising=False)
@@ -279,3 +285,63 @@ async def test_trace_and_tenant_headers_applied(caplog: pytest.LogCaptureFixture
     assert record["query_id"] == "20240101_000000_test"
     assert record["tenant"] == "tenant-trace"
     assert record["traceparent"] == trace_context.to_traceparent()
+
+
+async def test_execute_query_uses_ttl_cache(monkeypatch: pytest.MonkeyPatch) -> None:
+    client = SimpleTrinoClient(TrinoConfig())
+
+    async def fake_run_with_retries(sql, params, tenant, timeout):  # type: ignore[no-untyped-def]
+        fake_run_with_retries.calls += 1
+        return [{"value": fake_run_with_retries.calls}]
+
+    fake_run_with_retries.calls = 0
+    monkeypatch.setattr(client, "_run_with_retries", fake_run_with_retries)
+
+    result_one = await client.execute_query("SELECT 1", params={"foo": "bar"})
+    result_two = await client.execute_query("SELECT 1", params={"foo": "bar"})
+
+    assert fake_run_with_retries.calls == 1
+    assert result_one == result_two
+
+
+async def test_execute_query_uses_hot_cache_when_ttl_disabled(monkeypatch: pytest.MonkeyPatch) -> None:
+    client = SimpleTrinoClient(TrinoConfig())
+    client._cache.default_ttl = 0
+
+    async def fake_run_with_retries(sql, params, tenant, timeout):  # type: ignore[no-untyped-def]
+        fake_run_with_retries.calls += 1
+        return [{"value": fake_run_with_retries.calls}]
+
+    fake_run_with_retries.calls = 0
+    monkeypatch.setattr(client, "_run_with_retries", fake_run_with_retries)
+
+    first = await client.execute_query("SELECT 1", params={"foo": "bar"})
+    second = await client.execute_query("SELECT 1", params={"foo": "bar"})
+
+    assert fake_run_with_retries.calls == 1
+    assert first == second
+
+
+async def test_circuit_breaker_opens_after_failures(monkeypatch: pytest.MonkeyPatch) -> None:
+    client = SimpleTrinoClient(
+        TrinoConfig(),
+        concurrency_config={
+            "trino_circuit_breaker_failure_threshold": 1,
+            "trino_circuit_breaker_timeout_seconds": 0.05,
+            "trino_circuit_breaker_success_threshold": 1,
+            "trino_max_retries": 0,
+        },
+    )
+
+    async def fail_execute(*_args, **_kwargs):  # type: ignore[no-untyped-def]
+        raise RuntimeError("boom")
+
+    monkeypatch.setattr(client, "_execute_query_with_timeout", fail_execute)
+
+    with pytest.raises(RuntimeError):
+        await client.execute_query("SELECT 1", params={})
+
+    assert client.circuit_breaker.is_open()
+
+    with pytest.raises(ServiceUnavailableException):
+        await client.execute_query("SELECT 1", params={})

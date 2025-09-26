@@ -16,8 +16,8 @@ import threading
 import time
 from pathlib import Path
 from collections import OrderedDict
-from dataclasses import dataclass, field, fields
-from typing import Any, Dict, List, Optional, Tuple, Union
+from dataclasses import dataclass, field, fields, replace
+from typing import Any, Dict, List, Optional, Sequence, Tuple, Union
 
 try:
     import trino  # type: ignore
@@ -28,7 +28,7 @@ except ImportError:
     trino = None  # type: ignore
 
 from ..exceptions import ServiceUnavailableException
-from ..performance import ConnectionPool
+from .connection_pool import ConnectionPool
 from ..telemetry.context import (
     get_correlation_id,
     get_request_id,
@@ -57,10 +57,13 @@ from ...observability.metrics import (
 )
 from ...observability.enhanced_tracing import get_current_trace_context
 
-from .config import TrinoConfig
+from .config import TrinoConfig, TrinoCatalogConfig, TrinoCatalogType, TrinoAccessLevel
 from ...core.settings import get_settings
 
 LOGGER = logging.getLogger(__name__)
+
+_catalog_configs: Dict[str, TrinoCatalogConfig] = {}
+_catalog_trino_configs: Dict[str, TrinoConfig] = {}
 
 
 def _create_lock() -> asyncio.Lock:
@@ -71,6 +74,16 @@ def _create_lock() -> asyncio.Lock:
     except RuntimeError:
         asyncio.set_event_loop(asyncio.new_event_loop())
     return asyncio.Lock()
+
+
+def _get_base_trino_config() -> TrinoConfig:
+    """Return the base Trino configuration derived from settings when available."""
+
+    try:
+        settings = get_settings()
+    except Exception:
+        return TrinoConfig()
+    return TrinoConfig.from_settings(settings)
 
 # Feature flags for database migration
 DB_FEATURE_FLAGS = {
@@ -966,7 +979,7 @@ class HybridTrinoClientManager:
         """Normalize inputs to a configuration cache key and TrinoConfig."""
 
         if catalog_or_config is None:
-            config = TrinoConfig()
+            config = _get_base_trino_config()
         elif isinstance(catalog_or_config, TrinoConfig):
             config = catalog_or_config
         elif isinstance(catalog_or_config, dict):
@@ -974,7 +987,10 @@ class HybridTrinoClientManager:
             filtered = {k: v for k, v in catalog_or_config.items() if k in allowed_keys}
             config = TrinoConfig(**filtered)
         elif isinstance(catalog_or_config, str):
-            config = TrinoConfig(catalog=catalog_or_config)
+            config = _catalog_trino_configs.get(catalog_or_config)
+            if config is None:
+                base = _get_base_trino_config()
+                config = replace(base, catalog=catalog_or_config)
         elif all(hasattr(catalog_or_config, attr) for attr in ("host", "port", "user", "catalog", "schema", "http_scheme")):
             # Accept duck-typed config objects
             config = TrinoConfig(
@@ -1146,7 +1162,6 @@ class HybridTrinoClientManager:
 
 
 # Global instance for backward compatibility
-_client_manager = HybridTrinoClientManager()
 
 
 def get_trino_client(
@@ -1191,29 +1206,91 @@ def get_trino_client_by_catalog(catalog: str):
     """Get Trino client for specified catalog by catalog type."""
     return _client_manager.get_client(catalog)
 
-def get_trino_catalog_config():
-    """Get Trino catalog configuration."""
-    # This is a placeholder implementation
-    # In a real implementation, this would return catalog configuration
-    return {}
+def configure_trino_catalogs(
+    catalog_configs: Sequence[TrinoCatalogConfig],
+) -> Dict[str, TrinoCatalogConfig]:
+    """Register available Trino catalog configurations."""
 
-def configure_trino_catalogs(catalog_configs):
-    """Configure Trino catalogs."""
-    # This is a placeholder implementation
-    # In a real implementation, this would configure the catalogs
-    pass
+    global _catalog_configs, _catalog_trino_configs
+
+    if not isinstance(catalog_configs, Sequence):
+        raise TypeError("catalog_configs must be a sequence of TrinoCatalogConfig")
+
+    updated_configs: Dict[str, TrinoCatalogConfig] = dict(_catalog_configs)
+    updated_trino_configs: Dict[str, TrinoConfig] = dict(_catalog_trino_configs)
+
+    for cfg in catalog_configs:
+        if not isinstance(cfg, TrinoCatalogConfig):
+            raise TypeError("catalog configuration entries must be TrinoCatalogConfig instances")
+        updated_configs[cfg.catalog] = cfg
+        updated_trino_configs[cfg.catalog] = TrinoConfig(
+            host=cfg.host,
+            port=cfg.port,
+            user=cfg.user,
+            http_scheme=cfg.http_scheme,
+            catalog=cfg.catalog,
+            schema=cfg.schema,
+            password=cfg.password,
+        )
+
+    _catalog_configs = updated_configs
+    _catalog_trino_configs = updated_trino_configs
+    return dict(_catalog_configs)
 
 
-class TrinoClientManager:
-    """Manager for Trino clients."""
+def get_trino_catalog_config(
+    catalog: Optional[str] = None,
+) -> Union[TrinoCatalogConfig, Dict[str, TrinoCatalogConfig]]:
+    """Fetch configured Trino catalog metadata.
 
-    def __init__(self):
-        """Initialize the TrinoClientManager."""
-        pass
+    When no catalogs have been configured explicitly, defaults are inferred from
+    application settings (raw + market catalogs).
+    """
 
-    def get_client(self, catalog: str):
-        """Get a Trino client for the specified catalog."""
-        return create_trino_client(TrinoConfig())
+    if not _catalog_configs:
+        base = _get_base_trino_config()
+        defaults = [
+            TrinoCatalogConfig(
+                host=base.host,
+                port=base.port,
+                user=base.user,
+                http_scheme=base.http_scheme,
+                catalog=TrinoCatalogType.RAW.value,
+                schema=base.schema,
+                access_level=TrinoAccessLevel.READ_ONLY,
+                password=base.password,
+            ),
+            TrinoCatalogConfig(
+                host=base.host,
+                port=base.port,
+                user=base.user,
+                http_scheme=base.http_scheme,
+                catalog=TrinoCatalogType.MARKET.value,
+                schema=base.schema,
+                access_level=TrinoAccessLevel.READ_WRITE,
+                password=base.password,
+            ),
+        ]
+        configure_trino_catalogs(defaults)
+
+    if catalog is None:
+        return dict(_catalog_configs)
+
+    try:
+        return _catalog_configs[catalog]
+    except KeyError as exc:
+        raise KeyError(f"Unknown Trino catalog '{catalog}'") from exc
+
+
+class TrinoClientManager(HybridTrinoClientManager):
+    """Compatibility shim that exposes the hybrid manager under a legacy name."""
+
+    @classmethod
+    def get_instance(cls) -> HybridTrinoClientManager:
+        return HybridTrinoClientManager.get_instance()
+
+
+_client_manager = TrinoClientManager.get_instance()
 
 # Migration management functions
 def advance_db_migration_phase(phase: str = "hybrid") -> bool:

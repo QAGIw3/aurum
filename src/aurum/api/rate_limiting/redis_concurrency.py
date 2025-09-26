@@ -28,6 +28,8 @@ import uuid
 from dataclasses import dataclass
 from typing import Any, Awaitable, Callable, Dict, Optional, Sequence
 
+from fastapi import APIRouter, Depends, HTTPException, Request
+
 try:  # pragma: no cover - optional dependency
     import redis.asyncio as redis  # type: ignore
 except ImportError:  # pragma: no cover
@@ -45,6 +47,18 @@ class RedisConcurrencyConfig:
     poll_interval_seconds: float = 0.05
     queue_stale_after_seconds: float = 5.0
     queue_ttl_seconds: float = 120.0
+
+    def validate(self) -> None:
+        """Validate configuration values to guard against misconfiguration."""
+
+        if not self.url:
+            raise ValueError("Redis URL must be provided for distributed concurrency")
+        if self.poll_interval_seconds <= 0:
+            raise ValueError("poll_interval_seconds must be positive")
+        if self.queue_stale_after_seconds <= 0:
+            raise ValueError("queue_stale_after_seconds must be positive")
+        if self.queue_ttl_seconds <= 0:
+            raise ValueError("queue_ttl_seconds must be positive")
 
 
 class RedisUnavailable(RuntimeError):
@@ -106,6 +120,15 @@ class RedisConcurrencyBackend:
         self._active_observer = active
         self._tenant_active_observer = tenant_active
         self._global_queue_observer = global_queue
+
+    async def ping(self) -> bool:
+        """Check if the Redis connection is healthy."""
+
+        try:
+            result = await self._redis.ping()  # type: ignore[call-arg]
+        except Exception:
+            return False
+        return bool(result)
 
     # ------------------------------------------------------------------
     # High-level coordination API
@@ -228,6 +251,37 @@ class RedisConcurrencyBackend:
             "tenant_active": tenant_active,
             "tenant_queue": tenant_queue,
         }
+
+
+diagnostics_router = APIRouter(prefix="/v1/admin/concurrency", tags=["Concurrency"])
+
+
+def _require_backend(request: Request) -> RedisConcurrencyBackend:
+    backend = getattr(getattr(request.app, "state", None), "concurrency_backend", None)
+    if not isinstance(backend, RedisConcurrencyBackend):
+        raise HTTPException(status_code=404, detail="Distributed concurrency backend is not configured")
+    return backend
+
+
+@diagnostics_router.get("/redis/stats", summary="Redis concurrency statistics")
+async def redis_concurrency_stats(
+    backend: RedisConcurrencyBackend = Depends(_require_backend),
+) -> Dict[str, Any]:
+    """Expose current distributed concurrency statistics."""
+
+    return await backend.get_stats()
+
+
+@diagnostics_router.get("/redis/health", summary="Redis concurrency health")
+async def redis_concurrency_health(
+    backend: RedisConcurrencyBackend = Depends(_require_backend),
+) -> Dict[str, str]:
+    """Simple readiness check for the Redis-backed concurrency coordinator."""
+
+    healthy = await backend.ping()
+    if not healthy:
+        raise HTTPException(status_code=503, detail="Redis concurrency backend unavailable")
+    return {"status": "ok"}
 
     # ------------------------------------------------------------------
     # Internal helpers

@@ -19,6 +19,7 @@ from .rate_limiting import (
 )
 from .quota_manager import APIQuotaExceeded, TenantQuotaManager
 from .concurrency_middleware import ConcurrencyMiddleware
+from .redis_concurrency import diagnostics_router
 
 __all__ = [
     # Core Rate Limiting
@@ -45,4 +46,5 @@ __all__ = [
     "TenantQuotaManager",
     # Concurrency
     "ConcurrencyMiddleware",
+    "diagnostics_router",
 ]

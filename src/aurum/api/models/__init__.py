@@ -7,15 +7,10 @@ package so existing imports like ``from aurum.api.models import Meta`` continue
 working after the refactor.
 """
 
-from importlib import util as _importlib_util
-from pathlib import Path as _Path
-
-_SCENARIO_MODELS_PATH = "/Users/mstudio/Library/Mobile Documents/com~apple~CloudDocs/dev/aurum/src/aurum/api/scenarios/scenario_models.py"
-_spec = _importlib_util.spec_from_file_location('aurum.api.models._scenario_models', _SCENARIO_MODELS_PATH)
-if _spec is None or _spec.loader is None:  # pragma: no cover - defensive
-    raise ImportError('Failed to load scenario models module')
-_scenario_models = _importlib_util.module_from_spec(_spec)
-_spec.loader.exec_module(_scenario_models)
+try:
+    from ..scenarios import scenario_models as _scenario_models
+except ImportError as exc:  # pragma: no cover - defensive import guard
+    raise ImportError("Failed to import scenario models") from exc
 
 (
     BulkScenarioRunDuplicate,

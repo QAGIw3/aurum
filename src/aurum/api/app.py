@@ -94,6 +94,13 @@ from aurum.api.models.common import (
     TooManyRequestsError,
 )
 from aurum.api.exceptions import handle_api_exception
+from aurum.api.rate_limiting.concurrency_middleware import (
+    ConcurrencyMiddleware,
+    OffloadInstruction,
+    create_concurrency_middleware_from_settings,
+)
+from aurum.api.rate_limiting.redis_concurrency import diagnostics_router
+from aurum.api.offload import offload_router
 
 try:  # pragma: no cover - optional dependency
     from prometheus_client import CONTENT_TYPE_LATEST, CollectorRegistry, generate_latest
@@ -303,7 +310,90 @@ def log_api_migration_status():
     logger.info(f"API Migration Metrics: Legacy calls: {ApiMigrationMetrics.legacy_calls}, "
                 f"Simplified calls: {ApiMigrationMetrics.simplified_calls}")
 
-from typing import Any, Dict, Optional
+from typing import Any, Callable, Dict, Optional
+
+
+def _build_offload_predicate(
+    settings: AurumSettings,
+) -> Optional[Callable[[Dict[str, Any]], Optional[OffloadInstruction]]]:
+    """Construct dispatch predicate for concurrency offloading."""
+
+    concurrency_cfg = getattr(getattr(settings, "api", None), "concurrency", None)
+    if concurrency_cfg is None:
+        return None
+
+    routes = getattr(concurrency_cfg, "offload_routes", None)
+    if not routes:
+        return None
+
+    normalized: list[dict[str, Any]] = []
+    for entry in routes:
+        if not isinstance(entry, dict):
+            LOGGER.warning("invalid_offload_route_entry", extra={"entry": entry})
+            continue
+        try:
+            path = str(entry["path"]).rstrip("/") or "/"
+            method = str(entry.get("method", "POST")).upper()
+            job_name = str(entry["job"])
+        except (KeyError, TypeError, ValueError):
+            LOGGER.warning("invalid_offload_route_config", extra={"entry": entry})
+            continue
+
+        normalized.append(
+            {
+                "path": path,
+                "method": method,
+                "job": job_name,
+                "queue": entry.get("queue"),
+                "status_url": entry.get("status_url", "/v1/admin/offload/{task_id}"),
+            }
+        )
+
+    if not normalized:
+        return None
+
+    def predicate(request_info: Dict[str, Any]) -> Optional[OffloadInstruction]:
+        path = str(request_info.get("path", "")).rstrip("/") or "/"
+        method = str(request_info.get("method", "")).upper()
+        for route in normalized:
+            if path == route["path"] and method == route["method"]:
+                payload = {
+                    "path": path,
+                    "method": method,
+                    "headers": request_info.get("headers", {}),
+                    "query_string": request_info.get("query_string"),
+                    "client": request_info.get("client"),
+                }
+                return OffloadInstruction(
+                    job_name=route["job"],
+                    payload=payload,
+                    queue=route.get("queue"),
+                    status_url=route.get("status_url"),
+                )
+        return None
+
+    return predicate
+
+
+def _install_concurrency_middleware(
+    app: FastAPI,
+    settings: AurumSettings,
+) -> FastAPI | ConcurrencyMiddleware:
+    """Wrap the app with concurrency middleware when enabled in configuration."""
+
+    offload_predicate = _build_offload_predicate(settings)
+
+    try:
+        wrapped = create_concurrency_middleware_from_settings(
+            app,
+            settings=settings,
+            offload_predicate=offload_predicate,
+        )
+    except Exception as exc:  # pragma: no cover - middleware install is optional
+        LOGGER.warning("concurrency_middleware_setup_failed", exc_info=exc)
+        return app
+
+    return wrapped
 
 
 def create_app(settings: Optional[AurumSettings] = None) -> FastAPI:
@@ -437,6 +527,9 @@ def _create_simplified_app(settings: AurumSettings, logger: logging.Logger) -> F
     except Exception as e:
         logger.warning(f"Failed to load runtime config router: {e}")
 
+    app.include_router(diagnostics_router)
+    app.include_router(offload_router)
+
     # Basic route registration (honor light init flag)
     if os.getenv("AURUM_API_LIGHT_INIT", "0") == "1":
         _include_fallback_routes(app, logger)
@@ -486,7 +579,7 @@ def _create_simplified_app(settings: AurumSettings, logger: logging.Logger) -> F
 
     _register_metrics_endpoint(app, settings)
 
-    return app
+    return _install_concurrency_middleware(app, settings)
 
 def _create_legacy_app(settings: AurumSettings, logger: logging.Logger) -> FastAPI:
     """Create legacy API with full feature set."""
@@ -555,6 +648,9 @@ def _create_legacy_app(settings: AurumSettings, logger: logging.Logger) -> FastA
     except Exception as e:
         logger.warning(f"Failed to load runtime config router: {e}")
 
+    app.include_router(diagnostics_router)
+    app.include_router(offload_router)
+
     # Basic route registration (honor light init flag)
     if os.getenv("AURUM_API_LIGHT_INIT", "0") == "1":
         _include_fallback_routes(app, logger)
@@ -611,7 +707,7 @@ def _create_legacy_app(settings: AurumSettings, logger: logging.Logger) -> FastA
 
     _register_metrics_endpoint(app, settings)
 
-    return app
+    return _install_concurrency_middleware(app, settings)
 
 
 # Admin groups configuration
