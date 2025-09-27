@@ -2,7 +2,7 @@ openapi: 3.1.0
 info:
   title: Aurum API
   description: Aurum Market Intelligence Platform API
-  version: 1.0.0
+  version: 2.0.0
 paths:
   /health:
     get:
@@ -32,6 +32,14 @@ paths:
   /v1/curves:
     get:
       summary: List Curves
+      description: 'List curve observations with cursor pagination and optional CSV.
+
+
+        Supports forward (`cursor`/`since_cursor`) and backward (`prev_cursor`)
+
+        iteration using opaque tokens produced in `meta`. When `format=csv`, the
+
+        endpoint streams a CSV response with appropriate Cache-Control headers.'
       operationId: list_curves_v1_curves_get
       parameters:
       - name: asof
@@ -179,12 +187,91 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/CurveResponse'
+          headers:
+            Deprecation:
+              description: Indicates the v1 API is deprecated and targeted for removal.
+              schema:
+                type: string
+              example: 'true'
+            Sunset:
+              description: Date after which the v1 API will no longer be available
+                (RFC 7231).
+              schema:
+                type: string
+              example: Wed, 31 Dec 2025 23:59:59 GMT
+            Link:
+              description: Pointer to the v2 migration guide (rel=deprecation).
+              schema:
+                type: string
+              example: <https://docs.aurum.dev/api/migration-guide#v2>; rel="deprecation";
+                type="text/html"
+            Warning:
+              description: Human-readable deprecation warning following RFC 7234 section
+                5.5.
+              schema:
+                type: string
+              example: 299 aurum "API v1 is deprecated; migrate to /v2 before 2025-12-31"
+            X-API-Version:
+              description: Denotes the served API version for the response.
+              schema:
+                type: string
+              example: v1
+            X-API-Lifecycle:
+              description: Lifecycle state for the API surface.
+              schema:
+                type: string
+              example: deprecated
+            X-API-Migration-Guide:
+              description: URL with migration instructions for upgrading clients.
+              schema:
+                type: string
+              example: https://docs.aurum.dev/api/migration-guide
         '422':
           description: Validation Error
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/HTTPValidationError'
+          headers:
+            Deprecation:
+              description: Indicates the v1 API is deprecated and targeted for removal.
+              schema:
+                type: string
+              example: 'true'
+            Sunset:
+              description: Date after which the v1 API will no longer be available
+                (RFC 7231).
+              schema:
+                type: string
+              example: Wed, 31 Dec 2025 23:59:59 GMT
+            Link:
+              description: Pointer to the v2 migration guide (rel=deprecation).
+              schema:
+                type: string
+              example: <https://docs.aurum.dev/api/migration-guide#v2>; rel="deprecation";
+                type="text/html"
+            Warning:
+              description: Human-readable deprecation warning following RFC 7234 section
+                5.5.
+              schema:
+                type: string
+              example: 299 aurum "API v1 is deprecated; migrate to /v2 before 2025-12-31"
+            X-API-Version:
+              description: Denotes the served API version for the response.
+              schema:
+                type: string
+              example: v1
+            X-API-Lifecycle:
+              description: Lifecycle state for the API surface.
+              schema:
+                type: string
+              example: deprecated
+            X-API-Migration-Guide:
+              description: URL with migration instructions for upgrading clients.
+              schema:
+                type: string
+              example: https://docs.aurum.dev/api/migration-guide
+      deprecated: true
   /v1/curves/diff:
     get:
       summary: List Curves Diff
@@ -322,12 +409,91 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/CurveDiffResponse'
+          headers:
+            Deprecation:
+              description: Indicates the v1 API is deprecated and targeted for removal.
+              schema:
+                type: string
+              example: 'true'
+            Sunset:
+              description: Date after which the v1 API will no longer be available
+                (RFC 7231).
+              schema:
+                type: string
+              example: Wed, 31 Dec 2025 23:59:59 GMT
+            Link:
+              description: Pointer to the v2 migration guide (rel=deprecation).
+              schema:
+                type: string
+              example: <https://docs.aurum.dev/api/migration-guide#v2>; rel="deprecation";
+                type="text/html"
+            Warning:
+              description: Human-readable deprecation warning following RFC 7234 section
+                5.5.
+              schema:
+                type: string
+              example: 299 aurum "API v1 is deprecated; migrate to /v2 before 2025-12-31"
+            X-API-Version:
+              description: Denotes the served API version for the response.
+              schema:
+                type: string
+              example: v1
+            X-API-Lifecycle:
+              description: Lifecycle state for the API surface.
+              schema:
+                type: string
+              example: deprecated
+            X-API-Migration-Guide:
+              description: URL with migration instructions for upgrading clients.
+              schema:
+                type: string
+              example: https://docs.aurum.dev/api/migration-guide
         '422':
           description: Validation Error
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/HTTPValidationError'
+          headers:
+            Deprecation:
+              description: Indicates the v1 API is deprecated and targeted for removal.
+              schema:
+                type: string
+              example: 'true'
+            Sunset:
+              description: Date after which the v1 API will no longer be available
+                (RFC 7231).
+              schema:
+                type: string
+              example: Wed, 31 Dec 2025 23:59:59 GMT
+            Link:
+              description: Pointer to the v2 migration guide (rel=deprecation).
+              schema:
+                type: string
+              example: <https://docs.aurum.dev/api/migration-guide#v2>; rel="deprecation";
+                type="text/html"
+            Warning:
+              description: Human-readable deprecation warning following RFC 7234 section
+                5.5.
+              schema:
+                type: string
+              example: 299 aurum "API v1 is deprecated; migrate to /v2 before 2025-12-31"
+            X-API-Version:
+              description: Denotes the served API version for the response.
+              schema:
+                type: string
+              example: v1
+            X-API-Lifecycle:
+              description: Lifecycle state for the API surface.
+              schema:
+                type: string
+              example: deprecated
+            X-API-Migration-Guide:
+              description: URL with migration instructions for upgrading clients.
+              schema:
+                type: string
+              example: https://docs.aurum.dev/api/migration-guide
+      deprecated: true
   /v1/metadata/dimensions:
     get:
       tags:
@@ -438,12 +604,91 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/DimensionsResponse'
+          headers:
+            Deprecation:
+              description: Indicates the v1 API is deprecated and targeted for removal.
+              schema:
+                type: string
+              example: 'true'
+            Sunset:
+              description: Date after which the v1 API will no longer be available
+                (RFC 7231).
+              schema:
+                type: string
+              example: Wed, 31 Dec 2025 23:59:59 GMT
+            Link:
+              description: Pointer to the v2 migration guide (rel=deprecation).
+              schema:
+                type: string
+              example: <https://docs.aurum.dev/api/migration-guide#v2>; rel="deprecation";
+                type="text/html"
+            Warning:
+              description: Human-readable deprecation warning following RFC 7234 section
+                5.5.
+              schema:
+                type: string
+              example: 299 aurum "API v1 is deprecated; migrate to /v2 before 2025-12-31"
+            X-API-Version:
+              description: Denotes the served API version for the response.
+              schema:
+                type: string
+              example: v1
+            X-API-Lifecycle:
+              description: Lifecycle state for the API surface.
+              schema:
+                type: string
+              example: deprecated
+            X-API-Migration-Guide:
+              description: URL with migration instructions for upgrading clients.
+              schema:
+                type: string
+              example: https://docs.aurum.dev/api/migration-guide
         '422':
           description: Validation Error
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/HTTPValidationError'
+          headers:
+            Deprecation:
+              description: Indicates the v1 API is deprecated and targeted for removal.
+              schema:
+                type: string
+              example: 'true'
+            Sunset:
+              description: Date after which the v1 API will no longer be available
+                (RFC 7231).
+              schema:
+                type: string
+              example: Wed, 31 Dec 2025 23:59:59 GMT
+            Link:
+              description: Pointer to the v2 migration guide (rel=deprecation).
+              schema:
+                type: string
+              example: <https://docs.aurum.dev/api/migration-guide#v2>; rel="deprecation";
+                type="text/html"
+            Warning:
+              description: Human-readable deprecation warning following RFC 7234 section
+                5.5.
+              schema:
+                type: string
+              example: 299 aurum "API v1 is deprecated; migrate to /v2 before 2025-12-31"
+            X-API-Version:
+              description: Denotes the served API version for the response.
+              schema:
+                type: string
+              example: v1
+            X-API-Lifecycle:
+              description: Lifecycle state for the API surface.
+              schema:
+                type: string
+              example: deprecated
+            X-API-Migration-Guide:
+              description: URL with migration instructions for upgrading clients.
+              schema:
+                type: string
+              example: https://docs.aurum.dev/api/migration-guide
+      deprecated: true
   /v1/metadata/locations:
     get:
       tags:
@@ -486,12 +731,91 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/IsoLocationsResponse'
+          headers:
+            Deprecation:
+              description: Indicates the v1 API is deprecated and targeted for removal.
+              schema:
+                type: string
+              example: 'true'
+            Sunset:
+              description: Date after which the v1 API will no longer be available
+                (RFC 7231).
+              schema:
+                type: string
+              example: Wed, 31 Dec 2025 23:59:59 GMT
+            Link:
+              description: Pointer to the v2 migration guide (rel=deprecation).
+              schema:
+                type: string
+              example: <https://docs.aurum.dev/api/migration-guide#v2>; rel="deprecation";
+                type="text/html"
+            Warning:
+              description: Human-readable deprecation warning following RFC 7234 section
+                5.5.
+              schema:
+                type: string
+              example: 299 aurum "API v1 is deprecated; migrate to /v2 before 2025-12-31"
+            X-API-Version:
+              description: Denotes the served API version for the response.
+              schema:
+                type: string
+              example: v1
+            X-API-Lifecycle:
+              description: Lifecycle state for the API surface.
+              schema:
+                type: string
+              example: deprecated
+            X-API-Migration-Guide:
+              description: URL with migration instructions for upgrading clients.
+              schema:
+                type: string
+              example: https://docs.aurum.dev/api/migration-guide
         '422':
           description: Validation Error
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/HTTPValidationError'
+          headers:
+            Deprecation:
+              description: Indicates the v1 API is deprecated and targeted for removal.
+              schema:
+                type: string
+              example: 'true'
+            Sunset:
+              description: Date after which the v1 API will no longer be available
+                (RFC 7231).
+              schema:
+                type: string
+              example: Wed, 31 Dec 2025 23:59:59 GMT
+            Link:
+              description: Pointer to the v2 migration guide (rel=deprecation).
+              schema:
+                type: string
+              example: <https://docs.aurum.dev/api/migration-guide#v2>; rel="deprecation";
+                type="text/html"
+            Warning:
+              description: Human-readable deprecation warning following RFC 7234 section
+                5.5.
+              schema:
+                type: string
+              example: 299 aurum "API v1 is deprecated; migrate to /v2 before 2025-12-31"
+            X-API-Version:
+              description: Denotes the served API version for the response.
+              schema:
+                type: string
+              example: v1
+            X-API-Lifecycle:
+              description: Lifecycle state for the API surface.
+              schema:
+                type: string
+              example: deprecated
+            X-API-Migration-Guide:
+              description: URL with migration instructions for upgrading clients.
+              schema:
+                type: string
+              example: https://docs.aurum.dev/api/migration-guide
+      deprecated: true
   /v1/metadata/locations/{iso}/{location_id}:
     get:
       tags:
@@ -530,12 +854,91 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/IsoLocationResponse'
+          headers:
+            Deprecation:
+              description: Indicates the v1 API is deprecated and targeted for removal.
+              schema:
+                type: string
+              example: 'true'
+            Sunset:
+              description: Date after which the v1 API will no longer be available
+                (RFC 7231).
+              schema:
+                type: string
+              example: Wed, 31 Dec 2025 23:59:59 GMT
+            Link:
+              description: Pointer to the v2 migration guide (rel=deprecation).
+              schema:
+                type: string
+              example: <https://docs.aurum.dev/api/migration-guide#v2>; rel="deprecation";
+                type="text/html"
+            Warning:
+              description: Human-readable deprecation warning following RFC 7234 section
+                5.5.
+              schema:
+                type: string
+              example: 299 aurum "API v1 is deprecated; migrate to /v2 before 2025-12-31"
+            X-API-Version:
+              description: Denotes the served API version for the response.
+              schema:
+                type: string
+              example: v1
+            X-API-Lifecycle:
+              description: Lifecycle state for the API surface.
+              schema:
+                type: string
+              example: deprecated
+            X-API-Migration-Guide:
+              description: URL with migration instructions for upgrading clients.
+              schema:
+                type: string
+              example: https://docs.aurum.dev/api/migration-guide
         '422':
           description: Validation Error
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/HTTPValidationError'
+          headers:
+            Deprecation:
+              description: Indicates the v1 API is deprecated and targeted for removal.
+              schema:
+                type: string
+              example: 'true'
+            Sunset:
+              description: Date after which the v1 API will no longer be available
+                (RFC 7231).
+              schema:
+                type: string
+              example: Wed, 31 Dec 2025 23:59:59 GMT
+            Link:
+              description: Pointer to the v2 migration guide (rel=deprecation).
+              schema:
+                type: string
+              example: <https://docs.aurum.dev/api/migration-guide#v2>; rel="deprecation";
+                type="text/html"
+            Warning:
+              description: Human-readable deprecation warning following RFC 7234 section
+                5.5.
+              schema:
+                type: string
+              example: 299 aurum "API v1 is deprecated; migrate to /v2 before 2025-12-31"
+            X-API-Version:
+              description: Denotes the served API version for the response.
+              schema:
+                type: string
+              example: v1
+            X-API-Lifecycle:
+              description: Lifecycle state for the API surface.
+              schema:
+                type: string
+              example: deprecated
+            X-API-Migration-Guide:
+              description: URL with migration instructions for upgrading clients.
+              schema:
+                type: string
+              example: https://docs.aurum.dev/api/migration-guide
+      deprecated: true
   /v1/metadata/units:
     get:
       tags:
@@ -565,12 +968,91 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/UnitsCanonicalResponse'
+          headers:
+            Deprecation:
+              description: Indicates the v1 API is deprecated and targeted for removal.
+              schema:
+                type: string
+              example: 'true'
+            Sunset:
+              description: Date after which the v1 API will no longer be available
+                (RFC 7231).
+              schema:
+                type: string
+              example: Wed, 31 Dec 2025 23:59:59 GMT
+            Link:
+              description: Pointer to the v2 migration guide (rel=deprecation).
+              schema:
+                type: string
+              example: <https://docs.aurum.dev/api/migration-guide#v2>; rel="deprecation";
+                type="text/html"
+            Warning:
+              description: Human-readable deprecation warning following RFC 7234 section
+                5.5.
+              schema:
+                type: string
+              example: 299 aurum "API v1 is deprecated; migrate to /v2 before 2025-12-31"
+            X-API-Version:
+              description: Denotes the served API version for the response.
+              schema:
+                type: string
+              example: v1
+            X-API-Lifecycle:
+              description: Lifecycle state for the API surface.
+              schema:
+                type: string
+              example: deprecated
+            X-API-Migration-Guide:
+              description: URL with migration instructions for upgrading clients.
+              schema:
+                type: string
+              example: https://docs.aurum.dev/api/migration-guide
         '422':
           description: Validation Error
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/HTTPValidationError'
+          headers:
+            Deprecation:
+              description: Indicates the v1 API is deprecated and targeted for removal.
+              schema:
+                type: string
+              example: 'true'
+            Sunset:
+              description: Date after which the v1 API will no longer be available
+                (RFC 7231).
+              schema:
+                type: string
+              example: Wed, 31 Dec 2025 23:59:59 GMT
+            Link:
+              description: Pointer to the v2 migration guide (rel=deprecation).
+              schema:
+                type: string
+              example: <https://docs.aurum.dev/api/migration-guide#v2>; rel="deprecation";
+                type="text/html"
+            Warning:
+              description: Human-readable deprecation warning following RFC 7234 section
+                5.5.
+              schema:
+                type: string
+              example: 299 aurum "API v1 is deprecated; migrate to /v2 before 2025-12-31"
+            X-API-Version:
+              description: Denotes the served API version for the response.
+              schema:
+                type: string
+              example: v1
+            X-API-Lifecycle:
+              description: Lifecycle state for the API surface.
+              schema:
+                type: string
+              example: deprecated
+            X-API-Migration-Guide:
+              description: URL with migration instructions for upgrading clients.
+              schema:
+                type: string
+              example: https://docs.aurum.dev/api/migration-guide
+      deprecated: true
   /v1/metadata/units/mapping:
     get:
       tags:
@@ -601,12 +1083,91 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/UnitsMappingResponse'
+          headers:
+            Deprecation:
+              description: Indicates the v1 API is deprecated and targeted for removal.
+              schema:
+                type: string
+              example: 'true'
+            Sunset:
+              description: Date after which the v1 API will no longer be available
+                (RFC 7231).
+              schema:
+                type: string
+              example: Wed, 31 Dec 2025 23:59:59 GMT
+            Link:
+              description: Pointer to the v2 migration guide (rel=deprecation).
+              schema:
+                type: string
+              example: <https://docs.aurum.dev/api/migration-guide#v2>; rel="deprecation";
+                type="text/html"
+            Warning:
+              description: Human-readable deprecation warning following RFC 7234 section
+                5.5.
+              schema:
+                type: string
+              example: 299 aurum "API v1 is deprecated; migrate to /v2 before 2025-12-31"
+            X-API-Version:
+              description: Denotes the served API version for the response.
+              schema:
+                type: string
+              example: v1
+            X-API-Lifecycle:
+              description: Lifecycle state for the API surface.
+              schema:
+                type: string
+              example: deprecated
+            X-API-Migration-Guide:
+              description: URL with migration instructions for upgrading clients.
+              schema:
+                type: string
+              example: https://docs.aurum.dev/api/migration-guide
         '422':
           description: Validation Error
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/HTTPValidationError'
+          headers:
+            Deprecation:
+              description: Indicates the v1 API is deprecated and targeted for removal.
+              schema:
+                type: string
+              example: 'true'
+            Sunset:
+              description: Date after which the v1 API will no longer be available
+                (RFC 7231).
+              schema:
+                type: string
+              example: Wed, 31 Dec 2025 23:59:59 GMT
+            Link:
+              description: Pointer to the v2 migration guide (rel=deprecation).
+              schema:
+                type: string
+              example: <https://docs.aurum.dev/api/migration-guide#v2>; rel="deprecation";
+                type="text/html"
+            Warning:
+              description: Human-readable deprecation warning following RFC 7234 section
+                5.5.
+              schema:
+                type: string
+              example: 299 aurum "API v1 is deprecated; migrate to /v2 before 2025-12-31"
+            X-API-Version:
+              description: Denotes the served API version for the response.
+              schema:
+                type: string
+              example: v1
+            X-API-Lifecycle:
+              description: Lifecycle state for the API surface.
+              schema:
+                type: string
+              example: deprecated
+            X-API-Migration-Guide:
+              description: URL with migration instructions for upgrading clients.
+              schema:
+                type: string
+              example: https://docs.aurum.dev/api/migration-guide
+      deprecated: true
   /v1/metadata/calendars:
     get:
       tags:
@@ -621,6 +1182,46 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/CalendarsResponse'
+          headers:
+            Deprecation:
+              description: Indicates the v1 API is deprecated and targeted for removal.
+              schema:
+                type: string
+              example: 'true'
+            Sunset:
+              description: Date after which the v1 API will no longer be available
+                (RFC 7231).
+              schema:
+                type: string
+              example: Wed, 31 Dec 2025 23:59:59 GMT
+            Link:
+              description: Pointer to the v2 migration guide (rel=deprecation).
+              schema:
+                type: string
+              example: <https://docs.aurum.dev/api/migration-guide#v2>; rel="deprecation";
+                type="text/html"
+            Warning:
+              description: Human-readable deprecation warning following RFC 7234 section
+                5.5.
+              schema:
+                type: string
+              example: 299 aurum "API v1 is deprecated; migrate to /v2 before 2025-12-31"
+            X-API-Version:
+              description: Denotes the served API version for the response.
+              schema:
+                type: string
+              example: v1
+            X-API-Lifecycle:
+              description: Lifecycle state for the API surface.
+              schema:
+                type: string
+              example: deprecated
+            X-API-Migration-Guide:
+              description: URL with migration instructions for upgrading clients.
+              schema:
+                type: string
+              example: https://docs.aurum.dev/api/migration-guide
+      deprecated: true
   /v1/metadata/calendars/{name}/blocks:
     get:
       tags:
@@ -647,12 +1248,91 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/CalendarBlocksResponse'
+          headers:
+            Deprecation:
+              description: Indicates the v1 API is deprecated and targeted for removal.
+              schema:
+                type: string
+              example: 'true'
+            Sunset:
+              description: Date after which the v1 API will no longer be available
+                (RFC 7231).
+              schema:
+                type: string
+              example: Wed, 31 Dec 2025 23:59:59 GMT
+            Link:
+              description: Pointer to the v2 migration guide (rel=deprecation).
+              schema:
+                type: string
+              example: <https://docs.aurum.dev/api/migration-guide#v2>; rel="deprecation";
+                type="text/html"
+            Warning:
+              description: Human-readable deprecation warning following RFC 7234 section
+                5.5.
+              schema:
+                type: string
+              example: 299 aurum "API v1 is deprecated; migrate to /v2 before 2025-12-31"
+            X-API-Version:
+              description: Denotes the served API version for the response.
+              schema:
+                type: string
+              example: v1
+            X-API-Lifecycle:
+              description: Lifecycle state for the API surface.
+              schema:
+                type: string
+              example: deprecated
+            X-API-Migration-Guide:
+              description: URL with migration instructions for upgrading clients.
+              schema:
+                type: string
+              example: https://docs.aurum.dev/api/migration-guide
         '422':
           description: Validation Error
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/HTTPValidationError'
+          headers:
+            Deprecation:
+              description: Indicates the v1 API is deprecated and targeted for removal.
+              schema:
+                type: string
+              example: 'true'
+            Sunset:
+              description: Date after which the v1 API will no longer be available
+                (RFC 7231).
+              schema:
+                type: string
+              example: Wed, 31 Dec 2025 23:59:59 GMT
+            Link:
+              description: Pointer to the v2 migration guide (rel=deprecation).
+              schema:
+                type: string
+              example: <https://docs.aurum.dev/api/migration-guide#v2>; rel="deprecation";
+                type="text/html"
+            Warning:
+              description: Human-readable deprecation warning following RFC 7234 section
+                5.5.
+              schema:
+                type: string
+              example: 299 aurum "API v1 is deprecated; migrate to /v2 before 2025-12-31"
+            X-API-Version:
+              description: Denotes the served API version for the response.
+              schema:
+                type: string
+              example: v1
+            X-API-Lifecycle:
+              description: Lifecycle state for the API surface.
+              schema:
+                type: string
+              example: deprecated
+            X-API-Migration-Guide:
+              description: URL with migration instructions for upgrading clients.
+              schema:
+                type: string
+              example: https://docs.aurum.dev/api/migration-guide
+      deprecated: true
   /v1/metadata/calendars/{name}/hours:
     get:
       tags:
@@ -703,12 +1383,91 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/CalendarHoursResponse'
+          headers:
+            Deprecation:
+              description: Indicates the v1 API is deprecated and targeted for removal.
+              schema:
+                type: string
+              example: 'true'
+            Sunset:
+              description: Date after which the v1 API will no longer be available
+                (RFC 7231).
+              schema:
+                type: string
+              example: Wed, 31 Dec 2025 23:59:59 GMT
+            Link:
+              description: Pointer to the v2 migration guide (rel=deprecation).
+              schema:
+                type: string
+              example: <https://docs.aurum.dev/api/migration-guide#v2>; rel="deprecation";
+                type="text/html"
+            Warning:
+              description: Human-readable deprecation warning following RFC 7234 section
+                5.5.
+              schema:
+                type: string
+              example: 299 aurum "API v1 is deprecated; migrate to /v2 before 2025-12-31"
+            X-API-Version:
+              description: Denotes the served API version for the response.
+              schema:
+                type: string
+              example: v1
+            X-API-Lifecycle:
+              description: Lifecycle state for the API surface.
+              schema:
+                type: string
+              example: deprecated
+            X-API-Migration-Guide:
+              description: URL with migration instructions for upgrading clients.
+              schema:
+                type: string
+              example: https://docs.aurum.dev/api/migration-guide
         '422':
           description: Validation Error
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/HTTPValidationError'
+          headers:
+            Deprecation:
+              description: Indicates the v1 API is deprecated and targeted for removal.
+              schema:
+                type: string
+              example: 'true'
+            Sunset:
+              description: Date after which the v1 API will no longer be available
+                (RFC 7231).
+              schema:
+                type: string
+              example: Wed, 31 Dec 2025 23:59:59 GMT
+            Link:
+              description: Pointer to the v2 migration guide (rel=deprecation).
+              schema:
+                type: string
+              example: <https://docs.aurum.dev/api/migration-guide#v2>; rel="deprecation";
+                type="text/html"
+            Warning:
+              description: Human-readable deprecation warning following RFC 7234 section
+                5.5.
+              schema:
+                type: string
+              example: 299 aurum "API v1 is deprecated; migrate to /v2 before 2025-12-31"
+            X-API-Version:
+              description: Denotes the served API version for the response.
+              schema:
+                type: string
+              example: v1
+            X-API-Lifecycle:
+              description: Lifecycle state for the API surface.
+              schema:
+                type: string
+              example: deprecated
+            X-API-Migration-Guide:
+              description: URL with migration instructions for upgrading clients.
+              schema:
+                type: string
+              example: https://docs.aurum.dev/api/migration-guide
+      deprecated: true
   /v1/metadata/calendars/{name}/expand:
     get:
       tags:
@@ -771,12 +1530,91 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/CalendarHoursResponse'
+          headers:
+            Deprecation:
+              description: Indicates the v1 API is deprecated and targeted for removal.
+              schema:
+                type: string
+              example: 'true'
+            Sunset:
+              description: Date after which the v1 API will no longer be available
+                (RFC 7231).
+              schema:
+                type: string
+              example: Wed, 31 Dec 2025 23:59:59 GMT
+            Link:
+              description: Pointer to the v2 migration guide (rel=deprecation).
+              schema:
+                type: string
+              example: <https://docs.aurum.dev/api/migration-guide#v2>; rel="deprecation";
+                type="text/html"
+            Warning:
+              description: Human-readable deprecation warning following RFC 7234 section
+                5.5.
+              schema:
+                type: string
+              example: 299 aurum "API v1 is deprecated; migrate to /v2 before 2025-12-31"
+            X-API-Version:
+              description: Denotes the served API version for the response.
+              schema:
+                type: string
+              example: v1
+            X-API-Lifecycle:
+              description: Lifecycle state for the API surface.
+              schema:
+                type: string
+              example: deprecated
+            X-API-Migration-Guide:
+              description: URL with migration instructions for upgrading clients.
+              schema:
+                type: string
+              example: https://docs.aurum.dev/api/migration-guide
         '422':
           description: Validation Error
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/HTTPValidationError'
+          headers:
+            Deprecation:
+              description: Indicates the v1 API is deprecated and targeted for removal.
+              schema:
+                type: string
+              example: 'true'
+            Sunset:
+              description: Date after which the v1 API will no longer be available
+                (RFC 7231).
+              schema:
+                type: string
+              example: Wed, 31 Dec 2025 23:59:59 GMT
+            Link:
+              description: Pointer to the v2 migration guide (rel=deprecation).
+              schema:
+                type: string
+              example: <https://docs.aurum.dev/api/migration-guide#v2>; rel="deprecation";
+                type="text/html"
+            Warning:
+              description: Human-readable deprecation warning following RFC 7234 section
+                5.5.
+              schema:
+                type: string
+              example: 299 aurum "API v1 is deprecated; migrate to /v2 before 2025-12-31"
+            X-API-Version:
+              description: Denotes the served API version for the response.
+              schema:
+                type: string
+              example: v1
+            X-API-Lifecycle:
+              description: Lifecycle state for the API surface.
+              schema:
+                type: string
+              example: deprecated
+            X-API-Migration-Guide:
+              description: URL with migration instructions for upgrading clients.
+              schema:
+                type: string
+              example: https://docs.aurum.dev/api/migration-guide
+      deprecated: true
   /v1/iso/lmp/last-24h:
     get:
       tags:
@@ -841,12 +1679,91 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/IsoLmpResponse'
+          headers:
+            Deprecation:
+              description: Indicates the v1 API is deprecated and targeted for removal.
+              schema:
+                type: string
+              example: 'true'
+            Sunset:
+              description: Date after which the v1 API will no longer be available
+                (RFC 7231).
+              schema:
+                type: string
+              example: Wed, 31 Dec 2025 23:59:59 GMT
+            Link:
+              description: Pointer to the v2 migration guide (rel=deprecation).
+              schema:
+                type: string
+              example: <https://docs.aurum.dev/api/migration-guide#v2>; rel="deprecation";
+                type="text/html"
+            Warning:
+              description: Human-readable deprecation warning following RFC 7234 section
+                5.5.
+              schema:
+                type: string
+              example: 299 aurum "API v1 is deprecated; migrate to /v2 before 2025-12-31"
+            X-API-Version:
+              description: Denotes the served API version for the response.
+              schema:
+                type: string
+              example: v1
+            X-API-Lifecycle:
+              description: Lifecycle state for the API surface.
+              schema:
+                type: string
+              example: deprecated
+            X-API-Migration-Guide:
+              description: URL with migration instructions for upgrading clients.
+              schema:
+                type: string
+              example: https://docs.aurum.dev/api/migration-guide
         '422':
           description: Validation Error
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/HTTPValidationError'
+          headers:
+            Deprecation:
+              description: Indicates the v1 API is deprecated and targeted for removal.
+              schema:
+                type: string
+              example: 'true'
+            Sunset:
+              description: Date after which the v1 API will no longer be available
+                (RFC 7231).
+              schema:
+                type: string
+              example: Wed, 31 Dec 2025 23:59:59 GMT
+            Link:
+              description: Pointer to the v2 migration guide (rel=deprecation).
+              schema:
+                type: string
+              example: <https://docs.aurum.dev/api/migration-guide#v2>; rel="deprecation";
+                type="text/html"
+            Warning:
+              description: Human-readable deprecation warning following RFC 7234 section
+                5.5.
+              schema:
+                type: string
+              example: 299 aurum "API v1 is deprecated; migrate to /v2 before 2025-12-31"
+            X-API-Version:
+              description: Denotes the served API version for the response.
+              schema:
+                type: string
+              example: v1
+            X-API-Lifecycle:
+              description: Lifecycle state for the API surface.
+              schema:
+                type: string
+              example: deprecated
+            X-API-Migration-Guide:
+              description: URL with migration instructions for upgrading clients.
+              schema:
+                type: string
+              example: https://docs.aurum.dev/api/migration-guide
+      deprecated: true
   /v1/iso/lmp/hourly:
     get:
       tags:
@@ -939,12 +1856,91 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/IsoLmpAggregateResponse'
+          headers:
+            Deprecation:
+              description: Indicates the v1 API is deprecated and targeted for removal.
+              schema:
+                type: string
+              example: 'true'
+            Sunset:
+              description: Date after which the v1 API will no longer be available
+                (RFC 7231).
+              schema:
+                type: string
+              example: Wed, 31 Dec 2025 23:59:59 GMT
+            Link:
+              description: Pointer to the v2 migration guide (rel=deprecation).
+              schema:
+                type: string
+              example: <https://docs.aurum.dev/api/migration-guide#v2>; rel="deprecation";
+                type="text/html"
+            Warning:
+              description: Human-readable deprecation warning following RFC 7234 section
+                5.5.
+              schema:
+                type: string
+              example: 299 aurum "API v1 is deprecated; migrate to /v2 before 2025-12-31"
+            X-API-Version:
+              description: Denotes the served API version for the response.
+              schema:
+                type: string
+              example: v1
+            X-API-Lifecycle:
+              description: Lifecycle state for the API surface.
+              schema:
+                type: string
+              example: deprecated
+            X-API-Migration-Guide:
+              description: URL with migration instructions for upgrading clients.
+              schema:
+                type: string
+              example: https://docs.aurum.dev/api/migration-guide
         '422':
           description: Validation Error
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/HTTPValidationError'
+          headers:
+            Deprecation:
+              description: Indicates the v1 API is deprecated and targeted for removal.
+              schema:
+                type: string
+              example: 'true'
+            Sunset:
+              description: Date after which the v1 API will no longer be available
+                (RFC 7231).
+              schema:
+                type: string
+              example: Wed, 31 Dec 2025 23:59:59 GMT
+            Link:
+              description: Pointer to the v2 migration guide (rel=deprecation).
+              schema:
+                type: string
+              example: <https://docs.aurum.dev/api/migration-guide#v2>; rel="deprecation";
+                type="text/html"
+            Warning:
+              description: Human-readable deprecation warning following RFC 7234 section
+                5.5.
+              schema:
+                type: string
+              example: 299 aurum "API v1 is deprecated; migrate to /v2 before 2025-12-31"
+            X-API-Version:
+              description: Denotes the served API version for the response.
+              schema:
+                type: string
+              example: v1
+            X-API-Lifecycle:
+              description: Lifecycle state for the API surface.
+              schema:
+                type: string
+              example: deprecated
+            X-API-Migration-Guide:
+              description: URL with migration instructions for upgrading clients.
+              schema:
+                type: string
+              example: https://docs.aurum.dev/api/migration-guide
+      deprecated: true
   /v1/iso/lmp/daily:
     get:
       tags:
@@ -1037,12 +2033,91 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/IsoLmpAggregateResponse'
+          headers:
+            Deprecation:
+              description: Indicates the v1 API is deprecated and targeted for removal.
+              schema:
+                type: string
+              example: 'true'
+            Sunset:
+              description: Date after which the v1 API will no longer be available
+                (RFC 7231).
+              schema:
+                type: string
+              example: Wed, 31 Dec 2025 23:59:59 GMT
+            Link:
+              description: Pointer to the v2 migration guide (rel=deprecation).
+              schema:
+                type: string
+              example: <https://docs.aurum.dev/api/migration-guide#v2>; rel="deprecation";
+                type="text/html"
+            Warning:
+              description: Human-readable deprecation warning following RFC 7234 section
+                5.5.
+              schema:
+                type: string
+              example: 299 aurum "API v1 is deprecated; migrate to /v2 before 2025-12-31"
+            X-API-Version:
+              description: Denotes the served API version for the response.
+              schema:
+                type: string
+              example: v1
+            X-API-Lifecycle:
+              description: Lifecycle state for the API surface.
+              schema:
+                type: string
+              example: deprecated
+            X-API-Migration-Guide:
+              description: URL with migration instructions for upgrading clients.
+              schema:
+                type: string
+              example: https://docs.aurum.dev/api/migration-guide
         '422':
           description: Validation Error
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/HTTPValidationError'
+          headers:
+            Deprecation:
+              description: Indicates the v1 API is deprecated and targeted for removal.
+              schema:
+                type: string
+              example: 'true'
+            Sunset:
+              description: Date after which the v1 API will no longer be available
+                (RFC 7231).
+              schema:
+                type: string
+              example: Wed, 31 Dec 2025 23:59:59 GMT
+            Link:
+              description: Pointer to the v2 migration guide (rel=deprecation).
+              schema:
+                type: string
+              example: <https://docs.aurum.dev/api/migration-guide#v2>; rel="deprecation";
+                type="text/html"
+            Warning:
+              description: Human-readable deprecation warning following RFC 7234 section
+                5.5.
+              schema:
+                type: string
+              example: 299 aurum "API v1 is deprecated; migrate to /v2 before 2025-12-31"
+            X-API-Version:
+              description: Denotes the served API version for the response.
+              schema:
+                type: string
+              example: v1
+            X-API-Lifecycle:
+              description: Lifecycle state for the API surface.
+              schema:
+                type: string
+              example: deprecated
+            X-API-Migration-Guide:
+              description: URL with migration instructions for upgrading clients.
+              schema:
+                type: string
+              example: https://docs.aurum.dev/api/migration-guide
+      deprecated: true
   /v1/iso/lmp/negative:
     get:
       tags:
@@ -1098,12 +2173,91 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/IsoLmpResponse'
+          headers:
+            Deprecation:
+              description: Indicates the v1 API is deprecated and targeted for removal.
+              schema:
+                type: string
+              example: 'true'
+            Sunset:
+              description: Date after which the v1 API will no longer be available
+                (RFC 7231).
+              schema:
+                type: string
+              example: Wed, 31 Dec 2025 23:59:59 GMT
+            Link:
+              description: Pointer to the v2 migration guide (rel=deprecation).
+              schema:
+                type: string
+              example: <https://docs.aurum.dev/api/migration-guide#v2>; rel="deprecation";
+                type="text/html"
+            Warning:
+              description: Human-readable deprecation warning following RFC 7234 section
+                5.5.
+              schema:
+                type: string
+              example: 299 aurum "API v1 is deprecated; migrate to /v2 before 2025-12-31"
+            X-API-Version:
+              description: Denotes the served API version for the response.
+              schema:
+                type: string
+              example: v1
+            X-API-Lifecycle:
+              description: Lifecycle state for the API surface.
+              schema:
+                type: string
+              example: deprecated
+            X-API-Migration-Guide:
+              description: URL with migration instructions for upgrading clients.
+              schema:
+                type: string
+              example: https://docs.aurum.dev/api/migration-guide
         '422':
           description: Validation Error
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/HTTPValidationError'
+          headers:
+            Deprecation:
+              description: Indicates the v1 API is deprecated and targeted for removal.
+              schema:
+                type: string
+              example: 'true'
+            Sunset:
+              description: Date after which the v1 API will no longer be available
+                (RFC 7231).
+              schema:
+                type: string
+              example: Wed, 31 Dec 2025 23:59:59 GMT
+            Link:
+              description: Pointer to the v2 migration guide (rel=deprecation).
+              schema:
+                type: string
+              example: <https://docs.aurum.dev/api/migration-guide#v2>; rel="deprecation";
+                type="text/html"
+            Warning:
+              description: Human-readable deprecation warning following RFC 7234 section
+                5.5.
+              schema:
+                type: string
+              example: 299 aurum "API v1 is deprecated; migrate to /v2 before 2025-12-31"
+            X-API-Version:
+              description: Denotes the served API version for the response.
+              schema:
+                type: string
+              example: v1
+            X-API-Lifecycle:
+              description: Lifecycle state for the API surface.
+              schema:
+                type: string
+              example: deprecated
+            X-API-Migration-Guide:
+              description: URL with migration instructions for upgrading clients.
+              schema:
+                type: string
+              example: https://docs.aurum.dev/api/migration-guide
+      deprecated: true
   /v1/metadata/eia/datasets:
     get:
       tags:
@@ -1134,12 +2288,91 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/EiaDatasetsResponse'
+          headers:
+            Deprecation:
+              description: Indicates the v1 API is deprecated and targeted for removal.
+              schema:
+                type: string
+              example: 'true'
+            Sunset:
+              description: Date after which the v1 API will no longer be available
+                (RFC 7231).
+              schema:
+                type: string
+              example: Wed, 31 Dec 2025 23:59:59 GMT
+            Link:
+              description: Pointer to the v2 migration guide (rel=deprecation).
+              schema:
+                type: string
+              example: <https://docs.aurum.dev/api/migration-guide#v2>; rel="deprecation";
+                type="text/html"
+            Warning:
+              description: Human-readable deprecation warning following RFC 7234 section
+                5.5.
+              schema:
+                type: string
+              example: 299 aurum "API v1 is deprecated; migrate to /v2 before 2025-12-31"
+            X-API-Version:
+              description: Denotes the served API version for the response.
+              schema:
+                type: string
+              example: v1
+            X-API-Lifecycle:
+              description: Lifecycle state for the API surface.
+              schema:
+                type: string
+              example: deprecated
+            X-API-Migration-Guide:
+              description: URL with migration instructions for upgrading clients.
+              schema:
+                type: string
+              example: https://docs.aurum.dev/api/migration-guide
         '422':
           description: Validation Error
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/HTTPValidationError'
+          headers:
+            Deprecation:
+              description: Indicates the v1 API is deprecated and targeted for removal.
+              schema:
+                type: string
+              example: 'true'
+            Sunset:
+              description: Date after which the v1 API will no longer be available
+                (RFC 7231).
+              schema:
+                type: string
+              example: Wed, 31 Dec 2025 23:59:59 GMT
+            Link:
+              description: Pointer to the v2 migration guide (rel=deprecation).
+              schema:
+                type: string
+              example: <https://docs.aurum.dev/api/migration-guide#v2>; rel="deprecation";
+                type="text/html"
+            Warning:
+              description: Human-readable deprecation warning following RFC 7234 section
+                5.5.
+              schema:
+                type: string
+              example: 299 aurum "API v1 is deprecated; migrate to /v2 before 2025-12-31"
+            X-API-Version:
+              description: Denotes the served API version for the response.
+              schema:
+                type: string
+              example: v1
+            X-API-Lifecycle:
+              description: Lifecycle state for the API surface.
+              schema:
+                type: string
+              example: deprecated
+            X-API-Migration-Guide:
+              description: URL with migration instructions for upgrading clients.
+              schema:
+                type: string
+              example: https://docs.aurum.dev/api/migration-guide
+      deprecated: true
   /v1/metadata/eia/datasets/{dataset_path}:
     get:
       tags:
@@ -1168,12 +2401,91 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/EiaDatasetResponse'
+          headers:
+            Deprecation:
+              description: Indicates the v1 API is deprecated and targeted for removal.
+              schema:
+                type: string
+              example: 'true'
+            Sunset:
+              description: Date after which the v1 API will no longer be available
+                (RFC 7231).
+              schema:
+                type: string
+              example: Wed, 31 Dec 2025 23:59:59 GMT
+            Link:
+              description: Pointer to the v2 migration guide (rel=deprecation).
+              schema:
+                type: string
+              example: <https://docs.aurum.dev/api/migration-guide#v2>; rel="deprecation";
+                type="text/html"
+            Warning:
+              description: Human-readable deprecation warning following RFC 7234 section
+                5.5.
+              schema:
+                type: string
+              example: 299 aurum "API v1 is deprecated; migrate to /v2 before 2025-12-31"
+            X-API-Version:
+              description: Denotes the served API version for the response.
+              schema:
+                type: string
+              example: v1
+            X-API-Lifecycle:
+              description: Lifecycle state for the API surface.
+              schema:
+                type: string
+              example: deprecated
+            X-API-Migration-Guide:
+              description: URL with migration instructions for upgrading clients.
+              schema:
+                type: string
+              example: https://docs.aurum.dev/api/migration-guide
         '422':
           description: Validation Error
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/HTTPValidationError'
+          headers:
+            Deprecation:
+              description: Indicates the v1 API is deprecated and targeted for removal.
+              schema:
+                type: string
+              example: 'true'
+            Sunset:
+              description: Date after which the v1 API will no longer be available
+                (RFC 7231).
+              schema:
+                type: string
+              example: Wed, 31 Dec 2025 23:59:59 GMT
+            Link:
+              description: Pointer to the v2 migration guide (rel=deprecation).
+              schema:
+                type: string
+              example: <https://docs.aurum.dev/api/migration-guide#v2>; rel="deprecation";
+                type="text/html"
+            Warning:
+              description: Human-readable deprecation warning following RFC 7234 section
+                5.5.
+              schema:
+                type: string
+              example: 299 aurum "API v1 is deprecated; migrate to /v2 before 2025-12-31"
+            X-API-Version:
+              description: Denotes the served API version for the response.
+              schema:
+                type: string
+              example: v1
+            X-API-Lifecycle:
+              description: Lifecycle state for the API surface.
+              schema:
+                type: string
+              example: deprecated
+            X-API-Migration-Guide:
+              description: URL with migration instructions for upgrading clients.
+              schema:
+                type: string
+              example: https://docs.aurum.dev/api/migration-guide
+      deprecated: true
   /v1/ref/eia/series:
     get:
       tags:
@@ -1366,12 +2678,91 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/EiaSeriesResponse'
+          headers:
+            Deprecation:
+              description: Indicates the v1 API is deprecated and targeted for removal.
+              schema:
+                type: string
+              example: 'true'
+            Sunset:
+              description: Date after which the v1 API will no longer be available
+                (RFC 7231).
+              schema:
+                type: string
+              example: Wed, 31 Dec 2025 23:59:59 GMT
+            Link:
+              description: Pointer to the v2 migration guide (rel=deprecation).
+              schema:
+                type: string
+              example: <https://docs.aurum.dev/api/migration-guide#v2>; rel="deprecation";
+                type="text/html"
+            Warning:
+              description: Human-readable deprecation warning following RFC 7234 section
+                5.5.
+              schema:
+                type: string
+              example: 299 aurum "API v1 is deprecated; migrate to /v2 before 2025-12-31"
+            X-API-Version:
+              description: Denotes the served API version for the response.
+              schema:
+                type: string
+              example: v1
+            X-API-Lifecycle:
+              description: Lifecycle state for the API surface.
+              schema:
+                type: string
+              example: deprecated
+            X-API-Migration-Guide:
+              description: URL with migration instructions for upgrading clients.
+              schema:
+                type: string
+              example: https://docs.aurum.dev/api/migration-guide
         '422':
           description: Validation Error
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/HTTPValidationError'
+          headers:
+            Deprecation:
+              description: Indicates the v1 API is deprecated and targeted for removal.
+              schema:
+                type: string
+              example: 'true'
+            Sunset:
+              description: Date after which the v1 API will no longer be available
+                (RFC 7231).
+              schema:
+                type: string
+              example: Wed, 31 Dec 2025 23:59:59 GMT
+            Link:
+              description: Pointer to the v2 migration guide (rel=deprecation).
+              schema:
+                type: string
+              example: <https://docs.aurum.dev/api/migration-guide#v2>; rel="deprecation";
+                type="text/html"
+            Warning:
+              description: Human-readable deprecation warning following RFC 7234 section
+                5.5.
+              schema:
+                type: string
+              example: 299 aurum "API v1 is deprecated; migrate to /v2 before 2025-12-31"
+            X-API-Version:
+              description: Denotes the served API version for the response.
+              schema:
+                type: string
+              example: v1
+            X-API-Lifecycle:
+              description: Lifecycle state for the API surface.
+              schema:
+                type: string
+              example: deprecated
+            X-API-Migration-Guide:
+              description: URL with migration instructions for upgrading clients.
+              schema:
+                type: string
+              example: https://docs.aurum.dev/api/migration-guide
+      deprecated: true
   /v1/ref/eia/series/dimensions:
     get:
       tags:
@@ -1479,12 +2870,91 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/EiaSeriesDimensionsResponse'
+          headers:
+            Deprecation:
+              description: Indicates the v1 API is deprecated and targeted for removal.
+              schema:
+                type: string
+              example: 'true'
+            Sunset:
+              description: Date after which the v1 API will no longer be available
+                (RFC 7231).
+              schema:
+                type: string
+              example: Wed, 31 Dec 2025 23:59:59 GMT
+            Link:
+              description: Pointer to the v2 migration guide (rel=deprecation).
+              schema:
+                type: string
+              example: <https://docs.aurum.dev/api/migration-guide#v2>; rel="deprecation";
+                type="text/html"
+            Warning:
+              description: Human-readable deprecation warning following RFC 7234 section
+                5.5.
+              schema:
+                type: string
+              example: 299 aurum "API v1 is deprecated; migrate to /v2 before 2025-12-31"
+            X-API-Version:
+              description: Denotes the served API version for the response.
+              schema:
+                type: string
+              example: v1
+            X-API-Lifecycle:
+              description: Lifecycle state for the API surface.
+              schema:
+                type: string
+              example: deprecated
+            X-API-Migration-Guide:
+              description: URL with migration instructions for upgrading clients.
+              schema:
+                type: string
+              example: https://docs.aurum.dev/api/migration-guide
         '422':
           description: Validation Error
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/HTTPValidationError'
+          headers:
+            Deprecation:
+              description: Indicates the v1 API is deprecated and targeted for removal.
+              schema:
+                type: string
+              example: 'true'
+            Sunset:
+              description: Date after which the v1 API will no longer be available
+                (RFC 7231).
+              schema:
+                type: string
+              example: Wed, 31 Dec 2025 23:59:59 GMT
+            Link:
+              description: Pointer to the v2 migration guide (rel=deprecation).
+              schema:
+                type: string
+              example: <https://docs.aurum.dev/api/migration-guide#v2>; rel="deprecation";
+                type="text/html"
+            Warning:
+              description: Human-readable deprecation warning following RFC 7234 section
+                5.5.
+              schema:
+                type: string
+              example: 299 aurum "API v1 is deprecated; migrate to /v2 before 2025-12-31"
+            X-API-Version:
+              description: Denotes the served API version for the response.
+              schema:
+                type: string
+              example: v1
+            X-API-Lifecycle:
+              description: Lifecycle state for the API surface.
+              schema:
+                type: string
+              example: deprecated
+            X-API-Migration-Guide:
+              description: URL with migration instructions for upgrading clients.
+              schema:
+                type: string
+              example: https://docs.aurum.dev/api/migration-guide
+      deprecated: true
   /v1/curves/strips:
     get:
       summary: List Strips
@@ -1613,15 +3083,103 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/CurveResponse'
+          headers:
+            Deprecation:
+              description: Indicates the v1 API is deprecated and targeted for removal.
+              schema:
+                type: string
+              example: 'true'
+            Sunset:
+              description: Date after which the v1 API will no longer be available
+                (RFC 7231).
+              schema:
+                type: string
+              example: Wed, 31 Dec 2025 23:59:59 GMT
+            Link:
+              description: Pointer to the v2 migration guide (rel=deprecation).
+              schema:
+                type: string
+              example: <https://docs.aurum.dev/api/migration-guide#v2>; rel="deprecation";
+                type="text/html"
+            Warning:
+              description: Human-readable deprecation warning following RFC 7234 section
+                5.5.
+              schema:
+                type: string
+              example: 299 aurum "API v1 is deprecated; migrate to /v2 before 2025-12-31"
+            X-API-Version:
+              description: Denotes the served API version for the response.
+              schema:
+                type: string
+              example: v1
+            X-API-Lifecycle:
+              description: Lifecycle state for the API surface.
+              schema:
+                type: string
+              example: deprecated
+            X-API-Migration-Guide:
+              description: URL with migration instructions for upgrading clients.
+              schema:
+                type: string
+              example: https://docs.aurum.dev/api/migration-guide
         '422':
           description: Validation Error
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/HTTPValidationError'
+          headers:
+            Deprecation:
+              description: Indicates the v1 API is deprecated and targeted for removal.
+              schema:
+                type: string
+              example: 'true'
+            Sunset:
+              description: Date after which the v1 API will no longer be available
+                (RFC 7231).
+              schema:
+                type: string
+              example: Wed, 31 Dec 2025 23:59:59 GMT
+            Link:
+              description: Pointer to the v2 migration guide (rel=deprecation).
+              schema:
+                type: string
+              example: <https://docs.aurum.dev/api/migration-guide#v2>; rel="deprecation";
+                type="text/html"
+            Warning:
+              description: Human-readable deprecation warning following RFC 7234 section
+                5.5.
+              schema:
+                type: string
+              example: 299 aurum "API v1 is deprecated; migrate to /v2 before 2025-12-31"
+            X-API-Version:
+              description: Denotes the served API version for the response.
+              schema:
+                type: string
+              example: v1
+            X-API-Lifecycle:
+              description: Lifecycle state for the API surface.
+              schema:
+                type: string
+              example: deprecated
+            X-API-Migration-Guide:
+              description: URL with migration instructions for upgrading clients.
+              schema:
+                type: string
+              example: https://docs.aurum.dev/api/migration-guide
+      deprecated: true
   /v1/scenarios:
     get:
       summary: List Scenarios
+      description: 'List scenarios for the authenticated tenant with offset/cursor
+        support.
+
+
+        Accepts optional filters (status, name, tag, created_{after,before}). When
+
+        the number of results equals `limit`, a `meta.next_cursor` is returned that
+
+        can be supplied via `cursor` on subsequent requests.'
       operationId: list_scenarios_v1_scenarios_get
       parameters:
       - name: status
@@ -1726,14 +3284,94 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/ScenarioListResponse'
+          headers:
+            Deprecation:
+              description: Indicates the v1 API is deprecated and targeted for removal.
+              schema:
+                type: string
+              example: 'true'
+            Sunset:
+              description: Date after which the v1 API will no longer be available
+                (RFC 7231).
+              schema:
+                type: string
+              example: Wed, 31 Dec 2025 23:59:59 GMT
+            Link:
+              description: Pointer to the v2 migration guide (rel=deprecation).
+              schema:
+                type: string
+              example: <https://docs.aurum.dev/api/migration-guide#v2>; rel="deprecation";
+                type="text/html"
+            Warning:
+              description: Human-readable deprecation warning following RFC 7234 section
+                5.5.
+              schema:
+                type: string
+              example: 299 aurum "API v1 is deprecated; migrate to /v2 before 2025-12-31"
+            X-API-Version:
+              description: Denotes the served API version for the response.
+              schema:
+                type: string
+              example: v1
+            X-API-Lifecycle:
+              description: Lifecycle state for the API surface.
+              schema:
+                type: string
+              example: deprecated
+            X-API-Migration-Guide:
+              description: URL with migration instructions for upgrading clients.
+              schema:
+                type: string
+              example: https://docs.aurum.dev/api/migration-guide
         '422':
           description: Validation Error
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/HTTPValidationError'
+          headers:
+            Deprecation:
+              description: Indicates the v1 API is deprecated and targeted for removal.
+              schema:
+                type: string
+              example: 'true'
+            Sunset:
+              description: Date after which the v1 API will no longer be available
+                (RFC 7231).
+              schema:
+                type: string
+              example: Wed, 31 Dec 2025 23:59:59 GMT
+            Link:
+              description: Pointer to the v2 migration guide (rel=deprecation).
+              schema:
+                type: string
+              example: <https://docs.aurum.dev/api/migration-guide#v2>; rel="deprecation";
+                type="text/html"
+            Warning:
+              description: Human-readable deprecation warning following RFC 7234 section
+                5.5.
+              schema:
+                type: string
+              example: 299 aurum "API v1 is deprecated; migrate to /v2 before 2025-12-31"
+            X-API-Version:
+              description: Denotes the served API version for the response.
+              schema:
+                type: string
+              example: v1
+            X-API-Lifecycle:
+              description: Lifecycle state for the API surface.
+              schema:
+                type: string
+              example: deprecated
+            X-API-Migration-Guide:
+              description: URL with migration instructions for upgrading clients.
+              schema:
+                type: string
+              example: https://docs.aurum.dev/api/migration-guide
+      deprecated: true
     post:
       summary: Create Scenario
+      description: Create a new scenario for the resolved tenant and return its definition.
       operationId: create_scenario_v1_scenarios_post
       requestBody:
         required: true
@@ -1748,15 +3386,95 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/ScenarioResponse'
+          headers:
+            Deprecation:
+              description: Indicates the v1 API is deprecated and targeted for removal.
+              schema:
+                type: string
+              example: 'true'
+            Sunset:
+              description: Date after which the v1 API will no longer be available
+                (RFC 7231).
+              schema:
+                type: string
+              example: Wed, 31 Dec 2025 23:59:59 GMT
+            Link:
+              description: Pointer to the v2 migration guide (rel=deprecation).
+              schema:
+                type: string
+              example: <https://docs.aurum.dev/api/migration-guide#v2>; rel="deprecation";
+                type="text/html"
+            Warning:
+              description: Human-readable deprecation warning following RFC 7234 section
+                5.5.
+              schema:
+                type: string
+              example: 299 aurum "API v1 is deprecated; migrate to /v2 before 2025-12-31"
+            X-API-Version:
+              description: Denotes the served API version for the response.
+              schema:
+                type: string
+              example: v1
+            X-API-Lifecycle:
+              description: Lifecycle state for the API surface.
+              schema:
+                type: string
+              example: deprecated
+            X-API-Migration-Guide:
+              description: URL with migration instructions for upgrading clients.
+              schema:
+                type: string
+              example: https://docs.aurum.dev/api/migration-guide
         '422':
           description: Validation Error
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/HTTPValidationError'
+          headers:
+            Deprecation:
+              description: Indicates the v1 API is deprecated and targeted for removal.
+              schema:
+                type: string
+              example: 'true'
+            Sunset:
+              description: Date after which the v1 API will no longer be available
+                (RFC 7231).
+              schema:
+                type: string
+              example: Wed, 31 Dec 2025 23:59:59 GMT
+            Link:
+              description: Pointer to the v2 migration guide (rel=deprecation).
+              schema:
+                type: string
+              example: <https://docs.aurum.dev/api/migration-guide#v2>; rel="deprecation";
+                type="text/html"
+            Warning:
+              description: Human-readable deprecation warning following RFC 7234 section
+                5.5.
+              schema:
+                type: string
+              example: 299 aurum "API v1 is deprecated; migrate to /v2 before 2025-12-31"
+            X-API-Version:
+              description: Denotes the served API version for the response.
+              schema:
+                type: string
+              example: v1
+            X-API-Lifecycle:
+              description: Lifecycle state for the API surface.
+              schema:
+                type: string
+              example: deprecated
+            X-API-Migration-Guide:
+              description: URL with migration instructions for upgrading clients.
+              schema:
+                type: string
+              example: https://docs.aurum.dev/api/migration-guide
+      deprecated: true
   /v1/scenarios/{scenario_id}:
     get:
       summary: Get Scenario
+      description: Fetch a scenario by id with ETag support for conditional responses.
       operationId: get_scenario_v1_scenarios__scenario_id__get
       parameters:
       - name: scenario_id
@@ -1772,14 +3490,94 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/ScenarioResponse'
+          headers:
+            Deprecation:
+              description: Indicates the v1 API is deprecated and targeted for removal.
+              schema:
+                type: string
+              example: 'true'
+            Sunset:
+              description: Date after which the v1 API will no longer be available
+                (RFC 7231).
+              schema:
+                type: string
+              example: Wed, 31 Dec 2025 23:59:59 GMT
+            Link:
+              description: Pointer to the v2 migration guide (rel=deprecation).
+              schema:
+                type: string
+              example: <https://docs.aurum.dev/api/migration-guide#v2>; rel="deprecation";
+                type="text/html"
+            Warning:
+              description: Human-readable deprecation warning following RFC 7234 section
+                5.5.
+              schema:
+                type: string
+              example: 299 aurum "API v1 is deprecated; migrate to /v2 before 2025-12-31"
+            X-API-Version:
+              description: Denotes the served API version for the response.
+              schema:
+                type: string
+              example: v1
+            X-API-Lifecycle:
+              description: Lifecycle state for the API surface.
+              schema:
+                type: string
+              example: deprecated
+            X-API-Migration-Guide:
+              description: URL with migration instructions for upgrading clients.
+              schema:
+                type: string
+              example: https://docs.aurum.dev/api/migration-guide
         '422':
           description: Validation Error
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/HTTPValidationError'
+          headers:
+            Deprecation:
+              description: Indicates the v1 API is deprecated and targeted for removal.
+              schema:
+                type: string
+              example: 'true'
+            Sunset:
+              description: Date after which the v1 API will no longer be available
+                (RFC 7231).
+              schema:
+                type: string
+              example: Wed, 31 Dec 2025 23:59:59 GMT
+            Link:
+              description: Pointer to the v2 migration guide (rel=deprecation).
+              schema:
+                type: string
+              example: <https://docs.aurum.dev/api/migration-guide#v2>; rel="deprecation";
+                type="text/html"
+            Warning:
+              description: Human-readable deprecation warning following RFC 7234 section
+                5.5.
+              schema:
+                type: string
+              example: 299 aurum "API v1 is deprecated; migrate to /v2 before 2025-12-31"
+            X-API-Version:
+              description: Denotes the served API version for the response.
+              schema:
+                type: string
+              example: v1
+            X-API-Lifecycle:
+              description: Lifecycle state for the API surface.
+              schema:
+                type: string
+              example: deprecated
+            X-API-Migration-Guide:
+              description: URL with migration instructions for upgrading clients.
+              schema:
+                type: string
+              example: https://docs.aurum.dev/api/migration-guide
+      deprecated: true
     delete:
       summary: Delete Scenario
+      description: Delete a scenario by id. Returns 204 when deletion succeeds.
       operationId: delete_scenario_v1_scenarios__scenario_id__delete
       parameters:
       - name: scenario_id
@@ -1791,15 +3589,96 @@ paths:
       responses:
         '204':
           description: Successful Response
+          headers:
+            Deprecation:
+              description: Indicates the v1 API is deprecated and targeted for removal.
+              schema:
+                type: string
+              example: 'true'
+            Sunset:
+              description: Date after which the v1 API will no longer be available
+                (RFC 7231).
+              schema:
+                type: string
+              example: Wed, 31 Dec 2025 23:59:59 GMT
+            Link:
+              description: Pointer to the v2 migration guide (rel=deprecation).
+              schema:
+                type: string
+              example: <https://docs.aurum.dev/api/migration-guide#v2>; rel="deprecation";
+                type="text/html"
+            Warning:
+              description: Human-readable deprecation warning following RFC 7234 section
+                5.5.
+              schema:
+                type: string
+              example: 299 aurum "API v1 is deprecated; migrate to /v2 before 2025-12-31"
+            X-API-Version:
+              description: Denotes the served API version for the response.
+              schema:
+                type: string
+              example: v1
+            X-API-Lifecycle:
+              description: Lifecycle state for the API surface.
+              schema:
+                type: string
+              example: deprecated
+            X-API-Migration-Guide:
+              description: URL with migration instructions for upgrading clients.
+              schema:
+                type: string
+              example: https://docs.aurum.dev/api/migration-guide
         '422':
           description: Validation Error
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/HTTPValidationError'
+          headers:
+            Deprecation:
+              description: Indicates the v1 API is deprecated and targeted for removal.
+              schema:
+                type: string
+              example: 'true'
+            Sunset:
+              description: Date after which the v1 API will no longer be available
+                (RFC 7231).
+              schema:
+                type: string
+              example: Wed, 31 Dec 2025 23:59:59 GMT
+            Link:
+              description: Pointer to the v2 migration guide (rel=deprecation).
+              schema:
+                type: string
+              example: <https://docs.aurum.dev/api/migration-guide#v2>; rel="deprecation";
+                type="text/html"
+            Warning:
+              description: Human-readable deprecation warning following RFC 7234 section
+                5.5.
+              schema:
+                type: string
+              example: 299 aurum "API v1 is deprecated; migrate to /v2 before 2025-12-31"
+            X-API-Version:
+              description: Denotes the served API version for the response.
+              schema:
+                type: string
+              example: v1
+            X-API-Lifecycle:
+              description: Lifecycle state for the API surface.
+              schema:
+                type: string
+              example: deprecated
+            X-API-Migration-Guide:
+              description: URL with migration instructions for upgrading clients.
+              schema:
+                type: string
+              example: https://docs.aurum.dev/api/migration-guide
+      deprecated: true
   /v1/scenarios/{scenario_id}/runs:
     get:
       summary: List Scenario Runs
+      description: List runs for a scenario with cursor/offset pagination and time
+        filters.
       operationId: list_scenario_runs_v1_scenarios__scenario_id__runs_get
       parameters:
       - name: scenario_id
@@ -1888,15 +3767,95 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/ScenarioRunListResponse'
+          headers:
+            Deprecation:
+              description: Indicates the v1 API is deprecated and targeted for removal.
+              schema:
+                type: string
+              example: 'true'
+            Sunset:
+              description: Date after which the v1 API will no longer be available
+                (RFC 7231).
+              schema:
+                type: string
+              example: Wed, 31 Dec 2025 23:59:59 GMT
+            Link:
+              description: Pointer to the v2 migration guide (rel=deprecation).
+              schema:
+                type: string
+              example: <https://docs.aurum.dev/api/migration-guide#v2>; rel="deprecation";
+                type="text/html"
+            Warning:
+              description: Human-readable deprecation warning following RFC 7234 section
+                5.5.
+              schema:
+                type: string
+              example: 299 aurum "API v1 is deprecated; migrate to /v2 before 2025-12-31"
+            X-API-Version:
+              description: Denotes the served API version for the response.
+              schema:
+                type: string
+              example: v1
+            X-API-Lifecycle:
+              description: Lifecycle state for the API surface.
+              schema:
+                type: string
+              example: deprecated
+            X-API-Migration-Guide:
+              description: URL with migration instructions for upgrading clients.
+              schema:
+                type: string
+              example: https://docs.aurum.dev/api/migration-guide
         '422':
           description: Validation Error
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/HTTPValidationError'
+          headers:
+            Deprecation:
+              description: Indicates the v1 API is deprecated and targeted for removal.
+              schema:
+                type: string
+              example: 'true'
+            Sunset:
+              description: Date after which the v1 API will no longer be available
+                (RFC 7231).
+              schema:
+                type: string
+              example: Wed, 31 Dec 2025 23:59:59 GMT
+            Link:
+              description: Pointer to the v2 migration guide (rel=deprecation).
+              schema:
+                type: string
+              example: <https://docs.aurum.dev/api/migration-guide#v2>; rel="deprecation";
+                type="text/html"
+            Warning:
+              description: Human-readable deprecation warning following RFC 7234 section
+                5.5.
+              schema:
+                type: string
+              example: 299 aurum "API v1 is deprecated; migrate to /v2 before 2025-12-31"
+            X-API-Version:
+              description: Denotes the served API version for the response.
+              schema:
+                type: string
+              example: v1
+            X-API-Lifecycle:
+              description: Lifecycle state for the API surface.
+              schema:
+                type: string
+              example: deprecated
+            X-API-Migration-Guide:
+              description: URL with migration instructions for upgrading clients.
+              schema:
+                type: string
+              example: https://docs.aurum.dev/api/migration-guide
+      deprecated: true
   /v1/scenarios/{scenario_id}/run:
     post:
       summary: Run Scenario
+      description: Create or reuse a scenario run (idempotent by input fingerprint).
       operationId: run_scenario_v1_scenarios__scenario_id__run_post
       parameters:
       - name: scenario_id
@@ -1920,15 +3879,95 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/ScenarioRunResponse'
+          headers:
+            Deprecation:
+              description: Indicates the v1 API is deprecated and targeted for removal.
+              schema:
+                type: string
+              example: 'true'
+            Sunset:
+              description: Date after which the v1 API will no longer be available
+                (RFC 7231).
+              schema:
+                type: string
+              example: Wed, 31 Dec 2025 23:59:59 GMT
+            Link:
+              description: Pointer to the v2 migration guide (rel=deprecation).
+              schema:
+                type: string
+              example: <https://docs.aurum.dev/api/migration-guide#v2>; rel="deprecation";
+                type="text/html"
+            Warning:
+              description: Human-readable deprecation warning following RFC 7234 section
+                5.5.
+              schema:
+                type: string
+              example: 299 aurum "API v1 is deprecated; migrate to /v2 before 2025-12-31"
+            X-API-Version:
+              description: Denotes the served API version for the response.
+              schema:
+                type: string
+              example: v1
+            X-API-Lifecycle:
+              description: Lifecycle state for the API surface.
+              schema:
+                type: string
+              example: deprecated
+            X-API-Migration-Guide:
+              description: URL with migration instructions for upgrading clients.
+              schema:
+                type: string
+              example: https://docs.aurum.dev/api/migration-guide
         '422':
           description: Validation Error
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/HTTPValidationError'
+          headers:
+            Deprecation:
+              description: Indicates the v1 API is deprecated and targeted for removal.
+              schema:
+                type: string
+              example: 'true'
+            Sunset:
+              description: Date after which the v1 API will no longer be available
+                (RFC 7231).
+              schema:
+                type: string
+              example: Wed, 31 Dec 2025 23:59:59 GMT
+            Link:
+              description: Pointer to the v2 migration guide (rel=deprecation).
+              schema:
+                type: string
+              example: <https://docs.aurum.dev/api/migration-guide#v2>; rel="deprecation";
+                type="text/html"
+            Warning:
+              description: Human-readable deprecation warning following RFC 7234 section
+                5.5.
+              schema:
+                type: string
+              example: 299 aurum "API v1 is deprecated; migrate to /v2 before 2025-12-31"
+            X-API-Version:
+              description: Denotes the served API version for the response.
+              schema:
+                type: string
+              example: v1
+            X-API-Lifecycle:
+              description: Lifecycle state for the API surface.
+              schema:
+                type: string
+              example: deprecated
+            X-API-Migration-Guide:
+              description: URL with migration instructions for upgrading clients.
+              schema:
+                type: string
+              example: https://docs.aurum.dev/api/migration-guide
+      deprecated: true
   /v1/scenarios/{scenario_id}/runs/{run_id}:
     get:
       summary: Get Scenario Run
+      description: Fetch a specific run for a scenario; responds with ETag headers.
       operationId: get_scenario_run_v1_scenarios__scenario_id__runs__run_id__get
       parameters:
       - name: scenario_id
@@ -1950,15 +3989,96 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/ScenarioRunResponse'
+          headers:
+            Deprecation:
+              description: Indicates the v1 API is deprecated and targeted for removal.
+              schema:
+                type: string
+              example: 'true'
+            Sunset:
+              description: Date after which the v1 API will no longer be available
+                (RFC 7231).
+              schema:
+                type: string
+              example: Wed, 31 Dec 2025 23:59:59 GMT
+            Link:
+              description: Pointer to the v2 migration guide (rel=deprecation).
+              schema:
+                type: string
+              example: <https://docs.aurum.dev/api/migration-guide#v2>; rel="deprecation";
+                type="text/html"
+            Warning:
+              description: Human-readable deprecation warning following RFC 7234 section
+                5.5.
+              schema:
+                type: string
+              example: 299 aurum "API v1 is deprecated; migrate to /v2 before 2025-12-31"
+            X-API-Version:
+              description: Denotes the served API version for the response.
+              schema:
+                type: string
+              example: v1
+            X-API-Lifecycle:
+              description: Lifecycle state for the API surface.
+              schema:
+                type: string
+              example: deprecated
+            X-API-Migration-Guide:
+              description: URL with migration instructions for upgrading clients.
+              schema:
+                type: string
+              example: https://docs.aurum.dev/api/migration-guide
         '422':
           description: Validation Error
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/HTTPValidationError'
+          headers:
+            Deprecation:
+              description: Indicates the v1 API is deprecated and targeted for removal.
+              schema:
+                type: string
+              example: 'true'
+            Sunset:
+              description: Date after which the v1 API will no longer be available
+                (RFC 7231).
+              schema:
+                type: string
+              example: Wed, 31 Dec 2025 23:59:59 GMT
+            Link:
+              description: Pointer to the v2 migration guide (rel=deprecation).
+              schema:
+                type: string
+              example: <https://docs.aurum.dev/api/migration-guide#v2>; rel="deprecation";
+                type="text/html"
+            Warning:
+              description: Human-readable deprecation warning following RFC 7234 section
+                5.5.
+              schema:
+                type: string
+              example: 299 aurum "API v1 is deprecated; migrate to /v2 before 2025-12-31"
+            X-API-Version:
+              description: Denotes the served API version for the response.
+              schema:
+                type: string
+              example: v1
+            X-API-Lifecycle:
+              description: Lifecycle state for the API surface.
+              schema:
+                type: string
+              example: deprecated
+            X-API-Migration-Guide:
+              description: URL with migration instructions for upgrading clients.
+              schema:
+                type: string
+              example: https://docs.aurum.dev/api/migration-guide
+      deprecated: true
   /v1/scenarios/runs/{run_id}/state:
     post:
       summary: Update Scenario Run State
+      description: Update the state of an existing run (e.g., RUNNING, SUCCEEDED,
+        FAILED).
       operationId: update_scenario_run_state_v1_scenarios_runs__run_id__state_post
       parameters:
       - name: run_id
@@ -1981,15 +4101,95 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/ScenarioRunResponse'
+          headers:
+            Deprecation:
+              description: Indicates the v1 API is deprecated and targeted for removal.
+              schema:
+                type: string
+              example: 'true'
+            Sunset:
+              description: Date after which the v1 API will no longer be available
+                (RFC 7231).
+              schema:
+                type: string
+              example: Wed, 31 Dec 2025 23:59:59 GMT
+            Link:
+              description: Pointer to the v2 migration guide (rel=deprecation).
+              schema:
+                type: string
+              example: <https://docs.aurum.dev/api/migration-guide#v2>; rel="deprecation";
+                type="text/html"
+            Warning:
+              description: Human-readable deprecation warning following RFC 7234 section
+                5.5.
+              schema:
+                type: string
+              example: 299 aurum "API v1 is deprecated; migrate to /v2 before 2025-12-31"
+            X-API-Version:
+              description: Denotes the served API version for the response.
+              schema:
+                type: string
+              example: v1
+            X-API-Lifecycle:
+              description: Lifecycle state for the API surface.
+              schema:
+                type: string
+              example: deprecated
+            X-API-Migration-Guide:
+              description: URL with migration instructions for upgrading clients.
+              schema:
+                type: string
+              example: https://docs.aurum.dev/api/migration-guide
         '422':
           description: Validation Error
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/HTTPValidationError'
+          headers:
+            Deprecation:
+              description: Indicates the v1 API is deprecated and targeted for removal.
+              schema:
+                type: string
+              example: 'true'
+            Sunset:
+              description: Date after which the v1 API will no longer be available
+                (RFC 7231).
+              schema:
+                type: string
+              example: Wed, 31 Dec 2025 23:59:59 GMT
+            Link:
+              description: Pointer to the v2 migration guide (rel=deprecation).
+              schema:
+                type: string
+              example: <https://docs.aurum.dev/api/migration-guide#v2>; rel="deprecation";
+                type="text/html"
+            Warning:
+              description: Human-readable deprecation warning following RFC 7234 section
+                5.5.
+              schema:
+                type: string
+              example: 299 aurum "API v1 is deprecated; migrate to /v2 before 2025-12-31"
+            X-API-Version:
+              description: Denotes the served API version for the response.
+              schema:
+                type: string
+              example: v1
+            X-API-Lifecycle:
+              description: Lifecycle state for the API surface.
+              schema:
+                type: string
+              example: deprecated
+            X-API-Migration-Guide:
+              description: URL with migration instructions for upgrading clients.
+              schema:
+                type: string
+              example: https://docs.aurum.dev/api/migration-guide
+      deprecated: true
   /v1/scenarios/runs/{run_id}/cancel:
     post:
       summary: Cancel Scenario Run
+      description: Cancel a run by id and return its updated state.
       operationId: cancel_scenario_run_v1_scenarios_runs__run_id__cancel_post
       parameters:
       - name: run_id
@@ -2005,12 +4205,91 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/ScenarioRunResponse'
+          headers:
+            Deprecation:
+              description: Indicates the v1 API is deprecated and targeted for removal.
+              schema:
+                type: string
+              example: 'true'
+            Sunset:
+              description: Date after which the v1 API will no longer be available
+                (RFC 7231).
+              schema:
+                type: string
+              example: Wed, 31 Dec 2025 23:59:59 GMT
+            Link:
+              description: Pointer to the v2 migration guide (rel=deprecation).
+              schema:
+                type: string
+              example: <https://docs.aurum.dev/api/migration-guide#v2>; rel="deprecation";
+                type="text/html"
+            Warning:
+              description: Human-readable deprecation warning following RFC 7234 section
+                5.5.
+              schema:
+                type: string
+              example: 299 aurum "API v1 is deprecated; migrate to /v2 before 2025-12-31"
+            X-API-Version:
+              description: Denotes the served API version for the response.
+              schema:
+                type: string
+              example: v1
+            X-API-Lifecycle:
+              description: Lifecycle state for the API surface.
+              schema:
+                type: string
+              example: deprecated
+            X-API-Migration-Guide:
+              description: URL with migration instructions for upgrading clients.
+              schema:
+                type: string
+              example: https://docs.aurum.dev/api/migration-guide
         '422':
           description: Validation Error
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/HTTPValidationError'
+          headers:
+            Deprecation:
+              description: Indicates the v1 API is deprecated and targeted for removal.
+              schema:
+                type: string
+              example: 'true'
+            Sunset:
+              description: Date after which the v1 API will no longer be available
+                (RFC 7231).
+              schema:
+                type: string
+              example: Wed, 31 Dec 2025 23:59:59 GMT
+            Link:
+              description: Pointer to the v2 migration guide (rel=deprecation).
+              schema:
+                type: string
+              example: <https://docs.aurum.dev/api/migration-guide#v2>; rel="deprecation";
+                type="text/html"
+            Warning:
+              description: Human-readable deprecation warning following RFC 7234 section
+                5.5.
+              schema:
+                type: string
+              example: 299 aurum "API v1 is deprecated; migrate to /v2 before 2025-12-31"
+            X-API-Version:
+              description: Denotes the served API version for the response.
+              schema:
+                type: string
+              example: v1
+            X-API-Lifecycle:
+              description: Lifecycle state for the API surface.
+              schema:
+                type: string
+              example: deprecated
+            X-API-Migration-Guide:
+              description: URL with migration instructions for upgrading clients.
+              schema:
+                type: string
+              example: https://docs.aurum.dev/api/migration-guide
+      deprecated: true
   /v1/admin/cache/scenario/{scenario_id}/invalidate:
     post:
       tags:
@@ -2039,12 +4318,91 @@ paths:
       responses:
         '204':
           description: Successful Response
+          headers:
+            Deprecation:
+              description: Indicates the v1 API is deprecated and targeted for removal.
+              schema:
+                type: string
+              example: 'true'
+            Sunset:
+              description: Date after which the v1 API will no longer be available
+                (RFC 7231).
+              schema:
+                type: string
+              example: Wed, 31 Dec 2025 23:59:59 GMT
+            Link:
+              description: Pointer to the v2 migration guide (rel=deprecation).
+              schema:
+                type: string
+              example: <https://docs.aurum.dev/api/migration-guide#v2>; rel="deprecation";
+                type="text/html"
+            Warning:
+              description: Human-readable deprecation warning following RFC 7234 section
+                5.5.
+              schema:
+                type: string
+              example: 299 aurum "API v1 is deprecated; migrate to /v2 before 2025-12-31"
+            X-API-Version:
+              description: Denotes the served API version for the response.
+              schema:
+                type: string
+              example: v1
+            X-API-Lifecycle:
+              description: Lifecycle state for the API surface.
+              schema:
+                type: string
+              example: deprecated
+            X-API-Migration-Guide:
+              description: URL with migration instructions for upgrading clients.
+              schema:
+                type: string
+              example: https://docs.aurum.dev/api/migration-guide
         '422':
           description: Validation Error
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/HTTPValidationError'
+          headers:
+            Deprecation:
+              description: Indicates the v1 API is deprecated and targeted for removal.
+              schema:
+                type: string
+              example: 'true'
+            Sunset:
+              description: Date after which the v1 API will no longer be available
+                (RFC 7231).
+              schema:
+                type: string
+              example: Wed, 31 Dec 2025 23:59:59 GMT
+            Link:
+              description: Pointer to the v2 migration guide (rel=deprecation).
+              schema:
+                type: string
+              example: <https://docs.aurum.dev/api/migration-guide#v2>; rel="deprecation";
+                type="text/html"
+            Warning:
+              description: Human-readable deprecation warning following RFC 7234 section
+                5.5.
+              schema:
+                type: string
+              example: 299 aurum "API v1 is deprecated; migrate to /v2 before 2025-12-31"
+            X-API-Version:
+              description: Denotes the served API version for the response.
+              schema:
+                type: string
+              example: v1
+            X-API-Lifecycle:
+              description: Lifecycle state for the API surface.
+              schema:
+                type: string
+              example: deprecated
+            X-API-Migration-Guide:
+              description: URL with migration instructions for upgrading clients.
+              schema:
+                type: string
+              example: https://docs.aurum.dev/api/migration-guide
+      deprecated: true
   /v1/admin/mappings:
     post:
       tags:
@@ -2067,12 +4425,91 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/SeriesCurveMappingOut'
+          headers:
+            Deprecation:
+              description: Indicates the v1 API is deprecated and targeted for removal.
+              schema:
+                type: string
+              example: 'true'
+            Sunset:
+              description: Date after which the v1 API will no longer be available
+                (RFC 7231).
+              schema:
+                type: string
+              example: Wed, 31 Dec 2025 23:59:59 GMT
+            Link:
+              description: Pointer to the v2 migration guide (rel=deprecation).
+              schema:
+                type: string
+              example: <https://docs.aurum.dev/api/migration-guide#v2>; rel="deprecation";
+                type="text/html"
+            Warning:
+              description: Human-readable deprecation warning following RFC 7234 section
+                5.5.
+              schema:
+                type: string
+              example: 299 aurum "API v1 is deprecated; migrate to /v2 before 2025-12-31"
+            X-API-Version:
+              description: Denotes the served API version for the response.
+              schema:
+                type: string
+              example: v1
+            X-API-Lifecycle:
+              description: Lifecycle state for the API surface.
+              schema:
+                type: string
+              example: deprecated
+            X-API-Migration-Guide:
+              description: URL with migration instructions for upgrading clients.
+              schema:
+                type: string
+              example: https://docs.aurum.dev/api/migration-guide
         '422':
           description: Validation Error
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/HTTPValidationError'
+          headers:
+            Deprecation:
+              description: Indicates the v1 API is deprecated and targeted for removal.
+              schema:
+                type: string
+              example: 'true'
+            Sunset:
+              description: Date after which the v1 API will no longer be available
+                (RFC 7231).
+              schema:
+                type: string
+              example: Wed, 31 Dec 2025 23:59:59 GMT
+            Link:
+              description: Pointer to the v2 migration guide (rel=deprecation).
+              schema:
+                type: string
+              example: <https://docs.aurum.dev/api/migration-guide#v2>; rel="deprecation";
+                type="text/html"
+            Warning:
+              description: Human-readable deprecation warning following RFC 7234 section
+                5.5.
+              schema:
+                type: string
+              example: 299 aurum "API v1 is deprecated; migrate to /v2 before 2025-12-31"
+            X-API-Version:
+              description: Denotes the served API version for the response.
+              schema:
+                type: string
+              example: v1
+            X-API-Lifecycle:
+              description: Lifecycle state for the API surface.
+              schema:
+                type: string
+              example: deprecated
+            X-API-Migration-Guide:
+              description: URL with migration instructions for upgrading clients.
+              schema:
+                type: string
+              example: https://docs.aurum.dev/api/migration-guide
+      deprecated: true
     get:
       tags:
       - Admin
@@ -2126,12 +4563,91 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/SeriesCurveMappingListResponse'
+          headers:
+            Deprecation:
+              description: Indicates the v1 API is deprecated and targeted for removal.
+              schema:
+                type: string
+              example: 'true'
+            Sunset:
+              description: Date after which the v1 API will no longer be available
+                (RFC 7231).
+              schema:
+                type: string
+              example: Wed, 31 Dec 2025 23:59:59 GMT
+            Link:
+              description: Pointer to the v2 migration guide (rel=deprecation).
+              schema:
+                type: string
+              example: <https://docs.aurum.dev/api/migration-guide#v2>; rel="deprecation";
+                type="text/html"
+            Warning:
+              description: Human-readable deprecation warning following RFC 7234 section
+                5.5.
+              schema:
+                type: string
+              example: 299 aurum "API v1 is deprecated; migrate to /v2 before 2025-12-31"
+            X-API-Version:
+              description: Denotes the served API version for the response.
+              schema:
+                type: string
+              example: v1
+            X-API-Lifecycle:
+              description: Lifecycle state for the API surface.
+              schema:
+                type: string
+              example: deprecated
+            X-API-Migration-Guide:
+              description: URL with migration instructions for upgrading clients.
+              schema:
+                type: string
+              example: https://docs.aurum.dev/api/migration-guide
         '422':
           description: Validation Error
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/HTTPValidationError'
+          headers:
+            Deprecation:
+              description: Indicates the v1 API is deprecated and targeted for removal.
+              schema:
+                type: string
+              example: 'true'
+            Sunset:
+              description: Date after which the v1 API will no longer be available
+                (RFC 7231).
+              schema:
+                type: string
+              example: Wed, 31 Dec 2025 23:59:59 GMT
+            Link:
+              description: Pointer to the v2 migration guide (rel=deprecation).
+              schema:
+                type: string
+              example: <https://docs.aurum.dev/api/migration-guide#v2>; rel="deprecation";
+                type="text/html"
+            Warning:
+              description: Human-readable deprecation warning following RFC 7234 section
+                5.5.
+              schema:
+                type: string
+              example: 299 aurum "API v1 is deprecated; migrate to /v2 before 2025-12-31"
+            X-API-Version:
+              description: Denotes the served API version for the response.
+              schema:
+                type: string
+              example: v1
+            X-API-Lifecycle:
+              description: Lifecycle state for the API surface.
+              schema:
+                type: string
+              example: deprecated
+            X-API-Migration-Guide:
+              description: URL with migration instructions for upgrading clients.
+              schema:
+                type: string
+              example: https://docs.aurum.dev/api/migration-guide
+      deprecated: true
   /v1/admin/mappings/{provider}/{series_id}:
     put:
       tags:
@@ -2166,12 +4682,91 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/SeriesCurveMappingOut'
+          headers:
+            Deprecation:
+              description: Indicates the v1 API is deprecated and targeted for removal.
+              schema:
+                type: string
+              example: 'true'
+            Sunset:
+              description: Date after which the v1 API will no longer be available
+                (RFC 7231).
+              schema:
+                type: string
+              example: Wed, 31 Dec 2025 23:59:59 GMT
+            Link:
+              description: Pointer to the v2 migration guide (rel=deprecation).
+              schema:
+                type: string
+              example: <https://docs.aurum.dev/api/migration-guide#v2>; rel="deprecation";
+                type="text/html"
+            Warning:
+              description: Human-readable deprecation warning following RFC 7234 section
+                5.5.
+              schema:
+                type: string
+              example: 299 aurum "API v1 is deprecated; migrate to /v2 before 2025-12-31"
+            X-API-Version:
+              description: Denotes the served API version for the response.
+              schema:
+                type: string
+              example: v1
+            X-API-Lifecycle:
+              description: Lifecycle state for the API surface.
+              schema:
+                type: string
+              example: deprecated
+            X-API-Migration-Guide:
+              description: URL with migration instructions for upgrading clients.
+              schema:
+                type: string
+              example: https://docs.aurum.dev/api/migration-guide
         '422':
           description: Validation Error
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/HTTPValidationError'
+          headers:
+            Deprecation:
+              description: Indicates the v1 API is deprecated and targeted for removal.
+              schema:
+                type: string
+              example: 'true'
+            Sunset:
+              description: Date after which the v1 API will no longer be available
+                (RFC 7231).
+              schema:
+                type: string
+              example: Wed, 31 Dec 2025 23:59:59 GMT
+            Link:
+              description: Pointer to the v2 migration guide (rel=deprecation).
+              schema:
+                type: string
+              example: <https://docs.aurum.dev/api/migration-guide#v2>; rel="deprecation";
+                type="text/html"
+            Warning:
+              description: Human-readable deprecation warning following RFC 7234 section
+                5.5.
+              schema:
+                type: string
+              example: 299 aurum "API v1 is deprecated; migrate to /v2 before 2025-12-31"
+            X-API-Version:
+              description: Denotes the served API version for the response.
+              schema:
+                type: string
+              example: v1
+            X-API-Lifecycle:
+              description: Lifecycle state for the API surface.
+              schema:
+                type: string
+              example: deprecated
+            X-API-Migration-Guide:
+              description: URL with migration instructions for upgrading clients.
+              schema:
+                type: string
+              example: https://docs.aurum.dev/api/migration-guide
+      deprecated: true
     delete:
       tags:
       - Admin
@@ -2199,12 +4794,91 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/SeriesCurveMappingOut'
+          headers:
+            Deprecation:
+              description: Indicates the v1 API is deprecated and targeted for removal.
+              schema:
+                type: string
+              example: 'true'
+            Sunset:
+              description: Date after which the v1 API will no longer be available
+                (RFC 7231).
+              schema:
+                type: string
+              example: Wed, 31 Dec 2025 23:59:59 GMT
+            Link:
+              description: Pointer to the v2 migration guide (rel=deprecation).
+              schema:
+                type: string
+              example: <https://docs.aurum.dev/api/migration-guide#v2>; rel="deprecation";
+                type="text/html"
+            Warning:
+              description: Human-readable deprecation warning following RFC 7234 section
+                5.5.
+              schema:
+                type: string
+              example: 299 aurum "API v1 is deprecated; migrate to /v2 before 2025-12-31"
+            X-API-Version:
+              description: Denotes the served API version for the response.
+              schema:
+                type: string
+              example: v1
+            X-API-Lifecycle:
+              description: Lifecycle state for the API surface.
+              schema:
+                type: string
+              example: deprecated
+            X-API-Migration-Guide:
+              description: URL with migration instructions for upgrading clients.
+              schema:
+                type: string
+              example: https://docs.aurum.dev/api/migration-guide
         '422':
           description: Validation Error
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/HTTPValidationError'
+          headers:
+            Deprecation:
+              description: Indicates the v1 API is deprecated and targeted for removal.
+              schema:
+                type: string
+              example: 'true'
+            Sunset:
+              description: Date after which the v1 API will no longer be available
+                (RFC 7231).
+              schema:
+                type: string
+              example: Wed, 31 Dec 2025 23:59:59 GMT
+            Link:
+              description: Pointer to the v2 migration guide (rel=deprecation).
+              schema:
+                type: string
+              example: <https://docs.aurum.dev/api/migration-guide#v2>; rel="deprecation";
+                type="text/html"
+            Warning:
+              description: Human-readable deprecation warning following RFC 7234 section
+                5.5.
+              schema:
+                type: string
+              example: 299 aurum "API v1 is deprecated; migrate to /v2 before 2025-12-31"
+            X-API-Version:
+              description: Denotes the served API version for the response.
+              schema:
+                type: string
+              example: v1
+            X-API-Lifecycle:
+              description: Lifecycle state for the API surface.
+              schema:
+                type: string
+              example: deprecated
+            X-API-Migration-Guide:
+              description: URL with migration instructions for upgrading clients.
+              schema:
+                type: string
+              example: https://docs.aurum.dev/api/migration-guide
+      deprecated: true
   /v1/admin/mappings/search:
     get:
       tags:
@@ -2248,12 +4922,91 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/SeriesCurveMappingSearchResponse'
+          headers:
+            Deprecation:
+              description: Indicates the v1 API is deprecated and targeted for removal.
+              schema:
+                type: string
+              example: 'true'
+            Sunset:
+              description: Date after which the v1 API will no longer be available
+                (RFC 7231).
+              schema:
+                type: string
+              example: Wed, 31 Dec 2025 23:59:59 GMT
+            Link:
+              description: Pointer to the v2 migration guide (rel=deprecation).
+              schema:
+                type: string
+              example: <https://docs.aurum.dev/api/migration-guide#v2>; rel="deprecation";
+                type="text/html"
+            Warning:
+              description: Human-readable deprecation warning following RFC 7234 section
+                5.5.
+              schema:
+                type: string
+              example: 299 aurum "API v1 is deprecated; migrate to /v2 before 2025-12-31"
+            X-API-Version:
+              description: Denotes the served API version for the response.
+              schema:
+                type: string
+              example: v1
+            X-API-Lifecycle:
+              description: Lifecycle state for the API surface.
+              schema:
+                type: string
+              example: deprecated
+            X-API-Migration-Guide:
+              description: URL with migration instructions for upgrading clients.
+              schema:
+                type: string
+              example: https://docs.aurum.dev/api/migration-guide
         '422':
           description: Validation Error
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/HTTPValidationError'
+          headers:
+            Deprecation:
+              description: Indicates the v1 API is deprecated and targeted for removal.
+              schema:
+                type: string
+              example: 'true'
+            Sunset:
+              description: Date after which the v1 API will no longer be available
+                (RFC 7231).
+              schema:
+                type: string
+              example: Wed, 31 Dec 2025 23:59:59 GMT
+            Link:
+              description: Pointer to the v2 migration guide (rel=deprecation).
+              schema:
+                type: string
+              example: <https://docs.aurum.dev/api/migration-guide#v2>; rel="deprecation";
+                type="text/html"
+            Warning:
+              description: Human-readable deprecation warning following RFC 7234 section
+                5.5.
+              schema:
+                type: string
+              example: 299 aurum "API v1 is deprecated; migrate to /v2 before 2025-12-31"
+            X-API-Version:
+              description: Denotes the served API version for the response.
+              schema:
+                type: string
+              example: v1
+            X-API-Lifecycle:
+              description: Lifecycle state for the API surface.
+              schema:
+                type: string
+              example: deprecated
+            X-API-Migration-Guide:
+              description: URL with migration instructions for upgrading clients.
+              schema:
+                type: string
+              example: https://docs.aurum.dev/api/migration-guide
+      deprecated: true
   /v1/ppa/contracts:
     get:
       summary: List Ppa Contracts
@@ -2308,12 +5061,91 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/PpaContractListResponse'
+          headers:
+            Deprecation:
+              description: Indicates the v1 API is deprecated and targeted for removal.
+              schema:
+                type: string
+              example: 'true'
+            Sunset:
+              description: Date after which the v1 API will no longer be available
+                (RFC 7231).
+              schema:
+                type: string
+              example: Wed, 31 Dec 2025 23:59:59 GMT
+            Link:
+              description: Pointer to the v2 migration guide (rel=deprecation).
+              schema:
+                type: string
+              example: <https://docs.aurum.dev/api/migration-guide#v2>; rel="deprecation";
+                type="text/html"
+            Warning:
+              description: Human-readable deprecation warning following RFC 7234 section
+                5.5.
+              schema:
+                type: string
+              example: 299 aurum "API v1 is deprecated; migrate to /v2 before 2025-12-31"
+            X-API-Version:
+              description: Denotes the served API version for the response.
+              schema:
+                type: string
+              example: v1
+            X-API-Lifecycle:
+              description: Lifecycle state for the API surface.
+              schema:
+                type: string
+              example: deprecated
+            X-API-Migration-Guide:
+              description: URL with migration instructions for upgrading clients.
+              schema:
+                type: string
+              example: https://docs.aurum.dev/api/migration-guide
         '422':
           description: Validation Error
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/HTTPValidationError'
+          headers:
+            Deprecation:
+              description: Indicates the v1 API is deprecated and targeted for removal.
+              schema:
+                type: string
+              example: 'true'
+            Sunset:
+              description: Date after which the v1 API will no longer be available
+                (RFC 7231).
+              schema:
+                type: string
+              example: Wed, 31 Dec 2025 23:59:59 GMT
+            Link:
+              description: Pointer to the v2 migration guide (rel=deprecation).
+              schema:
+                type: string
+              example: <https://docs.aurum.dev/api/migration-guide#v2>; rel="deprecation";
+                type="text/html"
+            Warning:
+              description: Human-readable deprecation warning following RFC 7234 section
+                5.5.
+              schema:
+                type: string
+              example: 299 aurum "API v1 is deprecated; migrate to /v2 before 2025-12-31"
+            X-API-Version:
+              description: Denotes the served API version for the response.
+              schema:
+                type: string
+              example: v1
+            X-API-Lifecycle:
+              description: Lifecycle state for the API surface.
+              schema:
+                type: string
+              example: deprecated
+            X-API-Migration-Guide:
+              description: URL with migration instructions for upgrading clients.
+              schema:
+                type: string
+              example: https://docs.aurum.dev/api/migration-guide
+      deprecated: true
     post:
       summary: Create Ppa Contract
       operationId: create_ppa_contract_v1_ppa_contracts_post
@@ -2330,12 +5162,91 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/PpaContractResponse'
+          headers:
+            Deprecation:
+              description: Indicates the v1 API is deprecated and targeted for removal.
+              schema:
+                type: string
+              example: 'true'
+            Sunset:
+              description: Date after which the v1 API will no longer be available
+                (RFC 7231).
+              schema:
+                type: string
+              example: Wed, 31 Dec 2025 23:59:59 GMT
+            Link:
+              description: Pointer to the v2 migration guide (rel=deprecation).
+              schema:
+                type: string
+              example: <https://docs.aurum.dev/api/migration-guide#v2>; rel="deprecation";
+                type="text/html"
+            Warning:
+              description: Human-readable deprecation warning following RFC 7234 section
+                5.5.
+              schema:
+                type: string
+              example: 299 aurum "API v1 is deprecated; migrate to /v2 before 2025-12-31"
+            X-API-Version:
+              description: Denotes the served API version for the response.
+              schema:
+                type: string
+              example: v1
+            X-API-Lifecycle:
+              description: Lifecycle state for the API surface.
+              schema:
+                type: string
+              example: deprecated
+            X-API-Migration-Guide:
+              description: URL with migration instructions for upgrading clients.
+              schema:
+                type: string
+              example: https://docs.aurum.dev/api/migration-guide
         '422':
           description: Validation Error
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/HTTPValidationError'
+          headers:
+            Deprecation:
+              description: Indicates the v1 API is deprecated and targeted for removal.
+              schema:
+                type: string
+              example: 'true'
+            Sunset:
+              description: Date after which the v1 API will no longer be available
+                (RFC 7231).
+              schema:
+                type: string
+              example: Wed, 31 Dec 2025 23:59:59 GMT
+            Link:
+              description: Pointer to the v2 migration guide (rel=deprecation).
+              schema:
+                type: string
+              example: <https://docs.aurum.dev/api/migration-guide#v2>; rel="deprecation";
+                type="text/html"
+            Warning:
+              description: Human-readable deprecation warning following RFC 7234 section
+                5.5.
+              schema:
+                type: string
+              example: 299 aurum "API v1 is deprecated; migrate to /v2 before 2025-12-31"
+            X-API-Version:
+              description: Denotes the served API version for the response.
+              schema:
+                type: string
+              example: v1
+            X-API-Lifecycle:
+              description: Lifecycle state for the API surface.
+              schema:
+                type: string
+              example: deprecated
+            X-API-Migration-Guide:
+              description: URL with migration instructions for upgrading clients.
+              schema:
+                type: string
+              example: https://docs.aurum.dev/api/migration-guide
+      deprecated: true
   /v1/ppa/contracts/{contract_id}:
     get:
       summary: Get Ppa Contract
@@ -2354,12 +5265,91 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/PpaContractResponse'
+          headers:
+            Deprecation:
+              description: Indicates the v1 API is deprecated and targeted for removal.
+              schema:
+                type: string
+              example: 'true'
+            Sunset:
+              description: Date after which the v1 API will no longer be available
+                (RFC 7231).
+              schema:
+                type: string
+              example: Wed, 31 Dec 2025 23:59:59 GMT
+            Link:
+              description: Pointer to the v2 migration guide (rel=deprecation).
+              schema:
+                type: string
+              example: <https://docs.aurum.dev/api/migration-guide#v2>; rel="deprecation";
+                type="text/html"
+            Warning:
+              description: Human-readable deprecation warning following RFC 7234 section
+                5.5.
+              schema:
+                type: string
+              example: 299 aurum "API v1 is deprecated; migrate to /v2 before 2025-12-31"
+            X-API-Version:
+              description: Denotes the served API version for the response.
+              schema:
+                type: string
+              example: v1
+            X-API-Lifecycle:
+              description: Lifecycle state for the API surface.
+              schema:
+                type: string
+              example: deprecated
+            X-API-Migration-Guide:
+              description: URL with migration instructions for upgrading clients.
+              schema:
+                type: string
+              example: https://docs.aurum.dev/api/migration-guide
         '422':
           description: Validation Error
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/HTTPValidationError'
+          headers:
+            Deprecation:
+              description: Indicates the v1 API is deprecated and targeted for removal.
+              schema:
+                type: string
+              example: 'true'
+            Sunset:
+              description: Date after which the v1 API will no longer be available
+                (RFC 7231).
+              schema:
+                type: string
+              example: Wed, 31 Dec 2025 23:59:59 GMT
+            Link:
+              description: Pointer to the v2 migration guide (rel=deprecation).
+              schema:
+                type: string
+              example: <https://docs.aurum.dev/api/migration-guide#v2>; rel="deprecation";
+                type="text/html"
+            Warning:
+              description: Human-readable deprecation warning following RFC 7234 section
+                5.5.
+              schema:
+                type: string
+              example: 299 aurum "API v1 is deprecated; migrate to /v2 before 2025-12-31"
+            X-API-Version:
+              description: Denotes the served API version for the response.
+              schema:
+                type: string
+              example: v1
+            X-API-Lifecycle:
+              description: Lifecycle state for the API surface.
+              schema:
+                type: string
+              example: deprecated
+            X-API-Migration-Guide:
+              description: URL with migration instructions for upgrading clients.
+              schema:
+                type: string
+              example: https://docs.aurum.dev/api/migration-guide
+      deprecated: true
     patch:
       summary: Update Ppa Contract
       operationId: update_ppa_contract_v1_ppa_contracts__contract_id__patch
@@ -2383,12 +5373,91 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/PpaContractResponse'
+          headers:
+            Deprecation:
+              description: Indicates the v1 API is deprecated and targeted for removal.
+              schema:
+                type: string
+              example: 'true'
+            Sunset:
+              description: Date after which the v1 API will no longer be available
+                (RFC 7231).
+              schema:
+                type: string
+              example: Wed, 31 Dec 2025 23:59:59 GMT
+            Link:
+              description: Pointer to the v2 migration guide (rel=deprecation).
+              schema:
+                type: string
+              example: <https://docs.aurum.dev/api/migration-guide#v2>; rel="deprecation";
+                type="text/html"
+            Warning:
+              description: Human-readable deprecation warning following RFC 7234 section
+                5.5.
+              schema:
+                type: string
+              example: 299 aurum "API v1 is deprecated; migrate to /v2 before 2025-12-31"
+            X-API-Version:
+              description: Denotes the served API version for the response.
+              schema:
+                type: string
+              example: v1
+            X-API-Lifecycle:
+              description: Lifecycle state for the API surface.
+              schema:
+                type: string
+              example: deprecated
+            X-API-Migration-Guide:
+              description: URL with migration instructions for upgrading clients.
+              schema:
+                type: string
+              example: https://docs.aurum.dev/api/migration-guide
         '422':
           description: Validation Error
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/HTTPValidationError'
+          headers:
+            Deprecation:
+              description: Indicates the v1 API is deprecated and targeted for removal.
+              schema:
+                type: string
+              example: 'true'
+            Sunset:
+              description: Date after which the v1 API will no longer be available
+                (RFC 7231).
+              schema:
+                type: string
+              example: Wed, 31 Dec 2025 23:59:59 GMT
+            Link:
+              description: Pointer to the v2 migration guide (rel=deprecation).
+              schema:
+                type: string
+              example: <https://docs.aurum.dev/api/migration-guide#v2>; rel="deprecation";
+                type="text/html"
+            Warning:
+              description: Human-readable deprecation warning following RFC 7234 section
+                5.5.
+              schema:
+                type: string
+              example: 299 aurum "API v1 is deprecated; migrate to /v2 before 2025-12-31"
+            X-API-Version:
+              description: Denotes the served API version for the response.
+              schema:
+                type: string
+              example: v1
+            X-API-Lifecycle:
+              description: Lifecycle state for the API surface.
+              schema:
+                type: string
+              example: deprecated
+            X-API-Migration-Guide:
+              description: URL with migration instructions for upgrading clients.
+              schema:
+                type: string
+              example: https://docs.aurum.dev/api/migration-guide
+      deprecated: true
     delete:
       summary: Delete Ppa Contract
       operationId: delete_ppa_contract_v1_ppa_contracts__contract_id__delete
@@ -2402,12 +5471,91 @@ paths:
       responses:
         '204':
           description: Successful Response
+          headers:
+            Deprecation:
+              description: Indicates the v1 API is deprecated and targeted for removal.
+              schema:
+                type: string
+              example: 'true'
+            Sunset:
+              description: Date after which the v1 API will no longer be available
+                (RFC 7231).
+              schema:
+                type: string
+              example: Wed, 31 Dec 2025 23:59:59 GMT
+            Link:
+              description: Pointer to the v2 migration guide (rel=deprecation).
+              schema:
+                type: string
+              example: <https://docs.aurum.dev/api/migration-guide#v2>; rel="deprecation";
+                type="text/html"
+            Warning:
+              description: Human-readable deprecation warning following RFC 7234 section
+                5.5.
+              schema:
+                type: string
+              example: 299 aurum "API v1 is deprecated; migrate to /v2 before 2025-12-31"
+            X-API-Version:
+              description: Denotes the served API version for the response.
+              schema:
+                type: string
+              example: v1
+            X-API-Lifecycle:
+              description: Lifecycle state for the API surface.
+              schema:
+                type: string
+              example: deprecated
+            X-API-Migration-Guide:
+              description: URL with migration instructions for upgrading clients.
+              schema:
+                type: string
+              example: https://docs.aurum.dev/api/migration-guide
         '422':
           description: Validation Error
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/HTTPValidationError'
+          headers:
+            Deprecation:
+              description: Indicates the v1 API is deprecated and targeted for removal.
+              schema:
+                type: string
+              example: 'true'
+            Sunset:
+              description: Date after which the v1 API will no longer be available
+                (RFC 7231).
+              schema:
+                type: string
+              example: Wed, 31 Dec 2025 23:59:59 GMT
+            Link:
+              description: Pointer to the v2 migration guide (rel=deprecation).
+              schema:
+                type: string
+              example: <https://docs.aurum.dev/api/migration-guide#v2>; rel="deprecation";
+                type="text/html"
+            Warning:
+              description: Human-readable deprecation warning following RFC 7234 section
+                5.5.
+              schema:
+                type: string
+              example: 299 aurum "API v1 is deprecated; migrate to /v2 before 2025-12-31"
+            X-API-Version:
+              description: Denotes the served API version for the response.
+              schema:
+                type: string
+              example: v1
+            X-API-Lifecycle:
+              description: Lifecycle state for the API surface.
+              schema:
+                type: string
+              example: deprecated
+            X-API-Migration-Guide:
+              description: URL with migration instructions for upgrading clients.
+              schema:
+                type: string
+              example: https://docs.aurum.dev/api/migration-guide
+      deprecated: true
   /v1/ppa/contracts/{contract_id}/valuations:
     get:
       summary: List Ppa Contract Valuations
@@ -2496,12 +5644,91 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/PpaValuationListResponse'
+          headers:
+            Deprecation:
+              description: Indicates the v1 API is deprecated and targeted for removal.
+              schema:
+                type: string
+              example: 'true'
+            Sunset:
+              description: Date after which the v1 API will no longer be available
+                (RFC 7231).
+              schema:
+                type: string
+              example: Wed, 31 Dec 2025 23:59:59 GMT
+            Link:
+              description: Pointer to the v2 migration guide (rel=deprecation).
+              schema:
+                type: string
+              example: <https://docs.aurum.dev/api/migration-guide#v2>; rel="deprecation";
+                type="text/html"
+            Warning:
+              description: Human-readable deprecation warning following RFC 7234 section
+                5.5.
+              schema:
+                type: string
+              example: 299 aurum "API v1 is deprecated; migrate to /v2 before 2025-12-31"
+            X-API-Version:
+              description: Denotes the served API version for the response.
+              schema:
+                type: string
+              example: v1
+            X-API-Lifecycle:
+              description: Lifecycle state for the API surface.
+              schema:
+                type: string
+              example: deprecated
+            X-API-Migration-Guide:
+              description: URL with migration instructions for upgrading clients.
+              schema:
+                type: string
+              example: https://docs.aurum.dev/api/migration-guide
         '422':
           description: Validation Error
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/HTTPValidationError'
+          headers:
+            Deprecation:
+              description: Indicates the v1 API is deprecated and targeted for removal.
+              schema:
+                type: string
+              example: 'true'
+            Sunset:
+              description: Date after which the v1 API will no longer be available
+                (RFC 7231).
+              schema:
+                type: string
+              example: Wed, 31 Dec 2025 23:59:59 GMT
+            Link:
+              description: Pointer to the v2 migration guide (rel=deprecation).
+              schema:
+                type: string
+              example: <https://docs.aurum.dev/api/migration-guide#v2>; rel="deprecation";
+                type="text/html"
+            Warning:
+              description: Human-readable deprecation warning following RFC 7234 section
+                5.5.
+              schema:
+                type: string
+              example: 299 aurum "API v1 is deprecated; migrate to /v2 before 2025-12-31"
+            X-API-Version:
+              description: Denotes the served API version for the response.
+              schema:
+                type: string
+              example: v1
+            X-API-Lifecycle:
+              description: Lifecycle state for the API surface.
+              schema:
+                type: string
+              example: deprecated
+            X-API-Migration-Guide:
+              description: URL with migration instructions for upgrading clients.
+              schema:
+                type: string
+              example: https://docs.aurum.dev/api/migration-guide
+      deprecated: true
   /v1/ppa/valuate:
     post:
       summary: Valuate Ppa
@@ -2519,15 +5746,103 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/PpaValuationResponse'
+          headers:
+            Deprecation:
+              description: Indicates the v1 API is deprecated and targeted for removal.
+              schema:
+                type: string
+              example: 'true'
+            Sunset:
+              description: Date after which the v1 API will no longer be available
+                (RFC 7231).
+              schema:
+                type: string
+              example: Wed, 31 Dec 2025 23:59:59 GMT
+            Link:
+              description: Pointer to the v2 migration guide (rel=deprecation).
+              schema:
+                type: string
+              example: <https://docs.aurum.dev/api/migration-guide#v2>; rel="deprecation";
+                type="text/html"
+            Warning:
+              description: Human-readable deprecation warning following RFC 7234 section
+                5.5.
+              schema:
+                type: string
+              example: 299 aurum "API v1 is deprecated; migrate to /v2 before 2025-12-31"
+            X-API-Version:
+              description: Denotes the served API version for the response.
+              schema:
+                type: string
+              example: v1
+            X-API-Lifecycle:
+              description: Lifecycle state for the API surface.
+              schema:
+                type: string
+              example: deprecated
+            X-API-Migration-Guide:
+              description: URL with migration instructions for upgrading clients.
+              schema:
+                type: string
+              example: https://docs.aurum.dev/api/migration-guide
         '422':
           description: Validation Error
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/HTTPValidationError'
+          headers:
+            Deprecation:
+              description: Indicates the v1 API is deprecated and targeted for removal.
+              schema:
+                type: string
+              example: 'true'
+            Sunset:
+              description: Date after which the v1 API will no longer be available
+                (RFC 7231).
+              schema:
+                type: string
+              example: Wed, 31 Dec 2025 23:59:59 GMT
+            Link:
+              description: Pointer to the v2 migration guide (rel=deprecation).
+              schema:
+                type: string
+              example: <https://docs.aurum.dev/api/migration-guide#v2>; rel="deprecation";
+                type="text/html"
+            Warning:
+              description: Human-readable deprecation warning following RFC 7234 section
+                5.5.
+              schema:
+                type: string
+              example: 299 aurum "API v1 is deprecated; migrate to /v2 before 2025-12-31"
+            X-API-Version:
+              description: Denotes the served API version for the response.
+              schema:
+                type: string
+              example: v1
+            X-API-Lifecycle:
+              description: Lifecycle state for the API surface.
+              schema:
+                type: string
+              example: deprecated
+            X-API-Migration-Guide:
+              description: URL with migration instructions for upgrading clients.
+              schema:
+                type: string
+              example: https://docs.aurum.dev/api/migration-guide
+      deprecated: true
   /v1/scenarios/{scenario_id}/outputs:
     get:
       summary: List Scenario Outputs
+      description: 'List scenario outputs with hardened cursor pagination and CSV
+        option.
+
+
+        Uses `cursor`/`since_cursor` for forward iteration and `prev_cursor` to
+
+        fetch the previous page. When `format=csv`, streams a CSV with `next_cursor`
+
+        and `prev_cursor` included in headers.'
       operationId: list_scenario_outputs_v1_scenarios__scenario_id__outputs_get
       parameters:
       - name: scenario_id
@@ -2626,15 +5941,100 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/ScenarioOutputResponse'
+          headers:
+            Deprecation:
+              description: Indicates the v1 API is deprecated and targeted for removal.
+              schema:
+                type: string
+              example: 'true'
+            Sunset:
+              description: Date after which the v1 API will no longer be available
+                (RFC 7231).
+              schema:
+                type: string
+              example: Wed, 31 Dec 2025 23:59:59 GMT
+            Link:
+              description: Pointer to the v2 migration guide (rel=deprecation).
+              schema:
+                type: string
+              example: <https://docs.aurum.dev/api/migration-guide#v2>; rel="deprecation";
+                type="text/html"
+            Warning:
+              description: Human-readable deprecation warning following RFC 7234 section
+                5.5.
+              schema:
+                type: string
+              example: 299 aurum "API v1 is deprecated; migrate to /v2 before 2025-12-31"
+            X-API-Version:
+              description: Denotes the served API version for the response.
+              schema:
+                type: string
+              example: v1
+            X-API-Lifecycle:
+              description: Lifecycle state for the API surface.
+              schema:
+                type: string
+              example: deprecated
+            X-API-Migration-Guide:
+              description: URL with migration instructions for upgrading clients.
+              schema:
+                type: string
+              example: https://docs.aurum.dev/api/migration-guide
         '422':
           description: Validation Error
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/HTTPValidationError'
+          headers:
+            Deprecation:
+              description: Indicates the v1 API is deprecated and targeted for removal.
+              schema:
+                type: string
+              example: 'true'
+            Sunset:
+              description: Date after which the v1 API will no longer be available
+                (RFC 7231).
+              schema:
+                type: string
+              example: Wed, 31 Dec 2025 23:59:59 GMT
+            Link:
+              description: Pointer to the v2 migration guide (rel=deprecation).
+              schema:
+                type: string
+              example: <https://docs.aurum.dev/api/migration-guide#v2>; rel="deprecation";
+                type="text/html"
+            Warning:
+              description: Human-readable deprecation warning following RFC 7234 section
+                5.5.
+              schema:
+                type: string
+              example: 299 aurum "API v1 is deprecated; migrate to /v2 before 2025-12-31"
+            X-API-Version:
+              description: Denotes the served API version for the response.
+              schema:
+                type: string
+              example: v1
+            X-API-Lifecycle:
+              description: Lifecycle state for the API surface.
+              schema:
+                type: string
+              example: deprecated
+            X-API-Migration-Guide:
+              description: URL with migration instructions for upgrading clients.
+              schema:
+                type: string
+              example: https://docs.aurum.dev/api/migration-guide
+      deprecated: true
   /v1/scenarios/{scenario_id}/metrics/latest:
     get:
       summary: List Scenario Metrics Latest
+      description: 'Return the latest metrics for a scenario with stable pagination.
+
+
+        Designed to fetch most recent metric points per curve/metric, with
+
+        `cursor` tokens enabling resumable iteration.'
       operationId: list_scenario_metrics_latest_v1_scenarios__scenario_id__metrics_latest_get
       parameters:
       - name: scenario_id
@@ -2711,12 +6111,91 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/ScenarioMetricLatestResponse'
+          headers:
+            Deprecation:
+              description: Indicates the v1 API is deprecated and targeted for removal.
+              schema:
+                type: string
+              example: 'true'
+            Sunset:
+              description: Date after which the v1 API will no longer be available
+                (RFC 7231).
+              schema:
+                type: string
+              example: Wed, 31 Dec 2025 23:59:59 GMT
+            Link:
+              description: Pointer to the v2 migration guide (rel=deprecation).
+              schema:
+                type: string
+              example: <https://docs.aurum.dev/api/migration-guide#v2>; rel="deprecation";
+                type="text/html"
+            Warning:
+              description: Human-readable deprecation warning following RFC 7234 section
+                5.5.
+              schema:
+                type: string
+              example: 299 aurum "API v1 is deprecated; migrate to /v2 before 2025-12-31"
+            X-API-Version:
+              description: Denotes the served API version for the response.
+              schema:
+                type: string
+              example: v1
+            X-API-Lifecycle:
+              description: Lifecycle state for the API surface.
+              schema:
+                type: string
+              example: deprecated
+            X-API-Migration-Guide:
+              description: URL with migration instructions for upgrading clients.
+              schema:
+                type: string
+              example: https://docs.aurum.dev/api/migration-guide
         '422':
           description: Validation Error
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/HTTPValidationError'
+          headers:
+            Deprecation:
+              description: Indicates the v1 API is deprecated and targeted for removal.
+              schema:
+                type: string
+              example: 'true'
+            Sunset:
+              description: Date after which the v1 API will no longer be available
+                (RFC 7231).
+              schema:
+                type: string
+              example: Wed, 31 Dec 2025 23:59:59 GMT
+            Link:
+              description: Pointer to the v2 migration guide (rel=deprecation).
+              schema:
+                type: string
+              example: <https://docs.aurum.dev/api/migration-guide#v2>; rel="deprecation";
+                type="text/html"
+            Warning:
+              description: Human-readable deprecation warning following RFC 7234 section
+                5.5.
+              schema:
+                type: string
+              example: 299 aurum "API v1 is deprecated; migrate to /v2 before 2025-12-31"
+            X-API-Version:
+              description: Denotes the served API version for the response.
+              schema:
+                type: string
+              example: v1
+            X-API-Lifecycle:
+              description: Lifecycle state for the API surface.
+              schema:
+                type: string
+              example: deprecated
+            X-API-Migration-Guide:
+              description: URL with migration instructions for upgrading clients.
+              schema:
+                type: string
+              example: https://docs.aurum.dev/api/migration-guide
+      deprecated: true
   /v1/drought/dimensions:
     get:
       summary: Get Drought Dimensions
@@ -2728,6 +6207,46 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/DroughtDimensionsResponse'
+          headers:
+            Deprecation:
+              description: Indicates the v1 API is deprecated and targeted for removal.
+              schema:
+                type: string
+              example: 'true'
+            Sunset:
+              description: Date after which the v1 API will no longer be available
+                (RFC 7231).
+              schema:
+                type: string
+              example: Wed, 31 Dec 2025 23:59:59 GMT
+            Link:
+              description: Pointer to the v2 migration guide (rel=deprecation).
+              schema:
+                type: string
+              example: <https://docs.aurum.dev/api/migration-guide#v2>; rel="deprecation";
+                type="text/html"
+            Warning:
+              description: Human-readable deprecation warning following RFC 7234 section
+                5.5.
+              schema:
+                type: string
+              example: 299 aurum "API v1 is deprecated; migrate to /v2 before 2025-12-31"
+            X-API-Version:
+              description: Denotes the served API version for the response.
+              schema:
+                type: string
+              example: v1
+            X-API-Lifecycle:
+              description: Lifecycle state for the API surface.
+              schema:
+                type: string
+              example: deprecated
+            X-API-Migration-Guide:
+              description: URL with migration instructions for upgrading clients.
+              schema:
+                type: string
+              example: https://docs.aurum.dev/api/migration-guide
+      deprecated: true
   /v1/drought/indices:
     get:
       summary: Get Drought Indices
@@ -2827,12 +6346,91 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/DroughtIndexResponse'
+          headers:
+            Deprecation:
+              description: Indicates the v1 API is deprecated and targeted for removal.
+              schema:
+                type: string
+              example: 'true'
+            Sunset:
+              description: Date after which the v1 API will no longer be available
+                (RFC 7231).
+              schema:
+                type: string
+              example: Wed, 31 Dec 2025 23:59:59 GMT
+            Link:
+              description: Pointer to the v2 migration guide (rel=deprecation).
+              schema:
+                type: string
+              example: <https://docs.aurum.dev/api/migration-guide#v2>; rel="deprecation";
+                type="text/html"
+            Warning:
+              description: Human-readable deprecation warning following RFC 7234 section
+                5.5.
+              schema:
+                type: string
+              example: 299 aurum "API v1 is deprecated; migrate to /v2 before 2025-12-31"
+            X-API-Version:
+              description: Denotes the served API version for the response.
+              schema:
+                type: string
+              example: v1
+            X-API-Lifecycle:
+              description: Lifecycle state for the API surface.
+              schema:
+                type: string
+              example: deprecated
+            X-API-Migration-Guide:
+              description: URL with migration instructions for upgrading clients.
+              schema:
+                type: string
+              example: https://docs.aurum.dev/api/migration-guide
         '422':
           description: Validation Error
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/HTTPValidationError'
+          headers:
+            Deprecation:
+              description: Indicates the v1 API is deprecated and targeted for removal.
+              schema:
+                type: string
+              example: 'true'
+            Sunset:
+              description: Date after which the v1 API will no longer be available
+                (RFC 7231).
+              schema:
+                type: string
+              example: Wed, 31 Dec 2025 23:59:59 GMT
+            Link:
+              description: Pointer to the v2 migration guide (rel=deprecation).
+              schema:
+                type: string
+              example: <https://docs.aurum.dev/api/migration-guide#v2>; rel="deprecation";
+                type="text/html"
+            Warning:
+              description: Human-readable deprecation warning following RFC 7234 section
+                5.5.
+              schema:
+                type: string
+              example: 299 aurum "API v1 is deprecated; migrate to /v2 before 2025-12-31"
+            X-API-Version:
+              description: Denotes the served API version for the response.
+              schema:
+                type: string
+              example: v1
+            X-API-Lifecycle:
+              description: Lifecycle state for the API surface.
+              schema:
+                type: string
+              example: deprecated
+            X-API-Migration-Guide:
+              description: URL with migration instructions for upgrading clients.
+              schema:
+                type: string
+              example: https://docs.aurum.dev/api/migration-guide
+      deprecated: true
   /v1/drought/usdm:
     get:
       summary: Get Drought Usdm
@@ -2898,12 +6496,91 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/DroughtUsdmResponse'
+          headers:
+            Deprecation:
+              description: Indicates the v1 API is deprecated and targeted for removal.
+              schema:
+                type: string
+              example: 'true'
+            Sunset:
+              description: Date after which the v1 API will no longer be available
+                (RFC 7231).
+              schema:
+                type: string
+              example: Wed, 31 Dec 2025 23:59:59 GMT
+            Link:
+              description: Pointer to the v2 migration guide (rel=deprecation).
+              schema:
+                type: string
+              example: <https://docs.aurum.dev/api/migration-guide#v2>; rel="deprecation";
+                type="text/html"
+            Warning:
+              description: Human-readable deprecation warning following RFC 7234 section
+                5.5.
+              schema:
+                type: string
+              example: 299 aurum "API v1 is deprecated; migrate to /v2 before 2025-12-31"
+            X-API-Version:
+              description: Denotes the served API version for the response.
+              schema:
+                type: string
+              example: v1
+            X-API-Lifecycle:
+              description: Lifecycle state for the API surface.
+              schema:
+                type: string
+              example: deprecated
+            X-API-Migration-Guide:
+              description: URL with migration instructions for upgrading clients.
+              schema:
+                type: string
+              example: https://docs.aurum.dev/api/migration-guide
         '422':
           description: Validation Error
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/HTTPValidationError'
+          headers:
+            Deprecation:
+              description: Indicates the v1 API is deprecated and targeted for removal.
+              schema:
+                type: string
+              example: 'true'
+            Sunset:
+              description: Date after which the v1 API will no longer be available
+                (RFC 7231).
+              schema:
+                type: string
+              example: Wed, 31 Dec 2025 23:59:59 GMT
+            Link:
+              description: Pointer to the v2 migration guide (rel=deprecation).
+              schema:
+                type: string
+              example: <https://docs.aurum.dev/api/migration-guide#v2>; rel="deprecation";
+                type="text/html"
+            Warning:
+              description: Human-readable deprecation warning following RFC 7234 section
+                5.5.
+              schema:
+                type: string
+              example: 299 aurum "API v1 is deprecated; migrate to /v2 before 2025-12-31"
+            X-API-Version:
+              description: Denotes the served API version for the response.
+              schema:
+                type: string
+              example: v1
+            X-API-Lifecycle:
+              description: Lifecycle state for the API surface.
+              schema:
+                type: string
+              example: deprecated
+            X-API-Migration-Guide:
+              description: URL with migration instructions for upgrading clients.
+              schema:
+                type: string
+              example: https://docs.aurum.dev/api/migration-guide
+      deprecated: true
   /v1/drought/tiles/{dataset}/{index}/{timescale}/{z}/{x}/{y}.png:
     get:
       summary: Proxy Drought Tile
@@ -2957,12 +6634,91 @@ paths:
       responses:
         '200':
           description: Successful Response
+          headers:
+            Deprecation:
+              description: Indicates the v1 API is deprecated and targeted for removal.
+              schema:
+                type: string
+              example: 'true'
+            Sunset:
+              description: Date after which the v1 API will no longer be available
+                (RFC 7231).
+              schema:
+                type: string
+              example: Wed, 31 Dec 2025 23:59:59 GMT
+            Link:
+              description: Pointer to the v2 migration guide (rel=deprecation).
+              schema:
+                type: string
+              example: <https://docs.aurum.dev/api/migration-guide#v2>; rel="deprecation";
+                type="text/html"
+            Warning:
+              description: Human-readable deprecation warning following RFC 7234 section
+                5.5.
+              schema:
+                type: string
+              example: 299 aurum "API v1 is deprecated; migrate to /v2 before 2025-12-31"
+            X-API-Version:
+              description: Denotes the served API version for the response.
+              schema:
+                type: string
+              example: v1
+            X-API-Lifecycle:
+              description: Lifecycle state for the API surface.
+              schema:
+                type: string
+              example: deprecated
+            X-API-Migration-Guide:
+              description: URL with migration instructions for upgrading clients.
+              schema:
+                type: string
+              example: https://docs.aurum.dev/api/migration-guide
         '422':
           description: Validation Error
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/HTTPValidationError'
+          headers:
+            Deprecation:
+              description: Indicates the v1 API is deprecated and targeted for removal.
+              schema:
+                type: string
+              example: 'true'
+            Sunset:
+              description: Date after which the v1 API will no longer be available
+                (RFC 7231).
+              schema:
+                type: string
+              example: Wed, 31 Dec 2025 23:59:59 GMT
+            Link:
+              description: Pointer to the v2 migration guide (rel=deprecation).
+              schema:
+                type: string
+              example: <https://docs.aurum.dev/api/migration-guide#v2>; rel="deprecation";
+                type="text/html"
+            Warning:
+              description: Human-readable deprecation warning following RFC 7234 section
+                5.5.
+              schema:
+                type: string
+              example: 299 aurum "API v1 is deprecated; migrate to /v2 before 2025-12-31"
+            X-API-Version:
+              description: Denotes the served API version for the response.
+              schema:
+                type: string
+              example: v1
+            X-API-Lifecycle:
+              description: Lifecycle state for the API surface.
+              schema:
+                type: string
+              example: deprecated
+            X-API-Migration-Guide:
+              description: URL with migration instructions for upgrading clients.
+              schema:
+                type: string
+              example: https://docs.aurum.dev/api/migration-guide
+      deprecated: true
   /v1/drought/info/{dataset}/{index}/{timescale}:
     get:
       summary: Get Drought Tile Metadata
@@ -3002,12 +6758,91 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/DroughtInfoResponse'
+          headers:
+            Deprecation:
+              description: Indicates the v1 API is deprecated and targeted for removal.
+              schema:
+                type: string
+              example: 'true'
+            Sunset:
+              description: Date after which the v1 API will no longer be available
+                (RFC 7231).
+              schema:
+                type: string
+              example: Wed, 31 Dec 2025 23:59:59 GMT
+            Link:
+              description: Pointer to the v2 migration guide (rel=deprecation).
+              schema:
+                type: string
+              example: <https://docs.aurum.dev/api/migration-guide#v2>; rel="deprecation";
+                type="text/html"
+            Warning:
+              description: Human-readable deprecation warning following RFC 7234 section
+                5.5.
+              schema:
+                type: string
+              example: 299 aurum "API v1 is deprecated; migrate to /v2 before 2025-12-31"
+            X-API-Version:
+              description: Denotes the served API version for the response.
+              schema:
+                type: string
+              example: v1
+            X-API-Lifecycle:
+              description: Lifecycle state for the API surface.
+              schema:
+                type: string
+              example: deprecated
+            X-API-Migration-Guide:
+              description: URL with migration instructions for upgrading clients.
+              schema:
+                type: string
+              example: https://docs.aurum.dev/api/migration-guide
         '422':
           description: Validation Error
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/HTTPValidationError'
+          headers:
+            Deprecation:
+              description: Indicates the v1 API is deprecated and targeted for removal.
+              schema:
+                type: string
+              example: 'true'
+            Sunset:
+              description: Date after which the v1 API will no longer be available
+                (RFC 7231).
+              schema:
+                type: string
+              example: Wed, 31 Dec 2025 23:59:59 GMT
+            Link:
+              description: Pointer to the v2 migration guide (rel=deprecation).
+              schema:
+                type: string
+              example: <https://docs.aurum.dev/api/migration-guide#v2>; rel="deprecation";
+                type="text/html"
+            Warning:
+              description: Human-readable deprecation warning following RFC 7234 section
+                5.5.
+              schema:
+                type: string
+              example: 299 aurum "API v1 is deprecated; migrate to /v2 before 2025-12-31"
+            X-API-Version:
+              description: Denotes the served API version for the response.
+              schema:
+                type: string
+              example: v1
+            X-API-Lifecycle:
+              description: Lifecycle state for the API surface.
+              schema:
+                type: string
+              example: deprecated
+            X-API-Migration-Guide:
+              description: URL with migration instructions for upgrading clients.
+              schema:
+                type: string
+              example: https://docs.aurum.dev/api/migration-guide
+      deprecated: true
   /v1/external/providers:
     get:
       summary: List External Providers
@@ -3068,12 +6903,91 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/ExternalProvidersResponse'
+          headers:
+            Deprecation:
+              description: Indicates the v1 API is deprecated and targeted for removal.
+              schema:
+                type: string
+              example: 'true'
+            Sunset:
+              description: Date after which the v1 API will no longer be available
+                (RFC 7231).
+              schema:
+                type: string
+              example: Wed, 31 Dec 2025 23:59:59 GMT
+            Link:
+              description: Pointer to the v2 migration guide (rel=deprecation).
+              schema:
+                type: string
+              example: <https://docs.aurum.dev/api/migration-guide#v2>; rel="deprecation";
+                type="text/html"
+            Warning:
+              description: Human-readable deprecation warning following RFC 7234 section
+                5.5.
+              schema:
+                type: string
+              example: 299 aurum "API v1 is deprecated; migrate to /v2 before 2025-12-31"
+            X-API-Version:
+              description: Denotes the served API version for the response.
+              schema:
+                type: string
+              example: v1
+            X-API-Lifecycle:
+              description: Lifecycle state for the API surface.
+              schema:
+                type: string
+              example: deprecated
+            X-API-Migration-Guide:
+              description: URL with migration instructions for upgrading clients.
+              schema:
+                type: string
+              example: https://docs.aurum.dev/api/migration-guide
         '422':
           description: Validation Error
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/HTTPValidationError'
+          headers:
+            Deprecation:
+              description: Indicates the v1 API is deprecated and targeted for removal.
+              schema:
+                type: string
+              example: 'true'
+            Sunset:
+              description: Date after which the v1 API will no longer be available
+                (RFC 7231).
+              schema:
+                type: string
+              example: Wed, 31 Dec 2025 23:59:59 GMT
+            Link:
+              description: Pointer to the v2 migration guide (rel=deprecation).
+              schema:
+                type: string
+              example: <https://docs.aurum.dev/api/migration-guide#v2>; rel="deprecation";
+                type="text/html"
+            Warning:
+              description: Human-readable deprecation warning following RFC 7234 section
+                5.5.
+              schema:
+                type: string
+              example: 299 aurum "API v1 is deprecated; migrate to /v2 before 2025-12-31"
+            X-API-Version:
+              description: Denotes the served API version for the response.
+              schema:
+                type: string
+              example: v1
+            X-API-Lifecycle:
+              description: Lifecycle state for the API surface.
+              schema:
+                type: string
+              example: deprecated
+            X-API-Migration-Guide:
+              description: URL with migration instructions for upgrading clients.
+              schema:
+                type: string
+              example: https://docs.aurum.dev/api/migration-guide
+      deprecated: true
   /v1/external/series:
     get:
       summary: List External Series
@@ -3140,12 +7054,91 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/ExternalSeriesResponse'
+          headers:
+            Deprecation:
+              description: Indicates the v1 API is deprecated and targeted for removal.
+              schema:
+                type: string
+              example: 'true'
+            Sunset:
+              description: Date after which the v1 API will no longer be available
+                (RFC 7231).
+              schema:
+                type: string
+              example: Wed, 31 Dec 2025 23:59:59 GMT
+            Link:
+              description: Pointer to the v2 migration guide (rel=deprecation).
+              schema:
+                type: string
+              example: <https://docs.aurum.dev/api/migration-guide#v2>; rel="deprecation";
+                type="text/html"
+            Warning:
+              description: Human-readable deprecation warning following RFC 7234 section
+                5.5.
+              schema:
+                type: string
+              example: 299 aurum "API v1 is deprecated; migrate to /v2 before 2025-12-31"
+            X-API-Version:
+              description: Denotes the served API version for the response.
+              schema:
+                type: string
+              example: v1
+            X-API-Lifecycle:
+              description: Lifecycle state for the API surface.
+              schema:
+                type: string
+              example: deprecated
+            X-API-Migration-Guide:
+              description: URL with migration instructions for upgrading clients.
+              schema:
+                type: string
+              example: https://docs.aurum.dev/api/migration-guide
         '422':
           description: Validation Error
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/HTTPValidationError'
+          headers:
+            Deprecation:
+              description: Indicates the v1 API is deprecated and targeted for removal.
+              schema:
+                type: string
+              example: 'true'
+            Sunset:
+              description: Date after which the v1 API will no longer be available
+                (RFC 7231).
+              schema:
+                type: string
+              example: Wed, 31 Dec 2025 23:59:59 GMT
+            Link:
+              description: Pointer to the v2 migration guide (rel=deprecation).
+              schema:
+                type: string
+              example: <https://docs.aurum.dev/api/migration-guide#v2>; rel="deprecation";
+                type="text/html"
+            Warning:
+              description: Human-readable deprecation warning following RFC 7234 section
+                5.5.
+              schema:
+                type: string
+              example: 299 aurum "API v1 is deprecated; migrate to /v2 before 2025-12-31"
+            X-API-Version:
+              description: Denotes the served API version for the response.
+              schema:
+                type: string
+              example: v1
+            X-API-Lifecycle:
+              description: Lifecycle state for the API surface.
+              schema:
+                type: string
+              example: deprecated
+            X-API-Migration-Guide:
+              description: URL with migration instructions for upgrading clients.
+              schema:
+                type: string
+              example: https://docs.aurum.dev/api/migration-guide
+      deprecated: true
   /v1/external/series/{series_id}/observations:
     get:
       summary: Get External Series Observations
@@ -3233,12 +7226,91 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/ExternalObservationsResponse'
+          headers:
+            Deprecation:
+              description: Indicates the v1 API is deprecated and targeted for removal.
+              schema:
+                type: string
+              example: 'true'
+            Sunset:
+              description: Date after which the v1 API will no longer be available
+                (RFC 7231).
+              schema:
+                type: string
+              example: Wed, 31 Dec 2025 23:59:59 GMT
+            Link:
+              description: Pointer to the v2 migration guide (rel=deprecation).
+              schema:
+                type: string
+              example: <https://docs.aurum.dev/api/migration-guide#v2>; rel="deprecation";
+                type="text/html"
+            Warning:
+              description: Human-readable deprecation warning following RFC 7234 section
+                5.5.
+              schema:
+                type: string
+              example: 299 aurum "API v1 is deprecated; migrate to /v2 before 2025-12-31"
+            X-API-Version:
+              description: Denotes the served API version for the response.
+              schema:
+                type: string
+              example: v1
+            X-API-Lifecycle:
+              description: Lifecycle state for the API surface.
+              schema:
+                type: string
+              example: deprecated
+            X-API-Migration-Guide:
+              description: URL with migration instructions for upgrading clients.
+              schema:
+                type: string
+              example: https://docs.aurum.dev/api/migration-guide
         '422':
           description: Validation Error
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/HTTPValidationError'
+          headers:
+            Deprecation:
+              description: Indicates the v1 API is deprecated and targeted for removal.
+              schema:
+                type: string
+              example: 'true'
+            Sunset:
+              description: Date after which the v1 API will no longer be available
+                (RFC 7231).
+              schema:
+                type: string
+              example: Wed, 31 Dec 2025 23:59:59 GMT
+            Link:
+              description: Pointer to the v2 migration guide (rel=deprecation).
+              schema:
+                type: string
+              example: <https://docs.aurum.dev/api/migration-guide#v2>; rel="deprecation";
+                type="text/html"
+            Warning:
+              description: Human-readable deprecation warning following RFC 7234 section
+                5.5.
+              schema:
+                type: string
+              example: 299 aurum "API v1 is deprecated; migrate to /v2 before 2025-12-31"
+            X-API-Version:
+              description: Denotes the served API version for the response.
+              schema:
+                type: string
+              example: v1
+            X-API-Lifecycle:
+              description: Lifecycle state for the API surface.
+              schema:
+                type: string
+              example: deprecated
+            X-API-Migration-Guide:
+              description: URL with migration instructions for upgrading clients.
+              schema:
+                type: string
+              example: https://docs.aurum.dev/api/migration-guide
+      deprecated: true
   /v1/metadata/external:
     get:
       summary: Get External Metadata
@@ -3274,12 +7346,91 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/ExternalMetadataResponse'
+          headers:
+            Deprecation:
+              description: Indicates the v1 API is deprecated and targeted for removal.
+              schema:
+                type: string
+              example: 'true'
+            Sunset:
+              description: Date after which the v1 API will no longer be available
+                (RFC 7231).
+              schema:
+                type: string
+              example: Wed, 31 Dec 2025 23:59:59 GMT
+            Link:
+              description: Pointer to the v2 migration guide (rel=deprecation).
+              schema:
+                type: string
+              example: <https://docs.aurum.dev/api/migration-guide#v2>; rel="deprecation";
+                type="text/html"
+            Warning:
+              description: Human-readable deprecation warning following RFC 7234 section
+                5.5.
+              schema:
+                type: string
+              example: 299 aurum "API v1 is deprecated; migrate to /v2 before 2025-12-31"
+            X-API-Version:
+              description: Denotes the served API version for the response.
+              schema:
+                type: string
+              example: v1
+            X-API-Lifecycle:
+              description: Lifecycle state for the API surface.
+              schema:
+                type: string
+              example: deprecated
+            X-API-Migration-Guide:
+              description: URL with migration instructions for upgrading clients.
+              schema:
+                type: string
+              example: https://docs.aurum.dev/api/migration-guide
         '422':
           description: Validation Error
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/HTTPValidationError'
+          headers:
+            Deprecation:
+              description: Indicates the v1 API is deprecated and targeted for removal.
+              schema:
+                type: string
+              example: 'true'
+            Sunset:
+              description: Date after which the v1 API will no longer be available
+                (RFC 7231).
+              schema:
+                type: string
+              example: Wed, 31 Dec 2025 23:59:59 GMT
+            Link:
+              description: Pointer to the v2 migration guide (rel=deprecation).
+              schema:
+                type: string
+              example: <https://docs.aurum.dev/api/migration-guide#v2>; rel="deprecation";
+                type="text/html"
+            Warning:
+              description: Human-readable deprecation warning following RFC 7234 section
+                5.5.
+              schema:
+                type: string
+              example: 299 aurum "API v1 is deprecated; migrate to /v2 before 2025-12-31"
+            X-API-Version:
+              description: Denotes the served API version for the response.
+              schema:
+                type: string
+              example: v1
+            X-API-Lifecycle:
+              description: Lifecycle state for the API surface.
+              schema:
+                type: string
+              example: deprecated
+            X-API-Migration-Guide:
+              description: URL with migration instructions for upgrading clients.
+              schema:
+                type: string
+              example: https://docs.aurum.dev/api/migration-guide
+      deprecated: true
 components:
   schemas:
     CalendarBlocksResponse:
