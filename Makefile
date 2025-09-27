@@ -31,6 +31,35 @@ test: ## Run tests
 unit-test: ## Run unit test subset
 	pytest -m "unit" -q
 
+test-services: ## Run service layer tests
+	pytest tests/api/test_services_*.py -v
+
+test-services-coverage: ## Run service layer tests with coverage
+	pytest tests/api/test_services_*.py --cov=src/aurum/api/services --cov-report=term-missing --cov-report=html -v
+
+# Phase 1.4 Development Experience Enhancement
+dev-health-check: ## Run Phase 1 development health checks
+	python scripts/dev/health_checks.py
+
+dev-quick-setup: ## Quick development environment setup
+	pip install -e .
+	@echo "✅ Development environment ready"
+
+docker-dev-fast: ## Fast Docker development stack startup (Phase 1.4 target: <3 minutes)
+	@echo "🚀 Starting Docker development stack (optimized for speed)..."
+	@start_time=$$(date +%s); \
+	COMPOSE_PROFILES=core docker compose -f compose/docker-compose.dev.yml up -d --build; \
+	end_time=$$(date +%s); \
+	elapsed_time=$$((end_time - start_time)); \
+	minutes=$$((elapsed_time / 60)); \
+	seconds=$$((elapsed_time % 60)); \
+	echo "⏱️  Docker stack started in $${minutes}m $${seconds}s"; \
+	if [ $$elapsed_time -gt 180 ]; then \
+		echo "⚠️  Warning: Startup time exceeded 3-minute target"; \
+	else \
+		echo "✅ Startup time within 3-minute target"; \
+	fi
+
 lint: ## Run linting
 	black --check src/ tests/
 	isort --check-only src/ tests/

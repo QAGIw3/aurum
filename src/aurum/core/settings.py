@@ -1197,7 +1197,7 @@ def configure_settings(settings: AurumSettings) -> None:
 def get_migration_metrics() -> Optional[MigrationMetrics]:
     """Get the global migration metrics instance."""
     # Only initialize migration metrics if not during module import
-    if _migration_metrics is None and not _is_module_importing():
+    if _migration_metrics is None:
         _init_migration_metrics()
     return _migration_metrics
 
