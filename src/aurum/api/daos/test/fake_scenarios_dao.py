@@ -188,3 +188,4 @@ class FakeScenariosDAO(ScenariosDAO):
             self._operation_count += 1
             return True
         return False
+

@@ -439,3 +439,4 @@ async def get_scopes() -> Dict[str, List[str]]:
         scope.value: rule_names
         for scope, rule_names in rate_limiter.scope_rules.items()
     }
+

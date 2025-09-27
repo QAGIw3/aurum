@@ -105,17 +105,13 @@ from aurum.api.rate_limiting.concurrency_middleware import (
     local_diagnostics_router,
 )
 from aurum.api.rate_limiting.redis_concurrency import diagnostics_router
-from aurum.api.rate_limiting.sliding_window import (
-    RateLimitConfig,
-    RateLimitMiddleware,
-    ratelimit_admin_router,
-)
+from aurum.api.rate_limiting.consolidated_policy_engine import get_unified_rate_limiter
+from aurum.api.rate_limiting.admin_router import router as ratelimit_admin_router
 from aurum.api.rate_limiting.config import CacheConfig
 from aurum.api.offload import offload_router
 from aurum.api.router_registry import RouterSpec, get_v1_router_specs, get_v2_router_specs
 from aurum.api.routes import configure_routes
-from .app_lifecycle import register_trino_lifecycle as _register_trino_lifecycle
-from .app_lifecycle import register_metrics_endpoint as _register_metrics_endpoint
+from .lifespan_manager import setup_lifespan
 from .app_offload import build_offload_predicate as _build_offload_predicate
 from .middleware.registry import apply_middleware_stack
 from .middleware.admin_guard import AdminRouteGuard
@@ -413,16 +409,19 @@ def _install_concurrency_middleware(
 
 
 def _install_rate_limit_middleware(app: ASGIApp, settings: AurumSettings) -> ASGIApp:
-    """Wrap the app with sliding-window rate limiting."""
+    """Wrap the app with consolidated rate limiting."""
 
     try:
-        cache_cfg = CacheConfig.from_settings(settings)
-        rl_cfg = RateLimitConfig.from_settings(settings)
+        # Get unified rate limiter instance
+        rate_limiter = get_unified_rate_limiter()
+
+        # Create middleware using the consolidated rate limiter
+        from .rate_limiting import RateLimitingMiddleware
+        return RateLimitingMiddleware(app, rate_limiter)
+
     except Exception as exc:  # pragma: no cover - rate limiting is optional
         LOGGER.warning("rate_limit_middleware_setup_failed", exc_info=exc)
         return app
-
-    return RateLimitMiddleware(app, cache_cfg, rl_cfg)
 
 
 def _register_versioned_routers(app: FastAPI, settings: AurumSettings, logger: logging.Logger) -> bool:
@@ -534,10 +533,10 @@ def _create_simplified_app(settings: AurumSettings, logger: logging.Logger) -> F
         default_response_class=JSONResponse,
         timeout=settings.api.request_timeout_seconds,
         responses=GLOBAL_ERROR_RESPONSES,
+        lifespan=setup_lifespan(settings),
     )
     app.state.settings = settings
     app.add_exception_handler(Exception, _api_exception_handler)
-    _register_trino_lifecycle(app)
     configure_routes(settings)
     # Configure shared API state for modules that rely on it
     try:
@@ -569,12 +568,8 @@ def _create_simplified_app(settings: AurumSettings, logger: logging.Logger) -> F
     except Exception as e:
         logger.warning(f"Failed to load health router: {e}")
 
-    # Scenarios router
-    try:
-        from .scenarios import scenarios_router
-        app.include_router(scenarios_router)
-    except Exception as e:
-        logger.warning(f"Failed to load scenarios router: {e}")
+    # Scenarios router - now handled by router registry
+    # Legacy scenarios router removed in favor of v1/v2 registry-driven mounting
 
     try:
         from .runtime_config import router as runtime_config_router
@@ -644,10 +639,10 @@ def _create_legacy_app(settings: AurumSettings, logger: logging.Logger) -> FastA
         default_response_class=JSONResponse,
         timeout=settings.api.request_timeout_seconds,
         responses=GLOBAL_ERROR_RESPONSES,
+        lifespan=setup_lifespan(settings),
     )
     app.state.settings = settings
     app.add_exception_handler(Exception, _api_exception_handler)
-    _register_trino_lifecycle(app)
     configure_routes(settings)
     # Configure shared API state for modules that rely on it
     try:
@@ -689,12 +684,8 @@ def _create_legacy_app(settings: AurumSettings, logger: logging.Logger) -> FastA
     except Exception as e:
         logger.warning(f"Failed to load health router: {e}")
 
-    # Scenarios router
-    try:
-        from .scenarios import scenarios_router
-        app.include_router(scenarios_router)
-    except Exception as e:
-        logger.warning(f"Failed to load scenarios router: {e}")
+    # Scenarios router - now handled by router registry
+    # Legacy scenarios router removed in favor of v1/v2 registry-driven mounting
 
     try:
         from .runtime_config import router as runtime_config_router

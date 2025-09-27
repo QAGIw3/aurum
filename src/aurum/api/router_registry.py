@@ -112,8 +112,8 @@ def get_v1_router_specs(_settings: AurumSettings) -> list[RouterSpec]:
     specs.extend(_build_specs((curves_module,), seen=seen))
 
     mandatory_modules = (
-        "aurum.api.scenarios.scenarios",
-        "aurum.api.metadata",
+        "aurum.api.v1.scenarios",
+        "aurum.api.v1.metadata",
         "aurum.api.v1.ppa",
     )
 

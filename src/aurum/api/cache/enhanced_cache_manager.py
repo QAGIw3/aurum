@@ -24,6 +24,7 @@ class CacheNamespace(str, Enum):
     METADATA = "metadata"
     SCENARIOS = "scenarios"
     EIA_DATA = "eia"
+    ISO_DATA = "iso"
     EXTERNAL_DATA = "external"
     USER_DATA = "users"
     SYSTEM_CONFIG = "config"

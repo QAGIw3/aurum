@@ -336,3 +336,4 @@ class ScenariosDAO(TrinoDAO[ScenarioResponse, str]):
             error_message=row.get("error_message"),
             progress=row.get("progress", 0.0)
         )
+

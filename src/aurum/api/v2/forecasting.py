@@ -26,7 +26,8 @@ from enum import Enum
 from ..deps import get_settings, get_cache_manager
 from ..telemetry.context import get_request_id, get_tenant_id
 from aurum.core import AurumSettings
-from ..cache.cache import CacheManager
+from ..cache.consolidated_manager import get_unified_cache_manager
+from ..cache.enhanced_cache_manager import CacheNamespace
 from ..services.feature_store_service import get_feature_store_service
 from ...observability.telemetry_facade import get_telemetry_facade, MetricCategory
 
@@ -208,7 +209,7 @@ async def generate_forecast(
     request: ForecastRequest,
     response: Response,
     settings: AurumSettings = Depends(get_settings),
-    cache_manager: CacheManager = Depends(get_cache_manager)
+    cache_manager = Depends(get_unified_cache_manager)
 ) -> ForecastResponse:
     """Generate a probabilistic forecast with quantiles.
 
@@ -342,7 +343,7 @@ async def get_forecast(
     forecast_id: str,
     response: Response,
     settings: AurumSettings = Depends(get_settings),
-    cache_manager: CacheManager = Depends(get_cache_manager)
+    cache_manager = Depends(get_unified_cache_manager)
 ) -> ForecastResponse:
     """Retrieve a previously generated forecast by ID.
 

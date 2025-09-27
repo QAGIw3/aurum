@@ -316,10 +316,10 @@ class MetadataDao:
         prefixes: Optional[Sequence[str]] = None
     ) -> Dict[str, int]:
         """Invalidate metadata caches."""
-        from ..cache.cache import CacheManager
+        from ..cache.consolidated_manager import get_unified_cache_manager
         from ..container import get_service
         
-        cache_manager = get_service(CacheManager)
+        cache_manager = get_unified_cache_manager()
         
         if prefixes is None:
             prefixes = ["metadata:", "dimensions:", "units:", "calendars:"]

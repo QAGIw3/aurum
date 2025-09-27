@@ -25,7 +25,8 @@ from pydantic import BaseModel, Field
 from ..deps import get_settings, get_cache_manager
 from ..services import CurvesService
 from aurum.core import AurumSettings
-from ..cache.cache import CacheManager
+from ..cache.consolidated_manager import get_unified_cache_manager
+from ..cache.enhanced_cache_manager import CacheNamespace
 from ..http import respond_with_etag, deprecation_warning_headers, csv_response
 from .pagination import (
     resolve_pagination,
@@ -63,7 +64,7 @@ async def get_curves_v2(
     limit: int = Query(10, ge=1, le=100, description="Maximum number of items to return"),
     name_filter: Optional[str] = Query(None, description="Filter by curve name"),
     settings: AurumSettings = Depends(get_settings),
-    cache_manager: Optional[CacheManager] = Depends(get_cache_manager),
+    cache_manager = Depends(get_unified_cache_manager),
 ) -> CurveListResponse:
     """List curves with enhanced pagination and error handling."""
     start_time = time.perf_counter()

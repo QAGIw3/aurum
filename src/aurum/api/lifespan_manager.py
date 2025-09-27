@@ -848,3 +848,4 @@ def inject_test_dependencies(
 
     lifespan_manager = LifespanManager(settings)
     return TestDependencyInjector(lifespan_manager)
+

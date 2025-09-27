@@ -34,7 +34,8 @@ from ...scenarios.series_curve_mapping import get_database_mapper
 from ..deps import get_settings, get_cache_manager
 from ..services import MetadataService
 from aurum.core import AurumSettings
-from ..cache.cache import CacheManager
+from ..cache.consolidated_manager import get_unified_cache_manager
+from ..cache.enhanced_cache_manager import CacheNamespace
 
 router = APIRouter(prefix="/v2", tags=["metadata"])
 
@@ -153,7 +154,7 @@ async def list_dimensions_v2(
     limit: int = Query(10, ge=1, le=100, description="Maximum number of items to return"),
     asof: Optional[str] = Query(None, description="As-of date filter"),
     settings: AurumSettings = Depends(get_settings),
-    cache_manager: Optional[CacheManager] = Depends(get_cache_manager),
+    cache_manager = Depends(get_unified_cache_manager),
 ) -> DimensionsResponse:
     """List dimensions with enhanced pagination and error handling."""
     start_time = time.perf_counter()
@@ -245,7 +246,7 @@ async def list_locations_v2(
     cursor: Optional[str] = Query(None, description="Cursor for pagination"),
     limit: int = Query(10, ge=1, le=100, description="Maximum number of items to return"),
     settings: AurumSettings = Depends(get_settings),
-    cache_manager: Optional[CacheManager] = Depends(get_cache_manager),
+    cache_manager = Depends(get_unified_cache_manager),
 ) -> IsoLocationsResponse:
     """List ISO locations with enhanced pagination and error handling."""
     start_time = time.perf_counter()
@@ -342,7 +343,7 @@ async def list_units_v2(
     cursor: Optional[str] = Query(None, description="Cursor for pagination"),
     limit: int = Query(10, ge=1, le=100, description="Maximum number of items to return"),
     settings: AurumSettings = Depends(get_settings),
-    cache_manager: Optional[CacheManager] = Depends(get_cache_manager),
+    cache_manager = Depends(get_unified_cache_manager),
 ) -> UnitsCanonicalResponse:
     """List canonical units with enhanced pagination and error handling."""
     start_time = time.perf_counter()

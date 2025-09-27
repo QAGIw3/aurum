@@ -994,3 +994,4 @@ def log_error(
         category=MetricCategory.RELIABILITY,
         error_type=type(error).__name__ if error else "unknown"
     )
+

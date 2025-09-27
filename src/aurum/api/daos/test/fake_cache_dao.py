@@ -135,3 +135,4 @@ class FakeCacheDAO(CacheDAO):
     def set_access_delay(self, delay_seconds: float) -> None:
         """Set delay for cache access operations."""
         self._access_delay = delay_seconds
+

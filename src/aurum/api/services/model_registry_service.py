@@ -926,3 +926,4 @@ def get_current_champion_model(model_name: str) -> Optional[ModelVersion]:
     """
     service = get_model_registry_service()
     return service.get_latest_model_version(model_name)
+

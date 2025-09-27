@@ -284,10 +284,10 @@ class EiaDao:
     
     async def invalidate_eia_series_cache(self) -> Dict[str, int]:
         """Invalidate EIA series cache."""
-        from ..cache.cache import CacheManager
+        from ..cache.consolidated_manager import get_unified_cache_manager
         from ..container import get_service
         
-        cache_manager = get_service(CacheManager)
+        cache_manager = get_unified_cache_manager()
         
         # Pattern to match EIA series cache keys
         pattern = "eia_series:*"

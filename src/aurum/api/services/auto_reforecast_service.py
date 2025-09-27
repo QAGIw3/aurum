@@ -982,3 +982,4 @@ def create_price_trigger(
         forecast_config=forecast_config,
         priority=0.9
     )
+

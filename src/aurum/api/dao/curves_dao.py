@@ -339,10 +339,10 @@ class CurvesDao:
         location: Optional[str] = None,
     ) -> Dict[str, int]:
         """Invalidate curve cache."""
-        from ..cache.cache import CacheManager
+        from ..cache.consolidated_manager import get_unified_cache_manager
         from ..container import get_service
         
-        cache_manager = get_service(CacheManager)
+        cache_manager = get_unified_cache_manager()
         
         # Build cache key pattern based on parameters
         key_pattern = "curves:"

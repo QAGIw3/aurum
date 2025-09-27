@@ -737,3 +737,4 @@ def create_rate_limiting_middleware(
     """Create rate limiting middleware (backward compatibility)."""
     rate_limiter = get_unified_rate_limiter(redis_url, rules)
     return rate_limiter.create_middleware(app)
+

@@ -354,3 +354,4 @@ class FakeCurvesDAO(CurvesDAO):
             ))
 
         return strip_points
+

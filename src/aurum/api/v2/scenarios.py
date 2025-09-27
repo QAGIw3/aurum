@@ -25,7 +25,8 @@ from ..container import get_service
 from ..async_service import AsyncScenarioService
 from ..deps import get_settings, get_cache_manager
 from aurum.core import AurumSettings
-from ..cache.cache import CacheManager
+from ..cache.consolidated_manager import get_unified_cache_manager
+from ..cache.enhanced_cache_manager import CacheNamespace
 from ..scenario_models import (
     ScenarioCreateRequest,
     ScenarioData,
@@ -75,7 +76,7 @@ async def list_scenarios_v2(
     limit: int = Query(10, ge=1, le=100, description="Maximum number of items to return"),
     name_filter: Optional[str] = Query(None, description="Filter by scenario name"),
     settings: AurumSettings = Depends(get_settings),
-    cache_manager: Optional[CacheManager] = Depends(get_cache_manager),
+    cache_manager = Depends(get_unified_cache_manager),
 ) -> ScenarioListResponse:
     """List scenarios with enhanced pagination and error handling."""
     start_time = time.perf_counter()
@@ -168,7 +169,7 @@ async def create_scenario_v2(
     scenario: ScenarioCreateRequest,
     tenant_id: str = Query(..., description="Tenant ID"),
     settings: AurumSettings = Depends(get_settings),
-    cache_manager: Optional[CacheManager] = Depends(get_cache_manager),
+    cache_manager = Depends(get_unified_cache_manager),
 ) -> ScenarioResponse:
     """Create a scenario with enhanced validation and error handling."""
     start_time = time.perf_counter()
@@ -225,7 +226,7 @@ async def get_scenario_v2(
     scenario_id: str,
     tenant_id: str = Query(..., description="Tenant ID"),
     settings: AurumSettings = Depends(get_settings),
-    cache_manager: Optional[CacheManager] = Depends(get_cache_manager),
+    cache_manager = Depends(get_unified_cache_manager),
 ) -> ScenarioResponse:
     """Get a scenario with enhanced error handling."""
     start_time = time.perf_counter()
@@ -282,7 +283,7 @@ async def create_scenario_run_v2(
     run: ScenarioRunCreateRequest,
     tenant_id: str = Query(..., description="Tenant ID"),
     settings: AurumSettings = Depends(get_settings),
-    cache_manager: Optional[CacheManager] = Depends(get_cache_manager),
+    cache_manager = Depends(get_unified_cache_manager),
 ) -> ScenarioRunResponse:
     """Create a scenario run with enhanced validation and idempotency."""
     start_time = time.perf_counter()
@@ -342,7 +343,7 @@ async def list_scenario_runs_v2(
     limit: int = Query(10, ge=1, le=100, description="Maximum number of items to return"),
     status_filter: Optional[ScenarioRunStatus] = Query(None, description="Filter by run status"),
     settings: AurumSettings = Depends(get_settings),
-    cache_manager: Optional[CacheManager] = Depends(get_cache_manager),
+    cache_manager = Depends(get_unified_cache_manager),
 ) -> ScenarioRunListResponse:
     """List scenario runs with enhanced pagination and filtering."""
     start_time = time.perf_counter()

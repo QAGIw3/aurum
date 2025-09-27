@@ -130,3 +130,4 @@ The cache system automatically collects metrics:
 - Invalidation counts
 
 Metrics are available through the standard Aurum metrics interface.
+

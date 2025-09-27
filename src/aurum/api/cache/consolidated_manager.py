@@ -704,3 +704,4 @@ async def invalidate_cache_pattern(pattern: str, namespace: CacheNamespace = Cac
     """Backward compatibility function."""
     manager = get_unified_cache_manager()
     return await manager.invalidate_pattern(pattern, namespace)
+
