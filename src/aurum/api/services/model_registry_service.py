@@ -102,21 +102,53 @@ if current_champion:
 from __future__ import annotations
 
 import asyncio
-import json
 import logging
-from dataclasses import dataclass, field
 from datetime import datetime, timedelta
-from typing import Any, Dict, List, Optional, Set, Tuple, Union
+from typing import Any, Dict, List, Optional, Tuple
 from uuid import uuid4
-from pathlib import Path
 
-from pydantic import BaseModel, Field, validator
+from pydantic import BaseModel, Field
 
 from ..telemetry.context import get_request_id, get_tenant_id, log_structured
 from ..observability.telemetry_facade import get_telemetry_facade, MetricCategory
 from ..cache.consolidated_manager import get_unified_cache_manager
 from .feature_store_service import get_feature_store_service
 from ..daos.base_dao import TrinoDAO
+
+
+class _NoOpTelemetry:
+    """Fallback telemetry implementation for offline contexts."""
+
+    def info(self, *_: Any, **__: Any) -> None:  # noqa: D401 - simple no-op
+        pass
+
+    def warning(self, *_: Any, **__: Any) -> None:
+        pass
+
+    def error(self, *_: Any, **__: Any) -> None:
+        pass
+
+    def increment_counter(self, *_: Any, **__: Any) -> None:
+        pass
+
+    def record_histogram(self, *_: Any, **__: Any) -> None:
+        pass
+
+    def record_success(self, *_: Any, **__: Any) -> None:
+        pass
+
+    def record_error(self, *_: Any, **__: Any) -> None:
+        pass
+
+    def create_response_metadata(self, **kwargs: Any) -> Dict[str, Any]:
+        """Return minimal metadata structure expected by API layer."""
+
+        return {
+            "operation": kwargs.get("operation"),
+            "query_time_ms": kwargs.get("query_time_ms", 0),
+            "record_count": kwargs.get("record_count", 0),
+            "pagination": kwargs.get("pagination"),
+        }
 
 
 class ModelConfig(BaseModel):
@@ -146,13 +178,15 @@ class ModelVersion(BaseModel):
     training_end_date: datetime
     model_path: str
     model_size_bytes: int
-    performance_metrics: Dict[str, float]
-    feature_importance: Dict[str, float]
-    validation_results: Dict[str, Any]
+    performance_metrics: Dict[str, float] = Field(default_factory=dict)
+    feature_importance: Dict[str, float] = Field(default_factory=dict)
+    validation_results: Dict[str, Any] = Field(default_factory=dict)
     status: str = "active"  # "active", "deprecated", "archived"
-    created_at: datetime = field(default_factory=datetime.utcnow)
+    created_at: datetime = Field(default_factory=datetime.utcnow)
     created_by: str
-    tags: Dict[str, str] = field(default_factory=dict)
+    tags: Dict[str, str] = Field(default_factory=dict)
+    metadata: Dict[str, Any] = Field(default_factory=dict)
+    champion_score: Optional[float] = None
 
 
 class TrainingJob(BaseModel):
@@ -168,21 +202,24 @@ class TrainingJob(BaseModel):
     completed_at: Optional[datetime] = None
     error_message: Optional[str] = None
     model_version_id: Optional[str] = None
-    created_at: datetime = field(default_factory=datetime.utcnow)
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+    updated_at: datetime = Field(default_factory=datetime.utcnow)
     scheduled_for: Optional[datetime] = None
+    metadata: Dict[str, Any] = Field(default_factory=dict)
 
 
 class ModelComparison(BaseModel):
     """Comparison between two model versions."""
 
     comparison_id: str
+    model_name: str
     champion_version: str
     challenger_version: str
     comparison_metrics: Dict[str, float]
     statistical_significance: Dict[str, float]
     business_impact: Dict[str, float]
     recommendation: str  # "promote_challenger", "keep_champion", "needs_more_data"
-    comparison_date: datetime = field(default_factory=datetime.utcnow)
+    comparison_date: datetime = Field(default_factory=datetime.utcnow)
     notes: str = ""
 
 
@@ -196,8 +233,46 @@ class RetrainSchedule(BaseModel):
     last_run: Optional[datetime] = None
     next_run: Optional[datetime] = None
     max_training_time_hours: int = 24
-    notification_channels: List[str] = field(default_factory=list)
+    notification_channels: List[str] = Field(default_factory=list)
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+    updated_at: datetime = Field(default_factory=datetime.utcnow)
 
+
+class RegisteredModel(BaseModel):
+    """Metadata for a registered ML model."""
+
+    model_name: str
+    model_type: str
+    description: str = ""
+    status: str = "active"
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+    updated_at: datetime = Field(default_factory=datetime.utcnow)
+    latest_version: Optional[str] = None
+    champion_version_id: Optional[str] = None
+    tags: Dict[str, str] = Field(default_factory=dict)
+    owners: List[str] = Field(default_factory=list)
+    metadata: Dict[str, Any] = Field(default_factory=dict)
+    versions: Dict[str, ModelVersion] = Field(default_factory=dict)
+
+    def add_version(self, version: ModelVersion) -> None:
+        """Add or replace a model version and update metadata."""
+        self.versions[version.version_number] = version
+        self.latest_version = version.version_number
+        self.updated_at = datetime.utcnow()
+
+        # Use the first registered version as the default champion
+        if not self.champion_version_id:
+            self.champion_version_id = version.version_id
+
+    @property
+    def name(self) -> str:
+        """Alias for compatibility with API layer expectations."""
+        return self.model_name
+
+    @property
+    def total_versions(self) -> int:
+        """Return the number of tracked versions."""
+        return len(self.versions)
 
 class ModelRegistryDAO(TrinoDAO):
     """DAO for model registry operations using Trino."""
@@ -208,6 +283,33 @@ class ModelRegistryDAO(TrinoDAO):
         self.models_table = "ml.models"
         self.versions_table = "ml.model_versions"
         self.training_jobs_table = "ml.training_jobs"
+
+    async def create(self, entity: Any) -> Any:  # type: ignore[override]
+        """Placeholder create implementation for abstract base compliance."""
+        return entity
+
+    async def get_by_id(self, id: Any) -> Optional[Any]:  # type: ignore[override]
+        """Placeholder get implementation for abstract base compliance."""
+        return None
+
+    async def update(self, id: Any, entity: Any) -> Optional[Any]:  # type: ignore[override]
+        """Placeholder update implementation for abstract base compliance."""
+        return entity
+
+    async def delete(self, id: Any) -> bool:  # type: ignore[override]
+        """Placeholder delete implementation for abstract base compliance."""
+        return True
+
+    async def list(  # type: ignore[override]
+        self,
+        limit: int = 100,
+        offset: int = 0,
+        filters: Optional[Dict[str, Any]] = None,
+        order_by: Optional[str] = None,
+        order_desc: bool = False
+    ) -> List[Any]:
+        """Placeholder list implementation for abstract base compliance."""
+        return []
 
     async def _connect(self) -> None:
         """Connect to Trino for model registry."""
@@ -285,7 +387,8 @@ class ModelRegistryService:
         self.dao = dao or ModelRegistryDAO()
 
         # Model storage
-        self.models: Dict[str, Dict[str, ModelVersion]] = {}  # model_name -> version -> ModelVersion
+        self.models: Dict[str, RegisteredModel] = {}
+        self.version_index: Dict[str, ModelVersion] = {}
         self.training_jobs: Dict[str, TrainingJob] = {}
         self.schedules: Dict[str, RetrainSchedule] = {}
         self.comparisons: Dict[str, ModelComparison] = {}
@@ -300,10 +403,13 @@ class ModelRegistryService:
         self._initialize_mlflow()
 
         self.logger = logging.getLogger(__name__)
-        self.telemetry = get_telemetry_facade()
+        telemetry = get_telemetry_facade()
+        self.telemetry = telemetry if telemetry is not None else _NoOpTelemetry()
 
-        self.logger.info("Model registry service initialized",
-                        mlflow_enabled=self.mlflow_client is not None)
+        self.logger.info(
+            "Model registry service initialized (mlflow_enabled=%s)",
+            self.mlflow_client is not None,
+        )
 
     def _initialize_mlflow(self) -> None:
         """Initialize MLflow client."""
@@ -315,6 +421,78 @@ class ModelRegistryService:
                 self.logger.info("MLflow client initialized")
         except Exception as e:
             self.logger.warning("MLflow initialization failed", error=str(e))
+
+    def _get_model_record(self, model_name: str) -> Optional[RegisteredModel]:
+        """Return registered model metadata if available."""
+        return self.models.get(model_name)
+
+    def _ensure_model_record(
+        self,
+        model_name: str,
+        model_type: str,
+        description: Optional[str] = None,
+        tags: Optional[Dict[str, str]] = None,
+        owners: Optional[List[str]] = None,
+        metadata: Optional[Dict[str, Any]] = None,
+    ) -> RegisteredModel:
+        """Create or update the metadata container for a registered model."""
+        model = self.models.get(model_name)
+        if model is None:
+            model = RegisteredModel(
+                model_name=model_name,
+                model_type=model_type,
+                description=description or "",
+                tags=tags or {},
+                owners=owners or [],
+                metadata=metadata or {},
+            )
+            self.models[model_name] = model
+            return model
+
+        # Update existing metadata with any provided details
+        if model_type and model.model_type != model_type:
+            model.model_type = model_type
+        if description:
+            model.description = description
+        if tags:
+            model.tags.update(tags)
+        if owners:
+            existing = set(model.owners)
+            for owner in owners:
+                if owner not in existing:
+                    model.owners.append(owner)
+                    existing.add(owner)
+        if metadata:
+            model.metadata.update(metadata)
+
+        model.updated_at = datetime.utcnow()
+        return model
+
+    def _generate_version_number(self, model_name: str) -> str:
+        """Generate a semantic version identifier for a new model version."""
+        model = self.models.get(model_name)
+        if model is None or not model.versions:
+            return "v1.0"
+
+        existing_numbers = list(model.versions.keys())
+        numeric_suffixes: List[Tuple[int, int]] = []
+        for number in existing_numbers:
+            stripped = number.lstrip("vV")
+            major_minor = stripped.split(".")
+            try:
+                major = int(major_minor[0]) if major_minor[0] else 0
+                minor = int(major_minor[1]) if len(major_minor) > 1 else 0
+                numeric_suffixes.append((major, minor))
+            except ValueError:
+                continue
+
+        if not numeric_suffixes:
+            return f"v{len(existing_numbers) + 1}.0"
+
+        major, minor = max(numeric_suffixes)
+        # Increment the minor version by default
+        minor += 1
+        return f"v{major}.{minor}"
 
     async def start(self) -> None:
         """Start the model registry service."""
@@ -349,6 +527,55 @@ class ModelRegistryService:
             await asyncio.gather(*tasks, return_exceptions=True)
 
         self.telemetry.info("Model registry service stopped")
+
+    async def register_model(
+        self,
+        model_name: str,
+        model_type: str,
+        description: str = "",
+        tags: Optional[Dict[str, str]] = None,
+        owners: Optional[List[str]] = None,
+        metadata: Optional[Dict[str, Any]] = None,
+    ) -> RegisteredModel:
+        """Ensure a model is tracked in the registry and return its metadata."""
+
+        model = self._ensure_model_record(
+            model_name=model_name,
+            model_type=model_type,
+            description=description,
+            tags=tags,
+            owners=owners,
+            metadata=metadata,
+        )
+
+        self.telemetry.info(
+            "model_registry.model_registered",
+            model_name=model_name,
+            model_type=model_type,
+            version_count=len(model.versions),
+        )
+
+        return model
+
+    async def list_models(
+        self,
+        status: Optional[str] = None,
+        limit: int = 50,
+        offset: int = 0
+    ) -> List[RegisteredModel]:
+        """Return registered models ordered by most recent update."""
+
+        models = list(self.models.values())
+
+        if status:
+            models = [model for model in models if model.status == status]
+
+        models = sorted(models, key=lambda m: m.updated_at, reverse=True)
+
+        if offset:
+            models = models[offset:]
+
+        return models[:limit]
 
     async def _scheduler_loop(self) -> None:
         """Background task for scheduled model retraining."""
@@ -437,8 +664,10 @@ class ModelRegistryService:
     async def _execute_training_job(self, job: TrainingJob) -> None:
         """Execute a model training job."""
         try:
+            now = datetime.utcnow()
             job.status = "running"
-            job.started_at = datetime.utcnow()
+            job.started_at = now
+            job.updated_at = now
 
             self.telemetry.info(
                 "Executing training job",
@@ -449,6 +678,14 @@ class ModelRegistryService:
             # Update progress stages
             job.current_stage = "feature_engineering"
             job.progress = 0.1
+            job.updated_at = datetime.utcnow()
+
+            # Ensure a model record exists prior to training execution
+            await self.register_model(
+                model_name=job.model_name,
+                model_type=job.config.model_type,
+                description=f"Auto-generated model for {job.model_name}",
+            )
 
             # Get features for training
             feature_service = get_feature_store_service()
@@ -469,31 +706,35 @@ class ModelRegistryService:
 
             job.current_stage = "model_training"
             job.progress = 0.4
+            job.updated_at = datetime.utcnow()
 
             # Train model (simplified implementation)
-            model_version = await self._train_model(job.config, X_train, y_train)
+            model_version = await self._train_model(job.model_name, job.config, X_train, y_train)
 
             job.current_stage = "validation"
             job.progress = 0.7
+            job.updated_at = datetime.utcnow()
 
             # Validate model
             validation_metrics = await self._validate_model(model_version, X_train, y_train)
 
             job.current_stage = "registration"
             job.progress = 0.9
+            job.updated_at = datetime.utcnow()
 
-            # Register model
-            await self.register_model_version(model_version)
+            # Register model version and capture persisted metadata
+            registered_version = await self.register_model_version(model_version)
 
             job.status = "completed"
             job.completed_at = datetime.utcnow()
-            job.model_version_id = model_version.version_id
+            job.model_version_id = registered_version.version_id
             job.progress = 1.0
+            job.updated_at = datetime.utcnow()
 
             self.telemetry.info(
                 "Training job completed successfully",
                 job_id=job.job_id,
-                model_version=model_version.version_id,
+                model_version=registered_version.version_id,
                 metrics=validation_metrics
             )
 
@@ -509,6 +750,7 @@ class ModelRegistryService:
             job.status = "failed"
             job.error_message = str(e)
             job.completed_at = datetime.utcnow()
+            job.updated_at = datetime.utcnow()
 
             self.telemetry.error(
                 "Training job failed",
@@ -518,16 +760,19 @@ class ModelRegistryService:
 
             self.telemetry.increment_counter("model_training_jobs_failed", category=MetricCategory.RELIABILITY)
 
-    async def _train_model(self, config: ModelConfig, X: Dict[str, List[float]], y: List[float]) -> ModelVersion:
+    async def _train_model(
+        self,
+        model_name: str,
+        config: ModelConfig,
+        X: Dict[str, List[float]],
+        y: List[float]
+    ) -> ModelVersion:
         """Train ML model with given configuration."""
         # Simplified model training - in reality would use actual ML libraries
-        import numpy as np
-
-        # Create mock model
         model_version = ModelVersion(
             version_id=str(uuid4()),
-            model_name=f"{config.model_type}_{datetime.utcnow().strftime('%Y%m%d_%H%M%S')}",
-            version_number=f"v{len(self.models.get('default', {})) + 1}",
+            model_name=model_name,
+            version_number=self._generate_version_number(model_name),
             description=f"Trained {config.model_type} model",
             config=config,
             training_start_date=datetime.utcnow() - timedelta(days=config.training_period_days),
@@ -553,11 +798,6 @@ class ModelRegistryService:
             status="active",
             created_by="model_registry_service"
         )
-
-        # Store model
-        if "default" not in self.models:
-            self.models["default"] = {}
-        self.models["default"][model_version.version_number] = model_version
 
         return model_version
 
@@ -641,9 +881,14 @@ class ModelRegistryService:
             
             job.progress = min(max(progress, 0.0), 1.0)  # Clamp between 0 and 1
             job.current_stage = stage
+            job.updated_at = datetime.utcnow()
             
             if metrics:
-                # Store intermediate metrics as notes or in a separate field
+                job.metadata.setdefault("intermediate_metrics", []).append({
+                    "timestamp": datetime.utcnow().isoformat(),
+                    "stage": stage,
+                    "metrics": metrics,
+                })
                 self.telemetry.info(
                     "Training job progress updated",
                     job_id=job_id,
@@ -681,6 +926,7 @@ class ModelRegistryService:
                 return False
             
             job.completed_at = datetime.utcnow()
+            job.updated_at = job.completed_at
             
             if error_message:
                 job.status = "failed"
@@ -692,16 +938,15 @@ class ModelRegistryService:
                 )
             elif model_version:
                 job.status = "completed"
-                job.model_version_id = model_version.version_id
+                registered_version = await self.register_model_version(model_version)
+                job.model_version_id = registered_version.version_id
                 job.progress = 1.0
                 
                 # Register the resulting model version
-                await self.register_model_version(model_version)
-                
                 self.telemetry.info(
                     "Training job completed successfully",
                     job_id=job_id,
-                    model_version_id=model_version.version_id
+                    model_version_id=registered_version.version_id
                 )
             else:
                 job.status = "completed"
@@ -733,6 +978,7 @@ class ModelRegistryService:
             
             job.status = "cancelled"
             job.completed_at = datetime.utcnow()
+            job.updated_at = job.completed_at
             
             await self.dao.save_training_job(job)
             
@@ -747,7 +993,8 @@ class ModelRegistryService:
         self,
         model_name: Optional[str] = None,
         status: Optional[str] = None,
-        limit: int = 50
+        limit: int = 50,
+        offset: int = 0
     ) -> List[TrainingJob]:
         """List training jobs with optional filtering.
 
@@ -755,6 +1002,7 @@ class ModelRegistryService:
             model_name: Optional model name filter
             status: Optional status filter
             limit: Maximum number of jobs to return
+            offset: Number of jobs to skip before returning results
 
         Returns:
             List of training jobs
@@ -769,48 +1017,62 @@ class ModelRegistryService:
             jobs = [job for job in jobs if job.status == status]
         
         # Sort by creation date (newest first) and limit
-        jobs = sorted(jobs, key=lambda j: j.created_at, reverse=True)[:limit]
-        
-        return jobs
+        jobs = sorted(jobs, key=lambda j: j.created_at, reverse=True)
 
-    async def register_model_version(self, version: ModelVersion) -> bool:
-        """Register a model version in the registry.
+        if offset:
+            jobs = jobs[offset:]
 
-        Args:
-            version: Model version to register
+        return jobs[:limit]
 
-        Returns:
-            True if registered successfully
-        """
+    async def get_training_job(self, job_id: str) -> Optional[TrainingJob]:
+        """Retrieve a specific training job by ID."""
+
+        return self.training_jobs.get(job_id)
+
+    async def register_model_version(self, version: ModelVersion) -> ModelVersion:
+        """Register a model version in the registry and persist metadata."""
+
         try:
-            # Save to MLflow if available
+            # Ensure model metadata exists and is up to date
+            model = self._ensure_model_record(
+                model_name=version.model_name,
+                model_type=version.config.model_type,
+                description=version.description,
+                tags=version.tags,
+            )
+
+            # Persist to MLflow if configured
             if self.mlflow_client:
                 with self.mlflow_client.start_run():
                     self.mlflow_client.log_params(version.config.hyperparameters)
                     self.mlflow_client.log_metrics(version.performance_metrics)
                     self.mlflow_client.log_artifact(version.model_path)
 
-            # Save to local registry with proper metadata storage
-            if version.model_name not in self.models:
-                self.models[version.model_name] = {}
-            
-            self.models[version.model_name][version.version_number] = version
-            
-            # Save to persistent storage
+            # Store locally and update indices
+            model.add_version(version)
+            self.version_index[version.version_id] = version
+
+            if version.status == "champion":
+                model.champion_version_id = version.version_id
+            elif version.status == "active" and model.champion_version_id is None:
+                model.champion_version_id = version.version_id
+
+            # Persist via DAO (no-op in mock implementation but kept for completeness)
             await self.dao.save_model_version(version)
 
             self.telemetry.info(
                 "Model version registered",
                 model_name=version.model_name,
                 version=version.version_number,
-                metrics=version.performance_metrics
+                metrics=version.performance_metrics,
+                total_versions=len(model.versions)
             )
 
-            return True
+            return version
 
-        except Exception as e:
-            self.telemetry.error("Failed to register model version", error=str(e))
-            return False
+        except Exception as exc:
+            self.telemetry.error("Failed to register model version", error=str(exc))
+            raise
 
     def get_model_version(self, model_name: str, version: str) -> Optional[ModelVersion]:
         """Get a specific model version.
@@ -822,27 +1084,35 @@ class ModelRegistryService:
         Returns:
             Model version or None if not found
         """
-        model_versions = self.models.get(model_name, {})
-        return model_versions.get(version)
+        model = self._get_model_record(model_name)
+        if not model:
+            return None
+        return model.versions.get(version)
 
-    def list_model_versions(self, model_name: str, status: Optional[str] = None) -> List[ModelVersion]:
-        """List model versions.
+    async def list_model_versions(
+        self,
+        model_name: str,
+        status: Optional[str] = None,
+        limit: int = 100,
+        offset: int = 0
+    ) -> List[ModelVersion]:
+        """List model versions with optional filtering and pagination."""
 
-        Args:
-            model_name: Model name
-            status: Optional status filter
+        model = self._get_model_record(model_name)
+        if not model:
+            return []
 
-        Returns:
-            List of model versions
-        """
-        model_versions = self.models.get(model_name, {})
-
-        versions = list(model_versions.values())
+        versions = list(model.versions.values())
 
         if status:
             versions = [v for v in versions if v.status == status]
 
-        return sorted(versions, key=lambda v: v.created_at, reverse=True)
+        versions = sorted(versions, key=lambda v: v.created_at, reverse=True)
+
+        if offset:
+            versions = versions[offset:]
+
+        return versions[:limit]
 
     def get_latest_model_version(self, model_name: str) -> Optional[ModelVersion]:
         """Get the latest active model version.
@@ -853,18 +1123,40 @@ class ModelRegistryService:
         Returns:
             Latest model version or None if not found
         """
-        active_versions = [
-            v for v in self.models.get(model_name, {}).values()
-            if v.status == "active"
-        ]
-
-        if not active_versions:
+        model = self._get_model_record(model_name)
+        if not model or not model.versions:
             return None
 
-        return max(active_versions, key=lambda v: v.created_at)
+        active_versions = [v for v in model.versions.values() if v.status in {"active", "champion"}]
+        candidates = active_versions or list(model.versions.values())
+
+        return max(candidates, key=lambda v: v.created_at)
+
+    def get_current_champion_model(self, model_name: str) -> Optional[ModelVersion]:
+        """Return the current champion model version for the given model."""
+
+        model = self._get_model_record(model_name)
+        if not model:
+            return None
+
+        if model.champion_version_id:
+            champion = self.version_index.get(model.champion_version_id)
+            if champion and champion.model_name == model_name:
+                return champion
+            # Fall back to scanning model versions
+            for version in model.versions.values():
+                if version.version_id == model.champion_version_id:
+                    return version
+
+        champion_versions = [v for v in model.versions.values() if v.status == "champion"]
+        if champion_versions:
+            return max(champion_versions, key=lambda v: v.created_at)
+
+        return self.get_latest_model_version(model_name)
 
     async def compare_models(
         self,
+        model_name: str,
         champion_version: str,
         challenger_version: str,
         test_data: Optional[Tuple[Dict[str, List[float]], List[float]]] = None
@@ -872,6 +1164,7 @@ class ModelRegistryService:
         """Compare two model versions for champion/challenger testing.
 
         Args:
+            model_name: Model identifier the versions belong to
             champion_version: Champion model version ID
             challenger_version: Challenger model version ID
             test_data: Optional test data for comparison
@@ -883,19 +1176,14 @@ class ModelRegistryService:
 
         try:
             # Get model versions
-            champion = None
-            challenger = None
-
-            # Search across all models
-            for model_versions in self.models.values():
-                for version in model_versions.values():
-                    if version.version_id == champion_version:
-                        champion = version
-                    elif version.version_id == challenger_version:
-                        challenger = version
+            champion = self.version_index.get(champion_version)
+            challenger = self.version_index.get(challenger_version)
 
             if not champion or not challenger:
                 raise ValueError("Model versions not found")
+
+            if champion.model_name != model_name or challenger.model_name != model_name:
+                raise ValueError("Model versions do not belong to the specified model")
 
             # Perform comprehensive comparison
             comparison_metrics = {
@@ -926,8 +1214,8 @@ class ModelRegistryService:
             business_impact = {
                 "cost_reduction": max(0, 1 - comparison_metrics["model_size_ratio"]) * 0.1,  # Assume 10% cost per size
                 "accuracy_improvement": comparison_metrics["accuracy_improvement"],
-                "expected_revenue_lift": comparison_metrics["accuracy_improvement"] * 1000000,  # $1M per 1% accuracy
-                "deployment_complexity": "low" if comparison_metrics["model_size_ratio"] < 1.2 else "medium"
+                "expected_revenue_lift": comparison_metrics["accuracy_improvement"] * 1_000_000,  # $1M per 1% accuracy
+                "deployment_complexity": 0.3 if comparison_metrics["model_size_ratio"] < 1.2 else 0.6,
             }
 
             # Enhanced recommendation logic
@@ -970,6 +1258,7 @@ class ModelRegistryService:
 
             comparison = ModelComparison(
                 comparison_id=comparison_id,
+                model_name=model_name,
                 champion_version=champion_version,
                 challenger_version=challenger_version,
                 comparison_metrics=comparison_metrics,
@@ -983,6 +1272,7 @@ class ModelRegistryService:
             self.telemetry.info(
                 "Model comparison completed",
                 comparison_id=comparison_id,
+                model_name=model_name,
                 champion=champion_version,
                 challenger=challenger_version,
                 recommendation=recommendation
@@ -1005,23 +1295,33 @@ class ModelRegistryService:
             True if promoted successfully
         """
         try:
-            model_version = self.get_model_version(model_name, version)
-            if not model_version:
+            model = self._get_model_record(model_name)
+            if not model:
                 return False
 
-            # Deprecate other active versions
-            for v in self.models.get(model_name, {}).values():
-                if v.status == "active" and v.version_id != model_version.version_id:
-                    v.status = "deprecated"
+            target_version = model.versions.get(version)
+            if not target_version:
+                return False
 
-            # Activate the promoted version
-            model_version.status = "active"
+            # Deprecate or demote other versions
+            for candidate in model.versions.values():
+                if candidate.version_id == target_version.version_id:
+                    continue
+                if candidate.status == "champion":
+                    candidate.status = "active"
+                elif candidate.status == "active":
+                    candidate.status = "deprecated"
+
+            # Promote selected version
+            target_version.status = "champion"
+            model.champion_version_id = target_version.version_id
+            model.updated_at = datetime.utcnow()
 
             self.telemetry.info(
                 "Model promoted to production",
                 model_name=model_name,
                 version=version,
-                version_id=model_version.version_id
+                version_id=target_version.version_id
             )
 
             return True
@@ -1067,6 +1367,29 @@ class ModelRegistryService:
 
         return schedule_id
 
+    async def list_retrain_schedules(
+        self,
+        enabled_only: bool = False,
+        limit: int = 50,
+        offset: int = 0
+    ) -> List[RetrainSchedule]:
+        """List retraining schedules with optional filtering and pagination."""
+
+        schedules = list(self.schedules.values())
+
+        if enabled_only:
+            schedules = [schedule for schedule in schedules if schedule.enabled]
+
+        schedules = sorted(
+            schedules,
+            key=lambda s: (s.next_run or datetime.max, s.updated_at),
+        )
+
+        if offset:
+            schedules = schedules[offset:]
+
+        return schedules[:limit]
+
     def get_training_job_status(self, job_id: str) -> Optional[TrainingJob]:
         """Get status of training job.
 
@@ -1104,17 +1427,23 @@ class ModelRegistryService:
         model_version = self.get_model_version(model_name, version)
         return model_version.feature_importance if model_version else None
 
-    def list_champion_challenger_comparisons(self, limit: int = 50) -> List[ModelComparison]:
-        """List recent champion/challenger comparisons.
+    async def list_champion_challenger_comparisons(
+        self,
+        limit: int = 50,
+        offset: int = 0
+    ) -> List[ModelComparison]:
+        """List recent champion/challenger comparisons."""
 
-        Args:
-            limit: Maximum number of comparisons to return
+        comparisons = sorted(
+            self.comparisons.values(),
+            key=lambda c: c.comparison_date,
+            reverse=True,
+        )
 
-        Returns:
-            List of comparisons
-        """
-        comparisons = list(self.comparisons.values())
-        return sorted(comparisons, key=lambda c: c.comparison_date, reverse=True)[:limit]
+        if offset:
+            comparisons = comparisons[offset:]
+
+        return comparisons[:limit]
 
     async def select_champion_model(
         self,
@@ -1131,10 +1460,15 @@ class ModelRegistryService:
             Selected champion model or None if no suitable candidate found
         """
         try:
+            model = self._get_model_record(model_name)
+            if not model:
+                self.telemetry.warning(f"Model {model_name} not found for champion selection")
+                return None
+
             # Get all active model versions
             active_versions = [
-                v for v in self.models.get(model_name, {}).values()
-                if v.status == "active"
+                v for v in model.versions.values()
+                if v.status in {"active", "champion"}
             ]
 
             if not active_versions:
@@ -1189,6 +1523,9 @@ class ModelRegistryService:
                 primary_metric_value=champion.performance_metrics.get(criteria["primary_metric"])
             )
             
+            model.champion_version_id = champion.version_id
+            model.updated_at = datetime.utcnow()
+
             return champion
 
         except Exception as e:
@@ -1207,18 +1544,22 @@ class ModelRegistryService:
         """
         try:
             # Find the model version to promote
-            target_version = None
-            for version in self.models.get(model_name, {}).values():
-                if version.version_id == version_id:
-                    target_version = version
-                    break
-            
+            model = self._get_model_record(model_name)
+            if not model:
+                self.telemetry.error(f"Model {model_name} not found for champion promotion")
+                return False
+
+            target_version = next(
+                (version for version in model.versions.values() if version.version_id == version_id),
+                None,
+            )
+
             if not target_version:
                 self.telemetry.error(f"Version {version_id} not found for model {model_name}")
                 return False
             
             # Demote current champion(s)
-            for version in self.models.get(model_name, {}).values():
+            for version in model.versions.values():
                 if version.status == "champion":
                     version.status = "active"
                     self.telemetry.info(
@@ -1229,6 +1570,8 @@ class ModelRegistryService:
             
             # Promote new champion
             target_version.status = "champion"
+            model.champion_version_id = target_version.version_id
+            model.updated_at = datetime.utcnow()
             
             self.telemetry.info(
                 "Model promoted to champion",
@@ -1252,7 +1595,7 @@ class ModelRegistryService:
         return {
             "service": "model_registry",
             "status": "healthy",
-            "models_count": sum(len(versions) for versions in self.models.values()),
+            "models_count": sum(len(model.versions) for model in self.models.values()),
             "training_jobs_count": len(self.training_jobs),
             "schedules_count": len(self.schedules),
             "mlflow_enabled": self.mlflow_client is not None
@@ -1351,5 +1694,4 @@ def get_current_champion_model(model_name: str) -> Optional[ModelVersion]:
         Current champion model or None if not found
     """
     service = get_model_registry_service()
-    return service.get_latest_model_version(model_name)
-
+    return service.get_current_champion_model(model_name)

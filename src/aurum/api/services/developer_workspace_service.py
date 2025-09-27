@@ -11,22 +11,26 @@ This service provides:
 
 from __future__ import annotations
 
+# ruff: noqa: B008
 import asyncio
 import json
-import logging
-import os
+import random
 from collections import defaultdict
-from dataclasses import dataclass, field
 from datetime import datetime, timedelta
-from typing import Any, Dict, List, Optional, Set, Tuple, Union
+from pathlib import Path
+from typing import Any, Dict, List, Optional, Set, Union
 from uuid import uuid4
 
 import yaml
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, ValidationError, validator
+
+from ..logging.structured_logger import get_logger
 
 from ..telemetry.context import get_request_id, get_tenant_id, log_structured
 from ..observability.telemetry_facade import get_telemetry_facade, MetricCategory
 from ..cache.consolidated_manager import get_unified_cache_manager
+from ..cache.cache_governance import TTLPolicy
+from ..cache.enhanced_cache_manager import CacheNamespace
 
 
 class NotebookEnvironment(BaseModel):
@@ -36,21 +40,43 @@ class NotebookEnvironment(BaseModel):
     environment_name: str
     description: str
     base_image: str = "jupyter/scipy-notebook:latest"
-    resource_limits: Dict[str, str] = field(default_factory=lambda: {
+    resource_limits: Dict[str, str] = Field(default_factory=lambda: {
         "cpu": "2",
         "memory": "4Gi"
     })
-    resource_requests: Dict[str, str] = field(default_factory=lambda: {
+    resource_requests: Dict[str, str] = Field(default_factory=lambda: {
         "cpu": "500m",
         "memory": "1Gi"
     })
     storage_size: str = "10Gi"
-    environment_variables: Dict[str, str] = field(default_factory=dict)
-    mounted_secrets: List[str] = field(default_factory=list)
-    allowed_packages: List[str] = field(default_factory=list)
+    environment_variables: Dict[str, str] = Field(default_factory=dict)
+    mounted_secrets: List[str] = Field(default_factory=list)
+    allowed_packages: List[str] = Field(default_factory=list)
     network_policy: str = "restricted"
     idle_timeout_minutes: int = 60
     max_runtime_hours: int = 8
+
+    @validator("environment_id", "environment_name", "description", allow_reuse=True)
+    def _validate_non_empty(cls, value: str, field):
+        if not value:
+            raise ValueError(f"{field.name} must not be empty")
+        return value
+
+    @validator("resource_limits", "resource_requests", pre=True, allow_reuse=True)
+    def _validate_resources(cls, value: Dict[str, str], field):
+        if not value:
+            raise ValueError(f"{field.name} must be provided")
+        required = {"cpu", "memory"}
+        missing = required - set(value.keys())
+        if missing:
+            raise ValueError(f"{field.name} missing keys: {', '.join(sorted(missing))}")
+        return value
+
+    @validator("idle_timeout_minutes", "max_runtime_hours", allow_reuse=True)
+    def _validate_timeouts(cls, value: int, field):
+        if value <= 0:
+            raise ValueError(f"{field.name} must be positive")
+        return value
 
 
 class NotebookSession(BaseModel):
@@ -65,10 +91,9 @@ class NotebookSession(BaseModel):
     pod_ip: Optional[str] = None
     start_time: Optional[datetime] = None
     last_activity: Optional[datetime] = None
-    resource_usage: Dict[str, Any] = field(default_factory=dict)
+    resource_usage: Dict[str, Any] = Field(default_factory=dict)
     error_message: Optional[str] = None
     notebook_url: Optional[str] = None
-
 
 class NotebookTemplate(BaseModel):
     """Notebook template for common use cases."""
@@ -78,10 +103,10 @@ class NotebookTemplate(BaseModel):
     description: str
     category: str  # "api_exploration", "ml_training", "data_analysis", "forecasting"
     base_notebook_path: str
-    required_packages: List[str] = field(default_factory=list)
-    sample_queries: List[Dict[str, Any]] = field(default_factory=list)
-    documentation_links: List[str] = field(default_factory=list)
-    tags: List[str] = field(default_factory=list)
+    required_packages: List[str] = Field(default_factory=list)
+    sample_queries: List[Dict[str, Any]] = Field(default_factory=list)
+    documentation_links: List[str] = Field(default_factory=list)
+    tags: List[str] = Field(default_factory=list)
 
 
 class DeveloperWorkspaceService:
@@ -91,9 +116,17 @@ class DeveloperWorkspaceService:
         """Initialize developer workspace service."""
         self.cache_manager = get_unified_cache_manager()
         self.telemetry = get_telemetry_facade()
+        self.logger = get_logger(__name__)
+
+        # Cache keys and namespaces
+        self._env_cache_prefix = "developer_workspace:environments"
+        self._session_cache_prefix = "developer_workspace:sessions"
+        self._api_docs_cache_key = "developer_workspace:api_docs"
+        self._code_snippets_cache_key = "developer_workspace:code_snippets"
 
         # Workspace state
         self._environments: Dict[str, NotebookEnvironment] = {}
+        self._environment_metadata: Dict[str, Dict[str, Any]] = {}
         self._sessions: Dict[str, NotebookSession] = {}
         self._templates: Dict[str, NotebookTemplate] = {}
 
@@ -111,16 +144,39 @@ class DeveloperWorkspaceService:
         self._api_docs_url = "https://docs.aurum.dev/api/"
         self._openapi_spec_cache: Optional[Dict[str, Any]] = None
 
+        # State loading flags
+        self._environments_loaded = False
+        self._sessions_loaded = False
+        self._api_docs_loaded = False
+
+        # Index keys for cache persistence
+        self._environment_index_key = f"{self._env_cache_prefix}:index"
+        self._session_index_key = f"{self._session_cache_prefix}:index"
+
+        # Locks for lazy-loading
+        self._environment_lock = asyncio.Lock()
+        self._session_lock = asyncio.Lock()
+        self._api_docs_lock = asyncio.Lock()
+
+        # Paths for documentation loading
+        project_root = Path(__file__).resolve().parents[4]
+        self._openapi_candidates = [
+            project_root / "openapi" / "aurum.yaml",
+            project_root / "openapi" / "aurum.generated.yaml",
+        ]
+
         # Initialize default environments and templates
         self._initialize_default_environments()
         self._initialize_default_templates()
-        self._initialize_api_documentation()
-        self._initialize_code_snippets()
+
+        # Defer API documentation loading until first use
+        self._api_documentation_cache = {}
+        self._code_snippets = {}
 
     def _initialize_default_environments(self) -> None:
         """Initialize default notebook environments."""
-        # Standard ML environment
-        self._environments["ml_standard"] = NotebookEnvironment(
+        self._environments = {
+            "ml_standard": NotebookEnvironment(
             environment_id="ml_standard",
             environment_name="ML Development",
             description="Standard ML development environment with PyTorch, TensorFlow, and scikit-learn",
@@ -134,10 +190,8 @@ class DeveloperWorkspaceService:
             },
             allowed_packages=["torch", "tensorflow", "scikit-learn", "pandas", "numpy", "matplotlib"],
             network_policy="restricted"
-        )
-
-        # API exploration environment
-        self._environments["api_explorer"] = NotebookEnvironment(
+        ),
+            "api_explorer": NotebookEnvironment(
             environment_id="api_explorer",
             environment_name="API Explorer",
             description="Lightweight environment for API exploration and testing",
@@ -151,6 +205,7 @@ class DeveloperWorkspaceService:
             allowed_packages=["requests", "pandas", "matplotlib"],
             network_policy="api_access"
         )
+        }
 
     def _initialize_api_documentation(self) -> None:
         """Initialize API documentation cache."""
