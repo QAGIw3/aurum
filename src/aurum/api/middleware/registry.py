@@ -14,13 +14,7 @@ from starlette.types import ASGIApp
 
 from aurum.core import AurumSettings
 
-# Reuse existing installers to preserve behavior
-from aurum.api.app import (  # type: ignore
-    _install_concurrency_middleware as _install_concurrency,
-)
-from aurum.api.app import (  # type: ignore
-    _install_rate_limit_middleware as _install_rate_limit,
-)
+from .rfc7807 import RFC7807ExceptionMiddleware
 
 
 MiddlewareFactory = Callable[[ASGIApp, AurumSettings], ASGIApp]
@@ -48,25 +42,34 @@ def _wrap_cors(app: FastAPI, settings: AurumSettings) -> None:
     )
 
 
+def _wrap_rfc7807_exceptions(app: FastAPI, settings: AurumSettings) -> None:
+    """Add RFC7807 compliant exception handling middleware."""
+    base_url = getattr(settings.api, "base_url", "https://api.aurum.com")
+    app.add_middleware(RFC7807ExceptionMiddleware, base_url=base_url)
+
+
 def apply_middleware_stack(app: FastAPI, settings: AurumSettings) -> ASGIApp:
     """Apply middleware in a well-defined order based on settings.
 
     Order:
     - CORS (outermost)
     - GZip
-    - Concurrency/queueing
-    - Sliding-window rate limiting (innermost of our custom wrappers)
+    - RFC7807 Exception handling (critical for consistent error responses)
+    - Concurrency/queueing (handled separately in app.py to avoid circular imports)
+    - Sliding-window rate limiting (handled separately in app.py to avoid circular imports)
     """
 
     # Outer wrappers change request/response headers early
     _wrap_cors(app, settings)
     _wrap_gzip(app, settings)
+    
+    # RFC7807 exception handling should be early in the stack
+    # to catch exceptions from all other middleware
+    _wrap_rfc7807_exceptions(app, settings)
 
-    # Concurrency and rate limiting wrap the app object itself
-    wrapped: ASGIApp = app
-    wrapped = _install_concurrency(wrapped, settings)
-    wrapped = _install_rate_limit(wrapped, settings)
-    return wrapped
+    # Note: Concurrency and rate limiting are handled separately in app.py
+    # to avoid circular import issues with the middleware registry
+    return app
 
 
 __all__ = ["apply_middleware_stack"]

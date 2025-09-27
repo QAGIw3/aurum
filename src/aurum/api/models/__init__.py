@@ -81,7 +81,7 @@ from .admin import (
 )
 from .base import AurumBaseModel
 from .cache import CachePurgeDetail, CachePurgeResponse
-from .common import Meta, ErrorEnvelope, ValidationErrorDetail, ValidationErrorResponse
+from .common import Meta, ErrorEnvelope, ValidationErrorDetail, ValidationErrorResponse, ProblemDetail
 from .curves import (
     CurveDiffPoint,
     CurveDiffQueryParams,
@@ -152,6 +152,7 @@ __all__ = [
     "ErrorEnvelope",
     "ValidationErrorDetail",
     "ValidationErrorResponse",
+    "ProblemDetail",
     # Curves
     "CurveQueryParams",
     "CurveDiffQueryParams",
