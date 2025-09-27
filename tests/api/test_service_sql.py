@@ -419,12 +419,71 @@ def test_query_ppa_valuation_builds_cashflows():
     expected_npv = -options["upfront_cost"]
     expected_npv += 100.0 / (1 + monthly_rate)
     expected_npv += 50.0 / (1 + monthly_rate) ** 2
+    discounted = [row for row in rows if row["metric"] == "discounted_cashflow"]
+    assert len(discounted) == 2
+    assert discounted[0]["value"] == pytest.approx(100.0 / (1 + monthly_rate))
+    assert discounted[1]["value"] == pytest.approx(50.0 / (1 + monthly_rate) ** 2)
+
+    discount_factors = [row for row in rows if row["metric"] == "discount_factor"]
+    assert len(discount_factors) == 2
+    assert discount_factors[0]["value"] == pytest.approx(1 / (1 + monthly_rate), rel=1e-6)
+    assert discount_factors[1]["value"] == pytest.approx(1 / (1 + monthly_rate) ** 2, rel=1e-6)
+
     npv_row = next(row for row in rows if row["metric"] == "NPV")
     assert npv_row["value"] == pytest.approx(round(expected_npv, 4))
+
+    discounted_total_row = next(row for row in rows if row["metric"] == "discounted_cashflow_total")
+    assert discounted_total_row["value"] == pytest.approx(round(expected_npv + options["upfront_cost"], 4))
 
     irr_row = next(row for row in rows if row["metric"] == "IRR")
     expected_irr = round(compute_irr([-options["upfront_cost"], 100.0, 50.0]) or 0.0, 6)
     assert irr_row["value"] == expected_irr
+
+
+def test_calculate_valuation_currency_normalization():
+    sample_rows = [
+        {
+            "contract_month": date(2025, 1, 1),
+            "asof_date": date(2025, 1, 1),
+            "tenor_label": "2025-01",
+            "metric": "mid",
+            "value": 80.0,
+            "metric_currency": "eur",
+            "metric_unit": "eur/mwh",
+            "metric_unit_denominator": "MWh",
+            "curve_key": "curve-b",
+            "tenor_type": "MONTHLY",
+            "run_id": "run-2",
+        }
+    ]
+
+    class StubPpaDao:
+        def __init__(self, rows):
+            self._rows = rows
+
+        def execute(self, sql: str, *, trino_cfg=None):  # pragma: no cover - simple stub
+            return self._rows, 7.5
+
+    options = {
+        "ppa_price": 70.0,
+        "volume_mwh": 5.0,
+        "discount_rate": 0.0,
+        "upfront_cost": 0.0,
+        "base_currency": "usd",
+        "fx_rates": {"eur": 1.1},
+    }
+
+    ppa_service = PpaService(dao=StubPpaDao(sample_rows))
+    rows, _elapsed = ppa_service.calculate_valuation(
+        scenario_id="scn-eur",
+        tenant_id="tenant-2",
+        options=options,
+        trino_cfg=None,
+    )
+
+    cashflow = next(row for row in rows if row["metric"] == "cashflow")
+    assert cashflow["currency"] == "USD"
+    assert cashflow["value"] == pytest.approx((80.0 - 70.0) * 5.0 * 1.1)
 
 
 def test_query_iso_lmp_last_24h_inmemory_cache(monkeypatch):

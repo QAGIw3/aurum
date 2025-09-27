@@ -20,13 +20,15 @@ import time
 from typing import List, Optional
 from uuid import uuid4
 
-from fastapi import APIRouter, HTTPException, Query, Request, Response
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response
 from pydantic import BaseModel, Field
 
 from ..http import respond_with_etag
+from ..ppa_v2_service import PpaV2Service, get_ppa_service
 from .pagination import (
     resolve_pagination,
     build_next_cursor,
+    build_prev_cursor,
     build_pagination_envelope,
 )
 from ...telemetry.context import get_request_id
@@ -57,7 +59,12 @@ class PpaValuationResponse(BaseModel):
     """Response for PPA valuation data with v2 enhancements."""
     contract_id: str = Field(..., description="Contract identifier")
     valuation_date: str = Field(..., description="Valuation date")
-    present_value: float = Field(..., description="Present value")
+    period_start: Optional[str] = Field(None, description="Valuation period start")
+    period_end: Optional[str] = Field(None, description="Valuation period end")
+    metric: Optional[str] = Field(None, description="Metric name")
+    present_value: Optional[float] = Field(None, description="Present value")
+    cashflow: Optional[float] = Field(None, description="Cashflow for the period")
+    irr: Optional[float] = Field(None, description="Internal rate of return")
     currency: str = Field(..., description="Currency")
     meta: dict = Field(..., description="Metadata")
 
@@ -77,6 +84,7 @@ async def list_ppa_contracts_v2(
     cursor: Optional[str] = Query(None, description="Cursor for pagination"),
     limit: int = Query(10, ge=1, le=100, description="Maximum number of items to return"),
     counterparty_filter: Optional[str] = Query(None, description="Filter by counterparty"),
+    service: PpaV2Service = Depends(get_ppa_service),
 ) -> PpaContractListResponse:
     """List PPA contracts with enhanced pagination and error handling."""
     start_time = time.perf_counter()
@@ -89,23 +97,22 @@ async def list_ppa_contracts_v2(
             filters={"counterparty_filter": counterparty_filter},
         )
 
-        from ..services import PpaService
-        svc = PpaService()
-        paginated_data = await svc.list_contracts(
+        paginated_data = await service.list_contracts(
             tenant_id=tenant_id,
             offset=offset,
-            limit=effective_limit,
+            limit=effective_limit + 1,
             counterparty_filter=counterparty_filter,
         )
 
-        has_more = len(paginated_data) == effective_limit
+        has_more = len(paginated_data) > effective_limit
+        if has_more:
+            paginated_data = paginated_data[:effective_limit]
         next_cursor = build_next_cursor(
             offset=offset,
             limit=effective_limit,
             has_more=has_more,
             filters={"counterparty_filter": counterparty_filter},
         )
-        from .pagination import build_prev_cursor
         prev_cursor = build_prev_cursor(offset=offset, limit=effective_limit, filters={"counterparty_filter": counterparty_filter})
         meta_page, links = build_pagination_envelope(
             request_url=request.url,
@@ -218,6 +225,7 @@ async def list_ppa_valuations_v2(
     limit: int = Query(10, ge=1, le=100, description="Maximum number of items to return"),
     start_date: Optional[str] = Query(None, description="Start date filter"),
     end_date: Optional[str] = Query(None, description="End date filter"),
+    service: PpaV2Service = Depends(get_ppa_service),
 ) -> PpaValuationListResponse:
     """List PPA valuations with enhanced pagination and filtering."""
     start_time = time.perf_counter()
@@ -230,18 +238,18 @@ async def list_ppa_valuations_v2(
             filters={"contract_id": contract_id, "start_date": start_date, "end_date": end_date},
         )
 
-        from ..services import PpaService
-        svc = PpaService()
-        paginated_data = await svc.list_valuations(
+        paginated_data = await service.list_valuations(
             tenant_id=tenant_id,
             contract_id=contract_id,
             offset=offset,
-            limit=effective_limit,
+            limit=effective_limit + 1,
             start_date=start_date,
             end_date=end_date,
         )
 
-        has_more = len(paginated_data) == effective_limit
+        has_more = len(paginated_data) > effective_limit
+        if has_more:
+            paginated_data = paginated_data[:effective_limit]
         next_cursor = build_next_cursor(
             offset=offset,
             limit=effective_limit,
@@ -266,7 +274,12 @@ async def list_ppa_valuations_v2(
             valuations.append(PpaValuationResponse(
                 contract_id=contract_id,
                 valuation_date=str(valuation_data.get("valuation_date")),
-                present_value=float(valuation_data.get("present_value", 0.0)),
+                period_start=valuation_data.get("period_start"),
+                period_end=valuation_data.get("period_end"),
+                metric=valuation_data.get("metric"),
+                present_value=valuation_data.get("present_value"),
+                cashflow=valuation_data.get("cashflow"),
+                irr=valuation_data.get("irr"),
                 currency=str(valuation_data.get("currency", "USD")),
                 meta={"tenant_id": tenant_id}
             ))

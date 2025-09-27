@@ -28,6 +28,7 @@ def test_metrics_endpoint_returns_prometheus_text(metrics_client: TestClient) ->
     body = response.text
     assert "aurum_api_concurrency_requests_total" in body
     assert "aurum_api_active_requests" in body
+    assert "aurum_cache_hits_total" in body or "aurum_cache_requests_total" in body
 
 
 def test_metrics_endpoint_supports_multiprocess(monkeypatch: pytest.MonkeyPatch, tmp_path) -> None:

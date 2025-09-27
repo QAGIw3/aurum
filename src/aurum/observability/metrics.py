@@ -3,9 +3,11 @@
 from __future__ import annotations
 
 import time
+import threading
 from dataclasses import dataclass
 from enum import Enum
-from typing import Dict, List, Union
+from typing import Dict, List, Optional, Tuple, Union, Any
+import os
 
 try:  # pragma: no cover - optional dependency
     from prometheus_client import (
@@ -16,6 +18,7 @@ try:  # pragma: no cover - optional dependency
         Counter,
         Gauge,
         Histogram,
+        CollectorRegistry,
     )
     from prometheus_client import (
         generate_latest as _prom_generate_latest,
@@ -1974,12 +1977,133 @@ __all__ = [
 ]
 
 
-# Lightweight compatibility shim for code importing a metrics client factory
-def get_metrics_client():  # pragma: no cover - trivial shim for tests
-    class _NullMetrics:
-        def __getattr__(self, name):
-            def _noop(*args, **kwargs):
-                return None
-            return _noop
+class _PrometheusMetricsClient:
+    """Concrete metrics client backed by Prometheus primitives."""
 
-    return _NullMetrics()
+    def __init__(self) -> None:
+        self._lock = threading.Lock()
+        self._registry: Optional[CollectorRegistry] = REGISTRY
+        self._counters: Dict[Tuple[str, Tuple[Tuple[str, str], ...]], Counter] = {}
+        self._gauges: Dict[Tuple[str, Tuple[Tuple[str, str], ...]], Gauge] = {}
+        self._histograms: Dict[Tuple[str, Tuple[Tuple[str, str], ...]], Histogram] = {}
+
+    # ------------------------------------------------------------------
+    # Metric helper lookups
+    # ------------------------------------------------------------------
+    def _counter(self, name: str, labels: Tuple[Tuple[str, str], ...]) -> Counter:
+        key = (name, labels)
+        counter = self._counters.get(key)
+        if counter:
+            return counter
+        with self._lock:
+            counter = self._counters.get(key)
+            if counter:
+                return counter
+            label_names = [label for label, _ in labels]
+            counter = Counter(name, f"Counter for {name}", labelnames=label_names, registry=self._registry)
+            self._counters[key] = counter
+            return counter
+
+    def _gauge(self, name: str, labels: Tuple[Tuple[str, str], ...]) -> Gauge:
+        key = (name, labels)
+        gauge = self._gauges.get(key)
+        if gauge:
+            return gauge
+        with self._lock:
+            gauge = self._gauges.get(key)
+            if gauge:
+                return gauge
+            label_names = [label for label, _ in labels]
+            gauge = Gauge(name, f"Gauge for {name}", labelnames=label_names, registry=self._registry)
+            self._gauges[key] = gauge
+            return gauge
+
+    def _histogram(
+        self,
+        name: str,
+        labels: Tuple[Tuple[str, str], ...],
+        buckets: Optional[Tuple[float, ...]] = None,
+    ) -> Histogram:
+        key = (name, labels)
+        histogram = self._histograms.get(key)
+        if histogram:
+            return histogram
+        with self._lock:
+            histogram = self._histograms.get(key)
+            if histogram:
+                return histogram
+            label_names = [label for label, _ in labels]
+            histogram = Histogram(
+                name,
+                f"Histogram for {name}",
+                labelnames=label_names,
+                registry=self._registry,
+                buckets=buckets,
+            )
+            self._histograms[key] = histogram
+            return histogram
+
+    # ------------------------------------------------------------------
+    # Public API
+    # ------------------------------------------------------------------
+    def counter(self, name: str, labels: Optional[Dict[str, str]] = None, value: float = 1.0) -> None:
+        if not PROMETHEUS_AVAILABLE:
+            return
+        labels = labels or {}
+        counter = self._counter(name, tuple(sorted(labels.items())))
+        try:
+            counter.labels(**labels).inc(value)
+        except Exception:  # pragma: no cover - guard against label mismatches
+            pass
+
+    def gauge(self, name: str, value: float, labels: Optional[Dict[str, str]] = None) -> None:
+        if not PROMETHEUS_AVAILABLE:
+            return
+        labels = labels or {}
+        gauge = self._gauge(name, tuple(sorted(labels.items())))
+        try:
+            gauge.labels(**labels).set(value)
+        except Exception:  # pragma: no cover
+            pass
+
+    def histogram(
+        self,
+        name: str,
+        value: float,
+        labels: Optional[Dict[str, str]] = None,
+        buckets: Optional[Tuple[float, ...]] = None,
+    ) -> None:
+        if not PROMETHEUS_AVAILABLE:
+            return
+        labels = labels or {}
+        histogram = self._histogram(name, tuple(sorted(labels.items())), buckets=buckets)
+        try:
+            histogram.labels(**labels).observe(value)
+        except Exception:  # pragma: no cover
+            pass
+
+    def export(self) -> Dict[str, Any]:
+        if not PROMETHEUS_AVAILABLE or _prom_generate_latest is None:
+            return {}
+        registry = self._registry or REGISTRY
+        payload = _prom_generate_latest(registry)
+        return {
+            "content_type": _PROM_CONTENT_TYPE,
+            "payload": payload,
+        }
+
+    def register_process_collector(self) -> None:
+        if not PROMETHEUS_AVAILABLE:
+            return
+        if self._registry is not None:
+            return
+        try:
+            from prometheus_client import CollectorRegistry, multiprocess  # type: ignore
+
+            multiproc_dir = os.getenv("PROMETHEUS_MULTIPROC_DIR")
+            if multiproc_dir:
+                registry = CollectorRegistry()
+                multiprocess.MultiProcessCollector(registry)
+                self._registry = registry
+        except Exception:  # pragma: no cover - optional dependency
+            pass

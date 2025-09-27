@@ -32,6 +32,12 @@ from ..cache.consolidated_manager import get_unified_cache_manager
 from ..cache.cache_governance import TTLPolicy
 from ..cache.enhanced_cache_manager import CacheNamespace
 
+MAX_ENVIRONMENT_HISTORY = 5
+DEFAULT_IDLE_TIMEOUT_MINUTES = 60
+DEFAULT_MAX_RUNTIME_HOURS = 8
+MAX_SESSION_HISTORY = 20
+SESSION_PERSIST_TTL = TTLPolicy.MEDIUM
+
 
 class NotebookEnvironment(BaseModel):
     """Notebook environment configuration."""
@@ -127,7 +133,9 @@ class DeveloperWorkspaceService:
         # Workspace state
         self._environments: Dict[str, NotebookEnvironment] = {}
         self._environment_metadata: Dict[str, Dict[str, Any]] = {}
+        self._default_environments: Dict[str, NotebookEnvironment] = {}
         self._sessions: Dict[str, NotebookSession] = {}
+        self._session_metadata: Dict[str, Dict[str, Any]] = {}
         self._templates: Dict[str, NotebookTemplate] = {}
 
         # Enhanced features
@@ -165,9 +173,17 @@ class DeveloperWorkspaceService:
             project_root / "openapi" / "aurum.generated.yaml",
         ]
 
+        # Session management tuning (seconds)
+        self._session_startup_delay_seconds = 5
+        self._session_monitor_interval_seconds = 60
+
         # Initialize default environments and templates
         self._initialize_default_environments()
         self._initialize_default_templates()
+
+        # Environment snapshots for auditing
+        self._environment_versions: Dict[str, List[Dict[str, Any]]] = defaultdict(list)
+        self._session_versions: Dict[str, List[Dict[str, Any]]] = defaultdict(list)
 
         # Defer API documentation loading until first use
         self._api_documentation_cache = {}
@@ -175,7 +191,7 @@ class DeveloperWorkspaceService:
 
     def _initialize_default_environments(self) -> None:
         """Initialize default notebook environments."""
-        self._environments = {
+        self._default_environments = {
             "ml_standard": NotebookEnvironment(
             environment_id="ml_standard",
             environment_name="ML Development",
@@ -207,51 +223,69 @@ class DeveloperWorkspaceService:
         )
         }
 
+        # Merge defaults into active state without overwriting overrides
+        for env_id, environment in self._default_environments.items():
+            self._environments.setdefault(env_id, environment)
+
+    def _load_openapi_spec(candidates: List[Path]) -> Optional[Dict[str, Any]]:
+        for path in candidates:
+            if not path.exists():
+                continue
+            try:
+                with path.open("r", encoding="utf-8") as handle:
+                    if path.suffix.lower() == ".json":
+                        return json.load(handle)
+                    return yaml.safe_load(handle)
+            except Exception as exc:  # pragma: no cover - defensive
+                logging.getLogger(__name__).warning("Failed to load OpenAPI spec", path=str(path), error=str(exc))
+        return None
+
     def _initialize_api_documentation(self) -> None:
-        """Initialize API documentation cache."""
+        """Initialize API documentation cache from OpenAPI spec."""
         try:
-            # Mock API documentation - in reality would fetch from OpenAPI spec
+            if self._openapi_spec_cache is None:
+                self._openapi_spec_cache = self._load_openapi_spec(self._openapi_candidates)
+
+            if not self._openapi_spec_cache:
+                raise RuntimeError("OpenAPI specification not available")
+
+            spec = self._openapi_spec_cache
+            base_url = spec.get("servers", [{}])[0].get("url", "http://localhost:8000")
+            version = spec.get("info", {}).get("version", "unknown")
+
+            endpoints: Dict[str, Dict[str, Any]] = {}
+            categorized_snippets: Dict[str, List[Dict[str, Any]]] = defaultdict(list)
+
+            for path, methods in spec.get("paths", {}).items():
+                for http_method, operation in methods.items():
+                    http_method_upper = http_method.upper()
+                    if http_method_upper not in {"GET", "POST", "PUT", "PATCH", "DELETE"}:
+                        continue
+
+                    operation_entry = self._build_operation_entry(path, http_method_upper, operation)
+                    endpoint_key = f"{http_method_upper} {path}"
+                    endpoints[endpoint_key] = operation_entry
+
+                    for snippet in operation_entry.get("examples", []):
+                        category = snippet.get("category") or (operation.get("tags") or ["uncategorized"])[0]
+                        snippet.setdefault("endpoint", path)
+                        snippet.setdefault("method", http_method_upper)
+                        categorized_snippets[category].append(snippet)
+
             self._api_documentation_cache = {
-                "endpoints": {
-                    "/v2/curves": {
-                        "method": "GET",
-                        "summary": "Retrieve historical curve data",
-                        "parameters": ["asof", "limit", "geography"],
-                        "response_schema": {"type": "object", "properties": {"data": {"type": "array"}}},
-                        "examples": [
-                            {
-                                "name": "Get recent curves",
-                                "code": "response = requests.get('http://localhost:8000/v2/curves', params={'limit': 10})"
-                            }
-                        ]
-                    },
-                    "/v2/forecasting": {
-                        "method": "POST",
-                        "summary": "Generate probabilistic forecast",
-                        "parameters": ["forecast_type", "target_variable", "geography", "start_date", "end_date"],
-                        "response_schema": {"type": "object", "properties": {"forecast_id": {"type": "string"}}},
-                        "examples": [
-                            {
-                                "name": "Generate load forecast",
-                                "code": "forecast_data = {'forecast_type': 'load', 'target_variable': 'load_mw', 'geography': 'US', 'start_date': '2024-01-01', 'end_date': '2024-01-31'}\nresponse = requests.post('http://localhost:8000/v2/forecasting', json=forecast_data)"
-                            }
-                        ]
-                    }
-                },
-                "authentication": {
-                    "type": "bearer",
-                    "header": "Authorization: Bearer YOUR_TOKEN",
-                    "description": "Use your API token in the Authorization header"
-                },
-                "base_url": "http://localhost:8000",
-                "version": "2.0"
+                "endpoints": endpoints,
+                "base_url": base_url,
+                "version": version,
+                "generated_at": datetime.utcnow().isoformat(),
             }
 
-            self.logger.info("API documentation initialized")
+            self._code_snippets = categorized_snippets
+            self.logger.info("API documentation initialized from OpenAPI spec", version=version)
 
         except Exception as e:
             self.logger.error("Failed to initialize API documentation", error=str(e))
             self._api_documentation_cache = {}
+            self._code_snippets = {}
 
     def _initialize_code_snippets(self) -> None:
         """Initialize code snippets for common operations."""
@@ -351,19 +385,286 @@ class DeveloperWorkspaceService:
             tags=["ml", "training", "forecasting"]
         )
 
+    def _current_actor(self) -> str:
+        actor = get_request_id()
+        if actor:
+            return actor
+        tenant = get_tenant_id()
+        if tenant:
+            return tenant
+        return "system"
+
+    def _environment_cache_key(self, environment_id: str, suffix: str) -> str:
+        return f"{self._env_cache_prefix}:{environment_id}:{suffix}"
+
+    async def _ensure_environments_loaded(self) -> None:
+        if self._environments_loaded:
+            return
+
+        async with self._environment_lock:
+            if self._environments_loaded:
+                return
+
+            await self._load_cached_environments()
+
+            # Ensure defaults are present even if not persisted yet
+            timestamp = datetime.utcnow().isoformat()
+            for env_id, environment in self._default_environments.items():
+                if env_id not in self._environments:
+                    self._environments[env_id] = environment
+                    self._environment_metadata.setdefault(env_id, {
+                        "environment_id": env_id,
+                        "created_at": timestamp,
+                        "updated_at": timestamp,
+                        "created_by": "system",
+                        "updated_by": "system",
+                        "source": "default",
+                        "is_default": True,
+                        "version": 1,
+                    })
+                    self._environment_versions.setdefault(env_id, [])
+
+            self._environments_loaded = True
+
+    async def _load_cached_environments(self) -> None:
+        try:
+            index: List[str] = await self.cache_manager.get(
+                self._environment_index_key,
+                namespace=CacheNamespace.SYSTEM_CONFIG,
+                default=[],
+            )
+
+            if not index:
+                return
+
+            loaded = 0
+            for env_id in index:
+                data = await self.cache_manager.get(
+                    self._environment_cache_key(env_id, "data"),
+                    namespace=CacheNamespace.SYSTEM_CONFIG,
+                    default=None,
+                )
+
+                if not data:
+                    continue
+
+                try:
+                    environment = NotebookEnvironment(**data)
+                except ValidationError as exc:  # pragma: no cover - defensive
+                    self.telemetry.warning(
+                        "Cached notebook environment failed validation",
+                        environment_id=env_id,
+                        error=str(exc),
+                    )
+                    continue
+
+                self._environments[env_id] = environment
+                metadata = await self.cache_manager.get(
+                    self._environment_cache_key(env_id, "metadata"),
+                    namespace=CacheNamespace.SYSTEM_CONFIG,
+                    default=None,
+                )
+                if isinstance(metadata, dict):
+                    self._environment_metadata[env_id] = metadata
+
+                history = await self.cache_manager.get(
+                    self._environment_cache_key(env_id, "history"),
+                    namespace=CacheNamespace.SYSTEM_CONFIG,
+                    default=[],
+                )
+                if history:
+                    self._environment_versions[env_id] = history[-MAX_ENVIRONMENT_HISTORY:]
+
+                loaded += 1
+
+            if loaded:
+                self.telemetry.info(
+                    "Loaded notebook environments from cache",
+                    count=loaded,
+                )
+
+        except Exception as exc:  # pragma: no cover - defensive
+            self.telemetry.error("Failed to load cached notebook environments", error=str(exc))
+
+    async def _write_environment_index(self) -> None:
+        try:
+            environment_ids = sorted(self._environments.keys())
+            await self.cache_manager.set(
+                self._environment_index_key,
+                environment_ids,
+                namespace=CacheNamespace.SYSTEM_CONFIG,
+                ttl_policy=TTLPolicy.PERSISTENT,
+            )
+        except Exception as exc:  # pragma: no cover - defensive
+            self.telemetry.error("Failed to write environment index", error=str(exc))
+
+    async def _persist_environment(
+        self,
+        environment: NotebookEnvironment,
+        *,
+        is_new: bool,
+        updated_by: Optional[str] = None
+    ) -> None:
+        env_id = environment.environment_id
+        actor = updated_by or self._current_actor()
+        timestamp = datetime.utcnow()
+        timestamp_iso = timestamp.isoformat()
+
+        metadata = self._environment_metadata.get(env_id, {}).copy()
+        if not metadata:
+            metadata = {
+                "environment_id": env_id,
+                "created_at": timestamp_iso,
+                "created_by": actor,
+                "source": "default" if env_id in self._default_environments else "user",
+            }
+
+        metadata.setdefault("environment_id", env_id)
+        metadata.setdefault("created_at", timestamp_iso)
+        metadata.setdefault("created_by", actor)
+        metadata.setdefault("source", "default" if env_id in self._default_environments else "user")
+        metadata["updated_at"] = timestamp_iso
+        metadata["updated_by"] = actor
+        metadata["is_default"] = env_id in self._default_environments
+        metadata["version"] = metadata.get("version", 0) + 1
+
+        k8s_yaml = self._generate_k8s_yaml(environment)
+        metadata["k8s_yaml_key"] = self._environment_cache_key(env_id, "k8s")
+
+        self._environments[env_id] = environment
+        self._environment_metadata[env_id] = metadata
+
+        history_entry = {
+            "version": metadata["version"],
+            "updated_at": timestamp_iso,
+            "updated_by": actor,
+            "environment": environment.dict(),
+        }
+        history = self._environment_versions.setdefault(env_id, [])
+        history.append(history_entry)
+        if len(history) > MAX_ENVIRONMENT_HISTORY:
+            self._environment_versions[env_id] = history[-MAX_ENVIRONMENT_HISTORY:]
+            history = self._environment_versions[env_id]
+
+        payloads = [
+            (self._environment_cache_key(env_id, "data"), environment.dict()),
+            (self._environment_cache_key(env_id, "metadata"), metadata),
+            (self._environment_cache_key(env_id, "history"), history),
+            (self._environment_cache_key(env_id, "k8s"), k8s_yaml),
+            (f"env_yaml:{env_id}", k8s_yaml),  # Backward compatibility
+        ]
+
+        for key, value in payloads:
+            await self.cache_manager.set(
+                key,
+                value,
+                namespace=CacheNamespace.SYSTEM_CONFIG,
+                ttl_policy=TTLPolicy.PERSISTENT,
+            )
+
+        await self._write_environment_index()
+
+        self.telemetry.info(
+            "Notebook environment persisted",
+            environment_id=env_id,
+            version=metadata["version"],
+            is_new=is_new,
+            actor=actor,
+        )
+        self.telemetry.increment_counter(
+            "developer_workspace_environment_upserts",
+            category=MetricCategory.BUSINESS,
+            is_new=str(is_new).lower(),
+        )
+
+    async def _delete_environment_from_cache(self, environment_id: str) -> None:
+        for suffix in ("data", "metadata", "history", "k8s"):
+            await self.cache_manager.delete(
+                self._environment_cache_key(environment_id, suffix),
+                namespace=CacheNamespace.SYSTEM_CONFIG,
+            )
+        await self.cache_manager.delete(f"env_yaml:{environment_id}")
+
     async def create_notebook_environment(self, environment: NotebookEnvironment) -> str:
         """Create a new notebook environment."""
+        await self._ensure_environments_loaded()
+
         env_id = environment.environment_id
-        self._environments[env_id] = environment
+        if env_id in self._environments:
+            raise ValueError(f"Environment {env_id} already exists")
 
-        # Generate Kubernetes YAML for the environment
-        k8s_yaml = self._generate_k8s_yaml(environment)
-
-        # Store YAML for deployment
-        await self.cache_manager.set(f"env_yaml:{env_id}", k8s_yaml, ttl_seconds=3600)
-
-        self.telemetry.info("Notebook environment created", environment_id=env_id)
+        await self._persist_environment(environment, is_new=True)
         return env_id
+
+    async def update_notebook_environment(
+        self,
+        environment_id: str,
+        updates: Dict[str, Any]
+    ) -> NotebookEnvironment:
+        await self._ensure_environments_loaded()
+
+        current = self._environments.get(environment_id)
+        if not current:
+            raise ValueError(f"Environment {environment_id} not found")
+
+        data = current.dict()
+        data.update(updates)
+
+        try:
+            updated_environment = NotebookEnvironment(**data)
+        except ValidationError as exc:
+            self.telemetry.error(
+                "Invalid notebook environment update",
+                environment_id=environment_id,
+                error=str(exc),
+            )
+            raise
+
+        await self._persist_environment(updated_environment, is_new=False)
+        return updated_environment
+
+    async def delete_notebook_environment(self, environment_id: str) -> bool:
+        await self._ensure_environments_loaded()
+
+        if environment_id in self._default_environments:
+            raise ValueError(f"Default environment {environment_id} cannot be deleted")
+
+        environment = self._environments.get(environment_id)
+        if not environment:
+            return False
+
+        self._environments.pop(environment_id, None)
+        self._environment_metadata.pop(environment_id, None)
+        self._environment_versions.pop(environment_id, None)
+
+        await self._delete_environment_from_cache(environment_id)
+        await self._write_environment_index()
+
+        actor = self._current_actor()
+        self.telemetry.info(
+            "Notebook environment deleted",
+            environment_id=environment_id,
+            actor=actor,
+        )
+        self.telemetry.increment_counter(
+            "developer_workspace_environment_deletes",
+            category=MetricCategory.BUSINESS,
+        )
+
+        return True
+
+    async def list_notebook_environments(self) -> List[NotebookEnvironment]:
+        await self._ensure_environments_loaded()
+        return list(self._environments.values())
+
+    async def get_notebook_environment(self, environment_id: str) -> Optional[NotebookEnvironment]:
+        await self._ensure_environments_loaded()
+        return self._environments.get(environment_id)
+
+    async def get_notebook_environment_metadata(self, environment_id: str) -> Optional[Dict[str, Any]]:
+        await self._ensure_environments_loaded()
+        metadata = self._environment_metadata.get(environment_id)
+        return dict(metadata) if metadata else None
 
     def _generate_k8s_yaml(self, environment: NotebookEnvironment) -> str:
         """Generate Kubernetes YAML for notebook deployment."""
@@ -414,6 +715,9 @@ class DeveloperWorkspaceService:
         configuration: Dict[str, Any] = None
     ) -> str:
         """Start a new notebook session."""
+        configuration = configuration or {}
+
+        await self._ensure_environments_loaded()
         session_id = str(uuid4())
 
         # Get environment
@@ -433,66 +737,365 @@ class DeveloperWorkspaceService:
         )
 
         self._sessions[session_id] = session
+        self._session_metadata[session_id] = {
+            "session_id": session_id,
+            "tenant_id": tenant_id,
+            "user_id": user_id,
+            "environment_id": environment_id,
+            "created_at": session.start_time.isoformat(),
+            "status_history": [(session.status, session.start_time.isoformat())],
+            "configuration": configuration,
+        }
+        self._session_versions.setdefault(session_id, [])
 
-        # Start session in background
-        asyncio.create_task(self._manage_notebook_session(session_id))
+        await self._persist_session(session_id)
+        await self._write_session_index()
 
-        self.telemetry.info("Notebook session started", session_id=session_id, user_id=user_id)
+        asyncio.create_task(self._manage_notebook_session(session_id, environment))
+
+        self.telemetry.info(
+            "Notebook session started",
+            session_id=session_id,
+            user_id=user_id,
+            environment_id=environment_id,
+        )
+        self.telemetry.increment_counter(
+            "developer_workspace_session_starts",
+            category=MetricCategory.BUSINESS,
+        )
         return session_id
 
-    async def _manage_notebook_session(self, session_id: str) -> None:
+    async def _manage_notebook_session(
+        self,
+        session_id: str,
+        environment: NotebookEnvironment
+    ) -> None:
         """Manage notebook session lifecycle."""
         session = self._sessions[session_id]
 
         try:
             # Simulate pod creation and startup
-            await asyncio.sleep(5)  # Simulate startup time
+            await asyncio.sleep(self._session_startup_delay_seconds)  # Simulate startup time
 
             session.status = "running"
             session.pod_name = f"aurum-notebook-{session_id}"
             session.pod_ip = "10.0.0.100"  # Mock IP
             session.notebook_url = f"http://{session.pod_ip}:8888"
+            self._record_session_status(session_id, session.status)
+            await self._persist_session(session_id)
 
             # Monitor session activity
             while session.status == "running":
-                await asyncio.sleep(60)  # Check every minute
+                await asyncio.sleep(self._session_monitor_interval_seconds)
 
                 # Update last activity
                 session.last_activity = datetime.utcnow()
 
                 # Check for idle timeout
-                if environment.idle_timeout_minutes and session.last_activity:
-                    idle_time = (datetime.utcnow() - session.last_activity).total_seconds() / 60
-                    if idle_time > environment.idle_timeout_minutes:
-                        await self._stop_notebook_session(session_id)
+                idle_timeout = environment.idle_timeout_minutes or DEFAULT_IDLE_TIMEOUT_MINUTES
+                max_runtime = environment.max_runtime_hours or DEFAULT_MAX_RUNTIME_HOURS
+
+                if session.last_activity:
+                    idle_minutes = (datetime.utcnow() - session.last_activity).total_seconds() / 60
+                    if idle_minutes > idle_timeout:
+                        session.status = "idle_timeout"
+                        self.telemetry.warning(
+                            "Notebook session idle timeout",
+                            session_id=session_id,
+                            idle_minutes=idle_minutes,
+                            idle_timeout_minutes=idle_timeout,
+                        )
+                        await self._stop_notebook_session(session_id, reason="idle_timeout")
                         break
+
+                if session.start_time:
+                    runtime_hours = (datetime.utcnow() - session.start_time).total_seconds() / 3600
+                    if runtime_hours > max_runtime:
+                        session.status = "runtime_exceeded"
+                        self.telemetry.warning(
+                            "Notebook session exceeded max runtime",
+                            session_id=session_id,
+                            runtime_hours=runtime_hours,
+                            max_runtime_hours=max_runtime,
+                        )
+                        await self._stop_notebook_session(session_id, reason="runtime_exceeded")
+                        break
+
+                session.resource_usage = self._generate_mock_resource_usage(environment)
+                await self._persist_session(session_id)
 
         except Exception as e:
             session.status = "failed"
             session.error_message = str(e)
+            self._record_session_status(session_id, session.status)
+            await self._persist_session(session_id)
             self.telemetry.error("Session management failed", session_id=session_id, error=str(e))
 
-    async def _stop_notebook_session(self, session_id: str) -> None:
+    async def _stop_notebook_session(self, session_id: str, reason: str = "user_requested") -> None:
         """Stop notebook session."""
         session = self._sessions.get(session_id)
         if not session:
             return
 
         session.status = "stopping"
+        self._record_session_status(session_id, session.status)
+        await self._persist_session(session_id)
 
         # Simulate pod cleanup
         await asyncio.sleep(2)
 
         session.status = "stopped"
-        self.telemetry.info("Notebook session stopped", session_id=session_id)
+        session.last_activity = datetime.utcnow()
+        self._record_session_status(session_id, session.status)
+        await self._persist_session(session_id)
+
+        self.telemetry.info(
+            "Notebook session stopped",
+            session_id=session_id,
+            reason=reason,
+        )
+        self.telemetry.increment_counter(
+            "developer_workspace_session_stops",
+            category=MetricCategory.BUSINESS,
+            reason=reason,
+        )
+
+        await self._delete_session_from_cache(session_id)
 
     async def get_session_status(self, session_id: str) -> Optional[NotebookSession]:
         """Get notebook session status."""
+        await self._ensure_sessions_loaded()
         return self._sessions.get(session_id)
 
     async def list_user_sessions(self, user_id: str) -> List[NotebookSession]:
         """List active sessions for a user."""
+        await self._ensure_sessions_loaded()
         return [s for s in self._sessions.values() if s.user_id == user_id and s.status == "running"]
+
+    async def terminate_notebook_session(self, session_id: str, reason: str = "user_requested") -> bool:
+        await self._ensure_sessions_loaded()
+
+        session = self._sessions.get(session_id)
+        if not session:
+            return False
+
+        if session.status in {"stopped", "stopping"}:
+            return False
+
+        await self._stop_notebook_session(session_id, reason=reason)
+        return True
+
+    async def _write_session_index(self) -> None:
+        try:
+            session_ids = sorted(self._sessions.keys())
+            await self.cache_manager.set(
+                self._session_index_key,
+                session_ids,
+                namespace=CacheNamespace.USER_DATA,
+                ttl_policy=SESSION_PERSIST_TTL,
+            )
+        except Exception as exc:  # pragma: no cover - defensive
+            self.telemetry.error("Failed to write session index", error=str(exc))
+
+    async def _persist_session(self, session_id: str) -> None:
+        session = self._sessions.get(session_id)
+        if not session:
+            return
+
+        metadata = self._session_metadata.get(session_id, {}).copy()
+        metadata.setdefault("session_id", session_id)
+        metadata.setdefault("tenant_id", session.tenant_id)
+        metadata.setdefault("user_id", session.user_id)
+        metadata.setdefault("environment_id", session.environment_id)
+        metadata.setdefault(
+            "created_at",
+            session.start_time.isoformat() if session.start_time else datetime.utcnow().isoformat(),
+        )
+        metadata.setdefault("configuration", {})
+        metadata["updated_at"] = datetime.utcnow().isoformat()
+        metadata["status_history"] = metadata.get("status_history", [])[-MAX_SESSION_HISTORY:]
+
+        self._session_metadata[session_id] = metadata
+
+        history_entry = {
+            "status": session.status,
+            "timestamp": datetime.utcnow().isoformat(),
+            "resource_usage": session.resource_usage,
+        }
+        history = self._session_versions.setdefault(session_id, [])
+        history.append(history_entry)
+        if len(history) > MAX_SESSION_HISTORY:
+            self._session_versions[session_id] = history[-MAX_SESSION_HISTORY:]
+            history = self._session_versions[session_id]
+
+        payloads = [
+            (f"{self._session_cache_prefix}:{session_id}:data", session.dict()),
+            (f"{self._session_cache_prefix}:{session_id}:metadata", metadata),
+            (f"{self._session_cache_prefix}:{session_id}:history", history),
+        ]
+
+        for key, value in payloads:
+            await self.cache_manager.set(
+                key,
+                value,
+                namespace=CacheNamespace.USER_DATA,
+                ttl_policy=SESSION_PERSIST_TTL,
+            )
+
+    async def _delete_session_from_cache(self, session_id: str) -> None:
+        for suffix in ("data", "metadata", "history"):
+            await self.cache_manager.delete(
+                f"{self._session_cache_prefix}:{session_id}:{suffix}",
+                namespace=CacheNamespace.USER_DATA,
+            )
+
+    def _record_session_status(self, session_id: str, status: str) -> None:
+        metadata = self._session_metadata.setdefault(session_id, {})
+        history = metadata.setdefault("status_history", [])
+        history.append((status, datetime.utcnow().isoformat()))
+        metadata["status_history"] = history[-MAX_SESSION_HISTORY:]
+
+    def _generate_mock_resource_usage(self, environment: NotebookEnvironment) -> Dict[str, Any]:
+        return {
+            "cpu_millicores": random.randint(
+                200,
+                int(float(environment.resource_limits.get("cpu", "1")) * 1000),
+            ),
+            "memory_bytes": random.randint(256 * 1024 * 1024, 2 * 1024 * 1024 * 1024),
+            "last_updated": datetime.utcnow().isoformat(),
+        }
+
+    async def _ensure_sessions_loaded(self) -> None:
+        if self._sessions_loaded:
+            return
+
+        async with self._session_lock:
+            if self._sessions_loaded:
+                return
+
+            await self._load_cached_sessions()
+            self._sessions_loaded = True
+
+    async def _load_cached_sessions(self) -> None:
+        try:
+            index: List[str] = await self.cache_manager.get(
+                self._session_index_key,
+                namespace=CacheNamespace.USER_DATA,
+                default=[],
+            )
+
+            if not index:
+                return
+
+            loaded = 0
+            for session_id in index:
+                data = await self.cache_manager.get(
+                    f"{self._session_cache_prefix}:{session_id}:data",
+                    namespace=CacheNamespace.USER_DATA,
+                    default=None,
+                )
+                if not data:
+                    continue
+
+                try:
+                    session = NotebookSession(**data)
+                except ValidationError as exc:  # pragma: no cover - defensive
+                    self.telemetry.warning(
+                        "Cached notebook session failed validation",
+                        session_id=session_id,
+                        error=str(exc),
+                    )
+                    continue
+
+                self._sessions[session_id] = session
+
+                metadata = await self.cache_manager.get(
+                    f"{self._session_cache_prefix}:{session_id}:metadata",
+                    namespace=CacheNamespace.USER_DATA,
+                    default=None,
+                )
+                if isinstance(metadata, dict):
+                    self._session_metadata[session_id] = metadata
+
+                history = await self.cache_manager.get(
+                    f"{self._session_cache_prefix}:{session_id}:history",
+                    namespace=CacheNamespace.USER_DATA,
+                    default=[],
+                )
+                if history:
+                    self._session_versions[session_id] = history[-MAX_SESSION_HISTORY:]
+
+                loaded += 1
+
+            if loaded:
+                self.telemetry.info(
+                    "Loaded notebook sessions from cache",
+                    count=loaded,
+                )
+
+        except Exception as exc:  # pragma: no cover - defensive
+            self.telemetry.error("Failed to load cached notebook sessions", error=str(exc))
+
+    async def _ensure_api_docs_loaded(self) -> None:
+        if self._api_docs_loaded:
+            return
+
+        async with self._api_docs_lock:
+            if self._api_docs_loaded:
+                return
+
+            self._initialize_api_documentation()
+            self._initialize_code_snippets()
+            self._api_docs_loaded = True
+
+    def _build_operation_entry(
+        self,
+        path: str,
+        http_method: str,
+        operation: Dict[str, Any]
+    ) -> Dict[str, Any]:
+        parameters = operation.get("parameters", []).copy()
+        if "requestBody" in operation:
+            parameters.append({
+                "name": "body",
+                "in": "requestBody",
+                "required": operation.get("requestBody", {}).get("required", False),
+                "schema": operation.get("requestBody", {}).get("content", {}),
+            })
+
+        responses = operation.get("responses", {})
+        default_response = responses.get("200") or next(iter(responses.values())) if responses else {}
+        response_schema: Dict[str, Any] = {}
+        if isinstance(default_response, dict):
+            content = default_response.get("content", {})
+            if content:
+                first_media = next(iter(content.values()))
+                response_schema = first_media.get("schema", {})
+
+        examples = []
+        for example in operation.get("x-examples", []) or []:
+            example_entry = {
+                "name": example.get("name"),
+                "description": example.get("description"),
+                "language": example.get("language", "python"),
+                "code": example.get("code"),
+                "category": example.get("category"),
+            }
+            examples.append(example_entry)
+
+        endpoint_info = {
+            "path": path,
+            "method": http_method,
+            "summary": operation.get("summary", ""),
+            "description": operation.get("description", ""),
+            "parameters": parameters,
+            "response_schema": response_schema,
+            "tags": operation.get("tags", []),
+            "operation_id": operation.get("operationId"),
+            "examples": examples,
+        }
+
+        return endpoint_info
 
     async def get_environment_templates(self, category: Optional[str] = None) -> List[NotebookTemplate]:
         """Get available notebook templates."""
@@ -881,10 +1484,14 @@ Generated on: {datetime.utcnow().isoformat()}
         try:
             snippets = []
 
+            if not self._code_snippets:
+                await self._ensure_api_docs_loaded()
+
             if category and category in self._code_snippets:
                 snippets.extend(self._code_snippets[category])
+            elif category:
+                return []
             else:
-                # Return all snippets
                 for category_snippets in self._code_snippets.values():
                     snippets.extend(category_snippets)
 

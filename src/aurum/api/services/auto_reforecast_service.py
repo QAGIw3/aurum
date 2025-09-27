@@ -14,18 +14,54 @@ import asyncio
 import json
 import logging
 from collections import defaultdict, deque
-from dataclasses import dataclass, field
+from enum import Enum
 from datetime import datetime, timedelta
 from typing import Any, Dict, List, Optional, Set, Callable, Awaitable
 from uuid import uuid4
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from ..telemetry.context import get_request_id, get_tenant_id, log_structured
 from ..observability.telemetry_facade import get_telemetry_facade, MetricCategory
 from ..cache.consolidated_manager import get_unified_cache_manager
 from .feature_store_service import get_feature_store_service
-from ...api.v2.forecasting import ForecastRequest, ForecastType, QuantileLevel, ForecastInterval
+
+try:
+    from ...api.v2.forecasting import (
+        ForecastRequest,
+        ForecastType,
+        QuantileLevel,
+        ForecastInterval,
+    )
+except Exception:  # pragma: no cover - fallback for test environments
+    class ForecastType(str, Enum):
+        """Fallback forecast type enumeration when full API module is unavailable."""
+
+        LOAD = "load"
+        PRICE = "price"
+
+    class ForecastInterval(str, Enum):
+        """Fallback forecast interval enumeration."""
+
+        HOURLY = "hourly"
+
+    class QuantileLevel(str, Enum):
+        """Fallback quantile levels."""
+
+        P10 = "P10"
+        P50 = "P50"
+        P90 = "P90"
+
+    class ForecastRequest(BaseModel):
+        """Lightweight stand-in for the primary ForecastRequest model."""
+
+        forecast_type: ForecastType
+        target_variable: str
+        geography: str
+        start_date: datetime
+        end_date: datetime
+        quantiles: List[QuantileLevel] = Field(default_factory=list)
+        interval: ForecastInterval = ForecastInterval.HOURLY
 
 
 class TriggerCondition(BaseModel):
@@ -37,6 +73,8 @@ class TriggerCondition(BaseModel):
     threshold_value: float
     lookback_hours: int = 24
     min_change_required: bool = True
+    fields: Optional[List[str]] = None
+    metadata: Dict[str, Any] = Field(default_factory=dict)
 
 
 class DebounceConfig(BaseModel):
@@ -56,6 +94,7 @@ class BackpressureConfig(BaseModel):
     max_processing_rate_per_second: int = 10
     queue_timeout_seconds: int = 60
     drop_low_priority_on_pressure: bool = True
+    priority_threshold: float = 0.5
 
 
 class ForecastTrigger(BaseModel):
@@ -83,7 +122,7 @@ class TriggerEvent(BaseModel):
     timestamp: datetime
     data_changes: Dict[str, float]  # Field name -> change magnitude
     priority_score: float = 1.0
-    metadata: Dict[str, Any] = field(default_factory=dict)
+    metadata: Dict[str, Any] = Field(default_factory=dict)
 
 
 class ReforcastJob(BaseModel):
@@ -308,11 +347,11 @@ class AutoReforecastService:
             matching_triggers = self._find_matching_triggers(event)
 
             for trigger in matching_triggers:
-                # Check debounce
-                if not self._should_trigger(trigger, event):
+                priority_score = max(event.priority_score, trigger.priority)
+
+                if not self._should_trigger(trigger, event, priority_score):
                     continue
 
-                # Create trigger event
                 triggered_event = TriggerEvent(
                     event_id=f"{event.event_id}_{trigger.trigger_id}",
                     trigger_id=trigger.trigger_id,
@@ -320,13 +359,42 @@ class AutoReforecastService:
                     geography=event.geography,
                     timestamp=event.timestamp,
                     data_changes=event.data_changes,
-                    priority_score=trigger.priority,
-                    metadata=event.metadata
+                    priority_score=priority_score,
+                    metadata=dict(event.metadata)
                 )
 
-                # Add to processing queue
+                queued = False
+
                 try:
                     self.event_queue.put_nowait(triggered_event)
+                    queued = True
+
+                except asyncio.QueueFull:
+                    if self.backpressure_config.drop_low_priority_on_pressure and (
+                        priority_score < self.backpressure_config.priority_threshold
+                    ):
+                        self.telemetry.warning(
+                            "Dropping low-priority trigger event due to queue pressure",
+                            trigger_id=trigger.trigger_id,
+                            priority=priority_score
+                        )
+                        continue
+
+                    try:
+                        await asyncio.wait_for(
+                            self.event_queue.put(triggered_event),
+                            timeout=self.backpressure_config.queue_timeout_seconds
+                        )
+                        queued = True
+                    except asyncio.TimeoutError:
+                        self.telemetry.error(
+                            "Failed to queue trigger event - timeout",
+                            trigger_id=trigger.trigger_id
+                        )
+                        continue
+
+                if queued:
+                    self._record_trigger_activity(trigger, triggered_event)
 
                     self.telemetry.info(
                         "Trigger event queued",
@@ -334,29 +402,6 @@ class AutoReforecastService:
                         event_id=triggered_event.event_id,
                         priority=triggered_event.priority_score
                     )
-
-                except asyncio.QueueFull:
-                    if self.backpressure_config.drop_low_priority_on_pressure:
-                        # Check if we should drop this event
-                        if triggered_event.priority_score < self.backpressure_config.priority_threshold:
-                            self.telemetry.warning(
-                                "Dropping low-priority trigger event due to queue pressure",
-                                trigger_id=trigger.trigger_id,
-                                priority=triggered_event.priority_score
-                            )
-                            continue
-
-                    # Wait for queue space
-                    try:
-                        await asyncio.wait_for(
-                            self.event_queue.put(triggered_event),
-                            timeout=self.backpressure_config.queue_timeout_seconds
-                        )
-                    except asyncio.TimeoutError:
-                        self.telemetry.error(
-                            "Failed to queue trigger event - timeout",
-                            trigger_id=trigger.trigger_id
-                        )
 
         except Exception as e:
             self.telemetry.error("Failed to process trigger event", error=str(e))
@@ -384,11 +429,16 @@ class AutoReforecastService:
             if condition.geography != event.geography:
                 continue
 
-            # Check if any field changes meet the threshold
-            relevant_changes = [
-                change for field, change in event.data_changes.items()
-                if field in condition.metadata.get("fields", [])
-            ] or list(event.data_changes.values())
+            field_filter = condition.fields or condition.metadata.get("fields")
+
+            if field_filter:
+                relevant_changes = [
+                    change
+                    for field, change in event.data_changes.items()
+                    if field in field_filter
+                ]
+            else:
+                relevant_changes = list(event.data_changes.values())
 
             if not relevant_changes:
                 continue
@@ -414,34 +464,56 @@ class AutoReforecastService:
         # For now, use simplified logic
         return any(change > condition.threshold_value for change in event.data_changes.values())
 
-    def _should_trigger(self, trigger: ForecastTrigger, event: TriggerEvent) -> bool:
-        """Check if trigger should fire based on debounce and cooldown."""
+    def _should_trigger(
+        self,
+        trigger: ForecastTrigger,
+        event: TriggerEvent,
+        priority_score: Optional[float] = None
+    ) -> bool:
+        """Check if trigger should fire based on debounce, cooldown, and priority."""
         if not self.debounce_config.enabled:
             return True
 
+        effective_priority = priority_score if priority_score is not None else max(
+            event.priority_score,
+            trigger.priority
+        )
+
+        if effective_priority < self.debounce_config.priority_threshold:
+            return False
+
+        now = datetime.utcnow()
         trigger_key = f"{trigger.trigger_id}:{event.data_source}:{event.geography}"
 
         # Check cooldown
         if trigger.last_triggered:
             cooldown_end = trigger.last_triggered + timedelta(minutes=trigger.cooldown_minutes)
-            if datetime.utcnow() < cooldown_end:
+            if now < cooldown_end:
                 return False
 
-        # Check debounce window
-        now = datetime.utcnow()
+        # Check debounce window and concurrent triggers
         window_start = now - timedelta(seconds=self.debounce_config.window_seconds)
+        timestamps = self.trigger_timestamps[trigger_key]
 
-        # Get recent triggers for this key
-        recent_timestamps = [
-            ts for ts in self.trigger_timestamps[trigger_key]
-            if ts > window_start
-        ]
+        while timestamps and timestamps[0] < window_start:
+            timestamps.popleft()
 
-        # Check rate limiting
-        if len(recent_timestamps) >= self.debounce_config.max_concurrent_triggers:
+        if len(timestamps) >= self.debounce_config.max_concurrent_triggers:
             return False
 
         return True
+
+    def _record_trigger_activity(self, trigger: ForecastTrigger, event: TriggerEvent) -> None:
+        """Record a trigger firing for debounce tracking."""
+
+        trigger_key = f"{trigger.trigger_id}:{event.data_source}:{event.geography}"
+        timestamps = self.trigger_timestamps[trigger_key]
+
+        window_start = datetime.utcnow() - timedelta(seconds=self.debounce_config.window_seconds)
+        while timestamps and timestamps[0] < window_start:
+            timestamps.popleft()
+
+        timestamps.append(datetime.utcnow())
 
     async def _event_processor_loop(self) -> None:
         """Background task to process trigger events."""
@@ -487,7 +559,7 @@ class AutoReforecastService:
                 self.pending_jobs[job.job_id] = job
 
                 # Update trigger stats
-                trigger.last_triggered = datetime.utcnow()
+                trigger.last_triggered = event.timestamp
                 trigger.trigger_count += 1
 
                 self.telemetry.info(
@@ -820,148 +892,44 @@ class AutoReforecastService:
             "backpressure_enabled": self.backpressure_config.enabled
         }
 
-<<<<<<< HEAD
     # API Methods for trigger management
-    async def list_triggers(
-        self, 
-        enabled_only: bool = False, 
-        limit: int = 20, 
-        offset: int = 0
-    ) -> List[ForecastTrigger]:
-        """List forecast triggers with pagination.
-        
-        Args:
-            enabled_only: Only return enabled triggers
-            limit: Maximum number of triggers to return
-            offset: Offset for pagination
-            
-=======
     async def list_triggers(
         self,
         enabled_only: bool = False,
         limit: int = 50,
         offset: int = 0
     ) -> List[ForecastTrigger]:
-        """List forecast triggers with optional filtering.
+        """List forecast triggers with optional filtering and pagination."""
 
-        Args:
-            enabled_only: Only return enabled triggers
-            limit: Maximum number of triggers to return
-            offset: Pagination offset
-
->>>>>>> 6950b18f (	deleted:    .coverage)
-        Returns:
-            List of forecast triggers
-        """
         triggers = list(self.triggers.values())
-<<<<<<< HEAD
-        
-        if enabled_only:
-            triggers = [t for t in triggers if t.enabled]
-            
-        # Apply pagination
-        triggers = triggers[offset:offset + limit]
-        
-        return triggers
-
-    async def create_trigger(self, trigger: ForecastTrigger) -> ForecastTrigger:
-        """Create a new forecast trigger.
-        
-        Args:
-            trigger: Trigger configuration
-            
-        Returns:
-            Created trigger
-        """
-        self.add_trigger(trigger)
-        return trigger
-
-    async def get_trigger(self, trigger_id: str) -> Optional[ForecastTrigger]:
-        """Get a specific forecast trigger.
-        
-        Args:
-            trigger_id: Trigger identifier
-            
-        Returns:
-            Trigger if found, None otherwise
-        """
-        return self.triggers.get(trigger_id)
-
-    async def update_trigger(self, trigger: ForecastTrigger) -> ForecastTrigger:
-        """Update an existing forecast trigger.
-        
-        Args:
-            trigger: Updated trigger configuration
-            
-        Returns:
-            Updated trigger
-        """
-        self.triggers[trigger.trigger_id] = trigger
-        
-        if trigger.enabled:
-            self.active_triggers.add(trigger.trigger_id)
-        else:
-            self.active_triggers.discard(trigger.trigger_id)
-            
-=======
 
         if enabled_only:
-            triggers = [t for t in triggers if t.enabled]
+            triggers = [trigger for trigger in triggers if trigger.enabled]
 
-        # Apply pagination
         return triggers[offset:offset + limit]
 
     async def get_trigger(self, trigger_id: str) -> Optional[ForecastTrigger]:
-        """Get a specific forecast trigger.
+        """Get a specific forecast trigger by identifier."""
 
-        Args:
-            trigger_id: Trigger identifier
-
-        Returns:
-            Forecast trigger or None if not found
-        """
         return self.triggers.get(trigger_id)
 
     async def create_trigger(self, trigger: ForecastTrigger) -> ForecastTrigger:
-        """Create a new forecast trigger.
+        """Register a new forecast trigger."""
 
-        Args:
-            trigger: Trigger configuration
-
-        Returns:
-            Created trigger
-        """
-        self.triggers[trigger.trigger_id] = trigger
-
-        if trigger.enabled:
-            self.active_triggers.add(trigger.trigger_id)
-
-        self.telemetry.info(
-            "Trigger created",
-            trigger_id=trigger.trigger_id,
-            trigger_name=trigger.name
-        )
-
+        self.add_trigger(trigger)
         return trigger
 
     async def update_trigger(self, trigger: ForecastTrigger) -> ForecastTrigger:
-        """Update an existing forecast trigger.
+        """Update an existing forecast trigger."""
 
-        Args:
-            trigger: Updated trigger configuration
-
-        Returns:
-            Updated trigger
-        """
         if trigger.trigger_id not in self.triggers:
             raise ValueError(f"Trigger {trigger.trigger_id} not found")
 
-        old_trigger = self.triggers[trigger.trigger_id]
+        current_trigger = self.triggers[trigger.trigger_id]
 
-        # Update active triggers set
-        if old_trigger.enabled and not trigger.enabled:
+        if current_trigger.enabled and not trigger.enabled:
             self.active_triggers.discard(trigger.trigger_id)
-        elif not old_trigger.enabled and trigger.enabled:
+        elif not current_trigger.enabled and trigger.enabled:
             self.active_triggers.add(trigger.trigger_id)
 
         self.triggers[trigger.trigger_id] = trigger
@@ -972,118 +940,12 @@ class AutoReforecastService:
             trigger_name=trigger.name
         )
 
->>>>>>> 6950b18f (	deleted:    .coverage)
         return trigger
 
     async def delete_trigger(self, trigger_id: str) -> bool:
-        """Delete a forecast trigger.
-<<<<<<< HEAD
-        
-        Args:
-            trigger_id: Trigger identifier
-            
-        Returns:
-            True if trigger was deleted
-        """
+        """Delete a forecast trigger by identifier."""
+
         return self.remove_trigger(trigger_id)
-
-    async def list_jobs(
-        self, 
-        status: Optional[str] = None, 
-        limit: int = 20, 
-        offset: int = 0
-    ) -> List[ReforcastJob]:
-        """List reforecast jobs with filtering and pagination.
-        
-        Args:
-            status: Filter by job status
-            limit: Maximum number of jobs to return
-            offset: Offset for pagination
-            
-        Returns:
-            List of reforecast jobs
-        """
-        # Combine all jobs from different states
-        all_jobs = list(self.pending_jobs.values()) + list(self.completed_jobs.values())
-        
-        # Add currently processing jobs (mock them as ReforcastJob objects)
-        for job_id in self.processing_jobs:
-            if job_id in self.pending_jobs:
-                job = self.pending_jobs[job_id]
-                job.status = "processing"
-                all_jobs.append(job)
-        
-        # Filter by status if specified  
-        if status:
-            all_jobs = [job for job in all_jobs if job.status == status]
-            
-        # Sort by creation time (most recent first)
-        all_jobs.sort(key=lambda j: j.created_at, reverse=True)
-        
-        # Apply pagination
-        all_jobs = all_jobs[offset:offset + limit]
-        
-        return all_jobs
-
-    async def list_trigger_events(
-        self, 
-        limit: int = 50, 
-        since: Optional[datetime] = None
-    ) -> List[Dict[str, Any]]:
-        """List recent trigger events.
-        
-        Args:
-            limit: Maximum number of events to return
-            since: Only events since this timestamp
-            
-        Returns:
-            List of trigger events
-        """
-        # In a real implementation, this would query stored events
-        # For now, return mock events based on recent trigger activity
-        events = []
-        
-        for trigger_id, trigger in self.triggers.items():
-            if trigger.last_triggered:
-                if since is None or trigger.last_triggered >= since:
-                    events.append({
-                        "event_id": f"event_{trigger_id}_{int(trigger.last_triggered.timestamp())}",
-                        "trigger_id": trigger_id,
-                        "trigger_name": trigger.name,
-                        "timestamp": trigger.last_triggered.isoformat(),
-                        "data_source": trigger.conditions[0].data_source if trigger.conditions else "unknown",
-                        "geography": trigger.conditions[0].geography if trigger.conditions else "US",
-                        "priority_score": trigger.priority,
-                        "trigger_count": trigger.trigger_count
-                    })
-        
-        # Sort by timestamp (most recent first)
-        events.sort(key=lambda e: e["timestamp"], reverse=True)
-        
-        # Apply limit
-        events = events[:limit]
-        
-=======
-
-        Args:
-            trigger_id: Trigger identifier
-
-        Returns:
-            True if trigger was deleted
-        """
-        if trigger_id not in self.triggers:
-            return False
-
-        trigger = self.triggers.pop(trigger_id)
-        self.active_triggers.discard(trigger_id)
-
-        self.telemetry.info(
-            "Trigger deleted",
-            trigger_id=trigger_id,
-            trigger_name=trigger.name
-        )
-
-        return True
 
     async def list_jobs(
         self,
@@ -1091,147 +953,106 @@ class AutoReforecastService:
         limit: int = 50,
         offset: int = 0
     ) -> List[ReforcastJob]:
-        """List reforecast jobs with optional filtering.
+        """List reforecast jobs with optional status filtering."""
 
-        Args:
-            status: Optional status filter
-            limit: Maximum number of jobs to return
-            offset: Pagination offset
+        job_index: Dict[str, ReforcastJob] = {}
 
-        Returns:
-            List of reforecast jobs
-        """
-        jobs = []
+        def maybe_add(job: Optional[ReforcastJob]) -> None:
+            if not job:
+                return
 
-        # Get pending jobs
-        for job in list(self.pending_jobs.values()):
-            if status is None or job.status == status:
-                jobs.append(job)
+            if status is not None and job.status != status:
+                return
 
-        # Get processing jobs
+            job_index[job.job_id] = job
+
+        for job in self.pending_jobs.values():
+            maybe_add(job)
+
         for job_id in self.processing_jobs:
-            if job_id in self.pending_jobs:
-                job = self.pending_jobs[job_id]
-                if status is None or job.status == status:
-                    jobs.append(job)
+            maybe_add(self.pending_jobs.get(job_id))
 
-        # Get completed jobs (last 1000)
-        completed_jobs_list = list(self.completed_jobs.values())[-1000:]
-        for job in completed_jobs_list:
-            if status is None or job.status == status:
-                jobs.append(job)
+        for job in self.completed_jobs.values():
+            maybe_add(job)
 
-        # Sort by creation time (most recent first)
-        jobs.sort(key=lambda j: j.created_at, reverse=True)
+        jobs = sorted(job_index.values(), key=lambda job: job.created_at, reverse=True)
 
         return jobs[offset:offset + limit]
 
     async def list_trigger_events(
         self,
         trigger_id: Optional[str] = None,
-        limit: int = 100,
+        limit: int = 50,
         since: Optional[datetime] = None
     ) -> List[Dict[str, Any]]:
-        """List trigger events.
+        """Return recent trigger events derived from trigger metadata."""
 
-        Args:
-            trigger_id: Optional trigger filter
-            limit: Maximum events to return
-            since: Only events since this time
+        events: List[Dict[str, Any]] = []
 
-        Returns:
-            List of trigger events
-        """
-        # Mock implementation - in reality would store and query events
-        events = []
+        triggers: List[ForecastTrigger]
+        if trigger_id:
+            trigger = self.triggers.get(trigger_id)
+            triggers = [trigger] if trigger else []
+        else:
+            triggers = list(self.triggers.values())
 
-        if trigger_id and trigger_id in self.triggers:
-            trigger = self.triggers[trigger_id]
+        for trigger in triggers:
+            if not trigger or not trigger.last_triggered:
+                continue
 
-            # Generate mock events based on trigger count
-            for i in range(min(limit, trigger.trigger_count)):
-                event_time = datetime.utcnow() - timedelta(minutes=i * 10)
+            if since and trigger.last_triggered < since:
+                continue
 
-                if since and event_time < since:
-                    continue
+            primary_condition = trigger.conditions[0] if trigger.conditions else None
 
-                event = {
-                    "event_id": f"evt_{trigger.trigger_id}_{i}",
-                    "trigger_id": trigger_id,
-                    "data_source": "weather",  # Mock
-                    "geography": "US",  # Mock
-                    "timestamp": event_time,
-                    "data_changes": {"temperature": 5.0},  # Mock
+            events.append(
+                {
+                    "event_id": f"event_{trigger.trigger_id}_{int(trigger.last_triggered.timestamp())}",
+                    "trigger_id": trigger.trigger_id,
+                    "trigger_name": trigger.name,
+                    "timestamp": trigger.last_triggered.isoformat(),
+                    "data_source": primary_condition.data_source if primary_condition else "unknown",
+                    "geography": primary_condition.geography if primary_condition else "US",
                     "priority_score": trigger.priority,
-                    "processed": True
+                    "trigger_count": trigger.trigger_count,
                 }
-                events.append(event)
+            )
 
->>>>>>> 6950b18f (	deleted:    .coverage)
-        return events
+        events.sort(key=lambda event: event["timestamp"], reverse=True)
+        return events[:limit]
 
     async def get_debounce_config(self) -> DebounceConfig:
-        """Get current debounce configuration.
-<<<<<<< HEAD
-        
-        Returns:
-            Current debounce configuration
-=======
+        """Return the current debounce configuration."""
 
-        Returns:
-            Debounce configuration
->>>>>>> 6950b18f (	deleted:    .coverage)
-        """
         return self.debounce_config
 
     async def update_debounce_config(self, config: DebounceConfig) -> DebounceConfig:
-        """Update debounce configuration.
-<<<<<<< HEAD
-        
-        Args:
-            config: New debounce configuration
-            
-        Returns:
-            Updated configuration
-        """
-        self.debounce_config = config
-        
-        # Update processing semaphore if max concurrent triggers changed
-        self.processing_semaphore = asyncio.Semaphore(
-            config.max_concurrent_triggers
-        )
-        
-        self.telemetry.info(
-            "Updated debounce configuration",
-            enabled=config.enabled,
-            window_seconds=config.window_seconds,
-            max_concurrent_triggers=config.max_concurrent_triggers
-        )
-        
-        return self.debounce_config
-=======
+        """Update debounce configuration and adjust processing limits."""
 
-        Args:
-            config: New debounce configuration
-
-        Returns:
-            Updated debounce configuration
-        """
-        old_config = self.debounce_config
+        previous_config = self.debounce_config
         self.debounce_config = config
 
-        # Update semaphore if concurrent triggers changed
-        if config.max_concurrent_triggers != old_config.max_concurrent_triggers:
+        if config.max_concurrent_triggers != previous_config.max_concurrent_triggers:
             self.processing_semaphore = asyncio.Semaphore(config.max_concurrent_triggers)
+
+        old_config_data = (
+            previous_config.model_dump()
+            if hasattr(previous_config, "model_dump")
+            else previous_config.dict()
+        )
+        new_config_data = (
+            config.model_dump()
+            if hasattr(config, "model_dump")
+            else config.dict()
+        )
 
         self.telemetry.info(
             "Debounce config updated",
-            old_config=old_config.dict(),
-            new_config=config.dict()
+            old_config=old_config_data,
+            new_config=new_config_data
         )
 
-        return config
->>>>>>> 6950b18f (	deleted:    .coverage)
+        return self.debounce_config
 
 
 # Global auto-reforecast service instance
@@ -1324,21 +1145,30 @@ def create_weather_trigger(
     Returns:
         Forecast trigger configuration
     """
+    tracked_fields = ["temperature", "humidity", "wind_speed", "precipitation"]
+
     conditions = [
         TriggerCondition(
             data_source="weather",
             geography=geography,
             threshold_type="percentage",
-            threshold_value=threshold_percentage / 100.0
+            threshold_value=threshold_percentage / 100.0,
+            fields=tracked_fields,
+            metadata={
+                "fields": tracked_fields,
+                "unit": "percentage",
+                "description": "Weather variance trigger"
+            }
         )
     ]
 
+    start_time = datetime.utcnow()
     forecast_config = ForecastRequest(
         forecast_type=ForecastType.LOAD,
         target_variable="load_mw",
         geography=geography,
-        start_date=datetime.utcnow(),
-        end_date=datetime.utcnow() + timedelta(hours=forecast_horizon_hours),
+        start_date=start_time,
+        end_date=start_time + timedelta(hours=forecast_horizon_hours),
         quantiles=[QuantileLevel.P10, QuantileLevel.P50, QuantileLevel.P90],
         interval=ForecastInterval.HOURLY
     )
@@ -1368,21 +1198,30 @@ def create_price_trigger(
     Returns:
         Forecast trigger configuration
     """
+    tracked_fields = ["lmp_price", "marginal_cost"]
+
     conditions = [
         TriggerCondition(
             data_source="price",
             geography=geography,
             threshold_type="absolute",
-            threshold_value=threshold_absolute
+            threshold_value=threshold_absolute,
+            fields=tracked_fields,
+            metadata={
+                "fields": tracked_fields,
+                "unit": "USD",
+                "description": "Price shock trigger"
+            }
         )
     ]
 
+    start_time = datetime.utcnow()
     forecast_config = ForecastRequest(
         forecast_type=ForecastType.PRICE,
         target_variable="lmp_price",
         geography=geography,
-        start_date=datetime.utcnow(),
-        end_date=datetime.utcnow() + timedelta(hours=forecast_horizon_hours),
+        start_date=start_time,
+        end_date=start_time + timedelta(hours=forecast_horizon_hours),
         quantiles=[QuantileLevel.P10, QuantileLevel.P50, QuantileLevel.P90],
         interval=ForecastInterval.HOURLY
     )
@@ -1395,4 +1234,3 @@ def create_price_trigger(
         forecast_config=forecast_config,
         priority=0.9
     )
-

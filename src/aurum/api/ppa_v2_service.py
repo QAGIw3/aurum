@@ -6,10 +6,11 @@ Contracts are sourced from the in-memory/DB-backed ScenarioStore. Valuations are
 queried from Trino via existing helpers.
 """
 
+from datetime import date
 from typing import Any, Dict, List, Optional
 
 from .config import TrinoConfig
-from .services.ppa_service import PpaService
+from .services.ppa_service import PpaService, coerce_float
 from .state import get_settings
 
 
@@ -50,14 +51,36 @@ class PpaV2Service:
             scenario_id=None,
             metric=None,
             tenant_id=tenant_id,
+            start_date=start_date,
+            end_date=end_date,
             limit=limit,
             offset=offset,
             trino_cfg=trino_cfg,
         )
+
+        def _format_date(value: Any) -> Optional[str]:
+            if isinstance(value, date):
+                return value.isoformat()
+            if value is None:
+                return None
+            return str(value)
+
+        def _maybe_float(value: Any) -> Optional[float]:
+            return coerce_float(value) if value is not None else None
+
         return [
             {
-                "valuation_date": str(row.get("asof_date")),
-                "present_value": float(row.get("npv") or row.get("value") or 0.0),
+                "valuation_date": _format_date(row.get("asof_date")),
+                "period_start": _format_date(row.get("period_start")),
+                "period_end": _format_date(row.get("period_end")),
+                "metric": row.get("metric"),
+                "present_value": (
+                    coerce_float(row.get("npv"))
+                    if row.get("npv") is not None
+                    else _maybe_float(row.get("value"))
+                ),
+                "cashflow": _maybe_float(row.get("cashflow")),
+                "irr": _maybe_float(row.get("irr")),
                 "currency": row.get("metric_currency") or "USD",
             }
             for row in rows

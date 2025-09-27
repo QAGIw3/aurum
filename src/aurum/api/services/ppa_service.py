@@ -34,6 +34,39 @@ def coerce_date(value: Any, fallback: date) -> date:
     return fallback
 
 
+def normalize_currency_code(value: Any) -> Optional[str]:
+    """Normalize raw currency identifiers to ISO-like uppercase codes."""
+    if value is None:
+        return None
+    if isinstance(value, bytes):
+        value = value.decode("utf-8", errors="ignore")
+    text = str(value).strip()
+    if not text:
+        return None
+    # Split on separators often embedded in unit strings, e.g. "usd/mwh"
+    for separator in ("/", "-", " "):
+        if separator in text:
+            text = text.split(separator, 1)[0]
+            break
+    text = text.upper()
+    if len(text) > 3 and text[:3].isalpha():
+        return text[:3]
+    return text or None
+
+
+def parse_optional_date(value: Any) -> Optional[date]:
+    if isinstance(value, datetime):
+        return value.date()
+    if isinstance(value, date):
+        return value
+    if isinstance(value, str):
+        try:
+            return date.fromisoformat(value)
+        except ValueError:
+            return None
+    return None
+
+
 def month_end(day: date) -> date:
     last_day = monthrange(day.year, day.month)[1]
     return day.replace(day=last_day)
@@ -44,18 +77,26 @@ def month_offset(start: date, end: date) -> int:
 
 
 def extract_currency(row: Dict[str, Any]) -> Optional[str]:
-    currency = row.get("metric_currency")
-    if isinstance(currency, str) and currency.strip():
-        return currency.strip()
+    currency = normalize_currency_code(row.get("metric_currency"))
+    if currency:
+        return currency
     unit = row.get("metric_unit")
     if isinstance(unit, str) and unit.strip():
-        return unit.split("/", 1)[0].strip()
+        extracted = normalize_currency_code(unit)
+        if extracted:
+            return extracted
     return None
 
 
 def compute_irr(
-    cashflows: List[float], *, tolerance: float = 1e-6, max_iterations: int = 80
+    cashflows: List[float], *, tolerance: float = 1e-6, max_iterations: int = 120
 ) -> Optional[float]:
+    """Compute an internal rate of return using a robust bracketed search.
+
+    Falls back to an extended bisection search that attempts to find bounds for
+    the root even when the initial interval does not bracket the IRR.
+    """
+
     if not cashflows:
         return None
     if all(cf >= 0 for cf in cashflows) or all(cf <= 0 for cf in cashflows):
@@ -64,12 +105,29 @@ def compute_irr(
     def npv(rate: float) -> float:
         total = 0.0
         for idx, cf in enumerate(cashflows):
-            total += cf / (1.0 + rate) ** idx
+            discount = (1.0 + rate) ** idx
+            if discount == 0:
+                return float("inf")
+            total += cf / discount
         return total
 
     low, high = -0.9999, 10.0
     f_low = npv(low)
     f_high = npv(high)
+
+    # Expand bounds until root is bracketed or limits exceeded
+    expansion = 0
+    while f_low * f_high > 0 and expansion < 20:
+        expansion += 1
+        high = high * 2 if high > 0 else high + 1
+        f_high = npv(high)
+        if f_low * f_high <= 0:
+            break
+        low = low * 2 if low < 0 else low - 1
+        if low <= -0.999999:
+            low = -0.999999
+        f_low = npv(low)
+
     if f_low == 0:
         return low
     if f_high == 0:
@@ -77,19 +135,19 @@ def compute_irr(
     if f_low * f_high > 0:
         return None
 
-    mid = (low + high) / 2.0
+    rate = (low + high) / 2.0
     for _ in range(max_iterations):
-        mid = (low + high) / 2.0
-        f_mid = npv(mid)
-        if abs(f_mid) < tolerance:
-            return mid
-        if f_low * f_mid < 0:
-            high = mid
-            f_high = f_mid
+        rate = (low + high) / 2.0
+        f_rate = npv(rate)
+        if abs(f_rate) < tolerance:
+            return rate
+        if f_low * f_rate < 0:
+            high = rate
+            f_high = f_rate
         else:
-            low = mid
-            f_low = f_mid
-    return mid
+            low = rate
+            f_low = f_rate
+    return rate
 
 
 class PpaService:
@@ -141,6 +199,8 @@ class PpaService:
         scenario_id: Optional[str],
         metric: Optional[str],
         tenant_id: Optional[str],
+        start_date: Optional[Any] = None,
+        end_date: Optional[Any] = None,
         limit: int,
         offset: int,
         trino_cfg: Optional[TrinoConfig] = None,
@@ -154,6 +214,18 @@ class PpaService:
         if metric:
             filters["metric"] = metric
         where = build_filter_clause(filters)
+
+        start_bound = parse_optional_date(start_date)
+        end_bound = parse_optional_date(end_date)
+        bound_clauses: List[str] = []
+        if start_bound:
+            bound_clauses.append(f"period_start >= DATE '{start_bound.isoformat()}'")
+        if end_bound:
+            bound_clauses.append(f"period_end <= DATE '{end_bound.isoformat()}'")
+        if bound_clauses:
+            bounds = " AND ".join(bound_clauses)
+            where = where + (" AND " if where else " WHERE ") + bounds
+
         sql = (
             "SELECT cast(asof_date as date) as asof_date, "
             "cast(period_start as date) as period_start, "
@@ -170,6 +242,9 @@ class PpaService:
             for numeric_key in ("value", "cashflow", "npv", "irr"):
                 if record.get(numeric_key) is not None:
                     record[numeric_key] = float(record[numeric_key])
+            currency = extract_currency(record)
+            if currency:
+                record["metric_currency"] = currency
         return rows, elapsed
 
     # ------------------------------------------------------------------
@@ -210,15 +285,25 @@ class PpaService:
         volume = coerce_float(opts.get("volume_mwh"), 1.0)
         discount_rate = max(coerce_float(opts.get("discount_rate"), 0.0), -0.9999)
         upfront_cost = coerce_float(opts.get("upfront_cost"), 0.0)
+        base_currency_opt = normalize_currency_code(opts.get("base_currency"))
+        raw_fx_rates = opts.get("fx_rates") or {}
+        fx_rates: Dict[str, float] = {}
+        if isinstance(raw_fx_rates, dict):
+            for key, val in raw_fx_rates.items():
+                code = normalize_currency_code(key)
+                rate = coerce_float(val, 0.0)
+                if code and rate > 0.0:
+                    fx_rates[code] = rate
         monthly_rate = (1.0 + discount_rate) ** (1.0 / 12.0) - 1.0 if discount_rate else 0.0
 
         fallback_date = asof_date or date.today()
         base_period: Optional[date] = None
         latest_period: Optional[date] = None
         npv_total = -upfront_cost
+        discounted_total = 0.0
         cashflows_by_offset: Dict[int, float] = {}
         metrics_out: List[Dict[str, Any]] = []
-        currency_hint: Optional[str] = None
+        currency_hint: Optional[str] = base_currency_opt
         curve_hint: Optional[str] = None
         run_hint: Optional[str] = None
         tenor_hint: Optional[str] = None
@@ -232,27 +317,75 @@ class PpaService:
             latest_period = period
             offset = month_offset(base_period, period) + 1
             price_value = coerce_float(row.get("value"), 0.0)
-            currency = extract_currency(row)
+
+            source_currency = extract_currency(row)
+            normalized_currency = normalize_currency_code(source_currency)
+            if normalized_currency:
+                row["metric_currency"] = normalized_currency
 
             curve_hint = curve_hint or row.get("curve_key")
             run_hint = run_hint or row.get("run_id")
             tenor_hint = tenor_hint or row.get("tenor_type")
-            currency_hint = currency_hint or currency
 
-            cashflow = (price_value - ppa_price) * volume
-            discount_factor = (1.0 + monthly_rate) ** offset if monthly_rate else 1.0
-            discounted = cashflow / discount_factor
+            cashflow_raw = (price_value - ppa_price) * volume
+            cashflow_value = cashflow_raw
+            currency_used = normalized_currency or base_currency_opt
+            if base_currency_opt and normalized_currency and normalized_currency != base_currency_opt:
+                fx_rate = fx_rates.get(normalized_currency)
+                if fx_rate and fx_rate > 0.0:
+                    cashflow_value = cashflow_raw * fx_rate
+                    currency_used = base_currency_opt
+                else:
+                    currency_used = normalized_currency
+            elif base_currency_opt and not normalized_currency:
+                currency_used = base_currency_opt
+
+            currency_hint = currency_hint or currency_used or normalized_currency
+
+            discount_factor = 1.0
+            if monthly_rate:
+                discount_factor = 1.0 / (1.0 + monthly_rate) ** max(offset, 0)
+            discounted = cashflow_value * discount_factor
+
             npv_total += discounted
-            cashflows_by_offset[offset] = cashflows_by_offset.get(offset, 0.0) + cashflow
+            discounted_total += discounted
+            cashflows_by_offset[offset] = cashflows_by_offset.get(offset, 0.0) + cashflow_value
 
+            period_end = month_end(period)
             metrics_out.append(
                 {
                     "period_start": period,
-                    "period_end": month_end(period),
+                    "period_end": period_end,
                     "metric": "cashflow",
-                    "value": round(cashflow, 4),
-                    "currency": currency,
-                    "unit": currency,
+                    "value": round(cashflow_value, 4),
+                    "currency": currency_used,
+                    "unit": currency_used,
+                    "curve_key": row.get("curve_key"),
+                    "run_id": row.get("run_id"),
+                    "tenor_type": row.get("tenor_type"),
+                }
+            )
+            metrics_out.append(
+                {
+                    "period_start": period,
+                    "period_end": period_end,
+                    "metric": "discounted_cashflow",
+                    "value": round(discounted, 4),
+                    "currency": currency_used,
+                    "unit": currency_used,
+                    "curve_key": row.get("curve_key"),
+                    "run_id": row.get("run_id"),
+                    "tenor_type": row.get("tenor_type"),
+                }
+            )
+            metrics_out.append(
+                {
+                    "period_start": period,
+                    "period_end": period_end,
+                    "metric": "discount_factor",
+                    "value": round(discount_factor, 8),
+                    "currency": None,
+                    "unit": "ratio",
                     "curve_key": row.get("curve_key"),
                     "run_id": row.get("run_id"),
                     "tenor_type": row.get("tenor_type"),
@@ -264,7 +397,20 @@ class PpaService:
 
         summary_start = base_period or fallback_date
         summary_end = month_end(latest_period) if latest_period else summary_start
-        currency_summary = currency_hint or metrics_out[0].get("currency")
+        currency_summary = currency_hint or base_currency_opt or metrics_out[0].get("currency")
+        metrics_out.append(
+            {
+                "period_start": summary_start,
+                "period_end": summary_end,
+                "metric": "discounted_cashflow_total",
+                "value": round(discounted_total, 4),
+                "currency": currency_summary,
+                "unit": currency_summary,
+                "curve_key": curve_hint,
+                "run_id": run_hint,
+                "tenor_type": tenor_hint,
+            }
+        )
         metrics_out.append(
             {
                 "period_start": summary_start,
@@ -310,4 +456,3 @@ __all__ = [
     "extract_currency",
     "compute_irr",
 ]
-
