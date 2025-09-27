@@ -779,13 +779,31 @@ class MetricsCollector:
         return points
 
 
-_metrics_collector = MetricsCollector()
+
+
+_metrics_collector: Optional[MetricsCollector] = None
+_metrics_client: Optional["_PrometheusMetricsClient"] = None
 
 
 def get_metrics_collector() -> MetricsCollector:
     """Return the shared metrics collector instance."""
 
+    global _metrics_collector
+    if _metrics_collector is None:
+        _metrics_collector = MetricsCollector()
     return _metrics_collector
+
+
+def get_metrics_client() -> Optional["_PrometheusMetricsClient"]:
+    """Return the shared metrics client instance if Prometheus is available."""
+
+    if not PROMETHEUS_AVAILABLE:
+        return None
+
+    global _metrics_client
+    if _metrics_client is None:
+        _metrics_client = _PrometheusMetricsClient()
+    return _metrics_client
 
 
 async def increment_api_requests(

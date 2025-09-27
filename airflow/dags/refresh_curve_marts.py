@@ -1,4 +1,4 @@
-"""Airflow DAG to refresh curve facts/marts and run freshness tests."""
+"""Airflow DAG to refresh curve facts/marts and run freshness tests with DBT management service integration."""
 from __future__ import annotations
 
 import os
@@ -8,6 +8,7 @@ from typing import Any
 from airflow import DAG
 from airflow.operators.bash import BashOperator
 from airflow.operators.empty import EmptyOperator
+from airflow.operators.python import PythonOperator
 
 from aurum.airflow_utils import build_failure_callback
 
@@ -26,6 +27,37 @@ DBT_PROJECT_DIR = os.environ.get("AURUM_DBT_PROJECT_DIR", "/opt/airflow/dbt")
 DBT_PROFILES_DIR = os.environ.get("AURUM_DBT_PROFILES_DIR", "/opt/airflow/dbt")
 
 DBT_BASE_CMD = f"{DBT_BIN} --project-dir {DBT_PROJECT_DIR} --profiles-dir {DBT_PROFILES_DIR}"
+
+
+async def execute_scheduled_dbt_tests() -> None:
+    """Execute scheduled DBT tests using the management service."""
+    try:
+        from aurum.api.services.dbt_management_service import get_dbt_management_service
+
+        service = get_dbt_management_service()
+        results = await service.execute_scheduled_tests()
+
+        print(f"Executed {results['executed_count']} test schedules")
+        print(f"Results: {results['results']}")
+
+        # Check for failures
+        failed_schedules = [
+            name for name, result in results['results'].items()
+            if result.get('status') in ['error', 'failed']
+        ]
+
+        if failed_schedules:
+            raise Exception(f"Scheduled tests failed for: {', '.join(failed_schedules)}")
+
+    except Exception as e:
+        print(f"Error executing scheduled tests: {e}")
+        raise
+
+
+def run_scheduled_tests():
+    """Synchronous wrapper for async test execution."""
+    import asyncio
+    asyncio.run(execute_scheduled_dbt_tests())
 
 with DAG(
     dag_id="refresh_curve_marts",
@@ -58,6 +90,11 @@ with DAG(
         ),
     )
 
+    execute_scheduled_tests = PythonOperator(
+        task_id="execute_scheduled_tests",
+        python_callable=run_scheduled_tests,
+    )
+
     end = EmptyOperator(task_id="end")
 
-    start >> refresh_facts >> refresh_marts >> test_freshness >> end
+    start >> refresh_facts >> refresh_marts >> test_freshness >> execute_scheduled_tests >> end

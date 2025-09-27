@@ -141,6 +141,32 @@ class FreshnessCheckResponse(BaseModel):
     status: str
 
 
+class TestScheduleResponse(BaseModel):
+    """Response containing test schedule information."""
+
+    schedule_name: str
+    test_selector: str
+    schedule_cron: str
+    enabled: bool
+    last_run: Optional[datetime]
+    next_run: Optional[datetime]
+    failure_count: int
+    max_failures: int
+    alert_on_failure: bool
+    environment: str
+
+
+class TestScheduleCreateRequest(BaseModel):
+    """Request to create a test schedule."""
+
+    schedule_name: str = Field(..., description="Schedule name")
+    test_selector: str = Field(..., description="Test selector pattern")
+    schedule_cron: str = Field("0 */4 * * *", description="Cron expression")
+    enabled: bool = Field(True, description="Whether schedule is enabled")
+    alert_on_failure: bool = Field(True, description="Alert on test failures")
+    environment: str = Field("production", description="Environment")
+
+
 @router.post("/test", response_model=TestResultResponse, status_code=202)
 async def run_dbt_tests(
     request: Request,
@@ -642,4 +668,159 @@ async def get_dbt_health(
         raise HTTPException(
             status_code=500,
             detail=f"Failed to get DBT health: {str(exc)}"
+        )
+
+
+@router.post("/schedules", response_model=Dict[str, any], status_code=201)
+async def create_test_schedule(
+    request: Request,
+    schedule_data: TestScheduleCreateRequest
+) -> Dict[str, any]:
+    """Create a new test schedule."""
+    start_time = time.perf_counter()
+
+    try:
+        service = get_dbt_management_service()
+
+        # Create schedule configuration
+        schedule = TestSchedule(
+            schedule_name=schedule_data.schedule_name,
+            test_selector=schedule_data.test_selector,
+            schedule_cron=schedule_data.schedule_cron,
+            enabled=schedule_data.enabled,
+            alert_on_failure=schedule_data.alert_on_failure,
+            environment=schedule_data.environment
+        )
+
+        # Create schedule
+        schedule_name = await service.create_test_schedule(schedule)
+
+        query_time_ms = (time.perf_counter() - start_time) * 1000
+
+        telemetry = get_telemetry_facade()
+        telemetry.record_success(
+            operation="create_test_schedule",
+            query_time_ms=query_time_ms
+        )
+
+        return {
+            "meta": telemetry.create_response_metadata(
+                operation="create_test_schedule",
+                query_time_ms=query_time_ms
+            ),
+            "data": {
+                "schedule_name": schedule_name,
+                "message": "Test schedule created successfully"
+            }
+        }
+
+    except Exception as exc:
+        query_time_ms = (time.perf_counter() - start_time) * 1000
+        telemetry = get_telemetry_facade()
+        telemetry.record_error(
+            operation="create_test_schedule",
+            error=exc,
+            query_time_ms=query_time_ms
+        )
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to create test schedule: {str(exc)}"
+        )
+
+
+@router.get("/schedules", response_model=List[TestScheduleResponse])
+async def list_test_schedules(
+    request: Request,
+    response: Response
+) -> List[TestScheduleResponse]:
+    """List all test schedules."""
+    start_time = time.perf_counter()
+
+    try:
+        service = get_dbt_management_service()
+
+        # Get schedules
+        schedules = await service.get_test_schedules()
+
+        query_time_ms = (time.perf_counter() - start_time) * 1000
+
+        # Convert to response format
+        schedule_responses = [
+            TestScheduleResponse(
+                schedule_name=schedule.schedule_name,
+                test_selector=schedule.test_selector,
+                schedule_cron=schedule.schedule_cron,
+                enabled=schedule.enabled,
+                last_run=schedule.last_run,
+                next_run=schedule.next_run,
+                failure_count=schedule.failure_count,
+                max_failures=schedule.max_failures,
+                alert_on_failure=schedule.alert_on_failure,
+                environment=schedule.environment
+            )
+            for schedule in schedules
+        ]
+
+        telemetry = get_telemetry_facade()
+        telemetry.record_success(
+            operation="list_test_schedules",
+            query_time_ms=query_time_ms
+        )
+
+        return schedule_responses
+
+    except Exception as exc:
+        query_time_ms = (time.perf_counter() - start_time) * 1000
+        telemetry = get_telemetry_facade()
+        telemetry.record_error(
+            operation="list_test_schedules",
+            error=exc,
+            query_time_ms=query_time_ms
+        )
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to list test schedules: {str(exc)}"
+        )
+
+
+@router.post("/schedules/execute", response_model=Dict[str, any], status_code=202)
+async def execute_scheduled_tests(
+    request: Request
+) -> Dict[str, any]:
+    """Execute all enabled scheduled tests."""
+    start_time = time.perf_counter()
+
+    try:
+        service = get_dbt_management_service()
+
+        # Execute scheduled tests
+        results = await service.execute_scheduled_tests()
+
+        query_time_ms = (time.perf_counter() - start_time) * 1000
+
+        telemetry = get_telemetry_facade()
+        telemetry.record_success(
+            operation="execute_scheduled_tests",
+            query_time_ms=query_time_ms
+        )
+
+        return {
+            "meta": telemetry.create_response_metadata(
+                operation="execute_scheduled_tests",
+                query_time_ms=query_time_ms
+            ),
+            "data": results
+        }
+
+    except Exception as exc:
+        query_time_ms = (time.perf_counter() - start_time) * 1000
+        telemetry = get_telemetry_facade()
+        telemetry.record_error(
+            operation="execute_scheduled_tests",
+            error=exc,
+            query_time_ms=query_time_ms
+        )
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to execute scheduled tests: {str(exc)}"
         )
