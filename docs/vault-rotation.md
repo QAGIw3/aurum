@@ -498,7 +498,6 @@ kubectl exec -it deployment/vault -n aurum-dev -- vault status
 
 ### Resources
 
-- **Runbook**: [Vault Rotation Runbook](runbooks/vault-rotation.md)
 - **Documentation**: [Vault Documentation](https://developer.hashicorp.com/vault/docs)
 - **Monitoring**: [Grafana Dashboards](https://grafana.aurum-dev)
 

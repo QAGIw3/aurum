@@ -595,9 +595,8 @@ class SyntheticDataGenerator:
 ## Support
 
 ### Resources
-- [Test Fixtures Documentation](docs/test_fixtures.md)
-- [Data Quality Guide](docs/data_quality_assertions.md)
-- [CI/CD Integration Guide](docs/ci_cd_integration.md)
+- [Data Quality Guide](data_quality_assertions.md)
+- [Testing Guide](testing-fast-local.md)
 
 ### Community
 - GitHub Issues: Report bugs and request features

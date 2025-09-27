@@ -35,23 +35,29 @@ New to Aurum? Start here:
 - **[Pagination Guide](pagination.md)** - Working with paginated APIs
 
 ### External Data Integration
-- **[External Data Architecture](external-data.md)** - Data ingestion system design
+- **[External Data Architecture](external-data.md)** - Economic data ingestion system design
+- **[External Data Contracts](external_contracts.md)** - API contracts and data formats
 - **[EIA Integration](api/eia.md)** - Energy Information Administration APIs
-- **[NOAA Weather Data](external.md)** - Weather data integration
+- **[EIA Dataset Configuration](ingestion/eia_dataset_config.md)** - EIA data source configuration
+- **[External API Documentation](api/external.md)** - External provider API reference
 - **[Data Incremental Processing](external/incremental.md)** - Incremental data processing
+- **[ISO Canonical Contracts](external/iso_canonical_contract.md)** - Standardized energy market data formats
 
 ## 🎯 Scenarios & Data Processing
 
 ### Scenario System
 - **[Scenarios Overview](scenarios.md)** - Scenario modeling and execution
 - **[Scenario Outputs & Metrics](scenarios.md#outputs-and-metrics)** - Understanding scenario results
+- **[Scenario Smoke Tests](scenarios/smoke.md)** - Testing and validation procedures
 - **[Golden Query Cache](golden_query_cache.md)** - Caching strategy for scenarios
 
 ### Data Pipeline & Processing
 - **[Airflow Operations](airflow.md)** - Workflow orchestration
+- **[Airflow Setup Guide](airflow-setup.md)** - Complete Airflow configuration and deployment
 - **[Airflow Variables](airflow-variables.md)** - Configuration management
 - **[dbt Transformations](../dbt/)** - Data transformation models
 - **[Backfill Processing](backfill_driver.md)** - Historical data processing
+- **[Data Quality Assertions](data_quality_assertions.md)** - Data validation and testing framework
 
 ## ⚡ Performance & Operations
 
@@ -60,6 +66,7 @@ New to Aurum? Start here:
 - **[Cost Profiling](cost_profiler.md)** - Monitor and optimize resource usage
 - **[Quotas & Concurrency](quotas_and_concurrency.md)** - Resource management
 - **[Performance Monitoring](canary_monitoring.md)** - System monitoring and alerting
+- **[API Offload Strategies](api/offload.md)** - Async processing and performance optimization
 
 ### Operational Runbooks
 - **[Platform Operations](runbooks/oncall-platform-runbook.md)** - On-call procedures
@@ -74,11 +81,13 @@ New to Aurum? Start here:
 - **[Tenant Isolation & RLS](security/tenant-rls.md)** - Multi-tenant security model
 - **[OIDC Forward Auth](auth/oidc-forward-auth.md)** - Authentication setup
 - **[Secrets Management](security/secrets-policy.md)** - Secret handling policies
+- **[Platform Security & Reliability](platform-reliability-security-cost-optimization.md)** - Comprehensive security features and cost optimization
 - **[Vault Rotation](vault-rotation.md)** - Key rotation procedures
 
 ### Configuration & Management
 - **[Runtime Configuration](runtime-config.md)** - Dynamic configuration management
 - **[Migration Guide](migration-guide.md)** - Version migration procedures
+- **[System Maintenance](maintenance/refactored_system.md)** - Maintenance operations and system management
 - **[Test Fixtures](test_fixtures.md)** - Testing data and fixtures
 - **[Fast Local Testing](testing-fast-local.md)** - Optimized testing workflows
 
@@ -104,13 +113,19 @@ New to Aurum? Start here:
 - **[ISO-NE Implementation](implementations/isone-implementation.md)** - New England ISO integration
 - **[MISO Implementation](implementations/miso-implementation.md)** - Midcontinent ISO integration
 - **[External Data Ingestion](implementations/external-data-ingestion.md)** - General ingestion patterns
+- **[Canary Deployment](implementations/canary-deployment.md)** - Progressive deployment strategies
 
-### Project Management & Planning
+### Development Planning & Architecture
+- **[Development Roadmap 2024-2025](development-roadmap-2024.md)** - Strategic development priorities and phases
+- **[Next 10 Development Steps](next-development-steps.md)** - Immediate tactical development priorities
+- **[Architecture Refactor Plan](refactor-plan.md)** - Current refactoring initiatives and technical debt reduction
+- **[Refactor Implementation Guide](refactor-implementation-guide.md)** - Practical refactoring patterns and examples
+- **[Refactor Documentation →](refactor/)** - Detailed refactor ADRs, playbooks, and roadmaps
+
+### Project Execution & Roadmaps
 - **[Roadmap Implementation Guide](roadmap-implementation-guide.md)** - Execution templates and patterns
 - **[Roadmap Metrics Dashboard](roadmap-metrics-dashboard.md)** - KPIs and success tracking  
 - **[Ingestion & Scenarios Roadmap](roadmap-ingestion-scenarios.md)** - Data pipeline evolution
-- **[Refactor Implementation Guide](refactor-implementation-guide.md)** - Architecture refactoring
-- **[Refactor Plan](refactor-plan.md)** - Current refactoring initiatives
 
 ## 📋 Documentation Maintenance
 

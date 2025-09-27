@@ -783,9 +783,9 @@ class DataQualityChecker:
 ## Support
 
 ### Resources
-- [Data Quality Documentation](docs/data_quality.md)
-- [SeaTunnel Transform Guide](docs/seatunnel_transforms.md)
-- [Schema Validation Guide](docs/schema_validation.md)
+- [SeaTunnel Configuration](../seatunnel/README.md)
+- [Schema Registry Guide](schema_registry.md)
+- [Schema Drift Runbook](runbooks/schema-drift-runbook.md)
 
 ### Community
 - GitHub Issues: Report bugs and request features
