@@ -9,7 +9,9 @@ from fastapi.responses import JSONResponse
 
 from libs.core import CurveKey, PriceObservation
 from libs.storage import TimescaleSeriesRepo
-from ..main import get_timescale_repo
+from libs.common.cache import CacheManager
+from libs.common.observability import get_observability
+from ..main import get_timescale_repo, get_cache_manager
 
 router = APIRouter()
 
@@ -26,8 +28,46 @@ async def get_observations(
     product: Optional[str] = None,
     limit: Optional[int] = 1000,
     repo: TimescaleSeriesRepo = Depends(get_timescale_repo),
+    cache: CacheManager = Depends(get_cache_manager),
 ) -> List[dict]:
-    """Get price observations for a curve with ETag support."""
+    """Get price observations for a curve with ETag support and caching."""
+    
+    # Create cache key parameters
+    cache_params = {
+        "iso": iso,
+        "market": market,
+        "location": location,
+        "start_date": str(start_date),
+        "end_date": str(end_date),
+        "product": product,
+        "limit": limit,
+    }
+    
+    # Check cache first
+    cached_result = await cache.get("series_observations", cache_params)
+    if cached_result:
+        obs = get_observability()
+        if obs:
+            obs.record_cache_operation("get", hit=True)
+        
+        # Generate ETag from cache
+        import hashlib
+        etag_content = f"{cached_result.get('cached_at', '')}-{len(cached_result.get('data', []))}"
+        etag = hashlib.md5(etag_content.encode()).hexdigest()
+        
+        if request.headers.get("if-none-match") == f'"{etag}"':
+            return Response(status_code=304)
+        
+        response.headers["ETag"] = f'"{etag}"'
+        response.headers["Cache-Control"] = "max-age=300"
+        response.headers["X-Cache"] = "HIT"
+        
+        return cached_result["data"]
+    
+    # Cache miss - record metric
+    obs = get_observability()
+    if obs:
+        obs.record_cache_operation("get", hit=False)
     
     # Create curve key
     curve = CurveKey(
@@ -38,21 +78,31 @@ async def get_observations(
     )
     
     try:
-        # Get observations from repository
-        observations = await repo.get_observations(
-            curve=curve,
-            start_date=start_date,
-            end_date=end_date,
-            limit=limit,
-        )
+        # Get observations from repository with tracing
+        if obs:
+            async with obs.trace_operation("get_observations", {"curve": str(curve)}):
+                observations = await repo.get_observations(
+                    curve=curve,
+                    start_date=start_date,
+                    end_date=end_date,
+                    limit=limit,
+                )
+        else:
+            observations = await repo.get_observations(
+                curve=curve,
+                start_date=start_date,
+                end_date=end_date,
+                limit=limit,
+            )
         
         # Convert to dict format for response
         result = [obs.model_dump() for obs in observations]
         
-        # Generate ETag for caching
-        import hashlib
-        import json
+        # Cache the result
+        await cache.set("series_observations", result, cache_params)
         
+        # Generate ETag for fresh data
+        import hashlib
         etag_content = f"{curve.model_dump_json()}-{start_date}-{end_date}-{len(result)}"
         etag = hashlib.md5(etag_content.encode()).hexdigest()
         
@@ -60,13 +110,16 @@ async def get_observations(
         if request.headers.get("if-none-match") == f'"{etag}"':
             return Response(status_code=304)
         
-        # Set ETag header
+        # Set headers
         response.headers["ETag"] = f'"{etag}"'
-        response.headers["Cache-Control"] = "max-age=300"  # 5 minute cache
+        response.headers["Cache-Control"] = "max-age=300"
+        response.headers["X-Cache"] = "MISS"
         
         return result
         
     except Exception as e:
+        if obs:
+            obs.record_db_operation("get_observations", "timescale", success=False)
         raise HTTPException(status_code=500, detail=f"Failed to retrieve observations: {str(e)}")
 
 

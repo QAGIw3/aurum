@@ -10,6 +10,8 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.gzip import GZipMiddleware
 
 from libs.common.config import AurumSettings, get_settings
+from libs.common.cache import CacheManager
+from libs.common.observability import configure_observability, get_observability
 from libs.storage import TimescaleSeriesRepo, PostgresMetaRepo, TrinoAnalyticRepo
 
 # Import routers (these will be created)
@@ -29,6 +31,12 @@ class DependencyContainer:
         self.postgres_repo = PostgresMetaRepo(settings.database)  
         self.trino_repo = TrinoAnalyticRepo(settings.database)
         
+        # Initialize cache manager
+        self.cache_manager = CacheManager(settings.redis, settings.cache)
+        
+        # Initialize observability
+        self.observability = configure_observability(settings.observability)
+        
         logger.info("Dependency container initialized")
     
     async def close(self):
@@ -36,6 +44,7 @@ class DependencyContainer:
         await self.timescale_repo.close()
         await self.postgres_repo.close()
         await self.trino_repo.close()
+        await self.cache_manager.close()
         logger.info("Dependencies cleaned up")
 
 
@@ -112,6 +121,11 @@ def create_app(settings: AurumSettings | None = None) -> FastAPI:
         app.include_router(catalog.router, prefix="/v2/catalog", tags=["catalog-v2"])
         app.include_router(admin.router, prefix="/v2/admin", tags=["admin-v2"])
     
+    # Instrument with OpenTelemetry
+    observability = get_observability()
+    if observability:
+        observability.instrument_fastapi(app)
+    
     # Health check
     @app.get("/health")
     async def health_check():
@@ -138,3 +152,8 @@ def get_postgres_repo() -> PostgresMetaRepo:
 def get_trino_repo() -> TrinoAnalyticRepo:
     """Get Trino analytics repository."""
     return get_container().trino_repo
+
+
+def get_cache_manager() -> CacheManager:
+    """Get cache manager."""
+    return get_container().cache_manager
