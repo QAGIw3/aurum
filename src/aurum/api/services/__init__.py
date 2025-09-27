@@ -141,6 +141,27 @@ from .developer_workspace_service import (
     create_notebook_session,
     get_api_documentation
 )
+from .dbt_management_service import (
+    DBTManagementService,
+    DBTModel,
+    DataMart,
+    TestFixture,
+    LineageNode,
+    FreshnessCheck,
+    get_dbt_management_service,
+    run_model_tests,
+    generate_development_fixtures,
+    analyze_model_impact
+)
+from .performance_monitoring_service import (
+    PerformanceMonitoringService,
+    PerformanceBudget,
+    LoadTestScenario,
+    PerformanceTestResult,
+    PerformanceComparison,
+    get_performance_monitoring_service,
+    run_performance_regression_check
+)
 
 __all__ = [
     # Base interfaces
@@ -263,4 +284,23 @@ __all__ = [
     "get_developer_workspace_service",
     "create_notebook_session",
     "get_api_documentation",
+    # Performance monitoring components
+    "PerformanceMonitoringService",
+    "PerformanceBudget",
+    "LoadTestScenario",
+    "PerformanceTestResult",
+    "PerformanceComparison",
+    "get_performance_monitoring_service",
+    "run_performance_regression_check",
+    # DBT management components
+    "DBTManagementService",
+    "DBTModel",
+    "DataMart",
+    "TestFixture",
+    "LineageNode",
+    "FreshnessCheck",
+    "get_dbt_management_service",
+    "run_model_tests",
+    "generate_development_fixtures",
+    "analyze_model_impact",
 ]

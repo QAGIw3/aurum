@@ -198,6 +198,8 @@ def get_v2_router_specs(_settings: AurumSettings) -> list[RouterSpec]:
         "aurum.api.v2.regulatory_tracker",
         "aurum.api.v2.plugin_system",
         "aurum.api.v2.developer_workspace",
+        "aurum.api.v2.performance_monitoring",
+        "aurum.api.v2.dbt_management",
     )
     return _build_specs(module_paths)
 
