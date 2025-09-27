@@ -12,10 +12,10 @@ from enum import Enum
 
 from pydantic import BaseModel
 
-from ..observability.metrics import get_metrics_client
-from ..logging.structured_logger import get_logger
+from ...observability.metrics import get_metrics_client
+from ...logging.structured_logger import get_logger
 from .cache import AsyncCache, CacheEntry
-from ..core.settings import get_settings
+from ...core.settings import get_settings
 
 
 class CacheNamespace(str, Enum):
