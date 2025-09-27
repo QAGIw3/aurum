@@ -27,6 +27,7 @@ This guide lists the most relevant settings for local/dev and production. Defaul
 
 - `AURUM_API_AUTH_DISABLED`: disable auth entirely (dev only)
 - `AURUM_API_ADMIN_GROUP`: comma-separated admin groups allowed to use admin endpoints
+- `AURUM_API_ADMIN_GUARD_ENABLED`: set `1` to enforce an admin guard on `/v1/admin/*` and `/v2/admin/*` routes (returns 403 for non-admins)
 - OIDC/JWT:
   - `AURUM_API_OIDC_ISSUER`
   - `AURUM_API_OIDC_AUDIENCE`
@@ -47,6 +48,30 @@ Primary engine for the API is Trino. See also ClickHouse/Timescale options in `D
 - `AURUM_API_TRINO_CATALOG` (default `iceberg`)
 - `AURUM_API_TRINO_SCHEMA` (default `market`)
 - `AURUM_API_TRINO_PASSWORD` (optional)
+
+### Backend Selector (experimental)
+
+The API can read from multiple backends. Set `AURUM_API_BACKEND` to one of `trino`, `clickhouse`, or `timescale` and configure base tables per backend as needed. The selector is tried first and falls back to legacy helpers on errors.
+
+Dimensions (curve metadata):
+- `AURUM_API_DIMENSIONS_TABLE_TRINO` (default `iceberg.market.curve_observation`)
+- `AURUM_API_DIMENSIONS_TABLE_CLICKHOUSE` (default `aurum.curve_observation`)
+- `AURUM_API_DIMENSIONS_TABLE_TIMESCALE` (default `market.curve_observation`)
+
+EIA series:
+- `AURUM_API_EIA_SERIES_TABLE_TRINO` (default `iceberg.market.eia_series`; falls back to `AURUM_EIA_SERIES_BASE_TABLE` if set)
+- `AURUM_API_EIA_SERIES_TABLE_CLICKHOUSE` (default `aurum.eia_series`)
+- `AURUM_API_EIA_SERIES_TABLE_TIMESCALE` (default `market.eia_series`)
+
+ISO LMP:
+- `AURUM_API_ISO_LMP_LAST24H_TABLE_{TRINO,CLICKHOUSE,TIMESCALE}` (defaults `environment.iso_lmp_last_24h`, `aurum.iso_lmp_last_24h`, `public.iso_lmp_last_24h`)
+- `AURUM_API_ISO_LMP_HOURLY_TABLE_{TRINO,CLICKHOUSE,TIMESCALE}` (defaults `environment.iso_lmp_hourly`, `aurum.iso_lmp_hourly`, `public.iso_lmp_hourly`)
+- `AURUM_API_ISO_LMP_DAILY_TABLE_{TRINO,CLICKHOUSE,TIMESCALE}` (defaults `environment.iso_lmp_daily`, `aurum.iso_lmp_daily`, `public.iso_lmp_daily`)
+
+Drought indices + geographies join:
+- `AURUM_API_DROUGHT_INDEX_TABLE_{TRINO,CLICKHOUSE,TIMESCALE}` (defaults `environment.drought_index`, `aurum.drought_index`, `public.drought_index`)
+- `AURUM_API_USDM_AREA_TABLE_{TRINO,CLICKHOUSE,TIMESCALE}` (defaults `environment.usdm_area`, `aurum.usdm_area`, `public.usdm_area`)
+- `AURUM_API_GEOGRAPHIES_TABLE_{TRINO,CLICKHOUSE,TIMESCALE}` (defaults `ref.geographies`, `aurum.geographies`, `ref.geographies`)
 
 Timescale and EIA wiring used by metadata/external data features:
 
