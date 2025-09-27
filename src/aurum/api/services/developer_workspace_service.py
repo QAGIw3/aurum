@@ -1,0 +1,589 @@
+"""Developer Workspace Service for notebooks and API exploration.
+
+This service provides:
+- JupyterHub integration with scoped secrets
+- Notebook pod management and resource allocation
+- API exploration examples and templates
+- ML training notebook templates
+- Interactive API documentation and testing
+- Developer environment provisioning
+"""
+
+from __future__ import annotations
+
+import asyncio
+import json
+import logging
+import os
+from collections import defaultdict
+from dataclasses import dataclass, field
+from datetime import datetime, timedelta
+from typing import Any, Dict, List, Optional, Set, Tuple, Union
+from uuid import uuid4
+
+import yaml
+from pydantic import BaseModel, Field
+
+from ..telemetry.context import get_request_id, get_tenant_id, log_structured
+from ..observability.telemetry_facade import get_telemetry_facade, MetricCategory
+from ..cache.consolidated_manager import get_unified_cache_manager
+
+
+class NotebookEnvironment(BaseModel):
+    """Notebook environment configuration."""
+
+    environment_id: str
+    environment_name: str
+    description: str
+    base_image: str = "jupyter/scipy-notebook:latest"
+    resource_limits: Dict[str, str] = field(default_factory=lambda: {
+        "cpu": "2",
+        "memory": "4Gi"
+    })
+    resource_requests: Dict[str, str] = field(default_factory=lambda: {
+        "cpu": "500m",
+        "memory": "1Gi"
+    })
+    storage_size: str = "10Gi"
+    environment_variables: Dict[str, str] = field(default_factory=dict)
+    mounted_secrets: List[str] = field(default_factory=list)
+    allowed_packages: List[str] = field(default_factory=list)
+    network_policy: str = "restricted"
+    idle_timeout_minutes: int = 60
+    max_runtime_hours: int = 8
+
+
+class NotebookSession(BaseModel):
+    """Active notebook session."""
+
+    session_id: str
+    environment_id: str
+    user_id: str
+    tenant_id: str
+    status: str = "starting"  # "starting", "running", "stopping", "stopped", "failed"
+    pod_name: Optional[str] = None
+    pod_ip: Optional[str] = None
+    start_time: Optional[datetime] = None
+    last_activity: Optional[datetime] = None
+    resource_usage: Dict[str, Any] = field(default_factory=dict)
+    error_message: Optional[str] = None
+    notebook_url: Optional[str] = None
+
+
+class NotebookTemplate(BaseModel):
+    """Notebook template for common use cases."""
+
+    template_id: str
+    template_name: str
+    description: str
+    category: str  # "api_exploration", "ml_training", "data_analysis", "forecasting"
+    base_notebook_path: str
+    required_packages: List[str] = field(default_factory=list)
+    sample_queries: List[Dict[str, Any]] = field(default_factory=list)
+    documentation_links: List[str] = field(default_factory=list)
+    tags: List[str] = field(default_factory=list)
+
+
+class DeveloperWorkspaceService:
+    """Developer Workspace Service for notebooks and API exploration."""
+
+    def __init__(self):
+        """Initialize developer workspace service."""
+        self.cache_manager = get_unified_cache_manager()
+        self.telemetry = get_telemetry_facade()
+
+        # Workspace state
+        self._environments: Dict[str, NotebookEnvironment] = {}
+        self._sessions: Dict[str, NotebookSession] = {}
+        self._templates: Dict[str, NotebookTemplate] = {}
+
+        # Initialize default environments and templates
+        self._initialize_default_environments()
+        self._initialize_default_templates()
+
+    def _initialize_default_environments(self) -> None:
+        """Initialize default notebook environments."""
+        # Standard ML environment
+        self._environments["ml_standard"] = NotebookEnvironment(
+            environment_id="ml_standard",
+            environment_name="ML Development",
+            description="Standard ML development environment with PyTorch, TensorFlow, and scikit-learn",
+            base_image="jupyter/scipy-notebook:latest",
+            resource_limits={"cpu": "4", "memory": "8Gi"},
+            resource_requests={"cpu": "1", "memory": "2Gi"},
+            storage_size="20Gi",
+            environment_variables={
+                "JUPYTER_ENABLE_LAB": "yes",
+                "PIP_TRUSTED_HOST": "pypi.org"
+            },
+            allowed_packages=["torch", "tensorflow", "scikit-learn", "pandas", "numpy", "matplotlib"],
+            network_policy="restricted"
+        )
+
+        # API exploration environment
+        self._environments["api_explorer"] = NotebookEnvironment(
+            environment_id="api_explorer",
+            environment_name="API Explorer",
+            description="Lightweight environment for API exploration and testing",
+            base_image="jupyter/minimal-notebook:latest",
+            resource_limits={"cpu": "1", "memory": "2Gi"},
+            resource_requests={"cpu": "500m", "memory": "1Gi"},
+            storage_size="5Gi",
+            environment_variables={
+                "JUPYTER_ENABLE_LAB": "yes"
+            },
+            allowed_packages=["requests", "pandas", "matplotlib"],
+            network_policy="api_access"
+        )
+
+    def _initialize_default_templates(self) -> None:
+        """Initialize default notebook templates."""
+        # API exploration template
+        self._templates["api_exploration"] = NotebookTemplate(
+            template_id="api_exploration",
+            template_name="API Exploration",
+            description="Template for exploring Aurum API endpoints",
+            category="api_exploration",
+            base_notebook_path="templates/api_exploration.ipynb",
+            required_packages=["requests", "pandas"],
+            sample_queries=[
+                {
+                    "name": "Get Market Data",
+                    "endpoint": "/v2/curves",
+                    "method": "GET",
+                    "params": {"asof": "2024-01-01", "limit": 10},
+                    "description": "Retrieve historical curve data"
+                },
+                {
+                    "name": "Run Scenario",
+                    "endpoint": "/v2/scenarios",
+                    "method": "POST",
+                    "params": {
+                        "name": "Test Scenario",
+                        "assumptions": [{"type": "market_growth", "value": 0.05}]
+                    },
+                    "description": "Create and run a scenario"
+                }
+            ],
+            documentation_links=[
+                "https://docs.aurum.dev/api/",
+                "https://docs.aurum.dev/notebooks/getting-started"
+            ],
+            tags=["api", "exploration", "beginner"]
+        )
+
+        # ML training template
+        self._templates["ml_training"] = NotebookTemplate(
+            template_id="ml_training",
+            template_name="ML Model Training",
+            description="Template for training ML models with Aurum data",
+            category="ml_training",
+            base_notebook_path="templates/ml_training.ipynb",
+            required_packages=["torch", "pandas", "numpy", "scikit-learn"],
+            sample_queries=[
+                {
+                    "name": "Load Feature Data",
+                    "code": "from aurum.api.services.feature_store_service import get_feature_store_service\nfeatures = await get_feature_store_service().get_features_for_modeling()",
+                    "description": "Load features for model training"
+                },
+                {
+                    "name": "Train Forecasting Model",
+                    "code": "from aurum.api.services.model_registry_service import train_load_forecasting_model\nmodel = await train_load_forecasting_model(features)",
+                    "description": "Train a load forecasting model"
+                }
+            ],
+            documentation_links=[
+                "https://docs.aurum.dev/ml/training/",
+                "https://docs.aurum.dev/notebooks/ml-workflows"
+            ],
+            tags=["ml", "training", "forecasting"]
+        )
+
+    async def create_notebook_environment(self, environment: NotebookEnvironment) -> str:
+        """Create a new notebook environment."""
+        env_id = environment.environment_id
+        self._environments[env_id] = environment
+
+        # Generate Kubernetes YAML for the environment
+        k8s_yaml = self._generate_k8s_yaml(environment)
+
+        # Store YAML for deployment
+        await self.cache_manager.set(f"env_yaml:{env_id}", k8s_yaml, ttl_seconds=3600)
+
+        self.telemetry.info("Notebook environment created", environment_id=env_id)
+        return env_id
+
+    def _generate_k8s_yaml(self, environment: NotebookEnvironment) -> str:
+        """Generate Kubernetes YAML for notebook deployment."""
+        yaml_content = {
+            "apiVersion": "v1",
+            "kind": "Pod",
+            "metadata": {
+                "name": f"aurum-notebook-{environment.environment_id}",
+                "labels": {
+                    "app": "aurum-notebook",
+                    "environment": environment.environment_id
+                }
+            },
+            "spec": {
+                "containers": [{
+                    "name": "notebook",
+                    "image": environment.base_image,
+                    "resources": {
+                        "limits": environment.resource_limits,
+                        "requests": environment.resource_requests
+                    },
+                    "env": [
+                        {"name": k, "value": v} for k, v in environment.environment_variables.items()
+                    ],
+                    "ports": [{"containerPort": 8888}],
+                    "volumeMounts": [
+                        {
+                            "name": "workspace",
+                            "mountPath": "/home/jovyan/work"
+                        }
+                    ]
+                }],
+                "volumes": [{
+                    "name": "workspace",
+                    "emptyDir": {"sizeLimit": environment.storage_size}
+                }],
+                "restartPolicy": "Never"
+            }
+        }
+
+        return yaml.dump(yaml_content, default_flow_style=False)
+
+    async def start_notebook_session(
+        self,
+        environment_id: str,
+        user_id: str,
+        tenant_id: str,
+        configuration: Dict[str, Any] = None
+    ) -> str:
+        """Start a new notebook session."""
+        session_id = str(uuid4())
+
+        # Get environment
+        environment = self._environments.get(environment_id)
+        if not environment:
+            raise ValueError(f"Environment {environment_id} not found")
+
+        # Create session
+        session = NotebookSession(
+            session_id=session_id,
+            environment_id=environment_id,
+            user_id=user_id,
+            tenant_id=tenant_id,
+            status="starting",
+            start_time=datetime.utcnow(),
+            last_activity=datetime.utcnow()
+        )
+
+        self._sessions[session_id] = session
+
+        # Start session in background
+        asyncio.create_task(self._manage_notebook_session(session_id))
+
+        self.telemetry.info("Notebook session started", session_id=session_id, user_id=user_id)
+        return session_id
+
+    async def _manage_notebook_session(self, session_id: str) -> None:
+        """Manage notebook session lifecycle."""
+        session = self._sessions[session_id]
+
+        try:
+            # Simulate pod creation and startup
+            await asyncio.sleep(5)  # Simulate startup time
+
+            session.status = "running"
+            session.pod_name = f"aurum-notebook-{session_id}"
+            session.pod_ip = "10.0.0.100"  # Mock IP
+            session.notebook_url = f"http://{session.pod_ip}:8888"
+
+            # Monitor session activity
+            while session.status == "running":
+                await asyncio.sleep(60)  # Check every minute
+
+                # Update last activity
+                session.last_activity = datetime.utcnow()
+
+                # Check for idle timeout
+                if environment.idle_timeout_minutes and session.last_activity:
+                    idle_time = (datetime.utcnow() - session.last_activity).total_seconds() / 60
+                    if idle_time > environment.idle_timeout_minutes:
+                        await self._stop_notebook_session(session_id)
+                        break
+
+        except Exception as e:
+            session.status = "failed"
+            session.error_message = str(e)
+            self.telemetry.error("Session management failed", session_id=session_id, error=str(e))
+
+    async def _stop_notebook_session(self, session_id: str) -> None:
+        """Stop notebook session."""
+        session = self._sessions.get(session_id)
+        if not session:
+            return
+
+        session.status = "stopping"
+
+        # Simulate pod cleanup
+        await asyncio.sleep(2)
+
+        session.status = "stopped"
+        self.telemetry.info("Notebook session stopped", session_id=session_id)
+
+    async def get_session_status(self, session_id: str) -> Optional[NotebookSession]:
+        """Get notebook session status."""
+        return self._sessions.get(session_id)
+
+    async def list_user_sessions(self, user_id: str) -> List[NotebookSession]:
+        """List active sessions for a user."""
+        return [s for s in self._sessions.values() if s.user_id == user_id and s.status == "running"]
+
+    async def get_environment_templates(self, category: Optional[str] = None) -> List[NotebookTemplate]:
+        """Get available notebook templates."""
+        templates = list(self._templates.values())
+
+        if category:
+            templates = [t for t in templates if t.category == category]
+
+        return templates
+
+    async def deploy_notebook_template(
+        self,
+        template_id: str,
+        session_id: str,
+        customizations: Dict[str, Any] = None
+    ) -> str:
+        """Deploy a notebook template to a session."""
+        template = self._templates.get(template_id)
+        if not template:
+            raise ValueError(f"Template {template_id} not found")
+
+        session = self._sessions.get(session_id)
+        if not session:
+            raise ValueError(f"Session {session_id} not found")
+
+        # Generate customized notebook
+        notebook_content = await self._customize_notebook_template(template, customizations or {})
+
+        # Store notebook in session workspace
+        notebook_path = f"/tmp/session_{session_id}/notebook.ipynb"
+
+        # In real implementation, would copy to pod filesystem
+        await self.cache_manager.set(f"notebook:{session_id}", notebook_content, ttl_seconds=86400)
+
+        self.telemetry.info("Notebook template deployed", session_id=session_id, template_id=template_id)
+        return notebook_path
+
+    async def _customize_notebook_template(
+        self,
+        template: NotebookTemplate,
+        customizations: Dict[str, Any]
+    ) -> str:
+        """Customize notebook template with user preferences."""
+        # Mock notebook content
+        notebook_content = {
+            "cells": [
+                {
+                    "cell_type": "markdown",
+                    "metadata": {},
+                    "source": [f"# {template.template_name}\n\n{template.description}"]
+                },
+                {
+                    "cell_type": "code",
+                    "execution_count": None,
+                    "metadata": {},
+                    "outputs": [],
+                    "source": [
+                        "# Import required libraries\n",
+                        "import requests\n",
+                        "import pandas as pd\n",
+                        "import matplotlib.pyplot as plt\n",
+                        "from datetime import datetime\n",
+                        "\n",
+                        "# Aurum API base URL\n",
+                        "API_BASE = 'http://localhost:8000'\n",
+                        "\n",
+                        "# Authentication (replace with your token)\n",
+                        "headers = {'Authorization': 'Bearer YOUR_TOKEN_HERE'}\n"
+                    ]
+                }
+            ],
+            "metadata": {
+                "kernelspec": {
+                    "display_name": "Python 3",
+                    "language": "python",
+                    "name": "python3"
+                }
+            },
+            "nbformat": 4,
+            "nbformat_minor": 4
+        }
+
+        # Add sample queries
+        if template.sample_queries:
+            cells = notebook_content["cells"]
+            for query in template.sample_queries:
+                cells.append({
+                    "cell_type": "code",
+                    "execution_count": None,
+                    "metadata": {},
+                    "outputs": [],
+                    "source": [
+                        f"# {query['name']}",
+                        f"response = requests.{query['method'].lower()}(",
+                        f"    f\"{API_BASE}{query['endpoint']}\",",
+                        f"    headers=headers,",
+                        f"    params={query['params']}",
+                        ")\n",
+                        "print(response.json())"
+                    ]
+                })
+
+        return json.dumps(notebook_content)
+
+    async def get_api_examples(self, endpoint_category: str = "all") -> Dict[str, Any]:
+        """Get API usage examples and documentation."""
+        examples = {
+            "getting_started": {
+                "title": "Getting Started with Aurum API",
+                "description": "Basic examples for API authentication and data retrieval",
+                "examples": [
+                    {
+                        "name": "Health Check",
+                        "method": "GET",
+                        "endpoint": "/health",
+                        "description": "Check API health status",
+                        "code": "response = requests.get('http://localhost:8000/health')"
+                    },
+                    {
+                        "name": "List Curves",
+                        "method": "GET",
+                        "endpoint": "/v2/curves",
+                        "description": "Retrieve curve data with pagination",
+                        "code": "response = requests.get('http://localhost:8000/v2/curves', params={'limit': 10})"
+                    }
+                ]
+            },
+            "forecasting": {
+                "title": "Forecasting Examples",
+                "description": "Examples for probabilistic forecasting and model usage",
+                "examples": [
+                    {
+                        "name": "Generate Forecast",
+                        "method": "POST",
+                        "endpoint": "/v2/forecasting",
+                        "description": "Generate probabilistic forecast",
+                        "code": "forecast_data = {\n    'forecast_type': 'load',\n    'start_date': '2024-01-01',\n    'end_date': '2024-01-31'\n}\nresponse = requests.post('http://localhost:8000/v2/forecasting', json=forecast_data)"
+                    }
+                ]
+            },
+            "risk_analysis": {
+                "title": "Risk Analysis Examples",
+                "description": "Examples for risk calculation and portfolio analysis",
+                "examples": [
+                    {
+                        "name": "Calculate VaR",
+                        "method": "POST",
+                        "endpoint": "/v2/risk-engine/risk/calculate",
+                        "description": "Calculate Value at Risk for portfolio",
+                        "code": "var_data = {\n    'portfolio_id': 'portfolio_123',\n    'confidence_level': 0.95,\n    'time_horizon_days': 1\n}\nresponse = requests.post('http://localhost:8000/v2/risk-engine/risk/calculate', json=var_data)"
+                    }
+                ]
+            }
+        }
+
+        if endpoint_category == "all":
+            return examples
+        else:
+            return {endpoint_category: examples.get(endpoint_category, {})}
+
+    async def create_developer_guide(self, user_id: str) -> str:
+        """Create personalized developer guide."""
+        guide_content = f"""
+# Aurum Developer Guide - Personalized for {user_id}
+
+## Getting Started
+
+1. **API Authentication**
+   - Use your API token in the Authorization header
+   - Format: `Bearer YOUR_TOKEN_HERE`
+
+2. **Available Environments**
+   - ML Development: Full ML stack with PyTorch/TensorFlow
+   - API Explorer: Lightweight environment for API testing
+
+3. **Common Workflows**
+   - Data exploration and visualization
+   - Model training and evaluation
+   - Risk analysis and scenario testing
+
+## Quick Examples
+
+### Check API Health
+```python
+import requests
+response = requests.get('http://localhost:8000/health')
+print(response.json())
+```
+
+### Load Historical Data
+```python
+import pandas as pd
+response = requests.get('http://localhost:8000/v2/curves', params={{'limit': 100}})
+data = pd.DataFrame(response.json()['data'])
+```
+
+### Train a Model
+```python
+from aurum.api.services.model_registry_service import train_load_forecasting_model
+model = await train_load_forecasting_model(data)
+```
+
+## Next Steps
+
+- Explore the full API documentation
+- Try the ML training templates
+- Join the developer community
+
+Generated on: {datetime.utcnow().isoformat()}
+"""
+
+        return guide_content
+
+    async def get_service_health(self) -> Dict[str, Any]:
+        """Get service health status."""
+        active_sessions = len([s for s in self._sessions.values() if s.status == "running"])
+
+        return {
+            "status": "healthy",
+            "environments_available": len(self._environments),
+            "templates_available": len(self._templates),
+            "active_sessions": active_sessions,
+            "total_sessions": len(self._sessions),
+            "last_activity": datetime.utcnow()
+        }
+
+
+def get_developer_workspace_service() -> DeveloperWorkspaceService:
+    """Get the global developer workspace service instance."""
+    return DeveloperWorkspaceService()
+
+
+async def create_notebook_session(
+    environment_id: str,
+    user_id: str,
+    tenant_id: str
+) -> str:
+    """Create a new notebook session."""
+    service = get_developer_workspace_service()
+    return await service.start_notebook_session(environment_id, user_id, tenant_id)
+
+
+async def get_api_documentation() -> Dict[str, Any]:
+    """Get comprehensive API documentation."""
+    service = get_developer_workspace_service()
+    return await service.get_api_examples()

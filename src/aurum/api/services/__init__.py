@@ -74,6 +74,73 @@ from .model_registry_service import (
     train_price_forecasting_model,
     get_current_champion_model
 )
+from .bidding_rl_service import (
+    BiddingRLService,
+    AuctionEnvironment,
+    BiddingPolicy,
+    RLTrainingSession,
+    PolicyEvaluation,
+    AuctionResult,
+    get_bidding_rl_service,
+    simulate_auction_scenario,
+    evaluate_bidding_policy
+)
+from .carbon_rec_service import (
+    CarbonRecService,
+    CarbonInstrument,
+    CarbonPricing,
+    PortfolioCarbonExposure,
+    RECTrading,
+    CarbonInstrumentType,
+    CarbonMarket,
+    get_carbon_rec_service,
+    calculate_asset_carbon_impact,
+    analyze_portfolio_carbon_risk
+)
+from .risk_engine_service import (
+    RiskEngineService,
+    PortfolioPosition,
+    RiskDistributionConfig,
+    RiskScenario,
+    RiskCalculationResult,
+    PortfolioAggregation,
+    RiskDistributionType,
+    CorrelationModel,
+    RiskMetricType,
+    get_risk_engine_service,
+    calculate_portfolio_risk_metrics,
+    run_stress_test
+)
+from .regulatory_tracker_service import (
+    RegulatoryTrackerService,
+    RegulatoryArtifact,
+    RegulatoryAlert,
+    PolicyTagging,
+    RegulatorySource,
+    PolicyImpactLevel,
+    get_regulatory_tracker_service,
+    ingest_regulatory_updates,
+    get_regulatory_impact_for_portfolio,
+    get_market_regulatory_summary
+)
+from .plugin_system_service import (
+    PluginSystemService,
+    PluginContract,
+    PluginInstance,
+    PluginSecurityLevel,
+    PluginStatus,
+    get_plugin_system_service,
+    discover_and_load_plugins
+)
+from .developer_workspace_service import (
+    DeveloperWorkspaceService,
+    NotebookEnvironment,
+    NotebookSession,
+    NotebookTemplate,
+    get_developer_workspace_service,
+    create_notebook_session,
+    get_api_documentation
+)
 
 __all__ = [
     # Base interfaces
@@ -135,4 +202,65 @@ __all__ = [
     "train_load_forecasting_model",
     "train_price_forecasting_model",
     "get_current_champion_model",
+    # Bidding RL components
+    "BiddingRLService",
+    "AuctionEnvironment",
+    "BiddingPolicy",
+    "RLTrainingSession",
+    "PolicyEvaluation",
+    "AuctionResult",
+    "get_bidding_rl_service",
+    "simulate_auction_scenario",
+    "evaluate_bidding_policy",
+    # Carbon REC components
+    "CarbonRecService",
+    "CarbonInstrument",
+    "CarbonPricing",
+    "PortfolioCarbonExposure",
+    "RECTrading",
+    "CarbonInstrumentType",
+    "CarbonMarket",
+    "get_carbon_rec_service",
+    "calculate_asset_carbon_impact",
+    "analyze_portfolio_carbon_risk",
+    # Risk engine components
+    "RiskEngineService",
+    "PortfolioPosition",
+    "RiskDistributionConfig",
+    "RiskScenario",
+    "RiskCalculationResult",
+    "PortfolioAggregation",
+    "RiskDistributionType",
+    "CorrelationModel",
+    "RiskMetricType",
+    "get_risk_engine_service",
+    "calculate_portfolio_risk_metrics",
+    "run_stress_test",
+    # Regulatory tracker components
+    "RegulatoryTrackerService",
+    "RegulatoryArtifact",
+    "RegulatoryAlert",
+    "PolicyTagging",
+    "RegulatorySource",
+    "PolicyImpactLevel",
+    "get_regulatory_tracker_service",
+    "ingest_regulatory_updates",
+    "get_regulatory_impact_for_portfolio",
+    "get_market_regulatory_summary",
+    # Plugin system components
+    "PluginSystemService",
+    "PluginContract",
+    "PluginInstance",
+    "PluginSecurityLevel",
+    "PluginStatus",
+    "get_plugin_system_service",
+    "discover_and_load_plugins",
+    # Developer workspace components
+    "DeveloperWorkspaceService",
+    "NotebookEnvironment",
+    "NotebookSession",
+    "NotebookTemplate",
+    "get_developer_workspace_service",
+    "create_notebook_session",
+    "get_api_documentation",
 ]

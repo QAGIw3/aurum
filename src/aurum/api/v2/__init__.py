@@ -19,6 +19,6 @@ import os as _os
 if _os.getenv("AURUM_API_V2_LIGHT_INIT", "0") == "1":
     __all__: list[str] = []
 else:
-    from . import scenarios, curves, metadata, iso, eia, ppa, drought, admin, forecasting, auto_reforecast, renewables, model_registry, explainability, signals
+    from . import scenarios, curves, metadata, iso, eia, ppa, drought, admin, forecasting, auto_reforecast, renewables, model_registry, explainability, signals, bidding, carbon_rec, risk_engine, stress_testing, regulatory_tracker, plugin_system, developer_workspace
 
-    __all__ = ["scenarios", "curves", "metadata", "iso", "eia", "ppa", "drought", "admin", "forecasting", "auto_reforecast", "renewables", "model_registry", "explainability", "signals"]
+    __all__ = ["scenarios", "curves", "metadata", "iso", "eia", "ppa", "drought", "admin", "forecasting", "auto_reforecast", "renewables", "model_registry", "explainability", "signals", "bidding", "carbon_rec", "risk_engine", "stress_testing", "regulatory_tracker", "plugin_system", "developer_workspace"]
