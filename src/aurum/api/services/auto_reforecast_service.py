@@ -820,6 +820,7 @@ class AutoReforecastService:
             "backpressure_enabled": self.backpressure_config.enabled
         }
 
+<<<<<<< HEAD
     # API Methods for trigger management
     async def list_triggers(
         self, 
@@ -834,10 +835,26 @@ class AutoReforecastService:
             limit: Maximum number of triggers to return
             offset: Offset for pagination
             
+=======
+    async def list_triggers(
+        self,
+        enabled_only: bool = False,
+        limit: int = 50,
+        offset: int = 0
+    ) -> List[ForecastTrigger]:
+        """List forecast triggers with optional filtering.
+
+        Args:
+            enabled_only: Only return enabled triggers
+            limit: Maximum number of triggers to return
+            offset: Pagination offset
+
+>>>>>>> 6950b18f (	deleted:    .coverage)
         Returns:
             List of forecast triggers
         """
         triggers = list(self.triggers.values())
+<<<<<<< HEAD
         
         if enabled_only:
             triggers = [t for t in triggers if t.enabled]
@@ -886,10 +903,81 @@ class AutoReforecastService:
         else:
             self.active_triggers.discard(trigger.trigger_id)
             
+=======
+
+        if enabled_only:
+            triggers = [t for t in triggers if t.enabled]
+
+        # Apply pagination
+        return triggers[offset:offset + limit]
+
+    async def get_trigger(self, trigger_id: str) -> Optional[ForecastTrigger]:
+        """Get a specific forecast trigger.
+
+        Args:
+            trigger_id: Trigger identifier
+
+        Returns:
+            Forecast trigger or None if not found
+        """
+        return self.triggers.get(trigger_id)
+
+    async def create_trigger(self, trigger: ForecastTrigger) -> ForecastTrigger:
+        """Create a new forecast trigger.
+
+        Args:
+            trigger: Trigger configuration
+
+        Returns:
+            Created trigger
+        """
+        self.triggers[trigger.trigger_id] = trigger
+
+        if trigger.enabled:
+            self.active_triggers.add(trigger.trigger_id)
+
+        self.telemetry.info(
+            "Trigger created",
+            trigger_id=trigger.trigger_id,
+            trigger_name=trigger.name
+        )
+
+        return trigger
+
+    async def update_trigger(self, trigger: ForecastTrigger) -> ForecastTrigger:
+        """Update an existing forecast trigger.
+
+        Args:
+            trigger: Updated trigger configuration
+
+        Returns:
+            Updated trigger
+        """
+        if trigger.trigger_id not in self.triggers:
+            raise ValueError(f"Trigger {trigger.trigger_id} not found")
+
+        old_trigger = self.triggers[trigger.trigger_id]
+
+        # Update active triggers set
+        if old_trigger.enabled and not trigger.enabled:
+            self.active_triggers.discard(trigger.trigger_id)
+        elif not old_trigger.enabled and trigger.enabled:
+            self.active_triggers.add(trigger.trigger_id)
+
+        self.triggers[trigger.trigger_id] = trigger
+
+        self.telemetry.info(
+            "Trigger updated",
+            trigger_id=trigger.trigger_id,
+            trigger_name=trigger.name
+        )
+
+>>>>>>> 6950b18f (	deleted:    .coverage)
         return trigger
 
     async def delete_trigger(self, trigger_id: str) -> bool:
         """Delete a forecast trigger.
+<<<<<<< HEAD
         
         Args:
             trigger_id: Trigger identifier
@@ -975,18 +1063,130 @@ class AutoReforecastService:
         # Apply limit
         events = events[:limit]
         
+=======
+
+        Args:
+            trigger_id: Trigger identifier
+
+        Returns:
+            True if trigger was deleted
+        """
+        if trigger_id not in self.triggers:
+            return False
+
+        trigger = self.triggers.pop(trigger_id)
+        self.active_triggers.discard(trigger_id)
+
+        self.telemetry.info(
+            "Trigger deleted",
+            trigger_id=trigger_id,
+            trigger_name=trigger.name
+        )
+
+        return True
+
+    async def list_jobs(
+        self,
+        status: Optional[str] = None,
+        limit: int = 50,
+        offset: int = 0
+    ) -> List[ReforcastJob]:
+        """List reforecast jobs with optional filtering.
+
+        Args:
+            status: Optional status filter
+            limit: Maximum number of jobs to return
+            offset: Pagination offset
+
+        Returns:
+            List of reforecast jobs
+        """
+        jobs = []
+
+        # Get pending jobs
+        for job in list(self.pending_jobs.values()):
+            if status is None or job.status == status:
+                jobs.append(job)
+
+        # Get processing jobs
+        for job_id in self.processing_jobs:
+            if job_id in self.pending_jobs:
+                job = self.pending_jobs[job_id]
+                if status is None or job.status == status:
+                    jobs.append(job)
+
+        # Get completed jobs (last 1000)
+        completed_jobs_list = list(self.completed_jobs.values())[-1000:]
+        for job in completed_jobs_list:
+            if status is None or job.status == status:
+                jobs.append(job)
+
+        # Sort by creation time (most recent first)
+        jobs.sort(key=lambda j: j.created_at, reverse=True)
+
+        return jobs[offset:offset + limit]
+
+    async def list_trigger_events(
+        self,
+        trigger_id: Optional[str] = None,
+        limit: int = 100,
+        since: Optional[datetime] = None
+    ) -> List[Dict[str, Any]]:
+        """List trigger events.
+
+        Args:
+            trigger_id: Optional trigger filter
+            limit: Maximum events to return
+            since: Only events since this time
+
+        Returns:
+            List of trigger events
+        """
+        # Mock implementation - in reality would store and query events
+        events = []
+
+        if trigger_id and trigger_id in self.triggers:
+            trigger = self.triggers[trigger_id]
+
+            # Generate mock events based on trigger count
+            for i in range(min(limit, trigger.trigger_count)):
+                event_time = datetime.utcnow() - timedelta(minutes=i * 10)
+
+                if since and event_time < since:
+                    continue
+
+                event = {
+                    "event_id": f"evt_{trigger.trigger_id}_{i}",
+                    "trigger_id": trigger_id,
+                    "data_source": "weather",  # Mock
+                    "geography": "US",  # Mock
+                    "timestamp": event_time,
+                    "data_changes": {"temperature": 5.0},  # Mock
+                    "priority_score": trigger.priority,
+                    "processed": True
+                }
+                events.append(event)
+
+>>>>>>> 6950b18f (	deleted:    .coverage)
         return events
 
     async def get_debounce_config(self) -> DebounceConfig:
         """Get current debounce configuration.
+<<<<<<< HEAD
         
         Returns:
             Current debounce configuration
+=======
+
+        Returns:
+            Debounce configuration
+>>>>>>> 6950b18f (	deleted:    .coverage)
         """
         return self.debounce_config
 
     async def update_debounce_config(self, config: DebounceConfig) -> DebounceConfig:
         """Update debounce configuration.
+<<<<<<< HEAD
         
         Args:
             config: New debounce configuration
@@ -1009,6 +1209,29 @@ class AutoReforecastService:
         )
         
         return self.debounce_config
+=======
+
+        Args:
+            config: New debounce configuration
+
+        Returns:
+            Updated debounce configuration
+        """
+        old_config = self.debounce_config
+        self.debounce_config = config
+
+        # Update semaphore if concurrent triggers changed
+        if config.max_concurrent_triggers != old_config.max_concurrent_triggers:
+            self.processing_semaphore = asyncio.Semaphore(config.max_concurrent_triggers)
+
+        self.telemetry.info(
+            "Debounce config updated",
+            old_config=old_config.dict(),
+            new_config=config.dict()
+        )
+
+        return config
+>>>>>>> 6950b18f (	deleted:    .coverage)
 
 
 # Global auto-reforecast service instance

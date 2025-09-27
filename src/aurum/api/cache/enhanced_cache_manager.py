@@ -20,6 +20,7 @@ from ...core.settings import get_settings
 
 class CacheNamespace(str, Enum):
     """Standardized cache namespaces for better organization."""
+    GENERAL = "general"
     CURVES = "curves"
     METADATA = "metadata"
     SCENARIOS = "scenarios"

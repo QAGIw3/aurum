@@ -1,0 +1,487 @@
+name: Integration Tests & CI/CD Pipeline
+
+on:
+  push:
+    branches: [ main, develop ]
+    paths:
+      - 'src/**'
+      - 'tests/**'
+      - '.github/workflows/**'
+      - 'pyproject.toml'
+      - 'requirements*.txt'
+  pull_request:
+    branches: [ main, develop ]
+    paths:
+      - 'src/**'
+      - 'tests/**'
+      - '.github/workflows/**'
+      - 'pyproject.toml'
+      - 'requirements*.txt'
+  schedule:
+    # Run integration tests weekly on Sundays at 2 AM UTC
+    - cron: '0 2 * * 0'
+  workflow_dispatch:
+    inputs:
+      test_type:
+        description: 'Type of tests to run'
+        required: true
+        default: 'integration'
+        type: choice
+        options:
+          - integration
+          - performance
+          - security
+          - all
+
+env:
+  PYTHON_VERSION: '3.11'
+  POSTGRES_VERSION: '15'
+  REDIS_VERSION: '7'
+  KAFKA_VERSION: '3.5'
+
+jobs:
+  # Security and dependency scanning
+  security-scan:
+    name: Security Scan
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - name: Install security tools
+        run: |
+          pip install safety bandit[toml] detect-secrets
+
+      - name: Run dependency vulnerability scan
+        run: |
+          safety check --json --output security-report.json || true
+
+      - name: Run security linting
+        run: |
+          bandit -r src/ -f json -o bandit-report.json || true
+
+      - name: Run secrets detection
+        run: |
+          detect-secrets scan --all-files > secrets-report.json || true
+
+      - name: Upload security reports
+        uses: actions/upload-artifact@v3
+        with:
+          name: security-reports
+          path: |
+            security-report.json
+            bandit-report.json
+            secrets-report.json
+        if: always()
+
+  # Unit tests
+  unit-tests:
+    name: Unit Tests
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python-version: ['3.9', '3.10', '3.11']
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python ${{ matrix.python-version }}
+        uses: actions/setup-python@v4
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      - name: Cache pip dependencies
+        uses: actions/cache@v3
+        with:
+          path: ~/.cache/pip
+          key: ${{ runner.os }}-pip-${{ matrix.python-version }}-${{ hashFiles('**/requirements*.txt', 'pyproject.toml') }}
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[dev,test]"
+
+      - name: Run unit tests
+        run: |
+          pytest tests/ -m "not integration and not performance" \
+            --cov=src/aurum \
+            --cov-report=xml \
+            --cov-report=html \
+            --junitxml=test-results.xml
+
+      - name: Upload test results
+        uses: actions/upload-artifact@v3
+        with:
+          name: test-results-${{ matrix.python-version }}
+          path: test-results.xml
+        if: always()
+
+      - name: Upload coverage reports
+        uses: codecov/codecov-action@v3
+        with:
+          file: ./coverage.xml
+          flags: unit-tests
+          name: codecov-unit-tests
+
+  # Integration tests
+  integration-tests:
+    name: Integration Tests
+    runs-on: ubuntu-latest
+    needs: [security-scan, unit-tests]
+    services:
+      postgres:
+        image: postgres:${{ env.POSTGRES_VERSION }}
+        env:
+          POSTGRES_PASSWORD: test_password
+          POSTGRES_USER: test_user
+          POSTGRES_DB: test_aurum
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+      redis:
+        image: redis:${{ env.REDIS_VERSION }}
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+      kafka:
+        image: confluentinc/cp-kafka:${{ env.KAFKA_VERSION }}
+        ports:
+          - 9092:9092
+        env:
+          KAFKA_BROKER_ID: 1
+          KAFKA_ZOOKEEPER_CONNECT: zookeeper:2181
+          KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: PLAINTEXT:PLAINTEXT,PLAINTEXT_HOST:PLAINTEXT
+          KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:29092,PLAINTEXT_HOST://localhost:9092
+          KAFKA_LISTENERS: PLAINTEXT://0.0.0.0:29092,PLAINTEXT_HOST://0.0.0.0:9092
+          KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT
+          KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+          KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
+          KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
+          KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS: 0
+          KAFKA_JMX_PORT: 9991
+        options: >-
+          --health-cmd "kafka-broker-api-versions --bootstrap-server=localhost:9092"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+      zookeeper:
+        image: confluentinc/cp-zookeeper:${{ env.KAFKA_VERSION }}
+        env:
+          ZOOKEEPER_CLIENT_PORT: 2181
+          ZOOKEEPER_TICK_TIME: 2000
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - name: Cache pip dependencies
+        uses: actions/cache@v3
+        with:
+          path: ~/.cache/pip
+          key: ${{ runner.os }}-pip-integration-${{ hashFiles('**/requirements*.txt', 'pyproject.toml') }}
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[dev,test,integration]"
+
+      - name: Wait for services to be ready
+        run: |
+          # Wait for PostgreSQL
+          until pg_isready -h localhost -p 5432 -U test_user; do
+            echo "Waiting for PostgreSQL..."
+            sleep 2
+          done
+
+          # Wait for Redis
+          until redis-cli -h localhost ping; do
+            echo "Waiting for Redis..."
+            sleep 2
+          done
+
+          # Wait for Kafka
+          until kafka-broker-api-versions --bootstrap-server=localhost:9092; do
+            echo "Waiting for Kafka..."
+            sleep 5
+          done
+
+      - name: Set up test database
+        run: |
+          export DATABASE_URL="postgresql://test_user:test_password@localhost:5432/test_aurum"
+          export REDIS_URL="redis://localhost:6379"
+          export KAFKA_BOOTSTRAP_SERVERS="localhost:9092"
+
+          # Create test database schema
+          python -c "
+          import asyncio
+          from aurum.db.migrations import run_migrations
+          asyncio.run(run_migrations())
+          "
+
+      - name: Run integration tests
+        env:
+          DATABASE_URL: "postgresql://test_user:test_password@localhost:5432/test_aurum"
+          REDIS_URL: "redis://localhost:6379"
+          KAFKA_BOOTSTRAP_SERVERS: "localhost:9092"
+          TEST_INTEGRATION: "true"
+        run: |
+          pytest tests/test_plugin_system_integration.py \
+            tests/test_esg_risk_integration.py \
+            -m integration \
+            --tb=short \
+            --maxfail=5 \
+            --junitxml=integration-test-results.xml
+
+      - name: Upload integration test results
+        uses: actions/upload-artifact@v3
+        with:
+          name: integration-test-results
+          path: integration-test-results.xml
+        if: always()
+
+  # Performance tests
+  performance-tests:
+    name: Performance Tests
+    runs-on: ubuntu-latest
+    needs: [integration-tests]
+    if: github.event.inputs.test_type == 'performance' || github.event.inputs.test_type == 'all' || github.event_name == 'schedule'
+
+    services:
+      postgres:
+        image: postgres:${{ env.POSTGRES_VERSION }}
+        env:
+          POSTGRES_PASSWORD: test_password
+          POSTGRES_USER: test_user
+          POSTGRES_DB: test_aurum_perf
+        ports:
+          - 5432:5432
+
+      redis:
+        image: redis:${{ env.REDIS_VERSION }}
+        ports:
+          - 6379:6379
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[dev,test,performance]"
+
+      - name: Install k6
+        run: |
+          curl -fsSL https://github.com/grafana/k6/releases/download/v0.45.0/k6-v0.45.0-linux-amd64.tar.gz | tar -xzf -
+          sudo mv k6-v0.45.0-linux-amd64/k6 /usr/local/bin/k6
+
+      - name: Run load tests
+        env:
+          DATABASE_URL: "postgresql://test_user:test_password@localhost:5432/test_aurum_perf"
+          REDIS_URL: "redis://localhost:6379"
+        run: |
+          # Start API server in background
+          python -m aurum.api.main &
+          SERVER_PID=$!
+
+          # Wait for server to start
+          sleep 10
+
+          # Run k6 load tests
+          k6 run scripts/k6/api_load_test.js
+
+          # Stop server
+          kill $SERVER_PID
+
+      - name: Generate performance report
+        run: |
+          python scripts/generate_performance_report.py
+
+      - name: Upload performance results
+        uses: actions/upload-artifact@v3
+        with:
+          name: performance-results
+          path: performance-report.html
+
+  # E2E tests
+  e2e-tests:
+    name: End-to-End Tests
+    runs-on: ubuntu-latest
+    needs: [integration-tests]
+    if: github.event.inputs.test_type == 'all' || github.event_name == 'schedule'
+
+    services:
+      postgres:
+        image: postgres:${{ env.POSTGRES_VERSION }}
+        env:
+          POSTGRES_PASSWORD: test_password
+          POSTGRES_USER: test_user
+          POSTGRES_DB: test_aurum_e2e
+        ports:
+          - 5432:5432
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[dev,test,e2e]"
+
+      - name: Install Playwright
+        run: |
+          pip install playwright
+          playwright install
+
+      - name: Set up test environment
+        env:
+          DATABASE_URL: "postgresql://test_user:test_password@localhost:5432/test_aurum_e2e"
+        run: |
+          # Initialize test database
+          python scripts/setup_e2e_test_data.py
+
+      - name: Start API server
+        env:
+          DATABASE_URL: "postgresql://test_user:test_password@localhost:5432/test_aurum_e2e"
+        run: |
+          python -m aurum.api.main &
+          echo $! > server.pid
+
+      - name: Run E2E tests
+        run: |
+          pytest tests/e2e/ -v --tb=short
+
+      - name: Stop API server
+        run: |
+          kill $(cat server.pid) || true
+
+      - name: Upload E2E test results
+        uses: actions/upload-artifact@v3
+        with:
+          name: e2e-test-results
+          path: |
+            test-results/
+            screenshots/
+        if: always()
+
+  # Build and test Docker images
+  docker-build:
+    name: Docker Build & Test
+    runs-on: ubuntu-latest
+    needs: [integration-tests]
+    if: github.ref == 'refs/heads/main' || github.event_name == 'workflow_dispatch'
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build API Docker image
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: ./Dockerfile.api
+          push: false
+          tags: aurum-api:test
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Test API Docker image
+        run: |
+          docker run --rm aurum-api:test --help || echo "Docker image built successfully"
+
+  # Deploy to staging (on main branch)
+  deploy-staging:
+    name: Deploy to Staging
+    runs-on: ubuntu-latest
+    needs: [integration-tests, docker-build]
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+    environment: staging
+
+    steps:
+      - name: Deploy to staging
+        run: |
+          echo "Deploying to staging environment..."
+          # Add your staging deployment logic here
+          # This would typically involve:
+          # - Building and pushing Docker images to registry
+          # - Updating Kubernetes manifests
+          # - Running database migrations
+          # - Health checks
+
+  # Notify on failures
+  notify-failures:
+    name: Notify on Failures
+    runs-on: ubuntu-latest
+    needs: [security-scan, unit-tests, integration-tests, performance-tests, e2e-tests]
+    if: failure() && github.event_name == 'push'
+
+    steps:
+      - name: Send failure notification
+        run: |
+          echo "Build failed - sending notifications..."
+          # Add notification logic (Slack, email, etc.)
+          # Example: curl -X POST -H 'Content-type: application/json' \
+          #   --data '{"text":"Build failed: ${{ github.repository }}"}' \
+          #   ${{ secrets.SLACK_WEBHOOK }}
+
+  # Generate test summary
+  test-summary:
+    name: Test Summary
+    runs-on: ubuntu-latest
+    needs: [unit-tests, integration-tests, performance-tests, e2e-tests]
+    if: always()
+
+    steps:
+      - name: Generate test summary
+        run: |
+          echo "## Test Summary" > test-summary.md
+          echo "- Unit Tests: ${{ needs.unit-tests.result }}" >> test-summary.md
+          echo "- Integration Tests: ${{ needs.integration-tests.result }}" >> test-summary.md
+          if [[ "${{ needs.performance-tests.result }}" != "skipped" ]]; then
+            echo "- Performance Tests: ${{ needs.performance-tests.result }}" >> test-summary.md
+          fi
+          if [[ "${{ needs.e2e-tests.result }}" != "skipped" ]]; then
+            echo "- E2E Tests: ${{ needs.e2e-tests.result }}" >> test-summary.md
+          fi
+
+      - name: Upload test summary
+        uses: actions/upload-artifact@v3
+        with:
+          name: test-summary
+          path: test-summary.md

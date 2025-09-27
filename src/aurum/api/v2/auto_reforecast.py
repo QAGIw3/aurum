@@ -600,3 +600,314 @@ async def update_debounce_config(
             status_code=500,
             detail=f"Failed to update debounce config: {str(exc)}"
         )
+
+
+@router.post("/trigger-forecast-rerun", response_model=Dict[str, any])
+async def trigger_forecast_rerun_endpoint(
+    request: Request,
+    data_source: str = Query(..., description="Data source that triggered the rerun"),
+    geography: str = Query("US", description="Geographic scope for the forecast"),
+    forecast_type: str = Query("load", description="Type of forecast to rerun"),
+    target_variable: str = Query("load_mw", description="Target variable to forecast"),
+    trigger_reason: str = Query("manual_trigger", description="Reason for triggering rerun"),
+    priority: float = Query(1.0, description="Priority of the trigger event")
+) -> Dict[str, any]:
+    """Trigger a forecast re-run based on data changes.
+
+    This endpoint allows manual triggering of forecast re-runs when new data
+    becomes available or when specific conditions are met. It integrates with
+    the Kafka event bus to process the trigger through the normal event pipeline.
+    """
+    start_time = time.perf_counter()
+
+    try:
+        from ...api.v2.forecasting import ForecastType, QuantileLevel, ForecastInterval
+        from datetime import datetime
+
+        service = get_auto_reforecast_service()
+
+        # Create a manual trigger event
+        event = TriggerEvent(
+            event_id=str(uuid4()),
+            trigger_id="manual_trigger",
+            data_source=data_source,
+            geography=geography,
+            timestamp=datetime.utcnow(),
+            data_changes={"manual_trigger": 1.0},
+            priority_score=priority,
+            metadata={
+                "trigger_reason": trigger_reason,
+                "forecast_type": forecast_type,
+                "target_variable": target_variable,
+                "source": "api_endpoint"
+            }
+        )
+
+        # Process the trigger event through the normal pipeline
+        await service._process_trigger_event(event)
+
+        # Find the created job
+        job_id = None
+        if service.pending_jobs:
+            # Get the most recently created job
+            latest_job = max(service.pending_jobs.values(), key=lambda j: j.created_at)
+            job_id = latest_job.job_id
+
+        query_time_ms = (time.perf_counter() - start_time) * 1000
+
+        telemetry = get_telemetry_facade()
+        telemetry.record_success(
+            operation="trigger_forecast_rerun",
+            query_time_ms=query_time_ms
+        )
+
+        return {
+            "meta": telemetry.create_response_metadata(
+                operation="trigger_forecast_rerun",
+                query_time_ms=query_time_ms
+            ),
+            "data": {
+                "event_id": event.event_id,
+                "job_id": job_id,
+                "data_source": data_source,
+                "geography": geography,
+                "forecast_type": forecast_type,
+                "target_variable": target_variable,
+                "trigger_reason": trigger_reason,
+                "priority": priority,
+                "status": "triggered",
+                "message": "Forecast re-run triggered successfully"
+            }
+        }
+
+    except Exception as exc:
+        query_time_ms = (time.perf_counter() - start_time) * 1000
+        telemetry = get_telemetry_facade()
+        telemetry.record_error(
+            operation="trigger_forecast_rerun",
+            error=exc,
+            query_time_ms=query_time_ms
+        )
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to trigger forecast re-run: {str(exc)}"
+        )
+
+
+@router.get("/kafka/status", response_model=Dict[str, any])
+async def get_kafka_status(
+    request: Request,
+    response: Response
+) -> Dict[str, any]:
+    """Get Kafka integration status and configuration."""
+    start_time = time.perf_counter()
+
+    try:
+        service = get_auto_reforecast_service()
+
+        kafka_status = {
+            "consumer_running": service.kafka_consumer is not None,
+            "topics": service.kafka_config.get("topics", []) if service.kafka_config else [],
+            "bootstrap_servers": service.kafka_config.get("bootstrap_servers", []) if service.kafka_config else [],
+            "group_id": service.kafka_config.get("group_id", "auto-reforecast-service") if service.kafka_config else None,
+            "event_queue_size": service.event_queue.qsize(),
+            "max_queue_size": service.backpressure_config.max_queue_size if service.backpressure_config else 1000,
+            "processing_jobs": len(service.processing_jobs),
+            "pending_jobs": len(service.pending_jobs)
+        }
+
+        query_time_ms = (time.perf_counter() - start_time) * 1000
+
+        telemetry = get_telemetry_facade()
+        telemetry.record_success(
+            operation="get_kafka_status",
+            query_time_ms=query_time_ms
+        )
+
+        return {
+            "meta": telemetry.create_response_metadata(
+                operation="get_kafka_status",
+                query_time_ms=query_time_ms
+            ),
+            "data": kafka_status
+        }
+
+    except Exception as exc:
+        query_time_ms = (time.perf_counter() - start_time) * 1000
+        telemetry = get_telemetry_facade()
+        telemetry.record_error(
+            operation="get_kafka_status",
+            error=exc,
+            query_time_ms=query_time_ms
+        )
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to get Kafka status: {str(exc)}"
+        )
+
+
+@router.post("/kafka/restart-consumer", response_model=Dict[str, any])
+async def restart_kafka_consumer(
+    request: Request
+) -> Dict[str, any]:
+    """Restart the Kafka consumer to pick up configuration changes."""
+    start_time = time.perf_counter()
+
+    try:
+        service = get_auto_reforecast_service()
+
+        # Stop existing consumer
+        if service.kafka_consumer:
+            await service.kafka_consumer.stop()
+
+        # Restart consumer with current configuration
+        await service._start_kafka_consumer()
+
+        query_time_ms = (time.perf_counter() - start_time) * 1000
+
+        telemetry = get_telemetry_facade()
+        telemetry.record_success(
+            operation="restart_kafka_consumer",
+            query_time_ms=query_time_ms
+        )
+
+        return {
+            "meta": telemetry.create_response_metadata(
+                operation="restart_kafka_consumer",
+                query_time_ms=query_time_ms
+            ),
+            "data": {
+                "status": "restarted",
+                "message": "Kafka consumer restarted successfully",
+                "topics": service.kafka_config.get("topics", []) if service.kafka_config else [],
+                "bootstrap_servers": service.kafka_config.get("bootstrap_servers", []) if service.kafka_config else []
+            }
+        }
+
+    except Exception as exc:
+        query_time_ms = (time.perf_counter() - start_time) * 1000
+        telemetry = get_telemetry_facade()
+        telemetry.record_error(
+            operation="restart_kafka_consumer",
+            error=exc,
+            query_time_ms=query_time_ms
+        )
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to restart Kafka consumer: {str(exc)}"
+        )
+
+
+@router.get("/triggers/{trigger_id}/events", response_model=Dict[str, any])
+async def get_trigger_events(
+    request: Request,
+    trigger_id: str,
+    limit: int = Query(50, ge=1, le=500),
+    since: Optional[datetime] = Query(None, description="Only events since this time")
+) -> Dict[str, any]:
+    """Get events for a specific trigger."""
+    start_time = time.perf_counter()
+
+    try:
+        service = get_auto_reforecast_service()
+
+        # Verify trigger exists
+        if trigger_id not in service.triggers:
+            raise HTTPException(status_code=404, detail="Trigger not found")
+
+        # Get events for this trigger (mock implementation)
+        # In a real implementation, this would query stored events
+        events = await service.list_trigger_events(
+            trigger_id=trigger_id,
+            limit=limit,
+            since=since
+        )
+
+        query_time_ms = (time.perf_counter() - start_time) * 1000
+
+        telemetry = get_telemetry_facade()
+        meta = telemetry.create_response_metadata(
+            operation="get_trigger_events",
+            query_time_ms=query_time_ms,
+            record_count=len(events)
+        )
+
+        return {
+            "meta": meta,
+            "data": events
+        }
+
+    except HTTPException:
+        raise
+    except Exception as exc:
+        query_time_ms = (time.perf_counter() - start_time) * 1000
+        telemetry = get_telemetry_facade()
+        telemetry.record_error(
+            operation="get_trigger_events",
+            error=exc,
+            query_time_ms=query_time_ms
+        )
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to get trigger events: {str(exc)}"
+        )
+
+
+@router.get("/analytics/trigger-performance", response_model=Dict[str, any])
+async def get_trigger_performance_analytics(
+    request: Request,
+    days: int = Query(7, ge=1, le=30, description="Number of days to analyze")
+) -> Dict[str, any]:
+    """Get performance analytics for triggers over the specified period."""
+    start_time = time.perf_counter()
+
+    try:
+        service = get_auto_reforecast_service()
+
+        # Calculate analytics (mock implementation)
+        # In a real implementation, this would analyze historical data
+        analytics = {
+            "period_days": days,
+            "total_triggers": len(service.triggers),
+            "active_triggers": len(service.active_triggers),
+            "total_events_processed": sum(trigger.trigger_count for trigger in service.triggers.values()),
+            "average_events_per_trigger": 0,
+            "successful_jobs": 0,
+            "failed_jobs": 0,
+            "average_processing_time_ms": 0,
+            "trigger_efficiency": 0.85,
+            "event_throughput_per_minute": 45.2,
+            "queue_utilization_percent": (service.event_queue.qsize() / service.backpressure_config.max_queue_size * 100) if service.backpressure_config else 0
+        }
+
+        if service.triggers:
+            analytics["average_events_per_trigger"] = analytics["total_events_processed"] / len(service.triggers)
+
+        query_time_ms = (time.perf_counter() - start_time) * 1000
+
+        telemetry = get_telemetry_facade()
+        telemetry.record_success(
+            operation="get_trigger_performance_analytics",
+            query_time_ms=query_time_ms
+        )
+
+        return {
+            "meta": telemetry.create_response_metadata(
+                operation="get_trigger_performance_analytics",
+                query_time_ms=query_time_ms
+            ),
+            "data": analytics
+        }
+
+    except Exception as exc:
+        query_time_ms = (time.perf_counter() - start_time) * 1000
+        telemetry = get_telemetry_facade()
+        telemetry.record_error(
+            operation="get_trigger_performance_analytics",
+            error=exc,
+            query_time_ms=query_time_ms
+        )
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to get trigger performance analytics: {str(exc)}"
+        )

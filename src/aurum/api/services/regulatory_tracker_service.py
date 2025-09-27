@@ -112,7 +112,7 @@ class RegulatoryTrackerService:
     """Regulatory and Policy Tracker Service."""
 
     def __init__(self):
-        """Initialize regulatory tracker service."""
+        """Initialize enhanced regulatory tracker service."""
         self.dao = TrinoDAO()
         self.cache_manager = get_unified_cache_manager()
         self.telemetry = get_telemetry_facade()
@@ -120,36 +120,106 @@ class RegulatoryTrackerService:
         # Regulatory data storage
         self._artifacts: Dict[str, RegulatoryArtifact] = {}
         self._tagging_cache: Dict[str, PolicyTagging] = {}
-        self._alerts: List[RegulatoryAlert] = []
+        self._alerts: List[RegulatoryAlert] = {}
 
-        # RSS/API sources
+        # Enhanced RSS/API sources with more comprehensive coverage
         self._rss_sources = {
             "ferc": "https://www.ferc.gov/rss/news-releases.xml",
             "doe": "https://www.energy.gov/rss/all.xml",
-            "epa": "https://www.epa.gov/newsreleases/rss.xml"
+            "epa": "https://www.epa.gov/newsreleases/rss.xml",
+            "cftc": "https://www.cftc.gov/rss.xml",
+            "sec": "https://www.sec.gov/rss/litigation-releases.xml",
+            "nrel": "https://www.nrel.gov/rss.xml",
+            "eia": "https://www.eia.gov/rss/updates.xml"
         }
 
         self._api_sources = {
-            "cftc": "https://www.cftc.gov/api",
-            "sec": "https://www.sec.gov/api"
+            "cftc": {
+                "base_url": "https://www.cftc.gov/api",
+                "endpoints": ["/rules", "/enforcement", "/market-data"]
+            },
+            "sec": {
+                "base_url": "https://www.sec.gov/api",
+                "endpoints": ["/edgar", "/enforcement"]
+            },
+            "ferc": {
+                "base_url": "https://www.ferc.gov/api",
+                "endpoints": ["/orders", "/notices", "/rulemakings"]
+            }
         }
 
-        # NLP tagging patterns
+        # Enhanced NLP tagging patterns with more comprehensive coverage
         self._market_patterns = {
-            "PJM": r"\bPJM\b|\bPennsylvania-New Jersey-Maryland\b",
+            "PJM": r"\bPJM\b|\bPennsylvania-New Jersey-Maryland\b|\bPJM Interconnection\b",
             "ERCOT": r"\bERCOT\b|\bElectric Reliability Council of Texas\b",
-            "MISO": r"\bMISO\b|\bMidcontinent Independent System Operator\b",
+            "MISO": r"\bMISO\b|\bMidcontinent Independent System Operator\b|\bMidwest ISO\b",
             "CAISO": r"\bCAISO\b|\bCalifornia Independent System Operator\b",
             "NYISO": r"\bNYISO\b|\bNew York Independent System Operator\b",
-            "ISO-NE": r"\bISO-NE\b|\bISO New England\b"
+            "ISO-NE": r"\bISO-NE\b|\bISO New England\b|\bNew England ISO\b",
+            "SPP": r"\bSPP\b|\bSouthwest Power Pool\b",
+            "WECC": r"\bWECC\b|\bWestern Electricity Coordinating Council\b"
         }
 
         self._instrument_patterns = {
-            "LMP": r"\bLMP\b|\blocational marginal pricing\b|\bwholesale electricity prices\b",
-            "Capacity": r"\bcapacity market\b|\bresource adequacy\b|\bforward capacity auction\b",
-            "Ancillary": r"\bancillary services\b|\bfrequency regulation\b|\bspinning reserves\b",
-            "Transmission": r"\btransmission planning\b|\bcongestion management\b|\binterconnection\b"
+            "LMP": r"\bLMP\b|\blocational marginal pricing\b|\bwholesale electricity prices\b|\bday-ahead pricing\b",
+            "Capacity": r"\bcapacity market\b|\bresource adequacy\b|\bforward capacity auction\b|\bcapacity auction\b",
+            "Ancillary": r"\bancillary services\b|\bfrequency regulation\b|\bspinning reserves\b|\bvoltage support\b",
+            "Transmission": r"\btransmission planning\b|\bcongestion management\b|\binterconnection\b|\btransmission rights\b",
+            "RTO": r"\bRTO\b|\bRegional Transmission Organization\b",
+            "ISO": r"\bISO\b|\bIndependent System Operator\b"
         }
+
+        # Enhanced topic patterns for better classification
+        self._topic_patterns = {
+            "carbon": r"\bcarbon\b|\bCO2\b|\bgreenhouse gas\b|\bemissions\b|\bclimate\b",
+            "renewable": r"\brenewable\b|\bsolar\b|\bwind\b|\bhydro\b|\bgreen energy\b",
+            "pricing": r"\bpricing\b|\brates\b|\btariffs\b|\bmarket rates\b",
+            "capacity": r"\bcapacity\b|\bresource adequacy\b|\bgeneration\b",
+            "transmission": r"\btransmission\b|\bgrid\b|\binterconnection\b|\bcongestion\b",
+            "compliance": r"\bcompliance\b|\bregulation\b|\bpenalty\b|\benforcement\b"
+        }
+
+        # Real-time monitoring configuration
+        self._monitoring_enabled = True
+        self._polling_interval_minutes = 15
+        self._alert_thresholds = {
+            "critical": 0.8,
+            "high": 0.6,
+            "medium": 0.4,
+            "low": 0.2
+        }
+
+        # Change detection and trend analysis
+        self._change_detection_window = timedelta(days=7)
+        self._trend_analysis_enabled = True
+
+        # Initialize advanced NLP processing
+        self._initialize_nlp_processor()
+
+    def _initialize_nlp_processor(self) -> None:
+        """Initialize advanced NLP processing capabilities."""
+        try:
+            # Try to initialize spaCy or similar NLP library
+            try:
+                import spacy
+                self._nlp_processor = spacy.load("en_core_web_sm")
+                self._nlp_available = True
+            except ImportError:
+                self._nlp_processor = None
+                self._nlp_available = False
+                self.logger.warning("Advanced NLP processing not available - using regex patterns only")
+
+            # Initialize sentiment analysis (simplified)
+            self._sentiment_keywords = {
+                "positive": ["benefit", "advantage", "improvement", "enhancement", "support", "approval"],
+                "negative": ["concern", "issue", "problem", "risk", "penalty", "violation", "enforcement"],
+                "urgent": ["immediate", "urgent", "critical", "deadline", "requirement", "mandatory"]
+            }
+
+        except Exception as e:
+            self.logger.error("Failed to initialize NLP processor", error=str(e))
+            self._nlp_processor = None
+            self._nlp_available = False
 
     async def ingest_rss_feeds(self) -> List[RegulatoryArtifact]:
         """Ingest regulatory data from RSS feeds."""
@@ -279,74 +349,276 @@ class RegulatoryTrackerService:
         ]
 
     async def _perform_nlp_tagging(self, artifact: RegulatoryArtifact) -> None:
-        """Perform NLP tagging on regulatory artifact."""
+        """Perform enhanced NLP tagging on regulatory artifact."""
         try:
             # Extract text for analysis
             text = f"{artifact.title} {artifact.summary}"
             if artifact.full_text:
                 text += f" {artifact.full_text}"
 
-            # Find market mentions
+            # Find market mentions with enhanced patterns
             market_tags = []
             for market, pattern in self._market_patterns.items():
                 if re.search(pattern, text, re.IGNORECASE):
                     market_tags.append(market)
 
-            # Find instrument mentions
+            # Find instrument mentions with enhanced patterns
             instrument_tags = []
             for instrument, pattern in self._instrument_patterns.items():
                 if re.search(pattern, text, re.IGNORECASE):
                     instrument_tags.append(instrument)
 
-            # Simple sentiment analysis (mock)
-            sentiment_score = 0.0
-            urgency_score = 0.5
+            # Find topic mentions
+            topic_tags = []
+            for topic, pattern in self._topic_patterns.items():
+                if re.search(pattern, text, re.IGNORECASE):
+                    topic_tags.append(topic)
 
-            # Determine compliance impact
-            impact_keywords = ["mandatory", "required", "must", "shall", "prohibited", "deadline"]
-            compliance_impact = "low"
-            for keyword in impact_keywords:
-                if keyword.lower() in text.lower():
-                    compliance_impact = "high"
-                    break
+            # Enhanced sentiment analysis
+            sentiment_score = self._calculate_sentiment_score(text)
 
-            # Create tagging result
+            # Enhanced urgency analysis
+            urgency_score = self._calculate_urgency_score(text)
+
+            # Enhanced compliance impact analysis
+            compliance_impact = self._calculate_compliance_impact(text)
+
+            # Extract entities (simplified - would use NER in production)
+            entity_tags = self._extract_entities(text)
+
+            # Extract key phrases with improved logic
+            key_phrases = self._extract_key_phrases_enhanced(text)
+
+            # Calculate confidence based on text quality and pattern matches
+            confidence = self._calculate_confidence_score(text, market_tags, instrument_tags, topic_tags)
+
+            # Create enhanced tagging result
             tagging = PolicyTagging(
                 artifact_id=artifact.artifact_id,
                 market_tags=market_tags,
                 instrument_tags=instrument_tags,
-                entity_tags=[],  # Would extract entities
-                topic_tags=["energy", "regulation"],  # Would extract topics
+                entity_tags=entity_tags,
+                topic_tags=topic_tags,
                 sentiment_score=sentiment_score,
                 urgency_score=urgency_score,
                 compliance_impact=compliance_impact,
-                key_phrases=self._extract_key_phrases(text),
-                confidence=0.8
+                key_phrases=key_phrases,
+                confidence=confidence
             )
 
             self._tagging_cache[artifact.artifact_id] = tagging
 
-            # Update artifact with tagging results
+            # Update artifact with enhanced tagging results
             artifact.affected_markets = market_tags
             artifact.affected_instruments = instrument_tags
             artifact.nlp_tags = {
                 "markets": market_tags,
                 "instruments": instrument_tags,
-                "topics": tagging.topic_tags,
+                "topics": topic_tags,
+                "entities": entity_tags,
                 "sentiment": sentiment_score,
-                "urgency": urgency_score
+                "urgency": urgency_score,
+                "compliance_impact": compliance_impact,
+                "key_phrases": key_phrases,
+                "confidence": confidence
             }
 
-            # Determine impact level
-            if len(market_tags) > 0 and compliance_impact == "high":
-                artifact.impact_level = PolicyImpactLevel.HIGH
-            elif len(market_tags) > 0:
-                artifact.impact_level = PolicyImpactLevel.MEDIUM
-            else:
-                artifact.impact_level = PolicyImpactLevel.LOW
+            # Enhanced impact level determination
+            artifact.impact_level = self._determine_enhanced_impact_level(
+                market_tags, instrument_tags, topic_tags, urgency_score, compliance_impact
+            )
 
         except Exception as e:
-            self.telemetry.error("NLP tagging failed", artifact_id=artifact.artifact_id, error=str(e))
+            self.telemetry.error("Enhanced NLP tagging failed", artifact_id=artifact.artifact_id, error=str(e))
+
+    def _calculate_sentiment_score(self, text: str) -> float:
+        """Calculate sentiment score using keyword analysis."""
+        text_lower = text.lower()
+
+        positive_count = sum(1 for keyword in self._sentiment_keywords["positive"] if keyword in text_lower)
+        negative_count = sum(1 for keyword in self._sentiment_keywords["negative"] if keyword in text_lower)
+
+        total_sentiment_words = positive_count + negative_count
+
+        if total_sentiment_words == 0:
+            return 0.0
+
+        # Normalize to [-1, 1] range
+        sentiment_score = (positive_count - negative_count) / total_sentiment_words
+
+        return max(-1.0, min(1.0, sentiment_score))
+
+    def _calculate_urgency_score(self, text: str) -> float:
+        """Calculate urgency score based on urgent keywords and deadlines."""
+        text_lower = text.lower()
+        urgent_count = sum(1 for keyword in self._sentiment_keywords["urgent"] if keyword in text_lower)
+
+        # Check for deadline mentions
+        deadline_patterns = [
+            r"\bdeadline\b", r"\bby\s+\d{1,2}/\d{1,2}/\d{4}\b", r"\bwithin\s+\d+\s+days?\b",
+            r"\beffective\s+\d{1,2}/\d{1,2}/\d{4}\b", r"\bimmediately\b"
+        ]
+
+        deadline_mentions = sum(1 for pattern in deadline_patterns if re.search(pattern, text, re.IGNORECASE))
+
+        # Combine urgency keywords and deadline mentions
+        total_urgency_indicators = urgent_count + deadline_mentions
+
+        # Normalize to [0, 1] range
+        return min(1.0, total_urgency_indicators / 5.0)
+
+    def _calculate_compliance_impact(self, text: str) -> str:
+        """Calculate compliance impact level."""
+        text_lower = text.lower()
+
+        # High impact indicators
+        high_impact_keywords = [
+            "mandatory", "required", "must", "shall", "prohibited", "violation", "penalty",
+            "enforcement", "compliance", "deadline", "requirement"
+        ]
+
+        # Medium impact indicators
+        medium_impact_keywords = [
+            "recommended", "guidance", "suggested", "encouraged", "should", "may"
+        ]
+
+        high_count = sum(1 for keyword in high_impact_keywords if keyword in text_lower)
+        medium_count = sum(1 for keyword in medium_impact_keywords if keyword in text_lower)
+
+        if high_count > 0:
+            return "high"
+        elif medium_count > 0:
+            return "medium"
+        else:
+            return "low"
+
+    def _extract_entities(self, text: str) -> List[str]:
+        """Extract entities from text (simplified implementation)."""
+        entities = []
+
+        # Extract organization names (simplified patterns)
+        org_patterns = [
+            r"\b(FERC|CFTC|SEC|EPA|DOE|NREL|EIA)\b",
+            r"\b(Commission|Agency|Department|Administration)\b",
+            r"\b(Interconnection|Corporation|Company|LLC|Inc)\b"
+        ]
+
+        for pattern in org_patterns:
+            matches = re.findall(pattern, text, re.IGNORECASE)
+            entities.extend(matches)
+
+        return list(set(entities))  # Remove duplicates
+
+    def _extract_key_phrases_enhanced(self, text: str) -> List[str]:
+        """Extract key phrases using enhanced logic."""
+        # Split into sentences
+        sentences = re.split(r'[.!?]+', text)
+
+        # Score sentences based on importance indicators
+        scored_sentences = []
+        for sentence in sentences:
+            sentence = sentence.strip()
+            if len(sentence) < 20:  # Skip very short sentences
+                continue
+
+            score = 0
+
+            # Length bonus (longer sentences likely contain more info)
+            score += min(len(sentence) / 100, 1.0)
+
+            # Keyword bonuses
+            for category, keywords in self._sentiment_keywords.items():
+                for keyword in keywords:
+                    if keyword in sentence.lower():
+                        score += 0.2
+
+            # Technical term bonuses
+            technical_terms = ["regulation", "policy", "rule", "requirement", "compliance", "market", "pricing"]
+            for term in technical_terms:
+                if term in sentence.lower():
+                    score += 0.1
+
+            scored_sentences.append((sentence, score))
+
+        # Sort by score and return top phrases
+        scored_sentences.sort(key=lambda x: x[1], reverse=True)
+        top_sentences = [sentence for sentence, _ in scored_sentences[:5]]
+
+        return top_sentences
+
+    def _calculate_confidence_score(
+        self,
+        text: str,
+        market_tags: List[str],
+        instrument_tags: List[str],
+        topic_tags: List[str]
+    ) -> float:
+        """Calculate confidence score for NLP tagging."""
+        base_confidence = 0.5
+
+        # Text length bonus
+        text_length = len(text)
+        if text_length > 500:
+            base_confidence += 0.2
+        elif text_length > 200:
+            base_confidence += 0.1
+
+        # Pattern match bonus
+        match_count = len(market_tags) + len(instrument_tags) + len(topic_tags)
+        if match_count > 0:
+            base_confidence += min(match_count * 0.1, 0.3)
+
+        # Source reliability (mock - would be based on source credibility)
+        base_confidence += 0.1
+
+        return min(1.0, base_confidence)
+
+    def _determine_enhanced_impact_level(
+        self,
+        market_tags: List[str],
+        instrument_tags: List[str],
+        topic_tags: List[str],
+        urgency_score: float,
+        compliance_impact: str
+    ) -> PolicyImpactLevel:
+        """Determine enhanced impact level based on multiple factors."""
+        # Base scoring
+        base_score = 0.0
+
+        # Market impact
+        if len(market_tags) > 0:
+            base_score += 0.3
+
+        # Instrument impact
+        if len(instrument_tags) > 0:
+            base_score += 0.2
+
+        # Topic impact
+        critical_topics = ["carbon", "compliance", "pricing"]
+        if any(topic in critical_topics for topic in topic_tags):
+            base_score += 0.3
+
+        # Urgency impact
+        if urgency_score > 0.7:
+            base_score += 0.3
+        elif urgency_score > 0.4:
+            base_score += 0.1
+
+        # Compliance impact
+        if compliance_impact == "high":
+            base_score += 0.2
+        elif compliance_impact == "medium":
+            base_score += 0.1
+
+        # Determine final impact level
+        if base_score >= 0.8:
+            return PolicyImpactLevel.CRITICAL
+        elif base_score >= 0.6:
+            return PolicyImpactLevel.HIGH
+        elif base_score >= 0.3:
+            return PolicyImpactLevel.MEDIUM
+        else:
+            return PolicyImpactLevel.LOW
 
     def _extract_key_phrases(self, text: str) -> List[str]:
         """Extract key phrases from text."""
@@ -433,15 +705,42 @@ class RegulatoryTrackerService:
         }
 
     async def get_service_health(self) -> Dict[str, Any]:
-        """Get service health status."""
+        """Get enhanced service health status."""
         return {
             "status": "healthy",
             "artifacts_tracked": len(self._artifacts),
             "alerts_generated": len(self._alerts),
             "last_ingestion": datetime.utcnow(),
             "rss_sources": len(self._rss_sources),
-            "api_sources": len(self._api_sources)
+            "api_sources": len(self._api_sources),
+            "monitoring_enabled": self._monitoring_enabled,
+            "polling_interval_minutes": self._polling_interval_minutes,
+            "trend_analysis_enabled": self._trend_analysis_enabled,
+            "nlp_processor_available": self._nlp_available,
+            "quality_checks_configured": len(self.quality_checks) if hasattr(self, 'quality_checks') else 0
         }
+
+    async def start_real_time_monitoring(self) -> None:
+        """Start real-time monitoring of regulatory sources."""
+        if not self._monitoring_enabled:
+            return
+
+        try:
+            # Start background monitoring task
+            asyncio.create_task(self._monitoring_loop())
+
+            self.telemetry.info(
+                "Real-time regulatory monitoring started",
+                polling_interval_minutes=self._polling_interval_minutes
+            )
+
+        except Exception as e:
+            self.telemetry.error("Failed to start real-time monitoring", error=str(e))
+
+    async def stop_real_time_monitoring(self) -> None:
+        """Stop real-time monitoring."""
+        self._monitoring_enabled = False
+        self.telemetry.info("Real-time regulatory monitoring stopped")
 
 
 def get_regulatory_tracker_service() -> RegulatoryTrackerService:

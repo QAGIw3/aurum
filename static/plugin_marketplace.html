@@ -1,0 +1,719 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Aurum Plugin Marketplace</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            line-height: 1.6;
+            color: #333;
+            background-color: #f8fafc;
+        }
+
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+            padding: 0 20px;
+        }
+
+        .header {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            padding: 2rem 0;
+            text-align: center;
+            box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+        }
+
+        .header h1 {
+            margin-bottom: 0.5rem;
+            font-size: 2.5rem;
+            font-weight: 300;
+        }
+
+        .header p {
+            opacity: 0.9;
+            font-size: 1.1rem;
+        }
+
+        .search-section {
+            background: white;
+            padding: 2rem 0;
+            border-bottom: 1px solid #e2e8f0;
+        }
+
+        .search-bar {
+            display: flex;
+            gap: 1rem;
+            max-width: 600px;
+            margin: 0 auto;
+        }
+
+        .search-input {
+            flex: 1;
+            padding: 0.75rem 1rem;
+            border: 2px solid #e2e8f0;
+            border-radius: 8px;
+            font-size: 1rem;
+            transition: border-color 0.2s;
+        }
+
+        .search-input:focus {
+            outline: none;
+            border-color: #667eea;
+        }
+
+        .search-btn, .filter-btn {
+            padding: 0.75rem 1.5rem;
+            background: #667eea;
+            color: white;
+            border: none;
+            border-radius: 8px;
+            cursor: pointer;
+            font-size: 1rem;
+            transition: background-color 0.2s;
+        }
+
+        .search-btn:hover, .filter-btn:hover {
+            background: #5a67d8;
+        }
+
+        .categories {
+            display: flex;
+            gap: 0.5rem;
+            flex-wrap: wrap;
+            justify-content: center;
+            margin-top: 1rem;
+        }
+
+        .category-btn {
+            padding: 0.5rem 1rem;
+            background: #f7fafc;
+            border: 1px solid #e2e8f0;
+            border-radius: 20px;
+            cursor: pointer;
+            font-size: 0.9rem;
+            transition: all 0.2s;
+        }
+
+        .category-btn:hover, .category-btn.active {
+            background: #667eea;
+            color: white;
+            border-color: #667eea;
+        }
+
+        .plugins-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(350px, 1fr));
+            gap: 2rem;
+            padding: 3rem 0;
+        }
+
+        .plugin-card {
+            background: white;
+            border-radius: 12px;
+            padding: 1.5rem;
+            box-shadow: 0 4px 6px rgba(0, 0, 0, 0.07);
+            transition: transform 0.2s, box-shadow 0.2s;
+            border: 1px solid #e2e8f0;
+        }
+
+        .plugin-card:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 8px 25px rgba(0, 0, 0, 0.1);
+        }
+
+        .plugin-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: start;
+            margin-bottom: 1rem;
+        }
+
+        .plugin-title {
+            font-size: 1.25rem;
+            font-weight: 600;
+            color: #1a202c;
+            margin-bottom: 0.25rem;
+        }
+
+        .plugin-version {
+            color: #718096;
+            font-size: 0.9rem;
+        }
+
+        .plugin-description {
+            color: #4a5568;
+            margin-bottom: 1rem;
+            line-height: 1.5;
+        }
+
+        .plugin-meta {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 1rem;
+            flex-wrap: wrap;
+            gap: 0.5rem;
+        }
+
+        .plugin-author {
+            color: #718096;
+            font-size: 0.9rem;
+        }
+
+        .plugin-rating {
+            display: flex;
+            align-items: center;
+            gap: 0.25rem;
+            color: #f6ad55;
+        }
+
+        .plugin-rating .stars {
+            display: flex;
+            gap: 2px;
+        }
+
+        .plugin-rating .star {
+            width: 16px;
+            height: 16px;
+            clip-path: polygon(50% 0%, 61% 35%, 98% 35%, 68% 57%, 79% 91%, 50% 70%, 21% 91%, 32% 57%, 2% 35%, 39% 35%);
+            background: currentColor;
+        }
+
+        .plugin-tags {
+            display: flex;
+            gap: 0.5rem;
+            flex-wrap: wrap;
+            margin-bottom: 1rem;
+        }
+
+        .tag {
+            background: #edf2f7;
+            color: #4a5568;
+            padding: 0.25rem 0.75rem;
+            border-radius: 12px;
+            font-size: 0.8rem;
+            font-weight: 500;
+        }
+
+        .plugin-security {
+            display: inline-flex;
+            align-items: center;
+            gap: 0.25rem;
+            padding: 0.25rem 0.75rem;
+            border-radius: 12px;
+            font-size: 0.8rem;
+            font-weight: 500;
+            margin-bottom: 1rem;
+        }
+
+        .security-sandboxed {
+            background: #c6f6d5;
+            color: #22543d;
+        }
+
+        .security-restricted {
+            background: #fed7d7;
+            color: #742a2a;
+        }
+
+        .security-trusted {
+            background: #fbb6ce;
+            color: #702459;
+        }
+
+        .plugin-actions {
+            display: flex;
+            gap: 0.75rem;
+            margin-top: auto;
+        }
+
+        .btn {
+            padding: 0.75rem 1.25rem;
+            border: none;
+            border-radius: 8px;
+            cursor: pointer;
+            font-size: 0.9rem;
+            font-weight: 500;
+            transition: all 0.2s;
+            text-decoration: none;
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+        }
+
+        .btn-primary {
+            background: #667eea;
+            color: white;
+        }
+
+        .btn-primary:hover {
+            background: #5a67d8;
+        }
+
+        .btn-secondary {
+            background: #f7fafc;
+            color: #4a5568;
+            border: 1px solid #e2e8f0;
+        }
+
+        .btn-secondary:hover {
+            background: #edf2f7;
+        }
+
+        .btn:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+        }
+
+        .featured-section {
+            background: white;
+            padding: 3rem 0;
+            border-bottom: 1px solid #e2e8f0;
+        }
+
+        .featured-section h2 {
+            text-align: center;
+            margin-bottom: 2rem;
+            color: #1a202c;
+            font-size: 2rem;
+            font-weight: 400;
+        }
+
+        .featured-plugins {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+            gap: 2rem;
+        }
+
+        .loading {
+            text-align: center;
+            padding: 3rem;
+            color: #718096;
+        }
+
+        .error {
+            background: #fed7d7;
+            color: #742a2a;
+            padding: 1rem;
+            border-radius: 8px;
+            margin: 1rem 0;
+            border: 1px solid #feb2b2;
+        }
+
+        .plugin-stats {
+            background: #f7fafc;
+            padding: 0.75rem;
+            border-radius: 8px;
+            margin-bottom: 1rem;
+        }
+
+        .stats-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
+            gap: 1rem;
+            font-size: 0.9rem;
+        }
+
+        .stat-item {
+            text-align: center;
+        }
+
+        .stat-value {
+            font-size: 1.5rem;
+            font-weight: 600;
+            color: #667eea;
+            margin-bottom: 0.25rem;
+        }
+
+        .stat-label {
+            color: #718096;
+        }
+
+        @media (max-width: 768px) {
+            .search-bar {
+                flex-direction: column;
+            }
+
+            .categories {
+                justify-content: flex-start;
+            }
+
+            .plugins-grid {
+                grid-template-columns: 1fr;
+            }
+
+            .featured-plugins {
+                grid-template-columns: 1fr;
+            }
+        }
+    </style>
+</head>
+<body>
+    <header class="header">
+        <div class="container">
+            <h1>Aurum Plugin Marketplace</h1>
+            <p>Discover, install, and manage plugins to extend your Aurum platform</p>
+        </div>
+    </header>
+
+    <section class="featured-section">
+        <div class="container">
+            <h2>Featured Plugins</h2>
+            <div class="featured-plugins" id="featuredPlugins">
+                <div class="loading">Loading featured plugins...</div>
+            </div>
+        </div>
+    </section>
+
+    <section class="search-section">
+        <div class="container">
+            <div class="search-bar">
+                <input type="text" class="search-input" id="searchInput" placeholder="Search plugins...">
+                <button class="search-btn" onclick="searchPlugins()">Search</button>
+                <button class="filter-btn" onclick="toggleFilters()">Filters</button>
+            </div>
+
+            <div class="categories" id="categories" style="display: none;">
+                <button class="category-btn" onclick="filterByCategory('all')">All</button>
+                <button class="category-btn" onclick="filterByCategory('data_ingestion')">Data Ingestion</button>
+                <button class="category-btn" onclick="filterByCategory('analytics')">Analytics</button>
+                <button class="category-btn" onclick="filterByCategory('forecasting')">Forecasting</button>
+                <button class="category-btn" onclick="filterByCategory('risk_management')">Risk Management</button>
+                <button class="category-btn" onclick="filterByCategory('integration')">Integration</button>
+            </div>
+        </div>
+    </section>
+
+    <section class="plugins-section">
+        <div class="container">
+            <div class="plugins-grid" id="pluginsGrid">
+                <div class="loading">Loading plugins...</div>
+            </div>
+        </div>
+    </section>
+
+    <div id="pluginModal" style="display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.5); z-index: 1000;">
+        <div style="position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); background: white; padding: 2rem; border-radius: 12px; max-width: 600px; width: 90%; max-height: 80vh; overflow-y: auto;">
+            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1.5rem;">
+                <h2 id="modalTitle">Plugin Details</h2>
+                <button onclick="closeModal()" style="background: none; border: none; font-size: 1.5rem; cursor: pointer;">&times;</button>
+            </div>
+            <div id="modalContent">
+                <div class="loading">Loading plugin details...</div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        const API_BASE = 'http://localhost:8000/v2/marketplace';
+        let currentCategory = 'all';
+        let searchQuery = '';
+
+        // Load initial data
+        document.addEventListener('DOMContentLoaded', function() {
+            loadFeaturedPlugins();
+            loadPlugins();
+            loadCategories();
+        });
+
+        async function loadFeaturedPlugins() {
+            try {
+                const response = await fetch(`${API_BASE}/featured?limit=3`);
+                const plugins = await response.json();
+
+                const container = document.getElementById('featuredPlugins');
+                container.innerHTML = plugins.map(createPluginCard).join('');
+            } catch (error) {
+                console.error('Error loading featured plugins:', error);
+                document.getElementById('featuredPlugins').innerHTML = '<div class="error">Failed to load featured plugins</div>';
+            }
+        }
+
+        async function loadPlugins() {
+            try {
+                let url = `${API_BASE}/plugins?limit=20`;
+                if (currentCategory !== 'all') {
+                    url += `&category=${currentCategory}`;
+                }
+
+                const response = await fetch(url);
+                const plugins = await response.json();
+
+                const container = document.getElementById('pluginsGrid');
+                if (plugins.length === 0) {
+                    container.innerHTML = '<div class="loading">No plugins found</div>';
+                } else {
+                    container.innerHTML = plugins.map(createPluginCard).join('');
+                }
+            } catch (error) {
+                console.error('Error loading plugins:', error);
+                document.getElementById('pluginsGrid').innerHTML = '<div class="error">Failed to load plugins</div>';
+            }
+        }
+
+        async function loadCategories() {
+            try {
+                const response = await fetch(`${API_BASE}/categories`);
+                const categories = await response.json();
+
+                const container = document.getElementById('categories');
+                Object.entries(categories).forEach(([key, value]) => {
+                    const btn = document.createElement('button');
+                    btn.className = 'category-btn';
+                    btn.textContent = key.replace('_', ' ').toUpperCase();
+                    btn.onclick = () => filterByCategory(key);
+                    container.appendChild(btn);
+                });
+            } catch (error) {
+                console.error('Error loading categories:', error);
+            }
+        }
+
+        function createPluginCard(plugin) {
+            const securityClass = `security-${plugin.security_level}`;
+            const ratingStars = '★'.repeat(Math.floor(plugin.rating)) + '☆'.repeat(5 - Math.floor(plugin.rating));
+
+            return `
+                <div class="plugin-card">
+                    <div class="plugin-header">
+                        <div>
+                            <h3 class="plugin-title">${plugin.display_name}</h3>
+                            <span class="plugin-version">v${plugin.version}</span>
+                        </div>
+                        <div class="plugin-security ${securityClass}">
+                            ${plugin.security_level.toUpperCase()}
+                        </div>
+                    </div>
+
+                    <p class="plugin-description">${plugin.description}</p>
+
+                    <div class="plugin-meta">
+                        <span class="plugin-author">By ${plugin.author}</span>
+                        <div class="plugin-rating">
+                            <span class="stars">${ratingStars}</span>
+                            <span>${plugin.rating.toFixed(1)}</span>
+                        </div>
+                    </div>
+
+                    <div class="plugin-tags">
+                        ${plugin.tags.map(tag => `<span class="tag">${tag}</span>`).join('')}
+                    </div>
+
+                    <div class="plugin-stats">
+                        <div class="stats-grid">
+                            <div class="stat-item">
+                                <div class="stat-value">${plugin.install_count}</div>
+                                <div class="stat-label">Installs</div>
+                            </div>
+                            <div class="stat-item">
+                                <div class="stat-value">${plugin.review_count}</div>
+                                <div class="stat-label">Reviews</div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="plugin-actions">
+                        <button class="btn btn-primary" onclick="showPluginDetails('${plugin.plugin_name}')">View Details</button>
+                        <button class="btn btn-secondary" onclick="installPlugin('${plugin.plugin_name}')">Install</button>
+                    </div>
+                </div>
+            `;
+        }
+
+        function searchPlugins() {
+            searchQuery = document.getElementById('searchInput').value;
+            if (searchQuery.trim()) {
+                searchForPlugins(searchQuery);
+            } else {
+                loadPlugins();
+            }
+        }
+
+        async function searchForPlugins(query) {
+            try {
+                let url = `${API_BASE}/plugins/search?q=${encodeURIComponent(query)}&limit=20`;
+                if (currentCategory !== 'all') {
+                    url += `&category=${currentCategory}`;
+                }
+
+                const response = await fetch(url);
+                const plugins = await response.json();
+
+                const container = document.getElementById('pluginsGrid');
+                if (plugins.length === 0) {
+                    container.innerHTML = '<div class="loading">No plugins found for your search</div>';
+                } else {
+                    container.innerHTML = plugins.map(createPluginCard).join('');
+                }
+            } catch (error) {
+                console.error('Error searching plugins:', error);
+                document.getElementById('pluginsGrid').innerHTML = '<div class="error">Search failed</div>';
+            }
+        }
+
+        function filterByCategory(category) {
+            currentCategory = category;
+
+            // Update active category button
+            document.querySelectorAll('.category-btn').forEach(btn => {
+                btn.classList.remove('active');
+            });
+            event.target.classList.add('active');
+
+            if (searchQuery) {
+                searchForPlugins(searchQuery);
+            } else {
+                loadPlugins();
+            }
+        }
+
+        function toggleFilters() {
+            const categories = document.getElementById('categories');
+            categories.style.display = categories.style.display === 'none' ? 'flex' : 'none';
+        }
+
+        async function showPluginDetails(pluginName) {
+            const modal = document.getElementById('pluginModal');
+            const modalContent = document.getElementById('modalContent');
+
+            modal.style.display = 'block';
+            modalContent.innerHTML = '<div class="loading">Loading plugin details...</div>';
+
+            try {
+                const response = await fetch(`${API_BASE}/plugins/${pluginName}`);
+                const data = await response.json();
+
+                const plugin = data.listing;
+                const modalTitle = document.getElementById('modalTitle');
+                modalTitle.textContent = plugin.display_name;
+
+                modalContent.innerHTML = `
+                    <div style="margin-bottom: 1.5rem;">
+                        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1rem;">
+                            <div>
+                                <h3 style="margin: 0; color: #1a202c;">${plugin.display_name}</h3>
+                                <p style="margin: 0.25rem 0 0 0; color: #718096;">v${plugin.version} by ${plugin.author}</p>
+                            </div>
+                            <div class="plugin-security security-${plugin.security_level}" style="margin: 0;">
+                                ${plugin.security_level.toUpperCase()}
+                            </div>
+                        </div>
+
+                        <p style="color: #4a5568; line-height: 1.6; margin-bottom: 1rem;">${plugin.description}</p>
+
+                        <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 1rem; margin-bottom: 1.5rem;">
+                            <div style="text-align: center; padding: 1rem; background: #f7fafc; border-radius: 8px;">
+                                <div style="font-size: 1.5rem; font-weight: 600; color: #667eea; margin-bottom: 0.25rem;">${plugin.install_count}</div>
+                                <div style="color: #718096; font-size: 0.9rem;">Installs</div>
+                            </div>
+                            <div style="text-align: center; padding: 1rem; background: #f7fafc; border-radius: 8px;">
+                                <div style="font-size: 1.5rem; font-weight: 600; color: #667eea; margin-bottom: 0.25rem;">${plugin.rating.toFixed(1)}</div>
+                                <div style="color: #718096; font-size: 0.9rem;">Rating</div>
+                            </div>
+                            <div style="text-align: center; padding: 1rem; background: #f7fafc; border-radius: 8px;">
+                                <div style="font-size: 1.5rem; font-weight: 600; color: #667eea; margin-bottom: 0.25rem;">${plugin.review_count}</div>
+                                <div style="color: #718096; font-size: 0.9rem;">Reviews</div>
+                            </div>
+                        </div>
+
+                        <div style="margin-bottom: 1.5rem;">
+                            <h4 style="margin-bottom: 0.75rem; color: #1a202c;">Tags</h4>
+                            <div style="display: flex; gap: 0.5rem; flex-wrap: wrap;">
+                                ${plugin.tags.map(tag => `<span class="tag">${tag}</span>`).join('')}
+                            </div>
+                        </div>
+
+                        ${data.reviews && data.reviews.length > 0 ? `
+                        <div style="margin-bottom: 1.5rem;">
+                            <h4 style="margin-bottom: 0.75rem; color: #1a202c;">Recent Reviews</h4>
+                            <div style="max-height: 200px; overflow-y: auto;">
+                                ${data.reviews.slice(0, 3).map(review => `
+                                    <div style="background: #f7fafc; padding: 1rem; border-radius: 8px; margin-bottom: 0.75rem;">
+                                        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.5rem;">
+                                            <div style="font-weight: 500;">User ${review.user_id.slice(0, 8)}</div>
+                                            <div style="color: #f6ad55;">${'★'.repeat(review.rating)}${'☆'.repeat(5 - review.rating)}</div>
+                                        </div>
+                                        <p style="color: #4a5568; font-size: 0.9rem; margin: 0;">${review.review_text}</p>
+                                        <div style="color: #718096; font-size: 0.8rem; margin-top: 0.5rem;">${new Date(review.created_at).toLocaleDateString()}</div>
+                                    </div>
+                                `).join('')}
+                            </div>
+                        </div>
+                        ` : ''}
+
+                        <div class="plugin-actions" style="border-top: 1px solid #e2e8f0; padding-top: 1.5rem;">
+                            <button class="btn btn-primary" onclick="installPlugin('${plugin.plugin_name}')" style="flex: 1;">Install Plugin</button>
+                            <button class="btn btn-secondary" onclick="closeModal()" style="flex: 1;">Close</button>
+                        </div>
+                    </div>
+                `;
+            } catch (error) {
+                console.error('Error loading plugin details:', error);
+                modalContent.innerHTML = '<div class="error">Failed to load plugin details</div>';
+            }
+        }
+
+        function closeModal() {
+            document.getElementById('pluginModal').style.display = 'none';
+        }
+
+        async function installPlugin(pluginName) {
+            const tenantId = prompt('Enter your tenant ID:');
+            if (!tenantId) return;
+
+            const config = {
+                api_key: prompt('Enter API key (if required):') || 'demo_key',
+                polling_interval_minutes: 60
+            };
+
+            try {
+                const response = await fetch(`${API_BASE}/plugins/${pluginName}/install`, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({
+                        tenant_id: tenantId,
+                        configuration: config
+                    })
+                });
+
+                const result = await response.json();
+
+                if (response.ok) {
+                    alert(`Plugin installed successfully!\nInstance ID: ${result.instance_id}`);
+                    closeModal();
+                } else {
+                    alert(`Installation failed: ${result.detail}`);
+                }
+            } catch (error) {
+                console.error('Error installing plugin:', error);
+                alert('Installation failed. Please try again.');
+            }
+        }
+
+        // Close modal when clicking outside
+        document.getElementById('pluginModal').addEventListener('click', function(e) {
+            if (e.target === this) {
+                closeModal();
+            }
+        });
+
+        // Handle Enter key in search
+        document.getElementById('searchInput').addEventListener('keypress', function(e) {
+            if (e.key === 'Enter') {
+                searchPlugins();
+            }
+        });
+    </script>
+</body>
+</html>

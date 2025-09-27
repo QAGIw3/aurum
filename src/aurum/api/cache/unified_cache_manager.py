@@ -486,6 +486,10 @@ class UnifiedCacheManager:
                 task.cancel()
 
 
+class LegacyUnifiedCacheManager(UnifiedCacheManager):
+    """Backward compatible alias retained for legacy imports."""
+
+
 # Global instance management
 _global_unified_cache_manager: Optional[UnifiedCacheManager] = None
 
@@ -503,6 +507,7 @@ def set_unified_cache_manager(manager: Optional[UnifiedCacheManager]) -> None:
 
 __all__ = [
     "UnifiedCacheManager",
+    "LegacyUnifiedCacheManager",
     "CacheStrategy", 
     "CacheAnalytics",
     "get_unified_cache_manager",

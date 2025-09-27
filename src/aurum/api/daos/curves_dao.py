@@ -252,7 +252,7 @@ class CurvesDAO(TrinoDAO[CurveResponse, str]):
             ? as curve_id,
             to_points.date,
             to_points.value - from_points.value as value,
-            json '{}' as metadata
+            json '{{}}' as metadata
         FROM to_points
         LEFT JOIN from_points ON to_points.date = from_points.date
         """
@@ -287,7 +287,7 @@ class CurvesDAO(TrinoDAO[CurveResponse, str]):
             curve_id,
             date_trunc('{strip_type}', date) as date,
             avg(value) as value,
-            json '{}' as metadata
+            json '{{}}' as metadata
         FROM {self.table_name}_points
         WHERE curve_id = ?
         GROUP BY curve_id, date_trunc('{strip_type}', date)

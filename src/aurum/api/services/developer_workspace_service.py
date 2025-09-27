@@ -97,9 +97,25 @@ class DeveloperWorkspaceService:
         self._sessions: Dict[str, NotebookSession] = {}
         self._templates: Dict[str, NotebookTemplate] = {}
 
+        # Enhanced features
+        self._active_collaborators: Dict[str, Set[str]] = {}  # session_id -> set of user_ids
+        self._session_snapshots: Dict[str, List[Dict[str, Any]]] = {}  # session_id -> snapshots
+        self._api_documentation_cache: Dict[str, Any] = {}
+        self._code_snippets: Dict[str, List[Dict[str, Any]]] = {}
+
+        # Real-time collaboration
+        self._collaboration_enabled = True
+        self._snapshot_interval_minutes = 5
+
+        # API integration
+        self._api_docs_url = "https://docs.aurum.dev/api/"
+        self._openapi_spec_cache: Optional[Dict[str, Any]] = None
+
         # Initialize default environments and templates
         self._initialize_default_environments()
         self._initialize_default_templates()
+        self._initialize_api_documentation()
+        self._initialize_code_snippets()
 
     def _initialize_default_environments(self) -> None:
         """Initialize default notebook environments."""
@@ -135,6 +151,87 @@ class DeveloperWorkspaceService:
             allowed_packages=["requests", "pandas", "matplotlib"],
             network_policy="api_access"
         )
+
+    def _initialize_api_documentation(self) -> None:
+        """Initialize API documentation cache."""
+        try:
+            # Mock API documentation - in reality would fetch from OpenAPI spec
+            self._api_documentation_cache = {
+                "endpoints": {
+                    "/v2/curves": {
+                        "method": "GET",
+                        "summary": "Retrieve historical curve data",
+                        "parameters": ["asof", "limit", "geography"],
+                        "response_schema": {"type": "object", "properties": {"data": {"type": "array"}}},
+                        "examples": [
+                            {
+                                "name": "Get recent curves",
+                                "code": "response = requests.get('http://localhost:8000/v2/curves', params={'limit': 10})"
+                            }
+                        ]
+                    },
+                    "/v2/forecasting": {
+                        "method": "POST",
+                        "summary": "Generate probabilistic forecast",
+                        "parameters": ["forecast_type", "target_variable", "geography", "start_date", "end_date"],
+                        "response_schema": {"type": "object", "properties": {"forecast_id": {"type": "string"}}},
+                        "examples": [
+                            {
+                                "name": "Generate load forecast",
+                                "code": "forecast_data = {'forecast_type': 'load', 'target_variable': 'load_mw', 'geography': 'US', 'start_date': '2024-01-01', 'end_date': '2024-01-31'}\nresponse = requests.post('http://localhost:8000/v2/forecasting', json=forecast_data)"
+                            }
+                        ]
+                    }
+                },
+                "authentication": {
+                    "type": "bearer",
+                    "header": "Authorization: Bearer YOUR_TOKEN",
+                    "description": "Use your API token in the Authorization header"
+                },
+                "base_url": "http://localhost:8000",
+                "version": "2.0"
+            }
+
+            self.logger.info("API documentation initialized")
+
+        except Exception as e:
+            self.logger.error("Failed to initialize API documentation", error=str(e))
+            self._api_documentation_cache = {}
+
+    def _initialize_code_snippets(self) -> None:
+        """Initialize code snippets for common operations."""
+        self._code_snippets = {
+            "data_retrieval": [
+                {
+                    "name": "Get Market Data",
+                    "language": "python",
+                    "code": "import requests\n\nresponse = requests.get('http://localhost:8000/v2/curves', params={'limit': 10})\ndata = response.json()['data']\nprint(f'Retrieved {len(data)} curve records')",
+                    "description": "Basic data retrieval example"
+                },
+                {
+                    "name": "Pandas DataFrame",
+                    "language": "python",
+                    "code": "import pandas as pd\nimport requests\n\nresponse = requests.get('http://localhost:8000/v2/curves')\ndf = pd.DataFrame(response.json()['data'])\nprint(df.head())",
+                    "description": "Convert API response to pandas DataFrame"
+                }
+            ],
+            "forecasting": [
+                {
+                    "name": "Generate Forecast",
+                    "language": "python",
+                    "code": "import requests\n\nforecast_data = {\n    'forecast_type': 'load',\n    'target_variable': 'load_mw',\n    'geography': 'US',\n    'start_date': '2024-01-01',\n    'end_date': '2024-01-31'\n}\n\nresponse = requests.post('http://localhost:8000/v2/forecasting', json=forecast_data)\nforecast_id = response.json()['forecast_id']\nprint(f'Forecast generated: {forecast_id}')",
+                    "description": "Generate a probabilistic forecast"
+                }
+            ],
+            "risk_analysis": [
+                {
+                    "name": "Calculate VaR",
+                    "language": "python",
+                    "code": "import requests\n\nvar_data = {\n    'portfolio_id': 'portfolio_123',\n    'confidence_level': 0.95,\n    'time_horizon_days': 1\n}\n\nresponse = requests.post('http://localhost:8000/v2/risk-engine/risk/calculate', json=var_data)\nvar_result = response.json()\nprint(f'VaR 95%: ${var_result[\"var_95\"]}')",
+                    "description": "Calculate Value at Risk for a portfolio"
+                }
+            ]
+        }
 
     def _initialize_default_templates(self) -> None:
         """Initialize default notebook templates."""

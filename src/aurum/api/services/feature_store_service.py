@@ -11,12 +11,14 @@ This service provides a unified interface for:
 from __future__ import annotations
 
 import asyncio
+import logging
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
-from typing import Any, Dict, List, Optional, Tuple, Union
+from typing import Any, Dict, List, Optional, Sequence, Tuple, Union
 from uuid import uuid4
 
 import pandas as pd
+from pandas import DataFrame
 from pydantic import BaseModel, Field
 
 from ..telemetry.context import get_request_id, log_structured
@@ -68,6 +70,28 @@ class FeatureStoreDAO(TrinoDAO):
         """Initialize feature store DAO."""
         super().__init__(trino_config)
         self.table_name = "market_data.features"
+
+    async def create(self, entity: Dict[str, Any]) -> Dict[str, Any]:  # type: ignore[override]
+        raise NotImplementedError("FeatureStoreDAO does not support create operations")
+
+    async def get_by_id(self, id: str) -> Optional[Dict[str, Any]]:  # type: ignore[override]
+        raise NotImplementedError("FeatureStoreDAO does not support get_by_id operations")
+
+    async def update(self, id: str, entity: Dict[str, Any]) -> Optional[Dict[str, Any]]:  # type: ignore[override]
+        raise NotImplementedError("FeatureStoreDAO does not support update operations")
+
+    async def delete(self, id: str) -> bool:  # type: ignore[override]
+        raise NotImplementedError("FeatureStoreDAO does not support delete operations")
+
+    async def list(
+        self,
+        limit: int = 100,
+        offset: int = 0,
+        filters: Optional[Dict[str, Any]] = None,
+        order_by: Optional[str] = None,
+        order_desc: bool = False
+    ) -> List[Dict[str, Any]]:  # type: ignore[override]
+        raise NotImplementedError("FeatureStoreDAO does not support list operations")
 
     async def _connect(self) -> None:
         """Connect to Trino for feature store."""
@@ -240,9 +264,12 @@ class FeatureStoreService:
         self._initialize_feature_definitions()
 
         self.logger = logging.getLogger(__name__)
-        self.logger.info("Feature store service initialized",
-                        geography=config.geography,
-                        feature_version=config.feature_version)
+        log_structured(
+            "info",
+            "feature_store_service_initialized",
+            geography=config.geography,
+            feature_version=config.feature_version
+        )
 
     def _initialize_feature_definitions(self) -> None:
         """Initialize standard feature definitions for cross-asset analysis."""
@@ -395,6 +422,27 @@ class FeatureStoreService:
             # Create features
             features_data = await self._create_features_from_joined_data(joined_data, feature_types)
 
+            engineered = await self._build_engineered_feature_sets(
+                features_data,
+                time_window_columns=[col for col in ("load_mw", "lmp_price", "temperature") if col in features_data],
+                lag_columns=[
+                    col for col in ("load_mw", "lmp_price", "temperature", "humidity", "wind_speed")
+                    if col in features_data
+                ],
+                time_window_sizes=[3, 24, 168],
+                lag_periods=[1, 24, 168],
+                aggregation_methods=("mean", "std"),
+                include_trends=True
+            )
+
+            seasonal_features = engineered.get("seasonal", {}).copy()
+            seasonal_features.pop("is_weekend", None)
+
+            features_data.update(engineered.get("time_windows", {}))
+            features_data.update(engineered.get("lags", {}))
+            features_data.update({key: value for key, value in seasonal_features.items() if key not in features_data})
+            features_data["engineered_features"] = engineered
+
             # Add metadata
             features_data["metadata"] = {
                 "feature_version": self.config.feature_version,
@@ -404,7 +452,11 @@ class FeatureStoreService:
                 "feature_types": feature_types,
                 "scenario_id": scenario_id,
                 "generated_at": datetime.utcnow().isoformat(),
-                "generated_by": "feature_store_service"
+                "generated_by": "feature_store_service",
+                "timestamps": [
+                    ts.isoformat() if isinstance(ts, datetime) else str(ts)
+                    for ts in features_data.get("timestamp", [])
+                ]
             }
 
             # Cache the results
@@ -488,12 +540,15 @@ class FeatureStoreService:
 
         base_load = 1000  # Base load in MW
 
+        weekdays = np.array([dt.weekday() for dt in date_range])
+        weekday_factor = np.where(weekdays < 5, 1.0, 0.5)
+
         load_data = {
             "timestamps": [dt.isoformat() for dt in date_range],
             "geography": geography,
             "load_mw": base_load * (
                 0.7 + 0.6 * np.sin(2 * np.pi * np.arange(len(date_range)) / 24) +  # Daily pattern
-                0.2 * (1 if np.array([dt.weekday for dt in date_range]) < 5 else 0.5) +  # Weekly pattern
+                0.2 * weekday_factor +  # Weekly pattern
                 np.random.normal(0, 0.05, len(date_range))  # Random variation
             ),
         }
@@ -520,12 +575,15 @@ class FeatureStoreService:
 
         base_price = 50  # Base price in $/MWh
 
+        weekdays = np.array([dt.weekday() for dt in date_range])
+        weekday_price_factor = np.where(weekdays < 5, 1.0, 0.7)
+
         price_data = {
             "timestamps": [dt.isoformat() for dt in date_range],
             "geography": geography,
             "lmp_price": base_price * (
                 0.8 + 0.4 * np.sin(2 * np.pi * np.arange(len(date_range)) / 24) +  # Daily pattern
-                0.3 * (1 if np.array([dt.weekday for dt in date_range]) < 5 else 0.7) +  # Weekly pattern
+                0.3 * weekday_price_factor +  # Weekly pattern
                 np.random.normal(0, 0.1, len(date_range))  # Random variation
             ),
         }
@@ -573,114 +631,132 @@ class FeatureStoreService:
         feature_types: List[str]
     ) -> Dict[str, Any]:
         """Create features from joined cross-asset data."""
-        features = {}
+        frame = self._build_base_dataframe(joined_data)
+
+        timestamps = frame["timestamp"].tolist()
+
+        features: Dict[str, Any] = {
+            "timestamp": timestamps,
+            "timestamps": [
+                ts.isoformat() if isinstance(ts, datetime) else str(ts)
+                for ts in timestamps
+            ],
+        }
+
+        for column in frame.columns:
+            if column == "timestamp":
+                continue
+            features[column] = frame[column].tolist()
 
         if "weather" in feature_types:
-            features.update(await self._add_weather_features(joined_data))
+            features.update(await self._add_weather_features(frame))
 
         if "load" in feature_types:
-            features.update(await self._add_load_features(joined_data))
+            features.update(await self._add_load_features(frame))
 
         if "price" in feature_types:
-            features.update(await self._add_price_features(joined_data))
+            features.update(await self._add_price_features(frame))
 
         if "cross_asset" in feature_types:
-            features.update(await self._add_cross_asset_features(joined_data))
+            features.update(await self._add_cross_asset_features(frame))
 
         return features
 
-    async def _add_weather_features(self, data: Dict[str, Any]) -> Dict[str, Any]:
+    def _build_base_dataframe(self, joined_data: Dict[str, Any]) -> DataFrame:
+        """Create a normalized dataframe from joined asset data."""
+        timestamps = pd.to_datetime(joined_data["timestamps"])  # type: ignore[arg-type]
+
+        frame = pd.DataFrame(
+            {
+                "timestamp": timestamps,
+                "temperature": joined_data["weather"]["temperature"],
+                "humidity": joined_data["weather"]["humidity"],
+                "wind_speed": joined_data["weather"]["wind_speed"],
+                "solar_irradiance": joined_data["weather"]["solar_irradiance"],
+                "load_mw": joined_data["load"]["load_mw"],
+                "lmp_price": joined_data["price"]["lmp_price"],
+            }
+        )
+
+        frame = frame.sort_values("timestamp").reset_index(drop=True)
+        return frame
+
+    async def _add_weather_features(self, frame: DataFrame) -> Dict[str, Any]:
         """Add derived weather features."""
-        weather = data["weather"]
-        features = {}
+        features: Dict[str, Any] = {}
 
-        # Temperature-related features
-        features["temp_squared"] = [t**2 for t in weather["temperature"]]
-        features["temp_cubed"] = [t**3 for t in weather["temperature"]]
+        temperature = frame["temperature"].tolist()
+        humidity = frame["humidity"].tolist()
+        wind_speed = frame["wind_speed"].tolist()
 
-        # Weather indicators
-        features["is_hot"] = [1 if t > 25 else 0 for t in weather["temperature"]]
-        features["is_cold"] = [1 if t < 5 else 0 for t in weather["temperature"]]
-        features["high_humidity"] = [1 if h > 70 else 0 for h in weather["humidity"]]
+        features["temp_squared"] = [t ** 2 for t in temperature]
+        features["temp_cubed"] = [t ** 3 for t in temperature]
+        features["is_hot"] = [1 if t > 25 else 0 for t in temperature]
+        features["is_cold"] = [1 if t < 5 else 0 for t in temperature]
+        features["high_humidity"] = [1 if h > 70 else 0 for h in humidity]
+        features["temp_change_1h"] = [0] + [temperature[i] - temperature[i - 1] for i in range(1, len(temperature))]
+        features["wind_power_potential"] = [0.5 * ws ** 3 * 1.225 for ws in wind_speed]
 
-        # Weather changes (simplified)
-        temp_values = weather["temperature"]
-        features["temp_change_1h"] = [0] + [temp_values[i] - temp_values[i-1] for i in range(1, len(temp_values))]
+        return features
 
-        # Wind power potential
-        features["wind_power_potential"] = [
-            0.5 * ws**3 * 1.225 for ws in weather["wind_speed"]  # Air density 1.225 kg/m³
+    async def _add_load_features(self, frame: DataFrame) -> Dict[str, Any]:
+        """Add derived load features."""
+        features: Dict[str, Any] = {}
+
+        load_values = frame["load_mw"].tolist()
+        timestamps = frame["timestamp"].tolist()
+
+        features["load_change_1h"] = [0] + [load_values[i] - load_values[i - 1] for i in range(1, len(load_values))]
+        features["load_change_3h"] = [0] * min(3, len(load_values)) + [
+            load_values[i] - load_values[i - 3]
+            for i in range(3, len(load_values))
+        ]
+        features["load_change_24h"] = [0] * min(24, len(load_values)) + [
+            load_values[i] - load_values[i - 24]
+            for i in range(24, len(load_values))
         ]
 
-        return features
-
-    async def _add_load_features(self, data: Dict[str, Any]) -> Dict[str, Any]:
-        """Add derived load features."""
-        load = data["load"]
-        features = {}
-
-        load_values = load["load_mw"]
-
-        # Load changes
-        features["load_change_1h"] = [0] + [load_values[i] - load_values[i-1] for i in range(1, len(load_values))]
-        features["load_change_3h"] = [0, 0] + [load_values[i] - load_values[i-3] for i in range(3, len(load_values))]
-
-        # Rolling statistics (simplified)
-        window_sizes = [3, 6, 24, 168]  # 3h, 6h, 1d, 1w
+        window_sizes = [3, 6, 24, 168]
         for window in window_sizes:
             if len(load_values) > window:
-                # Simplified rolling mean (in real implementation, would use pandas)
                 rolling_means = []
                 for i in range(len(load_values)):
                     if i < window:
-                        rolling_means.append(sum(load_values[:i+1]) / (i+1))
+                        rolling_means.append(sum(load_values[: i + 1]) / (i + 1))
                     else:
-                        rolling_means.append(sum(load_values[i-window+1:i+1]) / window)
+                        rolling_means.append(sum(load_values[i - window + 1 : i + 1]) / window)
                 features[f"load_mean_{window}h"] = rolling_means
 
-        # Peak indicators
-        features["is_peak_hour"] = [
-            1 if 17 <= datetime.fromisoformat(ts).hour <= 20 else 0
-            for ts in data["timestamps"]
-        ]
-        features["is_weekend"] = [
-            1 if datetime.fromisoformat(ts).weekday() >= 5 else 0
-            for ts in data["timestamps"]
-        ]
+        features["is_peak_hour"] = [1 if ts.hour in (17, 18, 19, 20) else 0 for ts in timestamps]
+        features["is_weekend"] = [1 if ts.weekday() >= 5 else 0 for ts in timestamps]
 
         return features
 
-    async def _add_price_features(self, data: Dict[str, Any]) -> Dict[str, Any]:
+    async def _add_price_features(self, frame: DataFrame) -> Dict[str, Any]:
         """Add derived price features."""
-        price = data["price"]
-        features = {}
+        features: Dict[str, Any] = {}
 
-        price_values = price["lmp_price"]
+        price_values = frame["lmp_price"].tolist()
 
-        # Price changes
-        features["price_change_1h"] = [0] + [price_values[i] - price_values[i-1] for i in range(1, len(price_values))]
+        features["price_change_1h"] = [0] + [price_values[i] - price_values[i - 1] for i in range(1, len(price_values))]
 
-        # Price volatility (simplified)
         window = 24
         if len(price_values) > window:
             rolling_stds = []
             for i in range(len(price_values)):
                 if i < window:
-                    # Use available data
-                    window_data = price_values[:i+1]
+                    window_data = price_values[: i + 1]
                     mean_val = sum(window_data) / len(window_data)
-                    variance = sum((x - mean_val)**2 for x in window_data) / len(window_data)
-                    rolling_stds.append(variance**0.5)
+                    variance = sum((x - mean_val) ** 2 for x in window_data) / len(window_data)
+                    rolling_stds.append(variance ** 0.5)
                 else:
-                    window_data = price_values[i-window+1:i+1]
+                    window_data = price_values[i - window + 1 : i + 1]
                     mean_val = sum(window_data) / window
-                    variance = sum((x - mean_val)**2 for x in window_data) / window
-                    rolling_stds.append(variance**0.5)
+                    variance = sum((x - mean_val) ** 2 for x in window_data) / window
+                    rolling_stds.append(variance ** 0.5)
             features["price_volatility_24h"] = rolling_stds
 
-        # Price spikes (simplified)
         if "price_volatility_24h" in features and "load_mean_24h" in features:
-            # This would be more sophisticated in real implementation
             features["price_spike"] = [
                 1 if abs(price_values[i]) > 2 * features["price_volatility_24h"][i] else 0
                 for i in range(len(price_values))
@@ -688,148 +764,193 @@ class FeatureStoreService:
 
         return features
 
-    async def _add_cross_asset_features(self, data: Dict[str, Any]) -> Dict[str, Any]:
+    async def _add_cross_asset_features(self, frame: DataFrame) -> Dict[str, Any]:
         """Add cross-asset derived features."""
-        features = {}
+        features: Dict[str, Any] = {}
 
-        weather = data["weather"]
-        load = data["load"]
-        price = data["price"]
+        temp_values = frame["temperature"].tolist()
+        load_values = frame["load_mw"].tolist()
+        price_values = frame["lmp_price"].tolist()
 
-        # Weather-load relationships (simplified correlations)
-        temp_values = weather["temperature"]
-        load_values = load["load_mw"]
-
-        # Simple correlation approximation
         if len(temp_values) > 1:
-            temp_mean = sum(temp_values) / len(temp_values)
-            load_mean = sum(load_values) / len(load_values)
+            temp_series = pd.Series(temp_values)
+            load_series = pd.Series(load_values)
+            correlation = temp_series.corr(load_series)
+            if pd.notna(correlation):
+                features["temp_load_correlation_24h"] = [float(correlation)] * len(temp_series)
 
-            temp_var = sum((t - temp_mean)**2 for t in temp_values) / len(temp_values)
-            load_var = sum((l - load_mean)**2 for l in load_values) / len(load_values)
+        if len(load_values) > 1 and len(price_values) > 1:
+            load_series = pd.Series(load_values)
+            price_series = pd.Series(price_values)
+            correlation = load_series.corr(price_series)
+            if pd.notna(correlation):
+                features["load_price_correlation_24h"] = [float(correlation)] * len(load_series)
 
-            if temp_var > 0 and load_var > 0:
-                covariance = sum((temp_values[i] - temp_mean) * (load_values[i] - load_mean) for i in range(len(temp_values))) / len(temp_values)
-                correlation = covariance / (temp_var**0.5 * load_var**0.5)
-                features["temp_load_correlation_24h"] = [correlation] * len(temp_values)
-
-        # Load-price relationships
-        if len(load_values) > 1 and len(price["lmp_price"]) > 1:
-            load_mean = sum(load_values) / len(load_values)
-            price_mean = sum(price["lmp_price"]) / len(price["lmp_price"])
-
-            load_var = sum((l - load_mean)**2 for l in load_values) / len(load_values)
-            price_var = sum((p - price_mean)**2 for p in price["lmp_price"]) / len(price["lmp_price"])
-
-            if load_var > 0 and price_var > 0:
-                covariance = sum((load_values[i] - load_mean) * (price["lmp_price"][i] - price_mean) for i in range(len(load_values))) / len(load_values)
-                correlation = covariance / (load_var**0.5 * price_var**0.5)
-                features["load_price_correlation_24h"] = [correlation] * len(load_values)
-
-        # Composite indicators
         if "temp_load_correlation_24h" in features and "load_price_correlation_24h" in features:
-            features["weather_sensitivity_index"] = [
+            combined = [
                 (features["temp_load_correlation_24h"][i] + features["load_price_correlation_24h"][i]) / 2
-                for i in range(len(temp_values))
+                for i in range(len(features["temp_load_correlation_24h"]))
             ]
-
+            features["weather_sensitivity_index"] = combined
             features["price_elasticity_index"] = features["load_price_correlation_24h"]
 
         return features
 
     async def create_time_window_features(
         self,
-        base_features: Dict[str, Any],
-        window_sizes: List[int],
-        aggregation_methods: List[str] = ["mean", "std", "min", "max"]
+        base_features: Union[DataFrame, Dict[str, Any]],
+        window_sizes: Sequence[int],
+        aggregation_methods: Sequence[str] = ("mean", "std", "min", "max"),
+        columns: Optional[Sequence[str]] = None,
+        min_periods: int = 1
     ) -> Dict[str, Any]:
-        """Create time-window aggregation features.
+        """Create time-window aggregation features."""
+        df = self._ensure_dataframe(base_features)
 
-        Args:
-            base_features: Dictionary of base feature data with timestamps
-            window_sizes: List of window sizes in periods (e.g., [1, 7, 30] for 1-day, 1-week, 1-month)
-            aggregation_methods: List of aggregation methods to apply
+        if columns is None:
+            numeric_columns = [
+                col for col in df.columns
+                if pd.api.types.is_numeric_dtype(df[col])
+            ]
+        else:
+            numeric_columns = [col for col in columns if col in df.columns]
 
-        Returns:
-            Dictionary with time-window aggregated features
-        """
-        time_window_features = {}
+        time_window_features: Dict[str, List[Optional[float]]] = {}
 
-        for feature_name, feature_data in base_features.items():
-            if not isinstance(feature_data, (list, pd.Series)):
-                continue
-
-            # Convert to pandas for easier window operations
-            if isinstance(feature_data, list):
-                df = pd.DataFrame(feature_data)
-            else:
-                df = feature_data.to_frame() if hasattr(feature_data, 'to_frame') else pd.DataFrame(feature_data)
-
-            if 'timestamp' not in df.columns:
-                continue
-
-            df = df.set_index('timestamp').sort_index()
-
+        for feature_name in numeric_columns:
+            rolling_source = df[feature_name]
             for window in window_sizes:
+                rolling_window = rolling_source.rolling(window=window, min_periods=min_periods)
                 for method in aggregation_methods:
                     feature_key = f"{feature_name}_rolling_{window}_{method}"
                     if method == "mean":
-                        time_window_features[feature_key] = df[feature_name].rolling(window=window).mean()
+                        series = rolling_window.mean()
                     elif method == "std":
-                        time_window_features[feature_key] = df[feature_name].rolling(window=window).std()
+                        series = rolling_window.std()
                     elif method == "min":
-                        time_window_features[feature_key] = df[feature_name].rolling(window=window).min()
+                        series = rolling_window.min()
                     elif method == "max":
-                        time_window_features[feature_key] = df[feature_name].rolling(window=window).max()
+                        series = rolling_window.max()
+                    elif method == "sum":
+                        series = rolling_window.sum()
+                    else:
+                        continue
+
+                    time_window_features[feature_key] = series.tolist()
 
         return time_window_features
 
     async def create_lag_features(
         self,
-        base_features: Dict[str, Any],
-        lag_periods: List[int],
-        fill_method: str = "forward"
+        base_features: Union[DataFrame, Dict[str, Any]],
+        lag_periods: Sequence[int],
+        fill_method: str = "forward",
+        columns: Optional[Sequence[str]] = None
     ) -> Dict[str, Any]:
-        """Create lag features for time series data.
+        """Create lag features for time series data."""
+        df = self._ensure_dataframe(base_features)
 
-        Args:
-            base_features: Dictionary of base feature data with timestamps
-            lag_periods: List of lag periods (e.g., [1, 7, 30] for 1, 7, 30 period lags)
-            fill_method: Method to fill NaN values ("forward", "backward", "interpolate", or None)
+        if columns is None:
+            candidate_columns = [
+                col for col in df.columns
+                if pd.api.types.is_numeric_dtype(df[col])
+            ]
+        else:
+            candidate_columns = [col for col in columns if col in df.columns]
 
-        Returns:
-            Dictionary with lag features
-        """
-        lag_features = {}
+        lag_features: Dict[str, List[Optional[float]]] = {}
 
-        for feature_name, feature_data in base_features.items():
-            if not isinstance(feature_data, (list, pd.Series)):
-                continue
-
-            # Convert to pandas for lag operations
-            if isinstance(feature_data, list):
-                df = pd.DataFrame(feature_data)
-            else:
-                df = feature_data.to_frame() if hasattr(feature_data, 'to_frame') else pd.DataFrame(feature_data)
-
-            if 'timestamp' not in df.columns:
-                continue
-
-            df = df.set_index('timestamp').sort_index()
-
+        for feature_name in candidate_columns:
+            series = df[feature_name]
             for lag in lag_periods:
-                lag_key = f"{feature_name}_lag_{lag}"
-                lag_features[lag_key] = df[feature_name].shift(lag)
+                lag_series = series.shift(lag)
 
-                # Fill NaN values based on method
                 if fill_method == "forward":
-                    lag_features[lag_key] = lag_features[lag_key].fillna(method='ffill')
+                    lag_series = lag_series.ffill()
                 elif fill_method == "backward":
-                    lag_features[lag_key] = lag_features[lag_key].fillna(method='bfill')
+                    lag_series = lag_series.bfill()
                 elif fill_method == "interpolate":
-                    lag_features[lag_key] = lag_features[lag_key].interpolate()
+                    lag_series = lag_series.interpolate()
+
+                lag_key = f"{feature_name}_lag_{lag}"
+                lag_features[lag_key] = lag_series.tolist()
 
         return lag_features
+
+    def _ensure_dataframe(self, base_features: Union[DataFrame, Dict[str, Any]]) -> DataFrame:
+        """Convert feature collection into a timestamp-indexed dataframe."""
+        if isinstance(base_features, pd.DataFrame):
+            df = base_features.copy()
+        elif isinstance(base_features, dict):
+            df = pd.DataFrame(base_features)
+        else:
+            raise TypeError("base_features must be a pandas DataFrame or dict")
+
+        if "timestamp" in df.columns:
+            timestamp_column = "timestamp"
+        elif "timestamps" in df.columns:
+            timestamp_column = "timestamps"
+        else:
+            raise ValueError("base_features must include a 'timestamp' column")
+
+        df = df.copy()
+        df["timestamp"] = pd.to_datetime(df[timestamp_column])
+        if "timestamps" in df.columns and timestamp_column != "timestamps":
+            df = df.drop(columns=["timestamps"])
+
+        df = df.sort_values("timestamp").reset_index(drop=True)
+        df = df.set_index("timestamp")
+
+        return df
+
+    async def _build_engineered_feature_sets(
+        self,
+        feature_map: Dict[str, Any],
+        time_window_columns: Sequence[str],
+        lag_columns: Sequence[str],
+        time_window_sizes: Sequence[int],
+        lag_periods: Sequence[int],
+        aggregation_methods: Sequence[str] = ("mean", "std"),
+        include_trends: bool = True
+    ) -> Dict[str, Dict[str, Any]]:
+        """Generate standard engineered feature groups for downstream consumers."""
+        sanitized = {
+            key: value
+            for key, value in feature_map.items()
+            if key not in {"metadata", "feature_set_metadata", "engineered_features"}
+        }
+
+        try:
+            time_windows = await self.create_time_window_features(
+                sanitized,
+                window_sizes=time_window_sizes,
+                aggregation_methods=aggregation_methods,
+                columns=time_window_columns,
+                min_periods=1
+            )
+        except ValueError:
+            time_windows = {}
+
+        try:
+            lag_features = await self.create_lag_features(
+                sanitized,
+                lag_periods=lag_periods,
+                columns=lag_columns,
+                fill_method="forward"
+            )
+        except ValueError:
+            lag_features = {}
+
+        seasonal_features = await self.create_seasonal_features(
+            [pd.to_datetime(ts) for ts in sanitized.get("timestamp", [])],
+            include_trends=include_trends
+        )
+
+        return {
+            "time_windows": time_windows,
+            "lags": lag_features,
+            "seasonal": seasonal_features,
+        }
 
     async def create_seasonal_features(
         self,
@@ -852,21 +973,18 @@ class FeatureStoreService:
         if not timestamps:
             return seasonal_features
 
-        # Convert to pandas datetime index
-        ts_series = pd.Series(timestamps)
+        ts_series = pd.to_datetime(pd.Series(timestamps))
 
-        # Basic seasonal features
-        seasonal_features['hour_of_day'] = ts_series.dt.hour
-        seasonal_features['day_of_week'] = ts_series.dt.dayofweek
-        seasonal_features['month_of_year'] = ts_series.dt.month
-        seasonal_features['quarter'] = ts_series.dt.quarter
-        seasonal_features['is_weekend'] = (ts_series.dt.dayofweek >= 5).astype(int)
+        seasonal_features['hour_of_day'] = ts_series.dt.hour.tolist()
+        seasonal_features['day_of_week'] = ts_series.dt.dayofweek.tolist()
+        seasonal_features['month_of_year'] = ts_series.dt.month.tolist()
+        seasonal_features['quarter'] = ts_series.dt.quarter.tolist()
+        seasonal_features['is_weekend'] = (ts_series.dt.dayofweek >= 5).astype(int).tolist()
         seasonal_features['is_holiday'] = [0] * len(ts_series)  # Placeholder for holiday detection
 
         if include_trends:
-            # Convert to numeric for trend calculation
-            numeric_ts = pd.to_datetime(ts_series).astype(int) // 10**9  # Unix timestamp
-            seasonal_features['trend'] = numeric_ts
+            numeric_ts = ts_series.view('int64') // 10**9
+            seasonal_features['trend'] = numeric_ts.tolist()
 
         if include_seasonal_decomposition:
             try:
@@ -877,9 +995,9 @@ class FeatureStoreService:
                 dummy_values = pd.Series([1.0] * len(ts_series), index=ts_series)
                 decomposition = seasonal_decompose(dummy_values, period=24)  # Assuming hourly data
 
-                seasonal_features['seasonal_component'] = decomposition.seasonal
-                seasonal_features['trend_component'] = decomposition.trend
-                seasonal_features['residual'] = decomposition.resid
+                seasonal_features['seasonal_component'] = decomposition.seasonal.tolist()
+                seasonal_features['trend_component'] = decomposition.trend.tolist()
+                seasonal_features['residual'] = decomposition.resid.tolist()
 
             except ImportError:
                 log_structured("warning", "statsmodels_not_available",
@@ -909,10 +1027,30 @@ class FeatureStoreService:
         Returns:
             Tuple of (features_dict, target_values)
         """
-        # Get cross-asset features
         features = await self.create_cross_asset_features(
             start_date, end_date, geography, scenario_id=scenario_id
         )
+
+        engineered_groups = features.get("engineered_features")
+        if not engineered_groups:
+            engineered_groups = await self._build_engineered_feature_sets(
+                features,
+                time_window_columns=["load_mw", "lmp_price", "temperature"],
+                lag_columns=["load_mw", "lmp_price", "temperature", "humidity", "wind_speed"],
+                time_window_sizes=[3, 24, 168],
+                lag_periods=[1, 24, 168],
+                aggregation_methods=("mean", "std"),
+                include_trends=True
+            )
+            features.update(engineered_groups.get("time_windows", {}))
+            features.update(engineered_groups.get("lags", {}))
+            seasonal_features = engineered_groups.get("seasonal", {}).copy()
+            seasonal_features.pop("is_weekend", None)
+            features.update({key: value for key, value in seasonal_features.items() if key not in features})
+            features["engineered_features"] = engineered_groups
+
+        seasonal_features = engineered_groups.get("seasonal", {})
+        seasonal_features.pop("is_weekend", None)
 
         # Select features
         if feature_list is None:
@@ -922,7 +1060,10 @@ class FeatureStoreService:
                 "load_mw", "load_change_1h", "load_change_24h",
                 "price_change_1h", "price_volatility_24h",
                 "temp_load_correlation_24h", "load_price_correlation_24h",
-                "is_peak_hour", "is_weekend"
+                "is_peak_hour", "is_weekend",
+                "load_mw_rolling_24_mean", "lmp_price_rolling_24_mean",
+                "temperature_lag_24", "load_mw_lag_24", "lmp_price_lag_1",
+                "hour_of_day", "day_of_week"
             ]
 
         # Prepare X and y
@@ -1063,6 +1204,24 @@ async def get_features_for_scenario(
         start_date, end_date, geography, feature_types, scenario_id
     )
 
+    engineered_groups = features.get("engineered_features")
+    if not engineered_groups:
+        engineered_groups = await service._build_engineered_feature_sets(
+            features,
+            time_window_columns=["load_mw", "lmp_price", "temperature"],
+            lag_columns=["load_mw", "lmp_price", "temperature", "humidity", "wind_speed"],
+            time_window_sizes=[3, 24, 168],
+            lag_periods=[1, 24, 168],
+            aggregation_methods=("mean", "std"),
+            include_trends=True
+        )
+        features.update(engineered_groups.get("time_windows", {}))
+        features.update(engineered_groups.get("lags", {}))
+        seasonal_features = engineered_groups.get("seasonal", {}).copy()
+        seasonal_features.pop("is_weekend", None)
+        features.update({key: value for key, value in seasonal_features.items() if key not in features})
+        features["engineered_features"] = engineered_groups
+
     # Add scenario-specific features
     features["scenario_metadata"] = {
         "scenario_id": scenario_id,
@@ -1103,3 +1262,50 @@ async def get_training_features(
         start_date, end_date, geography, target_variable, feature_list
     )
 
+
+async def create_time_window_features(
+    base_features: Union[DataFrame, Dict[str, Any]],
+    window_sizes: Sequence[int],
+    aggregation_methods: Sequence[str] = ("mean", "std", "min", "max"),
+    columns: Optional[Sequence[str]] = None,
+    min_periods: int = 1
+) -> Dict[str, Any]:
+    """Module-level compatibility wrapper for time-window features."""
+    service = get_feature_store_service()
+    return await service.create_time_window_features(
+        base_features,
+        window_sizes,
+        aggregation_methods,
+        columns,
+        min_periods
+    )
+
+
+async def create_lag_features(
+    base_features: Union[DataFrame, Dict[str, Any]],
+    lag_periods: Sequence[int],
+    fill_method: str = "forward",
+    columns: Optional[Sequence[str]] = None
+) -> Dict[str, Any]:
+    """Module-level compatibility wrapper for lag features."""
+    service = get_feature_store_service()
+    return await service.create_lag_features(
+        base_features,
+        lag_periods,
+        fill_method,
+        columns
+    )
+
+
+async def create_seasonal_features(
+    timestamps: List[datetime],
+    include_trends: bool = True,
+    include_seasonal_decomposition: bool = False
+) -> Dict[str, Any]:
+    """Module-level compatibility wrapper for seasonal feature extraction."""
+    service = get_feature_store_service()
+    return await service.create_seasonal_features(
+        timestamps,
+        include_trends,
+        include_seasonal_decomposition
+    )
