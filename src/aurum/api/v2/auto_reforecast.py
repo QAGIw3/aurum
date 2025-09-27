@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import time
 from datetime import datetime
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Any
 from uuid import uuid4
 
 from fastapi import APIRouter, HTTPException, Query, Request, Response, Depends
@@ -39,7 +39,7 @@ class TriggerCreateRequest(BaseModel):
     name: str = Field(..., description="Trigger name")
     description: str = Field("", description="Trigger description")
     conditions: List[TriggerCondition] = Field(..., description="Trigger conditions")
-    forecast_config: Dict[str, any] = Field(..., description="Forecast configuration")
+    forecast_config: Dict[str, Any] = Field(..., description="Forecast configuration")
     priority: float = Field(1.0, description="Trigger priority")
     cooldown_minutes: int = Field(30, description="Cooldown period in minutes")
     enabled: bool = Field(True, description="Whether trigger is enabled")
@@ -51,7 +51,7 @@ class TriggerUpdateRequest(BaseModel):
     name: Optional[str] = Field(None, description="Trigger name")
     description: Optional[str] = Field(None, description="Trigger description")
     conditions: Optional[List[TriggerCondition]] = Field(None, description="Trigger conditions")
-    forecast_config: Optional[Dict[str, any]] = Field(None, description="Forecast configuration")
+    forecast_config: Optional[Dict[str, Any]] = Field(None, description="Forecast configuration")
     priority: Optional[float] = Field(None, description="Trigger priority")
     cooldown_minutes: Optional[int] = Field(None, description="Cooldown period in minutes")
     enabled: Optional[bool] = Field(None, description="Whether trigger is enabled")
@@ -64,7 +64,7 @@ class TriggerResponse(BaseModel):
     name: str
     description: str
     conditions: List[TriggerCondition]
-    forecast_config: Dict[str, any]
+    forecast_config: Dict[str, Any]
     priority: float
     cooldown_minutes: int
     enabled: bool
@@ -78,8 +78,8 @@ class TriggerListResponse(BaseModel):
     """Response for listing triggers."""
 
     data: List[TriggerResponse]
-    meta: Dict[str, any]
-    links: Dict[str, any]
+    meta: Dict[str, Any]
+    links: Dict[str, Any]
 
 
 class JobResponse(BaseModel):
@@ -87,7 +87,7 @@ class JobResponse(BaseModel):
 
     job_id: str
     trigger_event: TriggerEvent
-    forecast_request: Dict[str, any]
+    forecast_request: Dict[str, Any]
     priority: float
     created_at: datetime
     scheduled_for: datetime
@@ -102,8 +102,8 @@ class JobListResponse(BaseModel):
     """Response for listing jobs."""
 
     data: List[JobResponse]
-    meta: Dict[str, any]
-    links: Dict[str, any]
+    meta: Dict[str, Any]
+    links: Dict[str, Any]
 
 
 @router.get("/triggers", response_model=TriggerListResponse)
@@ -471,13 +471,13 @@ async def list_reforecast_jobs(
         )
 
 
-@router.get("/events", response_model=Dict[str, any])
+@router.get("/events", response_model=Dict[str, Any])
 async def list_trigger_events(
     request: Request,
     response: Response,
     limit: int = Query(50, ge=1, le=500),
     since: Optional[datetime] = Query(None, description="Only events since this time")
-) -> Dict[str, any]:
+) -> Dict[str, Any]:
     """List recent trigger events."""
     start_time = time.perf_counter()
 
@@ -518,11 +518,11 @@ async def list_trigger_events(
         )
 
 
-@router.get("/config/debounce", response_model=Dict[str, any])
+@router.get("/config/debounce", response_model=Dict[str, Any])
 async def get_debounce_config(
     request: Request,
     response: Response
-) -> Dict[str, any]:
+) -> Dict[str, Any]:
     """Get current debounce configuration."""
     start_time = time.perf_counter()
 
@@ -560,11 +560,11 @@ async def get_debounce_config(
         )
 
 
-@router.put("/config/debounce", response_model=Dict[str, any])
+@router.put("/config/debounce", response_model=Dict[str, Any])
 async def update_debounce_config(
     request: Request,
     config: DebounceConfig
-) -> Dict[str, any]:
+) -> Dict[str, Any]:
     """Update debounce configuration."""
     start_time = time.perf_counter()
 

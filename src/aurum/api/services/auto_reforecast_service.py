@@ -820,6 +820,196 @@ class AutoReforecastService:
             "backpressure_enabled": self.backpressure_config.enabled
         }
 
+    # API Methods for trigger management
+    async def list_triggers(
+        self, 
+        enabled_only: bool = False, 
+        limit: int = 20, 
+        offset: int = 0
+    ) -> List[ForecastTrigger]:
+        """List forecast triggers with pagination.
+        
+        Args:
+            enabled_only: Only return enabled triggers
+            limit: Maximum number of triggers to return
+            offset: Offset for pagination
+            
+        Returns:
+            List of forecast triggers
+        """
+        triggers = list(self.triggers.values())
+        
+        if enabled_only:
+            triggers = [t for t in triggers if t.enabled]
+            
+        # Apply pagination
+        triggers = triggers[offset:offset + limit]
+        
+        return triggers
+
+    async def create_trigger(self, trigger: ForecastTrigger) -> ForecastTrigger:
+        """Create a new forecast trigger.
+        
+        Args:
+            trigger: Trigger configuration
+            
+        Returns:
+            Created trigger
+        """
+        self.add_trigger(trigger)
+        return trigger
+
+    async def get_trigger(self, trigger_id: str) -> Optional[ForecastTrigger]:
+        """Get a specific forecast trigger.
+        
+        Args:
+            trigger_id: Trigger identifier
+            
+        Returns:
+            Trigger if found, None otherwise
+        """
+        return self.triggers.get(trigger_id)
+
+    async def update_trigger(self, trigger: ForecastTrigger) -> ForecastTrigger:
+        """Update an existing forecast trigger.
+        
+        Args:
+            trigger: Updated trigger configuration
+            
+        Returns:
+            Updated trigger
+        """
+        self.triggers[trigger.trigger_id] = trigger
+        
+        if trigger.enabled:
+            self.active_triggers.add(trigger.trigger_id)
+        else:
+            self.active_triggers.discard(trigger.trigger_id)
+            
+        return trigger
+
+    async def delete_trigger(self, trigger_id: str) -> bool:
+        """Delete a forecast trigger.
+        
+        Args:
+            trigger_id: Trigger identifier
+            
+        Returns:
+            True if trigger was deleted
+        """
+        return self.remove_trigger(trigger_id)
+
+    async def list_jobs(
+        self, 
+        status: Optional[str] = None, 
+        limit: int = 20, 
+        offset: int = 0
+    ) -> List[ReforcastJob]:
+        """List reforecast jobs with filtering and pagination.
+        
+        Args:
+            status: Filter by job status
+            limit: Maximum number of jobs to return
+            offset: Offset for pagination
+            
+        Returns:
+            List of reforecast jobs
+        """
+        # Combine all jobs from different states
+        all_jobs = list(self.pending_jobs.values()) + list(self.completed_jobs.values())
+        
+        # Add currently processing jobs (mock them as ReforcastJob objects)
+        for job_id in self.processing_jobs:
+            if job_id in self.pending_jobs:
+                job = self.pending_jobs[job_id]
+                job.status = "processing"
+                all_jobs.append(job)
+        
+        # Filter by status if specified  
+        if status:
+            all_jobs = [job for job in all_jobs if job.status == status]
+            
+        # Sort by creation time (most recent first)
+        all_jobs.sort(key=lambda j: j.created_at, reverse=True)
+        
+        # Apply pagination
+        all_jobs = all_jobs[offset:offset + limit]
+        
+        return all_jobs
+
+    async def list_trigger_events(
+        self, 
+        limit: int = 50, 
+        since: Optional[datetime] = None
+    ) -> List[Dict[str, Any]]:
+        """List recent trigger events.
+        
+        Args:
+            limit: Maximum number of events to return
+            since: Only events since this timestamp
+            
+        Returns:
+            List of trigger events
+        """
+        # In a real implementation, this would query stored events
+        # For now, return mock events based on recent trigger activity
+        events = []
+        
+        for trigger_id, trigger in self.triggers.items():
+            if trigger.last_triggered:
+                if since is None or trigger.last_triggered >= since:
+                    events.append({
+                        "event_id": f"event_{trigger_id}_{int(trigger.last_triggered.timestamp())}",
+                        "trigger_id": trigger_id,
+                        "trigger_name": trigger.name,
+                        "timestamp": trigger.last_triggered.isoformat(),
+                        "data_source": trigger.conditions[0].data_source if trigger.conditions else "unknown",
+                        "geography": trigger.conditions[0].geography if trigger.conditions else "US",
+                        "priority_score": trigger.priority,
+                        "trigger_count": trigger.trigger_count
+                    })
+        
+        # Sort by timestamp (most recent first)
+        events.sort(key=lambda e: e["timestamp"], reverse=True)
+        
+        # Apply limit
+        events = events[:limit]
+        
+        return events
+
+    async def get_debounce_config(self) -> DebounceConfig:
+        """Get current debounce configuration.
+        
+        Returns:
+            Current debounce configuration
+        """
+        return self.debounce_config
+
+    async def update_debounce_config(self, config: DebounceConfig) -> DebounceConfig:
+        """Update debounce configuration.
+        
+        Args:
+            config: New debounce configuration
+            
+        Returns:
+            Updated configuration
+        """
+        self.debounce_config = config
+        
+        # Update processing semaphore if max concurrent triggers changed
+        self.processing_semaphore = asyncio.Semaphore(
+            config.max_concurrent_triggers
+        )
+        
+        self.telemetry.info(
+            "Updated debounce configuration",
+            enabled=config.enabled,
+            window_seconds=config.window_seconds,
+            max_concurrent_triggers=config.max_concurrent_triggers
+        )
+        
+        return self.debounce_config
+
 
 # Global auto-reforecast service instance
 _auto_reforecast_service: Optional[AutoReforecastService] = None
