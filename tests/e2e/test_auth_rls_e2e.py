@@ -130,11 +130,23 @@ class TestAuthRLSE2E:
             response = client.get("/v1/scenarios?invalid_param=1")
 
             # Should return proper RFC 7807 error format
-            if response.status_code == 400:
+            if response.status_code >= 400:
                 error_data = response.json()
-                assert "error" in error_data
-                assert "message" in error_data
+                # Check for RFC 7807 required fields
+                assert "type" in error_data
+                assert "title" in error_data
+                assert "status" in error_data
+                
+                # Check for Aurum-specific fields
                 assert "request_id" in error_data
+                assert "timestamp" in error_data
+                
+                # Verify status code consistency
+                assert error_data["status"] == response.status_code
+                
+                # Check content type is RFC 7807 compliant
+                content_type = response.headers.get("content-type", "")
+                assert "application/json" in content_type  # May be problem+json or regular json
 
     async def test_cache_tenant_namespacing(self, app):
         """Test that cache keys are properly namespaced by tenant."""
