@@ -58,10 +58,10 @@ def test_v1_router_specs_curves_flag_is_ignored(monkeypatch, reset_split_flags):
 
 def test_v1_router_specs_unique_when_all_flags_enabled(monkeypatch, reset_split_flags):
     for flag in [
-        "AURUM_API_V1_SPLIT_CURVES",
+        "AURUM_API_V1_SPLIT_CURVES",  # deprecated but tested for backward compatibility
         "AURUM_API_V1_SPLIT_EIA",
         "AURUM_API_V1_SPLIT_ISO",
-        "AURUM_API_V1_SPLIT_PPA",
+        "AURUM_API_V1_SPLIT_PPA",    # deprecated but tested for backward compatibility
         "AURUM_API_V1_SPLIT_DROUGHT",
         "AURUM_API_V1_SPLIT_ADMIN",
         "AURUM_API_V1_SPLIT_METADATA",

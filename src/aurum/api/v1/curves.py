@@ -5,7 +5,7 @@ Endpoints:
 - /v1/curves/diff
 - /v1/curves/strips
 
-Enable via AURUM_API_V1_SPLIT_CURVES=1 in app wiring.
+This router is always enabled by default. The AURUM_API_V1_SPLIT_CURVES flag is deprecated.
 """
 
 from __future__ import annotations

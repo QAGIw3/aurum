@@ -84,7 +84,6 @@ def get_v1_router_specs(_settings: AurumSettings) -> list[RouterSpec]:
     optional_modules = {
         "AURUM_API_V1_SPLIT_EIA": "aurum.api.v1.eia",
         "AURUM_API_V1_SPLIT_ISO": "aurum.api.v1.iso",
-        "AURUM_API_V1_SPLIT_PPA": "aurum.api.v1.ppa",
         "AURUM_API_V1_SPLIT_DROUGHT": "aurum.api.v1.drought",
         "AURUM_API_V1_SPLIT_ADMIN": "aurum.api.v1.admin",
     }
