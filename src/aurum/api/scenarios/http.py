@@ -1,94 +1,93 @@
 """HTTP utilities for scenario endpoints.
 
-This module provides HTTP utility functions for handling ETags, cursors,
-and other HTTP-specific functionality in the scenario API.
+DEPRECATED: This module provides compatibility adapters for scenario endpoints
+that were using simplified HTTP utilities. These functions now delegate to the
+main HTTP utilities package for consistency.
+
+For new code, import directly from aurum.api.http instead.
 """
 
 from __future__ import annotations
 
-from typing import Any, Dict, Optional
+import json
+from typing import Any, Dict, Optional, Tuple
 from base64 import b64encode, b64decode
 
-
-def respond_with_etag(
-    data: Any,
-    etag: Optional[str] = None,
-    status_code: int = 200
-) -> Dict[str, Any]:
-    """Respond with data and ETag header.
-
-    Args:
-        data: Response data
-        etag: Optional ETag value
-        status_code: HTTP status code
-
-    Returns:
-        Response dictionary with data and metadata
-    """
-    response = {
-        "data": data,
-        "status_code": status_code
-    }
-    if etag:
-        response["etag"] = etag
-    return response
+from ..http import encode_cursor as http_encode_cursor
 
 
 def decode_cursor(cursor: str) -> Dict[str, Any]:
     """Decode a cursor string to get pagination information.
 
+    This is a compatibility adapter that provides a simple dictionary interface
+    over the more sophisticated HTTP package cursor system.
+
     Args:
         cursor: Base64 encoded cursor string
 
     Returns:
-        Dictionary with cursor data
+        Dictionary with cursor data (mainly 'offset' for scenarios compatibility)
     """
     try:
+        # Try simple JSON decode first (legacy format)
         decoded = b64decode(cursor).decode('utf-8')
-        # This is a placeholder implementation
-        # In a real implementation, this would parse the cursor data
-        return {"offset": 0, "limit": 50}
+        # Handle both string representation and JSON
+        if decoded.startswith('{'):
+            return json.loads(decoded)
+        else:
+            # Handle str() representation from old encode_cursor
+            # Example: "{'offset': 10, 'limit': 50}"
+            import ast
+            return ast.literal_eval(decoded)
     except Exception:
+        # Fallback to default values
         return {"offset": 0, "limit": 50}
 
 
-def encode_cursor(offset: int, limit: int, **kwargs) -> str:
+def encode_cursor(data: Dict[str, Any]) -> str:
     """Encode pagination information into a cursor string.
 
+    This maintains compatibility with the scenarios usage pattern.
+
     Args:
-        offset: Pagination offset
-        limit: Pagination limit
-        **kwargs: Additional cursor data
+        data: Dictionary with cursor data (expects 'offset' key)
 
     Returns:
         Base64 encoded cursor string
     """
-    cursor_data = {
-        "offset": offset,
-        "limit": limit,
-        **kwargs
-    }
-    cursor_json = str(cursor_data)
+    # Use simple JSON encoding for scenarios compatibility
+    cursor_json = json.dumps(data, separators=(',', ':'))
     return b64encode(cursor_json.encode('utf-8')).decode('utf-8')
 
 
-def normalize_cursor_input(cursor: Optional[str] = None) -> Dict[str, Any]:
+def normalize_cursor_input(payload: Dict[str, Any]) -> Tuple[int, Optional[Dict[str, Any]]]:
     """Normalize cursor input for pagination.
 
+    This adapter converts the dictionary payload to the expected tuple format
+    for scenarios compatibility.
+
     Args:
-        cursor: Optional cursor string
+        payload: Cursor payload dictionary
 
     Returns:
-        Normalized cursor data
+        Tuple of (offset, additional_metadata) - compatible with scenarios usage
     """
-    if cursor:
-        return decode_cursor(cursor)
-    return {"offset": 0, "limit": 50}
+    if payload and "offset" in payload:
+        try:
+            offset = int(payload["offset"])
+        except (TypeError, ValueError):
+            offset = 0
+        
+        # Extract any additional metadata
+        extra = {k: v for k, v in payload.items() if k != "offset"}
+        return offset, extra if extra else None
+    
+    # Default case
+    return 0, None
 
 
 __all__ = [
-    "respond_with_etag",
     "decode_cursor",
-    "encode_cursor",
+    "encode_cursor", 
     "normalize_cursor_input"
 ]

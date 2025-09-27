@@ -68,7 +68,6 @@ def _get_async_scenario_service():
         return AsyncScenarioService
 from .routes import _resolve_tenant, _resolve_tenant_optional
 from .http import (
-    respond_with_etag,
     decode_cursor,
     encode_cursor,
     normalize_cursor_input,
