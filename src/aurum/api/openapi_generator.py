@@ -1670,20 +1670,26 @@ export type {{ APIClientConfig, APIResponse, APIError }};
 
 
 class DocumentationValidator:
-    """Validates API documentation for completeness and accuracy."""
+    """Validates API documentation for completeness and accuracy with domain-specific rules."""
 
     def __init__(self, schema: Dict[str, Any]):
         self.schema = schema
         self.issues: List[str] = []
+        self.warnings: List[str] = []
 
     def validate(self) -> List[str]:
         """Validate the API documentation."""
         self.issues = []
+        self.warnings = []
 
         self._validate_info_section()
         self._validate_paths()
         self._validate_components()
         self._validate_security()
+        self._validate_aurum_domain_patterns()
+        self._validate_pagination_consistency()
+        self._validate_tenant_isolation()
+        self._validate_error_response_consistency()
 
         return self.issues
 
@@ -1742,6 +1748,186 @@ class DocumentationValidator:
         """Validate security configuration."""
         if not self.schema.get('components', {}).get('securitySchemes'):
             self.issues.append("No security schemes defined")
+
+    def _validate_aurum_domain_patterns(self) -> None:
+        """Validate Aurum-specific domain patterns and conventions."""
+        paths = self.schema.get('paths', {})
+
+        for path, path_item in paths.items():
+            # Check v2 endpoints have tenant_id requirement
+            if path.startswith('/v2/'):
+                self._validate_v2_tenant_requirements(path, path_item)
+            
+            # Check curve-related endpoints follow domain patterns
+            if 'curves' in path or 'curve' in path:
+                self._validate_curve_endpoint_patterns(path, path_item)
+            
+            # Check scenario endpoints follow domain patterns  
+            if 'scenarios' in path or 'scenario' in path:
+                self._validate_scenario_endpoint_patterns(path, path_item)
+            
+            # Check external data endpoints follow patterns
+            if 'external' in path:
+                self._validate_external_endpoint_patterns(path, path_item)
+
+    def _validate_v2_tenant_requirements(self, path: str, path_item: Dict[str, Any]) -> None:
+        """Validate that v2 endpoints require tenant_id parameter."""
+        for method, operation in path_item.items():
+            if method.upper() in ['GET', 'POST', 'PUT', 'DELETE', 'PATCH']:
+                parameters = operation.get('parameters', [])
+                tenant_param_found = False
+                
+                for param in parameters:
+                    if isinstance(param, dict) and param.get('name') == 'tenant_id':
+                        tenant_param_found = True
+                        if not param.get('required', False):
+                            self.issues.append(f"tenant_id parameter must be required for {method.upper()} {path}")
+                        break
+                
+                if not tenant_param_found:
+                    self.issues.append(f"Missing required tenant_id parameter for {method.upper()} {path}")
+
+    def _validate_curve_endpoint_patterns(self, path: str, path_item: Dict[str, Any]) -> None:
+        """Validate curve endpoint follows Aurum domain patterns."""
+        for method, operation in path_item.items():
+            if method.upper() == 'GET':
+                parameters = operation.get('parameters', [])
+                param_names = [p.get('name') for p in parameters if isinstance(p, dict)]
+                
+                # Curve endpoints should support common filtering parameters
+                expected_params = ['asof', 'asset_class', 'limit', 'cursor']
+                missing_params = [p for p in expected_params if p not in param_names]
+                
+                if missing_params:
+                    self.warnings.append(f"Curve endpoint {path} missing recommended parameters: {missing_params}")
+
+    def _validate_scenario_endpoint_patterns(self, path: str, path_item: Dict[str, Any]) -> None:
+        """Validate scenario endpoint follows Aurum domain patterns."""
+        for method, operation in path_item.items():
+            if method.upper() == 'GET':
+                # Scenario list endpoints should support pagination
+                parameters = operation.get('parameters', [])
+                param_names = [p.get('name') for p in parameters if isinstance(p, dict)]
+                
+                if 'limit' not in param_names:
+                    self.warnings.append(f"Scenario endpoint {path} should support limit parameter")
+                if 'cursor' not in param_names:
+                    self.warnings.append(f"Scenario endpoint {path} should support cursor pagination")
+
+    def _validate_external_endpoint_patterns(self, path: str, path_item: Dict[str, Any]) -> None:
+        """Validate external data endpoint follows Aurum domain patterns."""
+        for method, operation in path_item.items():
+            if method.upper() == 'GET':
+                parameters = operation.get('parameters', [])
+                param_names = [p.get('name') for p in parameters if isinstance(p, dict)]
+                
+                # External endpoints should support provider filtering
+                if 'provider' not in param_names and '/providers' not in path:
+                    self.warnings.append(f"External endpoint {path} should support provider parameter")
+
+    def _validate_pagination_consistency(self) -> None:
+        """Validate pagination patterns are consistent across endpoints."""
+        paths = self.schema.get('paths', {})
+        
+        for path, path_item in paths.items():
+            for method, operation in path_item.items():
+                if method.upper() == 'GET':
+                    parameters = operation.get('parameters', [])
+                    param_names = [p.get('name') for p in parameters if isinstance(p, dict)]
+                    
+                    # Check if endpoint supports pagination
+                    has_limit = 'limit' in param_names
+                    has_cursor = 'cursor' in param_names
+                    has_offset = 'offset' in param_names
+                    
+                    if has_limit and has_offset and has_cursor:
+                        self.warnings.append(f"Endpoint {path} supports both cursor and offset pagination - prefer cursor")
+                    elif has_limit and not has_cursor and not has_offset:
+                        self.warnings.append(f"Endpoint {path} has limit but no pagination mechanism")
+
+    def _validate_tenant_isolation(self) -> None:
+        """Validate tenant isolation patterns for multi-tenant endpoints."""
+        paths = self.schema.get('paths', {})
+        
+        for path, path_item in paths.items():
+            if path.startswith('/v2/'):
+                for method, operation in path_item.items():
+                    if method.upper() in ['GET', 'POST', 'PUT', 'DELETE', 'PATCH']:
+                        # Check response schemas include tenant isolation
+                        responses = operation.get('responses', {})
+                        
+                        # V2 endpoints should document tenant scoping in responses
+                        success_response = responses.get('200') or responses.get('201')
+                        if success_response and 'content' in success_response:
+                            content = success_response['content']
+                            if 'application/json' in content:
+                                schema = content['application/json'].get('schema', {})
+                                # This is a warning since not all responses need explicit tenant fields
+                                if not self._schema_mentions_tenant(schema):
+                                    self.warnings.append(f"V2 endpoint {method.upper()} {path} response should document tenant scoping")
+
+    def _validate_error_response_consistency(self) -> None:
+        """Validate error responses follow RFC 7807 consistently."""
+        paths = self.schema.get('paths', {})
+        
+        for path, path_item in paths.items():
+            for method, operation in path_item.items():
+                if method.upper() in ['GET', 'POST', 'PUT', 'DELETE', 'PATCH']:
+                    responses = operation.get('responses', {})
+                    
+                    # Check common error responses are defined
+                    required_errors = ['400', '401', '403', '404', '500']
+                    for error_code in required_errors:
+                        if error_code not in responses:
+                            self.issues.append(f"Missing {error_code} response for {method.upper()} {path}")
+                        else:
+                            # Validate error response references ErrorEnvelope
+                            error_response = responses[error_code]
+                            if 'content' in error_response:
+                                content = error_response['content']
+                                if 'application/json' in content:
+                                    schema = content['application/json'].get('schema', {})
+                                    if not self._references_error_envelope(schema):
+                                        self.warnings.append(f"Error response {error_code} for {method.upper()} {path} should reference ErrorEnvelope schema")
+
+    def _schema_mentions_tenant(self, schema: Dict[str, Any]) -> bool:
+        """Check if schema mentions tenant-related fields."""
+        if isinstance(schema, dict):
+            # Check properties for tenant-related fields
+            properties = schema.get('properties', {})
+            tenant_fields = ['tenant_id', 'tenant', 'organization_id', 'org_id']
+            
+            for field in tenant_fields:
+                if field in properties:
+                    return True
+            
+            # Check nested schemas recursively
+            for prop_schema in properties.values():
+                if self._schema_mentions_tenant(prop_schema):
+                    return True
+                    
+            # Check array items
+            if 'items' in schema:
+                return self._schema_mentions_tenant(schema['items'])
+                
+        return False
+
+    def _references_error_envelope(self, schema: Dict[str, Any]) -> bool:
+        """Check if schema references the ErrorEnvelope component."""
+        if isinstance(schema, dict):
+            ref = schema.get('$ref', '')
+            if 'ErrorEnvelope' in ref:
+                return True
+                
+            # Check nested schemas
+            for key, value in schema.items():
+                if isinstance(value, dict) and self._references_error_envelope(value):
+                    return True
+                elif isinstance(value, list):
+                    for item in value:
+                        if isinstance(item, dict) and self._references_error_envelope(item):
+                            return True
+        return False
 
 
 def generate_documentation(
