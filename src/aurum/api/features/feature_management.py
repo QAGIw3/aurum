@@ -776,3 +776,143 @@ async def get_feature_usage(
             status_code=500,
             detail=f"Failed to get feature usage: {str(exc)}"
         ) from exc
+
+
+# V1 Split Flag Management Endpoints
+
+@router.get("/v1/admin/features/v1-splits")
+async def get_v1_split_flags(
+    request: Request,
+    principal=Depends(_routes._get_principal),
+) -> Dict[str, Any]:
+    """Get status of all V1 split flags."""
+    start_time = time.perf_counter()
+
+    try:
+        _routes._require_admin(principal)
+        
+        from .v1_split_integration import get_v1_split_manager
+        v1_manager = get_v1_split_manager()
+        
+        # Initialize flags if needed
+        await v1_manager.initialize_v1_flags()
+        
+        # Get status of all V1 split flags
+        status = await v1_manager.get_v1_split_status()
+
+        query_time_ms = (time.perf_counter() - start_time) * 1000
+
+        return {
+            "meta": {
+                "request_id": get_request_id(),
+                "query_time_ms": round(query_time_ms, 2),
+                "total_flags": len(status),
+                "enabled_flags": sum(1 for f in status.values() if f.get("enabled", False)),
+            },
+            "data": status
+        }
+
+    except Exception as exc:
+        query_time_ms = (time.perf_counter() - start_time) * 1000
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to get V1 split flags: {str(exc)}"
+        ) from exc
+
+
+@router.put("/v1/admin/features/v1-splits/{flag_name}")
+async def toggle_v1_split_flag(
+    request: Request,
+    flag_name: str,
+    enabled: bool = Body(..., description="Enable or disable the flag"),
+    principal=Depends(_routes._get_principal),
+) -> Dict[str, Any]:
+    """Enable or disable a V1 split flag at runtime."""
+    start_time = time.perf_counter()
+
+    try:
+        _routes._require_admin(principal)
+        
+        from .v1_split_integration import get_v1_split_manager
+        v1_manager = get_v1_split_manager()
+        
+        # Get user ID for audit trail
+        user_id = principal.get("user_id", "admin") if principal else "admin"
+        
+        # Toggle the flag
+        success = await v1_manager.set_v1_split_enabled(flag_name, enabled, user_id)
+        
+        if not success:
+            raise HTTPException(
+                status_code=400, 
+                detail=f"Failed to {'enable' if enabled else 'disable'} V1 split flag '{flag_name}'. Check flag name and try again."
+            )
+
+        query_time_ms = (time.perf_counter() - start_time) * 1000
+
+        return {
+            "message": f"V1 split flag '{flag_name}' {'enabled' if enabled else 'disabled'} successfully",
+            "flag_name": flag_name,
+            "enabled": enabled,
+            "changed_by": user_id,
+            "env_var": v1_manager.get_env_var_for_flag(flag_name),
+            "module_path": v1_manager.get_module_path_for_flag(flag_name),
+            "meta": {
+                "request_id": get_request_id(),
+                "query_time_ms": round(query_time_ms, 2),
+            }
+        }
+
+    except HTTPException:
+        raise
+    except Exception as exc:
+        query_time_ms = (time.perf_counter() - start_time) * 1000
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to toggle V1 split flag: {str(exc)}"
+        ) from exc
+
+
+@router.get("/v1/admin/features/v1-splits/{flag_name}")
+async def get_v1_split_flag(
+    request: Request,
+    flag_name: str,
+    principal=Depends(_routes._get_principal),
+) -> Dict[str, Any]:
+    """Get detailed information about a specific V1 split flag."""
+    start_time = time.perf_counter()
+
+    try:
+        _routes._require_admin(principal)
+        
+        from .v1_split_integration import get_v1_split_manager
+        v1_manager = get_v1_split_manager()
+        
+        # Get flag status
+        all_status = await v1_manager.get_v1_split_status()
+        flag_status = all_status.get(flag_name)
+        
+        if not flag_status:
+            raise HTTPException(
+                status_code=404,
+                detail=f"V1 split flag '{flag_name}' not found"
+            )
+
+        query_time_ms = (time.perf_counter() - start_time) * 1000
+
+        return {
+            "meta": {
+                "request_id": get_request_id(),
+                "query_time_ms": round(query_time_ms, 2),
+            },
+            "data": flag_status
+        }
+
+    except HTTPException:
+        raise
+    except Exception as exc:
+        query_time_ms = (time.perf_counter() - start_time) * 1000
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to get V1 split flag: {str(exc)}"
+        ) from exc
