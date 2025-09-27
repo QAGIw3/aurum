@@ -37,7 +37,7 @@ New to Aurum? Start here:
 ### External Data Integration
 - **[External Data Architecture](external-data.md)** - Data ingestion system design
 - **[EIA Integration](api/eia.md)** - Energy Information Administration APIs
-- **[NOAA Weather Data](external.md)** - Weather data integration
+- **[External Data Integration](external-data.md)** - External data providers and integration
 - **[Data Incremental Processing](external/incremental.md)** - Incremental data processing
 
 ## 🎯 Scenarios & Data Processing
@@ -74,6 +74,7 @@ New to Aurum? Start here:
 - **[Tenant Isolation & RLS](security/tenant-rls.md)** - Multi-tenant security model
 - **[OIDC Forward Auth](auth/oidc-forward-auth.md)** - Authentication setup
 - **[Secrets Management](security/secrets-policy.md)** - Secret handling policies
+- **[Platform Security & Reliability](platform-reliability-security-cost-optimization.md)** - Comprehensive security features and cost optimization
 - **[Vault Rotation](vault-rotation.md)** - Key rotation procedures
 
 ### Configuration & Management
@@ -105,12 +106,17 @@ New to Aurum? Start here:
 - **[MISO Implementation](implementations/miso-implementation.md)** - Midcontinent ISO integration
 - **[External Data Ingestion](implementations/external-data-ingestion.md)** - General ingestion patterns
 
-### Project Management & Planning
+### Development Planning & Architecture
+- **[Development Roadmap 2024-2025](development-roadmap-2024.md)** - Strategic development priorities and phases
+- **[Next 10 Development Steps](next-development-steps.md)** - Immediate tactical development priorities
+- **[Architecture Refactor Plan](refactor-plan.md)** - Current refactoring initiatives and technical debt reduction
+- **[Refactor Implementation Guide](refactor-implementation-guide.md)** - Practical refactoring patterns and examples
+- **[Refactor Documentation →](refactor/)** - Detailed refactor ADRs, playbooks, and roadmaps
+
+### Project Execution & Roadmaps
 - **[Roadmap Implementation Guide](roadmap-implementation-guide.md)** - Execution templates and patterns
 - **[Roadmap Metrics Dashboard](roadmap-metrics-dashboard.md)** - KPIs and success tracking  
 - **[Ingestion & Scenarios Roadmap](roadmap-ingestion-scenarios.md)** - Data pipeline evolution
-- **[Refactor Implementation Guide](refactor-implementation-guide.md)** - Architecture refactoring
-- **[Refactor Plan](refactor-plan.md)** - Current refactoring initiatives
 
 ## 📋 Documentation Maintenance
 
