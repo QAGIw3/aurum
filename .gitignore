@@ -24,3 +24,10 @@ k8s/**/helm/charts/
 venv*/
 env*/
 .python-version
+
+# Generated documentation
+docs/api/api-docs.md
+docs/api/api-docs.html
+docs/api/index.html
+docs/api/openapi.json
+docs/api/openapi.generated.yaml
