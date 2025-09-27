@@ -15,7 +15,7 @@ from typing import Any, Dict, Optional
 from fastapi import APIRouter, Depends, Request, Response
 
 from ..config import CacheConfig
-from ..http.responses import respond_with_etag
+from ..http import respond_with_etag
 from ..models import CachePurgeDetail, CachePurgeResponse, Meta
 from ..service import _maybe_redis_client, invalidate_scenario_outputs_cache, invalidate_eia_series_cache
 from ..state import get_settings

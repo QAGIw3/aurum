@@ -19,7 +19,7 @@ from typing import Any, AsyncIterator, Dict, Iterable, List, Mapping, Optional
 from fastapi import APIRouter, HTTPException, Query, Request, Response
 from fastapi.responses import StreamingResponse
 
-from ..http.responses import respond_with_etag, csv_response
+from ..http import respond_with_etag, csv_response
 from ..models import (
     Meta,
     EiaDatasetBriefOut,
