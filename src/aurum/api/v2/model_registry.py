@@ -787,3 +787,243 @@ async def list_retrain_schedules(
             status_code=500,
             detail=f"Failed to list retrain schedules: {str(exc)}"
         )
+
+
+@router.post("/models/{model_name}/select-champion", response_model=Dict[str, any], status_code=200)
+async def select_champion_model(
+    request: Request,
+    model_name: str,
+    selection_criteria: Optional[Dict[str, any]] = None
+) -> Dict[str, any]:
+    """Automatically select champion model based on performance criteria."""
+    start_time = time.perf_counter()
+
+    try:
+        service = get_model_registry_service()
+
+        champion = await service.select_champion_model(
+            model_name=model_name,
+            selection_criteria=selection_criteria
+        )
+
+        query_time_ms = (time.perf_counter() - start_time) * 1000
+
+        telemetry = get_telemetry_facade()
+        telemetry.record_success(
+            operation="select_champion_model",
+            query_time_ms=query_time_ms
+        )
+
+        if champion:
+            return {
+                "champion_selected": True,
+                "champion_version": champion.version_number,
+                "champion_version_id": champion.version_id,
+                "performance_metrics": champion.performance_metrics,
+                "selection_criteria": selection_criteria
+            }
+        else:
+            return {
+                "champion_selected": False,
+                "message": "No suitable champion model found",
+                "selection_criteria": selection_criteria
+            }
+
+    except Exception as exc:
+        query_time_ms = (time.perf_counter() - start_time) * 1000
+        telemetry = get_telemetry_facade()
+        telemetry.record_error(
+            operation="select_champion_model",
+            error=exc,
+            query_time_ms=query_time_ms
+        )
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to select champion model: {str(exc)}"
+        )
+
+
+@router.post("/models/{model_name}/promote-champion", response_model=Dict[str, any], status_code=200)
+async def promote_model_to_champion(
+    request: Request,
+    model_name: str,
+    version_id: str = Query(..., description="Version ID to promote to champion")
+) -> Dict[str, any]:
+    """Promote a specific model version to champion status."""
+    start_time = time.perf_counter()
+
+    try:
+        service = get_model_registry_service()
+
+        success = await service.promote_to_champion(
+            model_name=model_name,
+            version_id=version_id
+        )
+
+        query_time_ms = (time.perf_counter() - start_time) * 1000
+
+        telemetry = get_telemetry_facade()
+        telemetry.record_success(
+            operation="promote_model_to_champion",
+            query_time_ms=query_time_ms
+        )
+
+        return {
+            "promotion_successful": success,
+            "model_name": model_name,
+            "promoted_version_id": version_id,
+            "message": "Model promoted to champion" if success else "Promotion failed"
+        }
+
+    except Exception as exc:
+        query_time_ms = (time.perf_counter() - start_time) * 1000
+        telemetry = get_telemetry_facade()
+        telemetry.record_error(
+            operation="promote_model_to_champion",
+            error=exc,
+            query_time_ms=query_time_ms
+        )
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to promote model to champion: {str(exc)}"
+        )
+
+
+@router.put("/jobs/{job_id}/progress", response_model=Dict[str, any], status_code=200)
+async def update_training_job_progress(
+    request: Request,
+    job_id: str,
+    progress: float = Query(..., ge=0.0, le=1.0, description="Progress percentage (0.0 to 1.0)"),
+    stage: str = Query(..., description="Current training stage"),
+    metrics: Optional[Dict[str, float]] = None
+) -> Dict[str, any]:
+    """Update training job progress and metrics."""
+    start_time = time.perf_counter()
+
+    try:
+        service = get_model_registry_service()
+
+        success = await service.update_training_job_progress(
+            job_id=job_id,
+            progress=progress,
+            stage=stage,
+            metrics=metrics
+        )
+
+        query_time_ms = (time.perf_counter() - start_time) * 1000
+
+        telemetry = get_telemetry_facade()
+        telemetry.record_success(
+            operation="update_training_job_progress",
+            query_time_ms=query_time_ms
+        )
+
+        return {
+            "update_successful": success,
+            "job_id": job_id,
+            "progress": progress,
+            "stage": stage,
+            "metrics": metrics
+        }
+
+    except Exception as exc:
+        query_time_ms = (time.perf_counter() - start_time) * 1000
+        telemetry = get_telemetry_facade()
+        telemetry.record_error(
+            operation="update_training_job_progress",
+            error=exc,
+            query_time_ms=query_time_ms
+        )
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to update training job progress: {str(exc)}"
+        )
+
+
+@router.post("/jobs/{job_id}/complete", response_model=Dict[str, any], status_code=200)
+async def complete_training_job(
+    request: Request,
+    job_id: str,
+    success: bool = Query(..., description="Whether the job completed successfully"),
+    error_message: Optional[str] = Query(None, description="Error message if job failed")
+) -> Dict[str, any]:
+    """Complete a training job with success or failure status."""
+    start_time = time.perf_counter()
+
+    try:
+        service = get_model_registry_service()
+
+        completion_success = await service.complete_training_job(
+            job_id=job_id,
+            model_version=None,  # In real implementation, this would come from the request
+            error_message=error_message if not success else None
+        )
+
+        query_time_ms = (time.perf_counter() - start_time) * 1000
+
+        telemetry = get_telemetry_facade()
+        telemetry.record_success(
+            operation="complete_training_job",
+            query_time_ms=query_time_ms
+        )
+
+        return {
+            "completion_successful": completion_success,
+            "job_id": job_id,
+            "job_success": success,
+            "error_message": error_message
+        }
+
+    except Exception as exc:
+        query_time_ms = (time.perf_counter() - start_time) * 1000
+        telemetry = get_telemetry_facade()
+        telemetry.record_error(
+            operation="complete_training_job",
+            error=exc,
+            query_time_ms=query_time_ms
+        )
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to complete training job: {str(exc)}"
+        )
+
+
+@router.delete("/jobs/{job_id}", response_model=Dict[str, any], status_code=200)
+async def cancel_training_job(
+    request: Request,
+    job_id: str
+) -> Dict[str, any]:
+    """Cancel a pending or running training job."""
+    start_time = time.perf_counter()
+
+    try:
+        service = get_model_registry_service()
+
+        success = await service.cancel_training_job(job_id=job_id)
+
+        query_time_ms = (time.perf_counter() - start_time) * 1000
+
+        telemetry = get_telemetry_facade()
+        telemetry.record_success(
+            operation="cancel_training_job",
+            query_time_ms=query_time_ms
+        )
+
+        return {
+            "cancellation_successful": success,
+            "job_id": job_id,
+            "message": "Training job cancelled" if success else "Failed to cancel job"
+        }
+
+    except Exception as exc:
+        query_time_ms = (time.perf_counter() - start_time) * 1000
+        telemetry = get_telemetry_facade()
+        telemetry.record_error(
+            operation="cancel_training_job",
+            error=exc,
+            query_time_ms=query_time_ms
+        )
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to cancel training job: {str(exc)}"
+        )

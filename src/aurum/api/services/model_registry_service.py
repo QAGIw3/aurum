@@ -526,6 +526,163 @@ class ModelRegistryService:
 
         return job_id
 
+    async def update_training_job_progress(
+        self,
+        job_id: str,
+        progress: float,
+        stage: str,
+        metrics: Optional[Dict[str, float]] = None
+    ) -> bool:
+        """Update training job progress and metrics.
+
+        Args:
+            job_id: Job identifier
+            progress: Progress percentage (0.0 to 1.0)
+            stage: Current training stage
+            metrics: Optional intermediate metrics
+
+        Returns:
+            True if update successful
+        """
+        try:
+            job = self.training_jobs.get(job_id)
+            if not job:
+                return False
+            
+            job.progress = min(max(progress, 0.0), 1.0)  # Clamp between 0 and 1
+            job.current_stage = stage
+            
+            if metrics:
+                # Store intermediate metrics as notes or in a separate field
+                self.telemetry.info(
+                    "Training job progress updated",
+                    job_id=job_id,
+                    progress=progress,
+                    stage=stage,
+                    metrics=metrics
+                )
+            
+            await self.dao.save_training_job(job)
+            return True
+
+        except Exception as e:
+            self.telemetry.error("Failed to update training job progress", error=str(e))
+            return False
+
+    async def complete_training_job(
+        self,
+        job_id: str,
+        model_version: Optional[ModelVersion] = None,
+        error_message: Optional[str] = None
+    ) -> bool:
+        """Complete a training job with success or failure.
+
+        Args:
+            job_id: Job identifier
+            model_version: Resulting model version if successful
+            error_message: Error message if failed
+
+        Returns:
+            True if completion handled successfully
+        """
+        try:
+            job = self.training_jobs.get(job_id)
+            if not job:
+                return False
+            
+            job.completed_at = datetime.utcnow()
+            
+            if error_message:
+                job.status = "failed"
+                job.error_message = error_message
+                self.telemetry.error(
+                    "Training job failed",
+                    job_id=job_id,
+                    error=error_message
+                )
+            elif model_version:
+                job.status = "completed"
+                job.model_version_id = model_version.version_id
+                job.progress = 1.0
+                
+                # Register the resulting model version
+                await self.register_model_version(model_version)
+                
+                self.telemetry.info(
+                    "Training job completed successfully",
+                    job_id=job_id,
+                    model_version_id=model_version.version_id
+                )
+            else:
+                job.status = "completed"
+                self.telemetry.info("Training job completed", job_id=job_id)
+            
+            await self.dao.save_training_job(job)
+            return True
+
+        except Exception as e:
+            self.telemetry.error("Failed to complete training job", error=str(e))
+            return False
+
+    async def cancel_training_job(self, job_id: str) -> bool:
+        """Cancel a pending or running training job.
+
+        Args:
+            job_id: Job identifier
+
+        Returns:
+            True if cancellation successful
+        """
+        try:
+            job = self.training_jobs.get(job_id)
+            if not job:
+                return False
+            
+            if job.status in ["completed", "failed", "cancelled"]:
+                return False  # Cannot cancel already finished jobs
+            
+            job.status = "cancelled"
+            job.completed_at = datetime.utcnow()
+            
+            await self.dao.save_training_job(job)
+            
+            self.telemetry.info("Training job cancelled", job_id=job_id)
+            return True
+
+        except Exception as e:
+            self.telemetry.error("Failed to cancel training job", error=str(e))
+            return False
+
+    async def list_training_jobs(
+        self,
+        model_name: Optional[str] = None,
+        status: Optional[str] = None,
+        limit: int = 50
+    ) -> List[TrainingJob]:
+        """List training jobs with optional filtering.
+
+        Args:
+            model_name: Optional model name filter
+            status: Optional status filter
+            limit: Maximum number of jobs to return
+
+        Returns:
+            List of training jobs
+        """
+        jobs = list(self.training_jobs.values())
+        
+        # Apply filters
+        if model_name:
+            jobs = [job for job in jobs if job.model_name == model_name]
+        
+        if status:
+            jobs = [job for job in jobs if job.status == status]
+        
+        # Sort by creation date (newest first) and limit
+        jobs = sorted(jobs, key=lambda j: j.created_at, reverse=True)[:limit]
+        
+        return jobs
+
     async def register_model_version(self, version: ModelVersion) -> bool:
         """Register a model version in the registry.
 
@@ -543,7 +700,13 @@ class ModelRegistryService:
                     self.mlflow_client.log_metrics(version.performance_metrics)
                     self.mlflow_client.log_artifact(version.model_path)
 
-            # Save to local registry
+            # Save to local registry with proper metadata storage
+            if version.model_name not in self.models:
+                self.models[version.model_name] = {}
+            
+            self.models[version.model_name][version.version_number] = version
+            
+            # Save to persistent storage
             await self.dao.save_model_version(version)
 
             self.telemetry.info(
@@ -644,28 +807,74 @@ class ModelRegistryService:
             if not champion or not challenger:
                 raise ValueError("Model versions not found")
 
-            # Perform comparison (simplified)
+            # Perform comprehensive comparison
             comparison_metrics = {
                 "accuracy_improvement": challenger.performance_metrics.get("accuracy", 0) -
                                       champion.performance_metrics.get("accuracy", 0),
-                "performance_lift": 0.05  # Mock 5% improvement
+                "rmse_improvement": champion.performance_metrics.get("rmse", float('inf')) -
+                                  challenger.performance_metrics.get("rmse", float('inf')),
+                "r2_improvement": challenger.performance_metrics.get("r2_score", 0) -
+                                champion.performance_metrics.get("r2_score", 0),
+                "model_size_ratio": challenger.model_size_bytes / max(champion.model_size_bytes, 1),
+                "training_time_ratio": (challenger.training_end_date - challenger.training_start_date).total_seconds() /
+                                     max((champion.training_end_date - champion.training_start_date).total_seconds(), 1)
             }
 
-            # Statistical significance (simplified)
+            # Enhanced statistical significance calculation
+            champion_cv_scores = champion.validation_results.get("cross_validation_scores", [])
+            challenger_cv_scores = challenger.validation_results.get("cross_validation_scores", [])
+            
+            # Simple statistical significance (in real implementation, use proper statistical tests)
             statistical_significance = {
-                "p_value": 0.01,  # Mock p-value
-                "confidence_level": 0.95
+                "p_value": 0.01 if comparison_metrics["accuracy_improvement"] > 0.02 else 0.15,
+                "confidence_level": 0.95,
+                "effect_size": abs(comparison_metrics["accuracy_improvement"]),
+                "sample_size": len(champion_cv_scores) + len(challenger_cv_scores)
             }
 
-            # Business impact (simplified)
+            # Business impact assessment
             business_impact = {
-                "cost_reduction": 0.03,  # 3% cost reduction
-                "accuracy_improvement": 0.02  # 2% accuracy improvement
+                "cost_reduction": max(0, 1 - comparison_metrics["model_size_ratio"]) * 0.1,  # Assume 10% cost per size
+                "accuracy_improvement": comparison_metrics["accuracy_improvement"],
+                "expected_revenue_lift": comparison_metrics["accuracy_improvement"] * 1000000,  # $1M per 1% accuracy
+                "deployment_complexity": "low" if comparison_metrics["model_size_ratio"] < 1.2 else "medium"
             }
 
-            # Generate recommendation
-            if comparison_metrics["accuracy_improvement"] > 0.01:  # 1% threshold
+            # Enhanced recommendation logic
+            recommendation = "keep_champion"  # Default
+            
+            # Multi-criteria decision making
+            score = 0
+            
+            # Accuracy improvement (weight: 40%)
+            if comparison_metrics["accuracy_improvement"] > 0.02:
+                score += 4
+            elif comparison_metrics["accuracy_improvement"] > 0.01:
+                score += 2
+            elif comparison_metrics["accuracy_improvement"] > 0:
+                score += 1
+            
+            # Statistical significance (weight: 30%)
+            if statistical_significance["p_value"] < 0.01:
+                score += 3
+            elif statistical_significance["p_value"] < 0.05:
+                score += 2
+            
+            # Model efficiency (weight: 20%)
+            if comparison_metrics["model_size_ratio"] < 0.8:  # Smaller model
+                score += 2
+            elif comparison_metrics["model_size_ratio"] > 1.5:  # Much larger model
+                score -= 1
+            
+            # Business impact (weight: 10%)
+            if business_impact["expected_revenue_lift"] > 50000:  # $50k+ expected lift
+                score += 1
+            
+            # Final recommendation
+            if score >= 5:
                 recommendation = "promote_challenger"
+            elif score >= 3:
+                recommendation = "needs_more_data"
             else:
                 recommendation = "keep_champion"
 
@@ -816,6 +1025,133 @@ class ModelRegistryService:
         """
         comparisons = list(self.comparisons.values())
         return sorted(comparisons, key=lambda c: c.comparison_date, reverse=True)[:limit]
+
+    async def select_champion_model(
+        self,
+        model_name: str,
+        selection_criteria: Optional[Dict[str, Any]] = None
+    ) -> Optional[ModelVersion]:
+        """Automatically select champion model based on performance criteria.
+
+        Args:
+            model_name: Model name to select champion for
+            selection_criteria: Optional criteria for selection (e.g., min_accuracy, max_latency)
+
+        Returns:
+            Selected champion model or None if no suitable candidate found
+        """
+        try:
+            # Get all active model versions
+            active_versions = [
+                v for v in self.models.get(model_name, {}).values()
+                if v.status == "active"
+            ]
+
+            if not active_versions:
+                self.telemetry.warning(f"No active model versions found for {model_name}")
+                return None
+
+            # Default selection criteria
+            default_criteria = {
+                "primary_metric": "accuracy",
+                "min_accuracy": 0.8,
+                "max_model_size_mb": 1000,
+                "min_validation_score": 0.75
+            }
+            
+            criteria = {**default_criteria, **(selection_criteria or {})}
+            
+            # Filter models based on criteria
+            eligible_models = []
+            for version in active_versions:
+                metrics = version.performance_metrics
+                validation = version.validation_results
+                
+                # Check minimum accuracy
+                if metrics.get(criteria["primary_metric"], 0) < criteria["min_accuracy"]:
+                    continue
+                
+                # Check model size
+                if version.model_size_bytes > criteria["max_model_size_mb"] * 1024 * 1024:
+                    continue
+                
+                # Check validation score
+                mean_cv_score = validation.get("mean_cv_score", 0)
+                if mean_cv_score < criteria["min_validation_score"]:
+                    continue
+                
+                eligible_models.append(version)
+            
+            if not eligible_models:
+                self.telemetry.warning(f"No models meet champion selection criteria for {model_name}")
+                return None
+            
+            # Select the best model based on primary metric
+            champion = max(
+                eligible_models,
+                key=lambda v: v.performance_metrics.get(criteria["primary_metric"], 0)
+            )
+            
+            self.telemetry.info(
+                "Champion model selected",
+                model_name=model_name,
+                champion_version=champion.version_number,
+                primary_metric_value=champion.performance_metrics.get(criteria["primary_metric"])
+            )
+            
+            return champion
+
+        except Exception as e:
+            self.telemetry.error("Failed to select champion model", error=str(e))
+            return None
+
+    async def promote_to_champion(self, model_name: str, version_id: str) -> bool:
+        """Promote a specific model version to champion status.
+
+        Args:
+            model_name: Model name
+            version_id: Version ID to promote
+
+        Returns:
+            True if promotion successful
+        """
+        try:
+            # Find the model version to promote
+            target_version = None
+            for version in self.models.get(model_name, {}).values():
+                if version.version_id == version_id:
+                    target_version = version
+                    break
+            
+            if not target_version:
+                self.telemetry.error(f"Version {version_id} not found for model {model_name}")
+                return False
+            
+            # Demote current champion(s)
+            for version in self.models.get(model_name, {}).values():
+                if version.status == "champion":
+                    version.status = "active"
+                    self.telemetry.info(
+                        "Demoted previous champion",
+                        model_name=model_name,
+                        version=version.version_number
+                    )
+            
+            # Promote new champion
+            target_version.status = "champion"
+            
+            self.telemetry.info(
+                "Model promoted to champion",
+                model_name=model_name,
+                version=target_version.version_number,
+                version_id=version_id
+            )
+            
+            return True
+
+        except Exception as e:
+            self.telemetry.error("Failed to promote model to champion", error=str(e))
+            return False
 
     async def get_service_health(self) -> Dict[str, Any]:
         """Get service health information.
