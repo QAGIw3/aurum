@@ -1,0 +1,188 @@
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: superset-ingress
+  namespace: aurum-dev
+  annotations:
+    traefik.ingress.kubernetes.io/router.entrypoints: web,websecure
+    traefik.ingress.kubernetes.io/router.tls: "true"
+    traefik.ingress.kubernetes.io/router.middlewares: https-redirect,api-security-headers,api-cors,api-compression
+spec:
+  ingressClassName: traefik
+  tls:
+  - hosts:
+    - superset.aurum.localtest.me
+    secretName: superset-tls
+  rules:
+  - host: superset.aurum.localtest.me
+    http:
+      paths:
+      - path: /
+        pathType: Prefix
+        backend:
+          service:
+            name: superset
+            port:
+              number: 8088
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: grafana-ingress
+  namespace: aurum-dev
+  annotations:
+    traefik.ingress.kubernetes.io/router.entrypoints: web,websecure
+    traefik.ingress.kubernetes.io/router.tls: "true"
+    traefik.ingress.kubernetes.io/router.middlewares: https-redirect,api-security-headers,api-cors,api-compression
+spec:
+  ingressClassName: traefik
+  tls:
+  - hosts:
+    - grafana.aurum.localtest.me
+    secretName: grafana-tls
+  rules:
+  - host: grafana.aurum.localtest.me
+    http:
+      paths:
+      - path: /
+        pathType: Prefix
+        backend:
+          service:
+            name: grafana
+            port:
+              number: 3000
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: kafka-ui-ingress
+  namespace: aurum-dev
+  annotations:
+    traefik.ingress.kubernetes.io/router.entrypoints: web,websecure
+    traefik.ingress.kubernetes.io/router.tls: "true"
+    traefik.ingress.kubernetes.io/router.middlewares: https-redirect,api-security-headers,api-cors,api-compression
+spec:
+  ingressClassName: traefik
+  tls:
+  - hosts:
+    - kafka-ui.aurum.localtest.me
+    secretName: kafka-ui-tls
+  rules:
+  - host: kafka-ui.aurum.localtest.me
+    http:
+      paths:
+      - path: /
+        pathType: Prefix
+        backend:
+          service:
+            name: kafka-ui
+            port:
+              number: 8080
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: lakefs-ingress
+  namespace: aurum-dev
+  annotations:
+    traefik.ingress.kubernetes.io/router.entrypoints: web,websecure
+    traefik.ingress.kubernetes.io/router.tls: "true"
+    traefik.ingress.kubernetes.io/router.middlewares: https-redirect,api-security-headers,api-cors,api-compression
+spec:
+  ingressClassName: traefik
+  tls:
+  - hosts:
+    - lakefs.aurum.localtest.me
+    secretName: lakefs-tls
+  rules:
+  - host: lakefs.aurum.localtest.me
+    http:
+      paths:
+      - path: /
+        pathType: Prefix
+        backend:
+          service:
+            name: lakefs
+            port:
+              number: 8000
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: minio-console-ingress
+  namespace: aurum-dev
+  annotations:
+    traefik.ingress.kubernetes.io/router.entrypoints: web,websecure
+    traefik.ingress.kubernetes.io/router.tls: "true"
+    traefik.ingress.kubernetes.io/router.middlewares: https-redirect,api-security-headers,api-cors,api-compression
+spec:
+  ingressClassName: traefik
+  tls:
+  - hosts:
+    - minio-console.aurum.localtest.me
+    secretName: minio-console-tls
+  rules:
+  - host: minio-console.aurum.localtest.me
+    http:
+      paths:
+      - path: /
+        pathType: Prefix
+        backend:
+          service:
+            name: minio
+            port:
+              number: 9001
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: trino-ingress
+  namespace: aurum-dev
+  annotations:
+    traefik.ingress.kubernetes.io/router.entrypoints: web,websecure
+    traefik.ingress.kubernetes.io/router.tls: "true"
+    traefik.ingress.kubernetes.io/router.middlewares: https-redirect,api-security-headers,api-cors,api-compression
+spec:
+  ingressClassName: traefik
+  tls:
+  - hosts:
+    - trino.aurum.localtest.me
+    secretName: trino-tls
+  rules:
+  - host: trino.aurum.localtest.me
+    http:
+      paths:
+      - path: /
+        pathType: Prefix
+        backend:
+          service:
+            name: trino
+            port:
+              number: 8080
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: vault-ingress
+  namespace: aurum-dev
+  annotations:
+    traefik.ingress.kubernetes.io/router.entrypoints: web,websecure
+    traefik.ingress.kubernetes.io/router.tls: "true"
+    traefik.ingress.kubernetes.io/router.middlewares: https-redirect,api-security-headers,api-cors,api-compression
+spec:
+  ingressClassName: traefik
+  tls:
+  - hosts:
+    - vault.aurum.localtest.me
+    secretName: vault-tls
+  rules:
+  - host: vault.aurum.localtest.me
+    http:
+      paths:
+      - path: /
+        pathType: Prefix
+        backend:
+          service:
+            name: vault
+            port:
+              number: 8200

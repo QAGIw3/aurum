@@ -1,0 +1,246 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: backup-system-overview
+  namespace: aurum-dev
+data:
+  system-overview.json: |
+    {
+      "system": "Aurum Data Platform Backup and Recovery",
+      "version": "1.0",
+      "last_updated": "$(date -u +'%Y-%m-%dT%H:%M:%SZ')",
+      "services": {
+        "postgresql": {
+          "backup_schedule": "0 2 * * *",
+          "backup_type": "full_base_backup",
+          "retention": "30 days",
+          "recovery_time": "4 hours",
+          "recovery_point": "1 hour",
+          "backup_method": "pg_basebackup",
+          "storage_location": "minio/aurum-backups/postgresql/",
+          "monitoring": {
+            "alerts": ["BackupJobFailed", "NoRecentBackup", "BackupTooOld"],
+            "metrics": ["backup:success_rate_24h", "backup:latest_age_hours"]
+          }
+        },
+        "timescaledb": {
+          "backup_schedule": "0 3 * * *",
+          "backup_type": "schema_and_metadata",
+          "retention": "30 days",
+          "recovery_time": "6 hours",
+          "recovery_point": "24 hours",
+          "backup_method": "pg_dump + metadata_export",
+          "storage_location": "minio/aurum-backups/timescaledb/",
+          "includes": ["schema", "hypertables", "continuous_aggregates", "retention_policies"],
+          "monitoring": {
+            "alerts": ["BackupJobFailed", "NoRecentBackup"],
+            "metrics": ["backup:success_rate_24h", "backup:latest_age_hours"]
+          }
+        },
+        "clickhouse": {
+          "backup_schedule": "0 4 * * *",
+          "backup_type": "full_backup",
+          "retention": "30 days",
+          "recovery_time": "8 hours",
+          "recovery_point": "24 hours",
+          "backup_method": "clickhouse-backup",
+          "storage_location": "minio/aurum-backups/clickhouse/",
+          "includes": ["all_databases", "schemas", "metadata"],
+          "monitoring": {
+            "alerts": ["BackupJobFailed", "NoRecentBackup", "BackupTooOld"],
+            "metrics": ["backup:success_rate_24h", "backup:latest_age_hours"]
+          }
+        },
+        "minio": {
+          "backup_schedule": "0 5 * * *",
+          "backup_type": "object_storage_replication",
+          "retention": "30 days",
+          "recovery_time": "2 hours",
+          "recovery_point": "24 hours",
+          "backup_method": "minio_client_mirror",
+          "storage_location": "minio/aurum-backups/minio/",
+          "monitoring": {
+            "alerts": ["BackupJobFailed", "NoRecentBackup"],
+            "metrics": ["backup:success_rate_24h"]
+          }
+        },
+        "kafka": {
+          "backup_schedule": "0 6 * * *",
+          "backup_type": "configuration_backup",
+          "retention": "30 days",
+          "recovery_time": "1 hour",
+          "recovery_point": "24 hours",
+          "backup_method": "kafka_tools",
+          "storage_location": "minio/aurum-backups/kafka/",
+          "includes": ["topic_configs", "consumer_groups", "offsets"],
+          "monitoring": {
+            "alerts": ["BackupJobFailed", "NoRecentBackup"],
+            "metrics": ["backup:success_rate_24h"]
+          }
+        },
+        "vault": {
+          "backup_schedule": "0 1 * * *",
+          "backup_type": "configuration_backup",
+          "retention": "30 days",
+          "recovery_time": "30 minutes",
+          "recovery_point": "24 hours",
+          "backup_method": "vault_api",
+          "storage_location": "minio/aurum-backups/vault/",
+          "includes": ["secrets_engines", "auth_methods", "policies", "mounts"],
+          "monitoring": {
+            "alerts": ["BackupJobFailed", "NoRecentBackup"],
+            "metrics": ["backup:success_rate_24h"]
+          }
+        }
+      },
+      "validation": {
+        "schedule": "0 */6 * * *",
+        "checks": ["backup_existence", "backup_integrity", "backup_age"],
+        "alerts": ["BackupValidationFailed"],
+        "storage_location": "minio/aurum-backups/validation/"
+      },
+      "monitoring": {
+        "service": "backup-status.aurum-dev",
+        "endpoints": {
+          "health": "/health",
+          "api": "/api/backup-status",
+          "dashboard": "/"
+        },
+        "alerts": [
+          "BackupJobFailed",
+          "BackupValidationFailed",
+          "NoRecentBackup",
+          "BackupTooOld",
+          "BackupJobRunningTooLong",
+          "BackupStorageFull",
+          "RestoreJobFailed",
+          "DataStoreUnavailable"
+        ],
+        "metrics": [
+          "backup:success_rate_24h",
+          "backup:latest_age_hours",
+          "backup:total_size_bytes",
+          "recovery:time_seconds"
+        ]
+      },
+      "disaster_recovery": {
+        "documentation": "disaster-recovery-guide ConfigMap",
+        "procedures": [
+          "infrastructure_recovery",
+          "datastore_recovery",
+          "application_recovery",
+          "validation_and_testing",
+          "post_recovery_tasks"
+        ],
+        "rto": {
+          "postgresql": "4 hours",
+          "timescaledb": "6 hours",
+          "clickhouse": "8 hours",
+          "minio": "2 hours",
+          "kafka": "1 hour",
+          "vault": "30 minutes"
+        },
+        "rpo": {
+          "postgresql": "1 hour",
+          "timescaledb": "24 hours",
+          "clickhouse": "24 hours",
+          "minio": "24 hours",
+          "kafka": "24 hours",
+          "vault": "24 hours"
+        }
+      },
+      "deployment": {
+        "script": "scripts/deploy-backup-recovery.sh",
+        "components": [
+          "backup_jobs",
+          "restore_jobs",
+          "validation_jobs",
+          "monitoring_service",
+          "documentation",
+          "alerting_rules"
+        ],
+        "verification": [
+          "backup_job_creation",
+          "validation_job_execution",
+          "monitoring_service_health"
+        ]
+      },
+      "maintenance": {
+        "backup_retention": "30 days",
+        "log_rotation": "7 days",
+        "cleanup_schedule": "daily",
+        "monitoring": {
+          "backup_health": "continuous",
+          "storage_usage": "hourly",
+          "performance_metrics": "daily"
+        }
+      }
+    }
+
+  deployment-commands.txt: |
+    # Deploy Backup and Recovery System
+    ./scripts/deploy-backup-recovery.sh
+
+    # Manual Backup Commands
+    kubectl create job manual-postgres-backup --from=cronjob/postgres-backup-schedule
+    kubectl create job manual-timescale-backup --from=cronjob/timescale-backup-schedule
+    kubectl create job manual-clickhouse-backup --from=cronjob/clickhouse-backup-schedule
+    kubectl create job manual-minio-backup --from=cronjob/minio-backup-schedule
+    kubectl create job manual-kafka-backup --from=cronjob/kafka-backup-schedule
+    kubectl create job manual-vault-backup --from=cronjob/vault-backup-schedule
+
+    # Restore Commands
+    kubectl create job restore-postgres --from=job/postgres-restore
+    kubectl create job restore-clickhouse --from=job/clickhouse-restore
+
+    # Validation Commands
+    kubectl create job validate-backups --from=cronjob/backup-validation-schedule
+
+    # Monitoring Commands
+    kubectl get jobs -n aurum-dev
+    kubectl logs deployment/backup-status -n aurum-dev
+    curl http://backup-status.aurum-dev/health
+    curl http://backup-status.aurum-dev/api/backup-status
+
+    # Cleanup Commands
+    kubectl delete jobs -l job-name=postgres-backup -n aurum-dev
+    kubectl delete jobs -l job-name=timescale-backup -n aurum-dev
+    kubectl delete jobs -l job-name=clickhouse-backup -n aurum-dev
+
+  quick-reference.txt: |
+    BACKUP & RECOVERY QUICK REFERENCE
+
+    Emergency Contacts:
+    - Check ConfigMap: kubectl describe configmap disaster-recovery-guide -n aurum-dev
+
+    Check Backup Status:
+    - Web Dashboard: http://backup-status.aurum-dev/
+    - API: curl http://backup-status.aurum-dev/api/backup-status
+    - Jobs: kubectl get jobs -n aurum-dev
+
+    Manual Backup (if automated fails):
+    kubectl create job manual-backup-$(date +%s) --from=cronjob/<service>-backup-schedule
+
+    Restore from Backup:
+    kubectl create job restore-$(date +%s) --from=job/<service>-restore
+
+    Common Issues:
+    - Backup Storage Full: Check PVC usage
+    - Backup Job Stuck: Check pod logs
+    - Restore Failed: Check service logs and retry
+
+    Disaster Recovery:
+    1. Declare disaster (notify team)
+    2. Check infrastructure (kubectl get nodes)
+    3. Run restore jobs for critical services
+    4. Validate data integrity
+    5. Test applications
+    6. Notify stakeholders
+
+    RTO/RPO:
+    - PostgreSQL: 4h RTO / 1h RPO
+    - TimescaleDB: 6h RTO / 24h RPO
+    - ClickHouse: 8h RTO / 24h RPO
+    - Minio: 2h RTO / 24h RPO
+    - Kafka: 1h RTO / 24h RPO
+    - Vault: 30m RTO / 24h RPO

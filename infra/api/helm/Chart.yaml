@@ -1,0 +1,9 @@
+apiVersion: v2
+name: aurum-api
+version: 0.1.0
+appVersion: "0.1.0"
+description: Helm chart for the Aurum API service
+home: https://github.com/aurum/platform
+maintainers:
+  - name: Aurum Platform Team
+    email: engineering@aurum.local

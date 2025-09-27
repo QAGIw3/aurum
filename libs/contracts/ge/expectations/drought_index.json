@@ -1,0 +1,64 @@
+{
+  "expectation_suite_name": "drought_index",
+  "meta": {
+    "notes": "Contracts for drought index zonal statistics ingested from raster pipelines."
+  },
+  "expectations": [
+    {
+      "expectation_type": "expect_table_columns_to_match_set",
+      "kwargs": {
+        "column_set": [
+          "tenant_id",
+          "schema_version",
+          "ingest_ts",
+          "ingest_job_id",
+          "series_id",
+          "region_type",
+          "region_id",
+          "dataset",
+          "index",
+          "timescale",
+          "valid_date",
+          "as_of",
+          "value",
+          "unit",
+          "poc",
+          "source_url",
+          "metadata"
+        ]
+      }
+    },
+    {"expectation_type": "expect_column_values_to_not_be_null", "kwargs": {"column": "series_id"}},
+    {"expectation_type": "expect_column_values_to_not_be_null", "kwargs": {"column": "valid_date"}},
+    {
+      "expectation_type": "expect_column_values_to_be_in_set",
+      "kwargs": {
+        "column": "region_type",
+        "value_set": ["ISO_NODE", "ISO_ZONE", "STATE", "COUNTY", "HUC2", "HUC8"]
+      }
+    },
+    {
+      "expectation_type": "expect_column_values_to_be_in_set",
+      "kwargs": {
+        "column": "dataset",
+        "value_set": ["nclimgrid", "acis", "cpc", "prism", "eddi"]
+      }
+    },
+    {
+      "expectation_type": "expect_column_values_to_be_in_set",
+      "kwargs": {
+        "column": "index",
+        "value_set": ["SPI", "SPEI", "EDDI", "PDSI", "QuickDRI", "VHI"]
+      }
+    },
+    {
+      "expectation_type": "expect_column_values_to_match_regex",
+      "kwargs": {"column": "timescale", "regex": "^(\\d+[MW])$"}
+    },
+    {
+      "expectation_type": "expect_column_values_to_be_between",
+      "kwargs": {"column": "value", "min_value": -10.0, "max_value": 10.0, "mostly": 0.99}
+    },
+    {"expectation_type": "expect_column_values_to_not_be_null", "kwargs": {"column": "ingest_ts"}}
+  ]
+}

@@ -1,0 +1,54 @@
+{
+  "expectation_suite_name": "drought_usdm_area",
+  "meta": {
+    "notes": "Weekly USDM area fraction checks by geography."
+  },
+  "expectations": [
+    {
+      "expectation_type": "expect_table_columns_to_match_set",
+      "kwargs": {
+        "column_set": [
+          "tenant_id",
+          "schema_version",
+          "ingest_ts",
+          "ingest_job_id",
+          "region_type",
+          "region_id",
+          "valid_date",
+          "as_of",
+          "d0_frac",
+          "d1_frac",
+          "d2_frac",
+          "d3_frac",
+          "d4_frac",
+          "source_url",
+          "metadata"
+        ]
+      }
+    },
+    {"expectation_type": "expect_column_values_to_not_be_null", "kwargs": {"column": "region_type"}},
+    {"expectation_type": "expect_column_values_to_not_be_null", "kwargs": {"column": "region_id"}},
+    {"expectation_type": "expect_column_values_to_not_be_null", "kwargs": {"column": "valid_date"}},
+    {
+      "expectation_type": "expect_column_values_to_be_between",
+      "kwargs": {"column": "d0_frac", "min_value": 0, "max_value": 1, "mostly": 0.999}
+    },
+    {
+      "expectation_type": "expect_column_values_to_be_between",
+      "kwargs": {"column": "d1_frac", "min_value": 0, "max_value": 1, "mostly": 0.999}
+    },
+    {
+      "expectation_type": "expect_column_values_to_be_between",
+      "kwargs": {"column": "d2_frac", "min_value": 0, "max_value": 1, "mostly": 0.999}
+    },
+    {
+      "expectation_type": "expect_column_values_to_be_between",
+      "kwargs": {"column": "d3_frac", "min_value": 0, "max_value": 1, "mostly": 0.999}
+    },
+    {
+      "expectation_type": "expect_column_values_to_be_between",
+      "kwargs": {"column": "d4_frac", "min_value": 0, "max_value": 1, "mostly": 0.999}
+    },
+    {"expectation_type": "expect_column_values_to_not_be_null", "kwargs": {"column": "ingest_ts"}}
+  ]
+}

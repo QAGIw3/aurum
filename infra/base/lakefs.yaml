@@ -1,0 +1,97 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: lakefs
+  namespace: aurum-dev
+  labels:
+    app: lakefs
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: lakefs
+  template:
+    metadata:
+      labels:
+        app: lakefs
+    spec:
+      containers:
+        - name: lakefs
+          image: treeverse/lakefs:1.13.0
+          ports:
+            - containerPort: 8000
+          envFrom:
+            - configMapRef:
+                name: aurum-config
+            - secretRef:
+                name: aurum-secrets
+          env:
+            - name: LAKEFS_DATABASE_TYPE
+              value: postgres
+            - name: LAKEFS_DATABASE_URI
+              value: postgres://aurum:aurum@postgres:5432/aurum?sslmode=disable
+            - name: LAKEFS_BLOCKSTORE_TYPE
+              value: s3
+            - name: LAKEFS_BLOCKSTORE_S3_FORCE_PATH_STYLE
+              value: "true"
+            - name: PGHOST
+              value: postgres
+            - name: PGUSER
+              value: aurum
+            - name: PGPASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: aurum-secrets
+                  key: POSTGRES_PASSWORD
+            - name: PGDATABASE
+              value: aurum
+            - name: LAKEFS_AUTH_ENCRYPT_SECRET_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: aurum-secrets
+                  key: LAKEFS_SECRET_KEY
+            - name: LAKEFS_BLOCKSTORE_S3_CREDENTIALS_ACCESS_KEY_ID
+              valueFrom:
+                secretKeyRef:
+                  name: aurum-secrets
+                  key: AURUM_S3_ACCESS_KEY
+            - name: LAKEFS_BLOCKSTORE_S3_CREDENTIALS_SECRET_ACCESS_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: aurum-secrets
+                  key: AURUM_S3_SECRET_KEY
+            - name: LAKEFS_BLOCKSTORE_S3_REGION
+              value: us-east-1
+            - name: LAKEFS_BLOCKSTORE_S3_ENDPOINT
+              value: http://minio.aurum-dev.svc.cluster.local:9000
+            - name: LAKEFS_GATEWAYS_S3_DOMAIN_NAME
+              value: localhost
+            - name: LAKEFS_LOGGING_LEVEL
+              value: INFO
+          readinessProbe:
+            httpGet:
+              path: /_health
+              port: 8000
+            initialDelaySeconds: 15
+            periodSeconds: 15
+          livenessProbe:
+            httpGet:
+              path: /_health
+              port: 8000
+            initialDelaySeconds: 60
+            periodSeconds: 60
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: lakefs
+  namespace: aurum-dev
+spec:
+  type: NodePort
+  selector:
+    app: lakefs
+  ports:
+    - name: http
+      port: 8000
+      targetPort: 8000
+      nodePort: 30000

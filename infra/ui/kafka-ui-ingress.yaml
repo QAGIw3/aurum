@@ -1,0 +1,14 @@
+apiVersion: traefik.io/v1alpha1
+kind: IngressRoute
+metadata:
+  name: kafka-ui
+  namespace: aurum-dev
+spec:
+  entryPoints:
+    - web
+  routes:
+    - match: Host(`kafka-ui.aurum.localtest.me`)
+      kind: Rule
+      services:
+        - name: kafka-ui
+          port: 8080

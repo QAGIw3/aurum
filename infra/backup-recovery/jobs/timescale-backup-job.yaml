@@ -1,0 +1,122 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: timescale-backup
+  namespace: aurum-dev
+spec:
+  template:
+    spec:
+      containers:
+      - name: timescale-backup
+        image: timescale/timescaledb:2.10.0-pg14
+        command: ["/bin/bash", "-c"]
+        args:
+        - |
+          set -e
+
+          # Set backup timestamp
+          BACKUP_TIMESTAMP=$(date -u +'%Y%m%d_%H%M%S')
+          BACKUP_NAME="timescale_backup_${BACKUP_TIMESTAMP}"
+
+          echo "Starting TimescaleDB backup: $BACKUP_NAME"
+
+          # Create backup directory
+          mkdir -p /backup/$BACKUP_NAME
+
+          # Export schema
+          pg_dump -h timescale.aurum-dev.svc.cluster.local \
+                  -U aurum \
+                  -d aurum_timeseries \
+                  --schema-only \
+                  -f /backup/$BACKUP_NAME/schema.sql
+
+          # Export hypertables metadata
+          psql -h timescale.aurum-dev.svc.cluster.local \
+               -U aurum \
+               -d aurum_timeseries \
+               -c "\COPY (SELECT * FROM timescaledb_information.hypertables) TO '/backup/$BACKUP_NAME/hypertables.csv' WITH CSV HEADER;"
+
+          # Create continuous aggregates metadata
+          psql -h timescale.aurum-dev.svc.cluster.local \
+               -U aurum \
+               -d aurum_timeseries \
+               -c "\COPY (SELECT * FROM timescaledb_information.continuous_aggregates) TO '/backup/$BACKUP_NAME/continuous_aggregates.csv' WITH CSV HEADER;"
+
+          # Create retention policies metadata
+          psql -h timescale.aurum-dev.svc.cluster.local \
+               -U aurum \
+               -d aurum_timeseries \
+               -c "\COPY (SELECT * FROM _timescaledb_config.bgw_policy_retention) TO '/backup/$BACKUP_NAME/retention_policies.csv' WITH CSV HEADER;"
+
+          # Create compressed chunks metadata
+          psql -h timescale.aurum-dev.svc.cluster.local \
+               -U aurum \
+               -d aurum_timeseries \
+               -c "\COPY (SELECT * FROM _timescaledb_catalog.chunk) TO '/backup/$BACKUP_NAME/chunks.csv' WITH CSV HEADER;"
+
+          # Compress and archive
+          tar -czf /backup/$BACKUP_NAME.tar.gz -C /backup $BACKUP_NAME
+
+          # Create backup metadata
+          cat > /backup/backup_metadata.json << METADATA_EOF
+          {
+            "backup_type": "schema_and_metadata",
+            "database": "timescaledb",
+            "timestamp": "$BACKUP_TIMESTAMP",
+            "backup_method": "pg_dump + metadata_export",
+            "compression": "gzip",
+            "includes": ["schema", "hypertables", "continuous_aggregates", "retention_policies", "chunks"],
+            "status": "completed"
+          }
+          METADATA_EOF
+
+          # Upload to Minio
+          echo "Uploading backup to Minio..."
+          mc alias set aurum-minio http://minio.aurum-dev.svc.cluster.local:9000 aurum password
+          mc cp /backup/$BACKUP_NAME.tar.gz aurum-minio/aurum-backups/timescaledb/
+          mc cp /backup/backup_metadata.json aurum-minio/aurum-backups/timescaledb/
+
+          # Cleanup
+          rm -rf /backup/$BACKUP_NAME
+          rm -f /backup/$BACKUP_NAME.tar.gz
+
+          echo "✅ TimescaleDB backup completed successfully: $BACKUP_NAME"
+        env:
+        - name: PGPASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: postgres-secrets
+              key: password
+        volumeMounts:
+        - name: backup-storage
+          mountPath: /backup
+      volumes:
+      - name: backup-storage
+        emptyDir: {}
+      restartPolicy: OnFailure
+  backoffLimit: 3
+---
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: timescale-backup-schedule
+  namespace: aurum-dev
+spec:
+  schedule: "0 3 * * *"
+  jobTemplate:
+    spec:
+      template:
+        spec:
+          containers:
+          - name: timescale-backup-scheduled
+            image: timescale/timescaledb:2.10.0-pg14
+            command: ["/bin/bash", "-c"]
+            args:
+            - |
+              echo "Starting scheduled TimescaleDB backup..."
+              kubectl create job timescale-backup-$(date +%s) --from=cronjob/timescale-backup-schedule
+            volumeMounts: []
+          volumes: []
+          restartPolicy: OnFailure
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 5

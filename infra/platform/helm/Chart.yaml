@@ -1,0 +1,17 @@
+apiVersion: v2
+name: aurum-platform
+version: 0.1.0
+appVersion: "0.1.0"
+description: Umbrella chart delivering the Aurum API and scenario worker components
+home: https://github.com/aurum/platform
+type: application
+maintainers:
+  - name: Aurum Platform Team
+    email: engineering@aurum.local
+dependencies:
+  - name: aurum-api
+    version: 0.1.0
+    repository: file://../../api/helm
+  - name: aurum-scenario-worker
+    version: 0.1.0
+    repository: file://../../scenario-worker/helm

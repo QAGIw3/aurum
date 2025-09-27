@@ -1,0 +1,75 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: schema-registry
+  namespace: aurum-dev
+  labels:
+    app: schema-registry
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: schema-registry
+  template:
+    metadata:
+      labels:
+        app: schema-registry
+    spec:
+      containers:
+        - name: schema-registry
+          image: confluentinc/cp-schema-registry:7.5.1
+          command: ["/bin/bash", "/opt/schema-registry/run.sh"]
+          ports:
+            - containerPort: 8081
+          env:
+            - name: SCHEMA_REGISTRY_HOST_NAME
+              value: schema-registry
+            - name: SCHEMA_REGISTRY_LISTENERS
+              value: http://0.0.0.0:8081
+            - name: SCHEMA_REGISTRY_KAFKASTORE_BOOTSTRAP_SERVERS
+              value: PLAINTEXT://kafka:9092
+            - name: SCHEMA_REGISTRY_KAFKASTORE_SECURITY_PROTOCOL
+              value: PLAINTEXT
+            - name: SCHEMA_REGISTRY_KAFKASTORE_TOPIC_REPLICATION_FACTOR
+              value: "1"
+            - name: SCHEMA_REGISTRY_KAFKASTORE_INIT_TIMEOUT_MS
+              value: "60000"
+            - name: SCHEMA_REGISTRY_PORT
+              value: ""
+          volumeMounts:
+            - name: schema-registry-runner
+              mountPath: /opt/schema-registry/run.sh
+              subPath: run.sh
+              readOnly: true
+          readinessProbe:
+            httpGet:
+              path: /subjects
+              port: 8081
+            initialDelaySeconds: 15
+            periodSeconds: 15
+          livenessProbe:
+            httpGet:
+              path: /subjects
+              port: 8081
+            initialDelaySeconds: 60
+            periodSeconds: 60
+      volumes:
+        - name: schema-registry-runner
+          configMap:
+            name: schema-registry-runner
+            defaultMode: 0755
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: schema-registry
+  namespace: aurum-dev
+spec:
+  type: NodePort
+  selector:
+    app: schema-registry
+  ports:
+    - name: http
+      port: 8081
+      targetPort: 8081
+      nodePort: 30081

@@ -1,0 +1,229 @@
+{
+  "expectation_suite_name": "noaa_weather",
+  "meta": {
+    "notes": "Comprehensive data quality checks for NOAA GHCND daily observations after SeaTunnel ingestion. Includes anomaly detection, range validation, and statistical checks for production use.",
+    "version": "2.0.0",
+    "last_updated": "2024-09-23",
+    "critical_checks": [
+      "station_id_not_null",
+      "observation_date_not_null",
+      "element_valid_values",
+      "temperature_range_validation",
+      "precipitation_range_validation",
+      "wind_speed_range_validation",
+      "data_freshness_check",
+      "anomaly_detection",
+      "duplicate_records_check",
+      "station_metadata_consistency"
+    ]
+  },
+  "expectations": [
+    {
+      "expectation_type": "expect_table_columns_to_match_set",
+      "kwargs": {
+        "column_set": [
+          "tenant_id",
+          "station_id",
+          "station_name",
+          "latitude",
+          "longitude",
+          "elevation_m",
+          "dataset",
+          "observation_date",
+          "element",
+          "value",
+          "raw_value",
+          "unit",
+          "observation_time",
+          "measurement_flag",
+          "quality_flag",
+          "source_flag",
+          "attributes",
+          "ingest_ts",
+          "ingest_job_id",
+          "ingest_run_id",
+          "ingest_batch_id"
+        ]
+      },
+      "meta": {"severity": "critical"}
+    },
+    {
+      "expectation_type": "expect_column_values_to_not_be_null",
+      "kwargs": {"column": "tenant_id"},
+      "meta": {"severity": "critical"}
+    },
+    {
+      "expectation_type": "expect_column_values_to_not_be_null",
+      "kwargs": {"column": "station_id"},
+      "meta": {"severity": "critical"}
+    },
+    {
+      "expectation_type": "expect_column_values_to_not_be_null",
+      "kwargs": {"column": "observation_date"},
+      "meta": {"severity": "critical"}
+    },
+    {
+      "expectation_type": "expect_column_values_to_be_in_set",
+      "kwargs": {
+        "column": "element",
+        "value_set": [
+          "PRCP", "SNOW", "SNWD", "TMAX", "TMIN", "TAVG", "TOBS", "AWND",
+          "WDF1", "WDF2", "WDF5", "WSF1", "WSF2", "WSF5", "WT01", "WT02",
+          "WT03", "WT04", "WT05", "WT06", "WT07", "WT08", "WT09", "WT10",
+          "WT11", "WT12", "WT13", "WT14", "WT15", "WT16", "WT17", "WT18",
+          "WT19", "WT21", "WT22", "WT23", "WT24", "UNKNOWN"
+        ]
+      },
+      "meta": {"severity": "critical"}
+    },
+    {
+      "expectation_type": "expect_column_values_to_not_be_null",
+      "kwargs": {"column": "unit"},
+      "meta": {"severity": "warning"}
+    },
+    {
+      "expectation_type": "expect_column_values_to_be_in_set",
+      "kwargs": {"column": "dataset", "value_set": ["GHCND", "GSOM", "NORMAL_DLY"]},
+      "meta": {"severity": "critical"}
+    },
+    {
+      "expectation_type": "expect_column_values_to_not_be_null",
+      "kwargs": {"column": "ingest_ts"},
+      "meta": {"severity": "critical"}
+    },
+    {
+      "expectation_type": "expect_column_values_to_be_between",
+      "kwargs": {
+        "column": "value",
+        "min_value": -200,
+        "max_value": 1000,
+        "mostly": 0.99
+      },
+      "meta": {"severity": "warning", "condition": "element in ['TMAX', 'TMIN', 'TAVG', 'TOBS']"}
+    },
+    {
+      "expectation_type": "expect_column_values_to_be_between",
+      "kwargs": {
+        "column": "value",
+        "min_value": 0,
+        "max_value": 5000,
+        "mostly": 0.98
+      },
+      "meta": {"severity": "warning", "condition": "element in ['PRCP', 'SNOW', 'SNWD']"}
+    },
+    {
+      "expectation_type": "expect_column_values_to_be_between",
+      "kwargs": {
+        "column": "value",
+        "min_value": 0,
+        "max_value": 200,
+        "mostly": 0.95
+      },
+      "meta": {"severity": "warning", "condition": "element in ['WSF1', 'WSF2', 'WSF5', 'AWND']"}
+    },
+    {
+      "expectation_type": "expect_column_pair_values_to_be_equal",
+      "kwargs": {
+        "column_A": "observation_date",
+        "column_B": "observation_date",
+        "ignore_row_if": "never"
+      },
+      "meta": {"severity": "critical"}
+    },
+    {
+      "expectation_type": "expect_column_values_to_be_of_type",
+      "kwargs": {
+        "column": "observation_date",
+        "type_": "DATE"
+      },
+      "meta": {"severity": "critical"}
+    },
+    {
+      "expectation_type": "expect_column_values_to_be_of_type",
+      "kwargs": {
+        "column": "value",
+        "type_": "FLOAT"
+      },
+      "meta": {"severity": "warning"}
+    },
+    {
+      "expectation_type": "expect_column_values_to_be_between",
+      "kwargs": {
+        "column": "ingest_ts",
+        "min_value": 1609459200000000,
+        "max_value": null
+      },
+      "meta": {"severity": "critical", "description": "Ingest timestamp must be recent"}
+    },
+    {
+      "expectation_type": "expect_column_values_to_be_unique",
+      "kwargs": {
+        "column": "tenant_id",
+        "ignore_row_if": "never"
+      },
+      "meta": {"severity": "warning"}
+    },
+    {
+      "expectation_type": "expect_column_values_to_match_regex",
+      "kwargs": {
+        "column": "station_id",
+        "regex": "^[A-Z]{5}:[A-Z0-9]{8,12}$"
+      },
+      "meta": {"severity": "critical"}
+    },
+    {
+      "expectation_type": "expect_column_values_to_be_between",
+      "kwargs": {
+        "column": "latitude",
+        "min_value": -90,
+        "max_value": 90,
+        "mostly": 0.99
+      },
+      "meta": {"severity": "warning"}
+    },
+    {
+      "expectation_type": "expect_column_values_to_be_between",
+      "kwargs": {
+        "column": "longitude",
+        "min_value": -180,
+        "max_value": 180,
+        "mostly": 0.99
+      },
+      "meta": {"severity": "warning"}
+    },
+    {
+      "expectation_type": "expect_column_values_to_be_between",
+      "kwargs": {
+        "column": "elevation_m",
+        "min_value": -500,
+        "max_value": 9000,
+        "mostly": 0.98
+      },
+      "meta": {"severity": "warning"}
+    },
+    {
+      "expectation_type": "expect_column_values_to_not_be_null",
+      "kwargs": {
+        "column": "measurement_flag",
+        "mostly": 0.95
+      },
+      "meta": {"severity": "info"}
+    },
+    {
+      "expectation_type": "expect_column_values_to_not_be_null",
+      "kwargs": {
+        "column": "quality_flag",
+        "mostly": 0.90
+      },
+      "meta": {"severity": "info"}
+    },
+    {
+      "expectation_type": "expect_column_values_to_not_be_null",
+      "kwargs": {
+        "column": "source_flag",
+        "mostly": 0.85
+      },
+      "meta": {"severity": "info"}
+    }
+  ]
+}

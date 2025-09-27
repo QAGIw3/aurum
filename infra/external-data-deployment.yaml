@@ -1,0 +1,220 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: aurum-external-data
+  namespace: aurum
+  labels:
+    app: aurum-external-data
+    component: external-data
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: aurum-external-data
+  template:
+    metadata:
+      labels:
+        app: aurum-external-data
+        component: external-data
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "8000"
+        prometheus.io/path: "/metrics"
+    spec:
+      containers:
+      - name: aurum-external-data
+        image: aurum-external-data:latest
+        imagePullPolicy: Always
+        ports:
+        - containerPort: 8000
+          name: http
+          protocol: TCP
+        env:
+        - name: AURUM_APP_DB_DSN
+          valueFrom:
+            secretKeyRef:
+              name: aurum-secrets
+              key: app-db-dsn
+        - name: KAFKA_BOOTSTRAP_SERVERS
+          valueFrom:
+            configMapKeyRef:
+              name: aurum-config
+              key: kafka-bootstrap-servers
+        - name: SCHEMA_REGISTRY_URL
+          valueFrom:
+            configMapKeyRef:
+              name: aurum-config
+              key: schema-registry-url
+        - name: VAULT_ADDR
+          valueFrom:
+            configMapKeyRef:
+              name: aurum-config
+              key: vault-addr
+        - name: VAULT_TOKEN
+          valueFrom:
+            secretKeyRef:
+              name: aurum-secrets
+              key: vault-token
+        - name: FRED_API_KEY
+          valueFrom:
+            secretKeyRef:
+              name: aurum-external-secrets
+              key: fred-api-key
+        - name: EIA_API_KEY
+          valueFrom:
+            secretKeyRef:
+              name: aurum-external-secrets
+              key: eia-api-key
+        - name: NOAA_GHCND_TOKEN
+          valueFrom:
+            secretKeyRef:
+              name: aurum-external-secrets
+              key: noaa-token
+        - name: AURUM_COLLECTORS_INTERVAL_SECONDS
+          value: "3600"  # 1 hour
+        - name: AURUM_COLLECTOR_LOG_LEVEL
+          value: "INFO"
+        - name: PYTHONPATH
+          value: "/app"
+        livenessProbe:
+          httpGet:
+            path: /health/external
+            port: 8000
+          initialDelaySeconds: 30
+          periodSeconds: 30
+          timeoutSeconds: 5
+          failureThreshold: 3
+        readinessProbe:
+          httpGet:
+            path: /health/external
+            port: 8000
+          initialDelaySeconds: 5
+          periodSeconds: 5
+          timeoutSeconds: 3
+          failureThreshold: 3
+        resources:
+          requests:
+            cpu: 100m
+            memory: 512Mi
+          limits:
+            cpu: 2000m
+            memory: 4Gi
+        volumeMounts:
+        - name: config-volume
+          mountPath: /app/config
+          readOnly: true
+        - name: schemas-volume
+          mountPath: /app/kafka/schemas
+          readOnly: true
+      volumes:
+      - name: config-volume
+        configMap:
+          name: aurum-external-config
+      - name: schemas-volume
+        configMap:
+          name: aurum-kafka-schemas
+      restartPolicy: Always
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: aurum-external-data
+  namespace: aurum
+  labels:
+    app: aurum-external-data
+spec:
+  selector:
+    app: aurum-external-data
+  ports:
+  - name: http
+    port: 8000
+    targetPort: 8000
+    protocol: TCP
+  type: ClusterIP
+
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: aurum-external-config
+  namespace: aurum
+data:
+  external_incremental_config.json: |
+    {
+      "providers": [
+        {
+          "name": "fred",
+          "datasets": ["DGS10", "DGS5", "DEXUSEU", "UNRATE"],
+          "update_frequency_minutes": 240,
+          "rate_limit_rps": 8,
+          "daily_quota": 1000
+        },
+        {
+          "name": "eia",
+          "datasets": ["PET.W_EPC0_SAX_Y05LA_DPG.W"],
+          "update_frequency_minutes": 360,
+          "rate_limit_rps": 4,
+          "daily_quota": 1000
+        }
+      ]
+    }
+  external_backfill_config.json: |
+    {
+      "providers": [
+        {
+          "name": "fred",
+          "datasets": ["DGS10", "DGS5", "DEXUSEU", "UNRATE"],
+          "start_date": "2020-01-01",
+          "end_date": "2024-01-01"
+        }
+      ]
+    }
+  external_monitoring_config.json: |
+    {
+      "slos": {
+        "data_freshness": {
+          "target": 0.99,
+          "threshold_hours": 24
+        }
+      }
+    }
+
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: aurum-external-data-pdb
+  namespace: aurum
+spec:
+  minAvailable: 1
+  selector:
+    matchLabels:
+      app: aurum-external-data
+
+---
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: aurum-external-data-hpa
+  namespace: aurum
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: aurum-external-data
+  minReplicas: 2
+  maxReplicas: 10
+  metrics:
+  - type: Resource
+    resource:
+      name: cpu
+      target:
+        type: Utilization
+        averageUtilization: 70
+  - type: Resource
+    resource:
+      name: memory
+      target:
+        type: Utilization
+        averageUtilization: 80

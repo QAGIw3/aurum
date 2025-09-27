@@ -1,0 +1,182 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: aurum-dev
+
+# Feature flags for Kubernetes optimization
+commonLabels:
+  app.kubernetes.io/part-of: aurum
+
+# Feature flag patches for migration
+patchesStrategicMerge: []
+
+# Resources - conditionally loaded based on feature flags
+resources:
+  # Core infrastructure (always loaded)
+  - base/namespace.yaml
+  - base/configmap-env.yaml
+  - base/secret-env.yaml
+
+  # Data services
+  - base/postgres.yaml
+  - base/timescale.yaml
+  - base/redis.yaml
+  - base/kafka.yaml
+  - base/trino.yaml
+  - base/clickhouse.yaml
+
+  # Infrastructure services
+  - base/vault.yaml
+  - base/jaeger.yaml
+  - base/vector.yaml
+
+  # Optimized API deployment (feature flagged)
+  - optimized-templates/deployment.yaml
+
+  # Optimized scenario worker (feature flagged)
+  - optimized-templates/scenario-worker-deployment.yaml
+
+  # Enhanced monitoring and observability
+  - optimized-templates/service-monitor.yaml
+  - optimized-templates/hpa.yaml
+  - optimized-templates/pdb.yaml
+
+# Configuration patches for feature flags
+configMapGenerator:
+  - name: aurum-k8s-features
+    literals:
+      - USE_OPTIMIZED_TEMPLATES=true
+      - K8S_MIGRATION_PHASE=2
+      - ENABLE_ENHANCED_MONITORING=true
+      - ENABLE_HPA=true
+      - ENABLE_PDB=true
+
+# Conditional patches based on feature flags
+patches:
+  # Patch for API deployment optimization
+  - target:
+      kind: Deployment
+      name: aurum-api
+    patch: |-
+      - op: replace
+        path: /spec/replicas
+        value: 3
+      - op: replace
+        path: /spec/template/spec/containers/0/resources
+        value:
+          requests:
+            cpu: 500m
+            memory: 1Gi
+          limits:
+            cpu: "2"
+            memory: 2Gi
+
+  # Patch for scenario worker optimization
+  - target:
+      kind: Deployment
+      name: aurum-scenario-worker
+    patch: |-
+      - op: replace
+        path: /spec/replicas
+        value: 2
+      - op: replace
+        path: /spec/template/spec/containers/0/resources
+        value:
+          requests:
+            cpu: 250m
+            memory: 512Mi
+          limits:
+            cpu: "1"
+            memory: 1Gi
+
+# Enhanced Horizontal Pod Autoscaling
+- optimized-templates/hpa.yaml
+
+# Enhanced Pod Disruption Budgets
+- optimized-templates/pdb.yaml
+
+# Enhanced monitoring
+- optimized-templates/service-monitor.yaml
+- optimized-templates/prometheus-rules.yaml
+
+# Network policies for security
+- optimized-templates/network-policy.yaml
+
+# Resource quotas for cost optimization
+- optimized-templates/resource-quota.yaml
+
+# Images configuration
+images:
+  - name: ghcr.io/aurum/aurum-api
+    newTag: latest
+  - name: ghcr.io/aurum/aurum-worker
+    newTag: latest
+
+# Namespace configuration
+namespace: aurum-dev
+
+# Common labels
+commonLabels:
+  app.kubernetes.io/part-of: aurum
+  app.kubernetes.io/managed-by: kustomize
+
+# Replica count configuration
+replicas:
+  - name: aurum-api
+    count: 3
+  - name: aurum-scenario-worker
+    count: 2
+
+# Resource configuration
+patchesStrategicMerge:
+  - |-
+    apiVersion: apps/v1
+    kind: Deployment
+    metadata:
+      name: aurum-api
+    spec:
+      template:
+        spec:
+          containers:
+          - name: api
+            resources:
+              requests:
+                cpu: 500m
+                memory: 1Gi
+              limits:
+                cpu: "2"
+                memory: 2Gi
+            securityContext:
+              allowPrivilegeEscalation: false
+              readOnlyRootFilesystem: true
+              runAsNonRoot: true
+              runAsUser: 1000
+              runAsGroup: 3000
+              capabilities:
+                drop:
+                  - ALL
+                add:
+                  - NET_BIND_SERVICE
+
+  - |-
+    apiVersion: apps/v1
+    kind: Deployment
+    metadata:
+      name: aurum-scenario-worker
+    spec:
+      template:
+        spec:
+          containers:
+          - name: worker
+            resources:
+              requests:
+                cpu: 250m
+                memory: 512Mi
+              limits:
+                cpu: "1"
+                memory: 1Gi
+            securityContext:
+              allowPrivilegeEscalation: false
+              readOnlyRootFilesystem: true
+              runAsNonRoot: true
+              runAsUser: 1000
+              runAsGroup: 3000

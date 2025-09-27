@@ -1,0 +1,29 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: trino-catalog
+  namespace: aurum-dev
+data:
+  timescale.properties: |
+    connector.name=postgresql
+    connection-url=jdbc:postgresql://timescale:5432/${ENV:TIMESCALE_DB}
+    connection-user=${ENV:TIMESCALE_USER}
+    connection-password=${ENV:TIMESCALE_PASSWORD}
+    case-insensitive-name-matching=true
+  clickhouse.properties: |
+    connector.name=clickhouse
+    connection-url=jdbc:clickhouse://clickhouse:8123/ops
+    connection-user=default
+  kafka.properties: |
+    connector.name=kafka
+    kafka.nodes=${ENV:KAFKA_INTERNAL_BOOTSTRAP}
+    kafka.security-protocol=PLAINTEXT
+    kafka.default-schema=public
+    kafka.hide-internal-columns=true
+  iceberg.properties: |
+    connector.name=iceberg
+    iceberg.catalog.type=rest
+    iceberg.rest-catalog.uri=http://nessie.aurum-dev.svc.cluster.local:19121/api/v1
+    iceberg.security=read_only
+    iceberg.file-format=PARQUET
+    iceberg.compression-codec=ZSTD

@@ -1,0 +1,40 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: aurum-staging
+
+# Base resources
+resources:
+  - ../base
+
+# Environment-specific patches
+patchesStrategicMerge:
+  - patches/replicas-staging.yaml
+  - patches/resources-staging.yaml
+  - patches/ingress-staging.yaml
+
+# Environment-specific image tags
+images:
+  - name: ghcr.io/aurum/aurum-api
+    newTag: staging
+  - name: ghcr.io/aurum/aurum-worker
+    newTag: staging
+
+# Environment-specific secrets
+secretGenerator:
+  - name: aurum-secrets
+    namespace: aurum-staging
+    behavior: replace
+    envs:
+      - secrets.staging.env
+
+# ConfigMap generator for environment-specific config
+configMapGenerator:
+  - name: aurum-env-config
+    namespace: aurum-staging
+    literals:
+      - ENVIRONMENT=staging
+      - LOG_LEVEL=INFO
+      - REPLICAS=3
+
+generatorOptions:
+  disableNameSuffixHash: true

@@ -1,0 +1,41 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: superset-bootstrap
+  namespace: aurum-dev
+data:
+  add_timescale.py: |
+    import json
+    import os
+    from superset.app import create_app
+    from superset import db
+
+    def build_timescale_uri() -> str:
+      user = os.environ.get("TIMESCALE_USER", "timescale")
+      password = os.environ.get("TIMESCALE_PASSWORD", "timescale")
+      host = os.environ.get("TIMESCALE_HOST", "timescale")
+      port = os.environ.get("TIMESCALE_PORT", "5432")
+      database = os.environ.get("TIMESCALE_DB", "timeseries")
+      return f"postgresql+psycopg2://{user}:{password}@{host}:{port}/{database}"
+
+    app = create_app()
+    with app.app_context():
+      from superset.models.core import Database
+      name = os.environ.get("SUPERSET_TIMESCALE_NAME", "Timescale")
+      uri = os.environ.get("SUPERSET_TIMESCALE_URI", build_timescale_uri())
+      extra = {
+        "engine_params": {
+          "connect_args": {
+            "options": "-c timezone=UTC"
+          }
+        }
+      }
+      existing = db.session.query(Database).filter_by(database_name=name).first()
+      if not existing:
+        database = Database(database_name=name, sqlalchemy_uri=uri, extra=json.dumps(extra))
+        db.session.add(database)
+        db.session.commit()
+        print(f"Created Superset database connection '{name}' -> {uri}")
+      else:
+        print(f"Superset database connection '{name}' already exists; skipping")
+

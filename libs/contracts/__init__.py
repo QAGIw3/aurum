@@ -1,0 +1,1 @@
+"""Aurum OpenAPI, GE, schemas."""

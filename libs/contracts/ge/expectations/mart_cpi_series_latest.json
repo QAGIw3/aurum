@@ -1,0 +1,29 @@
+{
+  "expectation_suite_name": "mart_cpi_series_latest",
+  "meta": {
+    "notes": "Validates mart layer for latest CPI observations."
+  },
+  "expectations": [
+    {
+      "expectation_type": "expect_column_values_to_not_be_null",
+      "kwargs": {"column": "tenant_id"}
+    },
+    {
+      "expectation_type": "expect_column_values_to_not_be_null",
+      "kwargs": {"column": "series_id"}
+    },
+    {
+      "expectation_type": "expect_column_values_to_not_be_null",
+      "kwargs": {"column": "period"}
+    },
+    {
+      "expectation_type": "expect_column_values_to_be_between",
+      "kwargs": {
+        "column": "value",
+        "min_value": 0,
+        "max_value": 1000,
+        "mostly": 0.99
+      }
+    }
+  ]
+}

@@ -1,0 +1,93 @@
+{
+  "expectation_suite_name": "external_obs_conformed",
+  "meta": {
+    "notes": "Validates conformed external observations after standardization."
+  },
+  "expectations": [
+    {
+      "expectation_type": "expect_column_values_to_not_be_null",
+      "kwargs": {"column": "provider"}
+    },
+    {
+      "expectation_type": "expect_column_values_to_not_be_null",
+      "kwargs": {"column": "series_id"}
+    },
+    {
+      "expectation_type": "expect_column_values_to_not_be_null",
+      "kwargs": {"column": "ts_utc"}
+    },
+    {
+      "expectation_type": "expect_column_values_to_not_be_null",
+      "kwargs": {"column": "asof_date"}
+    },
+    {
+      "expectation_type": "expect_column_values_to_not_be_null",
+      "kwargs": {"column": "value_usd_per_mwh"}
+    },
+    {
+      "expectation_type": "expect_column_values_to_not_be_null",
+      "kwargs": {"column": "frequency_code_normalized"}
+    },
+    {
+      "expectation_type": "expect_column_values_to_not_be_null",
+      "kwargs": {"column": "unit_code_canonical"}
+    },
+    {
+      "expectation_type": "expect_column_values_to_not_be_null",
+      "kwargs": {"column": "quality_status"}
+    },
+    {
+      "expectation_type": "expect_column_values_to_be_in_set",
+      "kwargs": {
+        "column": "frequency_code_normalized",
+        "value_set": ["ANNUAL", "QUARTERLY", "MONTHLY", "WEEKLY", "DAILY", "HOURLY", "OTHER"]
+      }
+    },
+    {
+      "expectation_type": "expect_column_values_to_be_in_set",
+      "kwargs": {
+        "column": "unit_code_canonical",
+        "value_set": ["USD/MWh", "USD/MMBtu", "USD/Mcf"]
+      }
+    },
+    {
+      "expectation_type": "expect_column_values_to_be_in_set",
+      "kwargs": {
+        "column": "quality_status",
+        "value_set": ["NULL_VALUE", "ZERO_VALUE", "VALID"]
+      }
+    },
+    {
+      "expectation_type": "expect_column_values_to_be_between",
+      "kwargs": {
+        "column": "value_usd_per_mwh",
+        "min_value": -10000,
+        "max_value": 10000
+      },
+      "meta": {"notes": "Standardized values should be in plausible USD/MWh range"}
+    },
+    {
+      "expectation_type": "expect_column_values_to_be_between",
+      "kwargs": {
+        "column": "ts_utc",
+        "min_value": "1900-01-01 00:00:00",
+        "max_value": "2030-12-31 23:59:59"
+      },
+      "meta": {"notes": "UTC timestamps should be within historical range"}
+    },
+    {
+      "expectation_type": "expect_column_values_to_be_between",
+      "kwargs": {
+        "column": "asof_date",
+        "min_value": "1900-01-01",
+        "max_value": "2030-12-31"
+      },
+      "meta": {"notes": "As-of dates should be within historical range"}
+    },
+    {
+      "expectation_type": "expect_column_values_to_not_be_null",
+      "kwargs": {"column": "conformed_at"},
+      "meta": {"notes": "All records should have conformance timestamp"}
+    }
+  ]
+}

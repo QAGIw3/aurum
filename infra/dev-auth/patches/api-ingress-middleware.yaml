@@ -1,0 +1,13 @@
+apiVersion: traefik.io/v1alpha1
+kind: IngressRoute
+metadata:
+  name: aurum-api
+spec:
+  routes:
+    - match: Host(`api.aurum.localtest.me`)
+      kind: Rule
+      middlewares:
+        - name: oidc-forward-auth
+      services:
+        - name: aurum-api
+          port: 8080

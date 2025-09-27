@@ -1,0 +1,101 @@
+{
+  "expectation_suite_name": "scenario_output",
+  "expectations": [
+    {
+      "expectation_type": "expect_column_values_to_not_be_null",
+      "kwargs": {"column": "scenario_id"}
+    },
+    {
+      "expectation_type": "expect_column_values_to_not_be_null",
+      "kwargs": {"column": "tenant_id"}
+    },
+    {
+      "expectation_type": "expect_column_values_to_not_be_null",
+      "kwargs": {"column": "metric"}
+    },
+    {
+      "expectation_type": "expect_column_values_to_not_be_null",
+      "kwargs": {"column": "value"}
+    },
+    {
+      "expectation_type": "expect_compound_columns_to_be_unique",
+      "kwargs": {"column_list": ["scenario_id", "metric", "tenor_label", "contract_month"]}
+    },
+    {
+      "expectation_type": "expect_column_values_to_be_in_set",
+      "kwargs": {
+        "column": "metric",
+        "value_set": ["mid", "uplift", "policy_uplift"]
+      }
+    },
+    {
+      "expectation_type": "expect_column_values_to_be_between",
+      "kwargs": {
+        "column": "value",
+        "row_condition": "metric == 'mid'",
+        "condition_parser": "pandas",
+        "min_value": -500.0,
+        "max_value": 500.0,
+        "mostly": 0.99
+      },
+      "meta": {
+        "env_overrides": {
+          "min_value": "GE_SCENARIO_METRIC_MID_MIN",
+          "max_value": "GE_SCENARIO_METRIC_MID_MAX",
+          "mostly": "GE_SCENARIO_METRIC_MID_MOSTLY"
+        }
+      }
+    },
+    {
+      "expectation_type": "expect_column_values_to_be_between",
+      "kwargs": {
+        "column": "value",
+        "row_condition": "metric == 'uplift'",
+        "condition_parser": "pandas",
+        "min_value": -200.0,
+        "max_value": 200.0,
+        "mostly": 0.95
+      },
+      "meta": {
+        "env_overrides": {
+          "min_value": "GE_SCENARIO_METRIC_UPLIFT_MIN",
+          "max_value": "GE_SCENARIO_METRIC_UPLIFT_MAX",
+          "mostly": "GE_SCENARIO_METRIC_UPLIFT_MOSTLY"
+        }
+      }
+    },
+    {
+      "expectation_type": "expect_column_values_to_be_between",
+      "kwargs": {
+        "column": "value",
+        "row_condition": "metric == 'policy_uplift'",
+        "condition_parser": "pandas",
+        "min_value": -200.0,
+        "max_value": 200.0,
+        "mostly": 0.95
+      },
+      "meta": {
+        "env_overrides": {
+          "min_value": "GE_SCENARIO_METRIC_POLICY_UPLIFT_MIN",
+          "max_value": "GE_SCENARIO_METRIC_POLICY_UPLIFT_MAX",
+          "mostly": "GE_SCENARIO_METRIC_POLICY_UPLIFT_MOSTLY"
+        }
+      }
+    },
+    {
+      "expectation_type": "expect_column_proportion_of_nonnulls_to_be_between",
+      "kwargs": {
+        "column": "value",
+        "row_condition": "tenor_type == 'MONTHLY'",
+        "condition_parser": "pandas",
+        "min_value": 0.8,
+        "max_value": 1.0
+      },
+      "meta": {
+        "env_overrides": {
+          "min_value": "GE_SCENARIO_TENOR_MONTHLY_MIN_FILL"
+        }
+      }
+    }
+  ]
+}

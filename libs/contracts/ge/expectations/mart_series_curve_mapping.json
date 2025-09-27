@@ -1,0 +1,45 @@
+{
+  "expectation_suite_name": "mart_series_curve_mapping",
+  "meta": {
+    "notes": "Quality checks for series to curve mapping mart."
+  },
+  "expectations": [
+    {
+      "expectation_type": "expect_column_values_to_not_be_null",
+      "kwargs": {"column": "external_provider"}
+    },
+    {
+      "expectation_type": "expect_column_values_to_not_be_null",
+      "kwargs": {"column": "external_series_id"}
+    },
+    {
+      "expectation_type": "expect_column_values_to_not_be_null",
+      "kwargs": {"column": "curve_key"}
+    },
+    {
+      "expectation_type": "expect_column_values_to_be_between",
+      "kwargs": {
+        "column": "mapping_confidence",
+        "min_value": 0,
+        "max_value": 1
+      }
+    },
+    {
+      "expectation_type": "expect_column_values_to_be_in_set",
+      "kwargs": {
+        "column": "mapping_method",
+        "value_set": ["manual", "automated", "heuristic"]
+      }
+    },
+    {
+      "expectation_type": "expect_column_values_to_not_be_null",
+      "kwargs": {"column": "is_active"}
+    },
+    {
+      "expectation_type": "expect_multicolumn_values_to_be_unique",
+      "kwargs": {
+        "column_list": ["external_provider", "external_series_id", "curve_key"]
+      }
+    }
+  ]
+}

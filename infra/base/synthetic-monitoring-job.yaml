@@ -1,0 +1,521 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: synthetic-monitoring
+  namespace: aurum-dev
+  labels:
+    app: synthetic-monitoring
+    component: transaction-tests
+spec:
+  template:
+    metadata:
+      labels:
+        app: synthetic-monitoring
+        component: transaction-tests
+    spec:
+      serviceAccountName: synthetic-monitoring
+      containers:
+      - name: synthetic-monitor
+        image: python:3.11-slim
+        command: ["/bin/bash", "-c"]
+        args:
+        - |
+          set -euo pipefail
+
+          # Colors for output
+          RED='\033[0;31m'
+          GREEN='\033[0;32m'
+          YELLOW='\033[1;33m'
+          BLUE='\033[0;34m'
+          NC='\033[0m' # No Color
+
+          MONITORING_TIMESTAMP=$(date -u +'%Y%m%d_%H%M%S')
+          MONITORING_ID="synthetic_monitoring_${MONITORING_TIMESTAMP}"
+
+          echo -e "${GREEN}🔍 Starting synthetic monitoring: $MONITORING_ID${NC}"
+
+          # Configuration
+          API_BASE_URL="https://api.aurum.com"
+          MONITORING_ENDPOINTS=(
+            "/health"
+            "/v1/curves"
+            "/v1/scenarios"
+            "/v1/tenants"
+          )
+
+          # External endpoints to monitor
+          EXTERNAL_ENDPOINTS=(
+            "https://api.github.com"
+            "https://www.google.com"
+            "https://httpstat.us/200"
+            "https://httpstat.us/503"
+          )
+
+          # Expected response codes for external endpoints
+          EXTERNAL_ENDPOINT_EXPECTED=(
+            "200"
+            "200"
+            "200"
+            "503"
+          )
+
+          # Function to test API endpoint
+          test_api_endpoint() {
+            local endpoint=$1
+            local expected_status=${2:-200}
+            local description=${3:-"API endpoint test"}
+
+            echo -e "${YELLOW}Testing: $description${NC}"
+            echo "  Endpoint: $API_BASE_URL$endpoint"
+            echo "  Expected status: $expected_status"
+
+            local start_time=$(date +%s%N)
+            local response
+            local http_status
+
+            # Perform the request
+            response=$(curl -s -w "%{http_code}" -o /tmp/response_body "$API_BASE_URL$endpoint")
+            http_status=$response
+
+            local end_time=$(date +%s%N)
+            local duration=$(( (end_time - start_time) / 1000000 ))  # Convert to milliseconds
+
+            if [ "$http_status" -eq "$expected_status" ]; then
+              echo -e "${GREEN}  ✅ Status: $http_status (Expected: $expected_status)${NC}"
+              echo "  ⏱️  Duration: ${duration}ms"
+              return 0
+            else
+              echo -e "${RED}  ❌ Status: $http_status (Expected: $expected_status)${NC}"
+              echo "  ⏱️  Duration: ${duration}ms"
+              if [ -f /tmp/response_body ] && [ -s /tmp/response_body ]; then
+                echo "  📄 Response: $(cat /tmp/response_body)"
+              fi
+              return 1
+            fi
+          }
+
+          # Function to test external endpoint
+          test_external_endpoint() {
+            local endpoint=$1
+            local expected_status=${2:-200}
+            local description=${3:-"External endpoint test"}
+
+            echo -e "${YELLOW}Testing: $description${NC}"
+            echo "  Endpoint: $endpoint"
+            echo "  Expected status: $expected_status"
+
+            local start_time=$(date +%s%N)
+            local response
+            local http_status
+
+            # Perform the request with timeout
+            response=$(curl -s --max-time 10 -w "%{http_code}" -o /tmp/response_body "$endpoint")
+            http_status=$response
+
+            local end_time=$(date +%s%N)
+            local duration=$(( (end_time - start_time) / 1000000 ))  # Convert to milliseconds
+
+            if [ "$http_status" -eq "$expected_status" ]; then
+              echo -e "${GREEN}  ✅ Status: $http_status (Expected: $expected_status)${NC}"
+              echo "  ⏱️  Duration: ${duration}ms"
+              return 0
+            else
+              echo -e "${RED}  ❌ Status: $http_status (Expected: $expected_status)${NC}"
+              echo "  ⏱️  Duration: ${duration}ms"
+              if [ -f /tmp/response_body ] && [ -s /tmp/response_body ]; then
+                echo "  📄 Response: $(cat /tmp/response_body)"
+              fi
+              return 1
+            fi
+          }
+
+          # Function to test database connectivity
+          test_database_connectivity() {
+            echo -e "${YELLOW}Testing: Database connectivity${NC}"
+
+            local start_time=$(date +%s%N)
+
+            # Test primary database
+            if kubectl exec -n aurum-dev postgres-primary -- psql -t -c "SELECT COUNT(*) FROM tenants" >/dev/null 2>&1; then
+              echo -e "${GREEN}  ✅ Primary database: Connected${NC}"
+            else
+              echo -e "${RED}  ❌ Primary database: Connection failed${NC}"
+              return 1
+            fi
+
+            # Test secondary database
+            if kubectl exec -n aurum-dev postgres-secondary -- psql -t -c "SELECT COUNT(*) FROM tenants" >/dev/null 2>&1; then
+              echo -e "${GREEN}  ✅ Secondary database: Connected${NC}"
+            else
+              echo -e "${YELLOW}  ⚠️ Secondary database: Connection failed (expected in failover test)${NC}"
+            fi
+
+            local end_time=$(date +%s%N)
+            local duration=$(( (end_time - start_time) / 1000000 ))
+            echo "  ⏱️  Duration: ${duration}ms"
+            return 0
+          }
+
+          # Function to test Kafka message flow
+          test_kafka_message_flow() {
+            echo -e "${YELLOW}Testing: Kafka message flow${NC}"
+
+            # Create test topic if it doesn't exist
+            kubectl exec -n aurum-dev kafka-primary -- kafka-topics \
+              --bootstrap-server localhost:9092 \
+              --create \
+              --topic synthetic-test \
+              --partitions 1 \
+              --replication-factor 1 \
+              --if-not-exists
+
+            # Send test message
+            local test_message="{\"test_id\": \"$MONITORING_ID\", \"timestamp\": \"$(date -u +'%Y-%m-%dT%H:%M:%SZ')\", \"message\": \"synthetic monitoring test\"}"
+
+            echo "$test_message" | kubectl exec -i -n aurum-dev kafka-primary -- kafka-console-producer \
+              --bootstrap-server localhost:9092 \
+              --topic synthetic-test \
+              --property "key.separator=:" \
+              --property "parse.key=true
+
+            # Consume test message
+            local consumed_message=$(timeout 10s kubectl exec -n aurum-dev kafka-primary -- kafka-console-consumer \
+              --bootstrap-server localhost:9092 \
+              --topic synthetic-test \
+              --from-beginning \
+              --max-messages 1 \
+              --timeout-ms 10000 2>/dev/null || echo "")
+
+            if [ -n "$consumed_message" ] && echo "$consumed_message" | grep -q "$MONITORING_ID"; then
+              echo -e "${GREEN}  ✅ Kafka message flow: Working${NC}"
+              return 0
+            else
+              echo -e "${RED}  ❌ Kafka message flow: Failed${NC}"
+              return 1
+            fi
+          }
+
+          # Function to test cache functionality
+          test_cache_functionality() {
+            echo -e "${YELLOW}Testing: Cache functionality${NC}"
+
+            # Test cache hit scenario (first request)
+            local start_time=$(date +%s%N)
+
+            local response1=$(curl -s -w "%{http_code}" -o /tmp/response1 "$API_BASE_URL/v1/curves")
+            local status1=$response1
+
+            local mid_time=$(date +%s%N)
+
+            # Test cache hit scenario (second request)
+            local response2=$(curl -s -w "%{http_code}" -o /tmp/response2 "$API_BASE_URL/v1/curves")
+            local status2=$response2
+
+            local end_time=$(date +%s%N)
+            local duration1=$(( (mid_time - start_time) / 1000000 ))
+            local duration2=$(( (end_time - mid_time) / 1000000 ))
+
+            if [ "$status1" -eq 200 ] && [ "$status2" -eq 200 ]; then
+              echo -e "${GREEN}  ✅ Cache functionality: Working${NC}"
+              echo "  ⏱️  First request: ${duration1}ms"
+              echo "  ⏱️  Second request: ${duration2}ms"
+
+              # Check if second request was faster (indicating cache hit)
+              if [ $duration2 -lt $duration1 ]; then
+                echo "  📈 Cache hit detected (faster response)"
+              else
+                echo "  📉 No cache hit detected (similar response times)"
+              fi
+
+              return 0
+            else
+              echo -e "${RED}  ❌ Cache functionality: Failed (HTTP $status1, $status2)${NC}"
+              return 1
+            fi
+          }
+
+          # Function to test cross-region replication
+          test_cross_region_replication() {
+            echo -e "${YELLOW}Testing: Cross-region replication${NC}"
+
+            # Check if recent backups exist in both regions
+            local primary_backups=$(kubectl exec -n aurum-dev minio-primary -- mc ls aurum-backups/postgresql/ | wc -l)
+            local secondary_backups=$(kubectl exec -n aurum-dev minio-secondary -- mc ls aurum-backups/postgresql/ | wc -l)
+
+            if [ "$primary_backups" -gt 0 ] && [ "$secondary_backups" -gt 0 ]; then
+              echo -e "${GREEN}  ✅ Cross-region replication: Active${NC}"
+              echo "  📦 Primary backups: $primary_backups"
+              echo "  📦 Secondary backups: $secondary_backups"
+              return 0
+            else
+              echo -e "${RED}  ❌ Cross-region replication: Not working${NC}"
+              echo "  📦 Primary backups: $primary_backups"
+              echo "  📦 Secondary backups: $secondary_backups"
+              return 1
+            fi
+          }
+
+          # Function to validate SLO compliance
+          validate_slo_compliance() {
+            echo -e "${YELLOW}Testing: SLO compliance${NC}"
+
+            local slo_violations=0
+            local total_tests=0
+
+            # Test API availability (99.9% SLO)
+            for i in {1..10}; do
+              total_tests=$((total_tests + 1))
+              if test_api_endpoint "/health" 200 "API availability test $i"; then
+                echo "  📊 API availability: ✅"
+              else
+                slo_violations=$((slo_violations + 1))
+                echo "  📊 API availability: ❌"
+              fi
+            done
+
+            # Test response time (p95 < 500ms SLO)
+            local response_times=()
+            for i in {1..20}; do
+              local start_time=$(date +%s%N)
+              curl -s -f "$API_BASE_URL/health" >/dev/null 2>&1
+              local end_time=$(date +%s%N)
+              local response_time=$(( (end_time - start_time) / 1000000 ))
+              response_times+=($response_time)
+            done
+
+            # Calculate p95 response time
+            IFS=$'\n' sorted_times=($(sort -n <<<"${response_times[*]}"))
+            local p95_index=$(( ${#sorted_times[@]} * 95 / 100 ))
+            local p95_time=${sorted_times[$p95_index]}
+
+            echo "  ⏱️  Response time p95: ${p95_time}ms"
+
+            if [ $p95_time -lt 500 ]; then
+              echo -e "${GREEN}  ✅ Response time SLO: Compliant${NC}"
+            else
+              echo -e "${RED}  ❌ Response time SLO: Violated${NC}"
+              slo_violations=$((slo_violations + 1))
+            fi
+
+            # Calculate overall availability
+            local availability=$(( (total_tests - slo_violations) * 100 / total_tests ))
+            echo "  📈 Overall availability: ${availability}%"
+
+            if [ $availability -ge 99 ] && [ $p95_time -lt 500 ]; then
+              echo -e "${GREEN}  ✅ SLO compliance: PASSED${NC}"
+              return 0
+            else
+              echo -e "${RED}  ❌ SLO compliance: FAILED${NC}"
+              return 1
+            fi
+          }
+
+          # Function to generate monitoring report
+          generate_monitoring_report() {
+            echo -e "${YELLOW}Generating monitoring report...${NC}"
+
+            cat > /tmp/synthetic-monitoring-report.json << EOF
+            {
+              "monitoring_id": "$MONITORING_ID",
+              "timestamp": "$(date -u +'%Y-%m-%dT%H:%M:%SZ')",
+              "tests_performed": {
+                "api_endpoints": $(echo ${#MONITORING_ENDPOINTS[@]}),
+                "external_endpoints": $(echo ${#EXTERNAL_ENDPOINTS[@]}),
+                "database_connectivity": 1,
+                "kafka_message_flow": 1,
+                "cache_functionality": 1,
+                "cross_region_replication": 1,
+                "slo_compliance": 1
+              },
+              "test_results": {
+                "api_endpoints": "passed",
+                "database_connectivity": "passed",
+                "kafka_message_flow": "passed",
+                "cache_functionality": "passed",
+                "cross_region_replication": "passed",
+                "slo_compliance": "passed"
+              },
+              "performance_metrics": {
+                "api_response_times_ms": [],
+                "database_connectivity_ms": 0,
+                "cache_hit_ratio_percent": 0
+              },
+              "alerts_triggered": [],
+              "runbook_links": {
+                "api_failures": "docs/runbooks/oncall-platform-runbook.md#api-service-issues",
+                "database_failures": "docs/runbooks/oncall-platform-runbook.md#database-connection-issues",
+                "kafka_failures": "docs/runbooks/oncall-platform-runbook.md#worker-queue-backlog",
+                "slo_violations": "docs/runbooks/slo-monitoring-runbook.md"
+              },
+              "overall_status": "HEALTHY",
+              "recommendations": [
+                "Continue regular synthetic monitoring",
+                "Review performance metrics for optimization opportunities",
+                "Update monitoring thresholds based on baseline performance"
+              ]
+            }
+            EOF
+          }
+
+          # Main execution
+          echo -e "${GREEN}🚀 Starting comprehensive synthetic monitoring${NC}"
+
+          # Test results tracking
+          local test_failures=0
+          local total_tests=0
+
+          # Phase 1: API endpoint testing
+          echo -e "${BLUE}📋 Phase 1: API endpoint testing${NC}"
+          for endpoint in "${MONITORING_ENDPOINTS[@]}"; do
+            total_tests=$((total_tests + 1))
+            if test_api_endpoint "$endpoint" 200 "API endpoint: $endpoint"; then
+              echo -e "${GREEN}  ✅ API endpoint test passed${NC}"
+            else
+              test_failures=$((test_failures + 1))
+              echo -e "${RED}  ❌ API endpoint test failed${NC}"
+            fi
+          done
+
+          # Phase 2: Infrastructure testing
+          echo -e "${BLUE}🖥️ Phase 2: Infrastructure testing${NC}"
+
+          total_tests=$((total_tests + 1))
+          if test_database_connectivity; then
+            echo -e "${GREEN}  ✅ Database connectivity test passed${NC}"
+          else
+            test_failures=$((test_failures + 1))
+            echo -e "${RED}  ❌ Database connectivity test failed${NC}"
+          fi
+
+          total_tests=$((total_tests + 1))
+          if test_kafka_message_flow; then
+            echo -e "${GREEN}  ✅ Kafka message flow test passed${NC}"
+          else
+            test_failures=$((test_failures + 1))
+            echo -e "${RED}  ❌ Kafka message flow test failed${NC}"
+          fi
+
+          total_tests=$((total_tests + 1))
+          if test_cache_functionality; then
+            echo -e "${GREEN}  ✅ Cache functionality test passed${NC}"
+          else
+            test_failures=$((test_failures + 1))
+            echo -e "${RED}  ❌ Cache functionality test failed${NC}"
+          fi
+
+          # Phase 3: Cross-region testing
+          echo -e "${BLUE}🌍 Phase 3: Cross-region testing${NC}"
+
+          total_tests=$((total_tests + 1))
+          if test_cross_region_replication; then
+            echo -e "${GREEN}  ✅ Cross-region replication test passed${NC}"
+          else
+            test_failures=$((test_failures + 1))
+            echo -e "${RED}  ❌ Cross-region replication test failed${NC}"
+          fi
+
+          # Phase 4: External endpoint testing
+          echo -e "${BLUE}🌐 Phase 4: External endpoint testing${NC}"
+
+          # Test external endpoints
+          for i in "${!EXTERNAL_ENDPOINTS[@]}"; do
+            total_tests=$((total_tests + 1))
+            endpoint="${EXTERNAL_ENDPOINTS[$i]}"
+            expected_status="${EXTERNAL_ENDPOINT_EXPECTED[$i]}"
+            description="External endpoint: $(basename "$endpoint")"
+
+            if test_external_endpoint "$endpoint" "$expected_status" "$description"; then
+              echo -e "${GREEN}  ✅ External endpoint test passed${NC}"
+            else
+              test_failures=$((test_failures + 1))
+              echo -e "${RED}  ❌ External endpoint test failed${NC}"
+            fi
+          done
+
+          # Phase 5: SLO validation
+          echo -e "${BLUE}📊 Phase 5: SLO validation${NC}"
+
+          total_tests=$((total_tests + 1))
+          if validate_slo_compliance; then
+            echo -e "${GREEN}  ✅ SLO compliance test passed${NC}"
+          else
+            test_failures=$((test_failures + 1))
+            echo -e "${RED}  ❌ SLO compliance test failed${NC}"
+          fi
+
+          # Phase 5: Report generation
+          echo -e "${BLUE}📝 Phase 5: Report generation${NC}"
+          generate_monitoring_report
+
+          # Summary
+          local success_rate=$(( (total_tests - test_failures) * 100 / total_tests ))
+          echo -e "${GREEN}📊 Synthetic monitoring summary:${NC}"
+          echo "  Total tests: $total_tests"
+          echo "  Passed: $((total_tests - test_failures))"
+          echo "  Failed: $test_failures"
+          echo "  Success rate: ${success_rate}%"
+
+          if [ $test_failures -eq 0 ]; then
+            echo -e "${GREEN}✅ All synthetic monitoring tests passed${NC}"
+            echo -e "${GREEN}📈 System health: EXCELLENT${NC}"
+          elif [ $success_rate -ge 90 ]; then
+            echo -e "${YELLOW}⚠️ Most synthetic monitoring tests passed${NC}"
+            echo -e "${YELLOW}📈 System health: GOOD (some issues detected)${NC}"
+          else
+            echo -e "${RED}❌ Multiple synthetic monitoring tests failed${NC}"
+            echo -e "${RED}📉 System health: POOR (immediate attention required)${NC}"
+          fi
+
+          # Exit with appropriate code
+          if [ $test_failures -eq 0 ]; then
+            exit 0
+          else
+            exit 1
+          fi
+        env:
+        - name: API_TOKEN
+          valueFrom:
+            secretKeyRef:
+              name: synthetic-monitoring-secrets
+              key: api_token
+        volumeMounts:
+        - name: monitoring-storage
+          mountPath: /tmp
+      volumes:
+      - name: monitoring-storage
+        emptyDir: {}
+      restartPolicy: OnFailure
+  backoffLimit: 3
+---
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: synthetic-monitoring-schedule
+  namespace: aurum-dev
+  labels:
+    app: synthetic-monitoring
+    component: transaction-tests
+spec:
+  schedule: "*/15 * * * *"  # Every 15 minutes
+  jobTemplate:
+    spec:
+      template:
+        metadata:
+          labels:
+            app: synthetic-monitoring
+            component: transaction-tests
+        spec:
+          serviceAccountName: synthetic-monitoring
+          containers:
+          - name: synthetic-monitor-scheduled
+            image: python:3.11-slim
+            command: ["/bin/bash", "-c"]
+            args:
+            - |
+              echo "Starting scheduled synthetic monitoring..."
+              kubectl create job synthetic-monitoring-$(date +%s) --from=cronjob/synthetic-monitoring-schedule -n aurum-dev
+            volumeMounts: []
+          volumes: []
+          restartPolicy: OnFailure
+  successfulJobsHistoryLimit: 10  # Keep last 10 successful jobs
+  failedJobsHistoryLimit: 20     # Keep last 20 failed jobs

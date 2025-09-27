@@ -1,0 +1,134 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: backup-validation
+  namespace: aurum-dev
+spec:
+  template:
+    spec:
+      containers:
+      - name: backup-validation
+        image: minio/mc:latest
+        command: ["/bin/bash", "-c"]
+        args:
+        - |
+          set -e
+
+          VALIDATION_TIMESTAMP=$(date -u +'%Y%m%d_%H%M%S')
+          echo "Starting backup validation: $VALIDATION_TIMESTAMP"
+
+          # Configure Minio client
+          mc alias set aurum-minio http://minio.aurum-dev.svc.cluster.local:9000 aurum password
+
+          # Create validation report
+          cat > /backup/validation_report.json << REPORT_EOF
+          {
+            "validation_timestamp": "$VALIDATION_TIMESTAMP",
+            "services": {}
+          }
+          REPORT_EOF
+
+          # Validate PostgreSQL backups
+          echo "Validating PostgreSQL backups..."
+          if mc ls aurum-minio/aurum-backups/postgresql/ > /dev/null 2>&1; then
+            LATEST_PG_BACKUP=$(mc ls aurum-minio/aurum-backups/postgresql/ | sort -k6,7 | tail -1 | awk '{print $6}')
+            BACKUP_SIZE=$(mc stat aurum-minio/aurum-backups/postgresql/$LATEST_PG_BACKUP | grep "Size:" | awk '{print $2}')
+            jq ".services.postgresql = {\"status\": \"valid\", \"latest_backup\": \"$LATEST_PG_BACKUP\", \"size\": \"$BACKUP_SIZE\", \"backup_count\": $(mc ls aurum-minio/aurum-backups/postgresql/ | wc -l)}" /backup/validation_report.json > /tmp/report.json && mv /tmp/report.json /backup/validation_report.json
+          else
+            jq ".services.postgresql = {\"status\": \"missing\", \"error\": \"No PostgreSQL backups found\"}" /backup/validation_report.json > /tmp/report.json && mv /tmp/report.json /backup/validation_report.json
+          fi
+
+          # Validate TimescaleDB backups
+          echo "Validating TimescaleDB backups..."
+          if mc ls aurum-minio/aurum-backups/timescaledb/ > /dev/null 2>&1; then
+            LATEST_TSDB_BACKUP=$(mc ls aurum-minio/aurum-backups/timescaledb/ | sort -k6,7 | tail -1 | awk '{print $6}')
+            BACKUP_SIZE=$(mc stat aurum-minio/aurum-backups/timescaledb/$LATEST_TSDB_BACKUP | grep "Size:" | awk '{print $2}')
+            jq ".services.timescaledb = {\"status\": \"valid\", \"latest_backup\": \"$LATEST_TSDB_BACKUP\", \"size\": \"$BACKUP_SIZE\", \"backup_count\": $(mc ls aurum-minio/aurum-backups/timescaledb/ | wc -l)}" /backup/validation_report.json > /tmp/report.json && mv /tmp/report.json /backup/validation_report.json
+          else
+            jq ".services.timescaledb = {\"status\": \"missing\", \"error\": \"No TimescaleDB backups found\"}" /backup/validation_report.json > /tmp/report.json && mv /tmp/report.json /backup/validation_report.json
+          fi
+
+          # Validate ClickHouse backups
+          echo "Validating ClickHouse backups..."
+          if mc ls aurum-minio/aurum-backups/clickhouse/ > /dev/null 2>&1; then
+            LATEST_CH_BACKUP=$(mc ls aurum-minio/aurum-backups/clickhouse/ | sort -k6,7 | tail -1 | awk '{print $6}')
+            BACKUP_SIZE=$(mc stat aurum-minio/aurum-backups/clickhouse/$LATEST_CH_BACKUP | grep "Size:" | awk '{print $2}')
+            jq ".services.clickhouse = {\"status\": \"valid\", \"latest_backup\": \"$LATEST_CH_BACKUP\", \"size\": \"$BACKUP_SIZE\", \"backup_count\": $(mc ls aurum-minio/aurum-backups/clickhouse/ | wc -l)}" /backup/validation_report.json > /tmp/report.json && mv /tmp/report.json /backup/validation_report.json
+          else
+            jq ".services.clickhouse = {\"status\": \"missing\", \"error\": \"No ClickHouse backups found\"}" /backup/validation_report.json > /tmp/report.json && mv /tmp/report.json /backup/validation_report.json
+          fi
+
+          # Validate Minio backups
+          echo "Validating Minio backups..."
+          if mc ls aurum-minio/aurum-backups/minio/ > /dev/null 2>&1; then
+            jq ".services.minio = {\"status\": \"valid\", \"backup_count\": $(mc ls aurum-minio/aurum-backups/minio/ | wc -l)}" /backup/validation_report.json > /tmp/report.json && mv /tmp/report.json /backup/validation_report.json
+          else
+            jq ".services.minio = {\"status\": \"missing\", \"error\": \"No Minio backups found\"}" /backup/validation_report.json > /tmp/report.json && mv /tmp/report.json /backup/validation_report.json
+          fi
+
+          # Validate Kafka backups
+          echo "Validating Kafka backups..."
+          if mc ls aurum-minio/aurum-backups/kafka/ > /dev/null 2>&1; then
+            LATEST_KAFKA_BACKUP=$(mc ls aurum-minio/aurum-backups/kafka/ | sort -k6,7 | tail -1 | awk '{print $6}')
+            BACKUP_SIZE=$(mc stat aurum-minio/aurum-backups/kafka/$LATEST_KAFKA_BACKUP | grep "Size:" | awk '{print $2}')
+            jq ".services.kafka = {\"status\": \"valid\", \"latest_backup\": \"$LATEST_KAFKA_BACKUP\", \"size\": \"$BACKUP_SIZE\", \"backup_count\": $(mc ls aurum-minio/aurum-backups/kafka/ | wc -l)}" /backup/validation_report.json > /tmp/report.json && mv /tmp/report.json /backup/validation_report.json
+          else
+            jq ".services.kafka = {\"status\": \"missing\", \"error\": \"No Kafka backups found\"}" /backup/validation_report.json > /tmp/report.json && mv /tmp/report.json /backup/validation_report.json
+          fi
+
+          # Validate Vault backups
+          echo "Validating Vault backups..."
+          if mc ls aurum-minio/aurum-backups/vault/ > /dev/null 2>&1; then
+            LATEST_VAULT_BACKUP=$(mc ls aurum-minio/aurum-backups/vault/ | sort -k6,7 | tail -1 | awk '{print $6}')
+            BACKUP_SIZE=$(mc stat aurum-minio/aurum-backups/vault/$LATEST_VAULT_BACKUP | grep "Size:" | awk '{print $2}')
+            jq ".services.vault = {\"status\": \"valid\", \"latest_backup\": \"$LATEST_VAULT_BACKUP\", \"size\": \"$BACKUP_SIZE\", \"backup_count\": $(mc ls aurum-minio/aurum-backups/vault/ | wc -l)}" /backup/validation_report.json > /tmp/report.json && mv /tmp/report.json /backup/validation_report.json
+          else
+            jq ".services.vault = {\"status\": \"missing\", \"error\": \"No Vault backups found\"}" /backup/validation_report.json > /tmp/report.json && mv /tmp/report.json /backup/validation_report.json
+          fi
+
+          # Upload validation report
+          mc cp /backup/validation_report.json aurum-minio/aurum-backups/validation/
+
+          # Check overall status
+          FAILED_SERVICES=$(jq '.services | to_entries | map(select(.value.status == "missing")) | length' /backup/validation_report.json)
+          if [ "$FAILED_SERVICES" -gt 0 ]; then
+            echo "❌ Validation failed: $FAILED_SERVICES services missing backups"
+            jq '.overall_status = "failed"' /backup/validation_report.json > /tmp/report.json && mv /tmp/report.json /backup/validation_report.json
+            exit 1
+          else
+            echo "✅ All backup validations passed"
+            jq '.overall_status = "success"' /backup/validation_report.json > /tmp/report.json && mv /tmp/report.json /backup/validation_report.json
+          fi
+        volumeMounts:
+        - name: backup-storage
+          mountPath: /backup
+      volumes:
+      - name: backup-storage
+        emptyDir: {}
+      restartPolicy: OnFailure
+  backoffLimit: 1
+---
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: backup-validation-schedule
+  namespace: aurum-dev
+spec:
+  schedule: "0 */6 * * *"
+  jobTemplate:
+    spec:
+      template:
+        spec:
+          containers:
+          - name: backup-validation-scheduled
+            image: minio/mc:latest
+            command: ["/bin/bash", "-c"]
+            args:
+            - |
+              echo "Starting scheduled backup validation..."
+              kubectl create job backup-validation-$(date +%s) --from=cronjob/backup-validation-schedule
+            volumeMounts: []
+          volumes: []
+          restartPolicy: OnFailure
+  successfulJobsHistoryLimit: 7
+  failedJobsHistoryLimit: 14

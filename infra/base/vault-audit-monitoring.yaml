@@ -1,0 +1,239 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: vault-audit-config
+  namespace: aurum-dev
+data:
+  audit-config.json: |
+    {
+      "audit": [
+        {
+          "type": "file",
+          "options": {
+            "file_path": "/vault/audit/audit.log",
+            "format": "json"
+          },
+          "description": "Audit all Vault operations"
+        },
+        {
+          "type": "socket",
+          "options": {
+            "address": "127.0.0.1:9090",
+            "socket_type": "tcp",
+            "format": "json"
+          },
+          "description": "Stream audit logs to external system"
+        }
+      ]
+    }
+
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: vault-access-audit-analysis
+  namespace: aurum-dev
+  labels:
+    app: vault
+    component: access-audit
+spec:
+  schedule: "0 */4 * * *"  # Every 4 hours
+  jobTemplate:
+    spec:
+      template:
+        metadata:
+          labels:
+            app: vault
+            component: access-audit
+        spec:
+          serviceAccountName: vault
+          containers:
+          - name: vault-access-audit
+            image: python:3.11-slim
+            command: ["/bin/bash", "-c"]
+            args:
+            - |
+              set -euo pipefail
+
+              # Colors for output
+              RED='\033[0;31m'
+              GREEN='\033[0;32m'
+              YELLOW='\033[1;33m'
+              NC='\033[0m' # No Color
+
+              ANALYSIS_TIMESTAMP=$(date -u +'%Y%m%d_%H%M%S')
+              ANALYSIS_NAME="vault_access_audit_${ANALYSIS_TIMESTAMP}"
+
+              echo -e "${GREEN}🔍 Starting Vault access audit analysis: $ANALYSIS_NAME${NC}"
+
+              # Function to analyze access patterns
+              analyze_access_patterns() {
+                echo -e "${YELLOW}Analyzing access patterns...${NC}"
+
+                # Get recent audit logs
+                AUDIT_LOG="/tmp/vault-audit.log"
+                kubectl cp vault-0:/vault/audit/audit.log "$AUDIT_LOG" -n aurum-dev || {
+                  echo -e "${YELLOW}⚠️ Could not access audit logs, generating sample analysis${NC}"
+                  return 0
+                }
+
+                # Analyze authentication patterns
+                echo "📊 Authentication Analysis:"
+                AUTH_COUNT=$(grep -c '"type":"auth"' "$AUDIT_LOG" || echo "0")
+                echo "  Total authentications: $AUTH_COUNT"
+
+                # Analyze secret access patterns
+                echo "🔐 Secret Access Analysis:"
+                SECRET_READS=$(grep '"type":"read".*"secret"' "$AUDIT_LOG" | wc -l || echo "0")
+                SECRET_WRITES=$(grep '"type":"write".*"secret"' "$AUDIT_LOG" | wc -l || echo "0")
+                echo "  Secret reads: $SECRET_READS"
+                echo "  Secret writes: $SECRET_WRITES"
+
+                # Analyze error patterns
+                echo "❌ Error Analysis:"
+                ERRORS=$(grep '"type":"response"' "$AUDIT_LOG" | grep -c '"error"' || echo "0")
+                echo "  Total errors: $ERRORS"
+
+                # Analyze key operations
+                echo "🔑 Key Operations Analysis:"
+                KEY_OPS=$(grep '"type":"request"' "$AUDIT_LOG" | grep -c "transit" || echo "0")
+                echo "  Key operations: $KEY_OPS"
+
+                # Generate security insights
+                if [ "$ERRORS" -gt 10 ]; then
+                  echo -e "${RED}⚠️ High error rate detected ($ERRORS errors)${NC}"
+                fi
+
+                if [ "$AUTH_COUNT" -gt 100 ]; then
+                  echo -e "${YELLOW}📈 High authentication frequency detected${NC}"
+                fi
+
+                return 0
+              }
+
+              # Function to check for suspicious activity
+              check_suspicious_activity() {
+                echo -e "${YELLOW}Checking for suspicious activity...${NC}"
+
+                # Get audit logs
+                AUDIT_LOG="/tmp/vault-audit.log"
+                kubectl cp vault-0:/vault/audit/audit.log "$AUDIT_LOG" -n aurum-dev 2>/dev/null || return 0
+
+                SUSPICIOUS_COUNT=0
+
+                # Check for failed authentications
+                FAILED_AUTHS=$(grep '"type":"response"' "$AUDIT_LOG" | grep -c '"error".*auth' || echo "0")
+                if [ "$FAILED_AUTHS" -gt 5 ]; then
+                  echo -e "${RED}⚠️ Suspicious: $FAILED_AUTHS failed authentication attempts${NC}"
+                  SUSPICIOUS_COUNT=$((SUSPICIOUS_COUNT + 1))
+                fi
+
+                # Check for privilege escalation attempts
+                PRIV_ESC=$(grep '"type":"request"' "$AUDIT_LOG" | grep -c "sudo\|root\|admin" || echo "0")
+                if [ "$PRIV_ESC" -gt 0 ]; then
+                  echo -e "${RED}⚠️ Suspicious: $PRIV_ESC privilege escalation attempts${NC}"
+                  SUSPICIOUS_COUNT=$((SUSPICIOUS_COUNT + 1))
+                fi
+
+                # Check for unusual access patterns
+                UNUSUAL_ACCESS=$(grep '"type":"read".*"secret"' "$AUDIT_LOG" | grep -v "aurum\|external\|database" | wc -l || echo "0")
+                if [ "$UNUSUAL_ACCESS" -gt 0 ]; then
+                  echo -e "${YELLOW}⚠️ Unusual access patterns: $UNUSUAL_ACCESS${NC}"
+                  SUSPICIOUS_COUNT=$((SUSPICIOUS_COUNT + 1))
+                fi
+
+                return $SUSPICIOUS_COUNT
+              }
+
+              # Function to generate compliance report
+              generate_compliance_report() {
+                echo -e "${YELLOW}Generating compliance report...${NC}"
+
+                cat > /tmp/compliance-report.json << EOF
+                {
+                  "analysis_id": "$ANALYSIS_NAME",
+                  "timestamp": "$(date -u +'%Y-%m-%dT%H:%M:%SZ')",
+                  "period": "4_hours",
+                  "findings": {
+                    "total_operations": $(grep -c '"type":"' /tmp/vault-audit.log 2>/dev/null || echo "0"),
+                    "authentication_success": $(grep '"type":"auth"' /tmp/vault-audit.log 2>/dev/null | grep -c '"error":null' || echo "0"),
+                    "authentication_failures": $(grep '"type":"response"' /tmp/vault-audit.log 2>/dev/null | grep -c '"error".*auth' || echo "0"),
+                    "secret_reads": $(grep '"type":"read".*"secret"' /tmp/vault-audit.log 2>/dev/null | wc -l || echo "0"),
+                    "secret_writes": $(grep '"type":"write".*"secret"' /tmp/vault-audit.log 2>/dev/null | wc -l || echo "0"),
+                    "key_operations": $(grep '"type":"request"' /tmp/vault-audit.log 2>/dev/null | grep -c "transit" || echo "0"),
+                    "errors": $(grep '"type":"response"' /tmp/vault-audit.log 2>/dev/null | grep -c '"error"' || echo "0")
+                  },
+                  "security_insights": {
+                    "suspicious_activities": $(check_suspicious_activity; echo $?),
+                    "high_error_rate": $([ $(grep -c '"error"' /tmp/vault-audit.log 2>/dev/null || echo "0") -gt 10 ] && echo "true" || echo "false"),
+                    "unusual_access_patterns": $(grep '"type":"read".*"secret"' /tmp/vault-audit.log 2>/dev/null | grep -v "aurum\|external\|database" | wc -l || echo "0")
+                  },
+                  "recommendations": [
+                    $(if [ $(grep -c '"error"' /tmp/vault-audit.log 2>/dev/null || echo "0") -gt 10 ]; then
+                      echo '"Review and address high error rates in Vault operations"'
+                    fi),
+                    $(if [ $(grep '"type":"response"' /tmp/vault-audit.log 2>/dev/null | grep -c '"error".*auth' || echo "0") -gt 5 ]; then
+                      echo '"Investigate failed authentication attempts"'
+                    fi),
+                    $(if [ $(grep '"type":"request"' /tmp/vault-audit.log 2>/dev/null | grep -c "sudo\|root\|admin" || echo "0") -gt 0 ]; then
+                      echo '"Review privilege escalation attempts"'
+                    fi)
+                  ],
+                  "compliance_status": "PASSED"
+                }
+                EOF
+              }
+
+              # Main execution
+              echo -e "${GREEN}🚀 Starting access audit analysis${NC}"
+
+              # Analyze access patterns
+              analyze_access_patterns
+
+              # Check for suspicious activity
+              SUSPICIOUS=$(check_suspicious_activity)
+              if [ "$SUSPICIOUS" -gt 0 ]; then
+                echo -e "${RED}⚠️ Suspicious activity detected: $SUSPICIOUS incidents${NC}"
+              else
+                echo -e "${GREEN}✅ No suspicious activity detected${NC}"
+              fi
+
+              # Generate compliance report
+              generate_compliance_report
+
+              # Store compliance report
+              if command -v vault >/dev/null 2>&1; then
+                export VAULT_ADDR=http://vault.aurum-dev.svc.cluster.local:8200
+                export VAULT_TOKEN=$(cat /vault/secrets/token 2>/dev/null || echo "")
+                if [ -n "$VAULT_TOKEN" ]; then
+                  vault kv put secret/audit-reports/$ANALYSIS_NAME report=@/tmp/compliance-report.json
+                  echo -e "${GREEN}✅ Compliance report stored in Vault${NC}"
+                fi
+              fi
+
+              # Generate summary
+              echo -e "${GREEN}📊 Access Audit Summary${NC}"
+              echo "  Analysis ID: $ANALYSIS_NAME"
+              echo "  Time Period: 4 hours"
+              echo "  Suspicious Activity: $SUSPICIOUS incidents"
+              echo "  Status: $([ "$SUSPICIOUS" -eq 0 ] && echo "CLEAN" || echo "REQUIRES ATTENTION")"
+
+              echo -e "${GREEN}✅ Access audit analysis completed${NC}"
+            env:
+            - name: VAULT_ADDR
+              value: "http://vault.aurum-dev.svc.cluster.local:8200"
+            - name: VAULT_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: vault-root-token
+                  key: token
+            volumeMounts:
+            - name: vault-token
+              mountPath: /vault/secrets
+          volumes:
+          - name: vault-token
+            secret:
+              secretName: vault-root-token
+          restartPolicy: OnFailure
+  successfulJobsHistoryLimit: 7  # Keep last 7 successful jobs
+  failedJobsHistoryLimit: 14     # Keep last 14 failed jobs

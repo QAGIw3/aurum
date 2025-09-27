@@ -1,0 +1,74 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: clickhouse-restore
+  namespace: aurum-dev
+spec:
+  template:
+    spec:
+      containers:
+      - name: clickhouse-restore
+        image: clickhouse/clickhouse-server:23.8
+        command: ["/bin/bash", "-c"]
+        args:
+        - |
+          set -e
+
+          # Get backup name from environment
+          BACKUP_NAME=${BACKUP_NAME:-"latest"}
+
+          echo "Starting ClickHouse restore from: $BACKUP_NAME"
+
+          # Download backup from Minio
+          mc alias set aurum-minio http://minio.aurum-dev.svc.cluster.local:9000 aurum password
+          mc cp aurum-minio/aurum-backups/clickhouse/$BACKUP_NAME.tar.gz /backup/
+
+          # Extract backup
+          tar -xzf /backup/$BACKUP_NAME.tar.gz -C /backup/
+
+          # Stop ClickHouse
+          kubectl scale statefulset clickhouse --replicas=0 -n aurum-dev
+
+          # Wait for shutdown
+          sleep 30
+
+          # Create backup name for restore
+          BACKUP_DIR=$(ls /backup/ | grep clickhouse_backup_ | head -1)
+          echo "Restoring from backup: $BACKUP_DIR"
+
+          # Restore using clickhouse-backup
+          clickhouse-backup restore \
+            --host clickhouse.aurum-dev.svc.cluster.local \
+            --port 9000 \
+            --username default \
+            --password aurum \
+            $BACKUP_DIR
+
+          # Start ClickHouse
+          kubectl scale statefulset clickhouse --replicas=1 -n aurum-dev
+
+          # Wait for startup
+          sleep 60
+
+          # Verify restore
+          clickhouse-client --host clickhouse.aurum-dev.svc.cluster.local \
+                           --port 9000 \
+                           --user default \
+                           --password aurum \
+                           --query "SELECT 'Restore successful' as status, count() as tables FROM system.tables WHERE database = 'aurum'"
+
+          # Cleanup
+          rm -rf /backup/*
+
+          echo "✅ ClickHouse restore completed successfully"
+        env:
+        - name: BACKUP_NAME
+          value: "clickhouse_backup_latest.tar.gz"
+        volumeMounts:
+        - name: backup-storage
+          mountPath: /backup
+      volumes:
+      - name: backup-storage
+        emptyDir: {}
+      restartPolicy: OnFailure
+  backoffLimit: 1

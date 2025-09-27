@@ -1,0 +1,53 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: aurum-external-collectors
+  labels:
+    app.kubernetes.io/name: aurum-external-collectors
+    app.kubernetes.io/component: collectors
+    app.kubernetes.io/part-of: aurum
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: aurum-external-collectors
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: aurum-external-collectors
+        app.kubernetes.io/component: collectors
+        app.kubernetes.io/part-of: aurum
+    spec:
+      serviceAccountName: aurum-external-collectors
+      containers:
+        - name: collectors
+          image: aurum-external-collectors:latest
+          imagePullPolicy: IfNotPresent
+          command: ["aurum-external-collector", "--loop"]
+          envFrom:
+            - configMapRef:
+                name: aurum-config
+            - configMapRef:
+                name: aurum-external-collectors-config
+            - secretRef:
+                name: aurum-secrets
+            - secretRef:
+                name: aurum-external-collectors-secrets
+          env:
+            - name: KAFKA_BOOTSTRAP_SERVERS
+              valueFrom:
+                configMapKeyRef:
+                  name: aurum-config
+                  key: KAFKA_INTERNAL_BOOTSTRAP
+            - name: SCHEMA_REGISTRY_URL
+              valueFrom:
+                configMapKeyRef:
+                  name: aurum-config
+                  key: SCHEMA_REGISTRY_URL
+          resources:
+            requests:
+              cpu: 200m
+              memory: 256Mi
+            limits:
+              cpu: 1
+              memory: 1Gi

@@ -1,0 +1,113 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: vault-backup
+  namespace: aurum-dev
+spec:
+  template:
+    spec:
+      containers:
+      - name: vault-backup
+        image: vault:1.14.0
+        command: ["/bin/bash", "-c"]
+        args:
+        - |
+          set -e
+
+          # Set backup timestamp
+          BACKUP_TIMESTAMP=$(date -u +'%Y%m%d_%H%M%S')
+          BACKUP_NAME="vault_backup_${BACKUP_TIMESTAMP}"
+
+          echo "Starting Vault backup: $BACKUP_NAME"
+
+          # Create backup directory
+          mkdir -p /backup/$BACKUP_NAME
+
+          # List all secrets engines
+          vault secrets list -format=json > /backup/$BACKUP_NAME/secrets_engines.json
+
+          # List all auth methods
+          vault auth list -format=json > /backup/$BACKUP_NAME/auth_methods.json
+
+          # List all policies
+          vault policy list -format=json > /backup/$BACKUP_NAME/policies.json
+
+          # List all mounts
+          vault secrets list -detailed -format=json > /backup/$BACKUP_NAME/mounts.json
+
+          # Export KV secrets (if KV v1/v2 engine is enabled)
+          if vault secrets list -format=json | jq -e '.["secret/"]' > /dev/null; then
+            echo "Backing up KV secrets..."
+            vault kv list secret/ -format=json > /backup/$BACKUP_NAME/kv_secrets_list.json
+
+            # Note: Individual secret backup would require iterating through each path
+            # This is a basic implementation - full secret export should be implemented carefully
+          fi
+
+          # Create backup metadata
+          cat > /backup/$BACKUP_NAME/backup_metadata.json << METADATA_EOF
+          {
+            "backup_type": "configuration",
+            "service": "vault",
+            "timestamp": "$BACKUP_TIMESTAMP",
+            "backup_method": "vault_api",
+            "status": "completed",
+            "includes": ["secrets_engines", "auth_methods", "policies", "mounts"],
+            "note": "KV secrets list only - full secret export requires manual implementation"
+          }
+          METADATA_EOF
+
+          # Compress backup
+          tar -czf /backup/$BACKUP_NAME.tar.gz -C /backup $BACKUP_NAME
+
+          # Upload to Minio
+          echo "Uploading backup to Minio..."
+          mc alias set aurum-minio http://minio.aurum-dev.svc.cluster.local:9000 aurum password
+          mc cp /backup/$BACKUP_NAME.tar.gz aurum-minio/aurum-backups/vault/
+
+          # Cleanup
+          rm -rf /backup/$BACKUP_NAME
+          rm -f /backup/$BACKUP_NAME.tar.gz
+
+          echo "✅ Vault backup completed successfully: $BACKUP_NAME"
+        env:
+        - name: VAULT_ADDR
+          value: "http://vault.aurum-dev.svc.cluster.local:8200"
+        - name: VAULT_TOKEN
+          valueFrom:
+            secretKeyRef:
+              name: vault-secrets
+              key: root-token
+        volumeMounts:
+        - name: backup-storage
+          mountPath: /backup
+      volumes:
+      - name: backup-storage
+        emptyDir: {}
+      restartPolicy: OnFailure
+  backoffLimit: 3
+---
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: vault-backup-schedule
+  namespace: aurum-dev
+spec:
+  schedule: "0 1 * * *"
+  jobTemplate:
+    spec:
+      template:
+        spec:
+          containers:
+          - name: vault-backup-scheduled
+            image: vault:1.14.0
+            command: ["/bin/bash", "-c"]
+            args:
+            - |
+              echo "Starting scheduled Vault backup..."
+              kubectl create job vault-backup-$(date +%s) --from=cronjob/vault-backup-schedule
+            volumeMounts: []
+          volumes: []
+          restartPolicy: OnFailure
+  successfulJobsHistoryLimit: 7
+  failedJobsHistoryLimit: 14

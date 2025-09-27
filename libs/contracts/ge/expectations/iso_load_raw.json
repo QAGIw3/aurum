@@ -1,0 +1,14 @@
+{
+  "expectation_suite_name": "iso_load_raw",
+  "expectations": [
+    {"expectation_type": "expect_table_columns_to_match_set", "kwargs": {"column_set": [
+      "iso_code","market","delivery_date","interval_start","interval_end","interval_minutes","location_id","location_name","location_type","zone","hub","timezone","currency","uom","settlement_point","source_run_id","ingest_ts","record_hash","metadata"
+    ]}},
+    {"expectation_type": "expect_column_values_to_not_be_null", "kwargs": {"column": "iso_code", "mostly": 0.99}},
+    {"expectation_type": "expect_column_values_to_not_be_null", "kwargs": {"column": "interval_start", "mostly": 0.999}},
+    {"expectation_type": "expect_compound_columns_to_be_unique", "kwargs": {"column_list": ["iso_code","location_id","interval_start"]}},
+    {"expectation_type": "expect_column_values_to_be_in_set", "kwargs": {"column": "timezone", "value_set": ["UTC","America/Los_Angeles","America/New_York","America/Chicago","America/Denver"], "mostly": 0.95}},
+    {"expectation_type": "expect_column_values_to_not_be_null", "kwargs": {"column": "ingest_ts", "mostly": 1.0}}
+  ]
+}
+

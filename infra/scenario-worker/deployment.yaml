@@ -1,0 +1,70 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: aurum-scenario-worker
+  labels:
+    app.kubernetes.io/name: aurum-scenario-worker
+    app.kubernetes.io/component: scenario-worker
+    app.kubernetes.io/part-of: aurum
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: aurum-scenario-worker
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: aurum-scenario-worker
+        app.kubernetes.io/component: scenario-worker
+        app.kubernetes.io/part-of: aurum
+    spec:
+      serviceAccountName: aurum-scenario-worker
+      containers:
+        - name: worker
+          image: ghcr.io/aurum/aurum-worker:latest
+          imagePullPolicy: IfNotPresent
+          ports:
+            - containerPort: 9464
+              name: metrics
+          envFrom:
+            - configMapRef:
+                name: aurum-scenario-worker-config
+            - secretRef:
+                name: aurum-scenario-worker-secrets
+          env:
+            - name: AURUM_SCENARIO_METRICS_PORT
+              valueFrom:
+                configMapKeyRef:
+                  name: aurum-scenario-worker-config
+                  key: AURUM_SCENARIO_METRICS_PORT
+          startupProbe:
+            httpGet:
+              path: /ready
+              port: metrics
+            initialDelaySeconds: 10
+            periodSeconds: 15
+            timeoutSeconds: 5
+            failureThreshold: 8
+          readinessProbe:
+            httpGet:
+              path: /ready
+              port: metrics
+            initialDelaySeconds: 20
+            periodSeconds: 20
+            timeoutSeconds: 5
+            failureThreshold: 3
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: metrics
+            initialDelaySeconds: 40
+            periodSeconds: 30
+            timeoutSeconds: 5
+            failureThreshold: 5
+          resources:
+            requests:
+              cpu: 250m
+              memory: 512Mi
+            limits:
+              cpu: 1
+              memory: 1Gi

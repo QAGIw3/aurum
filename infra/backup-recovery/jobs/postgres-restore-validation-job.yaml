@@ -1,0 +1,216 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: postgres-restore-validation
+  namespace: aurum-dev
+spec:
+  template:
+    spec:
+      containers:
+      - name: postgres-restore-validation
+        image: postgres:14
+        command: ["/bin/bash", "-c"]
+        args:
+        - |
+          set -e
+
+          # Set validation timestamp
+          VALIDATION_TIMESTAMP=$(date -u +'%Y%m%d_%H%M%S')
+          VALIDATION_NAME="postgres_restore_validation_${VALIDATION_TIMESTAMP}"
+
+          echo "🔍 Starting PostgreSQL restore validation: $VALIDATION_NAME"
+
+          # Create validation namespace
+          VALIDATION_NAMESPACE="aurum-backup-test-${VALIDATION_TIMESTAMP}"
+          kubectl create namespace $VALIDATION_NAMESPACE --dry-run=client -o yaml | kubectl apply -f -
+
+          # Deploy a temporary PostgreSQL instance for validation
+          cat << EOF | kubectl apply -f -
+          apiVersion: v1
+          kind: ConfigMap
+          metadata:
+            name: postgres-test-config
+            namespace: $VALIDATION_NAMESPACE
+          data:
+            postgresql.conf: |
+              listen_addresses = '*'
+              max_connections = 100
+              shared_buffers = 128MB
+              effective_cache_size = 1GB
+              maintenance_work_mem = 64MB
+              checkpoint_completion_target = 0.7
+              wal_buffers = 16MB
+              default_statistics_target = 100
+          EOF
+
+          cat << EOF | kubectl apply -f -
+          apiVersion: apps/v1
+          kind: Deployment
+          metadata:
+            name: postgres-test
+            namespace: $VALIDATION_NAMESPACE
+          spec:
+            replicas: 1
+            selector:
+              matchLabels:
+                app: postgres-test
+            template:
+              metadata:
+                labels:
+                  app: postgres-test
+              spec:
+                containers:
+                - name: postgres
+                  image: postgres:14
+                  ports:
+                  - containerPort: 5432
+                  env:
+                  - name: POSTGRES_DB
+                    value: aurum_test
+                  - name: POSTGRES_USER
+                    value: aurum
+                  - name: POSTGRES_PASSWORD
+                    valueFrom:
+                      secretKeyRef:
+                        name: postgres-secrets
+                        key: password
+                  volumeMounts:
+                  - name: postgres-storage
+                    mountPath: /var/lib/postgresql/data
+                  - name: config
+                    mountPath: /etc/postgresql
+                  readinessProbe:
+                    exec:
+                      command:
+                        - pg_isready
+                        - -U
+                        - aurum
+                        - -d
+                        - aurum_test
+                    initialDelaySeconds: 15
+                    periodSeconds: 5
+                volumes:
+                - name: postgres-storage
+                  emptyDir: {}
+                - name: config
+                  configMap:
+                    name: postgres-test-config
+          EOF
+
+          cat << EOF | kubectl apply -f -
+          apiVersion: v1
+          kind: Service
+          metadata:
+            name: postgres-test
+            namespace: $VALIDATION_NAMESPACE
+          spec:
+            selector:
+              app: postgres-test
+            ports:
+            - port: 5432
+              targetPort: 5432
+          EOF
+
+          # Wait for PostgreSQL to be ready
+          echo "⏳ Waiting for test PostgreSQL to be ready..."
+          kubectl wait --for=condition=available --timeout=300s deployment/postgres-test -n $VALIDATION_NAMESPACE
+
+          # Get latest backup from Minio
+          echo "📥 Downloading latest backup from Minio..."
+          LATEST_BACKUP=$(mc ls aurum-minio/aurum-backups/postgresql/ | sort -k6 | tail -1 | awk '{print $6}')
+          mc alias set aurum-minio http://minio.aurum-dev.svc.cluster.local:9000 aurum password
+          mc cp aurum-minio/aurum-backups/postgresql/$LATEST_BACKUP /tmp/backup.tar.gz
+
+          # Extract backup
+          echo "📦 Extracting backup..."
+          mkdir -p /tmp/backup-restore
+          cd /tmp/backup-restore
+          tar -xzf /tmp/backup.tar.gz
+
+          # Restore to test instance
+          echo "🔄 Restoring backup to test instance..."
+          pg_restore -h postgres-test.$VALIDATION_NAMESPACE.svc.cluster.local \
+                     -U aurum \
+                     -d aurum_test \
+                     -v \
+                     /tmp/backup-restore/*.dump
+
+          # Validate restore
+          echo "✅ Validating restored data..."
+
+          # Check if key tables exist and have data
+          VALIDATION_QUERIES=(
+            "SELECT COUNT(*) FROM information_schema.tables WHERE table_schema = 'public'"
+            "SELECT COUNT(*) FROM tenants"
+            "SELECT COUNT(*) FROM users"
+            "SELECT COUNT(*) FROM scenarios"
+          )
+
+          for query in "${VALIDATION_QUERIES[@]}"; do
+            echo "Running validation query: $query"
+            RESULT=$(psql -h postgres-test.$VALIDATION_NAMESPACE.svc.cluster.local \
+                         -U aurum \
+                         -d aurum_test \
+                         -t \
+                         -c "$query")
+
+            if [ "$RESULT" -gt 0 ]; then
+              echo "  ✅ Query passed: $RESULT rows found"
+            else
+              echo "  ❌ Query failed: No data found"
+              exit 1
+            fi
+          done
+
+          # Cleanup test resources
+          echo "🧹 Cleaning up test resources..."
+          kubectl delete namespace $VALIDATION_NAMESPACE --ignore-not-found=true
+
+          # Remove temporary files
+          rm -rf /tmp/backup-restore
+          rm -f /tmp/backup.tar.gz
+
+          echo "✅ PostgreSQL restore validation completed successfully"
+          echo "📊 Validation summary:"
+          echo "  Backup: $LATEST_BACKUP"
+          echo "  Test Namespace: $VALIDATION_NAMESPACE"
+          echo "  Status: PASSED"
+        env:
+        - name: PGPASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: postgres-secrets
+              key: password
+        volumeMounts:
+        - name: backup-storage
+          mountPath: /tmp
+      volumes:
+      - name: backup-storage
+        emptyDir: {}
+      restartPolicy: OnFailure
+  backoffLimit: 2
+---
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: postgres-restore-validation
+  namespace: aurum-dev
+spec:
+  schedule: "0 3 * * 1"  # Weekly on Monday at 3 AM
+  jobTemplate:
+    spec:
+      template:
+        spec:
+          containers:
+          - name: postgres-restore-validation-scheduled
+            image: postgres:14
+            command: ["/bin/bash", "-c"]
+            args:
+            - |
+              echo "Starting scheduled PostgreSQL restore validation..."
+              kubectl create job postgres-restore-validation-$(date +%s) --from=cronjob/postgres-restore-validation -n aurum-dev
+            volumeMounts: []
+          volumes: []
+          restartPolicy: OnFailure
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 5

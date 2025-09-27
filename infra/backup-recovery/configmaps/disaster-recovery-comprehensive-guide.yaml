@@ -1,0 +1,279 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: disaster-recovery-guide
+  namespace: aurum-dev
+data:
+  dr-guide.yaml: |
+    # Aurum Energy Trading Platform - Disaster Recovery Guide
+    # Version: 1.0
+    # Last Updated: 2025-01-21
+
+    global:
+      # RTO (Recovery Time Objective): 4 hours
+      # RPO (Recovery Point Objective): 1 hour
+      # Critical systems: API, Database, Message Queue
+      # Important systems: Workers, Analytics, Monitoring
+
+    phases:
+      - phase: Detection
+        description: "Identify and assess the disaster"
+        steps:
+          - name: "Monitor alerts"
+            action: "Check Prometheus alerts and Grafana dashboards"
+            tools: ["Prometheus", "Grafana", "AlertManager"]
+            duration: "5 minutes"
+          - name: "Assess impact"
+            action: "Determine affected components and data loss"
+            tools: ["kubectl", "logs", "metrics"]
+            duration: "15 minutes"
+          - name: "Notify team"
+            action: "Alert on-call engineers and stakeholders"
+            tools: ["Slack", "PagerDuty", "Email"]
+            duration: "5 minutes"
+
+      - phase: Assessment
+        description: "Evaluate recovery options and requirements"
+        steps:
+          - name: "Check backups"
+            action: "Verify backup integrity and availability"
+            command: "kubectl get jobs -l backup-type=postgres -n aurum-dev"
+            tools: ["kubectl", "Minio Console"]
+            duration: "10 minutes"
+          - name: "Review DR plan"
+            action: "Confirm recovery procedures and prerequisites"
+            tools: ["This guide", "Runbooks"]
+            duration: "5 minutes"
+
+      - phase: Infrastructure Recovery
+        description: "Restore core infrastructure components"
+        order: parallel
+        components:
+          - name: "PostgreSQL Database"
+            priority: critical
+            rto: "2 hours"
+            steps:
+              - name: "Deploy recovery instance"
+                command: "kubectl apply -f k8s/backup-recovery/postgres-recovery.yaml"
+                validation: "kubectl get pods -l app=postgres-recovery"
+              - name: "Restore from backup"
+                command: "kubectl create job postgres-restore --from=cronjob/postgres-restore"
+                validation: "kubectl logs job/postgres-restore"
+              - name: "Verify data integrity"
+                command: "kubectl exec postgres-recovery -- psql -c 'SELECT COUNT(*) FROM tenants'"
+
+          - name: "ClickHouse Analytics"
+            priority: important
+            rto: "3 hours"
+            steps:
+              - name: "Deploy recovery instance"
+                command: "kubectl apply -f k8s/backup-recovery/clickhouse-recovery.yaml"
+              - name: "Restore from backup"
+                command: "kubectl create job clickhouse-restore --from=cronjob/clickhouse-restore"
+              - name: "Verify data integrity"
+                command: "kubectl exec clickhouse-recovery -- clickhouse-client -q 'SELECT COUNT(*) FROM system.tables'"
+
+          - name: "TimescaleDB Metrics"
+            priority: important
+            rto: "3 hours"
+            steps:
+              - name: "Deploy recovery instance"
+                command: "kubectl apply -f k8s/backup-recovery/timescale-recovery.yaml"
+              - name: "Restore from backup"
+                command: "kubectl create job timescale-restore --from=cronjob/timescale-restore"
+              - name: "Verify data integrity"
+                command: "kubectl exec timescale-recovery -- psql -c 'SELECT COUNT(*) FROM prometheus.ts_prometheus'"
+
+      - phase: Application Recovery
+        description: "Restore application services"
+        order: sequential
+        components:
+          - name: "Kafka Message Queue"
+            priority: critical
+            rto: "1 hour"
+            steps:
+              - name: "Deploy Kafka cluster"
+                command: "kubectl apply -f k8s/base/kafka.yaml"
+                validation: "kubectl get pods -l app.kubernetes.io/name=kafka"
+              - name: "Restore topics and data"
+                command: "kubectl create job kafka-restore --from=cronjob/kafka-restore"
+                validation: "kubectl logs job/kafka-restore"
+
+          - name: "API Service"
+            priority: critical
+            rto: "30 minutes"
+            steps:
+              - name: "Deploy API service"
+                command: "helm upgrade aurum-api k8s/api/helm --values k8s/api/helm/values.yaml"
+                validation: "kubectl get pods -l app.kubernetes.io/name=aurum-api"
+              - name: "Verify health"
+                command: "curl http://aurum-api.aurum-dev.svc.cluster.local/health"
+                validation: "HTTP 200 response"
+
+          - name: "Worker Services"
+            priority: important
+            rto: "1 hour"
+            steps:
+              - name: "Deploy workers"
+                command: "helm upgrade aurum-worker k8s/scenario-worker/helm"
+                validation: "kubectl get pods -l app.kubernetes.io/name=aurum-worker"
+              - name: "Verify processing"
+                command: "kubectl logs -l app.kubernetes.io/name=aurum-worker --tail=10"
+
+      - phase: Data Validation
+        description: "Verify data integrity and consistency"
+        steps:
+          - name: "Validate critical data"
+            command: "kubectl exec postgres-recovery -- psql -c 'SELECT COUNT(*) FROM scenarios'"
+            validation: "Expected row count"
+          - name: "Check data consistency"
+            command: "python scripts/dr/validate_data_consistency.py"
+            validation: "No data integrity issues"
+          - name: "Verify business logic"
+            command: "python scripts/dr/test_business_logic.py"
+            validation: "All business rules pass"
+
+      - phase: Monitoring & Testing
+        description: "Monitor recovery and perform final tests"
+        steps:
+          - name: "Enable monitoring"
+            command: "kubectl apply -f k8s/base/prometheus-rules.yaml"
+            validation: "Prometheus targets up"
+          - name: "Run smoke tests"
+            command: "python scripts/dr/smoke_test.py"
+            validation: "All tests pass"
+          - name: "Monitor metrics"
+            action: "Observe Grafana dashboards for normal behavior"
+            duration: "30 minutes"
+
+    tools:
+      kubectl:
+        description: "Kubernetes CLI for managing resources"
+        commands:
+          - "kubectl get pods -A"
+          - "kubectl describe pod <pod-name>"
+          - "kubectl logs <pod-name>"
+
+      helm:
+        description: "Package manager for Kubernetes"
+        commands:
+          - "helm list -A"
+          - "helm status <release-name>"
+
+      minio-client:
+        description: "S3-compatible object storage client"
+        commands:
+          - "mc ls aurum-minio/aurum-backups/"
+          - "mc cp aurum-minio/aurum-backups/backup.tar.gz /tmp/"
+
+    contact:
+      primary: "oncall-platform@aurum.com"
+      secondary: "platform-team@aurum.com"
+      escalation: "engineering-leadership@aurum.com"
+
+    metrics:
+      - name: "Recovery Time"
+        description: "Time from disaster declaration to full recovery"
+        target: "< 4 hours"
+      - name: "Data Loss"
+        description: "Amount of data lost during recovery"
+        target: "< 1 hour"
+      - name: "System Availability"
+        description: "Percentage of systems successfully recovered"
+        target: "100%"
+
+  disaster-recovery-comprehensive-guide.md: |
+    # Aurum Platform - Comprehensive Disaster Recovery Guide
+
+    ## Overview
+    This guide provides step-by-step procedures for recovering the Aurum energy trading platform from various disaster scenarios.
+
+    ## Recovery Time Objectives (RTO)
+    - **Critical Systems**: 4 hours (API, Database, Message Queue)
+    - **Important Systems**: 8 hours (Workers, Analytics, Monitoring)
+
+    ## Recovery Point Objectives (RPO)
+    - **Critical Data**: 1 hour
+    - **Important Data**: 4 hours
+
+    ## Prerequisites
+    - Backup credentials available
+    - Kubernetes cluster access
+    - Network connectivity to storage systems
+    - Access to monitoring systems
+
+    ## Quick Recovery Commands
+
+    ### 1. Assess Current State
+    ```bash
+    # Check cluster status
+    kubectl cluster-info
+
+    # Check node status
+    kubectl get nodes
+
+    # Check pod status across all namespaces
+    kubectl get pods -A
+    ```
+
+    ### 2. Database Recovery
+    ```bash
+    # Deploy recovery PostgreSQL instance
+    kubectl apply -f k8s/backup-recovery/postgres-recovery.yaml
+
+    # Restore latest backup
+    kubectl create job postgres-restore-$(date +%s) --from=cronjob/postgres-restore
+    ```
+
+    ### 3. Application Recovery
+    ```bash
+    # Deploy API service
+    helm upgrade --install aurum-api k8s/api/helm --values k8s/api/helm/values.yaml
+
+    # Deploy worker services
+    helm upgrade --install aurum-worker k8s/scenario-worker/helm
+    ```
+
+    ### 4. Validation
+    ```bash
+    # Run data validation
+    python scripts/dr/validate_data_consistency.py
+
+    # Run smoke tests
+    python scripts/dr/smoke_test.py
+    ```
+
+    ## Monitoring Recovery
+
+    Check these dashboards during recovery:
+    - Grafana: https://grafana.aurum-dev.com/d/aurum-comprehensive-observability
+    - Prometheus: http://prometheus.aurum-dev.svc.cluster.local:9090
+    - AlertManager: http://alertmanager.aurum-dev.svc.cluster.local:9093
+
+    ## Contact Information
+
+    **Primary On-call**: oncall-platform@aurum.com
+    **Platform Team**: platform-team@aurum.com
+    **Emergency**: +1 (555) 123-4567
+
+    ## Post-Recovery Tasks
+
+    1. **Document the incident** in the incident management system
+    2. **Review recovery procedures** and update if necessary
+    3. **Test the recovery** with a subset of production data
+    4. **Update stakeholders** on the recovery status
+    5. **Schedule a post-mortem** within 1 week
+
+    ## Troubleshooting
+
+    ### Common Issues
+    - **Backup corruption**: Check backup integrity before restore
+    - **Network issues**: Verify connectivity to storage systems
+    - **Resource constraints**: Scale cluster if needed
+    - **Service dependencies**: Restore in correct order
+
+    ### Getting Help
+    1. Check this guide for specific procedures
+    2. Review runbooks in `docs/runbooks/`
+    3. Contact the platform team
+    4. Escalate to engineering leadership if needed
