@@ -871,3 +871,16 @@ def inject_test_dependencies(
     lifespan_manager = LifespanManager(settings)
     return TestDependencyInjector(lifespan_manager)
 
+
+__all__ = [
+    "LifespanManager",
+    "setup_lifespan",
+    "get_lifespan_manager",
+    "create_app_with_lifespan",
+    "TestDependencyInjector",
+    "inject_test_dependencies",
+    "LifecycleState",
+    "HealthStatus",
+    "DependencyScope",
+]
+
