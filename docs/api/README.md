@@ -133,7 +133,6 @@ python3 aurum/scripts/docs/generate_openapi.py
 # Outputs
 # - docs/api/openapi-spec.yaml
 # - docs/api/openapi-spec.json
-# - docs/api/aurum.yaml (compat with Redoc index if needed)
 ```
 
 ### Caching
