@@ -30,14 +30,9 @@ from ..models import (
     IsoLmpAggregateResponse,
     IsoLmpAggregatePoint,
 )
-from ..service import (
-    query_iso_lmp_last_24h,
-    query_iso_lmp_hourly,
-    query_iso_lmp_daily,
-    query_iso_lmp_negative,
-)
-from ..config import CacheConfig
-from ..state import get_settings
+from ..services.iso_service import IsoService
+# All ISO LMP functions now handled by IsoService
+# Remove unused imports since service handles state internally
 from ...telemetry.context import get_request_id
 
 
@@ -72,8 +67,13 @@ def _csv_etag_guard(
     return resp
 
 
+def _get_iso_service() -> IsoService:
+    """Get ISO service instance."""
+    return IsoService()
+
+
 @router.get("/v1/iso/lmp/last-24h", response_model=IsoLmpResponse)
-def iso_lmp_last_24h(
+async def iso_lmp_last_24h(
     request: Request,
     response: Response,
     iso_code: Optional[str] = Query(None),
@@ -82,13 +82,12 @@ def iso_lmp_last_24h(
     limit: int = Query(500, ge=1, le=1000),
     format: str = Query("json", pattern="^(json|csv)$"),
 ) -> IsoLmpResponse:
-    cache_cfg = CacheConfig.from_settings(get_settings())
-    rows, elapsed = query_iso_lmp_last_24h(
+    service = _get_iso_service()
+    rows, elapsed = await service.lmp_last_24h(
         iso_code=iso_code,
         market=market,
         location_id=location_id,
         limit=limit,
-        cache_cfg=cache_cfg,
     )
 
     if format.lower() == "csv":
@@ -128,7 +127,7 @@ def iso_lmp_last_24h(
 
 
 @router.get("/v1/iso/lmp/hourly", response_model=IsoLmpAggregateResponse)
-def iso_lmp_hourly(
+async def iso_lmp_hourly(
     request: Request,
     response: Response,
     iso_code: Optional[str] = Query(None),
@@ -141,15 +140,14 @@ def iso_lmp_hourly(
 ) -> IsoLmpAggregateResponse:
     if start and end and start > end:
         raise HTTPException(status_code=400, detail="start_after_end")
-    cache_cfg = CacheConfig.from_settings(get_settings())
-    rows, elapsed = query_iso_lmp_hourly(
+    
+    service = _get_iso_service()
+    rows, elapsed = await service.lmp_hourly(
         iso_code=iso_code,
         market=market,
         location_id=location_id,
-        start=start,
-        end=end,
+        date=start.date().isoformat() if start else None,
         limit=limit,
-        cache_cfg=cache_cfg,
     )
 
     if format.lower() == "csv":
@@ -180,7 +178,7 @@ def iso_lmp_hourly(
 
 
 @router.get("/v1/iso/lmp/daily", response_model=IsoLmpAggregateResponse)
-def iso_lmp_daily(
+async def iso_lmp_daily(
     request: Request,
     response: Response,
     iso_code: Optional[str] = Query(None),
@@ -193,15 +191,14 @@ def iso_lmp_daily(
 ) -> IsoLmpAggregateResponse:
     if start and end and start > end:
         raise HTTPException(status_code=400, detail="start_after_end")
-    cache_cfg = CacheConfig.from_settings(get_settings())
-    rows, elapsed = query_iso_lmp_daily(
+    
+    service = _get_iso_service()
+    rows, elapsed = await service.lmp_daily(
         iso_code=iso_code,
         market=market,
         location_id=location_id,
-        start=start,
-        end=end,
+        date=start.date().isoformat() if start else None,
         limit=limit,
-        cache_cfg=cache_cfg,
     )
 
     if format.lower() == "csv":
@@ -232,7 +229,7 @@ def iso_lmp_daily(
 
 
 @router.get("/v1/iso/lmp/negative", response_model=IsoLmpResponse)
-def iso_lmp_negative(
+async def iso_lmp_negative(
     request: Request,
     response: Response,
     iso_code: Optional[str] = Query(None),
@@ -240,12 +237,11 @@ def iso_lmp_negative(
     limit: int = Query(200, ge=1, le=1000),
     format: str = Query("json", pattern="^(json|csv)$"),
 ) -> IsoLmpResponse:
-    cache_cfg = CacheConfig.from_settings(get_settings())
-    rows, elapsed = query_iso_lmp_negative(
+    service = _get_iso_service()
+    rows, elapsed = await service.lmp_negative(
         iso_code=iso_code,
         market=market,
         limit=limit,
-        cache_cfg=cache_cfg,
     )
 
     if format.lower() == "csv":

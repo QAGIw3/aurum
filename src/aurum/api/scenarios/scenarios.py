@@ -67,7 +67,7 @@ def _get_async_scenario_service():
                 return [], []
         return AsyncScenarioService
 from .routes import _resolve_tenant, _resolve_tenant_optional
-from .http import (
+from ..http import (
     decode_cursor,
     encode_cursor,
     normalize_cursor_input,
@@ -126,7 +126,7 @@ async def list_scenarios(
         cursor_token = cursor or since_cursor
         if cursor_token:
             payload = decode_cursor(cursor_token)
-            effective_offset, _cursor_after = normalize_cursor_input(payload)
+            effective_offset, _cursor_after = normalize_cursor_input(payload.values)
         elif offset is not None:
             # Log deprecation warning for offset usage
             log_structured(
@@ -413,7 +413,7 @@ async def list_scenario_runs(
         cursor_token = cursor or since_cursor
         if cursor_token:
             payload = decode_cursor(cursor_token)
-            effective_offset, _cursor_after = normalize_cursor_input(payload)
+            effective_offset, _cursor_after = normalize_cursor_input(payload.values)
         elif offset is not None:
             # Log deprecation warning for offset usage
             log_structured(
@@ -853,7 +853,7 @@ async def get_scenario_outputs(
         cursor_token = cursor or since_cursor
         if cursor_token:
             payload = decode_cursor(cursor_token)
-            effective_offset, _cursor_after = normalize_cursor_input(payload)
+            effective_offset, _cursor_after = normalize_cursor_input(payload.values)
 
         service = _get_async_scenario_service()()
         outputs, total, meta = await service.get_scenario_outputs(

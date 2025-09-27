@@ -16,7 +16,7 @@ from typing import Any, Dict, List, Optional
 
 from fastapi import APIRouter, HTTPException, Query, Request, Response
 
-from ..http.pagination import encode_cursor, decode_cursor
+from ..http import encode_cursor, decode_cursor, respond_with_etag
 from ..models import (
     Meta,
     PpaContractCreate,
@@ -31,7 +31,6 @@ from ..models import (
     PpaMetric,
 )
 from ..services.ppa_service import PpaService
-from ..http.responses import respond_with_etag
 from ...telemetry.context import get_request_id
 from ..scenarios.scenario_service import STORE as ScenarioStore
 

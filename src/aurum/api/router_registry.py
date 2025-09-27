@@ -69,6 +69,7 @@ def _build_specs(module_paths: Iterable[str], *, seen: set[str] | None = None) -
     tracked = seen if seen is not None else set()
     for path in module_paths:
         if path in tracked:
+            logger.debug("Skipping duplicate router module: %s", path)
             continue
         router = _try_import_router(path)
         if router is not None:
@@ -124,6 +125,13 @@ def get_v1_router_specs(_settings: AurumSettings) -> list[RouterSpec]:
         "AURUM_API_V1_SPLIT_DROUGHT": "aurum.api.v1.drought",
         "AURUM_API_V1_SPLIT_ADMIN": "aurum.api.v1.admin",
     }
+
+    # Handle deprecated AURUM_API_V1_SPLIT_PPA flag gracefully 
+    # PPA is now mandatory and should not be added again if flag is set
+    if os.getenv("AURUM_API_V1_SPLIT_PPA", "0") == "1":
+        logger.warning(
+            "AURUM_API_V1_SPLIT_PPA flag is deprecated - PPA router is now enabled by default"
+        )
 
     for env_var, module_path in optional_modules.items():
         if os.getenv(env_var, "0") == "1":

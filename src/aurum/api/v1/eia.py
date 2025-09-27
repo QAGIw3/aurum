@@ -19,7 +19,7 @@ from typing import Any, AsyncIterator, Dict, Iterable, List, Mapping, Optional
 from fastapi import APIRouter, HTTPException, Query, Request, Response
 from fastapi.responses import StreamingResponse
 
-from ..http.responses import respond_with_etag, csv_response
+from ..http import respond_with_etag, csv_response
 from ..models import (
     Meta,
     EiaDatasetBriefOut,
@@ -31,12 +31,9 @@ from ..models import (
     EiaSeriesDimensionsData,
     EiaSeriesDimensionsResponse,
 )
-from ..service import (
-    query_eia_series,
-    query_eia_series_dimensions,
-)
-from ..config import TrinoConfig, CacheConfig
-from ..state import get_settings
+from ..services.eia_service import EiaService
+# Remove unused imports since service handles config internally
+# Remove unused imports since service handles state internally
 from ...reference import eia_catalog as ref_eia
 from ...telemetry.context import get_request_id
 
@@ -114,8 +111,13 @@ def get_eia_dataset(
     return respond_with_etag(model, request, response)
 
 
+def _get_eia_service() -> EiaService:
+    """Get EIA service instance."""
+    return EiaService()
+
+
 @router.get("/v1/ref/eia/series", response_model=EiaSeriesResponse)
-def list_eia_series(
+async def list_eia_series(
     request: Request,
     response: Response,
     series_id: Optional[str] = Query(None, description="Exact series identifier"),
@@ -149,30 +151,33 @@ def list_eia_series(
     except Exception:
         raise HTTPException(status_code=400, detail="Invalid timestamp format for start/end")
 
-    settings = get_settings()
-    trino_cfg = TrinoConfig.from_settings(settings)
-    cache_cfg = CacheConfig.from_settings(settings)
-
-    rows, elapsed_ms = query_eia_series(
-        trino_cfg=trino_cfg,
-        cache_cfg=cache_cfg,
-        series_id=series_id,
-        frequency=frequency,
-        area=area,
-        sector=sector,
-        dataset=dataset,
-        unit=unit,
-        canonical_unit=canonical_unit,
-        canonical_currency=canonical_currency,
-        source=source,
-        start=start_ts,
-        end=end_ts,
-        limit=limit,
+    service = _get_eia_service()
+    
+    # Prepare filters for the service
+    filters = {
+        "series_id": series_id,
+        "frequency": frequency,
+        "area": area,
+        "sector": sector,
+        "dataset": dataset,
+        "unit": unit,
+        "canonical_unit": canonical_unit,
+        "canonical_currency": canonical_currency,
+        "source": source,
+        "start_date": start_ts.isoformat() if start_ts else None,
+        "end_date": end_ts.isoformat() if end_ts else None,
+    }
+    
+    # Remove None values
+    filters = {k: v for k, v in filters.items() if v is not None}
+    
+    rows = await service.query_data(
         offset=offset,
-        cursor_after=None,
-        cursor_before=None,
-        descending=False,
+        limit=limit,
+        filters=filters
     )
+    
+    elapsed_ms = (time.perf_counter() - start_time) * 1000
 
     if (format or "").lower() == "csv":
         # Stream CSV with a standard field order
@@ -219,7 +224,7 @@ def list_eia_series(
 
 
 @router.get("/v1/ref/eia/series/dimensions", response_model=EiaSeriesDimensionsResponse)
-def list_eia_series_dimensions(
+async def list_eia_series_dimensions(
     request: Request,
     response: Response,
     series_id: Optional[str] = Query(None),
@@ -233,23 +238,29 @@ def list_eia_series_dimensions(
     source: Optional[str] = Query(None),
 ) -> EiaSeriesDimensionsResponse:
     request_id = get_request_id() or "unknown"
-    settings = get_settings()
-    trino_cfg = TrinoConfig.from_settings(settings)
-    cache_cfg = CacheConfig.from_settings(settings)
+    start_time = time.perf_counter()
+    
+    service = _get_eia_service()
+    
+    # Prepare filters for the service
+    filters = {
+        "series_id": series_id,
+        "frequency": frequency,
+        "area": area,
+        "sector": sector,
+        "dataset": dataset,
+        "unit": unit,
+        "canonical_unit": canonical_unit,
+        "canonical_currency": canonical_currency,
+        "source": source,
+    }
+    
+    # Remove None values
+    filters = {k: v for k, v in filters.items() if v is not None}
+    
     try:
-        values, elapsed_ms = query_eia_series_dimensions(
-            trino_cfg=trino_cfg,
-            cache_cfg=cache_cfg,
-            series_id=series_id,
-            frequency=frequency,
-            area=area,
-            sector=sector,
-            dataset=dataset,
-            unit=unit,
-            canonical_unit=canonical_unit,
-            canonical_currency=canonical_currency,
-            source=source,
-        )
+        values = await service.get_dimensions(filters=filters)
+        elapsed_ms = (time.perf_counter() - start_time) * 1000
     except RuntimeError as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
 
