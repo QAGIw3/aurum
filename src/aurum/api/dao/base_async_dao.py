@@ -5,6 +5,7 @@ from __future__ import annotations
 import logging
 from abc import ABC, abstractmethod
 from typing import Any, Dict, List, Optional, Tuple
+from types import TracebackType
 
 from aurum.core import AurumSettings
 from aurum.data import DataBackend, get_backend, ConnectionConfig, PoolConfig
@@ -23,6 +24,19 @@ class BaseAsyncDao(ABC):
         self._settings = settings or get_settings()
         self._backend_adapter = BackendAdapter(self._settings)
         self._backend: Optional[DataBackend] = None
+    
+    async def __aenter__(self):
+        """Async context manager entry."""
+        return self
+    
+    async def __aexit__(
+        self, 
+        exc_type: Optional[type], 
+        exc_val: Optional[BaseException], 
+        exc_tb: Optional[TracebackType]
+    ) -> None:
+        """Async context manager exit with automatic cleanup."""
+        await self.close()
     
     async def _get_backend(self) -> DataBackend:
         """Get or create the database backend with connection pooling."""

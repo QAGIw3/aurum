@@ -125,6 +125,33 @@ class TestBaseAsyncDao:
         mock_backend.execute_query.assert_called_once_with(expected_query, None)
 
 
+    @pytest.mark.asyncio
+    async def test_context_manager(self, mock_settings, mock_backend, mock_backend_adapter):
+        """Test async context manager functionality."""
+        query_result = QueryResult(
+            columns=["id", "name"],
+            rows=[(1, "test")],
+            metadata={}
+        )
+        mock_backend.execute_query.return_value = query_result
+        mock_backend_adapter.get_backend.return_value = mock_backend
+        
+        class TestDao(BaseAsyncDao):
+            @property
+            def dao_name(self) -> str:
+                return "test"
+        
+        # Test context manager
+        async with TestDao(mock_settings) as dao:
+            dao._backend_adapter = mock_backend_adapter
+            result = await dao.execute_query("SELECT * FROM test")
+            assert len(result) == 1
+            assert result[0]["name"] == "test"
+        
+        # Verify close was called
+        mock_backend_adapter.close.assert_called_once()
+
+
 class TestTrinoAsyncDao:
     """Test TrinoAsyncDao implementation."""
     
