@@ -185,6 +185,7 @@ def get_v2_router_specs(_settings: AurumSettings) -> list[RouterSpec]:
         "aurum.api.v2.ppa",
         "aurum.api.v2.drought",
         "aurum.api.v2.admin",
+        "aurum.api.v2.forecasting",
     )
     return _build_specs(module_paths)
 

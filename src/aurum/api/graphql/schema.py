@@ -15,6 +15,13 @@ from strawberry.types import Info
 
 from ...scenarios.models import DriverType
 from ...telemetry.context import log_structured
+from ...api.v2.forecasting import (
+    ForecastType,
+    QuantileLevel,
+    ForecastInterval,
+    ForecastPoint,
+    ForecastResponse
+)
 
 
 # GraphQL Types
@@ -93,6 +100,53 @@ class RunScenarioInput:
     simulation_type: str = "monte_carlo"
     num_iterations: int = 1000
     parallel_execution: bool = True
+
+
+# Forecasting GraphQL Types
+@strawberry.type
+class ForecastPointType:
+    """GraphQL type for forecast data points."""
+    timestamp: datetime
+    values: strawberry.scalars.JSON
+    confidence_interval: Optional[strawberry.scalars.JSON] = None
+    metadata: strawberry.scalars.JSON
+
+
+@strawberry.type
+class ForecastType:
+    """GraphQL type for forecast responses."""
+    forecast_id: str
+    request_id: str
+    forecast_type: str
+    target_variable: str
+    geography: str
+    model_version: str
+    forecast_points: List[ForecastPointType]
+    generated_at: datetime
+    valid_from: datetime
+    valid_until: datetime
+    metadata: strawberry.scalars.JSON
+
+
+@strawberry.input
+class ForecastInput:
+    """GraphQL input for forecast generation."""
+    forecast_type: str
+    target_variable: str
+    geography: str = "US"
+    start_date: datetime
+    end_date: datetime
+    quantiles: List[str] = strawberry.field(default_factory=lambda: ["p10", "p50", "p90"])
+    interval: str = "1H"
+    model_version: Optional[str] = None
+    scenario_id: Optional[str] = None
+
+
+@strawberry.input
+class BatchForecastInput:
+    """GraphQL input for batch forecast operations."""
+    forecasts: List[ForecastInput]
+    batch_id: Optional[str] = None
 
 
 @strawberry.input
@@ -204,6 +258,92 @@ class Query:
             metadata={"mock": True}
         )
 
+    @strawberry.field
+    async def probabilistic_forecast(
+        self,
+        input: ForecastInput
+    ) -> ForecastType:
+        """Generate probabilistic forecast with quantiles."""
+        await log_structured(
+            "graphql_probabilistic_forecast",
+            forecast_type=input.forecast_type,
+            target_variable=input.target_variable,
+            quantiles=input.quantiles
+        )
+
+        # This would integrate with the new forecasting service
+        forecast_id = f"forecast_{datetime.utcnow().timestamp()}"
+
+        # Mock forecast points
+        forecast_points = []
+        current_time = input.start_date
+        while current_time <= input.end_date:
+            values = {
+                "p10": 100.0 + current_time.hour * 0.1,
+                "p50": 120.0 + current_time.hour * 0.2,
+                "p90": 150.0 + current_time.hour * 0.3,
+            }
+
+            point = ForecastPointType(
+                timestamp=current_time,
+                values=values,
+                confidence_interval={"lower": values["p10"], "upper": values["p90"]},
+                metadata={"hour": current_time.hour}
+            )
+            forecast_points.append(point)
+
+            current_time += timedelta(hours=1)
+
+        return ForecastType(
+            forecast_id=forecast_id,
+            request_id=f"req_{datetime.utcnow().timestamp()}",
+            forecast_type=input.forecast_type,
+            target_variable=input.target_variable,
+            geography=input.geography,
+            model_version=input.model_version or "v1.0",
+            forecast_points=forecast_points,
+            generated_at=datetime.utcnow(),
+            valid_from=input.start_date,
+            valid_until=input.end_date,
+            metadata={"quantiles": input.quantiles, "interval": input.interval}
+        )
+
+    @strawberry.field
+    async def forecast_history(
+        self,
+        forecast_type: str,
+        target_variable: str,
+        geography: str = "US",
+        limit: int = 100
+    ) -> List[ForecastType]:
+        """Get historical forecasts."""
+        await log_structured(
+            "graphql_forecast_history",
+            forecast_type=forecast_type,
+            target_variable=target_variable,
+            limit=limit
+        )
+
+        # Mock historical forecasts
+        forecasts = []
+        for i in range(min(5, limit)):
+            forecast = ForecastType(
+                forecast_id=f"historical_forecast_{i}",
+                request_id=f"req_{i}",
+                forecast_type=forecast_type,
+                target_variable=target_variable,
+                geography=geography,
+                model_version="v1.0",
+                forecast_points=[],
+                generated_at=datetime.utcnow() - timedelta(days=i),
+                valid_from=datetime.utcnow() - timedelta(days=i+1),
+                valid_until=datetime.utcnow() - timedelta(days=i),
+                metadata={"historical": True}
+            )
+            forecasts.append(forecast)
+
+        return forecasts
+
 
 # Mutation resolvers
 @strawberry.type
@@ -267,7 +407,7 @@ class Mutation:
             operation_type=input.operation_type,
             scenario_count=len(input.scenario_ids)
         )
-        
+
         # Mock batch processing
         results = []
         for scenario_id in input.scenario_ids:
@@ -277,8 +417,41 @@ class Mutation:
                 results.append(f"validation_{scenario_id}")
             else:
                 results.append(f"operation_{scenario_id}")
-        
+
         return results
+
+    @strawberry.field
+    async def batch_forecast(self, input: BatchForecastInput) -> List[ForecastType]:
+        """Generate multiple forecasts in batch."""
+        await log_structured(
+            "graphql_batch_forecast",
+            forecast_count=len(input.forecasts),
+            batch_id=input.batch_id
+        )
+
+        # Mock batch forecasting
+        forecasts = []
+        for forecast_input in input.forecasts:
+            forecast = ForecastType(
+                forecast_id=f"batch_forecast_{len(forecasts)}",
+                request_id=f"req_{len(forecasts)}",
+                forecast_type=forecast_input.forecast_type,
+                target_variable=forecast_input.target_variable,
+                geography=forecast_input.geography,
+                model_version=forecast_input.model_version or "v1.0",
+                forecast_points=[],
+                generated_at=datetime.utcnow(),
+                valid_from=forecast_input.start_date,
+                valid_until=forecast_input.end_date,
+                metadata={
+                    "batch_id": input.batch_id,
+                    "quantiles": forecast_input.quantiles,
+                    "interval": forecast_input.interval
+                }
+            )
+            forecasts.append(forecast)
+
+        return forecasts
     
     @strawberry.field
     async def delete_scenario(self, id: str) -> bool:

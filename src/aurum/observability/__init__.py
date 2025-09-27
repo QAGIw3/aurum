@@ -7,6 +7,13 @@ hard failures during import.
 
 __all__ = []
 
+# Primary telemetry facade (recommended)
+try:
+    from . import telemetry_facade  # type: ignore
+    __all__.append("telemetry_facade")
+except Exception:  # pragma: no cover - optional at import time
+    telemetry_facade = None  # type: ignore
+
 try:
     from . import metrics  # type: ignore
     __all__.append("metrics")

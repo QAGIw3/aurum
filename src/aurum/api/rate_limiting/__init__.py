@@ -1,6 +1,28 @@
-"""Rate limiting functionality for the Aurum API."""
+"""Rate limiting functionality for the Aurum API - Consolidated policy engine."""
 
-from .sliding_window import RateLimitConfig, RateLimitMiddleware, ratelimit_admin_router
+# Primary consolidated interface (recommended)
+from .consolidated_policy_engine import (
+    ConsolidatedRateLimiter,
+    RateLimitingMiddleware,
+    RateLimitRule,
+    RateLimitResult,
+    RateLimitStats,
+    RateLimitAlgorithm,
+    RateLimitAlgorithmType,
+    RateLimitScope,
+    TokenBucketAlgorithm,
+    SlidingWindowAlgorithm,
+    FixedWindowAlgorithm,
+    AdaptiveAlgorithm,
+    get_unified_rate_limiter,
+    create_rate_limiting_middleware
+)
+
+# Admin management interface
+from .admin_router import router as rate_limiting_admin_router
+
+# Legacy interfaces (backward compatibility)
+from .sliding_window import RateLimitConfig, RateLimitMiddleware as LegacyRateLimitMiddleware, ratelimit_admin_router as legacy_admin_router
 from . import exceptions
 from .rate_limit_management import router as rate_limit_management_router
 from .rate_limiting import (
@@ -12,21 +34,41 @@ from .rate_limiting import (
     RedisRateLimitStorage,
     QuotaTier,
     Quota,
-    RateLimitRule,
-    RateLimitAlgorithm,
+    RateLimitRule as LegacyRateLimitRule,
+    RateLimitAlgorithm as LegacyRateLimitAlgorithm,
     RateLimitState,
-    RateLimitResult,
+    RateLimitResult as LegacyRateLimitResult,
 )
 from .quota_manager import APIQuotaExceeded, TenantQuotaManager
 from .concurrency_middleware import ConcurrencyMiddleware, local_diagnostics_router
 from .redis_concurrency import diagnostics_router
 
 __all__ = [
-    # Core Rate Limiting
+    # Primary consolidated interface (recommended)
+    "ConsolidatedRateLimiter",
+    "RateLimitingMiddleware",
+    "RateLimitRule",
+    "RateLimitResult",
+    "RateLimitStats",
+    "RateLimitAlgorithm",
+    "RateLimitAlgorithmType",
+    "RateLimitScope",
+    "TokenBucketAlgorithm",
+    "SlidingWindowAlgorithm",
+    "FixedWindowAlgorithm",
+    "AdaptiveAlgorithm",
+    "get_unified_rate_limiter",
+    "create_rate_limiting_middleware",
+
+    # Admin interface
+    "rate_limiting_admin_router",
+
+    # Legacy interfaces (backward compatibility)
     "RateLimitConfig",
-    "RateLimitMiddleware",
-    "ratelimit_admin_router",
-    # Enhanced Rate Limiting
+    "LegacyRateLimitMiddleware",
+    "legacy_admin_router",
+    "exceptions",
+    "rate_limit_management_router",
     "create_rate_limit_manager",
     "EnhancedRateLimitMiddleware",
     "RateLimitManager",
@@ -35,16 +77,12 @@ __all__ = [
     "RedisRateLimitStorage",
     "QuotaTier",
     "Quota",
-    "RateLimitRule",
-    "RateLimitAlgorithm",
+    "LegacyRateLimitRule",
+    "LegacyRateLimitAlgorithm",
     "RateLimitState",
-    "RateLimitResult",
-    # Management
-    "rate_limit_management_router",
-    # Quota Management
+    "LegacyRateLimitResult",
     "APIQuotaExceeded",
     "TenantQuotaManager",
-    # Concurrency
     "ConcurrencyMiddleware",
     "diagnostics_router",
     "local_diagnostics_router",
