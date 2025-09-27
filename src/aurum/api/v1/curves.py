@@ -33,7 +33,7 @@ from ..config import CacheConfig
 from ..state import get_settings
 from ..models import CurveDiffPoint, CurveDiffResponse, CurvePoint, CurveResponse, Meta
 from ..query import ORDER_COLUMNS as CURVE_ORDER_COLUMNS, DIFF_ORDER_COLUMNS as CURVE_DIFF_ORDER_COLUMNS
-from ..service import query_curves, query_curves_diff
+from ..services.curves_service import CurvesService
 from ..routes import (
     CURVE_CACHE_TTL,
     CURVE_DIFF_CACHE_TTL,
