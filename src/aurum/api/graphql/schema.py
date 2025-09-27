@@ -512,6 +512,47 @@ class Subscription:
             
             yield market_update
 
+    @strawberry.subscription
+    async def cache_invalidations(self) -> AsyncGenerator[strawberry.scalars.JSON, None]:
+        """Subscribe to cache invalidation events."""
+        await log_structured("graphql_cache_invalidation_subscription")
+
+        # Mock cache invalidation stream
+        invalidation_events = [
+            {"type": "scenario_cache", "keys": ["scenario:123", "scenario:456"], "timestamp": datetime.utcnow().isoformat()},
+            {"type": "feature_cache", "keys": ["features:load", "features:price"], "timestamp": datetime.utcnow().isoformat()},
+            {"type": "metadata_cache", "keys": ["metadata:dimensions"], "timestamp": datetime.utcnow().isoformat()},
+        ]
+
+        for event in invalidation_events:
+            await asyncio.sleep(3)  # Simulate real-time invalidations
+            yield event
+
+    @strawberry.subscription
+    async def signal_stream(self, signal_types: List[str]) -> AsyncGenerator[strawberry.scalars.JSON, None]:
+        """Subscribe to real-time signal streams."""
+        await log_structured("graphql_signal_stream_subscription", signal_types=signal_types)
+
+        # Mock signal stream
+        import random
+
+        while True:
+            await asyncio.sleep(5)  # Update every 5 seconds
+
+            signal = {
+                "timestamp": datetime.utcnow().isoformat(),
+                "type": random.choice(signal_types) if signal_types else "anomaly",
+                "severity": random.choice(["low", "medium", "high", "critical"]),
+                "message": f"Signal detected at {datetime.utcnow().isoformat()}",
+                "metadata": {
+                    "source": "realtime_detection",
+                    "confidence": round(random.uniform(0.5, 0.95), 2),
+                    "affected_assets": random.sample(["load", "price", "renewable"], k=random.randint(1, 3))
+                }
+            }
+
+            yield signal
+
 
 # Schema definition
 schema = strawberry.Schema(

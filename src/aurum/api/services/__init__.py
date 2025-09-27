@@ -31,7 +31,10 @@ from .feature_store_service import (
     CrossAssetFeature,
     get_feature_store_service,
     get_features_for_scenario,
-    get_training_features
+    get_training_features,
+    create_time_window_features,
+    create_lag_features,
+    create_seasonal_features
 )
 from .auto_reforecast_service import (
     AutoReforecastService,
@@ -94,6 +97,9 @@ __all__ = [
     "get_feature_store_service",
     "get_features_for_scenario",
     "get_training_features",
+    "create_time_window_features",
+    "create_lag_features",
+    "create_seasonal_features",
     # Auto-reforecast components
     "AutoReforecastService",
     "ForecastTrigger",

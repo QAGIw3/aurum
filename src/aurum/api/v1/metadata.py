@@ -18,7 +18,7 @@ from typing import List, Optional
 
 from fastapi import APIRouter, HTTPException, Query, Request, Response
 
-from ..telemetry.context import get_request_id
+from ...observability.telemetry_facade import get_telemetry_facade
 from ..services import MetadataService
 from ..deps import get_settings
 from aurum.core import AurumSettings
@@ -49,21 +49,29 @@ async def get_dimensions_v1(
 
         query_time_ms = (time.perf_counter() - start_time) * 1000
 
+        # Use telemetry facade for structured response
+        telemetry = get_telemetry_facade()
+        meta = telemetry.create_response_metadata(
+            operation="get_dimensions",
+            query_time_ms=query_time_ms,
+            record_count=len(dimensions),
+            pagination={"offset": offset, "limit": limit}
+        )
+
         return {
-            "meta": {
-                "request_id": get_request_id(),
-                "query_time_ms": round(query_time_ms, 2),
-                "count": len(dimensions),
-                "total": len(dimensions),
-                "offset": offset,
-                "limit": limit,
-            },
+            "meta": meta,
             "data": dimensions,
             "counts": counts if include_counts else None,
         }
 
     except Exception as exc:
         query_time_ms = (time.perf_counter() - start_time) * 1000
+        telemetry = get_telemetry_facade()
+        telemetry.record_error(
+            operation="get_dimensions",
+            error=exc,
+            query_time_ms=query_time_ms
+        )
         raise HTTPException(
             status_code=500,
             detail=f"Failed to get dimensions: {str(exc)}"
@@ -91,20 +99,28 @@ async def get_locations_v1(
 
         query_time_ms = (time.perf_counter() - start_time) * 1000
 
+        # Use telemetry facade for structured response
+        telemetry = get_telemetry_facade()
+        meta = telemetry.create_response_metadata(
+            operation="get_locations",
+            query_time_ms=query_time_ms,
+            record_count=len(locations),
+            pagination={"offset": offset, "limit": limit}
+        )
+
         return {
-            "meta": {
-                "request_id": get_request_id(),
-                "query_time_ms": round(query_time_ms, 2),
-                "count": len(locations),
-                "total": len(locations),
-                "offset": offset,
-                "limit": limit,
-            },
+            "meta": meta,
             "data": locations,
         }
 
     except Exception as exc:
         query_time_ms = (time.perf_counter() - start_time) * 1000
+        telemetry = get_telemetry_facade()
+        telemetry.record_error(
+            operation="get_locations",
+            error=exc,
+            query_time_ms=query_time_ms
+        )
         raise HTTPException(
             status_code=500,
             detail=f"Failed to get locations: {str(exc)}"
@@ -127,20 +143,28 @@ async def get_units_v1(
 
         query_time_ms = (time.perf_counter() - start_time) * 1000
 
+        # Use telemetry facade for structured response
+        telemetry = get_telemetry_facade()
+        meta = telemetry.create_response_metadata(
+            operation="get_units",
+            query_time_ms=query_time_ms,
+            record_count=len(units),
+            pagination={"offset": offset, "limit": limit}
+        )
+
         return {
-            "meta": {
-                "request_id": get_request_id(),
-                "query_time_ms": round(query_time_ms, 2),
-                "count": len(units),
-                "total": len(units),
-                "offset": offset,
-                "limit": limit,
-            },
+            "meta": meta,
             "data": units,
         }
 
     except Exception as exc:
         query_time_ms = (time.perf_counter() - start_time) * 1000
+        telemetry = get_telemetry_facade()
+        telemetry.record_error(
+            operation="get_units",
+            error=exc,
+            query_time_ms=query_time_ms
+        )
         raise HTTPException(
             status_code=500,
             detail=f"Failed to get units: {str(exc)}"
@@ -163,20 +187,28 @@ async def get_calendars_v1(
 
         query_time_ms = (time.perf_counter() - start_time) * 1000
 
+        # Use telemetry facade for structured response
+        telemetry = get_telemetry_facade()
+        meta = telemetry.create_response_metadata(
+            operation="get_calendars",
+            query_time_ms=query_time_ms,
+            record_count=len(calendars),
+            pagination={"offset": offset, "limit": limit}
+        )
+
         return {
-            "meta": {
-                "request_id": get_request_id(),
-                "query_time_ms": round(query_time_ms, 2),
-                "count": len(calendars),
-                "total": len(calendars),
-                "offset": offset,
-                "limit": limit,
-            },
+            "meta": meta,
             "data": calendars,
         }
 
     except Exception as exc:
         query_time_ms = (time.perf_counter() - start_time) * 1000
+        telemetry = get_telemetry_facade()
+        telemetry.record_error(
+            operation="get_calendars",
+            error=exc,
+            query_time_ms=query_time_ms
+        )
         raise HTTPException(
             status_code=500,
             detail=f"Failed to get calendars: {str(exc)}"

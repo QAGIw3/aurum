@@ -16,6 +16,7 @@ from datetime import datetime, timedelta
 from typing import Any, Dict, List, Optional, Tuple, Union
 from uuid import uuid4
 
+import pandas as pd
 from pydantic import BaseModel, Field
 
 from ..telemetry.context import get_request_id, log_structured
@@ -74,7 +75,76 @@ class FeatureStoreDAO(TrinoDAO):
 
     async def _disconnect(self) -> None:
         """Disconnect from Trino."""
-        pass
+        await super()._disconnect()
+
+    async def get_feature_history(
+        self,
+        feature_name: str,
+        start_date: datetime,
+        end_date: datetime,
+        geography: str = "US"
+    ) -> List[Dict[str, Any]]:
+        """Get historical feature data."""
+        query = f"""
+        SELECT timestamp, value
+        FROM {self.table_name}
+        WHERE feature_name = ?
+          AND geography = ?
+          AND timestamp BETWEEN ? AND ?
+        ORDER BY timestamp
+        """
+
+        parameters = {
+            "feature_name": feature_name,
+            "geography": geography,
+            "start_date": start_date,
+            "end_date": end_date
+        }
+
+        return await self._execute_trino_query(query, parameters)
+
+    async def save_feature_set(
+        self,
+        feature_set_id: str,
+        features: Dict[str, Any],
+        metadata: Dict[str, Any]
+    ) -> bool:
+        """Save a complete feature set with metadata."""
+        try:
+            # Flatten features for storage
+            feature_records = []
+            for feature_name, feature_values in features.items():
+                if isinstance(feature_values, (list, pd.Series)):
+                    if isinstance(feature_values, list):
+                        values = feature_values
+                    else:
+                        values = feature_values.tolist()
+
+                    for i, value in enumerate(values):
+                        if i < len(metadata.get("timestamps", [])):
+                            timestamp = metadata["timestamps"][i]
+                            feature_records.append({
+                                "feature_set_id": feature_set_id,
+                                "feature_name": feature_name,
+                                "timestamp": timestamp,
+                                "value": value,
+                                "geography": metadata.get("geography", "US")
+                            })
+
+            # Insert feature records (simplified implementation)
+            for record in feature_records:
+                query = """
+                INSERT INTO market_data.features
+                (feature_set_id, feature_name, timestamp, value, geography)
+                VALUES (?, ?, ?, ?, ?)
+                """
+                await self._execute_trino_query(query, record)
+
+            return True
+        except Exception as e:
+            log_structured("error", "feature_set_save_failed",
+                         feature_set_id=feature_set_id, error=str(e))
+            return False
 
     async def _execute_trino_query(
         self,
@@ -82,8 +152,13 @@ class FeatureStoreDAO(TrinoDAO):
         parameters: Dict[str, Any]
     ) -> List[Dict[str, Any]]:
         """Execute Trino query for features."""
-        # Mock implementation
-        return []
+        try:
+            return await super()._execute_trino_query(query, parameters)
+        except Exception as e:
+            log_structured("error", "feature_store_query_failed",
+                         query=query[:100], error=str(e))
+            return []
+
 
     async def save_features(
         self,
@@ -661,6 +736,156 @@ class FeatureStoreService:
             features["price_elasticity_index"] = features["load_price_correlation_24h"]
 
         return features
+
+    async def create_time_window_features(
+        self,
+        base_features: Dict[str, Any],
+        window_sizes: List[int],
+        aggregation_methods: List[str] = ["mean", "std", "min", "max"]
+    ) -> Dict[str, Any]:
+        """Create time-window aggregation features.
+
+        Args:
+            base_features: Dictionary of base feature data with timestamps
+            window_sizes: List of window sizes in periods (e.g., [1, 7, 30] for 1-day, 1-week, 1-month)
+            aggregation_methods: List of aggregation methods to apply
+
+        Returns:
+            Dictionary with time-window aggregated features
+        """
+        time_window_features = {}
+
+        for feature_name, feature_data in base_features.items():
+            if not isinstance(feature_data, (list, pd.Series)):
+                continue
+
+            # Convert to pandas for easier window operations
+            if isinstance(feature_data, list):
+                df = pd.DataFrame(feature_data)
+            else:
+                df = feature_data.to_frame() if hasattr(feature_data, 'to_frame') else pd.DataFrame(feature_data)
+
+            if 'timestamp' not in df.columns:
+                continue
+
+            df = df.set_index('timestamp').sort_index()
+
+            for window in window_sizes:
+                for method in aggregation_methods:
+                    feature_key = f"{feature_name}_rolling_{window}_{method}"
+                    if method == "mean":
+                        time_window_features[feature_key] = df[feature_name].rolling(window=window).mean()
+                    elif method == "std":
+                        time_window_features[feature_key] = df[feature_name].rolling(window=window).std()
+                    elif method == "min":
+                        time_window_features[feature_key] = df[feature_name].rolling(window=window).min()
+                    elif method == "max":
+                        time_window_features[feature_key] = df[feature_name].rolling(window=window).max()
+
+        return time_window_features
+
+    async def create_lag_features(
+        self,
+        base_features: Dict[str, Any],
+        lag_periods: List[int],
+        fill_method: str = "forward"
+    ) -> Dict[str, Any]:
+        """Create lag features for time series data.
+
+        Args:
+            base_features: Dictionary of base feature data with timestamps
+            lag_periods: List of lag periods (e.g., [1, 7, 30] for 1, 7, 30 period lags)
+            fill_method: Method to fill NaN values ("forward", "backward", "interpolate", or None)
+
+        Returns:
+            Dictionary with lag features
+        """
+        lag_features = {}
+
+        for feature_name, feature_data in base_features.items():
+            if not isinstance(feature_data, (list, pd.Series)):
+                continue
+
+            # Convert to pandas for lag operations
+            if isinstance(feature_data, list):
+                df = pd.DataFrame(feature_data)
+            else:
+                df = feature_data.to_frame() if hasattr(feature_data, 'to_frame') else pd.DataFrame(feature_data)
+
+            if 'timestamp' not in df.columns:
+                continue
+
+            df = df.set_index('timestamp').sort_index()
+
+            for lag in lag_periods:
+                lag_key = f"{feature_name}_lag_{lag}"
+                lag_features[lag_key] = df[feature_name].shift(lag)
+
+                # Fill NaN values based on method
+                if fill_method == "forward":
+                    lag_features[lag_key] = lag_features[lag_key].fillna(method='ffill')
+                elif fill_method == "backward":
+                    lag_features[lag_key] = lag_features[lag_key].fillna(method='bfill')
+                elif fill_method == "interpolate":
+                    lag_features[lag_key] = lag_features[lag_key].interpolate()
+
+        return lag_features
+
+    async def create_seasonal_features(
+        self,
+        timestamps: List[datetime],
+        include_trends: bool = True,
+        include_seasonal_decomposition: bool = False
+    ) -> Dict[str, Any]:
+        """Create seasonal and trend features from timestamps.
+
+        Args:
+            timestamps: List of datetime objects
+            include_trends: Whether to include trend features
+            include_seasonal_decomposition: Whether to include seasonal decomposition
+
+        Returns:
+            Dictionary with seasonal features
+        """
+        seasonal_features = {}
+
+        if not timestamps:
+            return seasonal_features
+
+        # Convert to pandas datetime index
+        ts_series = pd.Series(timestamps)
+
+        # Basic seasonal features
+        seasonal_features['hour_of_day'] = ts_series.dt.hour
+        seasonal_features['day_of_week'] = ts_series.dt.dayofweek
+        seasonal_features['month_of_year'] = ts_series.dt.month
+        seasonal_features['quarter'] = ts_series.dt.quarter
+        seasonal_features['is_weekend'] = (ts_series.dt.dayofweek >= 5).astype(int)
+        seasonal_features['is_holiday'] = [0] * len(ts_series)  # Placeholder for holiday detection
+
+        if include_trends:
+            # Convert to numeric for trend calculation
+            numeric_ts = pd.to_datetime(ts_series).astype(int) // 10**9  # Unix timestamp
+            seasonal_features['trend'] = numeric_ts
+
+        if include_seasonal_decomposition:
+            try:
+                # Simple seasonal decomposition (requires statsmodels)
+                from statsmodels.tsa.seasonal import seasonal_decompose
+
+                # Create dummy series for decomposition
+                dummy_values = pd.Series([1.0] * len(ts_series), index=ts_series)
+                decomposition = seasonal_decompose(dummy_values, period=24)  # Assuming hourly data
+
+                seasonal_features['seasonal_component'] = decomposition.seasonal
+                seasonal_features['trend_component'] = decomposition.trend
+                seasonal_features['residual'] = decomposition.resid
+
+            except ImportError:
+                log_structured("warning", "statsmodels_not_available",
+                             message="Seasonal decomposition requires statsmodels")
+
+        return seasonal_features
 
     async def get_features_for_modeling(
         self,
