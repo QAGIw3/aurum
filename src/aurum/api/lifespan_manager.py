@@ -686,6 +686,28 @@ class LifespanManager:
 _lifespan_manager: Optional[LifespanManager] = None
 
 
+def setup_lifespan(settings: Optional[AurumSettings] = None):
+    """Create a FastAPI lifespan context manager.
+
+    Args:
+        settings: Optional application settings
+
+    Returns:
+        FastAPI lifespan context manager
+    """
+    from contextlib import asynccontextmanager
+    from fastapi import FastAPI
+
+    manager = get_lifespan_manager(settings)
+
+    @asynccontextmanager
+    async def lifespan(app: FastAPI):
+        async with manager:
+            yield
+
+    return lifespan
+
+
 def get_lifespan_manager(settings: Optional[AurumSettings] = None) -> LifespanManager:
     """Get the global lifespan manager instance.
 
