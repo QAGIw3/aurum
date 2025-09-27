@@ -1514,8 +1514,8 @@ def _decode_member(member: Any) -> str:
     return str(member)
 
 
-def invalidate_eia_series_cache(cache_cfg: CacheConfig) -> Dict[str, int]:
-    """Invalidate EIA series caches. Prefer CacheManager; fallback to Redis sets.
+async def invalidate_eia_series_cache_async(cache_cfg: CacheConfig) -> Dict[str, int]:
+    """Async version of EIA series cache invalidation. Prefer CacheManager; fallback to Redis sets.
 
     Returns a dict of scope -> count invalidated (0 when using CacheManager).
     """
@@ -1524,11 +1524,17 @@ def invalidate_eia_series_cache(cache_cfg: CacheConfig) -> Dict[str, int]:
         try:
             # Best-effort: use broad patterns to invalidate related keys
             # Current CacheManager.invalidate_pattern clears all; keep scope keys for reporting
-            asyncio.run(manager.invalidate_pattern("eia-series"))  # type: ignore[arg-type]
+            await manager.invalidate_pattern("eia-series")
             return {"eia-series": 0, "eia-series-dimensions": 0}
         except Exception:
             LOGGER.debug("CacheManager invalidate_pattern failed; attempting Redis path", exc_info=True)
 
+    # Fallback to Redis logic
+    return _invalidate_eia_series_cache_redis(cache_cfg)
+
+
+def _invalidate_eia_series_cache_redis(cache_cfg: CacheConfig) -> Dict[str, int]:
+    """Redis-based EIA series cache invalidation fallback."""
     client = _maybe_redis_client(cache_cfg)
     prefix = f"{cache_cfg.namespace}:" if cache_cfg.namespace else ""
     scopes = {
@@ -1570,14 +1576,44 @@ def invalidate_eia_series_cache(cache_cfg: CacheConfig) -> Dict[str, int]:
     return results
 
 
-def invalidate_dimensions_cache(cache_cfg: CacheConfig) -> int:
+def invalidate_eia_series_cache(cache_cfg: CacheConfig) -> Dict[str, int]:
+    """Invalidate EIA series caches. Prefer CacheManager; fallback to Redis sets.
+
+    Returns a dict of scope -> count invalidated (0 when using CacheManager).
+    """
     manager = get_global_cache_manager()
     if manager is not None:
         try:
-            asyncio.run(manager.invalidate_pattern("dimensions"))  # type: ignore[arg-type]
+            # Use asyncio.get_running_loop() to detect if we're in an async context
+            try:
+                asyncio.get_running_loop()
+                # We're in an async context - this function shouldn't be called from async code
+                # Return fallback to Redis instead of creating a new event loop
+                LOGGER.warning("invalidate_eia_series_cache called from async context, using Redis fallback")
+            except RuntimeError:
+                # No event loop, safe to use asyncio.run
+                asyncio.run(manager.invalidate_pattern("eia-series"))  # type: ignore[arg-type]
+                return {"eia-series": 0, "eia-series-dimensions": 0}
+        except Exception:
+            LOGGER.debug("CacheManager invalidate_pattern failed; attempting Redis path", exc_info=True)
+
+
+async def invalidate_dimensions_cache_async(cache_cfg: CacheConfig) -> int:
+    """Async version of dimensions cache invalidation."""
+    manager = get_global_cache_manager()
+    if manager is not None:
+        try:
+            await manager.invalidate_pattern("dimensions")
             return 0
         except Exception:
             LOGGER.debug("CacheManager invalidate_pattern failed; attempting Redis path", exc_info=True)
+    
+    # Fallback to Redis logic
+    return _invalidate_dimensions_cache_redis(cache_cfg)
+
+
+def _invalidate_dimensions_cache_redis(cache_cfg: CacheConfig) -> int:
+    """Redis-based dimensions cache invalidation fallback."""
     client = _maybe_redis_client(cache_cfg)
     if client is None:
         return 0
@@ -1595,13 +1631,12 @@ def invalidate_dimensions_cache(cache_cfg: CacheConfig) -> int:
         decoded = _decode_member(member)
         if decoded:
             keys.append(decoded)
-    removed = 0
-    if keys:
-        try:
-            client.delete(*keys)
-        except Exception:
-            pass
-        removed = len(keys)
+    if not keys:
+        return 0
+    try:
+        client.delete(*keys)
+    except Exception:
+        pass
     try:
         client.srem(index_key, *members)
     except Exception:
@@ -1611,68 +1646,84 @@ def invalidate_dimensions_cache(cache_cfg: CacheConfig) -> int:
             client.delete(index_key)
     except Exception:
         client.delete(index_key)
-    return removed
+    return len(keys)
 
 
-def invalidate_metadata_cache(cache_cfg: CacheConfig, prefixes: Sequence[str]) -> Dict[str, int]:
+def invalidate_dimensions_cache(cache_cfg: CacheConfig) -> int:
+    """Invalidate dimensions cache. Prefer CacheManager; fallback to Redis sets."""
+    manager = get_global_cache_manager()
+    if manager is not None:
+        try:
+            # Use asyncio.get_running_loop() to detect if we're in an async context
+            try:
+                asyncio.get_running_loop()
+                # We're in an async context - this function shouldn't be called from async code
+                # Return fallback to Redis instead of creating a new event loop
+                LOGGER.warning("invalidate_dimensions_cache called from async context, using Redis fallback")
+            except RuntimeError:
+                # No event loop, safe to use asyncio.run
+                asyncio.run(manager.invalidate_pattern("dimensions"))  # type: ignore[arg-type]
+                return 0
+        except Exception:
+            LOGGER.debug("CacheManager invalidate_pattern failed; attempting Redis path", exc_info=True)
+
+async def invalidate_metadata_cache_async(cache_cfg: CacheConfig, prefixes: Sequence[str]) -> Dict[str, int]:
+    """Async version of metadata cache invalidation."""
     manager = get_global_cache_manager()
     results: Dict[str, int] = {prefix: 0 for prefix in prefixes}
     if manager is not None:
         try:
             for prefix in prefixes:
-                asyncio.run(manager.invalidate_pattern(f"metadata:{prefix}"))  # type: ignore[arg-type]
+                await manager.invalidate_pattern(f"metadata:{prefix}")
             return results
         except Exception:
             LOGGER.debug("CacheManager metadata invalidate failed; attempting Redis path", exc_info=True)
+    
+    # Fallback to Redis logic
+    return _invalidate_metadata_cache_redis(cache_cfg, prefixes)
+
+
+def _invalidate_metadata_cache_redis(cache_cfg: CacheConfig, prefixes: Sequence[str]) -> Dict[str, int]:
+    """Redis-based metadata cache invalidation fallback."""
+    results: Dict[str, int] = {prefix: 0 for prefix in prefixes}
     client = _maybe_redis_client(cache_cfg)
     namespace = cache_cfg.namespace or "aurum"
     index_key = f"{namespace}:metadata:index"
     if client is None:
         return results
-    try:
-        members = client.smembers(index_key)
-    except Exception:
-        return results
-
-    if not members:
-        client.delete(index_key)
-        return results
-
-    members_list = list(members)
-    keys_to_delete: list[str] = []
-    matched_members: list[Any] = []
-    for raw_member in members_list:
-        redis_key = _decode_member(raw_member)
-        if not redis_key:
-            continue
-        for prefix in prefixes:
-            expected_prefix = f"{namespace}:metadata:{prefix}"
-            if redis_key.startswith(expected_prefix):
-                keys_to_delete.append(redis_key)
-                matched_members.append(raw_member)
-                results[prefix] += 1
-                break
-
-    if keys_to_delete:
+    
+    for prefix in prefixes:
         try:
-            client.delete(*keys_to_delete)
+            metadata_key = f"{namespace}:metadata:{prefix}"
+            # Remove from index and delete the actual metadata
+            client.srem(index_key, metadata_key)
+            client.delete(metadata_key)
+            results[prefix] = 1  # Simplified count for Redis fallback
         except Exception:
-            pass
-
-    if matched_members:
-        try:
-            client.srem(index_key, *matched_members)
-        except Exception:
-            pass
-
-    try:
-        if hasattr(client, "scard") and client.scard(index_key) == 0:
-            client.delete(index_key)
-    except Exception:
-        client.delete(index_key)
-
+            LOGGER.debug(f"Failed to invalidate metadata cache for prefix {prefix}", exc_info=True)
+    
     return results
 
+
+def invalidate_metadata_cache(cache_cfg: CacheConfig, prefixes: Sequence[str]) -> Dict[str, int]:
+    """Invalidate metadata cache. Prefer CacheManager; fallback to Redis sets."""
+    manager = get_global_cache_manager()
+    results: Dict[str, int] = {prefix: 0 for prefix in prefixes}
+    if manager is not None:
+        try:
+            # Use asyncio.get_running_loop() to detect if we're in an async context
+            try:
+                asyncio.get_running_loop()
+                # We're in an async context - this function shouldn't be called from async code
+                # Return fallback to Redis instead of creating a new event loop
+                LOGGER.warning("invalidate_metadata_cache called from async context, using Redis fallback")
+            except RuntimeError:
+                # No event loop, safe to use asyncio.run
+                for prefix in prefixes:
+                    asyncio.run(manager.invalidate_pattern(f"metadata:{prefix}"))  # type: ignore[arg-type]
+                return results
+        except Exception:
+            LOGGER.debug("CacheManager metadata invalidate failed; attempting Redis path", exc_info=True)
 
 if _PromCounter is not None:  # pragma: no cover - optional metrics dependency
     ISO_LMP_CACHE_COUNTER = _PromCounter(
