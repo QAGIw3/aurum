@@ -1,12 +1,36 @@
 """v2 Model Registry API for ML model management and retrain pipelines.
 
-This module provides REST endpoints for:
+This module provides comprehensive REST endpoints for:
+
+Core Model Management:
 - Model registration and versioning
-- Training job management and monitoring
+- Training job management and monitoring  
 - Model performance tracking and validation
-- Champion/challenger model testing and promotion
-- Scheduled retrain job configuration
-- Model deployment and serving
+
+Champion/Challenger Workflows:
+- Automated champion model selection based on performance criteria
+- Manual champion promotion with version control
+- Advanced model comparison with statistical significance testing
+- Multi-criteria recommendation engine
+
+Training Job Operations:
+- Job progress tracking with real-time updates
+- Training completion handling with model registration
+- Job cancellation for long-running operations
+- Comprehensive job listing and filtering
+
+Enhanced Features:
+- Champion/challenger testing and promotion
+- Scheduled retrain job configuration  
+- Model deployment and serving integration
+- Business impact assessment for model changes
+
+New Endpoints Added:
+- POST /models/{model_name}/select-champion - Automated champion selection
+- POST /models/{model_name}/promote-champion - Manual champion promotion  
+- PUT /jobs/{job_id}/progress - Update training job progress
+- POST /jobs/{job_id}/complete - Complete training jobs
+- DELETE /jobs/{job_id} - Cancel training jobs
 """
 
 from __future__ import annotations

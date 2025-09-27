@@ -1,12 +1,102 @@
-"""Model Registry Service with MLflow integration and retrain pipelines.
+"""Model Registry Service with MLflow integration and comprehensive ML workflow management.
 
-This service provides:
-- ML model registration and versioning
+This service provides complete ML model lifecycle management including:
+
+Core Features:
+- ML model registration and versioning with metadata storage
+- Comprehensive training job management (progress tracking, completion, cancellation)
+- Advanced champion/challenger model comparison with multi-criteria decision making
+- Automated champion model selection based on configurable performance criteria
 - Scheduled retrain jobs with automated pipelines
 - Model performance tracking and validation
-- Champion/challenger model testing
-- Model deployment and serving
-- Integration with feature store and forecasting
+- Integration with MLflow for experiment tracking
+- REST API endpoints for all operations
+
+Champion/Challenger Workflow:
+1. Train multiple model versions using start_training_job()
+2. Register models with comprehensive metadata via register_model_version()
+3. Compare models using enhanced compare_models() with statistical significance
+4. Select champions automatically via select_champion_model() or promote manually
+5. Monitor and manage the complete model lifecycle
+
+Training Job Management:
+- Asynchronous job execution with progress tracking
+- Real-time status updates and error handling  
+- Automatic model registration on successful completion
+- Cancellation support for long-running jobs
+
+Model Comparison:
+- Statistical significance testing with p-values and effect sizes
+- Business impact assessment (cost reduction, revenue lift)
+- Multi-criteria recommendation engine with weighted scoring
+- Comprehensive metrics including accuracy, RMSE, R², model size, training time
+
+Champion Selection:
+- Configurable selection criteria (accuracy thresholds, model size limits)
+- Multi-criteria scoring algorithm with weighted factors
+- Automatic promotion based on performance benchmarks
+- Manual override capabilities for business requirements
+
+Example Usage:
+
+```python
+# Initialize service
+service = get_model_registry_service()
+
+# 1. Start training jobs
+config = ModelConfig(
+    model_type="xgboost",
+    hyperparameters={"n_estimators": 100, "max_depth": 6},
+    feature_selection=["temperature", "humidity", "wind_speed", "load_mw"],
+    target_variable="lmp_price"
+)
+
+job_id = await service.start_training_job("price_forecasting", config)
+
+# 2. Update progress during training
+await service.update_training_job_progress(
+    job_id=job_id,
+    progress=0.5,
+    stage="feature_engineering",
+    metrics={"current_rmse": 0.12}
+)
+
+# 3. Complete training and register model
+model_version = ModelVersion(
+    version_id=str(uuid4()),
+    model_name="price_forecasting",
+    version_number="v2.1",
+    description="Enhanced XGBoost model with feature engineering",
+    config=config,
+    training_start_date=datetime.utcnow(),
+    training_end_date=datetime.utcnow(),
+    model_path="models/price_forecasting/v2.1",
+    model_size_bytes=2*1024*1024,
+    performance_metrics={"accuracy": 0.94, "rmse": 0.06, "r2_score": 0.96},
+    feature_importance={"temperature": 0.35, "load_mw": 0.30, "humidity": 0.20, "wind_speed": 0.15},
+    validation_results={"cross_validation_scores": [0.93, 0.95, 0.92, 0.96, 0.94], "mean_cv_score": 0.94},
+    created_by="ml_engineer"
+)
+
+await service.complete_training_job(job_id, model_version=model_version)
+
+# 4. Compare with existing champion
+current_champion = service.get_latest_model_version("price_forecasting")
+if current_champion:
+    comparison = await service.compare_models(
+        champion_version=current_champion.version_id,
+        challenger_version=model_version.version_id
+    )
+    
+    print(f"Recommendation: {comparison.recommendation}")
+    print(f"Accuracy improvement: {comparison.comparison_metrics['accuracy_improvement']:.3f}")
+    
+    # 5. Auto-select new champion if warranted
+    if comparison.recommendation == "promote_challenger":
+        new_champion = await service.select_champion_model("price_forecasting")
+        if new_champion:
+            await service.promote_to_champion("price_forecasting", new_champion.version_id)
+```
 """
 
 from __future__ import annotations
