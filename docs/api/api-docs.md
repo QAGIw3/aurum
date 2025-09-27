@@ -2,7 +2,9 @@
 
 Aurum Market Intelligence Platform API
 
-Version: `1.0.0`
+Version: `2.0.0`
+
+> ⚠️ **Legacy notice:** `/v1/*` endpoints are retained for backward compatibility only. They emit `Deprecation`/`Sunset` headers and will be removed after 31 December 2025. Prefer the `/v2/*` resources documented in this file.
 
 ## Endpoints
 - `GET` `/health` - Health

@@ -20,9 +20,17 @@ async def test_indices_slicing(monkeypatch):
     ]
 
     import aurum.api.drought_v2_service as svc_mod
-    monkeypatch.setattr(
-        svc_mod, "query_drought_indices", lambda *a, **k: (rows, 1.0)
-    )
+
+    class StubService:
+        async def query_indices(self, **kwargs):  # type: ignore[override]
+            return rows, 1.0
+
+    monkeypatch.setattr(svc_mod, "DroughtService", lambda: StubService())
+
+    def _raise_backend(*_args, **_kwargs):
+        raise RuntimeError("fallback")
+
+    monkeypatch.setattr(svc_mod, "get_data_backend", _raise_backend)
 
     svc = DroughtV2Service()
     page = await svc.list_indices(
@@ -56,9 +64,17 @@ async def test_usdm_slicing(monkeypatch):
     ]
 
     import aurum.api.drought_v2_service as svc_mod
-    monkeypatch.setattr(
-        svc_mod, "query_drought_usdm", lambda *a, **k: (rows, 1.0)
-    )
+
+    class StubService:
+        async def query_usdm(self, **kwargs):  # type: ignore[override]
+            return rows, 1.0
+
+    monkeypatch.setattr(svc_mod, "DroughtService", lambda: StubService())
+
+    def _raise_backend(*_args, **_kwargs):
+        raise RuntimeError("fallback")
+
+    monkeypatch.setattr(svc_mod, "get_data_backend", _raise_backend)
 
     svc = DroughtV2Service()
     page = await svc.list_usdm(
@@ -70,4 +86,3 @@ async def test_usdm_slicing(monkeypatch):
         limit=3,
     )
     assert page == rows[5:8]
-

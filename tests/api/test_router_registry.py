@@ -2,7 +2,11 @@ from __future__ import annotations
 
 import pytest
 
-from aurum.api.router_registry import get_v1_router_specs
+from fastapi import APIRouter, FastAPI
+from fastapi.routing import APIRoute
+from fastapi.testclient import TestClient
+
+from aurum.api.router_registry import get_v1_router_specs, _ensure_v1_deprecation
 from aurum.core import AurumSettings
 
 
@@ -74,3 +78,34 @@ def test_v1_router_specs_unique_when_all_flags_enabled(monkeypatch, reset_split_
     names = [spec.name for spec in specs if spec.name is not None]
 
     assert len(names) == len(set(names))
+
+
+def test_v1_router_specs_routes_marked_deprecated(reset_split_flags):
+    settings = AurumSettings()
+    specs = get_v1_router_specs(settings)
+
+    for spec in specs:
+        for route in spec.router.routes:
+            if isinstance(route, APIRoute):
+                assert route.deprecated is True
+
+
+def test_ensure_v1_deprecation_adds_headers():
+    router = APIRouter()
+
+    @router.get("/v1/demo")
+    def demo_route():
+        return {"ok": True}
+
+    router = _ensure_v1_deprecation(router)
+
+    app = FastAPI()
+    app.include_router(router)
+
+    client = TestClient(app)
+    response = client.get("/v1/demo")
+
+    assert response.status_code == 200
+    assert response.headers.get("Deprecation", "").lower() == "true"
+    assert "Sunset" in response.headers
+    assert "X-API-Migration-Guide" in response.headers

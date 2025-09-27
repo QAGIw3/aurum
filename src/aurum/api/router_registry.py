@@ -8,13 +8,25 @@ from dataclasses import dataclass, field
 from importlib import import_module
 from typing import Any, Iterable, Mapping
 
-from fastapi import APIRouter
+from fastapi import APIRouter, Depends, Response
+from fastapi.routing import APIRoute
 
 from aurum.core import AurumSettings
 
 logger = logging.getLogger(__name__)
 
 _LIGHTWEIGHT_ROUTER_CACHE: dict[str, APIRouter] = {}
+
+
+_V1_DEPRECATION_HEADERS: Mapping[str, str] = {
+    "Deprecation": "true",
+    "Sunset": "Wed, 31 Dec 2025 23:59:59 GMT",
+    "Link": '<https://docs.aurum.dev/api/migration-guide#v2>; rel="deprecation"; type="text/html"',
+    "Warning": '299 aurum "API v1 is deprecated; migrate to /v2 before 2025-12-31"',
+    "X-API-Version": "v1",
+    "X-API-Lifecycle": "deprecated",
+    "X-API-Migration-Guide": "https://docs.aurum.dev/api/migration-guide",
+}
 
 
 @dataclass(frozen=True)
@@ -65,6 +77,31 @@ def _build_specs(module_paths: Iterable[str], *, seen: set[str] | None = None) -
     return specs
 
 
+def _ensure_v1_deprecation(router: APIRouter) -> APIRouter:
+    """Mark a router as deprecated and inject deprecation headers."""
+
+    if getattr(router, "_aurum_v1_deprecation_applied", False):
+        return router
+
+    def _apply_deprecation_headers(response: Response) -> None:
+        for header, value in _V1_DEPRECATION_HEADERS.items():
+            if header not in response.headers:
+                response.headers[header] = value
+
+    dependency = Depends(_apply_deprecation_headers)
+    dependencies = list(getattr(router, "dependencies", ()) or [])
+    dependencies.append(dependency)
+    router.dependencies = dependencies
+
+    for route in router.routes:
+        if isinstance(route, APIRoute):
+            route.dependencies = list(getattr(route, "dependencies", ())) + [dependency]
+            route.deprecated = True
+
+    setattr(router, "_aurum_v1_deprecation_applied", True)
+    return router
+
+
 def get_v1_router_specs(_settings: AurumSettings) -> list[RouterSpec]:
     """Return the list of v1 routers to include for the given settings."""
     seen: set[str] = set()
@@ -94,6 +131,7 @@ def get_v1_router_specs(_settings: AurumSettings) -> list[RouterSpec]:
                 continue
             router = _try_import_router(module_path)
             if router is not None:
+                router = _ensure_v1_deprecation(router)
                 specs.append(RouterSpec(router=router, name=module_path))
                 seen.add(module_path)
 
@@ -112,6 +150,7 @@ def get_v1_router_specs(_settings: AurumSettings) -> list[RouterSpec]:
             continue
         router = _try_import_router(module_path)
         if router is not None:
+            router = _ensure_v1_deprecation(router)
             specs.append(
                 RouterSpec(
                     router=router,
@@ -120,6 +159,9 @@ def get_v1_router_specs(_settings: AurumSettings) -> list[RouterSpec]:
                 )
             )
             seen.add(module_path)
+
+    for spec in specs:
+        _ensure_v1_deprecation(spec.router)
 
     return specs
 

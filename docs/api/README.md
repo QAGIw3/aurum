@@ -1,8 +1,10 @@
 # Aurum Market Intelligence Platform API
 
-[![API Version](https://img.shields.io/badge/API-1.0.0-blue.svg)](https://api.aurum.local/docs)
+[![API Version](https://img.shields.io/badge/API-2.0.0-blue.svg)](https://api.aurum.local/docs)
 [![FastAPI](https://img.shields.io/badge/FastAPI-0.110+-green.svg)](https://fastapi.tiangolo.com)
-[![OpenAPI](https://img.shields.io/badge/OpenAPI-3.0.3-yellow.svg)](https://swagger.io/specification/)
+[![OpenAPI](https://img.shields.io/badge/OpenAPI-3.1.0-yellow.svg)](https://swagger.io/specification/)
+
+> ⚠️ **v1 Deprecation:** All `/v1/*` endpoints now emit `Deprecation` and `Sunset` headers and will be removed after **31 December 2025**. Migrate to the `/v2/*` surface as soon as possible—see [migration-guide.md](../migration-guide.md) for step-by-step guidance.
 
 ## Overview
 
@@ -60,24 +62,17 @@ diffs = client.compare_curves(
 
 ### Endpoints
 
-| Endpoint | Method | Description |
-|----------|--------|-------------|
-| `/health` | GET | Health check |
-| `/ready` | GET | Readiness check |
-| `/v1/curves` | GET | Get curve data |
-| `/v1/curves/diff` | GET | Compare curve data |
-| `/v1/metadata/dimensions` | GET | Get metadata dimensions |
-| `/v1/locations/iso` | GET | Get ISO locations |
-| `/v1/locations/iso/{location_id}` | GET | Get location details |
-| `/v1/scenarios` | GET/POST | List or create scenarios |
-| `/v1/scenarios/{scenario_id}` | GET/DELETE | Get or delete scenario |
-| `/v1/scenarios/{scenario_id}/run` | POST | Trigger a scenario run |
-| `/v1/scenarios/{scenario_id}/runs` | GET | List runs for a scenario |
-| `/v1/scenarios/{scenario_id}/runs/{run_id}` | GET | Get run detail |
-| `/v1/scenarios/runs/{run_id}/state` | POST | Update run state |
-| `/v1/scenarios/runs/{run_id}/cancel` | POST | Cancel a run |
-| `/v1/scenarios/{scenario_id}/outputs` | GET | Latest outputs (JSON/CSV) |
-| `/v1/scenarios/{scenario_id}/metrics/latest` | GET | Latest metrics |
+| Endpoint | Method | Description | Lifecycle |
+|----------|--------|-------------|-----------|
+| `/health` | GET | Health check | Active |
+| `/ready` | GET | Readiness check | Active |
+| `/v2/curves` | GET | Curves API with RFC 7807 errors and cursor pagination | Active |
+| `/v2/curves/{curve_id}/diff` | GET | Curve deltas between as-of dates | Active |
+| `/v2/metadata/dimensions` | GET | Metadata catalogue | Active |
+| `/v2/scenarios` | GET/POST | Scenario lifecycle | Active |
+| `/v2/scenarios/{scenario_id}/runs` | GET | Scenario run listing | Active |
+| `/v2/scenarios/{scenario_id}/outputs` | GET | Scenario outputs (JSON/CSV) | Active |
+| `/v1/*` | — | Legacy v1 surface (curves, metadata, scenarios, admin) | Deprecated (Sunset 2025-12-31) |
 
 ## 🔧 Configuration
 

@@ -28,7 +28,7 @@ from ..models import (
     DroughtVectorResponse,
     DroughtVectorEventPoint,
 )
-from ..service import query_drought_indices, query_drought_usdm
+from ..services.drought_service import DroughtService
 from ...telemetry.context import get_request_id
 
 # Reuse helpers and metrics from the monolith to avoid duplication
@@ -182,7 +182,7 @@ def get_drought_dimensions() -> DroughtDimensionsResponse:
 
 
 @router.get("/v1/drought/indices", response_model=DroughtIndexResponse)
-def get_drought_indices(
+async def get_drought_indices(
     dataset: Optional[str] = Query(None, description="Source dataset (nclimgrid, acis, cpc, prism, eddi)."),
     index: Optional[str] = Query(None, description="Index name (SPI, SPEI, EDDI, PDSI, QuickDRI, VHI)."),
     timescale: Optional[str] = Query(None, description="Accumulation window such as 1M, 3M, 6M."),
@@ -201,17 +201,19 @@ def get_drought_indices(
     # Delegate to service
     from ..config import TrinoConfig
     from ..state import get_settings
+
     trino_cfg = TrinoConfig.from_settings(get_settings())
-    rows, elapsed = query_drought_indices(
-        trino_cfg,
-        region_type=parsed_region_type,
-        region_id=parsed_region_id,
+    drought_service = DroughtService()
+    rows, elapsed = await drought_service.query_indices(
         dataset=dataset,
         index_id=index,
         timescale=timescale,
+        region_type=parsed_region_type,
+        region_id=parsed_region_id,
         start_date=start,
         end_date=end,
         limit=limit,
+        trino_cfg=trino_cfg,
     )
     payload: List[DroughtIndexPoint] = []
     for row in rows:
@@ -239,7 +241,7 @@ def get_drought_indices(
 
 
 @router.get("/v1/drought/usdm", response_model=DroughtUsdmResponse)
-def get_drought_usdm(
+async def get_drought_usdm(
     region: Optional[str] = Query(None, description="Region specifier REGION_TYPE:REGION_ID."),
     region_type: Optional[str] = Query(None),
     region_id: Optional[str] = Query(None),
@@ -254,14 +256,16 @@ def get_drought_usdm(
 
     from ..config import TrinoConfig
     from ..state import get_settings
+
     trino_cfg = TrinoConfig.from_settings(get_settings())
-    rows, elapsed = query_drought_usdm(
-        trino_cfg,
+    drought_service = DroughtService()
+    rows, elapsed = await drought_service.query_usdm(
         region_type=parsed_region_type,
         region_id=parsed_region_id,
         start_date=start,
         end_date=end,
         limit=limit,
+        trino_cfg=trino_cfg,
     )
     payload = []
     for row in rows:
@@ -293,7 +297,7 @@ def get_drought_usdm(
 
 
 @router.get("/v1/drought/layers", response_model=DroughtVectorResponse, include_in_schema=False)
-def get_drought_layers(
+async def get_drought_layers(
     layer: Optional[str] = Query(None, description="Layer key (qpf, ahps_flood, aqi, wildfire)."),
     region: Optional[str] = Query(None, description="Region specifier REGION_TYPE:REGION_ID."),
     region_type: Optional[str] = Query(None),
@@ -308,16 +312,17 @@ def get_drought_layers(
         parsed_region_type, parsed_region_id = _parse_region_param(region)
     from ..config import TrinoConfig
     from ..state import get_settings
+
     trino_cfg = TrinoConfig.from_settings(get_settings())
-    from ..service import query_drought_vector_events
-    rows, elapsed = query_drought_vector_events(
-        trino_cfg,
+    drought_service = DroughtService()
+    rows, elapsed = await drought_service.query_vector_events(
         layer=layer.lower() if layer else None,
         region_type=parsed_region_type,
         region_id=parsed_region_id,
         start_time=start,
         end_time=end,
         limit=limit,
+        trino_cfg=trino_cfg,
     )
     payload: List[DroughtVectorEventPoint] = []
     for row in rows:

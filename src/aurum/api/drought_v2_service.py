@@ -6,8 +6,8 @@ from datetime import date as _date
 from typing import Any, Dict, List, Optional
 
 from .config import TrinoConfig
+from .services.drought_service import DroughtService
 from .state import get_settings
-from .service import query_drought_indices, query_drought_usdm
 from .database.backend_selector import get_data_backend
 
 
@@ -28,6 +28,7 @@ class DroughtV2Service:
     ) -> List[Dict[str, Any]]:
         settings = get_settings()
         trino_cfg = TrinoConfig.from_settings(settings)
+        drought_service = DroughtService()
 
         def _to_date(value: Optional[str]) -> Optional[_date]:
             if not value:
@@ -101,8 +102,7 @@ class DroughtV2Service:
         except Exception:
             # Legacy path via Trino helper
             fetch_limit = max(1, int(offset) + int(limit))
-            rows, _elapsed = query_drought_indices(
-                trino_cfg,
+            rows, _elapsed = await drought_service.query_indices(
                 region_type=region_type,
                 region_id=region_id,
                 dataset=dataset,
@@ -111,6 +111,7 @@ class DroughtV2Service:
                 start_date=_to_date(start),
                 end_date=_to_date(end),
                 limit=fetch_limit,
+                trino_cfg=trino_cfg,
             )
             return rows[int(offset) : int(offset) + int(limit)]
 
@@ -126,6 +127,7 @@ class DroughtV2Service:
     ) -> List[Dict[str, Any]]:
         settings = get_settings()
         trino_cfg = TrinoConfig.from_settings(settings)
+        drought_service = DroughtService()
 
         def _to_date(value: Optional[str]) -> Optional[_date]:
             if not value:
@@ -178,13 +180,13 @@ class DroughtV2Service:
             return rows
         except Exception:
             fetch_limit = max(1, int(offset) + int(limit))
-            rows, _elapsed = query_drought_usdm(
-                trino_cfg,
+            rows, _elapsed = await drought_service.query_usdm(
                 region_type=region_type,
                 region_id=region_id,
                 start_date=_to_date(start),
                 end_date=_to_date(end),
                 limit=fetch_limit,
+                trino_cfg=trino_cfg,
             )
             return rows[int(offset) : int(offset) + int(limit)]
 
