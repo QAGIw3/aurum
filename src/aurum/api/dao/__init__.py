@@ -5,7 +5,9 @@ Each domain has its own DAO class that handles database queries and caching for 
 """
 
 from .eia_dao import EiaDao
+from .curves_dao import CurvesDao
 
 __all__ = [
     "EiaDao",
+    "CurvesDao",
 ]
