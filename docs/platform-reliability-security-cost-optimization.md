@@ -563,10 +563,9 @@ python -m aurum.dr_test.cli test-status --test-id TEST_20241201_120000
 ## 📚 **References and Resources**
 
 ### Documentation
-- [Aurum Platform Architecture](docs/architecture-overview.md)
-- [API Documentation](docs/api_usage_guide.md)
-- [Deployment Guide](docs/deployment-guide.md)
-- [Operations Runbook](docs/runbooks/operations-runbook.md)
+- [Aurum Platform Architecture](architecture-overview.md)
+- [API Documentation](api_usage_guide.md)
+- [Operations Runbooks](runbooks/)
 
 ### External Resources
 - [Schema Registry Best Practices](https://docs.confluent.io/platform/current/schema-registry/)

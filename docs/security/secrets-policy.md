@@ -143,7 +143,6 @@ This policy applies to all secrets used in the Aurum platform, including:
 
 ## Related Documentation
 
-- [Vault Operations Guide](vault-operations.md)
-- [Incident Response Plan](incident-response.md)
-- [Security Monitoring Guide](security-monitoring.md)
-- [Compliance Requirements](compliance-requirements.md)
+- [Tenant Isolation & RLS](tenant-rls.md)
+- [Vault Rotation Guide](../vault-rotation.md)
+- [OIDC Forward Auth](../auth/oidc-forward-auth.md)
