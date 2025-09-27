@@ -16,8 +16,8 @@ from datetime import datetime, timedelta
 
 from pydantic import BaseModel
 
-from ..observability.metrics import get_metrics_client
-from ..logging.structured_logger import get_logger
+from ...observability.metrics import get_metrics_client
+from ...logging.structured_logger import get_logger
 from .enhanced_cache_manager import CacheNamespace, EnhancedCacheManager
 
 

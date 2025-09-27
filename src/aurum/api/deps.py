@@ -11,6 +11,7 @@ from typing import Any, Optional
 from fastapi import Request
 
 from aurum.api.cache.cache import CacheManager
+from aurum.api.cache.unified_cache_manager import UnifiedCacheManager, get_unified_cache_manager
 from aurum.core import AurumSettings
 from aurum.core.settings import get_settings as _core_get_settings
 
@@ -37,6 +38,19 @@ def get_cache_manager(request: Request) -> Optional[CacheManager]:
     )
 
 
+def get_unified_cache_manager_dep(request: Request) -> Optional[UnifiedCacheManager]:
+    """Return the active UnifiedCacheManager from app state or global instance."""
+    # First try to get from app state
+    app_state = getattr(getattr(request, "app", None), "state", None)
+    if app_state:
+        unified_manager = getattr(app_state, "unified_cache_manager", None)
+        if unified_manager:
+            return unified_manager
+    
+    # Fall back to global instance
+    return get_unified_cache_manager()
+
+
 def get_principal(request: Request) -> Optional[dict[str, Any]]:
     """Return the authenticated principal from request.state, if any."""
     principal = getattr(getattr(request, "state", None), "principal", None)
@@ -52,6 +66,7 @@ def get_tenant_id(request: Request) -> Optional[str]:
 __all__ = [
     "get_settings",
     "get_cache_manager",
+    "get_unified_cache_manager_dep",
     "get_principal",
     "get_tenant_id",
 ]
