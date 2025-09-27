@@ -112,13 +112,42 @@ class UnifiedCacheManager:
     async def _setup_governance(self):
         """Set up cache governance system."""
         if self.cache:
-            # Create enhanced cache manager for governance
-            from .enhanced_cache_manager import EnhancedCacheManager
-            enhanced_manager = EnhancedCacheManager()
-            await enhanced_manager.initialize(self.cache)
+            # Initialize governance manager directly without enhanced manager
+            # since we're implementing the unified functionality here
+            self.governance_manager = CacheGovernanceManager(self)
             
-            # Initialize governance manager
-            self.governance_manager = CacheGovernanceManager(enhanced_manager)
+    def _get_namespace_from_key(self, key: str) -> Optional[CacheNamespace]:
+        """Extract namespace from key for governance."""
+        return KeyNamingPattern.get_namespace_from_key(key)
+        
+    # Add methods that governance manager expects
+    async def set(self, 
+                  key: str, 
+                  value: Any, 
+                  ttl: Optional[int] = None,
+                  namespace: Optional[Union[CacheNamespace, str]] = None,
+                  tenant_id: Optional[str] = None) -> None:
+        """Set value in cache with governance and TTL policies."""
+        if not self.cache:
+            return
+            
+        namespace_str = namespace.value if isinstance(namespace, CacheNamespace) else namespace
+        
+        try:
+            # Determine appropriate TTL
+            effective_ttl = self._determine_ttl(key, ttl, namespace)
+            
+            # For now, use direct cache access instead of governance to avoid circular dependency
+            # In a production system, you'd implement the governance directly here
+            await self.cache.set(key, value, effective_ttl)
+            
+            # Update analytics
+            async with self._analytics_lock:
+                if namespace_str and namespace_str in self.analytics.namespace_stats:
+                    self.analytics.namespace_stats[namespace_str]["sets"] += 1
+                    
+        except Exception as e:
+            self.logger.error(f"Cache set error: {e}", extra={"key": key, "namespace": namespace})
 
     async def _setup_default_configurations(self):
         """Set up default TTLs and invalidation rules."""
@@ -233,16 +262,7 @@ class UnifiedCacheManager:
         namespace_str = namespace.value if isinstance(namespace, CacheNamespace) else namespace
         
         try:
-            # Use governance if available
-            if self.governance_manager and namespace:
-                result = await self.governance_manager.get_with_governance(
-                    namespace=namespace if isinstance(namespace, CacheNamespace) else CacheNamespace(namespace),
-                    key=key
-                )
-                await self._update_analytics("get", namespace_str, hit=result is not None)
-                return result
-            
-            # Fall back to direct cache access
+            # Use direct cache access for now
             result = await self.cache.get(key)
             await self._update_analytics("get", namespace_str, hit=result is not None)
             return result
@@ -254,10 +274,11 @@ class UnifiedCacheManager:
         finally:
             # Update response time
             response_time = time.time() - start_time
-            self.analytics.average_response_time = (
-                (self.analytics.average_response_time * (self.analytics.total_requests - 1) + response_time) /
-                self.analytics.total_requests
-            )
+            if self.analytics.total_requests > 0:
+                self.analytics.average_response_time = (
+                    (self.analytics.average_response_time * (self.analytics.total_requests - 1) + response_time) /
+                    self.analytics.total_requests
+                )
 
     async def set(self, 
                   key: str, 
@@ -275,18 +296,8 @@ class UnifiedCacheManager:
             # Determine appropriate TTL
             effective_ttl = self._determine_ttl(key, ttl, namespace)
             
-            # Use governance if available
-            if self.governance_manager and namespace:
-                await self.governance_manager.set_with_governance(
-                    namespace=namespace if isinstance(namespace, CacheNamespace) else CacheNamespace(namespace),
-                    key=key,
-                    value=value,
-                    ttl_override=effective_ttl,
-                    tenant_id=tenant_id
-                )
-            else:
-                # Fall back to direct cache access
-                await self.cache.set(key, value, effective_ttl)
+            # Use direct cache access for now
+            await self.cache.set(key, value, effective_ttl)
             
             # Update analytics
             async with self._analytics_lock:
@@ -413,7 +424,10 @@ class UnifiedCacheManager:
         }
         
         if self.governance_manager:
-            unified_stats["governance"] = self.governance_manager.get_stats()
+            try:
+                unified_stats["governance"] = self.governance_manager._stats
+            except AttributeError:
+                unified_stats["governance"] = {"status": "not_available"}
             
         return {**base_stats, **unified_stats}
 
