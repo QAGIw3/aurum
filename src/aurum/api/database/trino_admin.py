@@ -60,7 +60,7 @@ class TrinoHealthStatus(BaseModel):
     avg_response_time_seconds: float
 
 
-@router.get("/v1/admin/trino/health", dependencies=[Depends(_admin_guard)])
+@router.get("/health", dependencies=[Depends(_admin_guard)])
 async def trino_health(
     detailed: bool = Query(False, description="Include detailed metrics")
 ) -> Dict:
@@ -137,7 +137,7 @@ async def trino_health(
         )
 
 
-@router.get("/v1/admin/trino/pool", dependencies=[Depends(_admin_guard)])
+@router.get("/pool", dependencies=[Depends(_admin_guard)])
 async def trino_pool_status(
     detailed: bool = Query(False, description="Include detailed pool statistics")
 ) -> Dict:
@@ -199,7 +199,7 @@ async def trino_pool_status(
         )
 
 
-@router.get("/v1/admin/trino/stats", dependencies=[Depends(_admin_guard)])
+@router.get("/stats", dependencies=[Depends(_admin_guard)])
 async def trino_query_stats(
     time_range: str = Query("15m", description="Time range for statistics (15m, 1h, 24h)"),
     include_errors: bool = Query(True, description="Include error statistics")
@@ -236,7 +236,7 @@ async def trino_query_stats(
         )
 
 
-@router.post("/v1/admin/trino/reset", dependencies=[Depends(_admin_guard)])
+@router.post("/reset", dependencies=[Depends(_admin_guard)])
 async def trino_reset_circuit_breaker() -> Dict:
     """Reset Trino circuit breaker to recover from failures."""
     start_time = time.perf_counter()
@@ -268,7 +268,7 @@ async def trino_reset_circuit_breaker() -> Dict:
         )
 
 
-@router.get("/v1/admin/trino/config", dependencies=[Depends(_admin_guard)])
+@router.get("/config", dependencies=[Depends(_admin_guard)])
 async def trino_config_status() -> Dict:
     """Get Trino client configuration and runtime settings."""
     start_time = time.perf_counter()
@@ -314,7 +314,7 @@ async def trino_config_status() -> Dict:
         )
 
 
-@router.get("/v1/admin/trino/catalogs", dependencies=[Depends(_admin_guard)])
+@router.get("/catalogs", dependencies=[Depends(_admin_guard)])
 async def trino_catalog_status() -> Dict:
     """Get status of all configured Trino catalogs."""
     start_time = time.perf_counter()
@@ -364,7 +364,7 @@ async def trino_catalog_status() -> Dict:
         )
 
 
-@router.get("/v1/admin/trino/catalogs/{catalog_type}", dependencies=[Depends(_admin_guard)])
+@router.get("/catalogs/{catalog_type}", dependencies=[Depends(_admin_guard)])
 async def trino_catalog_info(
     catalog_type: str,
     include_access_control: bool = Query(False, description="Include access control details")
@@ -429,7 +429,7 @@ async def trino_catalog_info(
         )
 
 
-@router.post("/v1/admin/trino/catalogs/{catalog_type}/validate-access", dependencies=[Depends(_admin_guard)])
+@router.post("/catalogs/{catalog_type}/validate-access", dependencies=[Depends(_admin_guard)])
 async def validate_catalog_access(
     catalog_type: str,
     operation: str = Query("read", description="Operation to validate (read, write)")

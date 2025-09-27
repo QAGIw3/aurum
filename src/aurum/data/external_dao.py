@@ -65,7 +65,8 @@ class ExternalDAO:
     async def get_trino_client(self) -> TrinoClient:
         """Get Trino client instance."""
         if self.trino_client is None:
-            from ..api.trino_client import get_trino_client
+            # Consolidated import path: use the canonical database client
+            from ..api.database.trino_client import get_trino_client
             self.trino_client = get_trino_client()
         return self.trino_client
 
