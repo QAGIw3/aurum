@@ -20,6 +20,7 @@ Legacy Sync DAO Classes (deprecated):
 from .eia_dao import EiaDao
 from .curves_dao import CurvesDao
 from .metadata_dao import MetadataDao
+from .ppa_dao import PpaDao
 
 # New async DAOs with connection pooling
 from .base_async_dao import BaseAsyncDao
@@ -33,6 +34,7 @@ __all__ = [
     "EiaDao",
     "CurvesDao", 
     "MetadataDao",
+    "PpaDao",
     
     # New async DAOs with connection pooling
     "BaseAsyncDao",

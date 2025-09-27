@@ -1059,86 +1059,40 @@ def query_scenario_outputs(
         return rows, elapsed
 
 
+from .services.ppa_service import (
+    coerce_float as _ppa_coerce_float,
+    coerce_date as _ppa_coerce_date,
+    month_end as _ppa_month_end,
+    month_offset as _ppa_month_offset,
+    extract_currency as _ppa_extract_currency,
+    compute_irr as _ppa_compute_irr,
+)
+
+
 def _coerce_float(value: Any, default: float = 0.0) -> float:
-    try:
-        if value is None:
-            return default
-        return float(value)
-    except (TypeError, ValueError):
-        return default
+    return _ppa_coerce_float(value, default)
 
 
 def _coerce_date(value: Any, fallback: date) -> date:
-    if isinstance(value, date):
-        return value
-    if isinstance(value, str):
-        try:
-            return date.fromisoformat(value)
-        except ValueError:
-            return fallback
-    return fallback
+    return _ppa_coerce_date(value, fallback)
 
 
 def _month_end(day: date) -> date:
-    last_day = monthrange(day.year, day.month)[1]
-    return day.replace(day=last_day)
+    return _ppa_month_end(day)
 
 
 def _month_offset(start: date, end: date) -> int:
-    return (end.year - start.year) * 12 + (end.month - start.month)
+    return _ppa_month_offset(start, end)
 
 
 def _extract_currency(row: Dict[str, Any]) -> Optional[str]:
-    currency = row.get("metric_currency")
-    if currency:
-        currency_str = str(currency).strip()
-        if currency_str:
-            return currency_str
-    unit = row.get("metric_unit")
-    if unit:
-        parts = str(unit).split("/", 1)
-        candidate = parts[0].strip()
-        if candidate:
-            return candidate
-    return None
+    return _ppa_extract_currency(row)
 
 
-def _compute_irr(cashflows: List[float], *, tolerance: float = 1e-6, max_iterations: int = 80) -> Optional[float]:
-
-    if not cashflows:
-        return None
-    if all(cf >= 0 for cf in cashflows) or all(cf <= 0 for cf in cashflows):
-        return None
-
-    def npv(rate: float) -> float:
-        total = 0.0
-        for idx, cf in enumerate(cashflows):
-            total += cf / (1.0 + rate) ** idx
-        return total
-
-    low, high = -0.9999, 10.0
-    f_low = npv(low)
-    f_high = npv(high)
-    if f_low == 0:
-        return low
-    if f_high == 0:
-        return high
-    if f_low * f_high > 0:
-        return None
-
-    mid = (low + high) / 2.0
-    for _ in range(max_iterations):
-        mid = (low + high) / 2.0
-        f_mid = npv(mid)
-        if abs(f_mid) < tolerance:
-            return mid
-        if f_low * f_mid < 0:
-            high = mid
-            f_high = f_mid
-        else:
-            low = mid
-            f_low = f_mid
-    return mid
+def _compute_irr(
+    cashflows: List[float], *, tolerance: float = 1e-6, max_iterations: int = 80
+) -> Optional[float]:
+    return _ppa_compute_irr(cashflows, tolerance=tolerance, max_iterations=max_iterations)
 
 
 def query_ppa_valuation(
@@ -1150,131 +1104,18 @@ def query_ppa_valuation(
     metric: Optional[str] = "mid",
     options: Optional[Dict[str, Any]] = None,
 ) -> Tuple[List[Dict[str, Any]], float]:
-    base = "mart_scenario_output"
-    filters: Dict[str, Optional[str]] = {"scenario_id": scenario_id}
-    if tenant_id:
-        filters["tenant_id"] = tenant_id
-    target_metric = metric or "mid"
-    filters["metric"] = target_metric
-    where = _build_where(filters)
-    if asof_date:
-        clause = f"asof_date = DATE '{asof_date.isoformat()}'"
-        where = where + (" AND " if where else " WHERE ") + clause
+    from .services.ppa_service import PpaService
 
-    sql = (
-        "SELECT cast(contract_month as date) as contract_month, "
-        "cast(asof_date as date) as asof_date, tenor_label, metric, value, "
-        "metric_currency, metric_unit, metric_unit_denominator, curve_key, tenor_type, run_id "
-        f"FROM {base}{where} "
-        "ORDER BY contract_month NULLS LAST, tenor_label"
+    service = PpaService()
+    return service.calculate_valuation(
+        scenario_id=scenario_id,
+        tenant_id=tenant_id,
+        asof_date=asof_date,
+        metric=metric,
+        options=options,
+        trino_cfg=trino_cfg,
     )
 
-    start = time.perf_counter()
-    rows: List[Dict[str, Any]] = _execute_trino_query(trino_cfg, sql)
-    elapsed = (time.perf_counter() - start) * 1000.0
-
-    if not rows:
-        return [], elapsed
-
-    opts = options or {}
-    ppa_price = _coerce_float(opts.get("ppa_price"), 0.0)
-    volume = _coerce_float(opts.get("volume_mwh"), 1.0)
-    discount_rate = _coerce_float(opts.get("discount_rate"), 0.0)
-    upfront_cost = _coerce_float(opts.get("upfront_cost"), 0.0)
-    if discount_rate <= -1.0:
-        discount_rate = 0.0
-    monthly_rate = (1.0 + discount_rate) ** (1.0 / 12.0) - 1.0 if discount_rate else 0.0
-
-    fallback_date = asof_date or date.today()
-    base_period: Optional[date] = None
-    latest_period: Optional[date] = None
-    npv_total = -upfront_cost
-    cashflows_by_offset: Dict[int, float] = {}
-    metrics_out: List[Dict[str, Any]] = []
-    currency_hint: Optional[str] = None
-    curve_hint: Optional[str] = None
-    run_hint: Optional[str] = None
-    tenor_hint: Optional[str] = None
-
-    for row in rows:
-        if str(row.get("metric")) != target_metric:
-            continue
-        period_candidate = row.get("contract_month") or row.get("asof_date") or fallback_date
-        period = _coerce_date(period_candidate, fallback_date)
-        base_period = base_period or period
-        latest_period = period
-        offset = _month_offset(base_period, period) + 1
-        price_value = _coerce_float(row.get("value"), 0.0)
-        cashflow_value = (price_value - ppa_price) * volume
-        cashflows_by_offset[offset] = cashflows_by_offset.get(offset, 0.0) + cashflow_value
-        discount_factor = (1.0 + monthly_rate) ** offset if monthly_rate else 1.0
-        npv_total += cashflow_value / discount_factor
-        currency = _extract_currency(row)
-        if currency:
-            currency_hint = currency_hint or currency
-        curve = row.get("curve_key")
-        if curve:
-            curve_hint = curve_hint or curve
-        run_id = row.get("run_id")
-        if run_id:
-            run_hint = run_hint or run_id
-        tenor = row.get("tenor_type")
-        if tenor:
-            tenor_hint = tenor_hint or tenor
-        metrics_out.append(
-            {
-                "period_start": period,
-                "period_end": _month_end(period),
-                "metric": "cashflow",
-                "value": round(cashflow_value, 4),
-                "currency": currency or currency_hint,
-                "unit": (currency or currency_hint),
-                "curve_key": curve or curve_hint,
-                "run_id": row.get("run_id") or run_hint,
-                "tenor_type": row.get("tenor_type") or tenor_hint,
-            }
-        )
-
-    if not metrics_out:
-        return [], elapsed
-
-    summary_start = base_period or fallback_date
-    summary_end = _month_end(latest_period) if latest_period else summary_start
-    currency_summary = currency_hint or metrics_out[0].get("currency")
-    metrics_out.append(
-        {
-            "period_start": summary_start,
-            "period_end": summary_end,
-            "metric": "NPV",
-            "value": round(npv_total, 4),
-            "currency": currency_summary,
-            "unit": currency_summary,
-            "curve_key": curve_hint,
-            "run_id": run_hint,
-            "tenor_type": tenor_hint,
-        }
-    )
-
-    if cashflows_by_offset:
-        max_offset = max(cashflows_by_offset)
-        series = [-upfront_cost] + [cashflows_by_offset.get(idx, 0.0) for idx in range(1, max_offset + 1)]
-        irr = _compute_irr(series)
-        if irr is not None:
-            metrics_out.append(
-                {
-                    "period_start": summary_start,
-                    "period_end": summary_end,
-                    "metric": "IRR",
-                    "value": round(irr, 6),
-                    "currency": None,
-                    "unit": "ratio",
-                    "curve_key": curve_hint,
-                    "run_id": run_hint,
-                    "tenor_type": tenor_hint,
-                }
-            )
-
-    return metrics_out, elapsed
 
 
 def query_ppa_contract_valuations(
@@ -1287,38 +1128,19 @@ def query_ppa_contract_valuations(
     offset: int = 0,
     tenant_id: Optional[str] = None,
 ) -> Tuple[List[Dict[str, Any]], float]:
-    filters: Dict[str, Optional[str]] = {
-        "ppa_contract_id": ppa_contract_id,
-        "tenant_id": tenant_id,
-    }
-    if scenario_id:
-        filters["scenario_id"] = scenario_id
-    if metric:
-        filters["metric"] = metric
-    where = _build_where(filters)
+    from .services.ppa_service import PpaService
 
-    sql = (
-        "SELECT cast(asof_date as date) as asof_date, "
-        "cast(period_start as date) as period_start, "
-        "cast(period_end as date) as period_end, "
-        "scenario_id, tenant_id, curve_key, metric, value, cashflow, npv, irr, version_hash, _ingest_ts "
-        "FROM iceberg.market.ppa_valuation"
-        f"{where} "
-        "ORDER BY asof_date DESC, scenario_id, metric, period_start DESC "
-        f"LIMIT {int(limit)} OFFSET {int(offset)}"
+    service = PpaService()
+    return service.list_contract_valuation_rows(
+        contract_id=ppa_contract_id,
+        scenario_id=scenario_id,
+        metric=metric,
+        tenant_id=tenant_id,
+        limit=limit,
+        offset=offset,
+        trino_cfg=trino_cfg,
     )
 
-    start = time.perf_counter()
-    rows: List[Dict[str, Any]] = _execute_trino_query(trino_cfg, sql)
-    # Normalize numeric fields
-    for record in rows:
-        for key in ("value", "cashflow", "npv"):
-            if record.get(key) is not None:
-                record[key] = float(record[key])
-        if record.get("irr") is not None:
-            record["irr"] = float(record["irr"])
-    elapsed = (time.perf_counter() - start) * 1000.0
-    return rows, elapsed
 
 
 def _build_sql_scenario_metrics_latest(

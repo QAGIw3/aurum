@@ -13,10 +13,22 @@ def _ensure_opentelemetry(monkeypatch):
     stub_span = types.SimpleNamespace(set_attribute=lambda *args, **kwargs: None, is_recording=lambda: False)
 
     trace_module = types.ModuleType("opentelemetry.trace")
+
+    class _StatusCode:
+        OK = "OK"
+        ERROR = "ERROR"
+
+    class _Status:
+        def __init__(self, code, description=None):
+            self.status_code = code
+            self.description = description
+
     trace_module.get_current_span = lambda: stub_span
     trace_module.get_tracer_provider = lambda: None
-    trace_module.get_tracer = lambda *_args, **_kwargs: None
+    trace_module.get_tracer = lambda *_args, **_kwargs: types.SimpleNamespace(start_span=lambda *_a, **_k: stub_span)
     trace_module.set_tracer_provider = lambda *_args, **_kwargs: None
+    trace_module.Status = _Status
+    trace_module.StatusCode = _StatusCode
 
     propagate_module = types.ModuleType("opentelemetry.propagate")
     propagate_module.inject = lambda *_args, **_kwargs: None
@@ -48,7 +60,20 @@ def _ensure_opentelemetry(monkeypatch):
         def __init__(self, _exporter):
             pass
 
+    class _SimpleSpanProcessor:
+        def __init__(self, _exporter):
+            pass
+
+    class _ConsoleSpanExporter:
+        def __init__(self, **_kwargs):
+            pass
+
+        def export(self, _spans):
+            return None
+
     trace_export_module.BatchSpanProcessor = _BatchSpanProcessor
+    trace_export_module.SimpleSpanProcessor = _SimpleSpanProcessor
+    trace_export_module.ConsoleSpanExporter = _ConsoleSpanExporter
 
     sampling_module = types.ModuleType("opentelemetry.sdk.trace.sampling")
 
@@ -829,7 +854,6 @@ def test_ppa_valuate(monkeypatch):
     _ensure_opentelemetry(monkeypatch)
     from fastapi.testclient import TestClient
     from aurum.api import app as api_app
-    from aurum.api import service
     from datetime import date
 
     client = TestClient(api_app.app)
@@ -842,29 +866,41 @@ def test_ppa_valuate(monkeypatch):
     assert create_resp.status_code == 201
     contract_id = create_resp.json()["data"]["ppa_contract_id"]
 
-    def fake_query(trino_cfg, *, scenario_id, tenant_id=None, asof_date=None, metric="mid", options=None):
-        assert scenario_id == "scn-123"
-        assert tenant_id == "tenant-42"
-        assert metric == "mid"
-        assert options == {"foo": "bar"}
-        return (
-            [
-                {
-                    "period_start": date(2025, 1, 1),
-                    "period_end": date(2025, 1, 1),
-                    "metric": "mid",
-                    "value": 12.5,
-                    "currency": "USD",
-                    "unit": "USD",
-                    "curve_key": "curve-a",
-                    "tenor_type": "MONTHLY",
-                    "run_id": "run-xyz",
-                }
-            ],
-            11.2,
-        )
+    from aurum.api.v1 import ppa as ppa_router
 
-    monkeypatch.setattr(service, "query_ppa_valuation", fake_query)
+    class StubPpaService:
+        def calculate_valuation(
+            self,
+            *,
+            scenario_id,
+            tenant_id=None,
+            asof_date=None,
+            metric="mid",
+            options=None,
+            trino_cfg=None,
+        ):
+            assert scenario_id == "scn-123"
+            assert tenant_id == "tenant-42"
+            assert metric == "mid"
+            assert options == {"foo": "bar"}
+            return (
+                [
+                    {
+                        "period_start": date(2025, 1, 1),
+                        "period_end": date(2025, 1, 1),
+                        "metric": "mid",
+                        "value": 12.5,
+                        "currency": "USD",
+                        "unit": "USD",
+                        "curve_key": "curve-a",
+                        "tenor_type": "MONTHLY",
+                        "run_id": "run-xyz",
+                    }
+                ],
+                11.2,
+            )
+
+    monkeypatch.setattr(ppa_router, "_PPA_SERVICE", StubPpaService())
 
     persisted: dict[str, Any] = {}
 
@@ -1038,7 +1074,6 @@ def test_ppa_contract_valuations_list(monkeypatch):
     _ensure_opentelemetry(monkeypatch)
     from fastapi.testclient import TestClient
     from aurum.api import app as api_app
-    from aurum.api import service
 
     client = TestClient(api_app.app)
     client.headers.update({"X-Aurum-Tenant": "tenant-555"})
@@ -1050,57 +1085,62 @@ def test_ppa_contract_valuations_list(monkeypatch):
     assert create_resp.status_code == 201
     contract_id = create_resp.json()["data"]["ppa_contract_id"]
 
-    def fake_query(
-        trino_cfg,
-        *,
-        ppa_contract_id,
-        scenario_id=None,
-        metric=None,
-        limit,
-        offset,
-        tenant_id=None,
-    ):
-        assert ppa_contract_id == contract_id
-        assert limit == 2  # limit + 1 from handler
-        assert offset == 0
-        assert tenant_id == "tenant-555"
-        return (
-            [
-                {
-                    "asof_date": datetime(2025, 9, 12).date(),
-                    "period_start": datetime(2025, 9, 1).date(),
-                    "period_end": datetime(2025, 9, 30).date(),
-                    "scenario_id": "scn-1",
-                    "tenant_id": "tenant-555",
-                    "metric": "NPV",
-                    "value": 1100.0,
-                    "cashflow": 1250.0,
-                    "npv": 1100.0,
-                    "irr": 0.08,
-                    "curve_key": "curve-a",
-                    "version_hash": "hash-a",
-                    "_ingest_ts": datetime(2025, 9, 12, 0, 0, 0),
-                },
-                {
-                    "asof_date": datetime(2025, 10, 12).date(),
-                    "period_start": datetime(2025, 10, 1).date(),
-                    "period_end": datetime(2025, 10, 31).date(),
-                    "scenario_id": "scn-1",
-                    "tenant_id": "tenant-555",
-                    "metric": "IRR",
-                    "value": 0.08,
-                    "cashflow": None,
-                    "npv": None,
-                    "irr": 0.0825,
-                    "curve_key": "curve-a",
-                    "version_hash": "hash-b",
-                    "_ingest_ts": datetime(2025, 10, 12, 0, 0, 0),
-                },
-            ],
-            12.3,
-        )
+    expected_contract_id = contract_id
+    from aurum.api.v1 import ppa as ppa_router
 
-    monkeypatch.setattr(service, "query_ppa_contract_valuations", fake_query)
+    class StubPpaService:
+        def list_contract_valuation_rows(
+            self,
+            *,
+            contract_id,
+            scenario_id=None,
+            metric=None,
+            tenant_id=None,
+            limit,
+            offset,
+            trino_cfg=None,
+        ):
+            assert contract_id == expected_contract_id
+            assert limit == 2  # limit + 1 from handler
+            assert offset == 0
+            assert tenant_id == "tenant-555"
+            return (
+                [
+                    {
+                        "asof_date": datetime(2025, 9, 12).date(),
+                        "period_start": datetime(2025, 9, 1).date(),
+                        "period_end": datetime(2025, 9, 30).date(),
+                        "scenario_id": "scn-1",
+                        "tenant_id": "tenant-555",
+                        "metric": "NPV",
+                        "value": 1100.0,
+                        "cashflow": 1250.0,
+                        "npv": 1100.0,
+                        "irr": 0.08,
+                        "curve_key": "curve-a",
+                        "version_hash": "hash-a",
+                        "_ingest_ts": datetime(2025, 9, 12, 0, 0, 0),
+                    },
+                    {
+                        "asof_date": datetime(2025, 10, 12).date(),
+                        "period_start": datetime(2025, 10, 1).date(),
+                        "period_end": datetime(2025, 10, 31).date(),
+                        "scenario_id": "scn-1",
+                        "tenant_id": "tenant-555",
+                        "metric": "IRR",
+                        "value": 0.08,
+                        "cashflow": None,
+                        "npv": None,
+                        "irr": 0.0825,
+                        "curve_key": "curve-a",
+                        "version_hash": "hash-b",
+                        "_ingest_ts": datetime(2025, 10, 12, 0, 0, 0),
+                    },
+                ],
+                12.3,
+            )
+
+    monkeypatch.setattr(ppa_router, "_PPA_SERVICE", StubPpaService())
 
     resp = client.get(
         f"/v1/ppa/contracts/{contract_id}/valuations",

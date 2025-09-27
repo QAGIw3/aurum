@@ -30,13 +30,14 @@ from ..models import (
     PpaValuationResponse,
     PpaMetric,
 )
-from ..service import query_ppa_contract_valuations, query_ppa_valuation
+from ..services.ppa_service import PpaService
 from ..http.responses import respond_with_etag
 from ...telemetry.context import get_request_id
 from ..scenarios.scenario_service import STORE as ScenarioStore
 
 
 router = APIRouter()
+_PPA_SERVICE = PpaService()
 
 
 def _tenant_from_request(request: Request, explicit: Optional[str] = None) -> Optional[str]:
@@ -178,14 +179,14 @@ def list_ppa_contract_valuations(
         except Exception:
             raise HTTPException(status_code=400, detail="Invalid cursor")
 
-    rows, elapsed_ms = query_ppa_contract_valuations(
-        trino_cfg=None,
-        ppa_contract_id=contract_id,
+    rows, elapsed_ms = _PPA_SERVICE.list_contract_valuation_rows(
+        contract_id=contract_id,
         scenario_id=scenario_id,
         metric=metric,
+        tenant_id=tenant_id,
         limit=limit + 1,
         offset=effective_offset,
-        tenant_id=tenant_id,
+        trino_cfg=None,
     )
 
     more = len(rows) > limit
@@ -228,12 +229,12 @@ def valuate_ppa(payload: PpaValuationRequest, request: Request) -> PpaValuationR
     if ScenarioStore.get_ppa_contract(payload.ppa_contract_id, tenant_id=tenant_id) is None:
         raise HTTPException(status_code=404, detail="PPA contract not found")
 
-    rows, elapsed_ms = query_ppa_valuation(
-        trino_cfg=None,
+    rows, elapsed_ms = _PPA_SERVICE.calculate_valuation(
         scenario_id=payload.scenario_id,
         tenant_id=tenant_id,
         asof_date=payload.asof_date,
         options=payload.options or None,
+        trino_cfg=None,
     )
 
     fallback_date = payload.asof_date or __import__("datetime").date.today()
@@ -256,4 +257,3 @@ def valuate_ppa(payload: PpaValuationRequest, request: Request) -> PpaValuationR
         )
 
     return PpaValuationResponse(meta=Meta(request_id=request_id, query_time_ms=int(elapsed_ms)), data=metrics)
-

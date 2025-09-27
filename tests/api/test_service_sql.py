@@ -11,6 +11,7 @@ import sys
 import pytest
 
 from aurum.api import service
+from aurum.api.services.ppa_service import PpaService, compute_irr
 
 
 class FakeRedis:
@@ -354,49 +355,42 @@ def test_query_scenario_metrics_latest_uses_cache(monkeypatch):
     assert fake_redis.get_called >= 1
 
 
-def test_query_ppa_valuation_builds_cashflows(monkeypatch):
-    class FakeCursor:
-        def __init__(self, rows):
-            self._rows = rows
-            self.description = [
-                ("contract_month",),
-                ("asof_date",),
-                ("tenor_label",),
-                ("metric",),
-                ("value",),
-                ("metric_currency",),
-                ("metric_unit",),
-                ("metric_unit_denominator",),
-                ("curve_key",),
-                ("tenor_type",),
-                ("run_id",),
-            ]
-
-        def execute(self, *_args, **_kwargs) -> None:
-            return None
-
-        def fetchall(self):
-            return self._rows
-
-    class FakeConnection:
-        def __init__(self, rows):
-            self._rows = rows
-
-        def __enter__(self):
-            return self
-
-        def __exit__(self, exc_type, exc, tb):  # type: ignore[override]
-            return False
-
-        def cursor(self):
-            return FakeCursor(self._rows)
-
+def test_query_ppa_valuation_builds_cashflows():
     sample_rows = [
-        (date(2025, 1, 1), date(2025, 1, 1), "2025-01", "mid", 60.0, "USD", "USD/MWh", "MWh", "curve-a", "MONTHLY", "run-1"),
-        (date(2025, 2, 1), date(2025, 2, 1), "2025-02", "mid", 55.0, "USD", "USD/MWh", "MWh", "curve-a", "MONTHLY", "run-1"),
+        {
+            "contract_month": date(2025, 1, 1),
+            "asof_date": date(2025, 1, 1),
+            "tenor_label": "2025-01",
+            "metric": "mid",
+            "value": 60.0,
+            "metric_currency": "USD",
+            "metric_unit": "USD/MWh",
+            "metric_unit_denominator": "MWh",
+            "curve_key": "curve-a",
+            "tenor_type": "MONTHLY",
+            "run_id": "run-1",
+        },
+        {
+            "contract_month": date(2025, 2, 1),
+            "asof_date": date(2025, 2, 1),
+            "tenor_label": "2025-02",
+            "metric": "mid",
+            "value": 55.0,
+            "metric_currency": "USD",
+            "metric_unit": "USD/MWh",
+            "metric_unit_denominator": "MWh",
+            "curve_key": "curve-a",
+            "tenor_type": "MONTHLY",
+            "run_id": "run-1",
+        },
     ]
 
-    monkeypatch.setattr(service, "_require_trino", lambda: lambda **_kw: FakeConnection(sample_rows))
+    class StubPpaDao:
+        def __init__(self, rows):
+            self._rows = rows
+
+        def execute(self, sql: str, *, trino_cfg=None):  # pragma: no cover - simple stub
+            return self._rows, 12.5
 
     options = {
         "ppa_price": 50.0,
@@ -405,11 +399,12 @@ def test_query_ppa_valuation_builds_cashflows(monkeypatch):
         "upfront_cost": 100.0,
     }
 
-    rows, _elapsed = service.query_ppa_valuation(
-        service.TrinoConfig(),
+    ppa_service = PpaService(dao=StubPpaDao(sample_rows))
+    rows, _elapsed = ppa_service.calculate_valuation(
         scenario_id="scn-1",
         tenant_id="tenant-1",
         options=options,
+        trino_cfg=None,
     )
 
     cashflows = [row for row in rows if row["metric"] == "cashflow"]
@@ -428,7 +423,7 @@ def test_query_ppa_valuation_builds_cashflows(monkeypatch):
     assert npv_row["value"] == pytest.approx(round(expected_npv, 4))
 
     irr_row = next(row for row in rows if row["metric"] == "IRR")
-    expected_irr = round(service._compute_irr([-options["upfront_cost"], 100.0, 50.0]) or 0.0, 6)
+    expected_irr = round(compute_irr([-options["upfront_cost"], 100.0, 50.0]) or 0.0, 6)
     assert irr_row["value"] == expected_irr
 
 
