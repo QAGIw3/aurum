@@ -6,7 +6,7 @@ Endpoints:
 - /v1/ppa/contracts/{contract_id}/valuations (list)
 - /v1/ppa/valuate (adhoc valuation)
 
-Enable via AURUM_API_V1_SPLIT_PPA=1 in app wiring.
+This router is always enabled by default. The AURUM_API_V1_SPLIT_PPA flag is deprecated.
 """
 
 from __future__ import annotations
