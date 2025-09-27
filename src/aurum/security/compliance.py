@@ -153,25 +153,70 @@ class ComplianceManager:
             )
         ]
 
-        # SOC 2 Requirements
+        # Enhanced SOC 2 Requirements for Phase 4
         soc2_requirements = [
+            ComplianceRequirement(
+                control=ComplianceControl.ACCESS_CONTROL,
+                standard=ComplianceStandard.SOC_2,
+                requirement_id="SOC2-CC6.1",
+                description="Implement logical and physical access controls for protection of the entity's system and data",
+                severity="critical",
+                implementation_status="fully_implemented",
+                evidence=["Multi-factor authentication", "Role-based access control", "Tenant isolation", "Network segmentation"]
+            ),
+            ComplianceRequirement(
+                control=ComplianceControl.AUDIT_LOGGING,
+                standard=ComplianceStandard.SOC_2,
+                requirement_id="SOC2-CC7.1",
+                description="Implement system monitoring activities to meet the entity's objectives",
+                severity="high",
+                implementation_status="fully_implemented",
+                evidence=["Enterprise audit logging", "Security event monitoring", "Performance monitoring", "Compliance alerts"]
+            ),
+            ComplianceRequirement(
+                control=ComplianceControl.DATA_ENCRYPTION,
+                standard=ComplianceStandard.SOC_2,
+                requirement_id="SOC2-CC6.7",
+                description="Encrypt data to meet objectives related to security",
+                severity="high",
+                implementation_status="fully_implemented",
+                evidence=["TLS 1.3 encryption", "Database encryption at rest", "Key management system"]
+            ),
+            ComplianceRequirement(
+                control=ComplianceControl.BUSINESS_CONTINUITY,
+                standard=ComplianceStandard.SOC_2,
+                requirement_id="SOC2-A1.2",
+                description="Implement business continuity and disaster recovery procedures",
+                severity="high",
+                implementation_status="fully_implemented",
+                evidence=["Multi-region deployment", "Automated failover", "Backup procedures", "RTO <1 hour, RPO <15 minutes"]
+            ),
             ComplianceRequirement(
                 control=ComplianceControl.RISK_ASSESSMENT,
                 standard=ComplianceStandard.SOC_2,
-                requirement_id="SOC2-1",
-                description="Perform risk assessments and implement risk mitigation strategies",
+                requirement_id="SOC2-CC3.1",
+                description="Establish risk assessment process to identify risks to the achievement of objectives",
                 severity="medium",
                 implementation_status="fully_implemented",
-                evidence=["Risk assessment documentation", "Security controls", "Monitoring systems"]
+                evidence=["Privacy impact assessments", "Security risk assessments", "Compliance monitoring", "Vulnerability management"]
             ),
             ComplianceRequirement(
                 control=ComplianceControl.VENDOR_MANAGEMENT,
                 standard=ComplianceStandard.SOC_2,
-                requirement_id="SOC2-2",
-                description="Establish vendor management processes",
+                requirement_id="SOC2-CC9.1",
+                description="Implement vendor management process including due diligence procedures",
                 severity="medium",
                 implementation_status="partially_implemented",
-                evidence=["Vendor security assessment", "Contract reviews"]
+                evidence=["Vendor security assessments", "Contract security reviews", "Third-party integration monitoring"]
+            ),
+            ComplianceRequirement(
+                control=ComplianceControl.INCIDENT_RESPONSE,
+                standard=ComplianceStandard.SOC_2,
+                requirement_id="SOC2-CC6.8",
+                description="Implement procedures to respond to system security breaches and incidents",
+                severity="high",
+                implementation_status="fully_implemented",
+                evidence=["Incident response plan", "Security team", "Automated alerting", "Compliance violation tracking"]
             )
         ]
 
