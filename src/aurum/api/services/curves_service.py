@@ -18,7 +18,7 @@ from aurum.telemetry import get_tracer
 from .base_service import QueryableServiceInterface, ExportableServiceInterface
 from ..dao.curves_dao import CurvesDao
 from ..config import CacheConfig, TrinoConfig
-from ..cache.global_manager import get_global_cache_manager
+from ..cache.unified_cache_manager import get_unified_cache_manager
 from ..cache.utils import cache_get_sync, cache_set_sync, cache_get_or_set_sync
 from ..query import build_curve_query, build_curve_diff_query
 
@@ -246,10 +246,11 @@ class CurvesService(QueryableServiceInterface, ExportableServiceInterface):
             descending=descending,
         )
 
-        # try cache via CacheManager
-        manager = get_global_cache_manager()
+        # try cache via UnifiedCacheManager
+        manager = get_unified_cache_manager()
         cache_key = f"curves:{_cache_key({**params, 'sql': sql})}"
         if manager is not None:
+            # Use synchronous cache operations for backward compatibility
             cached_rows = cache_get_sync(manager, cache_key)
             if cached_rows is not None:
                 if SERVICE_CACHE_COUNTER:

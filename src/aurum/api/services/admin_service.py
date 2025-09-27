@@ -12,7 +12,7 @@ from typing import Any, Dict, List, Optional, Sequence
 
 from .base_service import ServiceInterface
 from ..config import CacheConfig
-from ..cache.global_manager import get_global_cache_manager
+from ..cache.unified_cache_manager import get_unified_cache_manager
 from ..cache.utils import cache_get_sync, cache_set_sync
 
 LOGGER = logging.getLogger(__name__)
@@ -99,10 +99,10 @@ class AdminService(ServiceInterface):
     ) -> None:
         """Invalidate scenario outputs cache."""
         client = _maybe_redis_client(cache_cfg)
-        manager = get_global_cache_manager()
+        manager = get_unified_cache_manager()
         _publish_cache_invalidation_event(tenant_id, scenario_id)
         
-        # Prefer version bump via CacheManager when available; fallback to Redis
+        # Prefer version bump via UnifiedCacheManager when available; fallback to Redis
         if manager is not None:
             version_key = _scenario_cache_version_key(cache_cfg.namespace, tenant_id)
             try:
@@ -134,14 +134,14 @@ class AdminService(ServiceInterface):
 
     async def invalidate_eia_series_cache_async(self, cache_cfg: CacheConfig) -> Dict[str, int]:
         """Async version of EIA series cache invalidation."""
-        manager = get_global_cache_manager()
+        manager = get_unified_cache_manager()
         if manager is not None:
             try:
                 # Best-effort: use broad patterns to invalidate related keys
                 await manager.invalidate_pattern("eia-series")
                 return {"eia-series": 0, "eia-series-dimensions": 0}
             except Exception:
-                LOGGER.debug("CacheManager invalidate_pattern failed; attempting Redis path", exc_info=True)
+                LOGGER.debug("UnifiedCacheManager invalidate_pattern failed; attempting Redis path", exc_info=True)
 
         # Fallback to Redis logic
         return self._invalidate_eia_series_cache_redis(cache_cfg)
@@ -185,27 +185,27 @@ class AdminService(ServiceInterface):
         return counts
 
     def invalidate_eia_series_cache(self, cache_cfg: CacheConfig) -> Dict[str, int]:
-        """Invalidate EIA series cache. Prefer CacheManager; fallback to Redis sets."""
-        manager = get_global_cache_manager()
+        """Invalidate EIA series cache. Prefer UnifiedCacheManager; fallback to Redis sets."""
+        manager = get_unified_cache_manager()
         if manager is not None:
             try:
-                # Using broad invalidation pattern for CacheManager
-                manager.invalidate_pattern("eia-series")
+                # Using broad invalidation pattern for UnifiedCacheManager
+                asyncio.create_task(manager.invalidate_pattern("eia-series"))
                 return {"eia-series": 0, "eia-series-dimensions": 0}
             except Exception:
-                LOGGER.debug("CacheManager invalidate_pattern failed; attempting Redis path", exc_info=True)
+                LOGGER.debug("UnifiedCacheManager invalidate_pattern failed; attempting Redis path", exc_info=True)
 
         return self._invalidate_eia_series_cache_redis(cache_cfg)
 
     async def invalidate_dimensions_cache_async(self, cache_cfg: CacheConfig) -> int:
         """Async version of dimensions cache invalidation."""
-        manager = get_global_cache_manager()
+        manager = get_unified_cache_manager()
         if manager is not None:
             try:
                 await manager.invalidate_pattern("dimensions")
                 return 0
             except Exception:
-                LOGGER.debug("CacheManager invalidate_pattern failed; attempting Redis path", exc_info=True)
+                LOGGER.debug("UnifiedCacheManager invalidate_pattern failed; attempting Redis path", exc_info=True)
         
         # Fallback to Redis logic
         return self._invalidate_dimensions_cache_redis(cache_cfg)
