@@ -165,22 +165,37 @@ def register_service(
 
 
 def get_service(service_type: Type[T]) -> T:
-    """Resolve a service from the global container."""
+    """Resolve a service from the global container.
+    
+    This is deprecated and should only be used from non-async contexts.
+    Prefer get_service_async() from async code.
+    """
     # For AsyncScenarioService, return a pre-created instance to avoid async issues in tests
     if service_type == AsyncScenarioService:
         return _create_async_scenario_service()
 
     try:
-        loop = asyncio.get_event_loop()
-        if loop.is_running():
-            # We're in an async context, but for non-AsyncScenarioService types, this shouldn't happen
-            # For now, raise an error to indicate this is unexpected
-            raise RuntimeError("Cannot resolve service from within a running event loop")
-        else:
-            return loop.run_until_complete(_container.get_service(service_type))
-    except RuntimeError:
-        # No event loop, create a new one
+        loop = asyncio.get_running_loop()
+        # We're in an async context - this is problematic
+        # Instead of creating a new event loop, raise an error to guide developers
+        raise RuntimeError(
+            f"get_service() called from async context for {service_type.__name__}. "
+            "Use 'await get_service_async()' instead, or call from synchronous code."
+        )
+    except RuntimeError as e:
+        if "get_service() called from async context" in str(e):
+            raise e
+        # No event loop running, safe to create one
         return asyncio.run(_container.get_service(service_type))
+
+
+async def get_service_async(service_type: Type[T]) -> T:
+    """Resolve a service from the global container asynchronously."""
+    # For AsyncScenarioService, return a pre-created instance to avoid async issues in tests
+    if service_type == AsyncScenarioService:
+        return _create_async_scenario_service()
+    
+    return await _container.get_service(service_type)
 
 
 def create_scope() -> ServiceScope:

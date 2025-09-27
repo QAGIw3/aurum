@@ -314,12 +314,25 @@ class SimpleTrinoClient:
         use_cache: bool | None = None,
         tenant_id: Optional[str] = None,
     ) -> List[Dict[str, Any]]:
-        """Synchronous helper used by legacy service code paths."""
-
-        async def _run() -> List[Dict[str, Any]]:
-            return await self.execute_query(sql, params=params, tenant_id=tenant_id)
-
-        return asyncio.run(_run())
+        """Synchronous helper used by legacy service code paths.
+        
+        This is deprecated and should only be used from non-async contexts.
+        Prefer execute_query() from async code.
+        """
+        try:
+            loop = asyncio.get_running_loop()
+            # We're in an async context - this is problematic
+            raise RuntimeError(
+                "execute_query_sync() called from async context. "
+                "Use 'await execute_query()' instead, or call from synchronous code."
+            )
+        except RuntimeError as e:
+            if "execute_query_sync() called from async context" in str(e):
+                raise e
+            # No event loop running, safe to create one
+            async def _run() -> List[Dict[str, Any]]:
+                return await self.execute_query(sql, params=params, tenant_id=tenant_id)
+            return asyncio.run(_run())
 
     async def query(self, sql: str, params: Optional[Dict[str, Any]] = None, tenant_id: Optional[str] = None) -> List[Dict[str, Any]]:
         """Alias for execute_query to maintain backwards compatibility."""
@@ -1205,14 +1218,18 @@ class HybridTrinoClientManager:
                 await maybe_coro
 
     def close_all_sync(self) -> Optional[asyncio.Task]:
-        """Close clients from synchronous code without double-running event loops."""
-
+        """Close clients from synchronous code without double-running event loops.
+        
+        Returns a Task if called from async context, None if called from sync context.
+        """
         try:
             loop = asyncio.get_running_loop()
         except RuntimeError:
+            # No event loop running, safe to use asyncio.run
             asyncio.run(self.close_all())
             return None
         else:
+            # We're in an async context, return a task that the caller can await
             return loop.create_task(self.close_all())
 
     def switch_to_simplified(self) -> bool:
