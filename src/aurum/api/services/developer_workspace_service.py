@@ -651,9 +651,442 @@ Generated on: {datetime.utcnow().isoformat()}
 
         return guide_content
 
+    async def join_session_collaboration(self, session_id: str, user_id: str) -> bool:
+        """Join a notebook session for collaboration.
+
+        Args:
+            session_id: Session identifier
+            user_id: User identifier joining the session
+
+        Returns:
+            True if successfully joined
+        """
+        try:
+            if session_id not in self._sessions:
+                raise ValueError(f"Session {session_id} not found")
+
+            session = self._sessions[session_id]
+            if session.status != "running":
+                raise ValueError(f"Session {session_id} is not running")
+
+            # Initialize collaborators set if not exists
+            if session_id not in self._active_collaborators:
+                self._active_collaborators[session_id] = set()
+
+            # Add user to collaborators
+            self._active_collaborators[session_id].add(user_id)
+
+            # Initialize snapshots for session if not exists
+            if session_id not in self._session_snapshots:
+                self._session_snapshots[session_id] = []
+
+            self.telemetry.info(
+                "User joined session collaboration",
+                session_id=session_id,
+                user_id=user_id,
+                total_collaborators=len(self._active_collaborators[session_id])
+            )
+
+            return True
+
+        except Exception as e:
+            self.telemetry.error("Failed to join session collaboration", session_id=session_id, user_id=user_id, error=str(e))
+            return False
+
+    async def leave_session_collaboration(self, session_id: str, user_id: str) -> bool:
+        """Leave a notebook session collaboration.
+
+        Args:
+            session_id: Session identifier
+            user_id: User identifier leaving the session
+
+        Returns:
+            True if successfully left
+        """
+        try:
+            if session_id not in self._active_collaborators:
+                return False
+
+            self._active_collaborators[session_id].discard(user_id)
+
+            # Clean up empty collaborator sets
+            if not self._active_collaborators[session_id]:
+                del self._active_collaborators[session_id]
+
+            self.telemetry.info(
+                "User left session collaboration",
+                session_id=session_id,
+                user_id=user_id
+            )
+
+            return True
+
+        except Exception as e:
+            self.telemetry.error("Failed to leave session collaboration", session_id=session_id, user_id=user_id, error=str(e))
+            return False
+
+    async def get_session_collaborators(self, session_id: str) -> List[str]:
+        """Get list of users collaborating on a session.
+
+        Args:
+            session_id: Session identifier
+
+        Returns:
+            List of user IDs collaborating on the session
+        """
+        if session_id not in self._active_collaborators:
+            return []
+
+        return list(self._active_collaborators[session_id])
+
+    async def create_session_snapshot(self, session_id: str, snapshot_data: Dict[str, Any]) -> str:
+        """Create a snapshot of the current notebook session.
+
+        Args:
+            session_id: Session identifier
+            snapshot_data: Snapshot data including notebook content
+
+        Returns:
+            Snapshot ID
+        """
+        try:
+            snapshot_id = str(uuid4())
+
+            snapshot = {
+                "snapshot_id": snapshot_id,
+                "session_id": session_id,
+                "created_at": datetime.utcnow(),
+                "data": snapshot_data
+            }
+
+            if session_id not in self._session_snapshots:
+                self._session_snapshots[session_id] = []
+
+            self._session_snapshots[session_id].append(snapshot)
+
+            # Keep only last 10 snapshots per session
+            if len(self._session_snapshots[session_id]) > 10:
+                self._session_snapshots[session_id] = self._session_snapshots[session_id][-10:]
+
+            self.telemetry.info(
+                "Session snapshot created",
+                session_id=session_id,
+                snapshot_id=snapshot_id
+            )
+
+            return snapshot_id
+
+        except Exception as e:
+            self.telemetry.error("Failed to create session snapshot", session_id=session_id, error=str(e))
+            raise
+
+    async def get_session_snapshots(self, session_id: str) -> List[Dict[str, Any]]:
+        """Get list of snapshots for a session.
+
+        Args:
+            session_id: Session identifier
+
+        Returns:
+            List of session snapshots
+        """
+        if session_id not in self._session_snapshots:
+            return []
+
+        return self._session_snapshots[session_id]
+
+    async def get_api_documentation(self, endpoint: Optional[str] = None) -> Dict[str, Any]:
+        """Get comprehensive API documentation.
+
+        Args:
+            endpoint: Optional specific endpoint to get documentation for
+
+        Returns:
+            API documentation
+        """
+        try:
+            if endpoint and endpoint in self._api_documentation_cache["endpoints"]:
+                return self._api_documentation_cache["endpoints"][endpoint]
+            else:
+                return self._api_documentation_cache
+
+        except Exception as e:
+            self.telemetry.error("Failed to get API documentation", endpoint=endpoint, error=str(e))
+            return {"error": str(e)}
+
+    async def get_code_snippets(self, category: Optional[str] = None, language: str = "python") -> List[Dict[str, Any]]:
+        """Get code snippets for common operations.
+
+        Args:
+            category: Optional category filter
+            language: Programming language filter
+
+        Returns:
+            List of code snippets
+        """
+        try:
+            snippets = []
+
+            if category and category in self._code_snippets:
+                snippets.extend(self._code_snippets[category])
+            else:
+                # Return all snippets
+                for category_snippets in self._code_snippets.values():
+                    snippets.extend(category_snippets)
+
+            # Filter by language
+            if language:
+                snippets = [s for s in snippets if s.get("language") == language]
+
+            return snippets
+
+        except Exception as e:
+            self.telemetry.error("Failed to get code snippets", category=category, language=language, error=str(e))
+            return []
+
+    async def create_notebook_from_template(
+        self,
+        template_id: str,
+        session_id: str,
+        customizations: Optional[Dict[str, Any]] = None
+    ) -> str:
+        """Create a notebook from a template with customizations.
+
+        Args:
+            template_id: Template identifier
+            session_id: Session identifier
+            customizations: Optional customizations to apply
+
+        Returns:
+            Notebook path
+        """
+        try:
+            template = self._templates.get(template_id)
+            if not template:
+                raise ValueError(f"Template {template_id} not found")
+
+            session = self._sessions.get(session_id)
+            if not session:
+                raise ValueError(f"Session {session_id} not found")
+
+            # Generate customized notebook content
+            notebook_content = await self._generate_customized_notebook(template, customizations or {})
+
+            # Store notebook in session workspace
+            notebook_path = f"/tmp/session_{session_id}/notebook_{template_id}.ipynb"
+
+            # In real implementation, would copy to pod filesystem
+            await self.cache_manager.set(
+                f"notebook:{session_id}:{template_id}",
+                notebook_content,
+                ttl_seconds=86400  # 24 hour cache
+            )
+
+            self.telemetry.info(
+                "Notebook created from template",
+                session_id=session_id,
+                template_id=template_id,
+                notebook_path=notebook_path
+            )
+
+            return notebook_path
+
+        except Exception as e:
+            self.telemetry.error(
+                "Failed to create notebook from template",
+                template_id=template_id,
+                session_id=session_id,
+                error=str(e)
+            )
+            raise
+
+    async def _generate_customized_notebook(self, template: NotebookTemplate, customizations: Dict[str, Any]) -> str:
+        """Generate customized notebook content from template."""
+        # Enhanced notebook generation with customizations
+        notebook_content = {
+            "cells": [
+                {
+                    "cell_type": "markdown",
+                    "metadata": {},
+                    "source": [f"# {template.template_name}\n\n{template.description}"]
+                },
+                {
+                    "cell_type": "markdown",
+                    "metadata": {},
+                    "source": ["## Setup and Authentication\n\nConfigure your environment and authenticate with the Aurum API."]
+                },
+                {
+                    "cell_type": "code",
+                    "execution_count": None,
+                    "metadata": {},
+                    "outputs": [],
+                    "source": [
+                        "# Import required libraries\n",
+                        "import requests\n",
+                        "import pandas as pd\n",
+                        "import matplotlib.pyplot as plt\n",
+                        "import seaborn as sns\n",
+                        "from datetime import datetime, timedelta\n",
+                        "\n",
+                        "# Configure matplotlib for better plots\n",
+                        "plt.style.use('seaborn-v0_8')\n",
+                        "%matplotlib inline\n",
+                        "\n",
+                        "# Aurum API configuration\n",
+                        "API_BASE = 'http://localhost:8000'\n",
+                        "API_TOKEN = 'YOUR_TOKEN_HERE'\n",
+                        "\n",
+                        "# Headers for API requests\n",
+                        "headers = {\n",
+                        "    'Authorization': f'Bearer {API_TOKEN}',\n",
+                        "    'Content-Type': 'application/json'\n",
+                        "}\n"
+                    ]
+                }
+            ],
+            "metadata": {
+                "kernelspec": {
+                    "display_name": "Python 3",
+                    "language": "python",
+                    "name": "python3"
+                },
+                "language_info": {
+                    "name": "python",
+                    "version": "3.8.0"
+                }
+            },
+            "nbformat": 4,
+            "nbformat_minor": 4
+        }
+
+        # Add template-specific content
+        if template.sample_queries:
+            notebook_content["cells"].append({
+                "cell_type": "markdown",
+                "metadata": {},
+                "source": ["## Sample Queries and Examples\n\nExplore the Aurum API with these example queries."]
+            })
+
+            for i, query in enumerate(template.sample_queries):
+                notebook_content["cells"].append({
+                    "cell_type": "code",
+                    "execution_count": None,
+                    "metadata": {},
+                    "outputs": [],
+                    "source": [
+                        f"# {query.get('name', f'Query {i+1}')}\n",
+                        f"print('Executing: {query.get('description', '')}')\n",
+                        "# Add actual API call code here
+                    ]
+                })
+
+        # Add customizations
+        if customizations:
+            notebook_content["cells"].append({
+                "cell_type": "markdown",
+                "metadata": {},
+                "source": ["## Customizations Applied\n\nThis notebook has been customized with your specific requirements."]
+            })
+
+        return json.dumps(notebook_content)
+
+    async def get_session_activity_feed(self, session_id: str, limit: int = 50) -> List[Dict[str, Any]]:
+        """Get activity feed for a session.
+
+        Args:
+            session_id: Session identifier
+            limit: Maximum activities to return
+
+        Returns:
+            List of session activities
+        """
+        try:
+            # Mock activity feed - in reality would track real activities
+            activities = []
+
+            session = self._sessions.get(session_id)
+            if not session:
+                return activities
+
+            # Generate mock activities based on session state
+            activities.append({
+                "activity_id": str(uuid4()),
+                "activity_type": "session_started",
+                "user_id": session.user_id,
+                "timestamp": session.start_time or datetime.utcnow(),
+                "description": f"Notebook session started",
+                "metadata": {"session_id": session_id}
+            })
+
+            # Add collaboration activities
+            collaborators = await self.get_session_collaborators(session_id)
+            for collaborator in collaborators:
+                activities.append({
+                    "activity_id": str(uuid4()),
+                    "activity_type": "user_joined",
+                    "user_id": collaborator,
+                    "timestamp": datetime.utcnow() - timedelta(minutes=len(collaborators)),
+                    "description": f"User joined collaboration",
+                    "metadata": {"session_id": session_id}
+                })
+
+            # Add snapshot activities
+            snapshots = await self.get_session_snapshots(session_id)
+            for snapshot in snapshots[-5:]:  # Last 5 snapshots
+                activities.append({
+                    "activity_id": str(uuid4()),
+                    "activity_type": "snapshot_created",
+                    "user_id": session.user_id,
+                    "timestamp": snapshot["created_at"],
+                    "description": f"Notebook snapshot created",
+                    "metadata": {"session_id": session_id, "snapshot_id": snapshot["snapshot_id"]}
+                })
+
+            # Sort by timestamp (most recent first)
+            activities.sort(key=lambda a: a["timestamp"], reverse=True)
+
+            return activities[:limit]
+
+        except Exception as e:
+            self.telemetry.error("Failed to get session activity feed", session_id=session_id, error=str(e))
+            return []
+
+    async def export_session_notebook(self, session_id: str, format: str = "ipynb") -> bytes:
+        """Export the current notebook session.
+
+        Args:
+            session_id: Session identifier
+            format: Export format (ipynb, html, pdf)
+
+        Returns:
+            Exported notebook content as bytes
+        """
+        try:
+            session = self._sessions.get(session_id)
+            if not session:
+                raise ValueError(f"Session {session_id} not found")
+
+            # Get the latest notebook content
+            notebook_data = await self.cache_manager.get(f"notebook:{session_id}")
+
+            if not notebook_data:
+                raise ValueError(f"No notebook data found for session {session_id}")
+
+            if format == "ipynb":
+                return json.dumps(notebook_data).encode('utf-8')
+            elif format == "html":
+                # Convert to HTML (simplified)
+                return f"<html><body><h1>Notebook Export</h1><pre>{json.dumps(notebook_data, indent=2)}</pre></body></html>".encode('utf-8')
+            else:
+                raise ValueError(f"Unsupported export format: {format}")
+
+        except Exception as e:
+            self.telemetry.error("Failed to export session notebook", session_id=session_id, format=format, error=str(e))
+            raise
+
     async def get_service_health(self) -> Dict[str, Any]:
-        """Get service health status."""
+        """Get enhanced service health status."""
         active_sessions = len([s for s in self._sessions.values() if s.status == "running"])
+        active_collaborators = sum(len(collaborators) for collaborators in self._active_collaborators.values())
 
         return {
             "status": "healthy",
@@ -661,6 +1094,11 @@ Generated on: {datetime.utcnow().isoformat()}
             "templates_available": len(self._templates),
             "active_sessions": active_sessions,
             "total_sessions": len(self._sessions),
+            "active_collaborators": active_collaborators,
+            "snapshots_stored": sum(len(snapshots) for snapshots in self._session_snapshots.values()),
+            "api_documentation_cached": len(self._api_documentation_cache),
+            "code_snippets_available": sum(len(snippets) for snippets in self._code_snippets.values()),
+            "collaboration_enabled": self._collaboration_enabled,
             "last_activity": datetime.utcnow()
         }
 
