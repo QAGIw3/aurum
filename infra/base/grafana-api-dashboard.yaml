@@ -1,0 +1,324 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: grafana-api-dashboard
+  namespace: aurum-dev
+  labels:
+    app: grafana
+    grafana_dashboard: "1"
+data:
+  api-dashboard.json: |
+    {
+      "id": null,
+      "uid": "api-dashboard",
+      "title": "Aurum API Dashboard",
+      "timezone": "browser",
+      "schemaVersion": 39,
+      "version": 1,
+      "panels": [
+        {
+          "type": "stat",
+          "title": "API Status",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "targets": [
+            {
+              "refId": "A",
+              "expr": "up{job=\"aurum-api\"}",
+              "legendFormat": "API Up"
+            }
+          ],
+          "fieldConfig": {
+            "defaults": {
+              "unit": "none",
+              "decimals": 0,
+              "mappings": [
+                {"type": "value", "options": {"0": {"color": "red", "text": "Down"}, "1": {"color": "green", "text": "Up"}}}
+              ]
+            }
+          },
+          "options": {
+            "reduceOptions": {
+              "values": true,
+              "calcs": ["lastNotNull"]
+            }
+          },
+          "gridPos": {"h": 6, "w": 12, "x": 0, "y": 0}
+        },
+        {
+          "type": "stat",
+          "title": "API Response Time",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "targets": [
+            {
+              "refId": "A",
+              "expr": "histogram_quantile(0.95, sum(rate(http_request_duration_seconds_bucket{job=\"aurum-api\"}[5m])) by (le))",
+              "legendFormat": "95th percentile"
+            }
+          ],
+          "fieldConfig": {
+            "defaults": {
+              "unit": "s",
+              "decimals": 3
+            }
+          },
+          "options": {
+            "reduceOptions": {
+              "values": true,
+              "calcs": ["lastNotNull"]
+            }
+          },
+          "gridPos": {"h": 6, "w": 12, "x": 12, "y": 0}
+        },
+        {
+          "type": "stat",
+          "title": "Active Requests",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "targets": [
+            {
+              "refId": "A",
+              "expr": "sum(concurrency_active_requests)",
+              "legendFormat": "Active"
+            }
+          ],
+          "fieldConfig": {
+            "defaults": {
+              "unit": "none",
+              "decimals": 0
+            }
+          },
+          "options": {
+            "reduceOptions": {
+              "values": true,
+              "calcs": ["lastNotNull"]
+            }
+          },
+          "gridPos": {"h": 6, "w": 8, "x": 0, "y": 6}
+        },
+        {
+          "type": "stat",
+          "title": "Queue Depth",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "targets": [
+            {
+              "refId": "A",
+              "expr": "sum(concurrency_queue_depth)",
+              "legendFormat": "Queued"
+            }
+          ],
+          "fieldConfig": {
+            "defaults": {
+              "unit": "none",
+              "decimals": 0
+            }
+          },
+          "options": {
+            "reduceOptions": {
+              "values": true,
+              "calcs": ["lastNotNull"]
+            }
+          },
+          "gridPos": {"h": 6, "w": 8, "x": 8, "y": 6}
+        },
+        {
+          "type": "stat",
+          "title": "Rate Limited Requests",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "targets": [
+            {
+              "refId": "A",
+              "expr": "sum(rate(concurrency_rate_limited_total[5m]))",
+              "legendFormat": "Rate Limited"
+            }
+          ],
+          "fieldConfig": {
+            "defaults": {
+              "unit": "req/s",
+              "decimals": 1
+            }
+          },
+          "options": {
+            "reduceOptions": {
+              "values": true,
+              "calcs": ["lastNotNull"]
+            }
+          },
+          "gridPos": {"h": 6, "w": 8, "x": 16, "y": 6}
+        },
+        {
+          "type": "timeseries",
+          "title": "Request Rate",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "targets": [
+            {
+              "refId": "A",
+              "expr": "sum(rate(http_requests_total{job=\"aurum-api\"}[5m]))",
+              "legendFormat": "Requests/sec"
+            }
+          ],
+          "fieldConfig": {
+            "defaults": {
+              "unit": "reqps"
+            }
+          },
+          "options": {
+            "legend": {
+              "displayMode": "list",
+              "placement": "bottom"
+            }
+          },
+          "gridPos": {"h": 8, "w": 12, "x": 0, "y": 12}
+        },
+        {
+          "type": "timeseries",
+          "title": "Error Rate",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "targets": [
+            {
+              "refId": "A",
+              "expr": "sum(rate(http_requests_total{job=\"aurum-api\", status=~\"5..\"}[5m])) / sum(rate(http_requests_total{job=\"aurum-api\"}[5m])) * 100",
+              "legendFormat": "Error Rate %"
+            }
+          ],
+          "fieldConfig": {
+            "defaults": {
+              "unit": "percent",
+              "decimals": 2
+            }
+          },
+          "options": {
+            "legend": {
+              "displayMode": "list",
+              "placement": "bottom"
+            }
+          },
+          "gridPos": {"h": 8, "w": 12, "x": 12, "y": 12}
+        },
+        {
+          "type": "timeseries",
+          "title": "Trino Connection Pool",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "targets": [
+            {
+              "refId": "A",
+              "expr": "trino_connection_pool_active",
+              "legendFormat": "Active Connections"
+            },
+            {
+              "refId": "B",
+              "expr": "trino_connection_pool_idle",
+              "legendFormat": "Idle Connections"
+            }
+          ],
+          "fieldConfig": {
+            "defaults": {
+              "unit": "none",
+              "decimals": 0
+            }
+          },
+          "options": {
+            "legend": {
+              "displayMode": "list",
+              "placement": "bottom"
+            }
+          },
+          "gridPos": {"h": 8, "w": 12, "x": 0, "y": 20}
+        },
+        {
+          "type": "timeseries",
+          "title": "Redis Operations",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "targets": [
+            {
+              "refId": "A",
+              "expr": "sum(rate(redis_operations_total[5m]))",
+              "legendFormat": "Operations/sec"
+            }
+          ],
+          "fieldConfig": {
+            "defaults": {
+              "unit": "ops"
+            }
+          },
+          "options": {
+            "legend": {
+              "displayMode": "list",
+              "placement": "bottom"
+            }
+          },
+          "gridPos": {"h": 8, "w": 12, "x": 12, "y": 20}
+        }
+      ],
+      "time": {
+        "from": "now-1h",
+        "to": "now"
+      },
+      "timepicker": {},
+      "templating": {
+        "list": []
+      },
+      "annotations": {
+        "list": [
+          {
+            "builtIn": 1,
+            "datasource": {
+              "type": "prometheus",
+              "uid": "prometheus"
+            },
+            "enable": true,
+            "hide": true,
+            "iconColor": "rgba(0, 211, 255, 1)",
+            "name": "Annotations & Alerts",
+            "target": {
+              "limit": 100,
+              "matchAny": false,
+              "tags": [],
+              "type": "dashboard"
+            },
+            "type": "dashboard"
+          }
+        ]
+      },
+      "refresh": "30s",
+      "schemaVersion": 39,
+      "tags": ["aurum", "api"],
+      "templating": {
+        "list": []
+      },
+      "time": {
+        "from": "now-1h",
+        "to": "now"
+      },
+      "timepicker": {},
+      "timezone": "",
+      "title": "Aurum API Dashboard",
+      "uid": "api-dashboard",
+      "version": 1,
+      "weekStart": ""
+    }

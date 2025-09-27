@@ -1,0 +1,25 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: schema-registry-runner
+  namespace: aurum-dev
+data:
+  run.sh: |
+    #!/usr/bin/env bash
+    set -euo pipefail
+    set -x
+
+    unset SCHEMA_REGISTRY_PORT SCHEMA_REGISTRY_PORT_8081_TCP SCHEMA_REGISTRY_PORT_8081_TCP_ADDR SCHEMA_REGISTRY_PORT_8081_TCP_PORT SCHEMA_REGISTRY_PORT_8081_TCP_PROTO
+
+    cat <<CFG >/etc/schema-registry/schema-registry.properties
+    schema.registry.host.name=${SCHEMA_REGISTRY_HOST_NAME:-schema-registry}
+    listeners=${SCHEMA_REGISTRY_LISTENERS:-http://0.0.0.0:8081}
+    kafkastore.bootstrap.servers=${SCHEMA_REGISTRY_KAFKASTORE_BOOTSTRAP_SERVERS}
+    kafkastore.topic.replication.factor=${SCHEMA_REGISTRY_KAFKASTORE_TOPIC_REPLICATION_FACTOR:-1}
+    kafkastore.security.protocol=${SCHEMA_REGISTRY_KAFKASTORE_SECURITY_PROTOCOL:-PLAINTEXT}
+    kafkastore.init.timeout.ms=${SCHEMA_REGISTRY_KAFKASTORE_INIT_TIMEOUT_MS:-60000}
+    CFG
+
+    cat /etc/schema-registry/schema-registry.properties
+
+    exec /etc/confluent/docker/run

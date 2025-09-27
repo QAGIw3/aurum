@@ -1,0 +1,131 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: postgres-init-sql
+  namespace: aurum-dev
+data:
+  00_create_airflow_db.sql: |
+    -- Create dedicated database for Airflow metadata if it does not already exist.
+    SELECT 'CREATE DATABASE airflow'
+    WHERE NOT EXISTS (SELECT FROM pg_database WHERE datname = 'airflow')\gexec
+  app.sql: |
+    CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
+    CREATE EXTENSION IF NOT EXISTS citext;
+    
+    CREATE TABLE IF NOT EXISTS tenant (
+        id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+        name CITEXT NOT NULL UNIQUE,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+    
+    CREATE TABLE IF NOT EXISTS instrument (
+        id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+        tenant_id UUID REFERENCES tenant(id) ON DELETE RESTRICT,
+        asset_class TEXT NOT NULL,
+        iso TEXT,
+        region TEXT,
+        location TEXT,
+        market TEXT,
+        product TEXT,
+        block TEXT,
+        spark_location TEXT,
+        units_raw TEXT,
+        curve_key TEXT NOT NULL,
+        metadata JSONB DEFAULT '{}'::JSONB,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        UNIQUE (tenant_id, curve_key)
+    );
+    
+    CREATE TABLE IF NOT EXISTS curve_def (
+        id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+        tenant_id UUID REFERENCES tenant(id) ON DELETE RESTRICT,
+        instrument_id UUID NOT NULL REFERENCES instrument(id) ON DELETE CASCADE,
+        methodology TEXT NOT NULL,
+        horizon_months INTEGER NOT NULL,
+        granularity TEXT NOT NULL,
+        version TEXT NOT NULL,
+        status TEXT NOT NULL DEFAULT 'active',
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+    
+    CREATE TABLE IF NOT EXISTS scenario (
+        id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+        tenant_id UUID REFERENCES tenant(id) ON DELETE RESTRICT,
+        name TEXT NOT NULL,
+        description TEXT,
+        created_by TEXT,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+    
+    CREATE TABLE IF NOT EXISTS assumption (
+        id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+        scenario_id UUID NOT NULL REFERENCES scenario(id) ON DELETE CASCADE,
+        type TEXT NOT NULL,
+        payload JSONB NOT NULL,
+        version TEXT,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+    
+    CREATE TABLE IF NOT EXISTS model_run (
+        id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+        scenario_id UUID NOT NULL REFERENCES scenario(id) ON DELETE CASCADE,
+        curve_def_id UUID NOT NULL REFERENCES curve_def(id) ON DELETE CASCADE,
+        code_version TEXT NOT NULL,
+        seed BIGINT,
+        state TEXT NOT NULL,
+        version_hash TEXT NOT NULL,
+        submitted_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        started_at TIMESTAMPTZ,
+        completed_at TIMESTAMPTZ,
+        error TEXT
+    );
+    
+    CREATE TABLE IF NOT EXISTS ppa_contract (
+        id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+        tenant_id UUID REFERENCES tenant(id) ON DELETE RESTRICT,
+        instrument_id UUID REFERENCES instrument(id) ON DELETE SET NULL,
+        terms JSONB NOT NULL,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+    
+    CREATE TABLE IF NOT EXISTS file_ingest_log (
+        id BIGSERIAL PRIMARY KEY,
+        asof DATE NOT NULL,
+        path TEXT NOT NULL,
+        sheet TEXT,
+        status TEXT NOT NULL,
+        details TEXT,
+        version_hash TEXT,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+    
+    CREATE INDEX IF NOT EXISTS idx_instrument_curve_key ON instrument(curve_key);
+    CREATE INDEX IF NOT EXISTS idx_curve_def_instrument ON curve_def(instrument_id);
+    CREATE INDEX IF NOT EXISTS idx_scenario_tenant ON scenario(tenant_id);
+    CREATE INDEX IF NOT EXISTS idx_model_run_state ON model_run(state);
+    CREATE INDEX IF NOT EXISTS idx_file_ingest_log_asof ON file_ingest_log(asof);
+    
+    ALTER TABLE instrument ENABLE ROW LEVEL SECURITY;
+    ALTER TABLE curve_def ENABLE ROW LEVEL SECURITY;
+    ALTER TABLE scenario ENABLE ROW LEVEL SECURITY;
+    ALTER TABLE model_run ENABLE ROW LEVEL SECURITY;
+    ALTER TABLE ppa_contract ENABLE ROW LEVEL SECURITY;
+    
+    CREATE POLICY tenant_isolation_instrument ON instrument
+        USING (tenant_id = current_setting('app.current_tenant')::UUID);
+    
+    CREATE POLICY tenant_isolation_curve_def ON curve_def
+        USING (tenant_id = current_setting('app.current_tenant')::UUID);
+    
+    CREATE POLICY tenant_isolation_scenario ON scenario
+        USING (tenant_id = current_setting('app.current_tenant')::UUID);
+    
+    CREATE POLICY tenant_isolation_model_run ON model_run
+        USING (scenario_id IN (
+            SELECT id FROM scenario WHERE tenant_id = current_setting('app.current_tenant')::UUID
+        ));
+    
+    CREATE POLICY tenant_isolation_ppa ON ppa_contract
+        USING (tenant_id = current_setting('app.current_tenant')::UUID);

@@ -1,0 +1,1215 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: grafana-datasources
+  namespace: aurum-dev
+  labels:
+    app: grafana
+    grafana_datasource: "1"
+data:
+  datasources.yaml: |
+    apiVersion: 1
+    datasources:
+      - uid: clickhouse
+        name: ClickHouse
+        type: grafana-clickhouse-datasource
+        access: proxy
+        url: http://clickhouse.aurum-dev.svc.cluster.local:8123
+        isDefault: true
+        jsonData:
+          defaultDatabase: ops
+          username: default
+          tlsSkipVerify: true
+        secureJsonData:
+          password: ""
+      - uid: prometheus
+        name: Prometheus
+        type: prometheus
+        access: proxy
+        url: http://prometheus.aurum-dev.svc.cluster.local:9090
+        jsonData:
+          httpMethod: GET
+          manageAlerts: false
+      - uid: aurum-postgres
+        name: Postgres (Ops)
+        type: postgres
+        access: proxy
+        url: postgres.aurum-dev.svc.cluster.local:5432
+        user: aurum
+        database: aurum
+        jsonData:
+          sslmode: disable
+        secureJsonData:
+          password: aurum
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: grafana-dashboard-providers
+  namespace: aurum-dev
+  labels:
+    app: grafana
+data:
+  dashboards.yaml: |
+    apiVersion: 1
+    providers:
+      - name: Aurum
+        folder: Aurum
+        type: file
+        disableDeletion: false
+        editable: true
+        options:
+          path: /var/lib/grafana/dashboards
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: grafana-dashboard-defs
+  namespace: aurum-dev
+  labels:
+    app: grafana
+data:
+  aurum-comprehensive-observability.json: |
+    {
+      "id": null,
+      "uid": "aurum-comprehensive-observability",
+      "title": "Aurum Comprehensive Observability",
+      "timezone": "",
+      "schemaVersion": 39,
+      "version": 1,
+      "refresh": "30s",
+      "panels": [
+        {
+          "type": "stat",
+          "title": "API Availability (99.9% SLO)",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "targets": [
+            {
+              "refId": "A",
+              "expr": "1 - (sum(rate(aurum_api_requests_total{status=~\"5..\"}[5m])) / sum(rate(aurum_api_requests_total[5m])))",
+              "legendFormat": "availability"
+            }
+          ],
+          "fieldConfig": {
+            "defaults": {
+              "unit": "percentunit",
+              "decimals": 3,
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  {"color": "red", "value": null},
+                  {"color": "yellow", "value": 0.999},
+                  {"color": "green", "value": 0.9999}
+                ]
+              }
+            }
+          },
+          "options": {
+            "reduceOptions": {
+              "values": true,
+              "calcs": ["lastNotNull"]
+            }
+          },
+          "gridPos": {"h": 4, "w": 6, "x": 0, "y": 0}
+        },
+        {
+          "type": "stat",
+          "title": "Worker Success Rate",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "targets": [
+            {
+              "refId": "B",
+              "expr": "1 - (sum(rate(aurum_worker_errors_total[5m])) / sum(rate(aurum_worker_task_duration_seconds_count[5m])))",
+              "legendFormat": "success_rate"
+            }
+          ],
+          "fieldConfig": {
+            "defaults": {
+              "unit": "percentunit",
+              "decimals": 3,
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  {"color": "red", "value": null},
+                  {"color": "yellow", "value": 0.95},
+                  {"color": "green", "value": 0.99}
+                ]
+              }
+            }
+          },
+          "options": {
+            "reduceOptions": {
+              "values": true,
+              "calcs": ["lastNotNull"]
+            }
+          },
+          "gridPos": {"h": 4, "w": 6, "x": 6, "y": 0}
+        },
+        {
+          "type": "stat",
+          "title": "Cache Hit Rate",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "targets": [
+            {
+              "refId": "C",
+              "expr": "sum(rate(aurum_cache_hits_total[5m])) / sum(rate(aurum_cache_operations_total[5m]))",
+              "legendFormat": "hit_rate"
+            }
+          ],
+          "fieldConfig": {
+            "defaults": {
+              "unit": "percentunit",
+              "decimals": 2,
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  {"color": "red", "value": null},
+                  {"color": "yellow", "value": 0.8},
+                  {"color": "green", "value": 0.9}
+                ]
+              }
+            }
+          },
+          "options": {
+            "reduceOptions": {
+              "values": true,
+              "calcs": ["lastNotNull"]
+            }
+          },
+          "gridPos": {"h": 4, "w": 6, "x": 12, "y": 0}
+        },
+        {
+          "type": "stat",
+          "title": "Database Connection Pool Health",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "targets": [
+            {
+              "refId": "D",
+              "expr": "sum(aurum_db_connections_active) / sum(aurum_db_connections_total) < 0.8",
+              "legendFormat": "pool_health"
+            }
+          ],
+          "fieldConfig": {
+            "defaults": {
+              "unit": "percentunit",
+              "decimals": 1,
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  {"color": "green", "value": null}
+                ]
+              },
+              "mappings": [
+                {"type": "value", "options": {"0": {"color": "red", "text": "Unhealthy"}, "1": {"color": "green", "text": "Healthy"}}}
+              ]
+            }
+          },
+          "options": {
+            "reduceOptions": {
+              "values": true,
+              "calcs": ["lastNotNull"]
+            }
+          },
+          "gridPos": {"h": 4, "w": 6, "x": 18, "y": 0}
+        },
+        {
+          "type": "timeseries",
+          "title": "API Request Rate by Status",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "targets": [
+            {
+              "refId": "A",
+              "expr": "rate(aurum_api_requests_total[5m])",
+              "legendFormat": "status_{{status}}"
+            }
+          ],
+          "fieldConfig": {
+            "defaults": {
+              "unit": "reqps",
+              "color": {
+                "mode": "palette-classic"
+              }
+            }
+          },
+          "options": {
+            "legend": {
+              "displayMode": "table",
+              "placement": "bottom"
+            }
+          },
+          "gridPos": {"h": 8, "w": 12, "x": 0, "y": 4}
+        },
+        {
+          "type": "timeseries",
+          "title": "API Latency p95 by Endpoint",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "targets": [
+            {
+              "refId": "B",
+              "expr": "histogram_quantile(0.95, rate(aurum_api_request_duration_seconds_bucket[5m]))",
+              "legendFormat": "{{path}}"
+            }
+          ],
+          "fieldConfig": {
+            "defaults": {
+              "unit": "s",
+              "decimals": 3
+            }
+          },
+          "options": {
+            "legend": {
+              "displayMode": "table",
+              "placement": "bottom"
+            }
+          },
+          "gridPos": {"h": 8, "w": 12, "x": 12, "y": 4}
+        },
+        {
+          "type": "timeseries",
+          "title": "Worker Task Duration p95",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "targets": [
+            {
+              "refId": "C",
+              "expr": "histogram_quantile(0.95, rate(aurum_worker_task_duration_seconds_bucket[5m]))",
+              "legendFormat": "{{worker_type}}_{{task_type}}"
+            }
+          ],
+          "fieldConfig": {
+            "defaults": {
+              "unit": "s",
+              "decimals": 2
+            }
+          },
+          "options": {
+            "legend": {
+              "displayMode": "table",
+              "placement": "bottom"
+            }
+          },
+          "gridPos": {"h": 8, "w": 12, "x": 0, "y": 12}
+        },
+        {
+          "type": "timeseries",
+          "title": "Ingestion Rate by Source",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "targets": [
+            {
+              "refId": "D",
+              "expr": "rate(aurum_ingestion_records_total[5m])",
+              "legendFormat": "{{source}}_{{dataset}}"
+            }
+          ],
+          "fieldConfig": {
+            "defaults": {
+              "unit": "reqps",
+              "color": {
+                "mode": "palette-classic"
+              }
+            }
+          },
+          "options": {
+            "legend": {
+              "displayMode": "table",
+              "placement": "bottom"
+            }
+          },
+          "gridPos": {"h": 8, "w": 12, "x": 12, "y": 12}
+        },
+        {
+          "type": "stat",
+          "title": "Rate Limit Violations (5m)",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "targets": [
+            {
+              "refId": "E",
+              "expr": "sum(rate(aurum_rate_limit_rejected_total[5m]))",
+              "legendFormat": "violations"
+            }
+          ],
+          "fieldConfig": {
+            "defaults": {
+              "unit": "reqps",
+              "decimals": 2,
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  {"color": "green", "value": null},
+                  {"color": "yellow", "value": 0.1},
+                  {"color": "red", "value": 1.0}
+                ]
+              }
+            }
+          },
+          "options": {
+            "reduceOptions": {
+              "values": true,
+              "calcs": ["lastNotNull"]
+            }
+          },
+          "gridPos": {"h": 4, "w": 6, "x": 0, "y": 20}
+        },
+        {
+          "type": "stat",
+          "title": "Active Ingestion Backlog",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "targets": [
+            {
+              "refId": "F",
+              "expr": "sum(aurum_ingestion_backlog)",
+              "legendFormat": "backlog"
+            }
+          ],
+          "fieldConfig": {
+            "defaults": {
+              "unit": "none",
+              "decimals": 0,
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  {"color": "green", "value": null},
+                  {"color": "yellow", "value": 1000},
+                  {"color": "red", "value": 10000}
+                ]
+              }
+            }
+          },
+          "options": {
+            "reduceOptions": {
+              "values": true,
+              "calcs": ["lastNotNull"]
+            }
+          },
+          "gridPos": {"h": 4, "w": 6, "x": 6, "y": 20}
+        },
+        {
+          "type": "stat",
+          "title": "Cache Evictions (5m)",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "targets": [
+            {
+              "refId": "G",
+              "expr": "sum(rate(aurum_cache_evictions_total[5m]))",
+              "legendFormat": "evictions"
+            }
+          ],
+          "fieldConfig": {
+            "defaults": {
+              "unit": "reqps",
+              "decimals": 2,
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  {"color": "green", "value": null},
+                  {"color": "yellow", "value": 1.0},
+                  {"color": "red", "value": 10.0}
+                ]
+              }
+            }
+          },
+          "options": {
+            "reduceOptions": {
+              "values": true,
+              "calcs": ["lastNotNull"]
+            }
+          },
+          "gridPos": {"h": 4, "w": 6, "x": 12, "y": 20}
+        },
+        {
+          "type": "stat",
+          "title": "Business Transaction Errors (5m)",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "targets": [
+            {
+              "refId": "H",
+              "expr": "sum(rate(aurum_business_errors_total[5m]))",
+              "legendFormat": "errors"
+            }
+          ],
+          "fieldConfig": {
+            "defaults": {
+              "unit": "reqps",
+              "decimals": 3,
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  {"color": "green", "value": null},
+                  {"color": "yellow", "value": 0.001},
+                  {"color": "red", "value": 0.01}
+                ]
+              }
+            }
+          },
+          "options": {
+            "reduceOptions": {
+              "values": true,
+              "calcs": ["lastNotNull"]
+            }
+          },
+          "gridPos": {"h": 4, "w": 6, "x": 18, "y": 20}
+        }
+      ],
+      "templating": {
+        "list": []
+      },
+      "time": {
+        "from": "now-6h",
+        "to": "now"
+      }
+    }
+---
+  aurum-observability.json: |
+        {
+          "type": "timeseries",
+          "title": "API Requests per Minute",
+          "datasource": {
+            "type": "grafana-clickhouse-datasource",
+            "uid": "clickhouse"
+          },
+          "targets": [
+            {
+              "query": "SELECT toStartOfInterval(timestamp, toIntervalMinute(1)) AS minute, count(*) AS requests FROM ops.logs WHERE JSONExtractString(message, 'event') = 'access' GROUP BY minute ORDER BY minute",
+              "refId": "A",
+              "format": "time_series"
+            }
+          ],
+          "fieldConfig": {
+            "defaults": {
+              "color": {
+                "mode": "palette-classic"
+              },
+              "unit": "req/min"
+            },
+            "overrides": []
+          },
+          "options": {
+            "legend": {
+              "displayMode": "table",
+              "placement": "bottom"
+            },
+            "tooltip": {
+              "mode": "single"
+            }
+          },
+          "gridPos": {
+            "h": 9,
+            "w": 24,
+            "x": 0,
+            "y": 0
+          }
+        },
+        {
+          "type": "table",
+          "title": "Scenario Worker Recent Logs",
+          "datasource": {
+            "type": "grafana-clickhouse-datasource",
+            "uid": "clickhouse"
+          },
+          "targets": [
+            {
+              "query": "SELECT timestamp, message FROM ops.logs WHERE JSONExtractString(message, 'logger') = 'aurum.scenarios.worker' ORDER BY timestamp DESC LIMIT 50",
+              "refId": "B",
+              "format": "table"
+            }
+          ],
+          "options": {
+            "showHeader": true
+          },
+          "gridPos": {
+            "h": 10,
+            "w": 24,
+            "x": 0,
+            "y": 9
+          },
+        "fieldConfig": {
+          "defaults": {
+            "custom": {
+              "align": "left"
+            }
+          },
+          "overrides": []
+        }
+        },
+        {
+          "type": "table",
+          "title": "Iceberg Maintenance Alerts",
+          "datasource": {
+            "type": "grafana-clickhouse-datasource",
+            "uid": "clickhouse"
+          },
+          "targets": [
+            {
+              "query": "SELECT timestamp, severity, message, payload FROM ops.alerts WHERE source = 'aurum.airflow.iceberg_maintenance' ORDER BY timestamp DESC LIMIT 25",
+              "refId": "C",
+              "format": "table"
+            }
+          ],
+          "options": {
+            "showHeader": true
+          },
+          "gridPos": {
+            "h": 8,
+            "w": 24,
+            "x": 0,
+            "y": 19
+          },
+          "fieldConfig": {
+            "defaults": {
+              "custom": {
+                "align": "left"
+              }
+            },
+            "overrides": []
+          }
+        }
+      ],
+      "templating": {
+        "list": []
+      },
+      "time": {
+        "from": "now-6h",
+        "to": "now"
+      }
+    }
+  aurum-api-latency.json: |
+    {
+      "id": null,
+      "uid": "aurum-api-latency",
+      "title": "API Latency & Errors",
+      "timezone": "browser",
+      "schemaVersion": 39,
+      "version": 1,
+      "refresh": "30s",
+      "time": {
+        "from": "now-6h",
+        "to": "now"
+      },
+      "panels": [
+        {
+          "type": "timeseries",
+          "title": "API p95 Latency (ms)",
+          "datasource": {
+            "type": "grafana-clickhouse-datasource",
+            "uid": "clickhouse"
+          },
+          "targets": [
+            {
+              "refId": "A",
+              "format": "time_series",
+              "query": "SELECT toStartOfInterval(timestamp, toIntervalMinute(1)) AS minute, quantile(0.95)(toFloat64OrNull(fields['duration_ms'])) AS p95 FROM ops.logs WHERE positionCaseInsensitive(service, 'api') > 0 AND has(fields, 'duration_ms') GROUP BY minute ORDER BY minute"
+            }
+          ],
+          "fieldConfig": {
+            "defaults": {
+              "unit": "ms"
+            },
+            "overrides": []
+          },
+          "gridPos": {
+            "h": 8,
+            "w": 24,
+            "x": 0,
+            "y": 0
+          }
+        },
+        {
+          "type": "timeseries",
+          "title": "API Error Rate (%)",
+          "datasource": {
+            "type": "grafana-clickhouse-datasource",
+            "uid": "clickhouse"
+          },
+          "targets": [
+            {
+              "refId": "B",
+              "format": "time_series",
+              "query": "SELECT toStartOfInterval(timestamp, toIntervalMinute(1)) AS minute, if(count() = 0, 0, countIf(toUInt16OrNull(fields['status']) >= 500 AND toUInt16OrNull(fields['status']) < 600) * 100.0 / count()) AS error_rate FROM ops.logs WHERE positionCaseInsensitive(service, 'api') > 0 AND has(fields, 'status') GROUP BY minute ORDER BY minute"
+            }
+          ],
+          "fieldConfig": {
+            "defaults": {
+              "unit": "percent",
+              "decimals": 2
+            },
+            "overrides": []
+          },
+          "options": {
+            "legend": {
+              "displayMode": "table",
+              "placement": "bottom"
+            }
+          },
+          "gridPos": {
+            "h": 8,
+            "w": 24,
+            "x": 0,
+            "y": 8
+          }
+        },
+        {
+          "type": "timeseries",
+          "title": "API Request Volume",
+          "datasource": {
+            "type": "grafana-clickhouse-datasource",
+            "uid": "clickhouse"
+          },
+          "targets": [
+            {
+              "refId": "C",
+              "format": "time_series",
+              "query": "SELECT toStartOfInterval(timestamp, toIntervalMinute(1)) AS minute, count() AS requests FROM ops.logs WHERE positionCaseInsensitive(service, 'api') > 0 GROUP BY minute ORDER BY minute"
+            }
+          ],
+          "fieldConfig": {
+            "defaults": {
+              "unit": "req/min"
+            },
+            "overrides": []
+          },
+          "gridPos": {
+            "h": 7,
+            "w": 24,
+            "x": 0,
+            "y": 16
+          }
+        }
+      ]
+    }
+
+  aurum-ingestion-sla.json: |
+    {
+      "id": null,
+      "uid": "aurum-ingestion-sla",
+      "title": "Ingestion SLA & Watermarks",
+      "timezone": "browser",
+      "schemaVersion": 39,
+      "version": 1,
+      "refresh": "1m",
+      "time": {
+        "from": "now-12h",
+        "to": "now"
+      },
+      "panels": [
+        {
+          "type": "stat",
+          "title": "Max Watermark Lag (minutes)",
+          "datasource": {
+            "type": "postgres",
+            "uid": "aurum-postgres"
+          },
+          "targets": [
+            {
+              "refId": "A",
+              "format": "table",
+              "rawQuery": true,
+              "sql": "SELECT ROUND(MAX(EXTRACT(EPOCH FROM (NOW() AT TIME ZONE 'UTC' - watermark)))/60.0, 2) AS lag_minutes FROM ingest_watermark"
+            }
+          ],
+          "fieldConfig": {
+            "defaults": {
+              "unit": "m",
+              "decimals": 2
+            },
+            "overrides": []
+          },
+          "options": {
+            "reduceOptions": {
+              "values": true,
+              "calcs": [
+                "lastNotNull"
+              ]
+            },
+            "orientation": "horizontal"
+          },
+          "gridPos": {
+            "h": 4,
+            "w": 6,
+            "x": 0,
+            "y": 0
+          }
+        },
+        {
+          "type": "table",
+          "title": "Top Sources by Lag",
+          "datasource": {
+            "type": "postgres",
+            "uid": "aurum-postgres"
+          },
+          "targets": [
+            {
+              "refId": "B",
+              "format": "table",
+              "rawQuery": true,
+              "sql": "SELECT source_name, ROUND(EXTRACT(EPOCH FROM (NOW() AT TIME ZONE 'UTC' - MAX(watermark)))/60.0, 2) AS lag_minutes, MAX(updated_at) AS last_update FROM ingest_watermark GROUP BY source_name ORDER BY lag_minutes DESC LIMIT 20"
+            }
+          ],
+          "fieldConfig": {
+            "defaults": {
+              "custom": {
+                "align": "left"
+              }
+            },
+            "overrides": []
+          },
+          "options": {
+            "showHeader": true
+          },
+          "gridPos": {
+            "h": 10,
+            "w": 18,
+            "x": 6,
+            "y": 0
+          }
+        },
+        {
+          "type": "timeseries",
+          "title": "Watermark Lag Over Time",
+          "datasource": {
+            "type": "postgres",
+            "uid": "aurum-postgres"
+          },
+          "targets": [
+            {
+              "refId": "C",
+              "format": "time_series",
+              "rawQuery": true,
+              "sql": "SELECT $__timeGroupAlias(updated_at, '5m'), source_name AS metric, AVG(EXTRACT(EPOCH FROM (updated_at - watermark))/60.0) AS lag_minutes FROM ingest_watermark WHERE $__timeFilter(updated_at) GROUP BY 1, source_name ORDER BY 1"
+            }
+          ],
+          "fieldConfig": {
+            "defaults": {
+              "unit": "m",
+              "decimals": 2
+            },
+            "overrides": []
+          },
+          "gridPos": {
+            "h": 9,
+            "w": 24,
+            "x": 0,
+            "y": 10
+          }
+        }
+      ]
+    }
+
+  aurum-scenario-worker.json: |
+    {
+      "id": null,
+      "uid": "aurum-scenario-worker",
+      "title": "Scenario Worker Metrics",
+      "timezone": "browser",
+      "schemaVersion": 39,
+      "version": 1,
+      "refresh": "30s",
+      "time": {
+        "from": "now-6h",
+        "to": "now"
+      },
+      "panels": [
+        {
+          "type": "timeseries",
+          "title": "Scenario Throughput (req/s)",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "targets": [
+            {
+              "refId": "A",
+              "expr": "rate(aurum_scenario_requests_success_total[5m])",
+              "legendFormat": "success"
+            },
+            {
+              "refId": "B",
+              "expr": "rate(aurum_scenario_requests_failure_total[5m])",
+              "legendFormat": "failure"
+            },
+            {
+              "refId": "C",
+              "expr": "rate(aurum_scenario_requests_dlq_total[5m])",
+              "legendFormat": "dlq"
+            }
+          ],
+          "fieldConfig": {
+            "defaults": {
+              "unit": "req/s",
+              "decimals": 3
+            },
+            "overrides": []
+          },
+          "gridPos": {
+            "h": 8,
+            "w": 24,
+            "x": 0,
+            "y": 0
+          }
+        },
+        {
+          "type": "timeseries",
+          "title": "Processing Duration p95 (s)",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "targets": [
+            {
+              "refId": "D",
+              "expr": "histogram_quantile(0.95, sum(rate(aurum_scenario_processing_seconds_bucket[5m])) by (le))",
+              "legendFormat": "p95"
+            }
+          ],
+          "fieldConfig": {
+            "defaults": {
+              "unit": "s",
+              "decimals": 2
+            },
+            "overrides": []
+          },
+          "gridPos": {
+            "h": 8,
+            "w": 24,
+            "x": 0,
+            "y": 8
+          }
+        },
+        {
+          "type": "stat",
+          "title": "Queue Depth",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "targets": [
+            {
+              "refId": "E",
+              "expr": "aurum_scenario_queue_size",
+              "legendFormat": "queue"
+            }
+          ],
+          "fieldConfig": {
+            "defaults": {
+              "unit": "none",
+              "decimals": 0
+            },
+            "overrides": []
+          },
+          "options": {
+            "reduceOptions": {
+              "values": true,
+              "calcs": [
+                "lastNotNull"
+              ]
+            },
+            "orientation": "horizontal"
+          },
+          "gridPos": {
+            "h": 4,
+            "w": 6,
+            "x": 0,
+            "y": 16
+          }
+        },
+        {
+          "type": "stat",
+          "title": "Retries (5m)",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "targets": [
+            {
+              "refId": "F",
+              "expr": "sum(rate(aurum_scenario_retry_attempts_total[5m]))",
+              "legendFormat": "retry attempts"
+            }
+          ],
+          "fieldConfig": {
+            "defaults": {
+              "unit": "req/s",
+              "decimals": 3
+            },
+            "overrides": []
+          },
+          "options": {
+            "reduceOptions": {
+              "values": true,
+              "calcs": [
+                "lastNotNull"
+              ]
+            },
+            "orientation": "horizontal"
+          },
+          "gridPos": {
+            "h": 4,
+            "w": 6,
+            "x": 6,
+            "y": 16
+          }
+        },
+        {
+          "type": "stat",
+          "title": "Timeouts (5m)",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "targets": [
+            {
+              "refId": "G",
+              "expr": "sum(rate(aurum_scenario_timeout_runs_total[5m]))",
+              "legendFormat": "timeouts"
+            }
+          ],
+          "fieldConfig": {
+            "defaults": {
+              "unit": "req/s",
+              "decimals": 3
+            },
+            "overrides": []
+          },
+          "options": {
+            "reduceOptions": {
+              "values": true,
+              "calcs": [
+                "lastNotNull"
+              ]
+            },
+            "orientation": "horizontal"
+          },
+          "gridPos": {
+            "h": 4,
+            "w": 6,
+            "x": 12,
+            "y": 16
+          }
+        },
+        {
+          "type": "stat",
+          "title": "DLQ Rate (5m)",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "targets": [
+            {
+              "refId": "H",
+              "expr": "sum(rate(aurum_scenario_requests_dlq_total[5m]))",
+              "legendFormat": "dlq"
+            }
+          ],
+          "fieldConfig": {
+            "defaults": {
+              "unit": "req/s",
+              "decimals": 3
+            },
+            "overrides": []
+          },
+          "options": {
+            "reduceOptions": {
+              "values": true,
+              "calcs": [
+                "lastNotNull"
+              ]
+            },
+            "orientation": "horizontal"
+          },
+          "gridPos": {
+            "h": 4,
+            "w": 6,
+            "x": 18,
+            "y": 16
+          }
+        }
+      ]
+    }
+
+  aurum-iso-ingestion.json: |
+    {
+      "id": null,
+      "uid": "aurum-iso-ingestion",
+      "title": "ISO Ingestion Overview",
+      "timezone": "browser",
+      "schemaVersion": 39,
+      "version": 1,
+      "refresh": "1m",
+      "time": { "from": "now-12h", "to": "now" },
+      "panels": [
+        {
+          "type": "stat",
+          "title": "Max ISO Watermark Lag (minutes)",
+          "datasource": {"type": "postgres", "uid": "aurum-postgres"},
+          "targets": [{
+            "refId": "A",
+            "format": "table",
+            "rawQuery": true,
+            "sql": "SELECT ROUND(MAX(EXTRACT(EPOCH FROM (NOW() AT TIME ZONE 'UTC' - watermark)))/60.0, 2) AS lag_minutes FROM ingest_watermark WHERE source_name LIKE 'iso.%'"
+          }],
+          "fieldConfig": {"defaults": {"unit": "m", "decimals": 2}, "overrides": []},
+          "gridPos": {"h": 4, "w": 6, "x": 0, "y": 0}
+        },
+        {
+          "type": "table",
+          "title": "Top ISO Sources by Lag",
+          "datasource": {"type": "postgres", "uid": "aurum-postgres"},
+          "targets": [{
+            "refId": "B",
+            "format": "table",
+            "rawQuery": true,
+            "sql": "SELECT source_name, ROUND(EXTRACT(EPOCH FROM (NOW() AT TIME ZONE 'UTC' - MAX(watermark)))/60.0, 2) AS lag_minutes, MAX(updated_at) AS last_update FROM ingest_watermark WHERE source_name LIKE 'iso.%' GROUP BY source_name ORDER BY lag_minutes DESC LIMIT 20"
+          }],
+          "gridPos": {"h": 10, "w": 10, "x": 6, "y": 0}
+        },
+        {
+          "type": "timeseries",
+          "title": "Ingest Error Rate (ClickHouse)",
+          "datasource": {"type": "grafana-clickhouse-datasource", "uid": "clickhouse"},
+          "targets": [{
+            "refId": "C",
+            "format": "time_series",
+            "query": "SELECT toStartOfInterval(timestamp, toIntervalMinute(1)) AS minute, countIf(level = 'ERROR') AS errors FROM ops.logs WHERE (positionCaseInsensitive(service, 'seatunnel') > 0 OR positionCaseInsensitive(message, 'iso') > 0) AND $__timeFilter(timestamp) GROUP BY minute ORDER BY minute"
+          }],
+          "fieldConfig": {"defaults": {"unit": "req/min"}, "overrides": []},
+          "gridPos": {"h": 7, "w": 24, "x": 0, "y": 10}
+        },
+        {
+          "type": "timeseries",
+          "title": "ISO Rows/sec (approx)",
+          "datasource": {"type": "grafana-clickhouse-datasource", "uid": "clickhouse"},
+          "targets": [{
+            "refId": "D",
+            "format": "time_series",
+            "query": "SELECT toStartOfInterval(timestamp, toIntervalMinute(1)) AS minute, countIf(positionCaseInsensitive(message, 'Produced') > 0 AND positionCaseInsensitive(message, 'aurum.iso.') > 0) AS rows FROM ops.logs WHERE $__timeFilter(timestamp) GROUP BY minute ORDER BY minute"
+          }],
+          "fieldConfig": {"defaults": {"unit": "rows/min"}, "overrides": []},
+          "gridPos": {"h": 7, "w": 24, "x": 0, "y": 17}
+        },
+        {
+          "type": "stat",
+          "title": "Schema Drift Events (24h)",
+          "datasource": {"type": "grafana-clickhouse-datasource", "uid": "clickhouse"},
+          "targets": [{
+            "refId": "E",
+            "format": "table",
+            "query": "SELECT count() AS drift FROM ops.logs WHERE $__timeFilter(timestamp) AND (positionCaseInsensitive(event, 'schema_contract_schema_missing') > 0 OR positionCaseInsensitive(event, 'schema_subject_registered') > 0)"
+          }],
+          "gridPos": {"h": 4, "w": 6, "x": 0, "y": 24}
+        }
+      ]
+    }
+
+
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: grafana
+  namespace: aurum-dev
+  labels:
+    app: grafana
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: grafana
+  template:
+    metadata:
+      labels:
+        app: grafana
+    spec:
+      containers:
+        - name: grafana
+          image: grafana/grafana:10.4.3
+          env:
+            - name: GF_SECURITY_ADMIN_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: aurum-secrets
+                  key: MINIO_ROOT_PASSWORD
+            - name: GF_SECURITY_ADMIN_USER
+              value: admin
+            - name: GF_INSTALL_PLUGINS
+              value: grafana-clickhouse-datasource
+          ports:
+            - containerPort: 3000
+              name: http
+          volumeMounts:
+            - name: datasources
+              mountPath: /etc/grafana/provisioning/datasources
+            - name: dashboard-providers
+              mountPath: /etc/grafana/provisioning/dashboards
+            - name: dashboard-defs
+              mountPath: /var/lib/grafana/dashboards
+          readinessProbe:
+            httpGet:
+              path: /api/health
+              port: http
+            initialDelaySeconds: 10
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /api/health
+              port: http
+            initialDelaySeconds: 30
+            periodSeconds: 30
+      volumes:
+        - name: datasources
+          configMap:
+            name: grafana-datasources
+        - name: dashboard-providers
+          configMap:
+            name: grafana-dashboard-providers
+        - name: dashboard-defs
+          configMap:
+            name: grafana-dashboard-defs
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: grafana
+  namespace: aurum-dev
+  labels:
+    app: grafana
+spec:
+  selector:
+    app: grafana
+  ports:
+    - name: http
+      port: 3000
+      targetPort: 3000

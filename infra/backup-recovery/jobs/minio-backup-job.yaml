@@ -1,0 +1,101 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: minio-backup
+  namespace: aurum-dev
+spec:
+  template:
+    spec:
+      containers:
+      - name: minio-backup
+        image: minio/mc:latest
+        command: ["/bin/bash", "-c"]
+        args:
+        - |
+          set -e
+
+          # Set backup timestamp
+          BACKUP_TIMESTAMP=$(date -u +'%Y%m%d_%H%M%S')
+          BACKUP_NAME="minio_backup_${BACKUP_TIMESTAMP}"
+
+          echo "Starting Minio backup: $BACKUP_NAME"
+
+          # Configure Minio client
+          mc alias set aurum-minio http://minio.aurum-dev.svc.cluster.local:9000 aurum password
+
+          # Create backup bucket if it doesn't exist
+          mc mb aurum-minio/aurum-backups --ignore-existing
+
+          # List all buckets for backup
+          mc ls aurum-minio/ --json > /backup/buckets.json
+
+          # Create backup metadata
+          cat > /backup/backup_metadata.json << METADATA_EOF
+          {
+            "backup_type": "object_storage",
+            "service": "minio",
+            "timestamp": "$BACKUP_TIMESTAMP",
+            "backup_method": "minio_client",
+            "status": "in_progress",
+            "buckets": []
+          }
+          METADATA_EOF
+
+          # Perform bucket replication to backup location
+          echo "Creating bucket replication..."
+          mc mirror aurum-minio/ aurum-minio/aurum-backups/ --overwrite
+
+          # Update metadata with completion status
+          cat > /backup/backup_metadata.json << METADATA_EOF
+          {
+            "backup_type": "object_storage",
+            "service": "minio",
+            "timestamp": "$BACKUP_TIMESTAMP",
+            "backup_method": "minio_client",
+            "status": "completed",
+            "target": "aurum-minio/aurum-backups/",
+            "replication": "mirror"
+          }
+          METADATA_EOF
+
+          # Upload metadata
+          mc cp /backup/backup_metadata.json aurum-minio/aurum-backups/minio/
+
+          # Cleanup
+          rm -f /backup/buckets.json
+          rm -f /backup/backup_metadata.json
+
+          echo "✅ Minio backup completed successfully: $BACKUP_NAME"
+        volumeMounts:
+        - name: backup-storage
+          mountPath: /backup
+      volumes:
+      - name: backup-storage
+        emptyDir: {}
+      restartPolicy: OnFailure
+  backoffLimit: 3
+---
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: minio-backup-schedule
+  namespace: aurum-dev
+spec:
+  schedule: "0 5 * * *"
+  jobTemplate:
+    spec:
+      template:
+        spec:
+          containers:
+          - name: minio-backup-scheduled
+            image: minio/mc:latest
+            command: ["/bin/bash", "-c"]
+            args:
+            - |
+              echo "Starting scheduled Minio backup..."
+              kubectl create job minio-backup-$(date +%s) --from=cronjob/minio-backup-schedule
+            volumeMounts: []
+          volumes: []
+          restartPolicy: OnFailure
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 5

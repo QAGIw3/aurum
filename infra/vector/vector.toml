@@ -1,0 +1,145 @@
+# Vector configuration shipping Docker Compose logs to ClickHouse.
+
+[sources.docker_logs]
+  type = "docker_logs"
+  auto_partial_merge = true
+  host_key = "host"
+
+[transforms.normalize_logs]
+  type = "remap"
+  inputs = ["docker_logs"]
+  source = """
+  ts = now()
+  if exists(.timestamp) {
+    parsed_ts, err = parse_timestamp(to_string!(.timestamp), format: "%+")
+    if err == null {
+      ts = parsed_ts
+    }
+  }
+  .timestamp = ts
+
+  service = "unknown"
+  if exists(.container_name) {
+    name = to_string!(.container_name)
+    if starts_with(name, "/") {
+      parts = split(name, "/")
+      if length(parts) > 1 {
+        name = parts[1]
+      } else {
+        name = parts[0]
+      }
+    }
+    name_parts = split(name, ".")
+    if length(name_parts) > 0 {
+      service = name_parts[0]
+    } else if length(name) > 0 {
+      service = name
+    }
+  }
+
+  if service == "unknown" && exists(.label) && exists(.label."com.docker.compose.service") {
+    service = to_string!(.label."com.docker.compose.service")
+  }
+  .service = service
+
+  host_val = get_hostname()
+  if exists(.host) {
+    host_val = to_string!(.host)
+  }
+  .host = host_val
+
+  level = null
+  trace_id = null
+  span_id = null
+  message = to_string!(.message)
+  fields = {}
+
+  parsed, err = parse_json(.message)
+  if err == null && is_object(parsed) {
+    if exists(parsed.level) {
+      level = to_string!(parsed.level)
+      parsed = del(parsed.level)
+    }
+    if exists(parsed.log_level) {
+      level = to_string!(parsed.log_level)
+      parsed = del(parsed.log_level)
+    }
+    if exists(parsed.message) {
+      message = to_string!(parsed.message)
+      parsed = del(parsed.message)
+    } else if exists(parsed.msg) {
+      message = to_string!(parsed.msg)
+      parsed = del(parsed.msg)
+    }
+    if exists(parsed.trace_id) {
+      trace_id = to_string!(parsed.trace_id)
+      parsed = del(parsed.trace_id)
+    }
+    if exists(parsed.span_id) {
+      span_id = to_string!(parsed.span_id)
+      parsed = del(parsed.span_id)
+    }
+
+    temp = {}
+    for_each(parsed) -> |key, value| {
+      if value != null {
+        if is_object(value) || is_array(value) {
+          temp[key] = encode_json(value)
+        } else {
+          temp[key] = to_string!(value)
+        }
+      }
+    }
+    fields = temp
+  }
+
+  if level == null && exists(.level) {
+    level = to_string!(.level)
+  }
+  if level == null {
+    level = "info"
+  }
+
+  if trace_id == null && exists(.trace_id) {
+    trace_id = to_string!(.trace_id)
+  }
+  if trace_id == null {
+    trace_id = ""
+  }
+
+  if span_id == null && exists(.span_id) {
+    span_id = to_string!(.span_id)
+  }
+  if span_id == null {
+    span_id = ""
+  }
+
+  .level = level
+  .trace_id = trace_id
+  .span_id = span_id
+  .message = message
+  .fields = fields
+
+  if !exists(.fields) {
+    .fields = {}
+  }
+
+  del(.container_id)
+  del(.container_name)
+  del(.label)
+  del(.stream)
+  del(.source_type)
+  del(.file)
+  del(.partial_message)
+  del(.docker)
+  """
+
+[sinks.clickhouse]
+  type = "clickhouse"
+  inputs = ["normalize_logs"]
+  endpoint = "http://clickhouse:8123"
+  database = "ops"
+  table = "logs"
+  compression = "gzip"
+  auth.username = "default"
+  skip_unknown_fields = true

@@ -1,0 +1,11 @@
+{{- if .Values.resourcesQuota.enabled -}}
+apiVersion: v1
+kind: ResourceQuota
+metadata:
+  name: {{ include "aurum-api.fullname" . }}-quota
+  labels:
+    {{- include "aurum-api.labels" . | nindent 4 }}
+spec:
+  hard:
+    {{- toYaml .Values.resourcesQuota.hard | nindent 4 }}
+{{- end }}

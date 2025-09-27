@@ -1,0 +1,25 @@
+{
+  "expectation_suite_name": "mart_curve_asof_diff",
+  "meta": {
+    "notes": "Sanity checks for pre-computed as-of curve deltas."
+  },
+  "expectations": [
+    {
+      "expectation_type": "expect_column_values_to_not_be_null",
+      "kwargs": {"column": "current_asof_date"}
+    },
+    {
+      "expectation_type": "expect_column_values_to_not_be_null",
+      "kwargs": {"column": "compare_asof_date"}
+    },
+    {
+      "expectation_type": "expect_column_values_to_be_between",
+      "kwargs": {
+        "column": "delta_mid",
+        "mostly": 0.995,
+        "min_value": -20000,
+        "max_value": 20000
+      }
+    }
+  ]
+}

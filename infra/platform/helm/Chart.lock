@@ -1,0 +1,9 @@
+dependencies:
+- name: aurum-api
+  repository: file://../../api/helm
+  version: 0.1.0
+- name: aurum-scenario-worker
+  repository: file://../../scenario-worker/helm
+  version: 0.1.0
+digest: sha256:fb02a9a5f72b41a5b40ab8578d34b57165d00f60462eff9643705a6728704381
+generated: "2024-09-12T00:00:00Z"

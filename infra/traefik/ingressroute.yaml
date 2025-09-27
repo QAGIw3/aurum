@@ -1,0 +1,33 @@
+apiVersion: traefik.containo.us/v1alpha1
+kind: IngressRoute
+metadata:
+  name: aurum-platform
+  namespace: aurum
+spec:
+  entryPoints:
+    - websecure
+  routes:
+    - match: Host(`api.aurum.local`)
+      kind: Rule
+      services:
+        - name: aurum-api
+          port: 8080
+      middlewares:
+        - name: oidc-forward-auth
+        - name: api-rate-limit
+    - match: Host(`superset.aurum.local`)
+      kind: Rule
+      services:
+        - name: aurum-superset
+          port: 8088
+      middlewares:
+        - name: oidc-forward-auth
+    - match: Host(`metadata.aurum.local`)
+      kind: Rule
+      services:
+        - name: openmetadata
+          port: 8585
+      middlewares:
+        - name: oidc-forward-auth
+  tls:
+    secretName: aurum-tls

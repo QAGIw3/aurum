@@ -1,0 +1,115 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: kafka-backup
+  namespace: aurum-dev
+spec:
+  template:
+    spec:
+      containers:
+      - name: kafka-backup
+        image: confluentinc/cp-kafka:7.4.0
+        command: ["/bin/bash", "-c"]
+        args:
+        - |
+          set -e
+
+          # Set backup timestamp
+          BACKUP_TIMESTAMP=$(date -u +'%Y%m%d_%H%M%S')
+          BACKUP_NAME="kafka_backup_${BACKUP_TIMESTAMP}"
+
+          echo "Starting Kafka backup: $BACKUP_NAME"
+
+          # Create backup directory
+          mkdir -p /backup/$BACKUP_NAME
+
+          # List all topics
+          kafka-topics --bootstrap-server kafka.aurum-dev.svc.cluster.local:9092 \
+                      --list > /backup/$BACKUP_NAME/topics.txt
+
+          # Create topic configurations backup
+          while read topic; do
+            if [ ! -z "$topic" ]; then
+              kafka-configs --bootstrap-server kafka.aurum-dev.svc.cluster.local:9092 \
+                           --entity-type topics \
+                           --entity-name $topic \
+                           --describe > /backup/$BACKUP_NAME/config_$topic.txt
+            fi
+          done < /backup/$BACKUP_NAME/topics.txt
+
+          # Create consumer groups backup
+          kafka-consumer-groups --bootstrap-server kafka.aurum-dev.svc.cluster.local:9092 \
+                               --list > /backup/$BACKUP_NAME/consumer_groups.txt
+
+          # Create offsets backup
+          while read group; do
+            if [ ! -z "$group" ]; then
+              kafka-consumer-groups --bootstrap-server kafka.aurum-dev.svc.cluster.local:9092 \
+                                   --group $group \
+                                   --describe > /backup/$BACKUP_NAME/offsets_$group.txt
+            fi
+          done < /backup/$BACKUP_NAME/consumer_groups.txt
+
+          # Create backup metadata
+          TOPIC_COUNT=$(wc -l < /backup/$BACKUP_NAME/topics.txt)
+          GROUP_COUNT=$(wc -l < /backup/$BACKUP_NAME/consumer_groups.txt)
+
+          cat > /backup/$BACKUP_NAME/backup_metadata.json << METADATA_EOF
+          {
+            "backup_type": "configuration",
+            "service": "kafka",
+            "timestamp": "$BACKUP_TIMESTAMP",
+            "backup_method": "kafka_tools",
+            "status": "completed",
+            "topics_count": $TOPIC_COUNT,
+            "consumer_groups_count": $GROUP_COUNT,
+            "includes": ["topic_configs", "consumer_groups", "offsets"]
+          }
+          METADATA_EOF
+
+          # Compress backup
+          tar -czf /backup/$BACKUP_NAME.tar.gz -C /backup $BACKUP_NAME
+
+          # Upload to Minio
+          echo "Uploading backup to Minio..."
+          mc alias set aurum-minio http://minio.aurum-dev.svc.cluster.local:9000 aurum password
+          mc cp /backup/$BACKUP_NAME.tar.gz aurum-minio/aurum-backups/kafka/
+
+          # Cleanup
+          rm -rf /backup/$BACKUP_NAME
+          rm -f /backup/$BACKUP_NAME.tar.gz
+
+          echo "✅ Kafka backup completed successfully: $BACKUP_NAME"
+        volumeMounts:
+        - name: backup-storage
+          mountPath: /backup
+      volumes:
+      - name: backup-storage
+        emptyDir: {}
+      restartPolicy: OnFailure
+  backoffLimit: 3
+---
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: kafka-backup-schedule
+  namespace: aurum-dev
+spec:
+  schedule: "0 6 * * *"
+  jobTemplate:
+    spec:
+      template:
+        spec:
+          containers:
+          - name: kafka-backup-scheduled
+            image: confluentinc/cp-kafka:7.4.0
+            command: ["/bin/bash", "-c"]
+            args:
+            - |
+              echo "Starting scheduled Kafka backup..."
+              kubectl create job kafka-backup-$(date +%s) --from=cronjob/kafka-backup-schedule
+            volumeMounts: []
+          volumes: []
+          restartPolicy: OnFailure
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 5

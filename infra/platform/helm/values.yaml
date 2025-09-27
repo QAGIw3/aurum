@@ -1,0 +1,65 @@
+# Global overrides shared by the Aurum platform components
+aurum-api:
+  replicaCount: 2
+  image:
+    repository: ghcr.io/aurum/aurum-api
+    tag: latest
+  ingress:
+    enabled: false
+    className: ""
+    annotations: {}
+    hosts:
+      - host: api.aurum.example.com
+        paths:
+          - path: /
+            pathType: Prefix
+    tls: []
+  config:
+    AURUM_API_TRINO_HOST: trino.aurum.svc.cluster.local
+    AURUM_API_TRINO_PORT: "8080"
+    AURUM_API_TRINO_USER: aurum
+    AURUM_API_TRINO_SCHEME: http
+    AURUM_APP_DB_DSN: postgresql://aurum@postgres.aurum.svc.cluster.local:5432/aurum
+    AURUM_API_REDIS_URL: redis://redis.aurum.svc.cluster.local:6379/0
+    AURUM_API_CACHE_TTL: "60"
+    AURUM_API_ISO_LMP_CACHE_TTL: "60"
+    AURUM_API_ISO_LMP_INMEM_TTL: "30"
+    AURUM_API_OIDC_ISSUER: https://auth.example.com/realms/aurum
+    AURUM_API_OIDC_AUDIENCE: aurum-api
+    AURUM_API_OIDC_JWKS_URL: https://auth.example.com/realms/aurum/protocol/openid-connect/certs
+    AURUM_API_JWT_LEEWAY: "60"
+    AURUM_API_AUTH_DISABLED: "0"
+    AURUM_API_ADMIN_GROUP: aurum-admins
+    KAFKA_EXTERNAL_BOOTSTRAP: kafka.aurum.example.com:31092
+    SCHEMA_REGISTRY_EXTERNAL_URL: https://schema-registry.aurum.example.com
+    AURUM_OTEL_SERVICE_NAME: aurum-api
+    AURUM_OTEL_EXPORTER_ENDPOINT: http://otel-collector.aurum.svc.cluster.local:4317
+    AURUM_OTEL_EXPORTER_INSECURE: "true"
+  secrets:
+    AURUM_API_OIDC_CLIENT_ID: aurum-frontend
+    AURUM_API_OIDC_CLIENT_SECRET: change-me
+    AURUM_API_JWT_SECRET: change-me
+    TRINO_PASSWORD: ""
+    REDIS_PASSWORD: ""
+    AURUM_APP_DB_DSN: postgresql://aurum:aurum@postgres.aurum.svc.cluster.local:5432/aurum
+
+aurum-scenario-worker:
+  replicaCount: 1
+  image:
+    repository: ghcr.io/aurum/aurum-worker
+    tag: latest
+  config:
+    KAFKA_BOOTSTRAP_SERVERS: kafka.aurum.svc.cluster.local:9092
+    SCHEMA_REGISTRY_URL: http://schema-registry.aurum.svc.cluster.local:8081
+    AURUM_SCENARIO_REQUEST_TOPIC: aurum.scenario.request.v1
+    AURUM_SCENARIO_OUTPUT_TOPIC: aurum.scenario.output.v1
+    AURUM_SCENARIO_WORKER_GROUP: aurum-scenario-worker
+    AURUM_SCENARIO_METRICS_PORT: "9464"
+    AURUM_SCENARIO_METRICS_ADDR: 0.0.0.0
+    AURUM_OTEL_SERVICE_NAME: aurum-scenario-worker
+    AURUM_OTEL_EXPORTER_ENDPOINT: http://otel-collector.aurum.svc.cluster.local:4317
+    AURUM_OTEL_EXPORTER_INSECURE: "true"
+  secrets:
+    SCHEMA_REGISTRY_BASIC_AUTH_USER_INFO: ":"
+    KAFKA_SASL_USERNAME: ""
+    KAFKA_SASL_PASSWORD: ""

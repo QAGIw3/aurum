@@ -1,0 +1,91 @@
+apiVersion: storage.k8s.io/v1
+kind: StorageClass
+metadata:
+  name: aurum-local
+provisioner: kubernetes.io/no-provisioner
+volumeBindingMode: WaitForFirstConsumer
+reclaimPolicy: Retain
+---
+apiVersion: v1
+kind: PersistentVolume
+metadata:
+  name: aurum-postgres-pv
+spec:
+  capacity:
+    storage: 5Gi
+  accessModes:
+    - ReadWriteOnce
+  persistentVolumeReclaimPolicy: Retain
+  storageClassName: aurum-local
+  hostPath:
+    path: /workspace/data/postgres
+---
+apiVersion: v1
+kind: PersistentVolume
+metadata:
+  name: aurum-timescale-pv
+spec:
+  capacity:
+    storage: 20Gi
+  accessModes:
+    - ReadWriteOnce
+  persistentVolumeReclaimPolicy: Retain
+  storageClassName: aurum-local
+  hostPath:
+    path: /workspace/data/timescale
+---
+apiVersion: v1
+kind: PersistentVolume
+metadata:
+  name: aurum-minio-pv
+spec:
+  capacity:
+    storage: 50Gi
+  accessModes:
+    - ReadWriteOnce
+  persistentVolumeReclaimPolicy: Retain
+  storageClassName: aurum-local
+  hostPath:
+    path: /workspace/data/minio
+---
+apiVersion: v1
+kind: PersistentVolume
+metadata:
+  name: aurum-clickhouse-pv
+spec:
+  capacity:
+    storage: 20Gi
+  accessModes:
+    - ReadWriteOnce
+  persistentVolumeReclaimPolicy: Retain
+  storageClassName: aurum-local
+  hostPath:
+    path: /workspace/data/clickhouse
+---
+apiVersion: v1
+kind: PersistentVolume
+metadata:
+  name: aurum-vault-pv
+spec:
+  capacity:
+    storage: 5Gi
+  accessModes:
+    - ReadWriteOnce
+  persistentVolumeReclaimPolicy: Retain
+  storageClassName: aurum-local
+  hostPath:
+    path: /workspace/data/vault
+---
+apiVersion: v1
+kind: PersistentVolume
+metadata:
+  name: aurum-backups-pv
+spec:
+  capacity:
+    storage: 50Gi
+  accessModes:
+    - ReadWriteMany
+  persistentVolumeReclaimPolicy: Retain
+  storageClassName: aurum-local
+  hostPath:
+    path: /workspace/data/backups

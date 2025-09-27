@@ -1,0 +1,47 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: aurum-scenario-worker
+spec:
+  template:
+    spec:
+      containers:
+        - name: worker
+          env:
+            - name: AURUM_API_AUTH_DISABLED
+              value: "1"
+            - name: AURUM_API_RATE_LIMIT_ENABLED
+              value: "0"
+            - name: AURUM_TELEMETRY_SERVICE_NAME
+              value: "aurum-scenario-worker-dev"
+            - name: POSTGRES_HOST
+              value: "postgres"
+            - name: POSTGRES_PORT
+              value: "5432"
+            - name: POSTGRES_DB
+              value: "aurum"
+            - name: POSTGRES_USER
+              value: "aurum"
+            - name: POSTGRES_PASSWORD
+              value: "aurum123"
+            - name: TRINO_HOST
+              value: "trino"
+            - name: TRINO_PORT
+              value: "8080"
+            - name: TRINO_USER
+              value: "aurum"
+            - name: REDIS_HOST
+              value: "redis"
+            - name: REDIS_PORT
+              value: "6379"
+            - name: REDIS_PASSWORD
+              value: "aurum123"
+            - name: KAFKA_BOOTSTRAP_SERVERS
+              value: "kafka:9092"
+            - name: KAFKA_SCHEMA_REGISTRY_URL
+              value: "http://schema-registry:8081"
+          command:
+            - python
+          args:
+            - -m
+            - aurum.scenarios.worker

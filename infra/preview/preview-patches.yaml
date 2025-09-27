@@ -1,0 +1,100 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: aurum-api
+spec:
+  template:
+    spec:
+      containers:
+      - name: aurum-api
+        env:
+        - name: AURUM_PREVIEW_MODE
+          value: "true"
+        - name: AURUM_LOG_LEVEL
+          value: "DEBUG"
+        - name: AURUM_API_DEBUG
+          value: "true"
+        ports:
+        - containerPort: 8080
+          name: http
+        - containerPort: 9464
+          name: metrics
+        resources:
+          requests:
+            cpu: 100m
+            memory: 256Mi
+          limits:
+            cpu: 500m
+            memory: 512Mi
+        securityContext:
+          allowPrivilegeEscalation: false
+          runAsNonRoot: true
+          runAsUser: 1001
+          capabilities:
+            drop:
+            - ALL
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: aurum-worker
+spec:
+  template:
+    spec:
+      containers:
+      - name: aurum-worker
+        env:
+        - name: AURUM_PREVIEW_MODE
+          value: "true"
+        - name: AURUM_LOG_LEVEL
+          value: "DEBUG"
+        resources:
+          requests:
+            cpu: 50m
+            memory: 128Mi
+          limits:
+            cpu: 200m
+            memory: 256Mi
+        securityContext:
+          allowPrivilegeEscalation: false
+          runAsNonRoot: true
+          runAsUser: 1001
+          capabilities:
+            drop:
+            - ALL
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: aurum-api
+spec:
+  type: ClusterIP
+  ports:
+  - port: 8080
+    targetPort: 8080
+    protocol: TCP
+    name: http
+  - port: 9464
+    targetPort: 9464
+    protocol: TCP
+    name: metrics
+  selector:
+    app.kubernetes.io/name: aurum-api
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: aurum-worker
+spec:
+  type: ClusterIP
+  ports:
+  - port: 8080
+    targetPort: 8080
+    protocol: TCP
+    name: http
+  - port: 9464
+    targetPort: 9464
+    protocol: TCP
+    name: metrics
+  selector:
+    app.kubernetes.io/name: aurum-worker

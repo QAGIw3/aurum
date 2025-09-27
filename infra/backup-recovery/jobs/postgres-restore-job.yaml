@@ -1,0 +1,80 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: postgres-restore
+  namespace: aurum-dev
+spec:
+  template:
+    spec:
+      containers:
+      - name: postgres-restore
+        image: postgres:14
+        command: ["/bin/bash", "-c"]
+        args:
+        - |
+          set -e
+
+          # Get backup name from environment
+          BACKUP_NAME=${BACKUP_NAME:-"latest"}
+
+          echo "Starting PostgreSQL restore from: $BACKUP_NAME"
+
+          # Download backup from Minio
+          mc alias set aurum-minio http://minio.aurum-dev.svc.cluster.local:9000 aurum password
+          mc cp aurum-minio/aurum-backups/postgresql/$BACKUP_NAME /backup/
+
+          # Extract backup
+          tar -xzf /backup/$BACKUP_NAME -C /backup/
+
+          # Stop PostgreSQL (for full restore)
+          kubectl scale deployment postgres --replicas=0 -n aurum-dev
+
+          # Wait for shutdown
+          sleep 30
+
+          # Remove existing data
+          rm -rf /var/lib/postgresql/data/*
+
+          # Restore from base backup
+          pg_basebackup -h postgres.aurum-dev.svc.cluster.local \
+                       -U aurum \
+                       -D /var/lib/postgresql/data \
+                       -Ft \
+                       -z \
+                       -P \
+                       -v
+
+          # Start PostgreSQL
+          kubectl scale deployment postgres --replicas=1 -n aurum-dev
+
+          # Wait for startup
+          sleep 60
+
+          # Verify restore
+          kubectl exec postgres-0 -n aurum-dev -- psql -U aurum -d postgres -c "SELECT version();"
+
+          # Cleanup
+          rm -rf /backup/*
+
+          echo "✅ PostgreSQL restore completed successfully"
+        env:
+        - name: BACKUP_NAME
+          value: "postgres_full_backup_latest"
+        - name: PGPASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: postgres-secrets
+              key: password
+        volumeMounts:
+        - name: backup-storage
+          mountPath: /backup
+        - name: postgres-data
+          mountPath: /var/lib/postgresql/data
+      volumes:
+      - name: backup-storage
+        emptyDir: {}
+      - name: postgres-data
+        persistentVolumeClaim:
+          claimName: postgres-pvc
+      restartPolicy: OnFailure
+  backoffLimit: 1

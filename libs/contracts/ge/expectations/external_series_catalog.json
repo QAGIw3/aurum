@@ -1,0 +1,91 @@
+{
+  "expectation_suite_name": "external_series_catalog",
+  "meta": {
+    "notes": "Validates external series catalog data from Kafka to Iceberg."
+  },
+  "expectations": [
+    {
+      "expectation_type": "expect_table_columns_to_match_set",
+      "kwargs": {
+        "column_set": [
+          "tenant_id",
+          "provider",
+          "series_id",
+          "dataset_code",
+          "title",
+          "description",
+          "unit_code",
+          "frequency_code",
+          "geo_id",
+          "status",
+          "category",
+          "source_url",
+          "notes",
+          "start_ts",
+          "end_ts",
+          "last_observation_ts",
+          "asof_date",
+          "created_at",
+          "updated_at",
+          "ingest_ts",
+          "ingest_job_id",
+          "ingest_run_id",
+          "ingest_batch_id",
+          "tags",
+          "metadata",
+          "version"
+        ]
+      }
+    },
+    {
+      "expectation_type": "expect_column_values_to_not_be_null",
+      "kwargs": {"column": "tenant_id"}
+    },
+    {
+      "expectation_type": "expect_column_values_to_not_be_null",
+      "kwargs": {"column": "provider"}
+    },
+    {
+      "expectation_type": "expect_column_values_to_not_be_null",
+      "kwargs": {"column": "series_id"}
+    },
+    {
+      "expectation_type": "expect_column_values_to_not_be_null",
+      "kwargs": {"column": "title"}
+    },
+    {
+      "expectation_type": "expect_column_values_to_not_be_null",
+      "kwargs": {"column": "ingest_ts"}
+    },
+    {
+      "expectation_type": "expect_column_values_to_be_in_set",
+      "kwargs": {
+        "column": "provider",
+        "value_set": ["FRED", "EIA", "BLS", "OECD"]
+      }
+    },
+    {
+      "expectation_type": "expect_column_values_to_not_be_null",
+      "kwargs": {"column": "version"},
+      "meta": {"notes": "Version required for optimistic concurrency"}
+    },
+    {
+      "expectation_type": "expect_column_values_to_be_between",
+      "kwargs": {
+        "column": "version",
+        "min_value": 1,
+        "max_value": 1000000
+      },
+      "meta": {"notes": "Version should be a reasonable positive number"}
+    },
+    {
+      "expectation_type": "expect_column_values_to_be_between",
+      "kwargs": {
+        "column": "ingest_ts",
+        "min_value": "2024-01-01 00:00:00",
+        "max_value": "2025-12-31 23:59:59"
+      },
+      "meta": {"notes": "Ingest timestamps should be within reasonable date range"}
+    }
+  ]
+}

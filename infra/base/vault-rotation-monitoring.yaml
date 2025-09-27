@@ -1,0 +1,491 @@
+# Prometheus monitoring configuration for Vault rotation
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: vault-secrets-rotation
+  namespace: aurum-dev
+  labels:
+    app: vault
+    component: secrets-rotation
+    managed-by: aurum-platform
+spec:
+  selector:
+    matchLabels:
+      app: vault
+      component: secrets-rotation
+  endpoints:
+  - port: metrics
+    path: /metrics
+    interval: 30s
+    scrapeTimeout: 10s
+    relabelings:
+    - sourceLabels: [__meta_kubernetes_pod_node_name]
+      targetLabel: node
+    - sourceLabels: [__meta_kubernetes_pod_name]
+      targetLabel: pod
+
+---
+# Prometheus rules for Vault rotation alerts
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: vault-secrets-rotation
+  namespace: aurum-dev
+  labels:
+    app: vault
+    component: secrets-rotation
+    managed-by: aurum-platform
+spec:
+  groups:
+  - name: vault_rotation
+    rules:
+      # Alert when rotation job fails
+      - alert: VaultRotationJobFailed
+        expr: kube_job_status_failed{job_name=~"vault-secrets-rotation.*"} > 0
+        for: 5m
+        labels:
+          severity: critical
+          service: vault
+          component: secrets-rotation
+        annotations:
+          summary: "Vault secrets rotation job has failed"
+          description: "The Vault secrets rotation job {{ $labels.job_name }} has failed. Check the job logs for details."
+          runbook_url: "https://github.com/supernova-corp/aurum/blob/main/docs/runbooks/vault-rotation.md"
+          dashboard_url: "https://grafana.aurum-dev/d/vault-rotation"
+
+      # Alert when rotation job is stuck
+      - alert: VaultRotationJobStuck
+        expr: kube_job_status_active{job_name=~"vault-secrets-rotation.*"} > 0
+        for: 10m
+        labels:
+          severity: warning
+          service: vault
+          component: secrets-rotation
+        annotations:
+          summary: "Vault secrets rotation job is stuck"
+          description: "The Vault secrets rotation job {{ $labels.job_name }} has been running for more than 10 minutes."
+
+      # Alert when rotation hasn't run in expected time
+      - alert: VaultRotationMissedSchedule
+        expr: |
+          (
+            time() - kube_job_status_completion_time{job_name=~"vault-secrets-rotation.*"}
+          ) / 60 / 60 > 25  # 25 hours since last successful rotation
+        for: 5m
+        labels:
+          severity: warning
+          service: vault
+          component: secrets-rotation
+        annotations:
+          summary: "Vault secrets rotation missed scheduled run"
+          description: "No successful Vault secrets rotation in the last 25 hours. The weekly rotation schedule may have been missed."
+
+      # Alert on high failure rate
+      - alert: VaultRotationHighFailureRate
+        expr: |
+          rate(kube_job_status_failed{job_name=~"vault-secrets-rotation.*"}[1h]) /
+          rate(kube_job_status_succeeded{job_name=~"vault-secrets-rotation.*"}[1h] + kube_job_status_failed{job_name=~"vault-secrets-rotation.*"}[1h]) > 0.5
+        for: 15m
+        labels:
+          severity: critical
+          service: vault
+          component: secrets-rotation
+        annotations:
+          summary: "High failure rate in Vault rotation jobs"
+          description: "More than 50% of Vault rotation jobs are failing in the last hour."
+
+      # Alert on secret rotation age
+      - alert: SecretsRotationOverdue
+        expr: |
+          time() - vault_secret_last_rotation > 30 * 24 * 60 * 60  # 30 days
+        for: 1h
+        labels:
+          severity: warning
+          service: vault
+          component: secrets-rotation
+        annotations:
+          summary: "Secrets not rotated in 30 days"
+          description: "Some secrets haven't been rotated in over 30 days, which exceeds the security policy."
+
+---
+# Grafana dashboard configuration for Vault rotation monitoring
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: vault-rotation-grafana-dashboard
+  namespace: aurum-dev
+  labels:
+    app: grafana
+    component: dashboard
+    managed-by: aurum-platform
+data:
+  vault-rotation-dashboard.json: |
+    {
+      "dashboard": {
+        "title": "Vault Secrets Rotation",
+        "description": "Monitoring dashboard for Vault secrets rotation jobs and security",
+        "tags": ["vault", "security", "rotation"],
+        "timezone": "UTC",
+        "refresh": "1m",
+        "time": {
+          "from": "now-24h",
+          "to": "now"
+        },
+        "panels": [
+          {
+            "title": "Rotation Job Status",
+            "type": "stat",
+            "targets": [
+              {
+                "expr": "kube_job_status_succeeded{job_name=~\"vault-secrets-rotation.*\"}",
+                "legendFormat": "Successful"
+              },
+              {
+                "expr": "kube_job_status_failed{job_name=~\"vault-secrets-rotation.*\"}",
+                "legendFormat": "Failed"
+              }
+            ],
+            "gridPos": {"x": 0, "y": 0, "w": 6, "h": 3}
+          },
+          {
+            "title": "Rotation Job Duration",
+            "type": "graph",
+            "targets": [
+              {
+                "expr": "kube_job_status_completion_time{job_name=~\"vault-secrets-rotation.*\"} - kube_job_status_start_time{job_name=~\"vault-secrets-rotation.*\"}",
+                "legendFormat": "{{ job_name }}"
+              }
+            ],
+            "gridPos": {"x": 6, "y": 0, "w": 12, "h": 6}
+          },
+          {
+            "title": "Recent Rotation Jobs",
+            "type": "table",
+            "targets": [
+              {
+                "expr": "kube_job_info{job_name=~\"vault-secrets-rotation.*\"}",
+                "legendFormat": "{{ job_name }}"
+              }
+            ],
+            "gridPos": {"x": 0, "y": 6, "w": 18, "h": 8}
+          },
+          {
+            "title": "Rotation Schedule Compliance",
+            "type": "singlestat",
+            "targets": [
+              {
+                "expr": "1 - (count(time() - kube_job_status_completion_time{job_name=~\"vault-secrets-rotation.*\"} > 7 * 24 * 60 * 60) / count(kube_job_status_completion_time{job_name=~\"vault-secrets-rotation.*\"}))",
+                "legendFormat": "Compliance Rate"
+              }
+            ],
+            "gridPos": {"x": 18, "y": 0, "w": 6, "h": 3}
+          }
+        ]
+      }
+    }
+
+---
+# AlertManager configuration for Vault rotation alerts
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: vault-rotation-alertmanager-config
+  namespace: aurum-dev
+  labels:
+    app: alertmanager
+    component: config
+    managed-by: aurum-platform
+data:
+  alertmanager.yml: |
+    global:
+      smtp_smarthost: 'smtp.aurum-dev.svc.cluster.local:587'
+      smtp_from: 'alerts@aurum-dev.internal'
+
+    route:
+      group_by: ['alertname']
+      group_wait: 10s
+      group_interval: 10s
+      repeat_interval: 1h
+      receiver: 'aurum-alerts'
+      routes:
+        - match:
+            service: vault
+            severity: critical
+          receiver: 'aurum-security'
+          group_wait: 5s
+          repeat_interval: 15m
+
+    receivers:
+      - name: 'aurum-alerts'
+        email_configs:
+          - to: 'platform-team@aurum-corp.com'
+            subject: 'Aurum Platform Alert: {{ .GroupLabels.alertname }}'
+            body: |
+              {{ range .Alerts }}
+              Alert: {{ .Annotations.summary }}
+              Description: {{ .Annotations.description }}
+              Severity: {{ .Labels.severity }}
+              Time: {{ .ActiveAt }}
+              {{ end }}
+
+      - name: 'aurum-security'
+        email_configs:
+          - to: 'security-team@aurum-corp.com'
+            subject: 'SECURITY: {{ .GroupLabels.alertname }}'
+            body: |
+              🚨 SECURITY ALERT 🚨
+
+              {{ range .Alerts }}
+              Alert: {{ .Annotations.summary }}
+              Description: {{ .Annotations.description }}
+              Severity: {{ .Labels.severity }}
+              Service: {{ .Labels.service }}
+              Time: {{ .ActiveAt }}
+
+              Runbook: {{ .Annotations.runbook_url }}
+              Dashboard: {{ .Annotations.dashboard_url }}
+              {{ end }}
+
+              This is a security-related alert. Immediate attention may be required.
+        slack_configs:
+          - api_url: '${SLACK_WEBHOOK_SECURITY}'
+            channel: '#security-alerts'
+            title: '🚨 Security Alert: {{ .GroupLabels.alertname }}'
+            text: |
+              {{ range .Alerts }}
+              *{{ .Annotations.summary }}*
+              {{ .Annotations.description }}
+
+              Severity: {{ .Labels.severity }}
+              Service: {{ .Labels.service }}
+              Time: {{ .ActiveAt }}
+
+              [Runbook]({{ .Annotations.runbook_url }}) | [Dashboard]({{ .Annotations.dashboard_url }})
+              {{ end }}
+
+---
+# Runbook configuration for Vault rotation issues
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: vault-rotation-runbook
+  namespace: aurum-dev
+  labels:
+    app: vault
+    component: runbook
+    managed-by: aurum-platform
+data:
+  runbook.md: |
+    # Vault Secrets Rotation Runbook
+
+    ## Overview
+    This runbook provides procedures for troubleshooting and resolving Vault secrets rotation issues.
+
+    ## Quick Diagnosis
+
+    ### Check Rotation Job Status
+    ```bash
+    kubectl get jobs -n aurum-dev -l app=vault,component=secrets-rotation
+    kubectl describe job <job-name> -n aurum-dev
+    kubectl logs job/<job-name> -n aurum-dev
+    ```
+
+    ### Check CronJob Status
+    ```bash
+    kubectl get cronjobs -n aurum-dev vault-secrets-rotation
+    kubectl describe cronjob vault-secrets-rotation -n aurum-dev
+    ```
+
+    ### Check Pod Status
+    ```bash
+    kubectl get pods -n aurum-dev -l app=vault,component=secrets-rotation
+    kubectl logs <pod-name> -n aurum-dev
+    ```
+
+    ## Common Issues
+
+    ### 1. Job Fails Immediately
+
+    **Symptoms:**
+    - Job fails with exit code 1
+    - Short execution time (< 1 minute)
+
+    **Possible Causes:**
+    - Vault connectivity issues
+    - Authentication failures
+    - Missing secrets or policies
+
+    **Resolution:**
+    1. Check Vault connectivity: `kubectl exec -it <pod> -- nc -zv vault.aurum-dev.svc.cluster.local 8200`
+    2. Verify service account token: `kubectl describe sa aurum-secrets-rotator -n aurum-dev`
+    3. Check Vault policies: `vault policy read aurum-secrets-rotator`
+    4. Verify Vault auth: `vault auth list`
+
+    ### 2. Job Runs Too Long
+
+    **Symptoms:**
+    - Job runs for >15 minutes
+    - High resource usage
+
+    **Possible Causes:**
+    - Network timeouts
+    - Vault performance issues
+    - Large number of secrets to rotate
+
+    **Resolution:**
+    1. Check Vault performance: `kubectl exec -it <pod> -- vault status`
+    2. Monitor resource usage: `kubectl top pods -n aurum-dev`
+    3. Review rotation logs for bottlenecks
+    4. Consider splitting rotation into smaller jobs
+
+    ### 3. CronJob Not Scheduling
+
+    **Symptoms:**
+    - No jobs created recently
+    - CronJob shows no recent activity
+
+    **Possible Causes:**
+    - CronJob suspended
+    - Schedule misconfiguration
+    - Cluster resource constraints
+
+    **Resolution:**
+    1. Check CronJob status: `kubectl describe cronjob vault-secrets-rotation -n aurum-dev`
+    2. Verify schedule: `kubectl get cronjob vault-secrets-rotation -n aurum-dev -o yaml | grep schedule`
+    3. Check for suspension: `kubectl get cronjob vault-secrets-rotation -n aurum-dev -o yaml | grep suspend`
+    4. Review cluster events: `kubectl get events -n aurum-dev`
+
+    ### 4. Authentication Failures
+
+    **Symptoms:**
+    - "permission denied" errors in logs
+    - Authentication timeout errors
+
+    **Possible Causes:**
+    - Expired service account token
+    - Vault policy changes
+    - RBAC configuration issues
+
+    **Resolution:**
+    1. Check service account: `kubectl get sa aurum-secrets-rotator -n aurum-dev`
+    2. Verify token expiration: `kubectl describe secret $(kubectl get sa aurum-secrets-rotator -n aurum-dev -o json | jq -r '.secrets[0].name') -n aurum-dev`
+    3. Test Vault login: `kubectl run vault-test --rm -it --restart=Never --image=curlimages/curl -- vault login -method=kubernetes role=aurum-secrets-rotator jwt=$(cat /var/run/secrets/kubernetes.io/serviceaccount/token)`
+
+    ### 5. Secret Rotation Failures
+
+    **Symptoms:**
+    - Specific secrets fail to rotate
+    - "secret not found" errors
+
+    **Possible Causes:**
+    - Secret paths changed
+    - Missing write permissions
+    - Vault policy restrictions
+
+    **Resolution:**
+    1. Verify secret paths: `kubectl exec -it <pod> -- vault kv list secret/aurum/`
+    2. Check permissions: `kubectl exec -it <pod> -- vault token capabilities secret/aurum/api-keys`
+    3. Review audit logs: `kubectl logs -n aurum-dev deployment/vault-audit`
+
+    ## Manual Rotation
+
+    ### Trigger Manual Rotation
+    ```bash
+    # Create a manual rotation job
+    kubectl create job vault-secrets-rotation-manual-$(date +%s) \
+      --from=cronjob/vault-secrets-rotation \
+      -n aurum-dev
+
+    # Monitor the job
+    kubectl logs -f job/vault-secrets-rotation-manual-$(date +%s) -n aurum-dev
+    ```
+
+    ### Rotate Specific Secret
+    ```bash
+    # Get a token with rotation permissions
+    kubectl exec -it <pod> -- vault login -method=kubernetes role=aurum-secrets-rotator jwt=$(cat /var/run/secrets/kubernetes.io/serviceaccount/token)
+
+    # Rotate specific secret
+    vault kv put secret/aurum/api-keys \
+      rotated_at="$(date -u +'%Y-%m-%dT%H:%M:%SZ')" \
+      rotation_period="30d" \
+      rotated_by="manual-rotation"
+    ```
+
+    ## Recovery Procedures
+
+    ### 1. Failed Rotation Recovery
+    1. Identify failed operations from job logs
+    2. Manually rotate failed secrets
+    3. Update rotation report
+    4. Investigate root cause
+    5. Implement preventive measures
+
+    ### 2. Emergency Rotation
+    ```bash
+    # For security incidents requiring immediate rotation
+    kubectl create job vault-emergency-rotation-$(date +%s) \
+      --from=cronjob/vault-secrets-rotation \
+      -n aurum-dev
+
+    # Force rotation of all critical secrets
+    kubectl exec -it job/vault-emergency-rotation-$(date +%s) -n aurum-dev -- \
+      vault kv put secret/aurum/api-keys \
+        rotated_at="$(date -u +'%Y-%m-%dT%H:%M:%SZ')" \
+        rotation_period="1h" \
+        rotated_by="emergency-rotation" \
+        emergency="true"
+    ```
+
+    ## Monitoring and Metrics
+
+    ### Key Metrics to Monitor
+    - Job success/failure rate
+    - Average job duration
+    - Time since last successful rotation
+    - Number of secrets rotated
+    - Rotation frequency compliance
+
+    ### Dashboards
+    - Vault Rotation Dashboard: `https://grafana.aurum-dev/d/vault-rotation`
+    - Security Dashboard: `https://grafana.aurum-dev/d/security-overview`
+
+    ## Security Considerations
+
+    ### Audit Requirements
+    - All rotation activities logged
+    - Failed rotations investigated within 24 hours
+    - Manual rotations documented and approved
+    - Emergency rotations reviewed within 1 hour
+
+    ### Compliance
+    - SOX: Regular key rotation with audit trails
+    - PCI-DSS: Encryption key rotation every 90 days
+    - ISO27001: Access logging and monitoring
+
+    ## Escalation
+
+    ### Level 1 (Platform Team)
+    - Routine rotation failures
+    - Performance issues
+    - Minor configuration problems
+
+    ### Level 2 (Security Team)
+    - Authentication failures
+    - Multiple rotation failures
+    - Security policy violations
+
+    ### Level 3 (Emergency Response)
+    - Complete rotation system failure
+    - Security incidents
+    - Compliance violations
+
+    ## References
+
+    - [Vault Documentation](https://developer.hashicorp.com/vault/docs)
+    - [Kubernetes CronJob Documentation](https://kubernetes.io/docs/concepts/workloads/controllers/cron-jobs/)
+    - [Aurum Security Policies](https://github.com/supernova-corp/aurum/blob/main/docs/security.md)
+
+    ---
+    *Last updated: $(date -u +'%Y-%m-%dT%H:%M:%SZ')*
+    *Document version: 1.0*

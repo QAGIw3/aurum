@@ -1,0 +1,318 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: disaster-recovery-guide
+  namespace: aurum-dev
+data:
+  recovery-procedures.md: |
+    # Aurum Data Platform - Disaster Recovery Guide
+
+    ## Emergency Contacts
+    - **DevOps Team**: devops@aurum.com
+    - **Database Administrator**: dba@aurum.com
+    - **Security Team**: security@aurum.com
+    - **On-call Engineer**: $(kubectl get configmap oncall-schedule -o jsonpath='{.data.oncall}' -n monitoring)
+
+    ## Recovery Time Objectives (RTO)
+    - **PostgreSQL**: 4 hours
+    - **TimescaleDB**: 6 hours
+    - **ClickHouse**: 8 hours
+    - **Minio**: 2 hours
+    - **Kafka**: 1 hour
+    - **Vault**: 30 minutes
+
+    ## Recovery Point Objectives (RPO)
+    - **PostgreSQL**: 1 hour (base backups every 24h + WAL)
+    - **TimescaleDB**: 24 hours (daily schema backups)
+    - **ClickHouse**: 24 hours (daily full backups)
+    - **Minio**: 24 hours (daily replication)
+    - **Kafka**: 24 hours (configuration backup)
+    - **Vault**: 24 hours (daily configuration backup)
+
+    ## 1. Disaster Declaration
+    ### When to declare a disaster:
+    - Complete data center outage
+    - All replicas of a critical service down > 30 minutes
+    - Data corruption affecting > 50% of datasets
+    - Security breach requiring full system rebuild
+
+    ### Declaration process:
+    1. Notify all stakeholders
+    2. Activate emergency response team
+    3. Document incident in disaster-recovery channel
+    4. Begin recovery procedures
+
+    ## 2. Infrastructure Recovery
+
+    ### 2.1 Verify Kubernetes Cluster
+    ```bash
+    kubectl get nodes
+    kubectl get pods -A --field-selector=status.phase!=Running
+    kubectl get pv
+    kubectl get pvc
+    ```
+
+    ### 2.2 Check Critical Services
+    ```bash
+    # Essential services status
+    kubectl get deployments -n aurum-dev -o wide
+    kubectl get statefulsets -n aurum-dev -o wide
+    kubectl get services -n aurum-dev
+    ```
+
+    ### 2.3 Restore Network Policies
+    ```bash
+    kubectl apply -f k8s/base/network-policies/
+    kubectl apply -f k8s/base/rbac/
+    ```
+
+    ## 3. Data Store Recovery
+
+    ### 3.1 PostgreSQL Recovery
+    ```bash
+    # Scale down postgres
+    kubectl scale deployment postgres --replicas=0 -n aurum-dev
+
+    # Identify latest backup
+    mc ls aurum-minio/aurum-backups/postgresql/ | tail -1
+
+    # Restore from backup
+    kubectl create job postgres-restore --from=job/postgres-restore -n aurum-dev
+
+    # Verify restore
+    kubectl exec postgres-0 -n aurum-dev -- psql -U aurum -d aurum -c "SELECT count(*) FROM information_schema.tables;"
+    ```
+
+    ### 3.2 TimescaleDB Recovery
+    ```bash
+    # Scale down timescale
+    kubectl scale statefulset timescale --replicas=0 -n aurum-dev
+
+    # Restore schema and metadata
+    kubectl create job timescale-restore --from=job/timescale-restore -n aurum-dev
+
+    # Verify hypertables
+    kubectl exec timescale-0 -n aurum-dev -- psql -U aurum -d aurum_timeseries -c "SELECT * FROM timescaledb_information.hypertables;"
+    ```
+
+    ### 3.3 ClickHouse Recovery
+    ```bash
+    # Scale down clickhouse
+    kubectl scale statefulset clickhouse --replicas=0 -n aurum-dev
+
+    # Restore from backup
+    kubectl create job clickhouse-restore --from=job/clickhouse-restore -n aurum-dev
+
+    # Verify data
+    kubectl exec clickhouse-0 -n aurum-dev -- clickhouse-client -q "SELECT count() FROM system.tables WHERE database = 'aurum'"
+    ```
+
+    ### 3.4 Minio Recovery
+    ```bash
+    # Restore object storage from backup
+    kubectl create job minio-restore --from=job/minio-restore -n aurum-dev
+
+    # Verify buckets
+    kubectl exec minio-0 -n aurum-dev -- mc ls aurum-minio/
+    ```
+
+    ### 3.5 Kafka Recovery
+    ```bash
+    # Restore topic configurations
+    kubectl create job kafka-restore --from=job/kafka-restore -n aurum-dev
+
+    # Verify topics
+    kubectl exec kafka-0 -n aurum-dev -- kafka-topics --bootstrap-server localhost:9092 --list
+    ```
+
+    ### 3.6 Vault Recovery
+    ```bash
+    # Restore secrets and policies
+    kubectl create job vault-restore --from=job/vault-restore -n aurum-dev
+
+    # Verify auth methods
+    kubectl exec vault-0 -n aurum-dev -- vault auth list
+    ```
+
+    ## 4. Application Recovery
+
+    ### 4.1 Restore Application Services
+    ```bash
+    # Deploy application components
+    kubectl apply -f k8s/api/
+    kubectl apply -f k8s/scenario-worker/
+
+    # Wait for rollout
+    kubectl rollout status deployment/api -n aurum-dev --timeout=600s
+    kubectl rollout status deployment/scenario-worker -n aurum-dev --timeout=600s
+    ```
+
+    ### 4.2 Verify Application Health
+    ```bash
+    # Check service endpoints
+    kubectl get endpoints -n aurum-dev
+
+    # Test API health
+    curl -f http://api.aurum-dev.svc.cluster.local:8080/health
+
+    # Test data ingestion
+    curl -X POST http://api.aurum-dev.svc.cluster.local:8080/api/v1/ingest/test
+    ```
+
+    ### 4.3 Restore Monitoring and Alerting
+    ```bash
+    # Restore monitoring stack
+    kubectl apply -f k8s/monitoring/
+
+    # Verify metrics collection
+    curl -f http://prometheus.aurum-dev.svc.cluster.local:9090/-/healthy
+    ```
+
+    ## 5. Validation and Testing
+
+    ### 5.1 Data Integrity Checks
+    ```bash
+    # PostgreSQL data validation
+    kubectl exec postgres-0 -n aurum-dev -- psql -U aurum -d aurum -c "SELECT COUNT(*) FROM users;"
+
+    # TimescaleDB validation
+    kubectl exec timescale-0 -n aurum-dev -- psql -U aurum -d aurum_timeseries -c "SELECT COUNT(*) FROM market_data;"
+
+    # ClickHouse validation
+    kubectl exec clickhouse-0 -n aurum-dev -- clickhouse-client -q "SELECT COUNT(*) FROM aurum.market_data"
+    ```
+
+    ### 5.2 Application Functional Tests
+    ```bash
+    # Run smoke tests
+    kubectl exec api-0 -n aurum-dev -- python -m pytest tests/smoke_tests.py -v
+
+    # Test data pipeline
+    kubectl exec scenario-worker-0 -n aurum-dev -- python -c "from aurum.scenarios.worker import test_connection; test_connection()"
+    ```
+
+    ### 5.3 Performance Validation
+    ```bash
+    # Load test API
+    kubectl run load-test --image=curlimages/curl --rm -it --restart=Never -- curl -s http://api/health
+
+    # Monitor resource usage
+    kubectl top nodes
+    kubectl top pods -A
+    ```
+
+    ## 6. Post-Recovery Tasks
+
+    ### 6.1 Update Documentation
+    - Document recovery time and issues encountered
+    - Update recovery procedures based on lessons learned
+    - Update contact lists and escalation procedures
+
+    ### 6.2 Communicate Status
+    - Notify stakeholders of recovery completion
+    - Schedule post-mortem meeting
+    - Update incident status
+
+    ### 6.3 Monitoring and Alerting
+    - Verify all monitoring is active
+    - Test alerting systems
+    - Update dashboards with recovery metrics
+
+    ## 7. Common Issues and Solutions
+
+    ### 7.1 Backup Not Found
+    ```bash
+    # List available backups
+    mc ls aurum-minio/aurum-backups/
+
+    # Check backup validation status
+    mc cat aurum-minio/aurum-backups/validation/latest_report.json
+    ```
+
+    ### 7.2 Service Won't Start
+    ```bash
+    # Check service logs
+    kubectl logs -f deployment/api -n aurum-dev
+
+    # Check resource constraints
+    kubectl describe pod api-xxx -n aurum-dev
+
+    # Check persistent volumes
+    kubectl describe pvc postgres-pvc -n aurum-dev
+    ```
+
+    ### 7.3 Network Issues
+    ```bash
+    # Verify network policies
+    kubectl get networkpolicy -A
+
+    # Test connectivity
+    kubectl exec postgres-0 -n aurum-dev -- nc -zv api 8080
+    ```
+
+    ## 8. Testing Recovery Procedures
+
+    ### 8.1 Scheduled Drills
+    - Quarterly disaster recovery testing
+    - Annual full recovery simulation
+    - Monthly backup validation
+
+    ### 8.2 Documentation Testing
+    - Verify all procedures are current
+    - Test contact information
+    - Validate recovery time estimates
+
+    ---
+    **Last Updated**: $(date -u +'%Y-%m-%dT%H:%M:%SZ')
+    **Recovery Procedures Version**: 1.0
+    **Next Review Date**: $(date -u -d '+90 days' +'%Y-%m-%d')
+
+  backup-monitoring-dashboard.json: |
+    {
+      "dashboard": {
+        "title": "Backup and Recovery Monitoring",
+        "tags": ["backup", "recovery", "monitoring"],
+        "panels": [
+          {
+            "title": "Backup Job Status",
+            "type": "stat",
+            "targets": [
+              {
+                "expr": "kube_job_status_succeeded{job_name=~\"(postgres|timescale|clickhouse|minio|kafka|vault)-backup\"}",
+                "legendFormat": "Successful Backups"
+              }
+            ]
+          },
+          {
+            "title": "Latest Backup Age",
+            "type": "graph",
+            "targets": [
+              {
+                "expr": "time() - kube_job_status_completion_time{job_name=~\"backup-.*\"} / 3600",
+                "legendFormat": "{{ job_name }}"
+              }
+            ]
+          },
+          {
+            "title": "Backup Size Trend",
+            "type": "graph",
+            "targets": [
+              {
+                "expr": "increase(kube_job_status_succeeded{job_name=~\"backup-.*\"}[24h])",
+                "legendFormat": "Backup Success Rate"
+              }
+            ]
+          },
+          {
+            "title": "Recovery Time",
+            "type": "histogram",
+            "targets": [
+              {
+                "expr": "kube_job_status_completion_time{job_name=~\"restore-.*\"} - kube_job_status_start_time{job_name=~\"restore-.*\"}",
+                "legendFormat": "{{ job_name }}"
+              }
+            ]
+          }
+        ]
+      }
+    }

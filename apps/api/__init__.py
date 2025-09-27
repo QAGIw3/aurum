@@ -1,0 +1,1 @@
+"""Aurum FastAPI application."""

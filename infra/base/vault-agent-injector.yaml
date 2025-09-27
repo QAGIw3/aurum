@@ -1,0 +1,217 @@
+apiVersion: v1
+kind: Secret
+metadata:
+  name: vault-agent-injector-certs
+  namespace: aurum-dev
+  labels:
+    app: vault
+    component: injector
+type: kubernetes.io/tls
+data:
+  tls.crt: LS0tLS1CRUdJTiBDRVJUSUZJQ0FURS0tLS0tCk1JSURqRENDQW5TZ0F3SUJBZ0lKQUt6RmNXZnlUVlkvTUEwR0NTcUdTSWIzRFFFQkN3VUFNQmt4RnpBVkJnTlYKQkFNTURuWmhkV3gwTFdGblpXNTBMV05oTUI0WERUSTFNRGt4T1RBME5UTTBOVm9YRFRNMU1Ea3hOekEwTlRNMApOVm93TFRFck1Da0dBMVVFQXd3aWRtRjFiSFF0WVdkbGJuUXRhVzVxWldOMGIzSXVZWFZ5ZFcwdFpHVjJMbk4yCll6Q0NBU0l3RFFZSktvWklodmNOQVFFQkJRQURnZ0VQQURDQ0FRb0NnZ0VCQU9LK2F5N0RadjlXNDFEWHAxRWwKQXdEa1VUV2xRY2Q2bmlWWVI3VGs5Q1FPTzVheG1xZVZpZFRNaXcwajJ6cGR3dE9RWkQ5bGlTbW9rNGhpcG1VbQorOVZiRUVwaTZWY2FTanhzZXVhZ3k3YXVoaVlkcm9FeHJKdlRVWUNoMk41ajlxanBRa2lCQWZaU0hhQ2NGQUxiCk5UK2ViZnREZnB5dmZrR3NVQlVyTFVETlllZG9maHNwSmFMK3ZTN29NU01nemdxenZMdi9yNFFHTnFuclM5bDcKU2poak9vQnhpV21DZlQzR1RaQ3p3Z3JPWjlwWUNjbUN5Sm5CNHp0b0NjZWR1RWJnRVJkTlZKYkV6dzZTbXZ6OApZcHN0OGVra2RrNHkrdThKdFlBdnBxMm1SYmVCSDJVM0NhcnM2UGZlemhlRFgvcUR2MUttYmxVL0VpaCtrbHJsCjhIMENBd0VBQWFPQndqQ0J2ekFPQmdOVkhROEJBZjhFQkFNQ0JhQXdFd1lEVlIwbEJBd3dDZ1lJS3dZQkJRVUgKQXdFd2daY0dBMVVkRVFTQmp6Q0JqSUlVZG1GMWJIUXRZV2RsYm5RdGFXNXFaV04wYjNLQ0huWmhkV3gwTFdGbgpaVzUwTFdsdWFtVmpkRzl5TG1GMWNuVnRMV1JsZG9JaWRtRjFiSFF0WVdkbGJuUXRhVzVxWldOMGIzSXVZWFZ5CmRXMHRaR1YyTG5OMlk0SXdkbUYxYkhRdFlXZGxiblF0YVc1cVpXTjBiM0l1WVhWeWRXMHRaR1YyTG5OMll5NWoKYkhWemRHVnlMbXh2WTJGc01BMEdDU3FHU0liM0RRRUJDd1VBQTRJQkFRQ25peHRmRFFXSExLdXFGY1dSS1NiYwpRRWFjUlpQU2tXZHZpdSswUHJsVkV0dFltK05jT1hic3pyQU1HSExDYTV5QjFFd3lkU0d1WEIzMkd2L3VLWjJ3CmxqTnVEZXAzQWNZZzNCQzRhRWo0SGJJeWN5SmQzWTE4NEdlTGlrWWM3aC9oWWVNNjdOaXZWNEgxampiT25WSTEKNlJObjM4SHZlWnZyc2dXUWI5aUFzREpzUGJGV3ZiVXBwRTlqWHREQ042RnlXQlBjdnBOTVRMYVBqZkZ1enlncApNVm5jcFo5b0JGZ2trdmJFUFkwNzlkWWU0Y3B1WHptcTJVblhRYXFPUWF1dXNBQmZuaFluMGZIMC8rMXVjRVB0CnhTdXRVTTEwSTQ0dTdVS2hKbTdNTUw5YmRIQThyeTBERWxYQlBBZm1JRTFQdGE4THU2SWdUampORVNCTkpJU3IKLS0tLS1FTkQgQ0VSVElGSUNBVEUtLS0tLQo=
+  tls.key: LS0tLS1CRUdJTiBQUklWQVRFIEtFWS0tLS0tCk1JSUV3QUlCQURBTkJna3Foa2lHOXcwQkFRRUZBQVNDQktvd2dnU21BZ0VBQW9JQkFRRGl2bXN1dzJiL1Z1TlEKMTZkUkpRTUE1RkUxcFVISGVwNGxXRWUwNVBRa0RqdVdzWnFubFluVXpJc05JOXM2WGNMVGtHUS9aWWtwcUpPSQpZcVpsSnZ2Vld4QktZdWxYR2tvOGJIcm1vTXUycm9ZbUhhNkJNYXliMDFHQW9kamVZL2FvNlVKSWdRSDJVaDJnCm5CUUMyelUvbm0zN1EzNmNyMzVCckZBVkt5MUF6V0huYUg0YktTV2kvcjB1NkRFaklNNEtzN3k3LzYrRUJqYXAKNjB2WmUwbzRZenFBY1lscGduMDl4azJRczhJS3ptZmFXQW5KZ3NpWndlTTdhQW5IbmJoRzRCRVhUVlNXeE04TwprcHI4L0dLYkxmSHBKSFpPTXZydkNiV0FMNmF0cGtXM2dSOWxOd21xN09qMzNzNFhnMS82Zzc5U3BtNVZQeElvCmZwSmE1ZkI5QWdNQkFBRUNnZ0VCQUtsS2FMWWllRzBlVDF3Vmx6dlRlWG1aL2pRaWJZbGxPRnhEbkU0b1Awd0kKUUY5VHZWZHdJOWQ0M0R6MFQ0TTFhL2dQcjNsUjh1WGlranhiQTBjMG93UDZHS0NoVnZ5TWlXNnh3OVVicXQxNwpVbmQwNDh4YjdUYnV3TVJja3BJQWFySlViZ082SmwvbGtXOVArUFRrKzgzREdQUm53VWwxRWJ3d3poM3YvYnFKCjlkR1V2ejVkc201YzllejFhV1J3ZHg5OEVLbjBCU0RSUVRNZUNtNis2NDFhMFFMSDg2Mmk2UU1CeTlJNXdTMWcKQmJBY2xtWmVGNjRpZ1Q0ZCtzY0dlWUFWRVpVcVlEMnc5b2xzeVhMS0ErY3c2RUhwczlVMUNZbkhoZkljaEhWaApMczhPVmVjK2tsNEEvWjR1cXd0SW1yaEZEWVpQZUVrd1hPTGozM05UT2NFQ2dZRUE4UjMzQ09ER1pMclplUk8rCmI4TDZXUy9iZm1lRFpWSVVzVm5HY2R2Q1FYdVlzRTAvREN4aDFQbkVXUG9wbkh6aFBZN3U5eGJjSG0yT2hNR3UKOFZ3YmZiczc2b0taSCt2a01vOG9BYWlVVWtuZ1pBclZJcGdkdytnbUViYW9XZUZDSUxRVEpvR1E1S25WVUlpZApaQUJtYnp6VUhkYnRjOUxlUFlPd25FVUpZVTBDZ1lFQThMMVZib2t5NGhPVUVlMkRiWFVXdjF0Vk9LZENwNzhzCjZGQkVySTIwOWxIa1ZoSm1IcmppVWxFd0RJb1VYc2oyTDBKSGgyZTJhdWhwRjgrT1EwSWs4bmxHUUVkTjFrdCsKaktkVUc1eERmVXZNem1qVzFWdHVZS201cDlRQUViY3dONmlTaUZ3RUR2UkhDT0J6VXp6ZmlnK3FTNTI4SXE1bgoraHBBSW1Ick0vRUNnWUVBbjFodFBNbkhjeVJrdW5hSTRUVmEyM3djTTZKWEhLdXREelBFU05TeHdUTGNTbzhTClBvcEtNVVRMTlA1R1o2dkQ4em0xeFVldk90Q3VZaC9aN0pveGROczdFcFV5ZXYwYTl5clNocDRSUDN5aE5aeFAKRktpdzZ4cE5wbUV2U3c3cDg5RHQ0d0czYnRhcUthblBVaHBObCsvOFFxZ2FqdlBwZVgvQlJOVC9DUFVDZ1lFQQoxbXFiNDlhWkZsai93YlA5SWdsdW1FTDl0WGJyM0VKZStnODhDMEF2bEZBK0FoZGpFeXZ5a0FTMXVnVmx2VUphCldwODYzRFFZZWtIRUVLd1Jkb0E4TGlhcjFtWnJ3bGo5UHNOdUd5Vmp5djR2VFF4OWhBeHFVL2YzXHE1bzNWNSsKdUtRUTF4aTFtS2dqZUptSXZmTnkyaUczdUorbHlISDBOQU1iYWtReVc5RUNnWUVBaiszcWlNM2tIbmdCa3oxaQpFbUFzNW5wSURSMzNNVjE2RDRob0JSSXhscCtxS2xuYzZjYnAybUNtNER3QlRNMXpGRVdFZVAvUlJmTEJ6L01FCk1EQUlDMFdrR2cvVk4vcDhLVjdKRXUzWHU4N05PMENISFQrWEJLcnZVQjV4ZzdPcVVKcDl1MW1iMVZoUWdMV3kKZ2hxd1BURU1uWDRHYVdBaTB6bGRlSmMxK013PQotLS0tLUVORCBQUklWQVRFIEtFWS0tLS0tCg==
+  ca.crt: LS0tLS1CRUdJTiBDRVJUSUZJQ0FURS0tLS0tCk1JSURHRENDQWdDZ0F3SUJBZ0lKQUlLOTRqcVFKSzZQTUEwR0NTcUdTSWIzRFFFQkN3VUFNQmt4RnpBVkJnTlYKQkFNTURuWmhkV3gwTFdGblpXNTBMV05oTUI0WERUSTFNRGt4T1RBME5UTTBORm9YRFRNMU1Ea3hOekEwTlRNMApORm93R1RFWE1CVUdBMVVFQXd3T2RtRjFiSFF0WVdkbGJuUXRZMkV3Z2dFaU1BMEdDU3FHU0liM0RRRUJBUVVBCkE0SUJEd0F3Z2dFS0FvSUJBUURmbmNMMXVwL1ZLaEw2YWlMVzhMQzkrTEFYTE1LUXljYVlhaUYxSHNlMTlta2IKOEx4bmloWXEyb0s4Y3BuaTdGei9nUmgrQ0Rzc3FJYlpqVXZUMjl0SVFUbUxrMC9BTlh6Y0FaWkdjcllxUWE2Zgpjb2llVFhtTGIzdFR6ZjRFWnc1eGZXY2lYMFAwQ0JDMnBoYzJFQ2lhY2lBYVNnVWl5dElMUUJWZ3ozZkZCOE1aCjIzdjA4cCs5cDhSUm9zNFlFS2NUNU5TZEdZUEhWUjdyU1pldURiVlJTOG4zME9rV3hqMGx4UEJHN1JPeFlnYXoKb3VnbzIxRk9zejIzWjBNd1hBejBjeWR2UE1XQ0VmUWIwbkRFam5id2M2WjBNV2ZMVXM5czlkNUwxMVBSZDJBTgpaSlJWZmt6cFN4ZVRBeVcwbldYZG9idTBESzFTd1JtcCt5USt1bHJaQWdNQkFBR2pZekJoTUIwR0ExVWREZ1FXCkJCVFFMcmRFMHJSVElxc0lqa2piWWhEaCtiOGNwREFmQmdOVkhTTUVHREFXZ0JUUUxyZEUwclJUSXFzSWpramIKWWhEaCtiOGNwREFQQmdOVkhSTUJBZjhFQlRBREFRSC9NQTRHQTFVZER3RUIvd1FFQXdJQmhqQU5CZ2txaGtpRwo5dzBCQVFzRkFBT0NBUUVBcDNSMUphZ3ZNVWgzcW9lVi9lcjFLUjB4RERSRXoycVQ0bC9hYjNPQmpvMW1GZzFNClN5QWV5TmV3WUtlQkdITWhQOGFvTmdHd1UvL20xQm1KUHNMRXhnS05kMjlvS0l3Wk1MZkw4L2Y5c3B6WXI5d0MKa1RjbWFkbW1hSXEzczkyQlVzbVBMdHJvT1cvUDJ6TWkrSFhQeFFpdm5GVk1kQkU5YWQ0SDhLdmorSWVLSklObAp4cHJjTHNjaVlBcURnUmd1d3JZTy9LM1hvOFN5ZXJ0eWxCOHplWmFkTnFuTjgwa1Y1MTVHdk8xQytJVS80NkNrCnZndE42NkppQitxemFvbmVLckNOV3N0ckFaTEVoV0h5VDRNbi94cTZTaVlhT1hacnl0ZzlMUk5ZcDVXTGs2NUcKemhSVXpEakRlMkZmOHZLTldtY2Y0Q2hxb3RtSnpEd0pVbFJlcVE9PQotLS0tLUVORCBDRVJUSUZJQ0FURS0tLS0tCg==
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: vault-agent-injector-config
+  namespace: aurum-dev
+  labels:
+    app: vault
+    component: injector
+data:
+  config.hcl: |
+    vault {
+      address = "http://vault.aurum-dev.svc.cluster.local:8200"
+    }
+
+    template_config {
+      static_secret_render_interval = "5m"
+    }
+
+    injector {
+      default_enable = "false"
+    }
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: vault-agent-injector
+  namespace: aurum-dev
+  labels:
+    app: vault
+    component: injector
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: vault-agent-injector
+rules:
+  - apiGroups: [""]
+    resources:
+      - pods
+      - pods/exec
+      - secrets
+      - configmaps
+      - serviceaccounts
+    verbs:
+      - get
+      - list
+      - watch
+  - apiGroups:
+      - admissionregistration.k8s.io
+    resources:
+      - mutatingwebhookconfigurations
+    verbs:
+      - get
+      - list
+      - watch
+      - patch
+      - create
+  - apiGroups:
+      - apps
+    resources:
+      - deployments
+    verbs:
+      - get
+      - list
+      - watch
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: vault-agent-injector
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: vault-agent-injector
+subjects:
+  - kind: ServiceAccount
+    name: vault-agent-injector
+    namespace: aurum-dev
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: vault-agent-injector
+  namespace: aurum-dev
+  labels:
+    app: vault
+    component: injector
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: vault
+      component: injector
+  template:
+    metadata:
+      labels:
+        app: vault
+        component: injector
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "8080"
+    spec:
+      serviceAccountName: vault-agent-injector
+      containers:
+        - name: injector
+          image: hashicorp/vault-k8s:1.4.2
+          args:
+            - agent-inject
+            - -log-level=info
+            - -listen=:8443
+            - -tls-cert-file=/tls/tls.crt
+            - -tls-key-file=/tls/tls.key
+            - -tls-ca-cert-file=/tls/ca.crt
+            - -vault-addr=http://vault.aurum-dev.svc.cluster.local:8200
+            - -config=/config/config.hcl
+            - -namespace=aurum-dev
+            - -default-to-host-network=false
+          ports:
+            - containerPort: 8443
+              name: https
+            - containerPort: 8080
+              name: metrics
+          readinessProbe:
+            httpGet:
+              path: /healthz
+              port: metrics
+              scheme: HTTP
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: metrics
+              scheme: HTTP
+            initialDelaySeconds: 10
+            periodSeconds: 20
+          volumeMounts:
+            - name: tls
+              mountPath: /tls
+              readOnly: true
+            - name: config
+              mountPath: /config
+      volumes:
+        - name: tls
+          secret:
+            secretName: vault-agent-injector-certs
+        - name: config
+          configMap:
+            name: vault-agent-injector-config
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: vault-agent-injector
+  namespace: aurum-dev
+  labels:
+    app: vault
+    component: injector
+spec:
+  selector:
+    app: vault
+    component: injector
+  ports:
+    - name: https
+      port: 443
+      targetPort: https
+---
+apiVersion: admissionregistration.k8s.io/v1
+kind: MutatingWebhookConfiguration
+metadata:
+  name: vault-agent-injector
+  labels:
+    app: vault
+    component: injector
+webhooks:
+  - name: vault-agent-injector.aurum-dev.svc
+    admissionReviewVersions: ["v1", "v1beta1"]
+    sideEffects: None
+    matchPolicy: Equivalent
+    failurePolicy: Ignore
+    namespaceSelector:
+      matchExpressions:
+        - key: kubernetes.io/metadata.name
+          operator: NotIn
+          values:
+            - kube-system
+            - kube-public
+    clientConfig:
+      service:
+        name: vault-agent-injector
+        namespace: aurum-dev
+        path: /mutate
+        port: 443
+      caBundle: LS0tLS1CRUdJTiBDRVJUSUZJQ0FURS0tLS0tCk1JSURHRENDQWdDZ0F3SUJBZ0lKQUlLOTRqcVFKSzZQTUEwR0NTcUdTSWIzRFFFQkN3VUFNQmt4RnpBVkJnTlYKQkFNTURuWmhkV3gwTFdGblpXNTBMV05oTUI0WERUSTFNRGt4T1RBME5UTTBORm9YRFRNMU1Ea3hOekEwTlRNMApORm93R1RFWE1CVUdBMVVFQXd3T2RtRjFiSFF0WVdkbGJuUXRZMkV3Z2dFaU1BMEdDU3FHU0liM0RRRUJBUVVBCkE0SUJEd0F3Z2dFS0FvSUJBUURmbmNMMXVwL1ZLaEw2YWlMVzhMQzkrTEFYTE1LUXljYVlhaUYxSHNlMTlta2IKOEx4bmloWXEyb0s4Y3BuaTdGei9nUmgrQ0Rzc3FJYlpqVXZUMjl0SVFUbUxrMC9BTlh6Y0FaWkdjcllxUWE2Zgpjb2llVFhtTGIzdFR6ZjRFWnc1eGZXY2lYMFAwQ0JDMnBoYzJFQ2lhY2lBYVNnVWl5dElMUUJWZ3ozZkZCOE1aCjIzdjA4cCs5cDhSUm9zNFlFS2NUNU5TZEdZUEhWUjdyU1pldURiVlJTOG4zME9rV3hqMGx4UEJHN1JPeFlnYXoKb3VnbzIxRk9zejIzWjBNd1hBejBjeWR2UE1XQ0VmUWIwbkRFam5id2M2WjBNV2ZMVXM5czlkNUwxMVBSZDJBTgpaSlJWZmt6cFN4ZVRBeVcwbldYZG9idTBESzFTd1JtcCt5USt1bHJaQWdNQkFBR2pZekJoTUIwR0ExVWREZ1FXCkJCVFFMcmRFMHJSVElxc0lqa2piWWhEaCtiOGNwREFmQmdOVkhTTUVHREFXZ0JUUUxyZEUwclJUSXFzSWpramIKWWhEaCtiOGNwREFQQmdOVkhSTUJBZjhFQlRBREFRSC9NQTRHQTFVZER3RUIvd1FFQXdJQmhqQU5CZ2txaGtpRwo5dzBCQVFzRkFBT0NBUUVBcDNSMUphZ3ZNVWgzcW9lVi9lcjFLUjB4RERSRXoycVQ0bC9hYjNPQmpvMW1GZzFNClN5QWV5TmV3WUtlQkdITWhQOGFvTmdHd1UvL20xQm1KUHNMRXhnS05kMjlvS0l3Wk1MZkw4L2Y5c3B6WXI5d0MKa1RjbWFkbW1hSXEzczkyQlVzbVBMdHJvT1cvUDJ6TWkrSFhQeFFpdm5GVk1kQkU5YWQ0SDhLdmorSWVLSklObAp4cHJjTHNjaVlBcURnUmd1d3JZTy9LM1hvOFN5ZXJ0eWxCOHplWmFkTnFuTjgwa1Y1MTVHdk8xQytJVS80NkNrCnZndE42NkppQitxemFvbmVLckNOV3N0ckFaTEVoV0h5VDRNbi94cTZTaVlhT1hacnl0ZzlMUk5ZcDVXTGs2NUcKemhSVXpEakRlMkZmOHZLTldtY2Y0Q2hxb3RtSnpEd0pVbFJlcVE9PQotLS0tLUVORCBDRVJUSUZJQ0FURS0tLS0tCg==
+    rules:
+      - operations: ["CREATE", "UPDATE"]
+        apiGroups: [""]
+        apiVersions: ["v1"]
+        resources: ["pods"]
+      - operations: ["CREATE", "UPDATE"]
+        apiGroups: ["batch"]
+        apiVersions: ["v1"]
+        resources: ["jobs"]

@@ -1,0 +1,125 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: trino
+  namespace: aurum-dev
+  labels:
+    app: trino
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: trino
+  template:
+    metadata:
+      labels:
+        app: trino
+    spec:
+      containers:
+        - name: trino
+          image: trinodb/trino:430
+          ports:
+            - containerPort: 8080
+          env:
+            - name: JAVA_TOOL_OPTIONS
+              valueFrom:
+                configMapKeyRef:
+                  name: aurum-config
+                  key: TRINO_JAVA_TOOL_OPTIONS
+            - name: POSTGRES_USER
+              valueFrom:
+                secretKeyRef:
+                  name: aurum-secrets
+                  key: POSTGRES_USER
+            - name: POSTGRES_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: aurum-secrets
+                  key: POSTGRES_PASSWORD
+            - name: TIMESCALE_DB
+              valueFrom:
+                configMapKeyRef:
+                  name: aurum-config
+                  key: TIMESCALE_DB
+            - name: TIMESCALE_USER
+              valueFrom:
+                secretKeyRef:
+                  name: aurum-secrets
+                  key: TIMESCALE_USER
+            - name: TIMESCALE_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: aurum-secrets
+                  key: TIMESCALE_PASSWORD
+            - name: AURUM_S3_ACCESS_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: aurum-secrets
+                  key: AURUM_S3_ACCESS_KEY
+            - name: AURUM_S3_SECRET_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: aurum-secrets
+                  key: AURUM_S3_SECRET_KEY
+            - name: AWS_ACCESS_KEY_ID
+              valueFrom:
+                secretKeyRef:
+                  name: aurum-secrets
+                  key: AURUM_S3_ACCESS_KEY
+            - name: AWS_SECRET_ACCESS_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: aurum-secrets
+                  key: AURUM_S3_SECRET_KEY
+            - name: AWS_REGION
+              value: us-east-1
+            - name: KAFKA_INTERNAL_BOOTSTRAP
+              valueFrom:
+                configMapKeyRef:
+                  name: aurum-config
+                  key: KAFKA_INTERNAL_BOOTSTRAP
+            - name: SCHEMA_REGISTRY_URL
+              valueFrom:
+                configMapKeyRef:
+                  name: aurum-config
+                  key: SCHEMA_REGISTRY_URL
+          volumeMounts:
+            - name: catalog
+              mountPath: /etc/trino/catalog
+            - name: trino-config
+              mountPath: /etc/trino/session.properties
+              subPath: session.properties
+            - name: trino-config
+              mountPath: /etc/trino/access-control.properties
+              subPath: access-control.properties
+            - name: trino-config
+              mountPath: /etc/trino/access-control-rules.json
+              subPath: access-control-rules.json
+          readinessProbe:
+            httpGet:
+              path: /v1/info
+              port: 8080
+            initialDelaySeconds: 15
+            periodSeconds: 15
+      volumes:
+        - name: catalog
+          configMap:
+            name: trino-catalog
+        - name: trino-config
+          configMap:
+            name: trino-config
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: trino
+  namespace: aurum-dev
+spec:
+  type: NodePort
+  selector:
+    app: trino
+  ports:
+    - name: http
+      port: 8080
+      targetPort: 8080
+      nodePort: 30080

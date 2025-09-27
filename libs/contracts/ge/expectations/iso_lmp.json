@@ -1,0 +1,89 @@
+{
+  "expectation_suite_name": "iso_lmp",
+  "meta": {
+    "notes": "Data quality checks for normalized ISO LMP observations pushed to Kafka."
+  },
+  "expectations": [
+    {
+      "expectation_type": "expect_table_columns_to_match_set",
+      "kwargs": {
+        "column_set": [
+          "iso_code",
+          "market",
+          "delivery_date",
+          "interval_start",
+          "interval_end",
+          "interval_minutes",
+          "location_id",
+          "location_name",
+          "location_type",
+          "price_total",
+          "price_energy",
+          "price_congestion",
+          "price_loss",
+          "currency",
+          "uom",
+          "settlement_point",
+          "source_run_id",
+          "ingest_ts",
+          "record_hash",
+          "metadata"
+        ]
+      }
+    },
+    {
+      "expectation_type": "expect_column_values_to_be_in_set",
+      "kwargs": {
+        "column": "iso_code",
+        "value_set": ["PJM", "CAISO", "ERCOT", "NYISO", "MISO", "ISONE", "SPP", "AESO"]
+      }
+    },
+    {
+      "expectation_type": "expect_column_values_to_be_in_set",
+      "kwargs": {
+        "column": "market",
+        "value_set": [
+          "DAY_AHEAD",
+          "REAL_TIME",
+          "FIFTEEN_MINUTE",
+          "FIVE_MINUTE",
+          "HOUR_AHEAD",
+          "SETTLEMENT",
+          "UNKNOWN"
+        ]
+      }
+    },
+    {"expectation_type": "expect_column_values_to_not_be_null", "kwargs": {"column": "interval_start"}},
+    {"expectation_type": "expect_column_values_to_not_be_null", "kwargs": {"column": "record_hash"}},
+    {
+      "expectation_type": "expect_column_values_to_be_between",
+      "kwargs": {"column": "price_total", "min_value": -1000, "max_value": 10000, "mostly": 0.99}
+    },
+    {
+      "expectation_type": "expect_column_values_to_be_between",
+      "kwargs": {"column": "price_energy", "min_value": -1000, "max_value": 10000, "mostly": 0.98}
+    },
+    {
+      "expectation_type": "expect_column_values_to_be_between",
+      "kwargs": {"column": "price_congestion", "min_value": -1000, "max_value": 10000, "mostly": 0.98}
+    },
+    {
+      "expectation_type": "expect_column_values_to_be_between",
+      "kwargs": {"column": "price_loss", "min_value": -1000, "max_value": 10000, "mostly": 0.98}
+    },
+    {
+      "expectation_type": "expect_column_values_to_be_between",
+      "kwargs": {"column": "interval_minutes", "min_value": 0, "max_value": 180, "mostly": 0.95}
+    },
+    {
+      "expectation_type": "expect_column_values_to_be_in_set",
+      "kwargs": {"column": "currency", "value_set": ["USD", "CAD"]}
+    },
+    {
+      "expectation_type": "expect_column_values_to_be_in_set",
+      "kwargs": {"column": "uom", "value_set": ["MWh"]}
+    },
+    {"expectation_type": "expect_column_values_to_not_be_null", "kwargs": {"column": "ingest_ts"}},
+    {"expectation_type": "expect_column_values_to_be_unique", "kwargs": {"column": "record_hash"}}
+  ]
+}

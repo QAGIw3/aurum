@@ -1,0 +1,177 @@
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: vault-bootstrap
+  namespace: aurum-dev
+  labels:
+    app: vault
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: vault-bootstrap-auth-delegator
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: system:auth-delegator
+subjects:
+  - kind: ServiceAccount
+    name: vault-bootstrap
+    namespace: aurum-dev
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: aurum-ingest
+  namespace: aurum-dev
+  labels:
+    app: vault
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: vault-bootstrap-script
+  namespace: aurum-dev
+  labels:
+    app: vault
+data:
+  bootstrap.sh: |
+    #!/usr/bin/env bash
+    set -euo pipefail
+
+    VAULT_ADDR="${VAULT_ADDR:-http://vault:8200}"
+    ROOT_TOKEN_FILE="/vault-root/token"
+    NAMESPACE="aurum-dev"
+    ROLE_NAME="aurum-ingest"
+    SECRET_PREFIX="secret/aurum"
+
+    if [[ ! -f "${ROOT_TOKEN_FILE}" ]]; then
+      echo "Root token file missing at ${ROOT_TOKEN_FILE}" >&2
+      exit 1
+    fi
+
+    export VAULT_ADDR
+    export VAULT_TOKEN="$(cat "${ROOT_TOKEN_FILE}")"
+    export VAULT_SKIP_VERIFY="${VAULT_SKIP_VERIFY:-true}"
+
+    echo "Waiting for Vault to become ready at ${VAULT_ADDR}"
+    for attempt in $(seq 1 60); do
+      if vault status >/dev/null 2>&1; then
+        break
+      fi
+      sleep 2
+    done
+
+    if ! vault status >/dev/null 2>&1; then
+      echo "Vault is not reachable after waiting" >&2
+      exit 1
+    fi
+
+    if ! vault auth list -format=json 2>/dev/null | grep -q '"kubernetes/"'; then
+      echo "Enabling Kubernetes auth method"
+      vault auth enable kubernetes
+    else
+      echo "Kubernetes auth method already enabled"
+    fi
+
+    REVIEWER_JWT="$(cat /var/run/secrets/kubernetes.io/serviceaccount/token)"
+    CA_CERT="/var/run/secrets/kubernetes.io/serviceaccount/ca.crt"
+
+    echo "Configuring Kubernetes auth method"
+    vault write auth/kubernetes/config \
+      token_reviewer_jwt="${REVIEWER_JWT}" \
+      kubernetes_host="https://kubernetes.default.svc:443" \
+      kubernetes_ca_cert=@"${CA_CERT}"
+
+    echo "Publishing aurum-ingest policy"
+    vault policy write aurum-ingest - <<'POLICY'
+    path "secret/data/aurum/*" {
+      capabilities = ["create", "update", "read", "delete", "list"]
+    }
+
+    path "secret/metadata/aurum/*" {
+      capabilities = ["read", "list"]
+    }
+    POLICY
+
+    echo "Creating/updating Kubernetes role ${ROLE_NAME}"
+    vault write auth/kubernetes/role/${ROLE_NAME} \
+      bound_service_account_names="aurum-ingest" \
+      bound_service_account_namespaces="${NAMESPACE}" \
+      policies="aurum-ingest" \
+      ttl="1h"
+
+    echo "Seeding placeholder secrets under ${SECRET_PREFIX}"
+    REQUIRED_SECRETS=(
+      postgres
+      timescale
+      minio
+      kafka
+      trino
+      caiso
+      ercot
+      nyiso
+      miso
+      isone
+      spp
+      aeso
+      eia
+      noaa
+      fred
+    )
+
+    for secret in "${REQUIRED_SECRETS[@]}"; do
+      path="${SECRET_PREFIX}/${secret}"
+      if vault kv get "${path}" >/dev/null 2>&1; then
+        echo "Secret ${path} already present"
+      else
+        echo "Seeding ${path}"
+        vault kv put "${path}" placeholder=true >/dev/null
+      fi
+    done
+
+    echo "Vault bootstrap complete"
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: vault-bootstrap
+  namespace: aurum-dev
+  labels:
+    app: vault
+spec:
+  backoffLimit: 3
+  template:
+    metadata:
+      labels:
+        app: vault
+        job: vault-bootstrap
+    spec:
+      serviceAccountName: vault-bootstrap
+      restartPolicy: OnFailure
+      containers:
+        - name: bootstrap
+          image: hashicorp/vault:1.15.5
+          command: ["/bin/sh", "/script/bootstrap.sh"]
+          env:
+            - name: VAULT_ADDR
+              value: http://vault:8200
+            - name: VAULT_SKIP_VERIFY
+              value: "true"
+          volumeMounts:
+            - name: script
+              mountPath: /script
+            - name: root-token
+              mountPath: /vault-root
+              readOnly: true
+      volumes:
+        - name: script
+          configMap:
+            name: vault-bootstrap-script
+            defaultMode: 0555
+        - name: root-token
+          secret:
+            secretName: vault-root-token
+            items:
+              - key: token
+                path: token

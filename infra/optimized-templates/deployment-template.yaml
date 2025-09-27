@@ -1,0 +1,184 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ .app.name }}
+  labels:
+    app.kubernetes.io/name: {{ .app.name }}
+    app.kubernetes.io/component: {{ .app.component }}
+    app.kubernetes.io/part-of: aurum
+    app.kubernetes.io/version: {{ .app.version | default "1.0" }}
+spec:
+  replicas: {{ .deployment.replicas | default 2 }}
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: {{ .deployment.maxUnavailable | default 1 }}
+      maxSurge: {{ .deployment.maxSurge | default 1 }}
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: {{ .app.name }}
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: {{ .app.name }}
+        app.kubernetes.io/component: {{ .app.component }}
+        app.kubernetes.io/part-of: aurum
+        app.kubernetes.io/version: {{ .app.version | default "1.0" }}
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: {{ .monitoring.metricsPort | default "8080" | quote }}
+        prometheus.io/path: {{ .monitoring.metricsPath | default "/metrics" | quote }}
+        checksum/config: {{ include (print $.Template.BasePath "/configmap.yaml") . | sha256sum }}
+    spec:
+      serviceAccountName: {{ .serviceAccount.name | default (printf "%s-sa" .app.name) }}
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        runAsGroup: 3000
+        fsGroup: 2000
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: {{ .app.name }}
+          image: {{ .image.repository }}:{{ .image.tag | default "latest" }}
+          imagePullPolicy: {{ .image.pullPolicy | default "IfNotPresent" }}
+          ports:
+            - containerPort: {{ .container.port | default 8080 }}
+              name: {{ .container.portName | default "http" }}
+              protocol: TCP
+            {{ if .monitoring.metricsEnabled }}
+            - containerPort: {{ .monitoring.metricsPort | default 8080 }}
+              name: metrics
+              protocol: TCP
+            {{ end }}
+          envFrom:
+            - configMapRef:
+                name: {{ .configMap.name | default (printf "%s-config" .app.name) }}
+            - secretRef:
+                name: {{ .secret.name | default (printf "%s-secrets" .app.name) }}
+          env:
+            - name: POD_IP
+              valueFrom:
+                fieldRef:
+                  fieldPath: status.podIP
+            - name: POD_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.name
+            - name: NAMESPACE
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.namespace
+          {{ if .healthChecks.startup.enabled }}
+          startupProbe:
+            httpGet:
+              path: {{ .healthChecks.startup.path | default "/ready" }}
+              port: {{ .healthChecks.startup.port | default "http" }}
+              scheme: HTTP
+            initialDelaySeconds: {{ .healthChecks.startup.initialDelaySeconds | default 10 }}
+            periodSeconds: {{ .healthChecks.startup.periodSeconds | default 10 }}
+            timeoutSeconds: {{ .healthChecks.startup.timeoutSeconds | default 5 }}
+            failureThreshold: {{ .healthChecks.startup.failureThreshold | default 12 }}
+            successThreshold: {{ .healthChecks.startup.successThreshold | default 1 }}
+          {{ end }}
+          {{ if .healthChecks.readiness.enabled }}
+          readinessProbe:
+            httpGet:
+              path: {{ .healthChecks.readiness.path | default "/ready" }}
+              port: {{ .healthChecks.readiness.port | default "http" }}
+              scheme: HTTP
+            initialDelaySeconds: {{ .healthChecks.readiness.initialDelaySeconds | default 15 }}
+            periodSeconds: {{ .healthChecks.readiness.periodSeconds | default 15 }}
+            timeoutSeconds: {{ .healthChecks.readiness.timeoutSeconds | default 5 }}
+            failureThreshold: {{ .healthChecks.readiness.failureThreshold | default 3 }}
+            successThreshold: {{ .healthChecks.readiness.successThreshold | default 1 }}
+          {{ end }}
+          {{ if .healthChecks.liveness.enabled }}
+          livenessProbe:
+            httpGet:
+              path: {{ .healthChecks.liveness.path | default "/health" }}
+              port: {{ .healthChecks.liveness.port | default "http" }}
+              scheme: HTTP
+            initialDelaySeconds: {{ .healthChecks.liveness.initialDelaySeconds | default 30 }}
+            periodSeconds: {{ .healthChecks.liveness.periodSeconds | default 20 }}
+            timeoutSeconds: {{ .healthChecks.liveness.timeoutSeconds | default 5 }}
+            failureThreshold: {{ .healthChecks.liveness.failureThreshold | default 3 }}
+            successThreshold: {{ .healthChecks.liveness.successThreshold | default 1 }}
+          {{ end }}
+          {{ if .lifecycle.enabled }}
+          lifecycle:
+            preStop:
+              exec:
+                command: ["/bin/sh", "-c", {{ .lifecycle.preStopCommand | default "sleep 30" | quote }}]
+          {{ end }}
+          resources:
+            requests:
+              cpu: {{ .resources.requests.cpu | default "200m" }}
+              memory: {{ .resources.requests.memory | default "512Mi" }}
+              {{ if .resources.requests.ephemeralStorage }}
+              ephemeral-storage: {{ .resources.requests.ephemeralStorage }}
+              {{ end }}
+            limits:
+              cpu: {{ .resources.limits.cpu | default "2" }}
+              memory: {{ .resources.limits.memory | default "2Gi" }}
+              {{ if .resources.limits.ephemeralStorage }}
+              ephemeral-storage: {{ .resources.limits.ephemeralStorage }}
+              {{ end }}
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            runAsNonRoot: true
+            runAsUser: 1000
+            runAsGroup: 3000
+            capabilities:
+              drop:
+                - ALL
+              {{ if .security.capabilities.add }}
+              add: {{ .security.capabilities.add | toYaml | nindent 16 }}
+              {{ end }}
+          volumeMounts:
+            {{ range .volumes }}
+            - name: {{ .name }}
+              mountPath: {{ .mountPath }}
+              {{ if .readOnly }}
+              readOnly: {{ .readOnly }}
+              {{ end }}
+            {{ end }}
+            - name: tmp-volume
+              mountPath: /tmp
+            {{ if .cache.enabled }}
+            - name: cache-volume
+              mountPath: {{ .cache.mountPath | default "/app/cache" }}
+              readOnly: false
+            {{ end }}
+      volumes:
+        - name: tmp-volume
+          emptyDir: {}
+        {{ if .cache.enabled }}
+        - name: cache-volume
+          emptyDir:
+            sizeLimit: {{ .cache.sizeLimit | default "100Mi" }}
+        {{ end }}
+        {{ range .volumes }}
+        - name: {{ .name }}
+          {{ .type | default "emptyDir" }}: {{ .config | toYaml | nindent 10 }}
+        {{ end }}
+      {{ if .affinity.enabled }}
+      affinity:
+        {{ if .affinity.podAntiAffinity }}
+        podAntiAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+            - weight: 100
+              podAffinityTerm:
+                labelSelector:
+                  matchExpressions:
+                    - key: app.kubernetes.io/name
+                      operator: In
+                      values:
+                        - {{ .app.name }}
+                topologyKey: {{ .affinity.topologyKey | default "kubernetes.io/hostname" }}
+        {{ end }}
+      {{ end }}
+      {{ if .tolerations }}
+      tolerations: {{ .tolerations | toYaml | nindent 8 }}
+      {{ end }}

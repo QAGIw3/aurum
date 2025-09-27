@@ -1,0 +1,60 @@
+{
+  "expectation_suite_name": "eia_series_mart",
+  "meta": {
+    "notes": "Business-facing checks for the curated EIA mart."
+  },
+  "expectations": [
+    {
+      "expectation_type": "expect_table_columns_to_match_set",
+      "kwargs": {
+        "column_set": [
+          "series_id",
+          "period",
+          "period_start",
+          "period_end",
+          "frequency",
+          "value",
+          "raw_value",
+          "unit_raw",
+          "unit_normalized",
+          "currency_normalized",
+          "conversion_factor",
+          "area",
+          "sector",
+          "seasonal_adjustment",
+          "description",
+          "source",
+          "dataset",
+          "metadata",
+          "ingest_ts",
+          "period_date"
+        ]
+      }
+    },
+    {
+      "expectation_type": "expect_column_values_to_not_be_null",
+      "kwargs": {"column": "series_id"}
+    },
+    {
+      "expectation_type": "expect_column_values_to_not_be_null",
+      "kwargs": {"column": "value", "mostly": 0.99}
+    },
+    {
+      "expectation_type": "expect_column_values_to_not_be_null",
+      "kwargs": {"column": "unit_normalized", "mostly": 0.95}
+    },
+    {
+      "expectation_type": "expect_column_values_to_not_be_null",
+      "kwargs": {"column": "currency_normalized", "mostly": 0.95}
+    },
+    {
+      "expectation_type": "expect_column_values_to_be_between",
+      "kwargs": {
+        "column": "value",
+        "min_value": -1000000000,
+        "max_value": 1000000000,
+        "mostly": 0.99
+      }
+    }
+  ]
+}

@@ -1,0 +1,19 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: trino-config
+  namespace: aurum-dev
+data:
+  session.properties: |
+    # Default session tuning for Iceberg lakehouse analytics.
+    catalog=iceberg
+    schema=external
+    spill_enabled=true
+    allow_pushdown_into_connectors=true
+    complex_expression_pushdown=true
+    predicate_pushdown_use_table_properties=true
+    query_max_memory=8GB
+    query_max_memory_per_node=2GB
+    query_max_total_memory=16GB
+  access-control.properties: |
+    access-control.name=allow-all

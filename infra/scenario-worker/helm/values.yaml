@@ -1,0 +1,77 @@
+replicaCount: 1
+
+# Pod Disruption Budget
+podDisruptionBudget:
+  enabled: true
+  minAvailable: 1
+  maxUnavailable: 1
+
+autoscaling:
+  enabled: true
+  minReplicas: 1
+  maxReplicas: 10
+  targetCPUUtilizationPercentage: 70
+  targetMemoryUtilizationPercentage: 80
+
+nameOverride: ""
+fullnameOverride: ""
+
+image:
+  repository: ghcr.io/aurum/aurum-worker
+  tag: latest
+  pullPolicy: IfNotPresent
+
+service:
+  type: ClusterIP
+  port: 9464
+  httpPort: 8080
+  annotations: {}
+
+config:
+  KAFKA_BOOTSTRAP_SERVERS: kafka.aurum-dev.svc.cluster.local:9092
+  SCHEMA_REGISTRY_URL: http://schema-registry.aurum-dev.svc.cluster.local:8081
+  AURUM_SCENARIO_REQUEST_TOPIC: aurum.scenario.request.v1
+  AURUM_SCENARIO_OUTPUT_TOPIC: aurum.scenario.output.v1
+  AURUM_SCENARIO_WORKER_GROUP: aurum-scenario-worker
+  AURUM_SCENARIO_METRICS_PORT: "9464"
+  AURUM_SCENARIO_METRICS_ADDR: 0.0.0.0
+  AURUM_SCENARIO_HTTP_PORT: ""
+  AURUM_SCENARIO_HTTP_ADDR: 0.0.0.0
+  AURUM_SCENARIO_MAX_ATTEMPTS: "3"
+  AURUM_SCENARIO_RETRY_BACKOFF_SEC: "0.5"
+  AURUM_OTEL_SERVICE_NAME: aurum-scenario-worker
+  AURUM_OTEL_EXPORTER_ENDPOINT: http://jaeger-collector.aurum-dev.svc.cluster.local:4317
+  AURUM_OTEL_EXPORTER_INSECURE: "true"
+
+secrets:
+  SCHEMA_REGISTRY_BASIC_AUTH_USER_INFO: ":"
+  KAFKA_SASL_USERNAME: ""
+  KAFKA_SASL_PASSWORD: ""
+
+resources:
+  requests:
+    cpu: 250m
+    memory: 512Mi
+  limits:
+    cpu: 1
+    memory: 1Gi
+
+serviceMonitor:
+  enabled: true
+  interval: 30s
+  scrapeTimeout: 10s
+  labels: {}
+  namespace: ""
+  path: /metrics
+
+podAnnotations: {}
+
+podLabels: {}
+
+deploymentAnnotations: {}
+
+nodeSelector: {}
+
+tolerations: []
+
+affinity: {}

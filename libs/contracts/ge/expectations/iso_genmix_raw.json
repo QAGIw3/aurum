@@ -1,0 +1,14 @@
+{
+  "expectation_suite_name": "iso_genmix_raw",
+  "expectations": [
+    {"expectation_type": "expect_table_columns_to_match_set", "kwargs": {"column_set": [
+      "iso_code","asof_time","fuel_type","mw","unit","ingest_ts","metadata"
+    ]}},
+    {"expectation_type": "expect_column_values_to_not_be_null", "kwargs": {"column": "iso_code", "mostly": 0.99}},
+    {"expectation_type": "expect_column_values_to_not_be_null", "kwargs": {"column": "asof_time", "mostly": 0.999}},
+    {"expectation_type": "expect_compound_columns_to_be_unique", "kwargs": {"column_list": ["iso_code","fuel_type","asof_time"]}},
+    {"expectation_type": "expect_column_values_to_be_between", "kwargs": {"column": "mw", "min_value": 0, "max_value": 1000000, "mostly": 0.999}},
+    {"expectation_type": "expect_column_values_to_be_in_set", "kwargs": {"column": "unit", "value_set": ["MW"], "mostly": 0.99}},
+    {"expectation_type": "expect_column_values_to_not_be_null", "kwargs": {"column": "ingest_ts", "mostly": 1.0}}
+  ]
+}

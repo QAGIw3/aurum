@@ -1,0 +1,26 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: aurum-ci
+resources:
+  - ../base
+
+patchesStrategicMerge:
+  - patches/api-vault.yaml
+  - patches/scenario-worker-vault.yaml
+  - patches/api-config.yaml
+  - patches/scenario-worker-config.yaml
+  - patches/api-networkpolicy.yaml
+  - patches/scenario-worker-networkpolicy.yaml
+
+patchesJson6902:
+  - target:
+      version: v1
+      kind: Namespace
+      name: aurum-dev
+    patch: |-
+      - op: replace
+        path: /metadata/name
+        value: aurum-ci
+      - op: replace
+        path: /metadata/labels/app.kubernetes.io~1environment
+        value: ci

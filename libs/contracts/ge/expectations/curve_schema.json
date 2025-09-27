@@ -1,0 +1,48 @@
+{
+  "expectation_suite_name": "curve_schema",
+  "meta": {
+    "notes": "Ensures canonical curve schema is present after parsing vendor workbooks."
+  },
+  "expectations": [
+    {
+      "expectation_type": "expect_table_columns_to_match_set",
+      "kwargs": {
+        "column_set": [
+          "asof_date",
+          "source_file",
+          "sheet_name",
+          "asset_class",
+          "region",
+          "iso",
+          "location",
+          "market",
+          "product",
+          "block",
+          "spark_location",
+          "price_type",
+          "units_raw",
+          "currency",
+          "per_unit",
+          "tenor_type",
+          "contract_month",
+          "tenor_label",
+          "value",
+          "bid",
+          "ask",
+          "mid",
+          "curve_key",
+          "version_hash",
+          "_ingest_ts"
+        ]
+      }
+    },
+    {"expectation_type": "expect_column_values_to_not_be_null", "kwargs": {"column": "curve_key"}},
+    {"expectation_type": "expect_column_values_to_not_be_null", "kwargs": {"column": "tenor_label"}},
+    {"expectation_type": "expect_column_values_to_not_be_null", "kwargs": {"column": "currency"}},
+    {"expectation_type": "expect_column_values_to_not_be_null", "kwargs": {"column": "per_unit"}},
+    {
+      "expectation_type": "expect_column_values_to_match_regex",
+      "kwargs": {"column": "tenor_type", "regex": "^(MONTHLY|CALENDAR|SEASON|QUARTER|STRIP|CUSTOM)$"}
+    }
+  ]
+}

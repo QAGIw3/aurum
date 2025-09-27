@@ -1,0 +1,86 @@
+{
+  "expectation_suite_name": "fx_rates",
+  "meta": {
+    "notes": "Quality checks for FX rates data from ECB via exchangerate.host API."
+  },
+  "expectations": [
+    {
+      "expectation_type": "expect_table_columns_to_match_set",
+      "kwargs": {
+        "column_set": [
+          "base_currency",
+          "quote_currency",
+          "rate",
+          "source",
+          "as_of_date",
+          "ingest_ts",
+          "metadata"
+        ]
+      }
+    },
+    {
+      "expectation_type": "expect_column_values_to_not_be_null",
+      "kwargs": {"column": "base_currency"}
+    },
+    {
+      "expectation_type": "expect_column_values_to_not_be_null",
+      "kwargs": {"column": "quote_currency"}
+    },
+    {
+      "expectation_type": "expect_column_values_to_not_be_null",
+      "kwargs": {"column": "rate"}
+    },
+    {
+      "expectation_type": "expect_column_values_to_not_be_null",
+      "kwargs": {"column": "source"}
+    },
+    {
+      "expectation_type": "expect_column_values_to_not_be_null",
+      "kwargs": {"column": "as_of_date"}
+    },
+    {
+      "expectation_type": "expect_column_values_to_not_be_null",
+      "kwargs": {"column": "ingest_ts"}
+    },
+    {
+      "expectation_type": "expect_column_values_to_be_between",
+      "kwargs": {
+        "column": "rate",
+        "min_value": 0.0001,
+        "max_value": 10000.0,
+        "mostly": 0.99
+      }
+    },
+    {
+      "expectation_type": "expect_column_values_to_match_regex",
+      "kwargs": {
+        "column": "base_currency",
+        "regex": "^[A-Z]{3}$"
+      }
+    },
+    {
+      "expectation_type": "expect_column_values_to_match_regex",
+      "kwargs": {
+        "column": "quote_currency",
+        "regex": "^[A-Z]{3}$"
+      }
+    },
+    {
+      "expectation_type": "expect_column_values_to_be_in_set",
+      "kwargs": {
+        "column": "source",
+        "value_set": ["ECB"]
+      }
+    },
+    {
+      "expectation_type": "expect_column_pair_values_to_be_equal",
+      "kwargs": {
+        "column_A": "base_currency",
+        "column_B": "metadata.api.base_currency"
+      },
+      "meta": {
+        "notes": "Verify base currency consistency in metadata"
+      }
+    }
+  ]
+}

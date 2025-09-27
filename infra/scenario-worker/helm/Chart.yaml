@@ -1,0 +1,9 @@
+apiVersion: v2
+name: aurum-scenario-worker
+version: 0.1.0
+appVersion: "0.1.0"
+description: Helm chart for the Aurum scenario worker
+home: https://github.com/aurum/platform
+maintainers:
+  - name: Aurum Platform Team
+    email: engineering@aurum.local
