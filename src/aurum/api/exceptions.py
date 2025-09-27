@@ -9,7 +9,7 @@ from fastapi.responses import JSONResponse
 from starlette.datastructures import MutableHeaders
 from starlette.types import Message
 
-from .models import ErrorEnvelope, ValidationErrorDetail, ValidationErrorResponse
+from .models import ErrorEnvelope, ValidationErrorDetail, ValidationErrorResponse, ProblemDetail
 
 
 class AurumAPIException(HTTPException):
@@ -189,6 +189,93 @@ def handle_api_exception(request: Request, exc: Exception) -> HTTPException:
         request_id=request_id,
     )
     return HTTPException(status_code=500, detail=error_envelope.model_dump())
+
+
+async def create_rfc7807_error_response(
+    error: Exception, 
+    request: Request,
+    base_url: str = "https://api.aurum.com"
+) -> JSONResponse:
+    """Create RFC7807 compliant error response from any exception.
+    
+    This function is the async-compatible entry point for creating RFC7807
+    Problem Detail responses. It should be used in exception handlers.
+    """
+    from ..telemetry.context import get_request_id
+    
+    request_id = get_request_id()
+    instance = str(request.url)
+    base_url = base_url.rstrip("/")
+    
+    # Handle Aurum API exceptions
+    if isinstance(error, AurumAPIException):
+        type_mapping = {
+            "ValidationException": "validation-error",
+            "NotFoundException": "not-found", 
+            "ForbiddenException": "forbidden",
+            "ServiceUnavailableException": "service-unavailable",
+            "DataProcessingException": "data-processing-error"
+        }
+        
+        exc_name = error.__class__.__name__
+        problem_type = type_mapping.get(exc_name, "api-error")
+        title = exc_name.replace("Exception", " Error").replace("_", " ")
+        if title.endswith(" Error"):
+            title = title[:-6] + " Error"  # Remove duplicate "Error"
+        title = title.strip()
+        
+        problem = ProblemDetail(
+            type=f"{base_url}/problems/{problem_type}",
+            title=title,
+            status=error.status_code,
+            detail=error.detail,
+            instance=instance,
+            request_id=request_id or error.request_id
+        )
+    
+    # Handle FastAPI HTTP exceptions
+    elif isinstance(error, HTTPException):
+        status_titles = {
+            400: "Bad Request",
+            401: "Unauthorized",
+            403: "Forbidden", 
+            404: "Not Found",
+            405: "Method Not Allowed",
+            422: "Unprocessable Entity",
+            429: "Too Many Requests",
+            500: "Internal Server Error",
+            502: "Bad Gateway",
+            503: "Service Unavailable",
+            504: "Gateway Timeout"
+        }
+        
+        title = status_titles.get(error.status_code, "HTTP Error")
+        
+        problem = ProblemDetail(
+            type="about:blank",
+            title=title,
+            status=error.status_code,
+            detail=str(error.detail) if error.detail else None,
+            instance=instance,
+            request_id=request_id
+        )
+    
+    # Handle other exceptions with appropriate defaults
+    else:
+        problem = ProblemDetail(
+            type="about:blank",
+            title="Internal Server Error",
+            status=500,
+            detail="An unexpected error occurred",
+            instance=instance,
+            request_id=request_id
+        )
+    
+    return JSONResponse(
+        status_code=problem.status,
+        content=problem.model_dump(exclude_none=True),
+        headers={"Content-Type": "application/problem+json"}
+    )
 
 
 # Common exception factories

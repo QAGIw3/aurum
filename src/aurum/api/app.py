@@ -205,24 +205,11 @@ GLOBAL_ERROR_RESPONSES = {
 
 
 async def _api_exception_handler(request: Request, exc: Exception) -> JSONResponse:
-    """Translate arbitrary exceptions into JSON error envelopes."""
-
-    http_exc = handle_api_exception(request, exc)
-    if isinstance(http_exc, FastAPIHTTPException):
-        detail = http_exc.detail
-        if not isinstance(detail, dict):
-            detail = {"error": http_exc.__class__.__name__, "message": str(detail)}
-        headers = getattr(http_exc, "headers", None) or {}
-        return JSONResponse(status_code=http_exc.status_code, content=detail, headers=headers)
-
-    LOGGER.error("Unhandled exception escaped API", exc_info=exc)
-    return JSONResponse(
-        status_code=500,
-        content={
-            "error": "InternalServerError",
-            "message": "Unhandled exception",
-        },
-    )
+    """Translate arbitrary exceptions into RFC7807 compliant JSON error responses."""
+    from .exceptions import create_rfc7807_error_response
+    
+    # Use the new RFC7807 compliant error response
+    return await create_rfc7807_error_response(exc, request)
 
 
 def _register_trino_lifecycle(app: FastAPI) -> None:
@@ -562,12 +549,18 @@ def _create_simplified_app(settings: AurumSettings, logger: logging.Logger) -> F
     # Essential telemetry
     configure_telemetry(settings.telemetry.service_name, fastapi_app=app, enable_psycopg=True)
 
-    # Apply the registered middleware stack (CORS, GZip, concurrency, rate limiting)
+    # Apply the registered middleware stack (CORS, GZip, RFC7807 exception handling)
     # Add an admin guard first to protect admin endpoints uniformly
     # Introduce admin guard (configurable via settings)
     admin_guard_enabled = bool(getattr(getattr(settings, "api", None), "admin_guard_enabled", False))
     app.add_middleware(AdminRouteGuard, enabled=admin_guard_enabled)
-    wrapped_app = apply_middleware_stack(app, settings)
+    
+    # Apply basic middleware (CORS, GZip, RFC7807 exceptions)
+    app_with_basic_middleware = apply_middleware_stack(app, settings)
+    
+    # Apply concurrency and rate limiting separately to avoid circular imports
+    app_with_concurrency = _install_concurrency_middleware(app_with_basic_middleware, settings)
+    wrapped_app = _install_rate_limit_middleware(app_with_concurrency, settings)
 
     # Core health endpoints
     try:

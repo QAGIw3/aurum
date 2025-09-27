@@ -118,12 +118,55 @@ class RequestTimeoutError(ErrorEnvelope):
     retry_after_seconds: Optional[int] = Field(default=None, ge=0)
 
 
+class ProblemDetail(AurumBaseModel):
+    """RFC 7807 Problem Details for HTTP APIs compliant error response.
+    
+    This model implements the Problem Details specification to provide
+    consistent, machine-readable error responses across all API endpoints.
+    """
+    
+    type: str = Field(
+        description="A URI reference that identifies the problem type",
+        examples=["https://api.aurum.com/problems/validation-error", "about:blank"]
+    )
+    title: str = Field(
+        description="A short, human-readable summary of the problem type"
+    )
+    status: int = Field(
+        description="The HTTP status code",
+        ge=100,
+        le=599
+    )
+    detail: Optional[str] = Field(
+        default=None,
+        description="A human-readable explanation specific to this occurrence"
+    )
+    instance: Optional[str] = Field(
+        default=None,
+        description="A URI reference that identifies the specific occurrence"
+    )
+    # Additional Aurum-specific fields
+    request_id: Optional[str] = Field(
+        default=None,
+        description="Unique identifier for the request"
+    )
+    timestamp: str = Field(
+        default_factory=lambda: datetime.utcnow().isoformat() + "Z",
+        description="When the error occurred (ISO 8601 format)"
+    )
+    errors: Optional[list[ValidationErrorDetail]] = Field(
+        default=None,
+        description="Detailed validation errors if applicable"
+    )
+
+
 __all__ = [
     "Meta",
     "ErrorEnvelope",
-    "ValidationErrorDetail",
+    "ValidationErrorDetail", 
     "ValidationErrorResponse",
     "TooManyRequestsError",
     "QueueServiceUnavailableError",
     "RequestTimeoutError",
+    "ProblemDetail",
 ]
