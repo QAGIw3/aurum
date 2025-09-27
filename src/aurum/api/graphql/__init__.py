@@ -1,0 +1,1 @@
+"""Phase 3: GraphQL API implementation."""
