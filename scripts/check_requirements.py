@@ -78,11 +78,11 @@ def check_pyproject_toml():
         with open(pyproject_path, 'r') as f:
             content = f.read()
 
-        # Check for required sections
+        # Check for required sections (updated for hatchling)
         required_sections = [
             "[build-system]",
-            "[tool.poetry]",
-            "[tool.poetry.dependencies]"
+            "[project]",
+            "[project.optional-dependencies]"
         ]
 
         for section in required_sections:
@@ -91,25 +91,24 @@ def check_pyproject_toml():
                 return False
 
         # Check for Python version constraint
-        if "python = " not in content:
+        if "requires-python" not in content:
             print("⚠️ No Python version constraint specified")
 
-        # Check for proper dependency specification
-        if "[tool.poetry.dependencies]" in content:
-            dependencies_section = content.split("[tool.poetry.dependencies]")[1]
-            if "[tool.poetry.dev-dependencies]" in dependencies_section:
-                dev_section = dependencies_section.split("[tool.poetry.dev-dependencies]")[0]
+        # Check for dependency group consistency
+        if "[project.optional-dependencies]" in content:
+            print("✅ Dependency groups found")
+            
+            # Check for shared dependency groups
+            shared_groups = ["common", "database", "monitoring", "data", "networking", "cloud"]
+            found_shared = []
+            for group in shared_groups:
+                if f"{group} = [" in content:
+                    found_shared.append(group)
+            
+            if found_shared:
+                print(f"✅ Shared dependency groups found: {', '.join(found_shared)}")
             else:
-                dev_section = dependencies_section
-
-            lines = dev_section.strip().split('\n')
-            for line in lines:
-                line = line.strip()
-                if line and not line.startswith('[') and '=' in line:
-                    package = line.split('=')[0].strip()
-                    if not package.startswith('"') or not package.endswith('"'):
-                        print(f"⚠️ Package {package} should be quoted")
-                        return False
+                print("⚠️ No shared dependency groups found")
 
         print("✅ pyproject.toml looks good")
         return True
