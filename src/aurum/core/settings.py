@@ -837,6 +837,18 @@ class SimplifiedSettings:
                 f"{self.env_prefix}API_DIMENSIONS_TABLE_TIMESCALE",
                 "market.curve_observation",
             ),
+            eia_series_table_trino=env.get(
+                f"{self.env_prefix}API_EIA_SERIES_TABLE_TRINO",
+                env.get(f"{self.env_prefix}EIA_SERIES_BASE_TABLE", "iceberg.market.eia_series"),
+            ),
+            eia_series_table_clickhouse=env.get(
+                f"{self.env_prefix}API_EIA_SERIES_TABLE_CLICKHOUSE",
+                "aurum.eia_series",
+            ),
+            eia_series_table_timescale=env.get(
+                f"{self.env_prefix}API_EIA_SERIES_TABLE_TIMESCALE",
+                "market.eia_series",
+            ),
         )
 
         if isinstance(self.api.cache, SimpleNamespace):

@@ -169,6 +169,7 @@ Observability and limits:
 - JSON access logs: emitted on logger `aurum.api.access` with fields `method,path,status,duration_ms,request_id,client_ip,tenant,subject`. Incoming `X-Request-Id` is honored and echoed.
 - In-memory metadata cache: enable short-lived caching for ISO locations, Units, and EIA catalog endpoints with `AURUM_API_INMEMORY_TTL` (seconds, default 60).
 - Override the EIA query base table with `AURUM_API_EIA_SERIES_TABLE` (defaults to the dbt `mart.mart_eia_series_latest` view).
+ - Backend selector (experimental): set `AURUM_API_BACKEND` to `trino`, `clickhouse`, or `timescale` and configure base tables as needed. For dimensions: `AURUM_API_DIMENSIONS_TABLE_{TRINO,CLICKHOUSE,TIMESCALE}` (defaults provided). For EIA series: `AURUM_API_EIA_SERIES_TABLE_{TRINO,CLICKHOUSE,TIMESCALE}` (defaults provided; falls back to `AURUM_EIA_SERIES_BASE_TABLE` for Trino).
 - Rate limit headers: successful responses include `X-RateLimit-{Limit,Remaining,Reset}`; 429 includes `Retry-After`.
 - `/ready` responds with `503` when the API cannot reach Trino; integrate with load balancer checks.
 - Add `include_counts=true` to `/v1/metadata/dimensions` to receive per-dimension frequencies alongside values.
