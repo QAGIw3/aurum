@@ -67,7 +67,7 @@ dependencies = [
     "confluent-kafka[avro]==2.6.1",
     "fastavro==1.9.7",
     "psycopg2-binary==2.9.9",
-    "psycopg[binary]==3.1.18",
+    "psycopg[binary]==3.2.10",
     "great-expectations==0.18.19",
     "cryptography==44.0.0",
     "PyJWT==2.10.1",
@@ -102,85 +102,86 @@ dev = [
     "safety==3.2.8",
     "flake8==7.1.1",
 ]
-api = [
-    "fastapi==0.115.6",
-    "uvicorn[standard]==0.32.0",
+# Shared dependency groups to eliminate duplication
+common = [
+    # Core settings and configuration
     "pydantic==2.10.3",
     "pydantic-settings==2.7.0",
-    "sqlalchemy==2.0.36",
-    "alembic==1.13.1",
+    "python-dotenv==1.0.0",
+    "dynaconf==3.2.6",
+    "click==8.1.7",
+    # Logging and utilities
+    "structlog==24.4.0",
+    "rich>=13.9.3,<15",
+    "tqdm==4.67.1",
+    "backoff==2.2.1",
+    # Security
+    "cryptography==44.0.0",
+    "PyJWT==2.10.1",
+]
+database = [
+    # Database access
     "asyncpg==0.30.0",
-    "redis==5.2.0",
-    "celery==5.4.0",
-    "prometheus-client==0.21.0",
+    "psycopg[binary]==3.2.10",  # Aligned to latest version
+    "psycopg2-binary==2.9.9",   # For legacy compatibility
+]
+monitoring = [
+    # Observability and monitoring
+    "prometheus-client==0.21.0",  # Aligned to main dependencies version
     "opentelemetry-api==1.28.0",
     "opentelemetry-sdk==1.28.0",
     "opentelemetry-instrumentation==0.49b0",
     "opentelemetry-instrumentation-fastapi==0.49b0",
-    "structlog==24.4.0",
+]
+data = [
+    # Data processing
+    "pandas==2.2.3",
+    "numpy>=1.21.6,<2.0.0",
+    "pyarrow==18.0.0",  # Aligned to main dependencies version
+]
+networking = [
+    # HTTP and networking
+    "requests==2.32.3",
+    "requests-oauthlib==2.0.0",
+    "urllib3>=1.25.4,<3",
+    "httpx==0.28.1",
+    "aiohttp==3.10.10",
+]
+cloud = [
+    # Cloud services
+    "boto3==1.35.72",
+    "boto3-stubs==1.35.72",
+]
+api = [
+    # Inherit shared dependencies
+    "aurum[common,database,monitoring,networking]",
+    # API-specific dependencies
+    "fastapi==0.115.6",
+    "uvicorn[standard]==0.32.0",
+    "sqlalchemy==2.0.36",
+    "alembic==1.13.1",
+    "redis==5.2.0",
+    "celery==5.4.0",
     "python-jose[cryptography]==3.3.0",
     "passlib[bcrypt]==1.7.4",
     "python-multipart==0.0.9",
-    "httpx==0.28.1",
-    "aiohttp==3.10.10",
-    "pandas==2.2.3",
-    "numpy>=1.21.6,<2.0.0",
-    "dynaconf==3.2.6",
-    "python-dotenv==1.0.0",
-    "click==8.1.7",
-    "rich>=13.9.3,<15",
 ]
 worker = [
-    "pandas==2.2.3",
-    "numpy>=1.21.6,<2.0.0",
-    "pyarrow==18.0.0",
+    # Inherit shared dependencies
+    "aurum[common,database,monitoring,data,networking,cloud]",
+    # Worker-specific dependencies
     "confluent-kafka[avro]==2.6.1",
     "fastavro==1.9.7",
-    "psycopg2-binary==2.9.9",
-    "asyncpg==0.30.0",
     "great-expectations==0.18.19",
-    "python-dotenv==1.0.0",
-    "pydantic==2.10.3",
-    "pydantic-settings==2.7.0",
-    "prometheus-client==0.21.0",
-    "cryptography==44.0.0",
-    "PyJWT==2.10.1",
-    "structlog==24.4.0",
-    "click==8.1.7",
-    "tqdm==4.67.1",
-    "backoff==2.2.1",
-    "boto3==1.35.72",
-    "boto3-stubs==1.35.72",
-    "requests==2.32.3",
-    "requests-oauthlib==2.0.0",
-    "urllib3>=1.25.4,<3",
-    "asyncio==3.4.3",
 ]
 ingest = [
-    "pandas==2.2.3",
-    "numpy>=1.21.6,<2.0.0",
-    "pyarrow==18.0.0",
+    # Inherit shared dependencies
+    "aurum[common,database,monitoring,data,networking,cloud]",
+    # Ingest-specific dependencies
     "confluent-kafka[avro]==2.6.1",
     "fastavro==1.9.7",
-    "psycopg2-binary==2.9.9",
-    "asyncpg==0.30.0",
     "great-expectations==0.18.19",
-    "python-dotenv==1.0.0",
-    "pydantic==2.10.3",
-    "pydantic-settings==2.7.0",
-    "prometheus-client==0.21.0",
-    "cryptography==44.0.0",
-    "PyJWT==2.10.1",
-    "structlog==24.4.0",
-    "click==8.1.7",
-    "tqdm==4.67.1",
-    "backoff==2.2.1",
-    "boto3==1.35.72",
-    "boto3-stubs==1.35.72",
-    "requests==2.32.3",
-    "requests-oauthlib==2.0.0",
-    "urllib3>=1.25.4,<3",
-    "asyncio==3.4.3",
+    # Geospatial and data format support
     "geopandas==1.0.1",
     "pyproj==3.6.1",
     "shapely==2.0.7",
@@ -188,15 +189,17 @@ ingest = [
     "xarray==2024.10.0",
     "xlrd==2.0.2",
     "openpyxl==3.1.5",
+    # Kafka streaming
     "kafka-python==2.2.15",
     "aiokafka==0.10.0",
+    # Schema validation
     "jsonschema==4.25.1",
     "openapi-spec-validator==0.7.2",
     "spectral==0.1.0",
+    # Analytics and transformation
     "trino==0.336.0",
     "dbt-core==1.8.8",
     "dbt-duckdb==1.9.6",
-    "psycopg[binary]==3.2.10",
 ]
 quality = [
     "pytest==8.3.3",
