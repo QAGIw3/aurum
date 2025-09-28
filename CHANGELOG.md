@@ -1,5 +1,155 @@
 # CHANGELOG
 
+## v0.2.0 (2025-09-28)
+
+### Feature
+
+* feat(parsers): finalize advanced vendor parser framework\n\n- Add Docling PDF table extraction with pdfminer fallback\n- Options-driven thresholds for anomaly and validation engines\n- Learned alias merging for schema inference\n- Robust error recovery, validation, and canonical projection\n- Performance instrumentation helpers for parser runs ([`2800d50`](https://github.com/QAGIw3/aurum/commit/2800d5071b9ff69d176adfdeaf65d7266e45fd11))
+
+* feat(parsers): add sample learned aliases config and demo entry-point plugin\n\n- Add config/learned_aliases.json for historical schema synonyms\n- Add example vendor parser exposed via entry points (demo_ep)\n- Wire entry point discovery in vendor_curves package init\n- Update pyproject with entry-point and package metadata\n- Update docs to mention Docling PDF integration and new options ([`660ec61`](https://github.com/QAGIw3/aurum/commit/660ec613103bf96415bc1d7f6b47c43fdb31663f))
+
+### Unknown
+
+* 	modified:   .coverage
+	modified:   README.md
+	new file:   airflow/dags/dynamic/__init__.py
+	new file:   airflow/dags/dynamic/loader.py
+	new file:   airflow/dags/examples/mapped_backfill_chunks.py
+	modified:   airflow/dags/ingest_eia_series_timescale.py
+	modified:   airflow/dags/ingest_iso_load_isone.py
+	modified:   airflow/dags/ingest_iso_metrics_caiso.py
+	modified:   airflow/dags/ingest_iso_metrics_miso.py
+	modified:   airflow/dags/ingest_iso_metrics_spp.py
+	modified:   airflow/dags/ingest_iso_prices_aeso.py
+	modified:   airflow/dags/ingest_iso_prices_pjm.py
+	modified:   airflow/dags/ingest_iso_prices_timescale.py
+	modified:   airflow/dags/ingest_pjm_pnodes.py
+	new file:   airflow/dags/ml_retraining.py
+	new file:   airflow/dags/ml_shape_forecast.py
+	modified:   airflow/dags/noaa_ingest_dag.py
+	new file:   config/workflows/example_dynamic.json
+	modified:   coverage.xml
+	modified:   docs/README.md
+	modified:   docs/comprehensive-development-tasks.md
+	new file:   docs/ml/advanced-analytics-platform-design.md
+	new file:   docs/ml/advanced-analytics.md
+	new file:   docs/runbooks/airflow-oncall-runbook.md
+	new file:   docs/runbooks/api-oncall-runbook.md
+	new file:   docs/runbooks/kafka-oncall-runbook.md
+	new file:   docs/runbooks/trino-oncall-runbook.md
+	new file:   docs/sre/README.md
+	new file:   docs/sre/paging-policy.md
+	new file:   examples/data/prices_sample.csv
+	new file:   examples/ml/generate_prices_csv.py
+	new file:   examples/ml/streaming_anomaly_consumer.py
+	modified:   pyproject.toml
+	new file:   src/aurum/airflow_utils/datasets.py
+	modified:   src/aurum/api/app.py
+	modified:   src/aurum/api/cache/__init__.py
+	modified:   src/aurum/api/cache/advanced_cache.py
+	modified:   src/aurum/api/cache/compatibility.py
+	modified:   src/aurum/api/cache/consolidated_manager.py
+	modified:   src/aurum/api/cache/initialization.py
+	modified:   src/aurum/api/cache/utils.py
+	modified:   src/aurum/api/container.py
+	new file:   src/aurum/api/contracts/__init__.py
+	modified:   src/aurum/api/dao/base_async_dao.py
+	modified:   src/aurum/api/dao/curves_dao.py
+	modified:   src/aurum/api/dao/drought_dao.py
+	modified:   src/aurum/api/dao/eia_dao.py
+	modified:   src/aurum/api/dao/metadata_dao.py
+	modified:   src/aurum/api/dao/ppa_dao.py
+	modified:   src/aurum/api/database/performance.py
+	modified:   src/aurum/api/database/trino_admin.py
+	modified:   src/aurum/api/deps.py
+	modified:   src/aurum/api/drought_v2_service.py
+	modified:   src/aurum/api/eia_v2_service.py
+	modified:   src/aurum/api/exceptions.py
+	modified:   src/aurum/api/handlers/external.py
+	modified:   src/aurum/api/health.py
+	modified:   src/aurum/api/iso_v2_service.py
+	modified:   src/aurum/api/lifespan_manager.py
+	modified:   src/aurum/api/logging/__init__.py
+	modified:   src/aurum/api/metadata.py
+	modified:   src/aurum/api/metadata_v2_service.py
+	modified:   src/aurum/api/middleware/enhanced_registry.py
+	new file:   src/aurum/api/middleware/performance_monitor.py
+	modified:   src/aurum/api/models/__init__.py
+	new file:   src/aurum/api/models/schema_manager.py
+	modified:   src/aurum/api/observability/__init__.py
+	modified:   src/aurum/api/performance.py
+	modified:   src/aurum/api/ppa_utils.py
+	modified:   src/aurum/api/ppa_v2_service.py
+	modified:   src/aurum/api/query.py
+	modified:   src/aurum/api/router_registry.py
+	modified:   src/aurum/api/routes.py
+	modified:   src/aurum/api/runtime_config.py
+	modified:   src/aurum/api/scenarios/scenarios.py
+	modified:   src/aurum/api/service.py
+	modified:   src/aurum/api/services/admin_service.py
+	modified:   src/aurum/api/services/base_service.py
+	modified:   src/aurum/api/services/curves_service.py
+	modified:   src/aurum/api/services/iso_service.py
+	modified:   src/aurum/api/services/ppa_service.py
+	modified:   src/aurum/api/state.py
+	modified:   src/aurum/api/v1/admin.py
+	modified:   src/aurum/api/v1/curves.py
+	modified:   src/aurum/api/v1/drought.py
+	modified:   src/aurum/api/v2/admin.py
+	modified:   src/aurum/api/v2/curves.py
+	new file:   src/aurum/api/v2/market_streaming.py
+	modified:   src/aurum/api/v2/metadata.py
+	modified:   src/aurum/api/v2/scenarios.py
+	modified:   src/aurum/api/version_management.py
+	modified:   src/aurum/api/versioning.py
+	new file:   src/aurum/api/websocket/__init__.py
+	new file:   src/aurum/api/websocket/market_feeds.py
+	modified:   src/aurum/api/websocket_manager.py
+	new file:   src/aurum/ml/__init__.py
+	new file:   src/aurum/ml/ab_testing.py
+	new file:   src/aurum/ml/anomaly_detection.py
+	new file:   src/aurum/ml/cli.py
+	new file:   src/aurum/ml/evaluation.py
+	new file:   src/aurum/ml/feature_engineering.py
+	new file:   src/aurum/ml/forecasting/__init__.py
+	new file:   src/aurum/ml/forecasting/models.py
+	new file:   src/aurum/ml/forecasting/naive.py
+	new file:   src/aurum/ml/forecasting/pipeline.py
+	new file:   src/aurum/ml/forecasting/shape.py
+	new file:   src/aurum/ml/forecasting/simple.py
+	new file:   src/aurum/ml/registry.py
+	new file:   src/aurum/ml/retraining.py
+	new file:   src/aurum/ml/volatility.py
+	modified:   src/aurum/parsers/__init__.py
+	new file:   src/aurum/streaming/__init__.py
+	new file:   src/aurum/streaming/handlers/ml_anomaly.py
+	new file:   src/aurum/streaming/kafka_processor.py
+	new file:   src/aurum/streaming/real_time_engine.py
+	new file:   src/aurum/streaming/service.py
+	new file:   src/aurum/streaming/services/anomaly_service.py
+	new file:   src/aurum/workflow/dynamic_dags.py
+	new file:   src/aurum/workflow/templates.py
+	modified:   tests/api/test_router_registry.py
+	modified:   tests/api/test_services_curves.py
+	modified:   tests/api/test_v2_developer_workspace_endpoints.py
+	new file:   tests/ml/test_ab_testing.py
+	new file:   tests/ml/test_anomaly_detection.py
+	new file:   tests/ml/test_feature_engineering.py
+	new file:   tests/ml/test_forecasting_pipeline.py
+	new file:   tests/ml/test_forecasting_simple.py
+	new file:   tests/ml/test_retraining.py
+	new file:   tests/ml/test_volatility.py
+	new file:   tests/parsers/test_ml_parser.py
+	new file:   tests/parsers/test_schema_inference.py
+	new file:   tests/parsers/test_validation_engine.py
+	modified:   tests/parsers/test_vendor_registry.py
+	new file:   tests/streaming/test_kafka_processor.py
+	new file:   tests/streaming/test_market_feeds.py
+	new file:   tests/streaming/test_real_time_engine.py
+	new file:   tests/test_datasets_uris.py
+	new file:   tests/test_fixtures/async_test_utils.py
+	modified:   tests/test_fixtures/test_fixtures.py ([`02eeb24`](https://github.com/QAGIw3/aurum/commit/02eeb247f9c4b48d897e972e04712664413bc7ee))
+
 ## v0.1.0 (2025-09-28)
 
 ### Chore
