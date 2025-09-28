@@ -17,6 +17,8 @@
   "eia_bulk_to_kafka.conf": "6a903c6f4727532c73a6f91b3a5155dcf56b198a76998d462e9629111680b1a5",
   "eia_fuel_curve_to_kafka.conf": "9faabb167faeab2207cf0878f1588f7eb8a61188c53a3efae769d8623ef8fd04",
   "eia_series_kafka_to_timescale.conf": "f1c2901fe025dc6fd95926c7af11d9510f0cbda9186a14bb5b040a9fb90b17b8",
+  "external_series_catalog_kafka_to_iceberg.conf": "1ae49291318af46bb99c79b02fde1a0763296d50bf959ba72ef8fdf35c6d048f",
+  "external_timeseries_kafka_to_iceberg.conf": "5be0e65b251643f7e22aebcd37529c8503b8f839db540be26c17a829ee2c1430",
   "ercot_lmp_to_kafka.conf": "bc83389d278875cf8eb532cfc47e8e09d136de53be12c99a0cdb48709789eef4",
   "fred_series_kafka_to_timescale.conf": "44fe85890010cd5f0c0c82ef7a2899770decd709fdbd449a4a0cd770d771369e",
   "fred_series_to_kafka.conf": "4200c512a4f22f277ace58879aae6be96ca45f52adb770e8174a06d48e1baa4f",

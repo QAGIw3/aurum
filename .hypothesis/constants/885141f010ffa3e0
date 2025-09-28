@@ -1,0 +1,4 @@
+# file: /opt/homebrew/bin/schemathesis
+# hypothesis_version: 6.138.13
+
+['.exe', '__main__']

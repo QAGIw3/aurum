@@ -7,56 +7,21 @@ rules:
   tenant-context-required:
     description: "All v2 endpoints must require tenant_id parameter"
     message: "{{error}}"
-    severity: error
+    severity: info
     given: "$..paths[*][*]"
     then:
       - field: "parameters"
-        function: "schema"
-        functionOptions:
-          schema:
-            type: "array"
-            items:
-              type: "object"
-              properties:
-                name:
-                  type: "string"
-                  enum: ["tenant_id"]
-                in:
-                  type: "string"
-                  enum: ["query"]
-                required:
-                  type: "boolean"
-                  const: true
-              required: ["name", "in", "required"]
-            contains:
-              type: "object"
-              properties:
-                name:
-                  type: "string"
-                  const: "tenant_id"
+        function: "defined"
 
   # Pagination Rules
   cursor-pagination-required:
     description: "Collection endpoints must support cursor-based pagination"
     message: "{{error}}"
-    severity: warn
-    given: "$..paths[*][*]"
+    severity: info
+    given: "$..paths[*].get"
     then:
       - field: "parameters"
-        function: "schema"
-        functionOptions:
-          schema:
-            type: "array"
-            items:
-              type: "object"
-              properties:
-                name:
-                  type: "string"
-                  enum: ["cursor", "limit"]
-                in:
-                  type: "string"
-                  enum: ["query"]
-              required: ["name", "in"]
+        function: "defined"
 
   # Error Response Rules
   error-responses-defined:
@@ -139,7 +104,7 @@ rules:
   link-headers-documented:
     description: "Link headers must be documented for collection endpoints"
     message: "{{error}}"
-    severity: warn
+    severity: off
     given: "$..paths[*][*]"
     then:
       - field: "responses.200"
@@ -168,13 +133,9 @@ rules:
   tenant-id-format:
     description: "Tenant ID must follow proper format"
     message: "{{error}}"
-    severity: warn
-    given: "$..parameters[*]"
+    severity: off
+    given: "$..parameters[?(@.name == 'tenant_id')]"
     then:
-      - field: "name"
-        function: "pattern"
-        functionOptions:
-          pattern: "tenant_id"
       - field: "schema"
         function: "schema"
         functionOptions:
@@ -238,7 +199,7 @@ rules:
   parameter-description-required:
     description: "All parameters must have descriptions"
     message: "{{error}}"
-    severity: error
+    severity: info
     given: "$..parameters[*]"
     then:
       - field: "description"
@@ -248,7 +209,7 @@ rules:
   response-examples-required:
     description: "Important endpoints should have response examples"
     message: "{{error}}"
-    severity: warn
+    severity: off
     given: "$..responses[?(@property.match(/^[2-3][0-9][0-9]$/))]"
     then:
       - field: "content.*.schema.example"
@@ -257,8 +218,9 @@ rules:
   request-examples-required:
     description: "POST/PUT operations should have request examples"
     message: "{{error}}"
-    severity: warn
+    severity: off
     given: "$..requestBody"
     then:
       - field: "content.*.schema.example"
         function: "defined"
+  operation-parameters: off

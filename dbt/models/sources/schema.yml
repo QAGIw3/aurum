@@ -198,6 +198,55 @@ sources:
           - name: source_flag
           - name: attributes
           - name: ingest_ts
+  - name: app_postgres
+    description: Application metadata tables persisted in Postgres powering scenario APIs.
+    schema: "{{ 'public' if target.name != 'duckdb' else target.schema }}"
+    loader: postgres
+    freshness:
+      warn_after: {count: 2, period: hour}
+      error_after: {count: 6, period: hour}
+    tables:
+      - name: scenarios
+        description: Scenario definitions and metadata managed by the platform API.
+        loaded_at_field: updated_at
+        freshness:
+          warn_after: {count: 2, period: hour}
+          error_after: {count: 6, period: hour}
+        columns:
+          - name: id
+            description: Scenario identifier.
+            tests:
+              - not_null
+          - name: tenant_id
+            description: Owning tenant for the scenario.
+            tests:
+              - not_null
+          - name: status
+            description: Scenario lifecycle status.
+          - name: updated_at
+            description: Last update timestamp for the scenario record.
+            tests:
+              - not_null
+      - name: scenario_runs
+        description: Execution runs for scenarios including status and timing metadata.
+        loaded_at_field: updated_at
+        columns:
+          - name: id
+            description: Scenario run identifier.
+            tests:
+              - not_null
+          - name: scenario_id
+            description: Parent scenario for the run.
+            tests:
+              - not_null
+          - name: tenant_id
+            description: Owning tenant for the run.
+            tests:
+              - not_null
+          - name: status
+            description: Run lifecycle status.
+          - name: updated_at
+            description: Last update timestamp for the scenario run record.
             tests:
               - not_null
           - name: ingest_job_id

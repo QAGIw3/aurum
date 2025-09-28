@@ -109,6 +109,7 @@ class PerformanceMonitoringService:
 
     def __init__(self, telemetry: Optional[TelemetryFacade] = None):
         self.telemetry = telemetry or get_telemetry_facade()
+        self._metrics_client = getattr(self.telemetry, "metrics_client", None)
         self.cache_manager = get_unified_cache_manager()
 
         self._budgets: Dict[str, PerformanceBudget] = {}
@@ -119,6 +120,7 @@ class PerformanceMonitoringService:
 
         self._current_metrics: Dict[str, Dict[str, float]] = {}
         self._metric_history: Dict[str, List[Tuple[datetime, float]]] = defaultdict(list)
+        self._local_counter_totals: Dict[Tuple[str, Tuple[Tuple[str, str], ...]], float] = defaultdict(float)
         self._ci_thresholds: Dict[str, Tuple[str, float]] = dict(self.DEFAULT_CI_THRESHOLDS)
 
         self._initialize_default_budgets()
@@ -131,6 +133,10 @@ class PerformanceMonitoringService:
         key = budget.key
         self._budgets[key] = budget
         self._log("info", "Performance budget registered", budget_key=key)
+        self._emit_counter(
+            "aurum_performance_budgets_registered_total",
+            labels={"endpoint": budget.endpoint, "method": budget.method.upper()},
+        )
         return key
 
     def upsert_performance_budget(
@@ -145,14 +151,26 @@ class PerformanceMonitoringService:
             update_data = existing.model_dump()
             update_data.update(overrides)
             budget = PerformanceBudget(**update_data)
+            self._emit_counter(
+                "aurum_performance_budgets_updated_total",
+                labels={"endpoint": endpoint, "method": method.upper()},
+            )
         else:
             budget = PerformanceBudget(endpoint=endpoint, method=method, **overrides)
+            self._emit_counter(
+                "aurum_performance_budgets_registered_total",
+                labels={"endpoint": endpoint, "method": method.upper()},
+            )
         self._budgets[key] = budget
         return budget
 
     def remove_performance_budget(self, method: str, endpoint: str) -> None:
         key = self._budget_key(method, endpoint)
         self._budgets.pop(key, None)
+        self._emit_counter(
+            "aurum_performance_budgets_removed_total",
+            labels={"endpoint": endpoint, "method": method.upper()},
+        )
 
     def list_performance_budgets(self) -> List[PerformanceBudget]:
         return list(self._budgets.values())
@@ -163,10 +181,20 @@ class PerformanceMonitoringService:
     def register_load_test_scenario(self, scenario: LoadTestScenario) -> LoadTestScenario:
         self._scenarios[scenario.scenario_id] = scenario
         self._log("info", "Load test scenario registered", scenario_id=scenario.scenario_id)
+        self._emit_counter(
+            "aurum_performance_load_tests_registered_total",
+            labels={"scenario_id": scenario.scenario_id},
+        )
         return scenario
 
     def list_load_test_scenarios(self) -> List[LoadTestScenario]:
         return list(self._scenarios.values())
+
+    def get_test_result(self, test_id: str) -> Optional[PerformanceTestResult]:
+        return self._test_results.get(test_id)
+
+    def get_comparison(self, comparison_id: str) -> Optional[RegressionReport]:
+        return self._reports.get(comparison_id)
 
     # ------------------------------------------------------------------
     # Budget evaluation
@@ -179,12 +207,21 @@ class PerformanceMonitoringService:
             current_metrics = self._current_metrics.get(key, {})
             budget_met = self._evaluate_budget(budget, current_metrics)
             results[key] = budget_met
+            status_label = "compliant" if budget_met else "violated"
+            self._emit_counter(
+                "aurum_performance_budget_evaluations_total",
+                labels={"status": status_label},
+            )
             if not budget_met:
                 self._log(
                     "warning",
                     "Performance budget violation",
                     budget_key=key,
                     metrics=current_metrics,
+                )
+                self._emit_counter(
+                    "aurum_performance_budget_violations_total",
+                    labels={"endpoint": budget.endpoint, "method": budget.method.upper()},
                 )
         return results
 
@@ -193,6 +230,33 @@ class PerformanceMonitoringService:
         self._current_metrics[key] = metrics
         for metric_name, value in metrics.items():
             self._metric_history[f"{key}:{metric_name}"].append((datetime.utcnow(), value))
+
+    def _emit_counter(
+        self,
+        name: str,
+        labels: Optional[Dict[str, str]] = None,
+        value: float = 1.0,
+    ) -> None:
+        metrics_client = getattr(self, "_metrics_client", None)
+        labels = labels or {}
+        label_key = tuple(sorted(labels.items()))
+        self._local_counter_totals[(name, label_key)] += value
+        if metrics_client is None or not hasattr(metrics_client, "counter"):
+            return
+        try:
+            metrics_client.counter(name, labels=labels, value=value)
+        except Exception:  # pragma: no cover - defensive guard for metrics errors
+            self._log("warning", "Failed to emit performance counter", metric=name, labels=labels)
+
+    def _local_metrics_snapshot(self) -> Dict[str, Dict[str, float]]:
+        snapshot: Dict[str, Dict[str, float]] = {}
+        for (name, labels), total in self._local_counter_totals.items():
+            if labels:
+                label_key = ",".join(f"{label}={value}" for label, value in labels)
+            else:
+                label_key = "total"
+            snapshot.setdefault(name, {})[label_key] = total
+        return snapshot
 
     # ------------------------------------------------------------------
     # Load test execution
@@ -245,6 +309,11 @@ class PerformanceMonitoringService:
             self._log("error", "Load test execution failed", scenario_id=scenario_id, error=str(exc))
         finally:
             result.end_time = datetime.utcnow()
+            status_label = result.status or "unknown"
+            self._emit_counter(
+                "aurum_performance_tests_total",
+                labels={"scenario_id": scenario_id, "status": status_label},
+            )
 
         return test_id
 
@@ -419,19 +488,26 @@ class PerformanceMonitoringService:
     # Prometheus integration
     # ------------------------------------------------------------------
     async def collect_prometheus_metrics(self) -> Dict[str, Any]:
-        client = getattr(self.telemetry, "metrics_client", None)
+        client = getattr(self, "_metrics_client", None)
+        metrics_snapshot = self._local_metrics_snapshot()
         if client and hasattr(client, "export"):
             try:
                 exported = client.export()
                 if isinstance(exported, dict) and exported:
-                    return exported
+                    enriched = dict(exported)
+                    if metrics_snapshot:
+                        enriched.setdefault("counters", metrics_snapshot)
+                    return enriched
             except Exception as exc:  # pylint: disable=broad-except
                 self._log("warning", "Prometheus metrics export failed", error=str(exc))
-        return {
+        fallback = {
             "api_request_duration_seconds": {"p95": 0.45, "p99": 0.9},
             "api_requests_total": {"rate_per_second": 120.0},
             "api_errors_total": {"rate_per_second": 2.0},
         }
+        if metrics_snapshot:
+            fallback["counters"] = metrics_snapshot
+        return fallback
 
     # ------------------------------------------------------------------
     # Regression analysis
@@ -468,6 +544,18 @@ class PerformanceMonitoringService:
 
         self._reports[comparison_id] = report
         self._log("info", "Performance comparison completed", comparison_id=comparison_id)
+        self._emit_counter(
+            "aurum_performance_regression_checks_total",
+            labels={"regression_detected": str(regression_detected).lower()},
+        )
+        if regression_detected:
+            self._emit_counter(
+                "aurum_performance_regressions_total",
+                labels={
+                    "baseline_scenario": baseline.scenario_id,
+                    "current_scenario": current.scenario_id,
+                },
+            )
         return comparison_id
 
     def _analyze_regression(
@@ -641,6 +729,10 @@ class PerformanceMonitoringService:
 
             status = "passed" if not violations else "failed"
             recommendation = "Performance check passed" if not violations else "Fix performance regressions before merge"
+            self._emit_counter(
+                "aurum_performance_ci_checks_total",
+                labels={"status": status},
+            )
             return {
                 "status": status,
                 "test_id": test_id,
@@ -649,6 +741,10 @@ class PerformanceMonitoringService:
                 "recommendation": recommendation,
             }
         except Exception as exc:  # pylint: disable=broad-except
+            self._emit_counter(
+                "aurum_performance_ci_checks_total",
+                labels={"status": "error"},
+            )
             return {
                 "status": "error",
                 "reason": str(exc),
@@ -776,6 +872,10 @@ class PerformanceMonitoringService:
         ]
         for budget in defaults:
             self._budgets[budget.key] = budget
+            self._emit_counter(
+                "aurum_performance_budgets_registered_total",
+                labels={"endpoint": budget.endpoint, "method": budget.method.upper()},
+            )
 
     def _initialize_default_scenarios(self) -> None:
         defaults = [
@@ -812,6 +912,10 @@ class PerformanceMonitoringService:
         ]
         for scenario in defaults:
             self._scenarios[scenario.scenario_id] = scenario
+            self._emit_counter(
+                "aurum_performance_load_tests_registered_total",
+                labels={"scenario_id": scenario.scenario_id},
+            )
 
 
 _SERVICE_INSTANCE: Optional[PerformanceMonitoringService] = None

@@ -26,6 +26,7 @@ if TYPE_CHECKING:  # pragma: no cover
 
 DEFAULT_SCHEMA_ROOT = Path(__file__).resolve().parents[2] / "kafka" / "schemas"
 DEFAULT_SUBJECT_FILE = DEFAULT_SCHEMA_ROOT / "subjects.json"
+DEFAULT_CONTRACTS_FILE = DEFAULT_SCHEMA_ROOT / "contracts.yml"
 DEFAULT_EIA_CONFIG = Path(__file__).resolve().parents[2] / "config" / "eia_ingest_datasets.json"
 
 SUBJECT_NAME_RE = re.compile(r"^aurum\.[a-z0-9_.]+\.v\d+(?:-(?:key|value))?$")
@@ -296,6 +297,7 @@ __all__ = [
     "enforce_contract",
     "validate_contracts",
     "load_subject_mapping",
+    "load_contract_subjects",
     "load_schema",
     "load_eia_subjects",
     "iter_subjects",
@@ -313,6 +315,43 @@ def load_subject_mapping(path: Path) -> dict[str, str]:
     if not isinstance(mapping, dict):
         raise SchemaRegistryError("Subject mapping must be a JSON object of subject -> schema")
     return {str(subject): str(schema) for subject, schema in mapping.items()}
+
+
+def load_contract_subjects(path: Path) -> dict[str, str]:
+    try:
+        import yaml
+    except ImportError as exc:  # pragma: no cover - only hit if PyYAML missing at runtime
+        raise SchemaRegistryError("PyYAML is required to load contract catalogues") from exc
+
+    try:
+        raw = yaml.safe_load(path.read_text(encoding="utf-8"))
+    except FileNotFoundError as exc:  # pragma: no cover - handled by CLI
+        raise SchemaRegistryError(f"Contracts file not found: {path}") from exc
+    except yaml.YAMLError as exc:  # pragma: no cover - handled by CLI
+        raise SchemaRegistryError(f"Invalid YAML in contracts file: {path}") from exc
+
+    if not isinstance(raw, dict):
+        raise SchemaRegistryError(f"Contracts file must be a mapping, got {type(raw).__name__}")
+
+    subjects = raw.get("subjects")
+    if not isinstance(subjects, list):
+        raise SchemaRegistryError("Contracts file missing 'subjects' list")
+
+    mapping: dict[str, str] = {}
+    for entry in subjects:
+        if not isinstance(entry, dict):
+            raise SchemaRegistryError("Contract entry must be a mapping")
+        subject = entry.get("subject")
+        schema = entry.get("schema")
+        if not subject or not schema:
+            raise SchemaRegistryError(f"Invalid contract entry: {entry}")
+        subject = str(subject)
+        schema = str(schema)
+        if subject in mapping:
+            raise SchemaRegistryError(f"Duplicate subject '{subject}' in contracts file")
+        mapping[subject] = schema
+
+    return mapping
 
 
 def load_schema(schema_root: Path, relative_path: str) -> dict:
@@ -526,6 +565,12 @@ def parse_args(argv: Iterable[str] | None = None) -> argparse.Namespace:
         help=f"Path to JSON map of subject -> schema (default: {DEFAULT_SUBJECT_FILE})",
     )
     parser.add_argument(
+        "--contracts-file",
+        type=Path,
+        default=DEFAULT_CONTRACTS_FILE,
+        help=f"Path to contracts.yml catalogue (default: {DEFAULT_CONTRACTS_FILE})",
+    )
+    parser.add_argument(
         "--schema-root",
         type=Path,
         default=DEFAULT_SCHEMA_ROOT,
@@ -571,6 +616,10 @@ def main(argv: Iterable[str] | None = None) -> int:
     compatibility = normalize_compatibility(args.compatibility)
 
     subjects = load_subject_mapping(args.subjects_file)
+    if args.contracts_file:
+        contracts_subjects = load_contract_subjects(args.contracts_file)
+        # Allow JSON mapping to override specific subjects if necessary while surfacing mismatches later.
+        subjects = {**contracts_subjects, **subjects}
     if args.include_eia:
         subjects.update(load_eia_subjects(args.eia_config))
     selected_subjects = iter_subjects(args.subject, subjects)

@@ -14,6 +14,16 @@ from .trino_client import (
     TrinoClientManager,
 )
 from .config import TrinoCatalogType, TrinoAccessLevel, TrinoCatalogConfig
+from .auto_reforecast import (
+    get_auto_reforecast_repository,
+    get_auto_reforecast_job_repository,
+    AutoReforecastRepository,
+    AutoReforecastJobRepository,
+)
+from .auto_reforecast_scheduler import (
+    AutoReforecastScheduler,
+    get_auto_reforecast_scheduler,
+)
 
 
 def initialize_trino_catalogs(settings) -> None:
@@ -85,4 +95,10 @@ __all__ = [
     "OptimizationSuggestion",
     "QueryPerformanceLevel",
     "OptimizationType",
+    "AutoReforecastRepository",
+    "AutoReforecastJobRepository",
+    "get_auto_reforecast_repository",
+    "get_auto_reforecast_job_repository",
+    "AutoReforecastScheduler",
+    "get_auto_reforecast_scheduler",
 ]

@@ -1317,6 +1317,80 @@ PY
     # Provide a sane default topic pattern covering PJM/CAISO/ERCOT/MISO/ISONE/SPP
     export ISO_LMP_TOPIC_PATTERN="${ISO_LMP_TOPIC_PATTERN:-aurum\\.iso\\..*\\.lmp\\.v1}"
     ;;
+  external_timeseries_kafka_to_iceberg)
+    REQUIRED_VARS=(
+      AURUM_KAFKA_BOOTSTRAP_SERVERS
+      AURUM_SCHEMA_REGISTRY_URL
+      ICEBERG_CATALOG_NAME
+      ICEBERG_CATALOG_TYPE
+      ICEBERG_URI
+      ICEBERG_WAREHOUSE
+      EXTERNAL_TENANT_ID
+    )
+    export EXTERNAL_TIMESERIES_TOPIC_PATTERN="${EXTERNAL_TIMESERIES_TOPIC_PATTERN:-aurum\\.ext\\.timeseries\\.obs\\.v1}"
+    export EXTERNAL_TIMESERIES_GROUP_ID="${EXTERNAL_TIMESERIES_GROUP_ID:-seatunnel.external.timeseries}"
+    export EXTERNAL_TIMESERIES_START_MODE="${EXTERNAL_TIMESERIES_START_MODE:-latest}"
+    export EXTERNAL_TIMESERIES_TABLE="${EXTERNAL_TIMESERIES_TABLE:-timeseries_observation}"
+    export EXTERNAL_ICEBERG_DB="${EXTERNAL_ICEBERG_DB:-external}"
+    export EXTERNAL_WRITE_DISTRIBUTION="${EXTERNAL_WRITE_DISTRIBUTION:-hash}"
+    export EXTERNAL_WRITE_FORMAT="${EXTERNAL_WRITE_FORMAT:-parquet}"
+    export EXTERNAL_CHECKPOINT_INTERVAL_MS="${EXTERNAL_CHECKPOINT_INTERVAL_MS:-30000}"
+    export EXTERNAL_CHECKPOINT_TIMEOUT_MS="${EXTERNAL_CHECKPOINT_TIMEOUT_MS:-60000}"
+    export EXTERNAL_INGEST_JOB_ID="${EXTERNAL_INGEST_JOB_ID:-seatunnel.external.timeseries}"
+    export EXTERNAL_INGEST_RUN_ID="${EXTERNAL_INGEST_RUN_ID:-manual-run}"
+    export EXTERNAL_INGEST_BATCH_ID="${EXTERNAL_INGEST_BATCH_ID:-batch-0}"
+    if [[ "${DESCRIBE_ONLY}" == "true" ]]; then
+      printf "  - EXTERNAL_TIMESERIES_TOPIC_PATTERN (default: %s)\\n" "${EXTERNAL_TIMESERIES_TOPIC_PATTERN}"
+      printf "  - EXTERNAL_TIMESERIES_GROUP_ID (default: %s)\\n" "${EXTERNAL_TIMESERIES_GROUP_ID}"
+      printf "  - EXTERNAL_TIMESERIES_START_MODE (default: %s)\\n" "${EXTERNAL_TIMESERIES_START_MODE}"
+      printf "  - EXTERNAL_TIMESERIES_TABLE (default: %s)\\n" "${EXTERNAL_TIMESERIES_TABLE}"
+      printf "  - EXTERNAL_ICEBERG_DB (default: %s)\\n" "${EXTERNAL_ICEBERG_DB}"
+      printf "  - EXTERNAL_WRITE_DISTRIBUTION (default: %s)\\n" "${EXTERNAL_WRITE_DISTRIBUTION}"
+      printf "  - EXTERNAL_WRITE_FORMAT (default: %s)\\n" "${EXTERNAL_WRITE_FORMAT}"
+      printf "  - EXTERNAL_CHECKPOINT_INTERVAL_MS (default: %s)\\n" "${EXTERNAL_CHECKPOINT_INTERVAL_MS}"
+      printf "  - EXTERNAL_CHECKPOINT_TIMEOUT_MS (default: %s)\\n" "${EXTERNAL_CHECKPOINT_TIMEOUT_MS}"
+      printf "  - EXTERNAL_INGEST_JOB_ID (default: %s)\\n" "${EXTERNAL_INGEST_JOB_ID}"
+      printf "  - EXTERNAL_INGEST_RUN_ID (default: %s)\\n" "${EXTERNAL_INGEST_RUN_ID}"
+      printf "  - EXTERNAL_INGEST_BATCH_ID (default: %s)\\n" "${EXTERNAL_INGEST_BATCH_ID}"
+    fi
+    ;;
+  external_series_catalog_kafka_to_iceberg)
+    REQUIRED_VARS=(
+      AURUM_KAFKA_BOOTSTRAP_SERVERS
+      AURUM_SCHEMA_REGISTRY_URL
+      ICEBERG_CATALOG_NAME
+      ICEBERG_CATALOG_TYPE
+      ICEBERG_URI
+      ICEBERG_WAREHOUSE
+      EXTERNAL_TENANT_ID
+    )
+    export EXTERNAL_SERIES_TOPIC_PATTERN="${EXTERNAL_SERIES_TOPIC_PATTERN:-aurum\\.ext\\.series_catalog\\.upsert\\.v1}"
+    export EXTERNAL_SERIES_GROUP_ID="${EXTERNAL_SERIES_GROUP_ID:-seatunnel.external.series}"
+    export EXTERNAL_SERIES_START_MODE="${EXTERNAL_SERIES_START_MODE:-latest}"
+    export EXTERNAL_SERIES_TABLE="${EXTERNAL_SERIES_TABLE:-series_catalog}"
+    export EXTERNAL_ICEBERG_DB="${EXTERNAL_ICEBERG_DB:-external}"
+    export EXTERNAL_SERIES_WRITE_DISTRIBUTION="${EXTERNAL_SERIES_WRITE_DISTRIBUTION:-hash}"
+    export EXTERNAL_SERIES_WRITE_FORMAT="${EXTERNAL_SERIES_WRITE_FORMAT:-parquet}"
+    export EXTERNAL_CHECKPOINT_INTERVAL_MS="${EXTERNAL_CHECKPOINT_INTERVAL_MS:-30000}"
+    export EXTERNAL_CHECKPOINT_TIMEOUT_MS="${EXTERNAL_CHECKPOINT_TIMEOUT_MS:-60000}"
+    export EXTERNAL_INGEST_JOB_ID="${EXTERNAL_INGEST_JOB_ID:-seatunnel.external.series}"
+    export EXTERNAL_INGEST_RUN_ID="${EXTERNAL_INGEST_RUN_ID:-manual-run}"
+    export EXTERNAL_INGEST_BATCH_ID="${EXTERNAL_INGEST_BATCH_ID:-batch-0}"
+    if [[ "${DESCRIBE_ONLY}" == "true" ]]; then
+      printf "  - EXTERNAL_SERIES_TOPIC_PATTERN (default: %s)\\n" "${EXTERNAL_SERIES_TOPIC_PATTERN}"
+      printf "  - EXTERNAL_SERIES_GROUP_ID (default: %s)\\n" "${EXTERNAL_SERIES_GROUP_ID}"
+      printf "  - EXTERNAL_SERIES_START_MODE (default: %s)\\n" "${EXTERNAL_SERIES_START_MODE}"
+      printf "  - EXTERNAL_SERIES_TABLE (default: %s)\\n" "${EXTERNAL_SERIES_TABLE}"
+      printf "  - EXTERNAL_ICEBERG_DB (default: %s)\\n" "${EXTERNAL_ICEBERG_DB}"
+      printf "  - EXTERNAL_SERIES_WRITE_DISTRIBUTION (default: %s)\\n" "${EXTERNAL_SERIES_WRITE_DISTRIBUTION}"
+      printf "  - EXTERNAL_SERIES_WRITE_FORMAT (default: %s)\\n" "${EXTERNAL_SERIES_WRITE_FORMAT}"
+      printf "  - EXTERNAL_CHECKPOINT_INTERVAL_MS (default: %s)\\n" "${EXTERNAL_CHECKPOINT_INTERVAL_MS}"
+      printf "  - EXTERNAL_CHECKPOINT_TIMEOUT_MS (default: %s)\\n" "${EXTERNAL_CHECKPOINT_TIMEOUT_MS}"
+      printf "  - EXTERNAL_INGEST_JOB_ID (default: %s)\\n" "${EXTERNAL_INGEST_JOB_ID}"
+      printf "  - EXTERNAL_INGEST_RUN_ID (default: %s)\\n" "${EXTERNAL_INGEST_RUN_ID}"
+      printf "  - EXTERNAL_INGEST_BATCH_ID (default: %s)\\n" "${EXTERNAL_INGEST_BATCH_ID}"
+    fi
+    ;;
   iso_lmp_kafka_to_iceberg)
     REQUIRED_VARS=(
       AURUM_KAFKA_BOOTSTRAP_SERVERS

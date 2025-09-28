@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+from textwrap import dedent
 
 import pytest
 
@@ -13,6 +14,7 @@ from scripts.kafka.register_schemas import (
     load_eia_subjects,
     load_schema,
     load_subject_mapping,
+    load_contract_subjects,
     put_compatibility,
     register_schema,
 )
@@ -41,6 +43,47 @@ def test_load_schema(tmp_path: Path) -> None:
 
     schema = load_schema(schema_root, "example.avsc")
     assert schema["name"] == "Foo"
+
+
+def test_load_contract_subjects(tmp_path: Path) -> None:
+    contracts_path = tmp_path / "contracts.yml"
+    contracts_path.write_text(
+        dedent(
+            """
+            defaults:
+              compatibility: BACKWARD
+            subjects:
+              - subject: foo.bar.v1-value
+                schema: foo.bar.v1.avsc
+                topic: foo.bar.v1
+            """
+        ).strip()
+        + "\n",
+        encoding="utf-8",
+    )
+
+    mapping = load_contract_subjects(contracts_path)
+    assert mapping == {"foo.bar.v1-value": "foo.bar.v1.avsc"}
+
+
+def test_load_contract_subjects_duplicate_subject(tmp_path: Path) -> None:
+    contracts_path = tmp_path / "contracts.yml"
+    contracts_path.write_text(
+        dedent(
+            """
+            subjects:
+              - subject: foo
+                schema: one.avsc
+              - subject: foo
+                schema: two.avsc
+            """
+        ).strip()
+        + "\n",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(SchemaRegistryError):
+        load_contract_subjects(contracts_path)
 
 
 def test_load_eia_subjects(tmp_path: Path) -> None:

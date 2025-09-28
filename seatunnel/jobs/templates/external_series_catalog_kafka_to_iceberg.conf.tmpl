@@ -1,0 +1,100 @@
+# External series catalog topic → Iceberg (external.series_catalog)
+#
+# Required environment variables:
+#   AURUM_KAFKA_BOOTSTRAP_SERVERS  - Kafka brokers
+#   AURUM_SCHEMA_REGISTRY_URL      - Confluent Schema Registry endpoint
+#   ICEBERG_CATALOG_NAME           - Iceberg catalog name (e.g. nessie)
+#   ICEBERG_CATALOG_TYPE           - Catalog type (nessie, hive, rest)
+#   ICEBERG_URI                    - Catalog endpoint / Hive metastore URI
+#   ICEBERG_WAREHOUSE              - Warehouse path (e.g. s3://aurum-curated/iceberg)
+#   EXTERNAL_TENANT_ID             - Tenant identifier stamped onto rows
+#
+# Optional environment variables:
+#   EXTERNAL_SERIES_TOPIC_PATTERN  - Regex pattern for topics (default aurum\\.ext\\.series_catalog\\.upsert\\.v1)
+#   EXTERNAL_SERIES_GROUP_ID       - Kafka consumer group (default seatunnel.external.series)
+#   EXTERNAL_SERIES_START_MODE     - Kafka start mode (default latest)
+#   EXTERNAL_SERIES_TABLE          - Iceberg table (default series_catalog)
+#   EXTERNAL_ICEBERG_DB            - Iceberg database/schema (default external)
+#   EXTERNAL_SERIES_WRITE_DISTRIBUTION - Iceberg write distribution (default hash)
+#   EXTERNAL_SERIES_WRITE_FORMAT   - Iceberg file format (default parquet)
+#   EXTERNAL_CHECKPOINT_INTERVAL_MS - Checkpoint interval in ms (default 30000)
+#   EXTERNAL_CHECKPOINT_TIMEOUT_MS  - Checkpoint timeout in ms (default 60000)
+#   EXTERNAL_INGEST_JOB_ID         - Ingest job identifier written to rows
+#   EXTERNAL_INGEST_RUN_ID         - Ingest run identifier written to rows
+#   EXTERNAL_INGEST_BATCH_ID       - Ingest batch identifier written to rows
+
+env {
+  job.mode = "STREAMING"
+  checkpoint.interval = ${EXTERNAL_CHECKPOINT_INTERVAL_MS}
+  checkpoint.timeout = ${EXTERNAL_CHECKPOINT_TIMEOUT_MS}
+  checkpoint.mode = "EXACTLY_ONCE"
+}
+
+source {
+  Kafka {
+    bootstrap.servers = "${AURUM_KAFKA_BOOTSTRAP_SERVERS}"
+    pattern = "${EXTERNAL_SERIES_TOPIC_PATTERN}"
+    format = "avro"
+    start_mode = "${EXTERNAL_SERIES_START_MODE}"
+    consumer.group = "${EXTERNAL_SERIES_GROUP_ID}"
+    commit_on_checkpoint = true
+    avro {
+      schema.registry.url = "${AURUM_SCHEMA_REGISTRY_URL}"
+    }
+    result_table_name = "external_series_raw"
+  }
+}
+
+transform {
+  Sql {
+    source_table_name = "external_series_raw"
+    result_table_name = "external_series_enriched"
+    query = """
+      SELECT
+        '${EXTERNAL_TENANT_ID}' AS tenant_id,
+        provider,
+        series_id,
+        dataset_code,
+        title,
+        description,
+        unit_code,
+        frequency_code,
+        geo_id,
+        status,
+        category,
+        source_url,
+        notes,
+        CASE WHEN start_ts IS NULL THEN NULL ELSE TO_TIMESTAMP(start_ts / 1000000.0) END AS start_ts,
+        CASE WHEN end_ts IS NULL THEN NULL ELSE TO_TIMESTAMP(end_ts / 1000000.0) END AS end_ts,
+        CASE WHEN last_observation_ts IS NULL THEN NULL ELSE TO_TIMESTAMP(last_observation_ts / 1000000.0) END AS last_observation_ts,
+        CASE WHEN asof_date IS NULL THEN NULL ELSE (DATE '1970-01-01' + asof_date * INTERVAL '1' DAY) END AS asof_date,
+        tags,
+        CASE WHEN metadata IS NULL THEN NULL ELSE CAST(metadata AS STRING) END AS metadata,
+        version,
+        CASE WHEN created_at IS NULL THEN CURRENT_TIMESTAMP ELSE TO_TIMESTAMP(created_at / 1000000.0) END AS created_at,
+        CASE WHEN updated_at IS NULL THEN CURRENT_TIMESTAMP ELSE TO_TIMESTAMP(updated_at / 1000000.0) END AS updated_at,
+        TO_TIMESTAMP(ingest_ts / 1000000.0) AS ingest_ts,
+        '${EXTERNAL_INGEST_JOB_ID}' AS ingest_job_id,
+        '${EXTERNAL_INGEST_RUN_ID}' AS ingest_run_id,
+        '${EXTERNAL_INGEST_BATCH_ID}' AS ingest_batch_id
+      FROM external_series_raw
+    """
+  }
+}
+
+sink {
+  Iceberg {
+    plugin_input = "external_series_enriched"
+    catalog_name = "${ICEBERG_CATALOG_NAME}"
+    catalog_type = "${ICEBERG_CATALOG_TYPE}"
+    uri = "${ICEBERG_URI}"
+    warehouse = "${ICEBERG_WAREHOUSE}"
+    database = "${EXTERNAL_ICEBERG_DB}"
+    table = "${EXTERNAL_SERIES_TABLE}"
+    write.distribution-mode = "${EXTERNAL_SERIES_WRITE_DISTRIBUTION}"
+    format = "${EXTERNAL_SERIES_WRITE_FORMAT}"
+    upsert = true
+    primary_keys = ["tenant_id", "provider", "series_id"]
+  }
+}
+

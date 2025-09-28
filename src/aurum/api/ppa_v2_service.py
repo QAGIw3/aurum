@@ -6,11 +6,13 @@ Contracts are sourced from the in-memory/DB-backed ScenarioStore. Valuations are
 queried from Trino via existing helpers.
 """
 
-from datetime import date
+import math
+from datetime import date, datetime
+from decimal import Decimal
 from typing import Any, Dict, List, Optional
 
 from .config import TrinoConfig
-from .services.ppa_service import PpaService, coerce_float
+from .services.ppa_service import PpaService, normalize_currency_code
 from .state import get_settings
 
 
@@ -59,14 +61,61 @@ class PpaV2Service:
         )
 
         def _format_date(value: Any) -> Optional[str]:
-            if isinstance(value, date):
-                return value.isoformat()
             if value is None:
                 return None
-            return str(value)
+            if isinstance(value, datetime):
+                return value.date().isoformat()
+            if isinstance(value, date):
+                return value.isoformat()
+            if isinstance(value, str):
+                text = value.strip()
+                if not text:
+                    return None
+                normalised = text[:-1] + "+00:00" if text.endswith("Z") else text
+                try:
+                    return datetime.fromisoformat(normalised).date().isoformat()
+                except ValueError:
+                    try:
+                        return date.fromisoformat(text).isoformat()
+                    except ValueError:
+                        return None
+            return None
 
-        def _maybe_float(value: Any) -> Optional[float]:
-            return coerce_float(value) if value is not None else None
+        def _optional_float(value: Any) -> Optional[float]:
+            if value is None:
+                return None
+            if isinstance(value, Decimal):
+                result = float(value)
+            elif isinstance(value, str):
+                text = value.strip()
+                if not text:
+                    return None
+                try:
+                    result = float(text)
+                except ValueError:
+                    return None
+            else:
+                try:
+                    result = float(value)
+                except (TypeError, ValueError):
+                    return None
+            if math.isnan(result) or math.isinf(result):
+                return None
+            return float(result)
+
+        def _present_value(row: Dict[str, Any]) -> Optional[float]:
+            for key in ("npv", "value"):
+                candidate = _optional_float(row.get(key))
+                if candidate is not None:
+                    return candidate
+            return None
+
+        def _normalise_currency(row: Dict[str, Any]) -> str:
+            for key in ("metric_currency", "currency", "metric_unit"):
+                candidate = normalize_currency_code(row.get(key))
+                if candidate and len(candidate) == 3 and candidate.isalpha():
+                    return candidate
+            return "USD"
 
         return [
             {
@@ -74,14 +123,10 @@ class PpaV2Service:
                 "period_start": _format_date(row.get("period_start")),
                 "period_end": _format_date(row.get("period_end")),
                 "metric": row.get("metric"),
-                "present_value": (
-                    coerce_float(row.get("npv"))
-                    if row.get("npv") is not None
-                    else _maybe_float(row.get("value"))
-                ),
-                "cashflow": _maybe_float(row.get("cashflow")),
-                "irr": _maybe_float(row.get("irr")),
-                "currency": row.get("metric_currency") or "USD",
+                "present_value": _present_value(row),
+                "cashflow": _optional_float(row.get("cashflow")),
+                "irr": _optional_float(row.get("irr")),
+                "currency": _normalise_currency(row),
             }
             for row in rows
         ]

@@ -288,3 +288,50 @@ models:
         description: "When analytics were generated"
         tests:
           - not_null
+- name: mart_scenario_overview
+  description: Scenario catalog summarizing metadata, run performance, and output freshness for API consumption.
+  tests:
+  - unique_combination:
+      combination_of_columns:
+      - tenant_id
+      - scenario_id
+  columns:
+  - name: scenario_id
+    description: Scenario identifier.
+    tests:
+    - not_null
+  - name: tenant_id
+    description: Owning tenant identifier.
+    tests:
+    - not_null
+  - name: scenario_status
+    description: Normalized lifecycle status for the scenario.
+    tests:
+    - not_null
+    - accepted_values:
+        values: [active, draft, archived, running]
+  - name: total_run_count
+    description: Total execution runs observed for the scenario.
+    tests:
+    - not_null
+  - name: completed_run_count
+    description: Count of successful runs.
+  - name: failed_run_count
+    description: Count of failed runs.
+  - name: inflight_run_count
+    description: Count of running or queued runs.
+  - name: latest_run_status
+    description: Status of the most recent run.
+    tests:
+    - accepted_values:
+        values: [completed, failed, running, queued, success, error]
+  - name: latest_output_asof
+    description: Most recent scenario output as-of date when available.
+  - name: has_outputs
+    description: Flag indicating scenario has at least one output row.
+    tests:
+    - not_null
+  - name: mart_generated_at
+    description: Timestamp when the mart row was produced.
+    tests:
+    - not_null

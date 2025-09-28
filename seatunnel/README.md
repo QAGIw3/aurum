@@ -71,6 +71,8 @@ This exposes Vault at `http://localhost:8200` with root token `aurum-dev-token` 
 - `noaa_ghcnd_to_kafka.conf.tmpl`: Fetches NOAA GHCND daily observations over HTTP, enriches them with station metadata from the `/stations` endpoint, and publishes Avro records (Confluent framing) to Kafka aligned with `aurum.ref.noaa.weather.v1`. Optional filters such as `locationid` or `datatypeid` can be added to the rendered config before execution.
 - `eia_series_to_kafka.conf.tmpl`: Calls the EIA v2 API for a series path and emits Avro records matching `aurum.ref.eia.series.v1`. Provide `EIA_SERIES_PATH`, `EIA_SERIES_ID`, and `EIA_FREQUENCY`; adjust pagination or filters by editing the rendered configuration before running the job.
 - `fred_series_to_kafka.conf.tmpl`: Pulls observations for a given FRED series ID and emits Avro records aligned with `aurum.ref.fred.series.v1`. Set `FRED_SERIES_ID`, frequency, and seasonal adjustment; the API key is read from Vault.
+- `external_series_catalog_kafka_to_iceberg.conf.tmpl`: Streams `aurum.ext.series_catalog.upsert.v1` updates into `iceberg.external.series_catalog` with upserts keyed by tenant/provider/series. Configure Iceberg catalog credentials plus `EXTERNAL_TENANT_ID`; checkpoint defaults live in `seatunnel/checkpoints/external_lake_checkpoint.properties`.
+- `external_timeseries_kafka_to_iceberg.conf.tmpl`: Streams `aurum.ext.timeseries.obs.v1` observations into `iceberg.external.timeseries_observation` with exactly-once checkpoints. Set Kafka/Schema Registry/Iceberg coordinates and `EXTERNAL_TENANT_ID`; overrides for consumer group, table name, and checkpoint interval are exposed via environment variables.
 - `pjm_lmp_to_kafka.conf.tmpl`: Queries PJM Data Miner for day-ahead LMPs and emits Avro records matching `aurum.iso.*.lmp.v1`. Configure interval start/end and the Data Miner token via Vault.
 - `iso_lmp_kafka_to_timescale.conf.tmpl`: Reads all ISO LMP Kafka topics (default pattern `aurum\\.iso\\..*\\.lmp\\.v1`, covering PJM/CAISO/ERCOT/MISO/ISONE/SPP) and writes rows into TimescaleDB via JDBC. Configure the topic pattern and Timescale connection environment variables before execution.
 - Not using SeaTunnel for CAISO/ ERCOT yet? Helper scripts `scripts/ingest/caiso_prc_lmp_to_kafka.py`, `scripts/ingest/ercot_mis_to_kafka.py`, and `scripts/ingest/miso_rtdb_to_kafka.py` normalize the OASIS/MIS/RTDB payloads and publish Avro records to Kafka.
@@ -104,6 +106,12 @@ Add additional job templates following the same pattern and extend `scripts/seat
    - Run: `AURUM_TIMESCALE_JDBC_URL=jdbc:postgresql://timescale:5432/timeseries AURUM_TIMESCALE_USER=ts AURUM_TIMESCALE_PASSWORD=ts AURUM_SCHEMA_REGISTRY_URL=http://schema-registry:8081 AURUM_KAFKA_BOOTSTRAP_SERVERS=broker:29092 make noaa-timescale-run`
 
 Rendered configs are placed under `seatunnel/jobs/generated` and are git-ignored.
+
+## Incremental checkpoint profiles
+
+The external Kafka→Iceberg jobs require durable checkpoints to resume from the last committed offsets. A starter profile is available at `seatunnel/checkpoints/external_lake_checkpoint.properties`; copy it to your runtime environment (or reference it via config maps) and adjust the HDFS path/user per deployment.
+
+For consistency, render production-ready configs into `seatunnel/run/` (see `seatunnel/run/README.md`) alongside the checkpoint profile before launching the jobs.
 
 ## EIA/FRED/CPI → Timescale quickstart
 

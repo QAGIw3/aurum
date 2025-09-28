@@ -1,0 +1,38 @@
+version: 2
+
+models:
+  - name: int_scenario_run_metrics
+    description: Aggregated scenario run metrics including latest run attributes for downstream marts.
+    tests:
+      - unique:
+          column_name: scenario_id
+    columns:
+      - name: scenario_id
+        description: Scenario identifier.
+        tests:
+          - not_null
+          - unique
+      - name: tenant_id
+        description: Tenant owning the scenario.
+        tests:
+          - not_null
+      - name: total_run_count
+        description: Total runs observed for the scenario.
+        tests:
+          - not_null
+      - name: completed_run_count
+        description: Count of successful runs.
+      - name: failed_run_count
+        description: Count of failed runs.
+      - name: inflight_run_count
+        description: Count of running or queued runs.
+      - name: latest_run_id
+        description: Identifier for the most recent run.
+      - name: latest_run_status
+        description: Status of the most recent run.
+      - name: latest_run_started_at
+        description: Start timestamp for the most recent run.
+      - name: latest_run_completed_at
+        description: Completion timestamp for the most recent run when available.
+      - name: latest_run_duration_seconds
+        description: Duration in seconds for the latest run when completed.

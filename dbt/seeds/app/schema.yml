@@ -1,0 +1,63 @@
+version: 2
+
+seeds:
+  - name: app_scenarios
+    description: Scenario definitions persisted in the application metadata store.
+    columns:
+      - name: id
+        description: Scenario primary key.
+        tests:
+          - not_null
+          - unique
+      - name: tenant_id
+        description: Tenant owning the scenario.
+        tests:
+          - not_null
+      - name: status
+        description: Current lifecycle state for the scenario.
+        tests:
+          - not_null
+          - accepted_values:
+              values: [active, draft, archived]
+      - name: created_at
+        description: Scenario creation timestamp.
+        tests:
+          - not_null
+      - name: updated_at
+        description: Last scenario update timestamp.
+        tests:
+          - not_null
+  - name: app_scenario_runs
+    description: Scenario execution runs tracked for auditing and API responses.
+    columns:
+      - name: id
+        description: Scenario run identifier.
+        tests:
+          - not_null
+          - unique
+      - name: scenario_id
+        description: Scenario owning the run.
+        tests:
+          - not_null
+          - relationships:
+              to: ref('app_scenarios')
+              field: scenario_id
+              to_field: id
+      - name: tenant_id
+        description: Tenant owning the scenario run.
+        tests:
+          - not_null
+      - name: status
+        description: Lifecycle status for the scenario run.
+        tests:
+          - not_null
+          - accepted_values:
+              values: [completed, failed, running, queued]
+      - name: started_at
+        description: Run start timestamp.
+        tests:
+          - not_null
+      - name: created_at
+        description: Run creation timestamp.
+        tests:
+          - not_null

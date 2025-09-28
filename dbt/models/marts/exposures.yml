@@ -57,3 +57,83 @@ exposures:
     email: data-platform@aurum.local
   meta:
     publish_path: docs/metric_catalog.md
+- name: api_scenarios_v1
+  type: application
+  maturity: high
+  url: https://api.aurum.local/v1/scenarios
+  description: Scenario listing endpoint used by external clients for discovery and pagination.
+  depends_on:
+  - ref('mart_scenario_overview')
+  - ref('int_scenario_run_metrics')
+  - ref('stg_scenarios')
+  tags:
+  - api
+  - scenarios
+  owner:
+    name: API Platform
+    email: platform@aurum.local
+  meta:
+    methods:
+    - GET
+    - HEAD
+    domain: scenarios
+    service: aurum-api
+- name: api_scenario_runs_v1
+  type: application
+  maturity: medium
+  url: https://api.aurum.local/v1/scenarios/{scenario_id}/runs
+  description: Provides paginated scenario run history to API consumers.
+  depends_on:
+  - ref('stg_scenario_runs')
+  - ref('int_scenario_run_metrics')
+  tags:
+  - api
+  - scenarios
+  owner:
+    name: API Platform
+    email: platform@aurum.local
+  meta:
+    methods:
+    - GET
+    domain: scenarios
+    service: aurum-api
+- name: api_ppa_valuations_v2
+  type: application
+  maturity: medium
+  url: https://api.aurum.local/v2/ppa/valuations
+  description: Valuation endpoint combining scenario outputs with PPA cashflow metrics.
+  depends_on:
+  - ref('mart_ppa_valuation')
+  - ref('mart_scenario_output')
+  - ref('mart_scenario_overview')
+  tags:
+  - api
+  - valuations
+  owner:
+    name: API Platform
+    email: platform@aurum.local
+  meta:
+    methods:
+    - GET
+    domain: ppa
+    service: aurum-api
+- name: api_curve_observations_v1
+  type: application
+  maturity: high
+  url: https://api.aurum.local/v1/curves
+  description: Legacy curves endpoint serving market observations backed by Iceberg publishing models.
+  depends_on:
+  - ref('publish_curve_observation')
+  - ref('fct_curve_observation')
+  tags:
+  - api
+  - curves
+  owner:
+    name: API Platform
+    email: platform@aurum.local
+  meta:
+    methods:
+    - GET
+    - HEAD
+    domain: curves
+    service: aurum-api

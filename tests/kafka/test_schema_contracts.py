@@ -8,11 +8,12 @@ from scripts.kafka import register_schemas as schemas
 
 SCHEMA_ROOT = Path("kafka/schemas")
 SUBJECT_FILE = SCHEMA_ROOT / "subjects.json"
+CONTRACT_FILE = SCHEMA_ROOT / "contracts.yml"
 EIA_CONFIG = Path("config/eia_ingest_datasets.json")
 
 
 def test_subject_contracts_match_mapping():
-    mapping = schemas.load_subject_mapping(SUBJECT_FILE)
+    mapping = schemas.load_contract_subjects(CONTRACT_FILE)
     compatibility = schemas.normalize_compatibility("backward")
     validated = schemas.validate_contracts(mapping, SCHEMA_ROOT, compatibility)
 
@@ -21,12 +22,19 @@ def test_subject_contracts_match_mapping():
 
 
 def test_subject_contracts_include_eia_config():
-    mapping = schemas.load_subject_mapping(SUBJECT_FILE)
+    mapping = schemas.load_contract_subjects(CONTRACT_FILE)
     mapping.update(schemas.load_eia_subjects(EIA_CONFIG))
     compatibility = schemas.normalize_compatibility("BACKWARD")
 
     validated = schemas.validate_contracts(mapping, SCHEMA_ROOT, compatibility)
     assert set(mapping) == set(validated)
+
+
+def test_subject_mapping_json_aligns_with_contracts():
+    json_mapping = schemas.load_subject_mapping(SUBJECT_FILE)
+    contract_mapping = schemas.load_contract_subjects(CONTRACT_FILE)
+
+    assert json_mapping == contract_mapping
 
 
 def test_all_schemas_have_contracts_and_required_fields():
@@ -44,7 +52,7 @@ def test_all_schemas_have_contracts_and_required_fields():
 
 
 def test_subject_names_conform_to_pattern():
-    mapping = schemas.load_subject_mapping(SUBJECT_FILE)
+    mapping = schemas.load_contract_subjects(CONTRACT_FILE)
     for subject in mapping:
         schemas.validate_subject_name(subject)
 

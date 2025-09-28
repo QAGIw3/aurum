@@ -23,6 +23,21 @@ class RateLimitExceededException(Exception):
         super().__init__(f"Rate limit {limit_name} exceeded")
 
 
+class RateLimitExceeded(RateLimitExceededException):
+    """Backwards-compatible alias for exceeded rate limit errors."""
+
+    def __init__(self, limit_name: str, retry_after: Optional[int] = None):
+        super().__init__(limit_name=limit_name, retry_after=retry_after)
+
+
+__all__ = [
+    "ServiceUnavailableException",
+    "RateLimitExceededException",
+    "RateLimitExceeded",
+    "QuotaExceededException",
+]
+
+
 class QuotaExceededException(Exception):
     """Exception raised when quota is exceeded."""
 

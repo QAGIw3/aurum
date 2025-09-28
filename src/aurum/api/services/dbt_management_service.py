@@ -16,21 +16,35 @@ import csv
 import json
 import logging
 import os
+import re
 import subprocess
 import time
-from collections import defaultdict
+from collections import Counter, defaultdict
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Sequence, Set, Tuple, Union
+from typing import Any, Callable, Dict, List, Optional, Sequence, Set, Tuple, Union
 from uuid import uuid4
 
 import yaml
 from pydantic import BaseModel, Field
 
+from aurum.core import AurumSettings, get_settings
+from aurum.performance.warehouse import (
+    ClickHouseTableConfig,
+    TimescaleHypertableConfig,
+    WarehouseMaintenanceConfig,
+    WarehouseMaintenanceCoordinator,
+)
 from ..telemetry.context import get_request_id, get_tenant_id, log_structured
 from ..observability.telemetry_facade import get_telemetry_facade, MetricCategory
 from ..cache.consolidated_manager import get_unified_cache_manager
+from ..dao.trino_async_dao import TrinoAsyncDao
+from libs.storage.timescale import TimescaleSeriesRepo
+from libs.storage.timescale_ops import TimescalePerformanceOps
+
+
+_CATALOG_NAME_PATTERN = re.compile(r"^[A-Za-z0-9_]+$")
 
 
 class DBTModel(BaseModel):
@@ -118,6 +132,57 @@ class TestSchedule(BaseModel):
     environment: str = "production"
 
 
+class IcebergColumnDefinition(BaseModel):
+    """Column specification for Iceberg table creation via Trino."""
+
+    name: str
+    data_type: str
+    nullable: bool = True
+    comment: Optional[str] = None
+
+
+class IcebergPartitionField(BaseModel):
+    """Partition field definition for Iceberg tables."""
+
+    column: str
+    transform: str = "identity"
+    comment: Optional[str] = None
+
+    def formatted(self) -> str:
+        """Return the formatted partition specification used by Trino."""
+        transform = (self.transform or "identity").strip().lower()
+        column = self.column.strip()
+        if transform in {"identity", ""}:
+            return f"'{column}'"
+        return f"'{transform}({column})'"
+
+
+class TrinoQueryExpectation(BaseModel):
+    """Expectation for a validation query executed against Trino."""
+
+    query: str
+    expected_rows: List[Dict[str, Any]] = Field(default_factory=list)
+    order_sensitive: bool = False
+    description: Optional[str] = None
+
+
+class IcebergTableDefinition(BaseModel):
+    """Definition of an Iceberg table to be created via Trino."""
+
+    catalog: str = "iceberg"
+    schema: str
+    table_name: str
+    columns: List[IcebergColumnDefinition]
+    partition_fields: List[IcebergPartitionField] = Field(default_factory=list)
+    table_properties: Dict[str, Any] = Field(default_factory=dict)
+    comment: Optional[str] = None
+    if_not_exists: bool = True
+
+    @property
+    def fully_qualified_name(self) -> str:
+        """Return catalog.schema.table representation."""
+        return f"{self.catalog}.{self.schema}.{self.table_name}"
+
 class DBTManagementService:
     """DBT Model Management and Data Mart Service."""
 
@@ -125,6 +190,8 @@ class DBTManagementService:
         """Initialize DBT management service."""
         self.cache_manager = get_unified_cache_manager()
         self.telemetry = get_telemetry_facade()
+        self._trino_dao_factory: Callable[[], TrinoAsyncDao] = TrinoAsyncDao
+        self._trino_dao: Optional[TrinoAsyncDao] = None
 
         # DBT state
         self._models: Dict[str, DBTModel] = {}
@@ -166,6 +233,324 @@ class DBTManagementService:
 
         except Exception as e:
             self.telemetry.error("DBT project loading failed", error=str(e))
+
+    def _get_trino_dao(self) -> TrinoAsyncDao:
+        """Lazily instantiate and return the Trino async DAO."""
+        if self._trino_dao is None:
+            self._trino_dao = self._trino_dao_factory()
+        return self._trino_dao
+
+    @staticmethod
+    def _quote_identifier(identifier: str) -> str:
+        """Quote an identifier for Trino SQL statements."""
+        value = identifier.strip()
+        if not value:
+            raise ValueError("Identifier cannot be empty")
+        escaped = value.replace('"', '""')
+        return f'"{escaped}"'
+
+    @staticmethod
+    def _format_literal(value: Any) -> str:
+        """Format a literal value for inclusion in Trino SQL."""
+        if isinstance(value, str):
+            escaped = value.replace("'", "''")
+            return f"'{escaped}'"
+        if isinstance(value, bool):
+            return "true" if value else "false"
+        if value is None:
+            return "NULL"
+        if isinstance(value, (int, float)):
+            return str(value)
+        return f"'{json.dumps(value)}'"
+
+    @staticmethod
+    def _normalize_catalog_name(catalog: str) -> str:
+        """Validate and normalize the catalog name."""
+        value = catalog.strip()
+        if not value:
+            raise ValueError("Catalog name cannot be empty")
+        if not _CATALOG_NAME_PATTERN.match(value):
+            raise ValueError(f"Invalid catalog name: {catalog}")
+        return value
+
+    @classmethod
+    def _table_reference(cls, definition: IcebergTableDefinition) -> str:
+        """Return a fully qualified table reference with proper quoting."""
+        catalog = cls._normalize_catalog_name(definition.catalog)
+        schema = cls._quote_identifier(definition.schema)
+        table = cls._quote_identifier(definition.table_name)
+        return f"{catalog}.{schema}.{table}"
+
+    @classmethod
+    def _build_create_table_ddl(cls, definition: IcebergTableDefinition) -> str:
+        """Construct a CREATE TABLE statement for an Iceberg table."""
+        if not definition.columns:
+            raise ValueError("Iceberg table definition must include at least one column")
+
+        table_ref = cls._table_reference(definition)
+        column_lines: List[str] = []
+        for column in definition.columns:
+            col_name = cls._quote_identifier(column.name)
+            data_type = column.data_type.strip()
+            if not data_type:
+                raise ValueError(f"Column {column.name} must specify a data type")
+            null_clause = "" if column.nullable else " NOT NULL"
+            comment_clause = (
+                f" COMMENT {cls._format_literal(column.comment)}"
+                if column.comment
+                else ""
+            )
+            column_lines.append(f"    {col_name} {data_type}{null_clause}{comment_clause}")
+
+        columns_section = ",\n".join(column_lines)
+        comment_clause = (
+            f"COMMENT {cls._format_literal(definition.comment)}"
+            if definition.comment
+            else ""
+        )
+
+        properties: Dict[str, Any] = {"format": "ICEBERG"}
+        properties.update(definition.table_properties)
+
+        if definition.partition_fields:
+            partition_expr = ", ".join(
+                field.formatted() for field in definition.partition_fields
+            )
+            properties["partitioning"] = f"ARRAY[{partition_expr}]"
+
+        property_lines = []
+        for key, value in properties.items():
+            if key == "partitioning":
+                property_lines.append(f"    {key} = {value}")
+            else:
+                property_lines.append(f"    {key} = {cls._format_literal(value)}")
+
+        properties_section = ",\n".join(property_lines)
+
+        create_clause = "CREATE TABLE "
+        if definition.if_not_exists:
+            create_clause += "IF NOT EXISTS "
+        create_clause += table_ref
+
+        ddl_lines = [
+            f"{create_clause}",
+            f"(\n{columns_section}\n)",
+        ]
+        if comment_clause:
+            ddl_lines.append(comment_clause)
+        ddl_lines.append("WITH (")
+        ddl_lines.append(properties_section)
+        ddl_lines.append(")")
+
+        return "\n".join(ddl_lines)
+
+
+    async def _validate_table_schema(
+        self,
+        dao: TrinoAsyncDao,
+        definition: IcebergTableDefinition,
+    ) -> Dict[str, Any]:
+        """Verify that the created table columns match the definition."""
+
+        describe_query = f"DESCRIBE {self._table_reference(definition)}"
+        rows = await dao.execute_query(describe_query)
+
+        actual_columns: Dict[str, Dict[str, Any]] = {}
+        for row in rows:
+            normalized = {str(k).lower(): v for k, v in row.items()}
+            column_name = normalized.get("column") or normalized.get("column_name")
+            if not column_name:
+                continue
+            column_name = str(column_name)
+            if column_name.startswith("$") or column_name.lower().startswith("partition"):
+                continue
+            data_type = normalized.get("type") or normalized.get("data_type")
+            actual_columns[column_name] = {
+                "type": str(data_type).strip() if data_type is not None else None,
+            }
+
+        expected_order = [column.name for column in definition.columns]
+        expected_types = {
+            column.name: column.data_type.strip()
+            for column in definition.columns
+        }
+
+        missing_columns = [name for name in expected_order if name not in actual_columns]
+        unexpected_columns = sorted(set(actual_columns.keys()) - set(expected_order))
+
+        type_mismatches: List[Dict[str, str]] = []
+        for name in expected_order:
+            if name in missing_columns:
+                continue
+            actual_type = (actual_columns.get(name, {}).get("type") or "").lower()
+            expected_type = expected_types[name].lower()
+            if actual_type != expected_type:
+                type_mismatches.append({
+                    "column": name,
+                    "expected": expected_types[name],
+                    "actual": actual_columns.get(name, {}).get("type"),
+                })
+
+        return {
+            "missing_columns": missing_columns,
+            "unexpected_columns": unexpected_columns,
+            "type_mismatches": type_mismatches,
+        }
+
+    async def _validate_table_partitions(
+        self,
+        dao: TrinoAsyncDao,
+        definition: IcebergTableDefinition,
+    ) -> Dict[str, Any]:
+        """Ensure the table partition spec aligns with the definition."""
+
+        show_query = f"SHOW CREATE TABLE {self._table_reference(definition)}"
+        rows = await dao.execute_query(show_query)
+        ddl_text = None
+        if rows:
+            first_row = rows[0]
+            if isinstance(first_row, dict):
+                ddl_text = next(iter(first_row.values()), None)
+            elif isinstance(first_row, (list, tuple)):  # pragma: no cover - safety
+                ddl_text = first_row[0] if first_row else None
+
+        if ddl_text is None:
+            return {
+                "missing_partition_clauses": [field.formatted() for field in definition.partition_fields],
+                "ddl_preview": None,
+                "status": "error",
+            }
+
+        ddl_lower = str(ddl_text).lower()
+        missing = []
+        for field in definition.partition_fields:
+            token = field.formatted().lower()
+            if token not in ddl_lower:
+                missing.append(field.formatted())
+
+        return {
+            "missing_partition_clauses": missing,
+            "ddl_preview": str(ddl_text)[:500],
+            "status": "success" if not missing else "issues",
+        }
+
+    @staticmethod
+    def _schema_validation_passed(validation: Dict[str, Any]) -> bool:
+        return not (
+            validation.get("missing_columns")
+            or validation.get("unexpected_columns")
+            or validation.get("type_mismatches")
+        )
+
+    @staticmethod
+    def _partition_validation_passed(validation: Dict[str, Any]) -> bool:
+        if validation.get("status") == "error":
+            return False
+        return not validation.get("missing_partition_clauses")
+
+    @staticmethod
+    def _rows_to_counter(rows: Sequence[Dict[str, Any]]) -> Counter:
+        serialized = [json.dumps(row, sort_keys=True, default=str) for row in rows]
+        return Counter(serialized)
+
+    @classmethod
+    def _rows_match(
+        cls,
+        actual: Sequence[Dict[str, Any]],
+        expected: Sequence[Dict[str, Any]],
+        order_sensitive: bool,
+    ) -> bool:
+        if order_sensitive:
+            if len(actual) != len(expected):
+                return False
+            return all(a == b for a, b in zip(actual, expected))
+        return cls._rows_to_counter(actual) == cls._rows_to_counter(expected)
+
+    @classmethod
+    def _row_diff(
+        cls,
+        actual: Sequence[Dict[str, Any]],
+        expected: Sequence[Dict[str, Any]],
+        limit: int = 5,
+    ) -> List[Dict[str, Any]]:
+        actual_counter = cls._rows_to_counter(actual)
+        expected_counter = cls._rows_to_counter(expected)
+        differences: List[Dict[str, Any]] = []
+
+        for key, expected_count in expected_counter.items():
+            actual_count = actual_counter.get(key, 0)
+            if expected_count > actual_count:
+                differences.append({
+                    "row": json.loads(key),
+                    "missing": expected_count - actual_count,
+                })
+
+        for key, actual_count in actual_counter.items():
+            expected_count = expected_counter.get(key, 0)
+            if actual_count > expected_count:
+                differences.append({
+                    "row": json.loads(key),
+                    "unexpected": actual_count - expected_count,
+                })
+
+        return differences[:limit]
+
+    async def _run_query_expectations(
+        self,
+        dao: TrinoAsyncDao,
+        expectations: Sequence[TrinoQueryExpectation],
+    ) -> Dict[str, Any]:
+        """Execute validation queries and compare the results."""
+
+        results: List[Dict[str, Any]] = []
+        overall_success = True
+
+        for expectation in expectations:
+            entry: Dict[str, Any] = {
+                "query": expectation.query,
+                "description": expectation.description,
+                "order_sensitive": expectation.order_sensitive,
+            }
+            try:
+                rows = await dao.execute_query(expectation.query)
+                entry["actual_row_count"] = len(rows)
+                entry["expected_row_count"] = len(expectation.expected_rows)
+                match = self._rows_match(rows, expectation.expected_rows, expectation.order_sensitive)
+                entry["success"] = match
+                if not match:
+                    overall_success = False
+                    entry["differences"] = self._row_diff(
+                        rows,
+                        expectation.expected_rows,
+                    )
+            except Exception as exc:  # pragma: no cover - defensive
+                overall_success = False
+                entry["success"] = False
+                entry["error"] = str(exc)
+
+            results.append(entry)
+
+        return {
+            "success": overall_success,
+            "results": results,
+        }
+
+    async def _ensure_lake_branch(
+        self,
+        repo: str,
+        branch: str,
+        base_branch: str,
+    ) -> None:
+        """Ensure a lakeFS branch exists before provisioning tables."""
+
+        def _ensure_branch():
+            from aurum.lakefs_client import LakeFSClient
+
+            client = LakeFSClient()
+            client.create_branch(repo, branch, base_branch)
+
+        loop = asyncio.get_running_loop()
+        await loop.run_in_executor(None, _ensure_branch)
 
     def _discover_models(self) -> None:
         """Discover DBT models from filesystem."""
@@ -373,6 +758,278 @@ class DBTManagementService:
             "stderr": result.get("stderr"),
             "command": result.get("command"),
         }
+
+    async def configure_timeseries_retention(
+        self,
+        *,
+        raw_retention_days: int = 180,
+        hourly_retention_days: int = 365,
+        daily_retention_days: int = 730,
+        clickhouse_raw_ttl_days: int = 90,
+        clickhouse_rollup_ttl_days: int = 365,
+    ) -> Dict[str, Any]:
+        """Ensure TimescaleDB hypertables and ClickHouse partitions honor retention policies."""
+
+        try:
+            settings = get_settings()
+        except RuntimeError:
+            settings = AurumSettings()
+
+        timescale_repo: Optional[TimescaleSeriesRepo] = None
+        timescale_summary: Dict[str, Any]
+
+        try:
+            timescale_repo = TimescaleSeriesRepo(settings.database)
+            ops = TimescalePerformanceOps(timescale_repo)
+
+            hypertables = await ops.ensure_hypertables()
+            compression = await ops.configure_compression()
+            aggregates = await ops.create_continuous_aggregates()
+            retention = await ops.configure_retention(
+                raw_retention_days=raw_retention_days,
+                aggregate_retention_days={
+                    "hourly_price_summary": hourly_retention_days,
+                    "daily_price_summary": daily_retention_days,
+                },
+            )
+            stats = await ops.get_hypertable_stats()
+
+            timescale_summary = {
+                "status": "success",
+                "hypertables": hypertables,
+                "compression": compression,
+                "continuous_aggregates": aggregates,
+                "retention": retention,
+                "stats": stats,
+            }
+
+        except Exception as exc:
+            timescale_summary = {
+                "status": "error",
+                "error": str(exc),
+            }
+            self.telemetry.error(
+                "timescale.retention.configure.failed",
+                error=str(exc),
+                request_id=get_request_id(),
+            )
+        finally:
+            if timescale_repo is not None:
+                await timescale_repo.close()
+
+        maintenance_summary: Dict[str, Any] = {}
+        coordinator: Optional[WarehouseMaintenanceCoordinator] = None
+
+        maintenance_config = WarehouseMaintenanceConfig(
+            timescale_tables=(
+                TimescaleHypertableConfig(
+                    name="public.iso_lmp_unified",
+                    compress_after=timedelta(days=7),
+                    retention=timedelta(days=raw_retention_days),
+                ),
+            ),
+            clickhouse_tables=(
+                ClickHouseTableConfig(
+                    name="ops.query_metrics_raw",
+                    ttl_days=clickhouse_raw_ttl_days,
+                    timestamp_column="recorded_at",
+                ),
+                ClickHouseTableConfig(
+                    name="ops.query_metrics_hourly",
+                    ttl_days=clickhouse_rollup_ttl_days,
+                    timestamp_column="hour",
+                ),
+            ),
+            iceberg_tables=tuple(),
+        )
+
+        try:
+            coordinator = WarehouseMaintenanceCoordinator(settings, maintenance_config)
+
+            try:
+                await coordinator.run_timescale_once()
+                maintenance_summary["timescale"] = {
+                    "status": "success",
+                    "chunks_compressed": coordinator.metrics.timescale_chunks_compressed,
+                    "chunks_dropped": coordinator.metrics.timescale_chunks_dropped,
+                    "failures": coordinator.metrics.timescale_failures,
+                }
+            except Exception as exc:
+                maintenance_summary["timescale"] = {"status": "error", "error": str(exc)}
+
+            try:
+                await coordinator.run_clickhouse_once()
+                maintenance_summary["clickhouse"] = {
+                    "status": "success",
+                    "tables_optimized": coordinator.metrics.clickhouse_tables_optimized,
+                    "ttl_updates": coordinator.metrics.clickhouse_ttl_updates,
+                    "runs_skipped": coordinator.metrics.clickhouse_runs_skipped,
+                    "failures": coordinator.metrics.clickhouse_failures,
+                }
+            except Exception as exc:
+                maintenance_summary["clickhouse"] = {"status": "error", "error": str(exc)}
+
+        except Exception as exc:
+            maintenance_summary["status"] = "error"
+            maintenance_summary["error"] = str(exc)
+            self.telemetry.error(
+                "warehouse.retention.scheduler_failed",
+                error=str(exc),
+                request_id=get_request_id(),
+            )
+        finally:
+            if coordinator is not None:
+                try:
+                    await coordinator.stop()
+                except Exception as exc:
+                    self.telemetry.warning(
+                        "warehouse.retention.scheduler_stop_failed",
+                        error=str(exc),
+                        request_id=get_request_id(),
+                    )
+
+        retention_issues = (
+            timescale_summary.get("status") != "success"
+            or maintenance_summary.get("status") == "error"
+            or any(
+                isinstance(result, dict) and result.get("status") == "error"
+                for key, result in maintenance_summary.items()
+                if key in {"timescale", "clickhouse"}
+            )
+        )
+
+        overall_status = "success" if not retention_issues else "error"
+
+        self.telemetry.info(
+            "warehouse.retention.jobs.completed",
+            status=overall_status,
+            raw_retention_days=raw_retention_days,
+            hourly_retention_days=hourly_retention_days,
+            daily_retention_days=daily_retention_days,
+            clickhouse_raw_ttl_days=clickhouse_raw_ttl_days,
+            clickhouse_rollup_ttl_days=clickhouse_rollup_ttl_days,
+        )
+
+        return {
+            "status": overall_status,
+            "timescale": timescale_summary,
+            "maintenance": maintenance_summary,
+            "config": {
+                "timescale": {
+                    "raw_retention_days": raw_retention_days,
+                    "hourly_retention_days": hourly_retention_days,
+                    "daily_retention_days": daily_retention_days,
+                },
+                "clickhouse": {
+                    "raw_ttl_days": clickhouse_raw_ttl_days,
+                    "rollup_ttl_days": clickhouse_rollup_ttl_days,
+                },
+            },
+        }
+
+    async def provision_iceberg_tables(
+        self,
+        table_definitions: Sequence[IcebergTableDefinition],
+        *,
+        lake_repo: Optional[str] = None,
+        lake_branch: Optional[str] = None,
+        lake_base_branch: str = "main",
+        validation_queries: Optional[Sequence[TrinoQueryExpectation]] = None,
+    ) -> Dict[str, Any]:
+        """Create Iceberg tables via Trino and validate them with sample queries."""
+
+        if not table_definitions:
+            return {
+                "status": "noop",
+                "tables": [],
+                "validation": None,
+            }
+
+        if lake_repo and lake_branch:
+            await self._ensure_lake_branch(lake_repo, lake_branch, lake_base_branch)
+
+        dao = self._get_trino_dao()
+        table_results: List[Dict[str, Any]] = []
+
+        for definition in table_definitions:
+            table_entry: Dict[str, Any] = {
+                "catalog": definition.catalog,
+                "schema": definition.schema,
+                "table": definition.table_name,
+                "fully_qualified_name": definition.fully_qualified_name,
+            }
+            try:
+                ddl = self._build_create_table_ddl(definition)
+                table_entry["ddl"] = ddl
+                await dao.execute_query(ddl)
+
+                schema_validation = await self._validate_table_schema(dao, definition)
+                partition_validation = await self._validate_table_partitions(dao, definition)
+
+                table_entry["schema_validation"] = schema_validation
+                table_entry["partition_validation"] = partition_validation
+
+                if (
+                    self._schema_validation_passed(schema_validation)
+                    and self._partition_validation_passed(partition_validation)
+                ):
+                    table_entry["status"] = "success"
+                else:
+                    table_entry["status"] = "issues"
+
+            except Exception as exc:
+                table_entry["status"] = "error"
+                table_entry["error"] = str(exc)
+                self.telemetry.error(
+                    "Iceberg table provisioning failed",
+                    table=definition.fully_qualified_name,
+                    error=str(exc),
+                )
+
+            table_results.append(table_entry)
+
+        table_statuses = [entry.get("status") for entry in table_results]
+        has_error = any(status == "error" for status in table_statuses)
+        tables_success = all(status == "success" for status in table_statuses)
+
+        validation_summary: Optional[Dict[str, Any]] = None
+        if validation_queries:
+            validation_summary = await self._run_query_expectations(dao, validation_queries)
+
+        overall_success = tables_success and (
+            not validation_summary or validation_summary.get("success")
+        )
+
+        if has_error:
+            status = "error"
+        elif overall_success:
+            status = "success"
+        else:
+            status = "issues"
+
+        response: Dict[str, Any] = {
+            "status": status,
+            "tables": table_results,
+            "validation": validation_summary,
+        }
+
+        if lake_repo and lake_branch:
+            response["lake_branch"] = {
+                "repo": lake_repo,
+                "branch": lake_branch,
+                "base_branch": lake_base_branch,
+            }
+
+        self.telemetry.info(
+            "Iceberg tables provisioned",
+            status=status,
+            table_count=len(table_definitions),
+            validation_success=(
+                validation_summary.get("success") if validation_summary else None
+            ),
+        )
+
+        return response
 
     async def _execute_dbt_command(
         self,

@@ -1,0 +1,62 @@
+version: 2
+
+models:
+  - name: stg_scenarios
+    description: Cleaned scenario metadata from the application store with lifecycle flags for downstream marts.
+    tests:
+      - not_null:
+          column_name: scenario_id
+    columns:
+      - name: scenario_id
+        description: Primary key for the scenario record.
+        tests:
+          - not_null
+          - unique
+      - name: tenant_id
+        description: Tenant that owns the scenario.
+        tests:
+          - not_null
+      - name: scenario_status
+        description: Normalized scenario lifecycle status.
+        tests:
+          - not_null
+          - accepted_values:
+              values: [active, draft, archived, running]
+      - name: created_at
+        description: Scenario creation timestamp converted to TIMESTAMP type.
+        tests:
+          - not_null
+      - name: updated_at
+        description: Scenario update timestamp converted to TIMESTAMP type.
+        tests:
+          - not_null
+  - name: stg_scenario_runs
+    description: Scenario run audit records with normalized status, timing metadata, and helper flags.
+    columns:
+      - name: scenario_run_id
+        description: Primary key for the scenario run.
+        tests:
+          - not_null
+          - unique
+      - name: scenario_id
+        description: Scenario identifier that owns the run.
+        tests:
+          - not_null
+          - relationships:
+              to: ref('stg_scenarios')
+              field: scenario_id
+              to_field: scenario_id
+      - name: run_status
+        description: Normalized status for the run lifecycle.
+        tests:
+          - not_null
+          - accepted_values:
+              values: [completed, failed, running, queued, success, error]
+      - name: started_at
+        description: Run start timestamp.
+        tests:
+          - not_null
+      - name: created_at
+        description: Run creation timestamp.
+        tests:
+          - not_null

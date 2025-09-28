@@ -1,0 +1,4979 @@
+openapi: 3.1.0
+info:
+  title: Aurum API v2
+  version: 2.0.0
+  description: |
+    High-level OpenAPI description for the Aurum v2 surface area. This document focuses on
+    the new platform routers covering performance monitoring, dbt management, automatic
+    reforecast orchestration, the machine-learning model registry, developer workspace
+    utilities, and the enhanced PPA contracts API.
+  contact:
+    name: Aurum Platform Team
+    email: api@aurum.dev
+servers:
+- url: https://api.aurum.dev
+  description: Production
+- url: https://api.sandbox.aurum.dev
+  description: Sandbox
+security:
+- BearerAuth: []
+tags:
+- name: Performance Monitoring
+- name: DBT Management
+- name: Auto Reforecast
+- name: Model Registry
+- name: Developer Workspace
+- name: PPA
+paths:
+  /v2/performance/budgets:
+    get:
+      tags: [Performance Monitoring]
+      summary: List performance budgets
+      description: Retrieve the configured performance budgets with compliance metadata.
+      operationId: listPerformanceBudgets
+      security:
+      - BearerAuth: []
+      responses:
+        '200':
+          description: Performance budgets with compliance context.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PerformanceBudgetListResponse'
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/XRequestId'
+            X-API-Version:
+              $ref: '#/components/headers/XApiVersion'
+            Link:
+              $ref: '#/components/headers/PaginationLink'
+            ETag:
+              $ref: '#/components/headers/ETag'
+        '400':
+          $ref: '#/components/responses/BadRequestError'
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+        '403':
+          $ref: '#/components/responses/ForbiddenError'
+        '404':
+          $ref: '#/components/responses/NotFoundError'
+        '429':
+          $ref: '#/components/responses/TooManyRequestsError'
+        '500':
+          $ref: '#/components/responses/InternalError'
+      parameters:
+      - $ref: '#/components/parameters/TenantId'
+      - $ref: '#/components/parameters/Cursor'
+      - $ref: '#/components/parameters/Limit'
+    post:
+      tags: [Performance Monitoring]
+      summary: Create performance budget
+      description: Create a new performance budget definition for an API endpoint.
+      operationId: createPerformanceBudget
+      security:
+      - BearerAuth: []
+      parameters:
+      - $ref: '#/components/parameters/TenantId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PerformanceBudgetCreateRequest'
+      responses:
+        '201':
+          description: Budget creation acknowledgement.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OperationStatusEnvelope'
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/XRequestId'
+            X-API-Version:
+              $ref: '#/components/headers/XApiVersion'
+        '400':
+          $ref: '#/components/responses/BadRequestError'
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+        '500':
+          $ref: '#/components/responses/InternalError'
+        '403':
+          $ref: '#/components/responses/ForbiddenError'
+        '404':
+          $ref: '#/components/responses/NotFoundError'
+        '429':
+          $ref: '#/components/responses/TooManyRequestsError'
+  /v2/performance/scenarios:
+    get:
+      tags: [Performance Monitoring]
+      summary: List load test scenarios
+      description: Retrieve load test scenarios configured for performance gating.
+      operationId: listLoadTestScenarios
+      security:
+      - BearerAuth: []
+      responses:
+        '200':
+          description: Load test scenarios and metadata.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/LoadTestScenarioListResponse'
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/XRequestId'
+            X-API-Version:
+              $ref: '#/components/headers/XApiVersion'
+            Link:
+              $ref: '#/components/headers/PaginationLink'
+            ETag:
+              $ref: '#/components/headers/ETag'
+        '400':
+          $ref: '#/components/responses/BadRequestError'
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+        '403':
+          $ref: '#/components/responses/ForbiddenError'
+        '404':
+          $ref: '#/components/responses/NotFoundError'
+        '429':
+          $ref: '#/components/responses/TooManyRequestsError'
+        '500':
+          $ref: '#/components/responses/InternalError'
+      parameters:
+      - $ref: '#/components/parameters/TenantId'
+      - $ref: '#/components/parameters/Cursor'
+      - $ref: '#/components/parameters/Limit'
+  /v2/performance/scenarios/{scenario_id}/run:
+    post:
+      tags: [Performance Monitoring]
+      summary: Run load test scenario
+      description: Invoke execution of the specified load test scenario.
+      operationId: runLoadTestScenario
+      security:
+      - BearerAuth: []
+      parameters:
+      - name: scenario_id
+        in: path
+        required: true
+        schema:
+          type: string
+          description: Scenario identifier
+        description: Scenario identifier
+      - $ref: '#/components/parameters/TenantId'
+      responses:
+        '202':
+          description: Scenario execution accepted.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ScenarioRunResponse'
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/XRequestId'
+            X-API-Version:
+              $ref: '#/components/headers/XApiVersion'
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+        '404':
+          $ref: '#/components/responses/NotFoundError'
+        '429':
+          $ref: '#/components/responses/TooManyRequestsError'
+        '500':
+          $ref: '#/components/responses/InternalError'
+        '400':
+          $ref: '#/components/responses/BadRequestError'
+        '403':
+          $ref: '#/components/responses/ForbiddenError'
+  /v2/performance/tests/{test_id}:
+    get:
+      tags: [Performance Monitoring]
+      summary: Get load test result
+      operationId: getPerformanceTestResult
+      parameters:
+      - name: test_id
+        in: path
+        required: true
+        schema:
+          type: string
+          description: Performance test identifier
+        description: test_id for GET /v2/performance/tests/{test_id}.
+      - $ref: '#/components/parameters/TenantId'
+      responses:
+        '200':
+          description: Load test execution outcome.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PerformanceTestResult'
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/XRequestId'
+            X-API-Version:
+              $ref: '#/components/headers/XApiVersion'
+            Link:
+              $ref: '#/components/headers/PaginationLink'
+            ETag:
+              $ref: '#/components/headers/ETag'
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+        '404':
+          $ref: '#/components/responses/NotFoundError'
+        '500':
+          $ref: '#/components/responses/InternalError'
+        '400':
+          $ref: '#/components/responses/BadRequestError'
+        '403':
+          $ref: '#/components/responses/ForbiddenError'
+        '429':
+          $ref: '#/components/responses/TooManyRequestsError'
+      description: Get load test result
+      security:
+      - BearerAuth: []
+  /v2/performance/dashboard:
+    get:
+      tags: [Performance Monitoring]
+      summary: Get performance dashboard snapshot
+      operationId: getPerformanceDashboard
+      responses:
+        '200':
+          description: Aggregated performance dashboard data.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PerformanceDashboard'
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/XRequestId'
+            X-API-Version:
+              $ref: '#/components/headers/XApiVersion'
+            Link:
+              $ref: '#/components/headers/PaginationLink'
+            ETag:
+              $ref: '#/components/headers/ETag'
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+        '500':
+          $ref: '#/components/responses/InternalError'
+        '400':
+          $ref: '#/components/responses/BadRequestError'
+        '403':
+          $ref: '#/components/responses/ForbiddenError'
+        '404':
+          $ref: '#/components/responses/NotFoundError'
+        '429':
+          $ref: '#/components/responses/TooManyRequestsError'
+      description: Get performance dashboard snapshot
+      security:
+      - BearerAuth: []
+      parameters:
+      - $ref: '#/components/parameters/TenantId'
+  /v2/performance/compare:
+    post:
+      tags: [Performance Monitoring]
+      summary: Compare performance test runs
+      operationId: comparePerformanceRuns
+      parameters:
+      - name: baseline_test_id
+        in: query
+        required: true
+        schema:
+          type: string
+          description: Baseline test identifier
+        description: baseline_test_id for POST /v2/performance/compare.
+      - name: current_test_id
+        in: query
+        required: true
+        schema:
+          type: string
+          description: Current test identifier to compare
+        description: current_test_id for POST /v2/performance/compare.
+      - $ref: '#/components/parameters/TenantId'
+      responses:
+        '201':
+          description: Comparison outcome between performance runs.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PerformanceComparison'
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/XRequestId'
+            X-API-Version:
+              $ref: '#/components/headers/XApiVersion'
+        '400':
+          $ref: '#/components/responses/BadRequestError'
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+        '500':
+          $ref: '#/components/responses/InternalError'
+        '403':
+          $ref: '#/components/responses/ForbiddenError'
+        '404':
+          $ref: '#/components/responses/NotFoundError'
+        '429':
+          $ref: '#/components/responses/TooManyRequestsError'
+      description: Compare performance test runs
+      security:
+      - BearerAuth: []
+  /v2/performance/ci-check:
+    post:
+      tags: [Performance Monitoring]
+      summary: Run CI performance check
+      operationId: runPerformanceCiCheck
+      responses:
+        '202':
+          description: CI check execution acknowledgement.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/GenericMapEnvelope'
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/XRequestId'
+            X-API-Version:
+              $ref: '#/components/headers/XApiVersion'
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+        '500':
+          $ref: '#/components/responses/InternalError'
+        '400':
+          $ref: '#/components/responses/BadRequestError'
+        '403':
+          $ref: '#/components/responses/ForbiddenError'
+        '404':
+          $ref: '#/components/responses/NotFoundError'
+        '429':
+          $ref: '#/components/responses/TooManyRequestsError'
+      description: Run CI performance check
+      security:
+      - BearerAuth: []
+      parameters:
+      - $ref: '#/components/parameters/TenantId'
+  /v2/performance/metrics/prometheus:
+    get:
+      tags: [Performance Monitoring]
+      summary: Collect Prometheus metrics snapshot
+      operationId: getPrometheusMetrics
+      responses:
+        '200':
+          description: Prometheus metrics payload collected during comparison.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/GenericMapEnvelope'
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/XRequestId'
+            X-API-Version:
+              $ref: '#/components/headers/XApiVersion'
+            Link:
+              $ref: '#/components/headers/PaginationLink'
+            ETag:
+              $ref: '#/components/headers/ETag'
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+        '500':
+          $ref: '#/components/responses/InternalError'
+        '400':
+          $ref: '#/components/responses/BadRequestError'
+        '403':
+          $ref: '#/components/responses/ForbiddenError'
+        '404':
+          $ref: '#/components/responses/NotFoundError'
+        '429':
+          $ref: '#/components/responses/TooManyRequestsError'
+      description: Collect Prometheus metrics snapshot
+      security:
+      - BearerAuth: []
+      parameters:
+      - $ref: '#/components/parameters/TenantId'
+  /v2/performance/health:
+    get:
+      tags: [Performance Monitoring]
+      summary: Get performance monitoring health
+      operationId: getPerformanceMonitoringHealth
+      responses:
+        '200':
+          description: Current health of the performance monitoring subsystem.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/GenericMapEnvelope'
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/XRequestId'
+            X-API-Version:
+              $ref: '#/components/headers/XApiVersion'
+            Link:
+              $ref: '#/components/headers/PaginationLink'
+            ETag:
+              $ref: '#/components/headers/ETag'
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+        '500':
+          $ref: '#/components/responses/InternalError'
+        '400':
+          $ref: '#/components/responses/BadRequestError'
+        '403':
+          $ref: '#/components/responses/ForbiddenError'
+        '404':
+          $ref: '#/components/responses/NotFoundError'
+        '429':
+          $ref: '#/components/responses/TooManyRequestsError'
+      description: Get performance monitoring health
+      security:
+      - BearerAuth: []
+      parameters:
+      - $ref: '#/components/parameters/TenantId'
+  /v2/dbt/test:
+    post:
+      tags: [DBT Management]
+      summary: Run dbt tests
+      operationId: runDbtTests
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/DBTModelTestRequest'
+      responses:
+        '202':
+          description: dbt test execution results.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DBTTestResult'
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/XRequestId'
+            X-API-Version:
+              $ref: '#/components/headers/XApiVersion'
+        '400':
+          $ref: '#/components/responses/BadRequestError'
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+        '500':
+          $ref: '#/components/responses/InternalError'
+        '403':
+          $ref: '#/components/responses/ForbiddenError'
+        '404':
+          $ref: '#/components/responses/NotFoundError'
+        '429':
+          $ref: '#/components/responses/TooManyRequestsError'
+      description: Run dbt tests
+      security:
+      - BearerAuth: []
+      parameters:
+      - $ref: '#/components/parameters/TenantId'
+  /v2/dbt/build:
+    post:
+      tags: [DBT Management]
+      summary: Run dbt build
+      operationId: runDbtBuild
+      parameters:
+      - name: models
+        in: query
+        required: false
+        description: Optional list of model selectors to build.
+        schema:
+          type: array
+          items:
+            type: string
+          style: form
+          explode: true
+      - $ref: '#/components/parameters/TenantId'
+      responses:
+        '202':
+          description: Build invocation acknowledgement with telemetry metadata.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/GenericMapEnvelope'
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/XRequestId'
+            X-API-Version:
+              $ref: '#/components/headers/XApiVersion'
+        '400':
+          $ref: '#/components/responses/BadRequestError'
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+        '500':
+          $ref: '#/components/responses/InternalError'
+        '403':
+          $ref: '#/components/responses/ForbiddenError'
+        '404':
+          $ref: '#/components/responses/NotFoundError'
+        '429':
+          $ref: '#/components/responses/TooManyRequestsError'
+      description: Run dbt build
+      security:
+      - BearerAuth: []
+  /v2/dbt/fixtures/generate:
+    post:
+      tags: [DBT Management]
+      summary: Generate test fixtures
+      operationId: generateDbtFixtures
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/FixtureGenerationRequest'
+      responses:
+        '201':
+          description: Fixture generation results by fixture name.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/FixtureGenerationEnvelope'
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/XRequestId'
+            X-API-Version:
+              $ref: '#/components/headers/XApiVersion'
+        '400':
+          $ref: '#/components/responses/BadRequestError'
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+        '500':
+          $ref: '#/components/responses/InternalError'
+        '403':
+          $ref: '#/components/responses/ForbiddenError'
+        '404':
+          $ref: '#/components/responses/NotFoundError'
+        '429':
+          $ref: '#/components/responses/TooManyRequestsError'
+      description: Generate test fixtures
+      security:
+      - BearerAuth: []
+      parameters:
+      - $ref: '#/components/parameters/TenantId'
+  /v2/dbt/marts:
+    post:
+      tags: [DBT Management]
+      summary: Create data mart definition
+      operationId: createDbtMart
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/MartCreateRequest'
+      responses:
+        '201':
+          description: Mart creation acknowledgement.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OperationStatusEnvelope'
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/XRequestId'
+            X-API-Version:
+              $ref: '#/components/headers/XApiVersion'
+        '400':
+          $ref: '#/components/responses/BadRequestError'
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+        '500':
+          $ref: '#/components/responses/InternalError'
+        '403':
+          $ref: '#/components/responses/ForbiddenError'
+        '404':
+          $ref: '#/components/responses/NotFoundError'
+        '429':
+          $ref: '#/components/responses/TooManyRequestsError'
+      description: Create data mart definition
+      security:
+      - BearerAuth: []
+      parameters:
+      - $ref: '#/components/parameters/TenantId'
+    get:
+      tags: [DBT Management]
+      summary: List data marts
+      operationId: listDbtMarts
+      responses:
+        '200':
+          description: Data mart definitions available in the workspace.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/MartResponse'
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/XRequestId'
+            X-API-Version:
+              $ref: '#/components/headers/XApiVersion'
+            Link:
+              $ref: '#/components/headers/PaginationLink'
+            ETag:
+              $ref: '#/components/headers/ETag'
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+        '500':
+          $ref: '#/components/responses/InternalError'
+        '400':
+          $ref: '#/components/responses/BadRequestError'
+        '403':
+          $ref: '#/components/responses/ForbiddenError'
+        '404':
+          $ref: '#/components/responses/NotFoundError'
+        '429':
+          $ref: '#/components/responses/TooManyRequestsError'
+      description: List data marts
+      security:
+      - BearerAuth: []
+      parameters:
+      - $ref: '#/components/parameters/TenantId'
+      - $ref: '#/components/parameters/Cursor'
+      - $ref: '#/components/parameters/Limit'
+  /v2/dbt/models:
+    get:
+      tags: [DBT Management]
+      summary: List dbt models
+      operationId: listDbtModels
+      parameters:
+      - name: model_type
+        in: query
+        required: false
+        schema:
+          type: string
+        description: model_type for GET /v2/dbt/models.
+      - name: status
+        in: query
+        required: false
+        schema:
+          type: string
+        description: status for GET /v2/dbt/models.
+      - $ref: '#/components/parameters/TenantId'
+      - $ref: '#/components/parameters/Cursor'
+      - $ref: '#/components/parameters/Limit'
+      responses:
+        '200':
+          description: Discovered dbt models with metadata.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/DBTModel'
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/XRequestId'
+            X-API-Version:
+              $ref: '#/components/headers/XApiVersion'
+            Link:
+              $ref: '#/components/headers/PaginationLink'
+            ETag:
+              $ref: '#/components/headers/ETag'
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+        '500':
+          $ref: '#/components/responses/InternalError'
+        '400':
+          $ref: '#/components/responses/BadRequestError'
+        '403':
+          $ref: '#/components/responses/ForbiddenError'
+        '404':
+          $ref: '#/components/responses/NotFoundError'
+        '429':
+          $ref: '#/components/responses/TooManyRequestsError'
+      description: List dbt models
+      security:
+      - BearerAuth: []
+  /v2/dbt/models/{model_name}/dependencies:
+    get:
+      tags: [DBT Management]
+      summary: Analyse model dependencies
+      operationId: analyzeDbtModelDependencies
+      parameters:
+      - name: model_name
+        in: path
+        required: true
+        schema:
+          type: string
+        description: model_name for GET /v2/dbt/models/{model_name}/dependencies.
+      - $ref: '#/components/parameters/TenantId'
+      responses:
+        '200':
+          description: Dependency impact assessment for the selected model.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DBTDependencyAnalysis'
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/XRequestId'
+            X-API-Version:
+              $ref: '#/components/headers/XApiVersion'
+            Link:
+              $ref: '#/components/headers/PaginationLink'
+            ETag:
+              $ref: '#/components/headers/ETag'
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+        '404':
+          $ref: '#/components/responses/NotFoundError'
+        '500':
+          $ref: '#/components/responses/InternalError'
+        '400':
+          $ref: '#/components/responses/BadRequestError'
+        '403':
+          $ref: '#/components/responses/ForbiddenError'
+        '429':
+          $ref: '#/components/responses/TooManyRequestsError'
+      description: Analyse model dependencies
+      security:
+      - BearerAuth: []
+  /v2/dbt/lineage:
+    get:
+      tags: [DBT Management]
+      summary: Get lineage documentation
+      operationId: getDbtLineage
+      responses:
+        '200':
+          description: Generated lineage documentation snapshot.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DBTLineageDocumentation'
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/XRequestId'
+            X-API-Version:
+              $ref: '#/components/headers/XApiVersion'
+            Link:
+              $ref: '#/components/headers/PaginationLink'
+            ETag:
+              $ref: '#/components/headers/ETag'
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+        '500':
+          $ref: '#/components/responses/InternalError'
+        '400':
+          $ref: '#/components/responses/BadRequestError'
+        '403':
+          $ref: '#/components/responses/ForbiddenError'
+        '404':
+          $ref: '#/components/responses/NotFoundError'
+        '429':
+          $ref: '#/components/responses/TooManyRequestsError'
+      description: Get lineage documentation
+      security:
+      - BearerAuth: []
+      parameters:
+      - $ref: '#/components/parameters/TenantId'
+  /v2/dbt/freshness:
+    get:
+      tags: [DBT Management]
+      summary: Check data freshness
+      operationId: getDbtFreshness
+      responses:
+        '200':
+          description: Freshness status across tracked tables.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/DBTFreshnessCheck'
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/XRequestId'
+            X-API-Version:
+              $ref: '#/components/headers/XApiVersion'
+            Link:
+              $ref: '#/components/headers/PaginationLink'
+            ETag:
+              $ref: '#/components/headers/ETag'
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+        '500':
+          $ref: '#/components/responses/InternalError'
+        '400':
+          $ref: '#/components/responses/BadRequestError'
+        '403':
+          $ref: '#/components/responses/ForbiddenError'
+        '404':
+          $ref: '#/components/responses/NotFoundError'
+        '429':
+          $ref: '#/components/responses/TooManyRequestsError'
+      description: Check data freshness
+      security:
+      - BearerAuth: []
+      parameters:
+      - $ref: '#/components/parameters/TenantId'
+  /v2/dbt/health:
+    get:
+      tags: [DBT Management]
+      summary: Get dbt management health
+      operationId: getDbtHealth
+      responses:
+        '200':
+          description: Health status envelope for dbt management subsystems.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/GenericMapEnvelope'
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/XRequestId'
+            X-API-Version:
+              $ref: '#/components/headers/XApiVersion'
+            Link:
+              $ref: '#/components/headers/PaginationLink'
+            ETag:
+              $ref: '#/components/headers/ETag'
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+        '500':
+          $ref: '#/components/responses/InternalError'
+        '400':
+          $ref: '#/components/responses/BadRequestError'
+        '403':
+          $ref: '#/components/responses/ForbiddenError'
+        '404':
+          $ref: '#/components/responses/NotFoundError'
+        '429':
+          $ref: '#/components/responses/TooManyRequestsError'
+      description: Get dbt management health
+      security:
+      - BearerAuth: []
+      parameters:
+      - $ref: '#/components/parameters/TenantId'
+  /v2/dbt/schedules:
+    post:
+      tags: [DBT Management]
+      summary: Create dbt test schedule
+      operationId: createDbtTestSchedule
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/TestScheduleCreateRequest'
+      responses:
+        '201':
+          description: Schedule creation acknowledgement.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OperationStatusEnvelope'
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/XRequestId'
+            X-API-Version:
+              $ref: '#/components/headers/XApiVersion'
+        '400':
+          $ref: '#/components/responses/BadRequestError'
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+        '500':
+          $ref: '#/components/responses/InternalError'
+        '403':
+          $ref: '#/components/responses/ForbiddenError'
+        '404':
+          $ref: '#/components/responses/NotFoundError'
+        '429':
+          $ref: '#/components/responses/TooManyRequestsError'
+      description: Create dbt test schedule
+      security:
+      - BearerAuth: []
+      parameters:
+      - $ref: '#/components/parameters/TenantId'
+    get:
+      tags: [DBT Management]
+      summary: List dbt test schedules
+      operationId: listDbtTestSchedules
+      responses:
+        '200':
+          description: Configured dbt test schedules.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/DBTTestSchedule'
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/XRequestId'
+            X-API-Version:
+              $ref: '#/components/headers/XApiVersion'
+            Link:
+              $ref: '#/components/headers/PaginationLink'
+            ETag:
+              $ref: '#/components/headers/ETag'
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+        '500':
+          $ref: '#/components/responses/InternalError'
+        '400':
+          $ref: '#/components/responses/BadRequestError'
+        '403':
+          $ref: '#/components/responses/ForbiddenError'
+        '404':
+          $ref: '#/components/responses/NotFoundError'
+        '429':
+          $ref: '#/components/responses/TooManyRequestsError'
+      description: List dbt test schedules
+      security:
+      - BearerAuth: []
+      parameters:
+      - $ref: '#/components/parameters/TenantId'
+      - $ref: '#/components/parameters/Cursor'
+      - $ref: '#/components/parameters/Limit'
+  /v2/dbt/schedules/execute:
+    post:
+      tags: [DBT Management]
+      summary: Execute scheduled dbt tests
+      operationId: executeDbtSchedules
+      responses:
+        '202':
+          description: Execution acknowledgement and per-schedule outcomes.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/GenericMapEnvelope'
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/XRequestId'
+            X-API-Version:
+              $ref: '#/components/headers/XApiVersion'
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+        '500':
+          $ref: '#/components/responses/InternalError'
+        '400':
+          $ref: '#/components/responses/BadRequestError'
+        '403':
+          $ref: '#/components/responses/ForbiddenError'
+        '404':
+          $ref: '#/components/responses/NotFoundError'
+        '429':
+          $ref: '#/components/responses/TooManyRequestsError'
+      description: Execute scheduled dbt tests
+      security:
+      - BearerAuth: []
+      parameters:
+      - $ref: '#/components/parameters/TenantId'
+  /v2/auto-reforecast/triggers:
+    get:
+      tags: [Auto Reforecast]
+      summary: List forecast triggers
+      operationId: listAutoReforecastTriggers
+      parameters:
+      - name: limit
+        in: query
+        required: false
+        schema:
+          type: integer
+          minimum: 1
+          maximum: 100
+          default: 20
+        description: limit for GET /v2/auto-reforecast/triggers.
+      - name: offset
+        in: query
+        required: false
+        schema:
+          type: integer
+          minimum: 0
+          default: 0
+        description: offset for GET /v2/auto-reforecast/triggers.
+      - name: enabled_only
+        in: query
+        required: false
+        schema:
+          type: boolean
+          default: false
+        description: enabled_only for GET /v2/auto-reforecast/triggers.
+      - $ref: '#/components/parameters/TenantId'
+      - $ref: '#/components/parameters/Cursor'
+      - $ref: '#/components/parameters/Limit'
+      responses:
+        '200':
+          description: Forecast trigger catalogue with pagination metadata.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TriggerListResponse'
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/XRequestId'
+            X-API-Version:
+              $ref: '#/components/headers/XApiVersion'
+            Link:
+              $ref: '#/components/headers/PaginationLink'
+            ETag:
+              $ref: '#/components/headers/ETag'
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+        '500':
+          $ref: '#/components/responses/InternalError'
+        '400':
+          $ref: '#/components/responses/BadRequestError'
+        '403':
+          $ref: '#/components/responses/ForbiddenError'
+        '404':
+          $ref: '#/components/responses/NotFoundError'
+        '429':
+          $ref: '#/components/responses/TooManyRequestsError'
+      description: List forecast triggers
+      security:
+      - BearerAuth: []
+    post:
+      tags: [Auto Reforecast]
+      summary: Create forecast trigger
+      operationId: createAutoReforecastTrigger
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/TriggerCreateRequest'
+      responses:
+        '201':
+          description: Newly created trigger definition.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TriggerResponse'
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/XRequestId'
+            X-API-Version:
+              $ref: '#/components/headers/XApiVersion'
+        '400':
+          $ref: '#/components/responses/BadRequestError'
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+        '500':
+          $ref: '#/components/responses/InternalError'
+        '403':
+          $ref: '#/components/responses/ForbiddenError'
+        '404':
+          $ref: '#/components/responses/NotFoundError'
+        '429':
+          $ref: '#/components/responses/TooManyRequestsError'
+      description: Create forecast trigger
+      security:
+      - BearerAuth: []
+      parameters:
+      - $ref: '#/components/parameters/TenantId'
+  /v2/auto-reforecast/triggers/{trigger_id}:
+    get:
+      tags: [Auto Reforecast]
+      summary: Get forecast trigger
+      operationId: getAutoReforecastTrigger
+      parameters:
+      - name: trigger_id
+        in: path
+        required: true
+        schema:
+          type: string
+        description: trigger_id for GET /v2/auto-reforecast/triggers/{trigger_id}.
+      - $ref: '#/components/parameters/TenantId'
+      responses:
+        '200':
+          description: Trigger definition details.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TriggerResponse'
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/XRequestId'
+            X-API-Version:
+              $ref: '#/components/headers/XApiVersion'
+            Link:
+              $ref: '#/components/headers/PaginationLink'
+            ETag:
+              $ref: '#/components/headers/ETag'
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+        '404':
+          $ref: '#/components/responses/NotFoundError'
+        '500':
+          $ref: '#/components/responses/InternalError'
+        '400':
+          $ref: '#/components/responses/BadRequestError'
+        '403':
+          $ref: '#/components/responses/ForbiddenError'
+        '429':
+          $ref: '#/components/responses/TooManyRequestsError'
+      description: Get forecast trigger
+      security:
+      - BearerAuth: []
+    put:
+      tags: [Auto Reforecast]
+      summary: Update forecast trigger
+      operationId: updateAutoReforecastTrigger
+      parameters:
+      - name: trigger_id
+        in: path
+        required: true
+        schema:
+          type: string
+        description: trigger_id for PUT /v2/auto-reforecast/triggers/{trigger_id}.
+      - $ref: '#/components/parameters/TenantId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/TriggerUpdateRequest'
+      responses:
+        '200':
+          description: Updated trigger definition.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TriggerResponse'
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/XRequestId'
+            X-API-Version:
+              $ref: '#/components/headers/XApiVersion'
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+        '404':
+          $ref: '#/components/responses/NotFoundError'
+        '500':
+          $ref: '#/components/responses/InternalError'
+        '400':
+          $ref: '#/components/responses/BadRequestError'
+        '403':
+          $ref: '#/components/responses/ForbiddenError'
+        '429':
+          $ref: '#/components/responses/TooManyRequestsError'
+      description: Update forecast trigger
+      security:
+      - BearerAuth: []
+    delete:
+      tags: [Auto Reforecast]
+      summary: Delete forecast trigger
+      operationId: deleteAutoReforecastTrigger
+      parameters:
+      - name: trigger_id
+        in: path
+        required: true
+        schema:
+          type: string
+        description: trigger_id for DELETE /v2/auto-reforecast/triggers/{trigger_id}.
+      - $ref: '#/components/parameters/TenantId'
+      responses:
+        '204':
+          description: Trigger deleted.
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/XRequestId'
+            X-API-Version:
+              $ref: '#/components/headers/XApiVersion'
+          content: {}
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+        '404':
+          $ref: '#/components/responses/NotFoundError'
+        '500':
+          $ref: '#/components/responses/InternalError'
+        '400':
+          $ref: '#/components/responses/BadRequestError'
+        '403':
+          $ref: '#/components/responses/ForbiddenError'
+        '429':
+          $ref: '#/components/responses/TooManyRequestsError'
+      description: Delete forecast trigger
+      security:
+      - BearerAuth: []
+  /v2/auto-reforecast/jobs:
+    get:
+      tags: [Auto Reforecast]
+      summary: List reforecast jobs
+      operationId: listAutoReforecastJobs
+      parameters:
+      - name: limit
+        in: query
+        required: false
+        schema:
+          type: integer
+          minimum: 1
+          maximum: 100
+          default: 20
+        description: limit for GET /v2/auto-reforecast/jobs.
+      - name: offset
+        in: query
+        required: false
+        schema:
+          type: integer
+          minimum: 0
+          default: 0
+        description: offset for GET /v2/auto-reforecast/jobs.
+      - name: status
+        in: query
+        required: false
+        schema:
+          type: string
+        description: status for GET /v2/auto-reforecast/jobs.
+      - name: model_name
+        in: query
+        required: false
+        schema:
+          type: string
+        description: model_name for GET /v2/auto-reforecast/jobs.
+      - $ref: '#/components/parameters/TenantId'
+      - $ref: '#/components/parameters/Cursor'
+      - $ref: '#/components/parameters/Limit'
+      responses:
+        '200':
+          description: Forecast job queue state with pagination telemetry.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/JobListResponse'
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/XRequestId'
+            X-API-Version:
+              $ref: '#/components/headers/XApiVersion'
+            Link:
+              $ref: '#/components/headers/PaginationLink'
+            ETag:
+              $ref: '#/components/headers/ETag'
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+        '500':
+          $ref: '#/components/responses/InternalError'
+        '400':
+          $ref: '#/components/responses/BadRequestError'
+        '403':
+          $ref: '#/components/responses/ForbiddenError'
+        '404':
+          $ref: '#/components/responses/NotFoundError'
+        '429':
+          $ref: '#/components/responses/TooManyRequestsError'
+      description: List reforecast jobs
+      security:
+      - BearerAuth: []
+  /v2/auto-reforecast/events:
+    get:
+      tags: [Auto Reforecast]
+      summary: List trigger events
+      operationId: listTriggerEvents
+      parameters:
+      - name: limit
+        in: query
+        required: false
+        schema:
+          type: integer
+          minimum: 1
+          maximum: 500
+          default: 50
+        description: limit for GET /v2/auto-reforecast/events.
+      - name: since
+        in: query
+        required: false
+        schema:
+          type: string
+          format: date-time
+          description: Only events since the provided timestamp.
+        description: since for GET /v2/auto-reforecast/events.
+      - $ref: '#/components/parameters/TenantId'
+      - $ref: '#/components/parameters/Cursor'
+      - $ref: '#/components/parameters/Limit'
+      responses:
+        '200':
+          description: Recent trigger events.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TriggerEventsEnvelope'
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/XRequestId'
+            X-API-Version:
+              $ref: '#/components/headers/XApiVersion'
+            Link:
+              $ref: '#/components/headers/PaginationLink'
+            ETag:
+              $ref: '#/components/headers/ETag'
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+        '500':
+          $ref: '#/components/responses/InternalError'
+        '400':
+          $ref: '#/components/responses/BadRequestError'
+        '403':
+          $ref: '#/components/responses/ForbiddenError'
+        '404':
+          $ref: '#/components/responses/NotFoundError'
+        '429':
+          $ref: '#/components/responses/TooManyRequestsError'
+      description: List trigger events
+      security:
+      - BearerAuth: []
+  /v2/auto-reforecast/config/debounce:
+    get:
+      tags: [Auto Reforecast]
+      summary: Get debounce configuration
+      operationId: getDebounceConfig
+      responses:
+        '200':
+          description: Current debounce configuration.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DebounceConfigEnvelope'
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/XRequestId'
+            X-API-Version:
+              $ref: '#/components/headers/XApiVersion'
+            Link:
+              $ref: '#/components/headers/PaginationLink'
+            ETag:
+              $ref: '#/components/headers/ETag'
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+        '500':
+          $ref: '#/components/responses/InternalError'
+        '400':
+          $ref: '#/components/responses/BadRequestError'
+        '403':
+          $ref: '#/components/responses/ForbiddenError'
+        '404':
+          $ref: '#/components/responses/NotFoundError'
+        '429':
+          $ref: '#/components/responses/TooManyRequestsError'
+      description: Get debounce configuration
+      security:
+      - BearerAuth: []
+      parameters:
+      - $ref: '#/components/parameters/TenantId'
+    put:
+      tags: [Auto Reforecast]
+      summary: Update debounce configuration
+      operationId: updateDebounceConfig
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/DebounceConfig'
+      responses:
+        '200':
+          description: Updated debounce configuration payload.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DebounceConfigEnvelope'
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/XRequestId'
+            X-API-Version:
+              $ref: '#/components/headers/XApiVersion'
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+        '500':
+          $ref: '#/components/responses/InternalError'
+        '400':
+          $ref: '#/components/responses/BadRequestError'
+        '403':
+          $ref: '#/components/responses/ForbiddenError'
+        '404':
+          $ref: '#/components/responses/NotFoundError'
+        '429':
+          $ref: '#/components/responses/TooManyRequestsError'
+      description: Update debounce configuration
+      security:
+      - BearerAuth: []
+      parameters:
+      - $ref: '#/components/parameters/TenantId'
+  /v2/auto-reforecast/trigger-forecast-rerun:
+    post:
+      tags: [Auto Reforecast]
+      summary: Trigger forecast rerun
+      operationId: triggerForecastRerun
+      parameters:
+      - name: data_source
+        in: query
+        required: true
+        schema:
+          type: string
+        description: data_source for POST /v2/auto-reforecast/trigger-forecast-rerun.
+      - name: geography
+        in: query
+        required: false
+        schema:
+          type: string
+          default: US
+        description: geography for POST /v2/auto-reforecast/trigger-forecast-rerun.
+      - name: forecast_type
+        in: query
+        required: false
+        schema:
+          type: string
+          default: load
+        description: forecast_type for POST /v2/auto-reforecast/trigger-forecast-rerun.
+      - name: target_variable
+        in: query
+        required: false
+        schema:
+          type: string
+          default: load_mw
+        description: target_variable for POST /v2/auto-reforecast/trigger-forecast-rerun.
+      - name: trigger_reason
+        in: query
+        required: false
+        schema:
+          type: string
+          default: manual_trigger
+        description: trigger_reason for POST /v2/auto-reforecast/trigger-forecast-rerun.
+      - name: priority
+        in: query
+        required: false
+        schema:
+          type: number
+          format: float
+          default: 1.0
+        description: priority for POST /v2/auto-reforecast/trigger-forecast-rerun.
+      - $ref: '#/components/parameters/TenantId'
+      responses:
+        '200':
+          description: Trigger acknowledgement and event identifiers.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TriggerRerunResponse'
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/XRequestId'
+            X-API-Version:
+              $ref: '#/components/headers/XApiVersion'
+        '400':
+          $ref: '#/components/responses/BadRequestError'
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+        '500':
+          $ref: '#/components/responses/InternalError'
+        '403':
+          $ref: '#/components/responses/ForbiddenError'
+        '404':
+          $ref: '#/components/responses/NotFoundError'
+        '429':
+          $ref: '#/components/responses/TooManyRequestsError'
+      description: Trigger forecast rerun
+      security:
+      - BearerAuth: []
+  /v2/auto-reforecast/kafka/status:
+    get:
+      tags: [Auto Reforecast]
+      summary: Get Kafka bridge status
+      operationId: getKafkaStatus
+      responses:
+        '200':
+          description: Kafka consumer integration status.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/KafkaStatusEnvelope'
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/XRequestId'
+            X-API-Version:
+              $ref: '#/components/headers/XApiVersion'
+            Link:
+              $ref: '#/components/headers/PaginationLink'
+            ETag:
+              $ref: '#/components/headers/ETag'
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+        '500':
+          $ref: '#/components/responses/InternalError'
+        '400':
+          $ref: '#/components/responses/BadRequestError'
+        '403':
+          $ref: '#/components/responses/ForbiddenError'
+        '404':
+          $ref: '#/components/responses/NotFoundError'
+        '429':
+          $ref: '#/components/responses/TooManyRequestsError'
+      description: Get Kafka bridge status
+      security:
+      - BearerAuth: []
+      parameters:
+      - $ref: '#/components/parameters/TenantId'
+  /v2/auto-reforecast/kafka/restart-consumer:
+    post:
+      tags: [Auto Reforecast]
+      summary: Restart Kafka consumer
+      operationId: restartKafkaConsumer
+      responses:
+        '200':
+          description: Kafka consumer restart acknowledgement.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OperationStatusEnvelope'
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/XRequestId'
+            X-API-Version:
+              $ref: '#/components/headers/XApiVersion'
+        '400':
+          $ref: '#/components/responses/BadRequestError'
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+        '403':
+          $ref: '#/components/responses/ForbiddenError'
+        '404':
+          $ref: '#/components/responses/NotFoundError'
+        '429':
+          $ref: '#/components/responses/TooManyRequestsError'
+        '500':
+          $ref: '#/components/responses/InternalError'
+      description: Restart Kafka consumer
+      security:
+      - BearerAuth: []
+      parameters:
+      - $ref: '#/components/parameters/TenantId'
+  /v2/auto-reforecast/triggers/{trigger_id}/events:
+    get:
+      tags: [Auto Reforecast]
+      summary: List events by trigger
+      operationId: listTriggerEventsByTrigger
+      parameters:
+      - name: trigger_id
+        in: path
+        required: true
+        schema:
+          type: string
+        description: trigger_id for GET /v2/auto-reforecast/triggers/{trigger_id}/events.
+      - name: limit
+        in: query
+        required: false
+        schema:
+          type: integer
+          minimum: 1
+          maximum: 500
+          default: 50
+        description: limit for GET /v2/auto-reforecast/triggers/{trigger_id}/events.
+      - name: since
+        in: query
+        required: false
+        schema:
+          type: string
+          format: date-time
+        description: since for GET /v2/auto-reforecast/triggers/{trigger_id}/events.
+      - $ref: '#/components/parameters/TenantId'
+      - $ref: '#/components/parameters/Cursor'
+      - $ref: '#/components/parameters/Limit'
+      responses:
+        '200':
+          description: Trigger-specific event history.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TriggerEventsEnvelope'
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/XRequestId'
+            X-API-Version:
+              $ref: '#/components/headers/XApiVersion'
+            Link:
+              $ref: '#/components/headers/PaginationLink'
+            ETag:
+              $ref: '#/components/headers/ETag'
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+        '404':
+          $ref: '#/components/responses/NotFoundError'
+        '500':
+          $ref: '#/components/responses/InternalError'
+        '400':
+          $ref: '#/components/responses/BadRequestError'
+        '403':
+          $ref: '#/components/responses/ForbiddenError'
+        '429':
+          $ref: '#/components/responses/TooManyRequestsError'
+      description: List events by trigger
+      security:
+      - BearerAuth: []
+  /v2/auto-reforecast/analytics/trigger-performance:
+    get:
+      tags: [Auto Reforecast]
+      summary: Get trigger performance analytics
+      operationId: getTriggerPerformanceAnalytics
+      parameters:
+      - name: days
+        in: query
+        required: false
+        schema:
+          type: integer
+          minimum: 1
+          maximum: 30
+          default: 7
+        description: days for GET /v2/auto-reforecast/analytics/trigger-performance.
+      - $ref: '#/components/parameters/TenantId'
+      responses:
+        '200':
+          description: Aggregated analytics for trigger fleet performance.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TriggerAnalyticsEnvelope'
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/XRequestId'
+            X-API-Version:
+              $ref: '#/components/headers/XApiVersion'
+            Link:
+              $ref: '#/components/headers/PaginationLink'
+            ETag:
+              $ref: '#/components/headers/ETag'
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+        '500':
+          $ref: '#/components/responses/InternalError'
+        '400':
+          $ref: '#/components/responses/BadRequestError'
+        '403':
+          $ref: '#/components/responses/ForbiddenError'
+        '404':
+          $ref: '#/components/responses/NotFoundError'
+        '429':
+          $ref: '#/components/responses/TooManyRequestsError'
+      description: Get trigger performance analytics
+      security:
+      - BearerAuth: []
+  /v2/models/models:
+    get:
+      tags: [Model Registry]
+      summary: List registered models
+      operationId: listRegisteredModels
+      parameters:
+      - name: limit
+        in: query
+        required: false
+        schema:
+          type: integer
+          minimum: 1
+          maximum: 100
+          default: 20
+        description: limit for GET /v2/models/models.
+      - name: offset
+        in: query
+        required: false
+        schema:
+          type: integer
+          minimum: 0
+          default: 0
+        description: offset for GET /v2/models/models.
+      - name: status
+        in: query
+        required: false
+        schema:
+          type: string
+        description: status for GET /v2/models/models.
+      - $ref: '#/components/parameters/TenantId'
+      - $ref: '#/components/parameters/Cursor'
+      - $ref: '#/components/parameters/Limit'
+      responses:
+        '200':
+          description: Registered model catalogue with pagination metadata.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ModelListResponse'
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/XRequestId'
+            X-API-Version:
+              $ref: '#/components/headers/XApiVersion'
+            Link:
+              $ref: '#/components/headers/PaginationLink'
+            ETag:
+              $ref: '#/components/headers/ETag'
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+        '500':
+          $ref: '#/components/responses/InternalError'
+        '400':
+          $ref: '#/components/responses/BadRequestError'
+        '403':
+          $ref: '#/components/responses/ForbiddenError'
+        '404':
+          $ref: '#/components/responses/NotFoundError'
+        '429':
+          $ref: '#/components/responses/TooManyRequestsError'
+      description: List registered models
+      security:
+      - BearerAuth: []
+    post:
+      tags: [Model Registry]
+      summary: Register new model version
+      operationId: registerModelVersion
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ModelCreateRequest'
+      responses:
+        '201':
+          description: Registered model metadata snapshot.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ModelResponse'
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/XRequestId'
+            X-API-Version:
+              $ref: '#/components/headers/XApiVersion'
+        '400':
+          $ref: '#/components/responses/BadRequestError'
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+        '500':
+          $ref: '#/components/responses/InternalError'
+        '403':
+          $ref: '#/components/responses/ForbiddenError'
+        '404':
+          $ref: '#/components/responses/NotFoundError'
+        '429':
+          $ref: '#/components/responses/TooManyRequestsError'
+      description: Register new model version
+      security:
+      - BearerAuth: []
+      parameters:
+      - $ref: '#/components/parameters/TenantId'
+  /v2/models/models/{model_name}/versions:
+    get:
+      tags: [Model Registry]
+      summary: List model versions
+      operationId: listModelVersions
+      parameters:
+      - name: model_name
+        in: path
+        required: true
+        schema:
+          type: string
+        description: model_name for GET /v2/models/models/{model_name}/versions.
+      - name: limit
+        in: query
+        required: false
+        schema:
+          type: integer
+          minimum: 1
+          maximum: 100
+          default: 20
+        description: limit for GET /v2/models/models/{model_name}/versions.
+      - name: offset
+        in: query
+        required: false
+        schema:
+          type: integer
+          minimum: 0
+          default: 0
+        description: offset for GET /v2/models/models/{model_name}/versions.
+      - name: status
+        in: query
+        required: false
+        schema:
+          type: string
+        description: status for GET /v2/models/models/{model_name}/versions.
+      - $ref: '#/components/parameters/TenantId'
+      - $ref: '#/components/parameters/Cursor'
+      - $ref: '#/components/parameters/Limit'
+      responses:
+        '200':
+          description: Version catalogue for the specified model.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ModelVersionListResponse'
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/XRequestId'
+            X-API-Version:
+              $ref: '#/components/headers/XApiVersion'
+            Link:
+              $ref: '#/components/headers/PaginationLink'
+            ETag:
+              $ref: '#/components/headers/ETag'
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+        '404':
+          $ref: '#/components/responses/NotFoundError'
+        '500':
+          $ref: '#/components/responses/InternalError'
+        '400':
+          $ref: '#/components/responses/BadRequestError'
+        '403':
+          $ref: '#/components/responses/ForbiddenError'
+        '429':
+          $ref: '#/components/responses/TooManyRequestsError'
+      description: List model versions
+      security:
+      - BearerAuth: []
+  /v2/models/models/{model_name}/train:
+    post:
+      tags: [Model Registry]
+      summary: Start model training job
+      operationId: startModelTraining
+      parameters:
+      - name: model_name
+        in: path
+        required: true
+        schema:
+          type: string
+        description: model_name for POST /v2/models/models/{model_name}/train.
+      - name: config
+        in: query
+        required: false
+        description: JSON encoded config override for the training job.
+        schema:
+          type: string
+      - $ref: '#/components/parameters/TenantId'
+      responses:
+        '202':
+          description: Training job enqueued acknowledgement.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ModelTrainingEnqueueResponse'
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/XRequestId'
+            X-API-Version:
+              $ref: '#/components/headers/XApiVersion'
+        '400':
+          $ref: '#/components/responses/BadRequestError'
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+        '500':
+          $ref: '#/components/responses/InternalError'
+        '403':
+          $ref: '#/components/responses/ForbiddenError'
+        '404':
+          $ref: '#/components/responses/NotFoundError'
+        '429':
+          $ref: '#/components/responses/TooManyRequestsError'
+      description: Start model training job
+      security:
+      - BearerAuth: []
+  /v2/models/jobs:
+    get:
+      tags: [Model Registry]
+      summary: List training jobs
+      operationId: listTrainingJobs
+      parameters:
+      - name: limit
+        in: query
+        required: false
+        schema:
+          type: integer
+          minimum: 1
+          maximum: 100
+          default: 20
+        description: limit for GET /v2/models/jobs.
+      - name: offset
+        in: query
+        required: false
+        schema:
+          type: integer
+          minimum: 0
+          default: 0
+        description: offset for GET /v2/models/jobs.
+      - name: status
+        in: query
+        required: false
+        schema:
+          type: string
+        description: status for GET /v2/models/jobs.
+      - name: model_name
+        in: query
+        required: false
+        schema:
+          type: string
+        description: model_name for GET /v2/models/jobs.
+      - $ref: '#/components/parameters/TenantId'
+      - $ref: '#/components/parameters/Cursor'
+      - $ref: '#/components/parameters/Limit'
+      responses:
+        '200':
+          description: Training job queue snapshots.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TrainingJobListResponse'
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/XRequestId'
+            X-API-Version:
+              $ref: '#/components/headers/XApiVersion'
+            Link:
+              $ref: '#/components/headers/PaginationLink'
+            ETag:
+              $ref: '#/components/headers/ETag'
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+        '500':
+          $ref: '#/components/responses/InternalError'
+        '400':
+          $ref: '#/components/responses/BadRequestError'
+        '403':
+          $ref: '#/components/responses/ForbiddenError'
+        '404':
+          $ref: '#/components/responses/NotFoundError'
+        '429':
+          $ref: '#/components/responses/TooManyRequestsError'
+      description: List training jobs
+      security:
+      - BearerAuth: []
+  /v2/models/jobs/{job_id}:
+    get:
+      tags: [Model Registry]
+      summary: Get training job details
+      operationId: getTrainingJob
+      parameters:
+      - name: job_id
+        in: path
+        required: true
+        schema:
+          type: string
+        description: job_id for GET /v2/models/jobs/{job_id}.
+      - $ref: '#/components/parameters/TenantId'
+      responses:
+        '200':
+          description: Training job details.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TrainingJobResponse'
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/XRequestId'
+            X-API-Version:
+              $ref: '#/components/headers/XApiVersion'
+            Link:
+              $ref: '#/components/headers/PaginationLink'
+            ETag:
+              $ref: '#/components/headers/ETag'
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+        '404':
+          $ref: '#/components/responses/NotFoundError'
+        '500':
+          $ref: '#/components/responses/InternalError'
+        '400':
+          $ref: '#/components/responses/BadRequestError'
+        '403':
+          $ref: '#/components/responses/ForbiddenError'
+        '429':
+          $ref: '#/components/responses/TooManyRequestsError'
+      description: Get training job details
+      security:
+      - BearerAuth: []
+    put:
+      tags: [Model Registry]
+      summary: Update training job progress
+      operationId: updateTrainingJobProgress
+      parameters:
+      - name: job_id
+        in: path
+        required: true
+        schema:
+          type: string
+        description: job_id for PUT /v2/models/jobs/{job_id}.
+      - name: progress
+        in: query
+        required: true
+        schema:
+          type: number
+          format: float
+          minimum: 0
+          maximum: 1
+        description: progress for PUT /v2/models/jobs/{job_id}.
+      - name: stage
+        in: query
+        required: true
+        schema:
+          type: string
+        description: stage for PUT /v2/models/jobs/{job_id}.
+      - name: metrics
+        in: query
+        required: false
+        description: JSON encoded map of interim metrics.
+        schema:
+          type: string
+      - $ref: '#/components/parameters/TenantId'
+      responses:
+        '200':
+          description: Progress update acknowledgement.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TrainingJobUpdateResponse'
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/XRequestId'
+            X-API-Version:
+              $ref: '#/components/headers/XApiVersion'
+        '400':
+          $ref: '#/components/responses/BadRequestError'
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+        '404':
+          $ref: '#/components/responses/NotFoundError'
+        '500':
+          $ref: '#/components/responses/InternalError'
+        '403':
+          $ref: '#/components/responses/ForbiddenError'
+        '429':
+          $ref: '#/components/responses/TooManyRequestsError'
+      description: Update training job progress
+      security:
+      - BearerAuth: []
+    post:
+      tags: [Model Registry]
+      summary: Complete training job
+      operationId: completeTrainingJob
+      parameters:
+      - name: job_id
+        in: path
+        required: true
+        schema:
+          type: string
+        description: job_id for POST /v2/models/jobs/{job_id}.
+      - name: success
+        in: query
+        required: true
+        schema:
+          type: boolean
+        description: success for POST /v2/models/jobs/{job_id}.
+      - name: error_message
+        in: query
+        required: false
+        schema:
+          type: string
+        description: error_message for POST /v2/models/jobs/{job_id}.
+      - $ref: '#/components/parameters/TenantId'
+      responses:
+        '200':
+          description: Training job completion acknowledgement.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TrainingJobCompletionResponse'
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/XRequestId'
+            X-API-Version:
+              $ref: '#/components/headers/XApiVersion'
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+        '404':
+          $ref: '#/components/responses/NotFoundError'
+        '500':
+          $ref: '#/components/responses/InternalError'
+        '400':
+          $ref: '#/components/responses/BadRequestError'
+        '403':
+          $ref: '#/components/responses/ForbiddenError'
+        '429':
+          $ref: '#/components/responses/TooManyRequestsError'
+      description: Complete training job
+      security:
+      - BearerAuth: []
+    delete:
+      tags: [Model Registry]
+      summary: Cancel training job
+      operationId: cancelTrainingJob
+      parameters:
+      - name: job_id
+        in: path
+        required: true
+        schema:
+          type: string
+        description: job_id for DELETE /v2/models/jobs/{job_id}.
+      - $ref: '#/components/parameters/TenantId'
+      responses:
+        '200':
+          description: Cancellation outcome.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TrainingJobCancellationResponse'
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/XRequestId'
+            X-API-Version:
+              $ref: '#/components/headers/XApiVersion'
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+        '404':
+          $ref: '#/components/responses/NotFoundError'
+        '500':
+          $ref: '#/components/responses/InternalError'
+        '400':
+          $ref: '#/components/responses/BadRequestError'
+        '403':
+          $ref: '#/components/responses/ForbiddenError'
+        '429':
+          $ref: '#/components/responses/TooManyRequestsError'
+      description: Cancel training job
+      security:
+      - BearerAuth: []
+  /v2/models/models/{model_name}/champion:
+    get:
+      tags: [Model Registry]
+      summary: Get champion model version
+      operationId: getChampionModel
+      parameters:
+      - name: model_name
+        in: path
+        required: true
+        schema:
+          type: string
+        description: model_name for GET /v2/models/models/{model_name}/champion.
+      - $ref: '#/components/parameters/TenantId'
+      responses:
+        '200':
+          description: Champion model version or null when not available.
+          content:
+            application/json:
+              schema:
+                oneOf:
+                - $ref: '#/components/schemas/ModelVersionResponse'
+                - type: 'null'
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/XRequestId'
+            X-API-Version:
+              $ref: '#/components/headers/XApiVersion'
+            Link:
+              $ref: '#/components/headers/PaginationLink'
+            ETag:
+              $ref: '#/components/headers/ETag'
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+        '404':
+          $ref: '#/components/responses/NotFoundError'
+        '500':
+          $ref: '#/components/responses/InternalError'
+        '400':
+          $ref: '#/components/responses/BadRequestError'
+        '403':
+          $ref: '#/components/responses/ForbiddenError'
+        '429':
+          $ref: '#/components/responses/TooManyRequestsError'
+      description: Get champion model version
+      security:
+      - BearerAuth: []
+  /v2/models/models/{model_name}/compare:
+    post:
+      tags: [Model Registry]
+      summary: Compare model versions
+      operationId: compareModelVersions
+      parameters:
+      - name: model_name
+        in: path
+        required: true
+        schema:
+          type: string
+        description: model_name for POST /v2/models/models/{model_name}/compare.
+      - name: champion_version
+        in: query
+        required: true
+        schema:
+          type: string
+        description: champion_version for POST /v2/models/models/{model_name}/compare.
+      - name: challenger_version
+        in: query
+        required: true
+        schema:
+          type: string
+        description: challenger_version for POST /v2/models/models/{model_name}/compare.
+      - $ref: '#/components/parameters/TenantId'
+      responses:
+        '201':
+          description: Champion/challenger comparison outcome.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ComparisonResponse'
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/XRequestId'
+            X-API-Version:
+              $ref: '#/components/headers/XApiVersion'
+        '400':
+          $ref: '#/components/responses/BadRequestError'
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+        '404':
+          $ref: '#/components/responses/NotFoundError'
+        '500':
+          $ref: '#/components/responses/InternalError'
+        '403':
+          $ref: '#/components/responses/ForbiddenError'
+        '429':
+          $ref: '#/components/responses/TooManyRequestsError'
+      description: Compare model versions
+      security:
+      - BearerAuth: []
+  /v2/models/comparisons:
+    get:
+      tags: [Model Registry]
+      summary: List comparison history
+      operationId: listModelComparisons
+      parameters:
+      - name: limit
+        in: query
+        required: false
+        schema:
+          type: integer
+          minimum: 1
+          maximum: 100
+          default: 20
+        description: limit for GET /v2/models/comparisons.
+      - name: offset
+        in: query
+        required: false
+        schema:
+          type: integer
+          minimum: 0
+          default: 0
+        description: offset for GET /v2/models/comparisons.
+      - $ref: '#/components/parameters/TenantId'
+      - $ref: '#/components/parameters/Cursor'
+      - $ref: '#/components/parameters/Limit'
+      responses:
+        '200':
+          description: Historical comparisons between champion/challenger pairs.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ComparisonListResponse'
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/XRequestId'
+            X-API-Version:
+              $ref: '#/components/headers/XApiVersion'
+            Link:
+              $ref: '#/components/headers/PaginationLink'
+            ETag:
+              $ref: '#/components/headers/ETag'
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+        '500':
+          $ref: '#/components/responses/InternalError'
+        '400':
+          $ref: '#/components/responses/BadRequestError'
+        '403':
+          $ref: '#/components/responses/ForbiddenError'
+        '404':
+          $ref: '#/components/responses/NotFoundError'
+        '429':
+          $ref: '#/components/responses/TooManyRequestsError'
+      description: List comparison history
+      security:
+      - BearerAuth: []
+  /v2/models/schedules:
+    get:
+      tags: [Model Registry]
+      summary: List retrain schedules
+      operationId: listRetrainSchedules
+      parameters:
+      - name: limit
+        in: query
+        required: false
+        schema:
+          type: integer
+          minimum: 1
+          maximum: 100
+          default: 20
+        description: limit for GET /v2/models/schedules.
+      - name: offset
+        in: query
+        required: false
+        schema:
+          type: integer
+          minimum: 0
+          default: 0
+        description: offset for GET /v2/models/schedules.
+      - name: enabled_only
+        in: query
+        required: false
+        schema:
+          type: boolean
+          default: false
+        description: enabled_only for GET /v2/models/schedules.
+      - $ref: '#/components/parameters/TenantId'
+      - $ref: '#/components/parameters/Cursor'
+      - $ref: '#/components/parameters/Limit'
+      responses:
+        '200':
+          description: Model retrain schedules with pagination metadata.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RetrainScheduleListResponse'
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/XRequestId'
+            X-API-Version:
+              $ref: '#/components/headers/XApiVersion'
+            Link:
+              $ref: '#/components/headers/PaginationLink'
+            ETag:
+              $ref: '#/components/headers/ETag'
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+        '500':
+          $ref: '#/components/responses/InternalError'
+        '400':
+          $ref: '#/components/responses/BadRequestError'
+        '403':
+          $ref: '#/components/responses/ForbiddenError'
+        '404':
+          $ref: '#/components/responses/NotFoundError'
+        '429':
+          $ref: '#/components/responses/TooManyRequestsError'
+      description: List retrain schedules
+      security:
+      - BearerAuth: []
+  /v2/models/models/{model_name}/select-champion:
+    post:
+      tags: [Model Registry]
+      summary: Automatically select champion model
+      operationId: selectChampionModel
+      parameters:
+      - name: model_name
+        in: path
+        required: true
+        schema:
+          type: string
+        description: model_name for POST /v2/models/models/{model_name}/select-champion.
+      - $ref: '#/components/parameters/TenantId'
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: true
+              description: Optional selection criteria override.
+      responses:
+        '200':
+          description: Champion selection outcome.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ChampionSelectionResponse'
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/XRequestId'
+            X-API-Version:
+              $ref: '#/components/headers/XApiVersion'
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+        '404':
+          $ref: '#/components/responses/NotFoundError'
+        '500':
+          $ref: '#/components/responses/InternalError'
+        '400':
+          $ref: '#/components/responses/BadRequestError'
+        '403':
+          $ref: '#/components/responses/ForbiddenError'
+        '429':
+          $ref: '#/components/responses/TooManyRequestsError'
+      description: Automatically select champion model
+      security:
+      - BearerAuth: []
+  /v2/models/models/{model_name}/promote-champion:
+    post:
+      tags: [Model Registry]
+      summary: Promote model version to champion
+      operationId: promoteChampionModel
+      parameters:
+      - name: model_name
+        in: path
+        required: true
+        schema:
+          type: string
+        description: model_name for POST /v2/models/models/{model_name}/promote-champion.
+      - name: version_id
+        in: query
+        required: true
+        schema:
+          type: string
+        description: version_id for POST /v2/models/models/{model_name}/promote-champion.
+      - $ref: '#/components/parameters/TenantId'
+      responses:
+        '200':
+          description: Champion promotion outcome.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PromotionResponse'
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/XRequestId'
+            X-API-Version:
+              $ref: '#/components/headers/XApiVersion'
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+        '404':
+          $ref: '#/components/responses/NotFoundError'
+        '500':
+          $ref: '#/components/responses/InternalError'
+        '400':
+          $ref: '#/components/responses/BadRequestError'
+        '403':
+          $ref: '#/components/responses/ForbiddenError'
+        '429':
+          $ref: '#/components/responses/TooManyRequestsError'
+      description: Promote model version to champion
+      security:
+      - BearerAuth: []
+  /v2/developer-workspace/environments:
+    post:
+      tags: [Developer Workspace]
+      summary: Create notebook environment
+      operationId: createDeveloperEnvironment
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/EnvironmentCreateRequest'
+      responses:
+        '201':
+          description: Created notebook environment.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/NotebookEnvironment'
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/XRequestId'
+            X-API-Version:
+              $ref: '#/components/headers/XApiVersion'
+        '400':
+          $ref: '#/components/responses/BadRequestError'
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+        '500':
+          $ref: '#/components/responses/InternalError'
+        '403':
+          $ref: '#/components/responses/ForbiddenError'
+        '404':
+          $ref: '#/components/responses/NotFoundError'
+        '429':
+          $ref: '#/components/responses/TooManyRequestsError'
+      description: Create notebook environment
+      security:
+      - BearerAuth: []
+      parameters:
+      - $ref: '#/components/parameters/TenantId'
+    get:
+      tags: [Developer Workspace]
+      summary: List notebook environments
+      operationId: listDeveloperEnvironments
+      responses:
+        '200':
+          description: Notebook environment catalogue summary.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/NotebookEnvironmentListResponse'
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/XRequestId'
+            X-API-Version:
+              $ref: '#/components/headers/XApiVersion'
+            Link:
+              $ref: '#/components/headers/PaginationLink'
+            ETag:
+              $ref: '#/components/headers/ETag'
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+        '500':
+          $ref: '#/components/responses/InternalError'
+        '400':
+          $ref: '#/components/responses/BadRequestError'
+        '403':
+          $ref: '#/components/responses/ForbiddenError'
+        '404':
+          $ref: '#/components/responses/NotFoundError'
+        '429':
+          $ref: '#/components/responses/TooManyRequestsError'
+      description: List notebook environments
+      security:
+      - BearerAuth: []
+      parameters:
+      - $ref: '#/components/parameters/TenantId'
+      - $ref: '#/components/parameters/Cursor'
+      - $ref: '#/components/parameters/Limit'
+  /v2/developer-workspace/sessions:
+    post:
+      tags: [Developer Workspace]
+      summary: Create notebook session
+      operationId: createNotebookSession
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SessionCreateRequest'
+      responses:
+        '201':
+          description: Session creation acknowledgement.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OperationStatusEnvelope'
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/XRequestId'
+            X-API-Version:
+              $ref: '#/components/headers/XApiVersion'
+        '400':
+          $ref: '#/components/responses/BadRequestError'
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+        '500':
+          $ref: '#/components/responses/InternalError'
+        '403':
+          $ref: '#/components/responses/ForbiddenError'
+        '404':
+          $ref: '#/components/responses/NotFoundError'
+        '429':
+          $ref: '#/components/responses/TooManyRequestsError'
+      description: Create notebook session
+      security:
+      - BearerAuth: []
+      parameters:
+      - $ref: '#/components/parameters/TenantId'
+  /v2/developer-workspace/sessions/{session_id}:
+    get:
+      tags: [Developer Workspace]
+      summary: Get notebook session
+      operationId: getNotebookSession
+      parameters:
+      - name: session_id
+        in: path
+        required: true
+        schema:
+          type: string
+        description: session_id for GET /v2/developer-workspace/sessions/{session_id}.
+      - $ref: '#/components/parameters/TenantId'
+      responses:
+        '200':
+          description: Session status and runtime details.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/NotebookSession'
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/XRequestId'
+            X-API-Version:
+              $ref: '#/components/headers/XApiVersion'
+            Link:
+              $ref: '#/components/headers/PaginationLink'
+            ETag:
+              $ref: '#/components/headers/ETag'
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+        '404':
+          $ref: '#/components/responses/NotFoundError'
+        '500':
+          $ref: '#/components/responses/InternalError'
+        '400':
+          $ref: '#/components/responses/BadRequestError'
+        '403':
+          $ref: '#/components/responses/ForbiddenError'
+        '429':
+          $ref: '#/components/responses/TooManyRequestsError'
+      description: Get notebook session
+      security:
+      - BearerAuth: []
+  /v2/developer-workspace/templates:
+    get:
+      tags: [Developer Workspace]
+      summary: List notebook templates
+      operationId: listNotebookTemplates
+      parameters:
+      - name: category
+        in: query
+        required: false
+        schema:
+          type: string
+        description: category for GET /v2/developer-workspace/templates.
+      - $ref: '#/components/parameters/TenantId'
+      - $ref: '#/components/parameters/Cursor'
+      - $ref: '#/components/parameters/Limit'
+      responses:
+        '200':
+          description: Notebook templates library.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/NotebookTemplate'
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/XRequestId'
+            X-API-Version:
+              $ref: '#/components/headers/XApiVersion'
+            Link:
+              $ref: '#/components/headers/PaginationLink'
+            ETag:
+              $ref: '#/components/headers/ETag'
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+        '500':
+          $ref: '#/components/responses/InternalError'
+        '400':
+          $ref: '#/components/responses/BadRequestError'
+        '403':
+          $ref: '#/components/responses/ForbiddenError'
+        '404':
+          $ref: '#/components/responses/NotFoundError'
+        '429':
+          $ref: '#/components/responses/TooManyRequestsError'
+      description: List notebook templates
+      security:
+      - BearerAuth: []
+  /v2/developer-workspace/api-examples:
+    get:
+      tags: [Developer Workspace]
+      summary: Get API examples
+      operationId: getApiExamples
+      parameters:
+      - name: category
+        in: query
+        required: false
+        schema:
+          type: string
+          default: all
+        description: category for GET /v2/developer-workspace/api-examples.
+      - $ref: '#/components/parameters/TenantId'
+      responses:
+        '200':
+          description: API usage examples grouped by category.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/GenericMapEnvelope'
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/XRequestId'
+            X-API-Version:
+              $ref: '#/components/headers/XApiVersion'
+            Link:
+              $ref: '#/components/headers/PaginationLink'
+            ETag:
+              $ref: '#/components/headers/ETag'
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+        '500':
+          $ref: '#/components/responses/InternalError'
+        '400':
+          $ref: '#/components/responses/BadRequestError'
+        '403':
+          $ref: '#/components/responses/ForbiddenError'
+        '404':
+          $ref: '#/components/responses/NotFoundError'
+        '429':
+          $ref: '#/components/responses/TooManyRequestsError'
+      description: Get API examples
+      security:
+      - BearerAuth: []
+  /v2/developer-workspace/guide/{user_id}:
+    get:
+      tags: [Developer Workspace]
+      summary: Get developer guide
+      operationId: getDeveloperGuide
+      parameters:
+      - name: user_id
+        in: path
+        required: true
+        schema:
+          type: string
+        description: user_id for GET /v2/developer-workspace/guide/{user_id}.
+      - $ref: '#/components/parameters/TenantId'
+      responses:
+        '200':
+          description: Personalized developer onboarding guide.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DeveloperGuide'
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/XRequestId'
+            X-API-Version:
+              $ref: '#/components/headers/XApiVersion'
+            Link:
+              $ref: '#/components/headers/PaginationLink'
+            ETag:
+              $ref: '#/components/headers/ETag'
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+        '500':
+          $ref: '#/components/responses/InternalError'
+        '400':
+          $ref: '#/components/responses/BadRequestError'
+        '403':
+          $ref: '#/components/responses/ForbiddenError'
+        '404':
+          $ref: '#/components/responses/NotFoundError'
+        '429':
+          $ref: '#/components/responses/TooManyRequestsError'
+      description: Get developer guide
+      security:
+      - BearerAuth: []
+  /v2/developer-workspace/health:
+    get:
+      tags: [Developer Workspace]
+      summary: Get developer workspace health
+      operationId: getDeveloperWorkspaceHealth
+      responses:
+        '200':
+          description: Health envelope for developer workspace services.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/GenericMapEnvelope'
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/XRequestId'
+            X-API-Version:
+              $ref: '#/components/headers/XApiVersion'
+            Link:
+              $ref: '#/components/headers/PaginationLink'
+            ETag:
+              $ref: '#/components/headers/ETag'
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+        '500':
+          $ref: '#/components/responses/InternalError'
+        '400':
+          $ref: '#/components/responses/BadRequestError'
+        '403':
+          $ref: '#/components/responses/ForbiddenError'
+        '404':
+          $ref: '#/components/responses/NotFoundError'
+        '429':
+          $ref: '#/components/responses/TooManyRequestsError'
+      description: Get developer workspace health
+      security:
+      - BearerAuth: []
+      parameters:
+      - $ref: '#/components/parameters/TenantId'
+  /v2/ppa/contracts:
+    get:
+      tags: [PPA]
+      summary: List PPA contracts
+      operationId: listPpaContracts
+      parameters:
+      - name: tenant_id
+        in: query
+        required: true
+        schema:
+          type: string
+        description: tenant_id for GET /v2/ppa/contracts.
+      - name: cursor
+        in: query
+        required: false
+        schema:
+          type: string
+        description: cursor for GET /v2/ppa/contracts.
+      - name: limit
+        in: query
+        required: false
+        schema:
+          type: integer
+          minimum: 1
+          maximum: 100
+          default: 10
+        description: limit for GET /v2/ppa/contracts.
+      - name: counterparty_filter
+        in: query
+        required: false
+        schema:
+          type: string
+        description: counterparty_filter for GET /v2/ppa/contracts.
+      - $ref: '#/components/parameters/TenantId'
+      - $ref: '#/components/parameters/Cursor'
+      - $ref: '#/components/parameters/Limit'
+      responses:
+        '200':
+          description: PPA contract catalogue with cursor pagination metadata.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PpaContractListResponse'
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/XRequestId'
+            X-API-Version:
+              $ref: '#/components/headers/XApiVersion'
+            Link:
+              $ref: '#/components/headers/PaginationLink'
+            ETag:
+              $ref: '#/components/headers/ETag'
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+        '500':
+          $ref: '#/components/responses/InternalError'
+        '400':
+          $ref: '#/components/responses/BadRequestError'
+        '403':
+          $ref: '#/components/responses/ForbiddenError'
+        '404':
+          $ref: '#/components/responses/NotFoundError'
+        '429':
+          $ref: '#/components/responses/TooManyRequestsError'
+      description: List PPA contracts
+      security:
+      - BearerAuth: []
+  /v2/ppa/valuate:
+    post:
+      tags: [PPA]
+      summary: Valuate a PPA contract
+      operationId: valuatePpa
+      parameters:
+      - name: tenant_id
+        in: query
+        required: true
+        schema:
+          type: string
+        description: tenant_id for POST /v2/ppa/valuate.
+      - name: contract_id
+        in: query
+        required: true
+        schema:
+          type: string
+        description: contract_id for POST /v2/ppa/valuate.
+      - name: valuation_date
+        in: query
+        required: true
+        schema:
+          type: string
+          format: date
+        description: valuation_date for POST /v2/ppa/valuate.
+      - $ref: '#/components/parameters/TenantId'
+      responses:
+        '201':
+          description: Valuation request accepted but not yet implemented.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PpaValuationResponse'
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/XRequestId'
+            X-API-Version:
+              $ref: '#/components/headers/XApiVersion'
+        '501':
+          $ref: '#/components/responses/NotImplementedError'
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+        '500':
+          $ref: '#/components/responses/InternalError'
+        '400':
+          $ref: '#/components/responses/BadRequestError'
+        '403':
+          $ref: '#/components/responses/ForbiddenError'
+        '404':
+          $ref: '#/components/responses/NotFoundError'
+        '429':
+          $ref: '#/components/responses/TooManyRequestsError'
+      description: Valuate a PPA contract
+      security:
+      - BearerAuth: []
+  /v2/ppa/contracts/{contract_id}/valuations:
+    get:
+      tags: [PPA]
+      summary: List PPA valuations
+      operationId: listPpaValuations
+      parameters:
+      - name: contract_id
+        in: path
+        required: true
+        schema:
+          type: string
+        description: contract_id for GET /v2/ppa/contracts/{contract_id}/valuations.
+      - name: tenant_id
+        in: query
+        required: true
+        schema:
+          type: string
+        description: tenant_id for GET /v2/ppa/contracts/{contract_id}/valuations.
+      - name: cursor
+        in: query
+        required: false
+        schema:
+          type: string
+        description: cursor for GET /v2/ppa/contracts/{contract_id}/valuations.
+      - name: limit
+        in: query
+        required: false
+        schema:
+          type: integer
+          minimum: 1
+          maximum: 100
+          default: 10
+        description: limit for GET /v2/ppa/contracts/{contract_id}/valuations.
+      - name: start_date
+        in: query
+        required: false
+        schema:
+          type: string
+          format: date
+        description: start_date for GET /v2/ppa/contracts/{contract_id}/valuations.
+      - name: end_date
+        in: query
+        required: false
+        schema:
+          type: string
+          format: date
+        description: end_date for GET /v2/ppa/contracts/{contract_id}/valuations.
+      - $ref: '#/components/parameters/TenantId'
+      - $ref: '#/components/parameters/Cursor'
+      - $ref: '#/components/parameters/Limit'
+      responses:
+        '200':
+          description: PPA valuation series for the specified contract.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PpaValuationListResponse'
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/XRequestId'
+            X-API-Version:
+              $ref: '#/components/headers/XApiVersion'
+            Link:
+              $ref: '#/components/headers/PaginationLink'
+            ETag:
+              $ref: '#/components/headers/ETag'
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+        '500':
+          $ref: '#/components/responses/InternalError'
+        '400':
+          $ref: '#/components/responses/BadRequestError'
+        '403':
+          $ref: '#/components/responses/ForbiddenError'
+        '404':
+          $ref: '#/components/responses/NotFoundError'
+        '429':
+          $ref: '#/components/responses/TooManyRequestsError'
+      description: List PPA valuations
+      security:
+      - BearerAuth: []
+components:
+  securitySchemes:
+    BearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+  headers:
+    XRequestId:
+      description: Unique correlation identifier for the request.
+      schema:
+        type: string
+    XApiVersion:
+      description: Semantic version for the served API surface.
+      schema:
+        type: string
+    PaginationLink:
+      description: RFC 8288 formatted pagination links.
+      schema:
+        type: string
+    RateLimitLimit:
+      description: Maximum number of requests allowed in the current window.
+      schema:
+        type: integer
+    RateLimitRemaining:
+      description: Remaining requests in the current window.
+      schema:
+        type: integer
+    RateLimitReset:
+      description: Epoch seconds when the rate limit window resets.
+      schema:
+        type: integer
+    RetryAfter:
+      description: Seconds until clients may retry after rate limiting.
+      schema:
+        type: integer
+    ETag:
+      description: Strong validator for response caching.
+      schema:
+        type: string
+  parameters:
+    TenantId:
+      name: tenant_id
+      in: query
+      required: true
+      description: Tenant identifier scoping the request.
+      schema:
+        type: string
+        pattern: "^[a-zA-Z0-9-_]+$"
+    Cursor:
+      name: cursor
+      in: query
+      required: false
+      description: Opaque cursor for pagination.
+      schema:
+        type: string
+    Limit:
+      name: limit
+      in: query
+      required: false
+      description: Maximum number of records to return.
+      schema:
+        type: integer
+        minimum: 1
+        maximum: 100
+        default: 10
+  responses:
+    UnauthorizedError:
+      headers:
+        X-Request-Id:
+          $ref: '#/components/headers/XRequestId'
+        X-API-Version:
+          $ref: '#/components/headers/XApiVersion'
+      description: Authentication failed or not supplied.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+    BadRequestError:
+      headers:
+        X-Request-Id:
+          $ref: '#/components/headers/XRequestId'
+        X-API-Version:
+          $ref: '#/components/headers/XApiVersion'
+      description: The request payload or parameters are invalid.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+    NotFoundError:
+      headers:
+        X-Request-Id:
+          $ref: '#/components/headers/XRequestId'
+        X-API-Version:
+          $ref: '#/components/headers/XApiVersion'
+      description: The requested resource was not found.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+    NotImplementedError:
+      headers:
+        X-Request-Id:
+          $ref: '#/components/headers/XRequestId'
+        X-API-Version:
+          $ref: '#/components/headers/XApiVersion'
+      description: The requested capability is not implemented.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+    ForbiddenError:
+      headers:
+        X-Request-Id:
+          $ref: '#/components/headers/XRequestId'
+        X-API-Version:
+          $ref: '#/components/headers/XApiVersion'
+      description: The client is authenticated but not authorized for the resource.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+    TooManyRequestsError:
+      headers:
+        X-Request-Id:
+          $ref: '#/components/headers/XRequestId'
+        X-API-Version:
+          $ref: '#/components/headers/XApiVersion'
+        X-RateLimit-Limit:
+          $ref: '#/components/headers/RateLimitLimit'
+        X-RateLimit-Remaining:
+          $ref: '#/components/headers/RateLimitRemaining'
+        X-RateLimit-Reset:
+          $ref: '#/components/headers/RateLimitReset'
+        Retry-After:
+          $ref: '#/components/headers/RetryAfter'
+      description: The request rate has exceeded the allowed threshold.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+    InternalError:
+      headers:
+        X-Request-Id:
+          $ref: '#/components/headers/XRequestId'
+        X-API-Version:
+          $ref: '#/components/headers/XApiVersion'
+      description: Unexpected server error.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+  schemas:
+    ResponseMeta:
+      type: object
+      description: Telemetry metadata returned by the Aurum API gateway.
+      properties:
+        operation:
+          type: string
+        query_time_ms:
+          type: number
+          format: float
+        record_count:
+          type: integer
+        pagination:
+          type: object
+          additionalProperties: true
+      additionalProperties: true
+    PaginationLinks:
+      type: object
+      description: Hypermedia pagination link container.
+      additionalProperties:
+        type: string
+    OperationStatusEnvelope:
+      type: object
+      properties:
+        meta:
+          $ref: '#/components/schemas/ResponseMeta'
+        data:
+          $ref: '#/components/schemas/OperationStatus'
+      required: [meta, data]
+    OperationStatus:
+      type: object
+      properties:
+        status:
+          type: string
+        message:
+          type: string
+        details:
+          type: object
+          additionalProperties: true
+      additionalProperties: true
+    GenericMapEnvelope:
+      type: object
+      properties:
+        meta:
+          $ref: '#/components/schemas/ResponseMeta'
+        data:
+          type: object
+          additionalProperties: true
+      required: [meta, data]
+    PerformanceBudget:
+      type: object
+      properties:
+        endpoint:
+          type: string
+        method:
+          type: string
+        p95_latency_ms:
+          type: number
+          format: float
+        p99_latency_ms:
+          type: number
+          format: float
+        max_error_rate:
+          type: number
+          format: float
+        min_throughput_rps:
+          type: number
+          format: float
+        max_memory_mb:
+          type: number
+          format: float
+        max_cpu_percent:
+          type: number
+          format: float
+        description:
+          type: string
+        enabled:
+          type: boolean
+        compliance_status:
+          type: string
+      required:
+      - endpoint
+      - method
+      - p95_latency_ms
+      - p99_latency_ms
+      - max_error_rate
+      - min_throughput_rps
+      - max_memory_mb
+      - max_cpu_percent
+      - description
+      - enabled
+      - compliance_status
+    PerformanceBudgetListResponse:
+      type: object
+      properties:
+        meta:
+          $ref: '#/components/schemas/ResponseMeta'
+        data:
+          type: array
+          items:
+            $ref: '#/components/schemas/PerformanceBudget'
+      required: [meta, data]
+    PerformanceBudgetCreateRequest:
+      type: object
+      required:
+      - endpoint
+      - method
+      - p95_latency_ms
+      - p99_latency_ms
+      - max_error_rate
+      - min_throughput_rps
+      - max_memory_mb
+      - max_cpu_percent
+      - description
+      properties:
+        endpoint:
+          type: string
+        method:
+          type: string
+        p95_latency_ms:
+          type: number
+          format: float
+        p99_latency_ms:
+          type: number
+          format: float
+        max_error_rate:
+          type: number
+          format: float
+        min_throughput_rps:
+          type: number
+          format: float
+        max_memory_mb:
+          type: number
+          format: float
+        max_cpu_percent:
+          type: number
+          format: float
+        description:
+          type: string
+        enabled:
+          type: boolean
+          default: true
+    LoadTestScenario:
+      type: object
+      properties:
+        scenario_id:
+          type: string
+        name:
+          type: string
+        description:
+          type: string
+        script_path:
+          type: string
+        duration_seconds:
+          type: integer
+        virtual_users:
+          type: integer
+        ramp_up_seconds:
+          type: integer
+        ramp_down_seconds:
+          type: integer
+        environment:
+          type: string
+        thresholds:
+          type: object
+          additionalProperties:
+            type: string
+        enabled:
+          type: boolean
+      required:
+      - scenario_id
+      - name
+      - description
+      - script_path
+      - duration_seconds
+      - virtual_users
+      - environment
+      - enabled
+    LoadTestScenarioListResponse:
+      type: object
+      properties:
+        meta:
+          $ref: '#/components/schemas/ResponseMeta'
+        data:
+          type: array
+          items:
+            $ref: '#/components/schemas/LoadTestScenario'
+      required: [meta, data]
+    ScenarioRunResponse:
+      type: object
+      properties:
+        meta:
+          $ref: '#/components/schemas/ResponseMeta'
+        data:
+          type: object
+          properties:
+            test_id:
+              type: string
+            status:
+              type: string
+            message:
+              type: string
+          required:
+          - test_id
+          - status
+      required: [meta, data]
+    PerformanceTestResult:
+      type: object
+      properties:
+        test_id:
+          type: string
+        scenario_id:
+          type: string
+        status:
+          type: string
+        metrics:
+          type: object
+          additionalProperties:
+            type: number
+            format: float
+        start_time:
+          type: string
+          format: date-time
+        end_time:
+          type: string
+          format: date-time
+          nullable: true
+        execution_time:
+          type: number
+          format: float
+          nullable: true
+        errors:
+          type: array
+          items:
+            type: string
+      required:
+      - test_id
+      - scenario_id
+      - status
+      - metrics
+      - start_time
+      - errors
+    PerformanceDashboard:
+      type: object
+      properties:
+        budget_compliance:
+          type: object
+          additionalProperties:
+            type: boolean
+        recent_tests:
+          type: array
+          items:
+            type: object
+            additionalProperties: true
+        performance_trends:
+          type: object
+          additionalProperties: true
+        recommendations:
+          type: array
+          items:
+            type: string
+        last_updated:
+          type: string
+          format: date-time
+      required:
+      - budget_compliance
+      - recent_tests
+      - performance_trends
+      - recommendations
+      - last_updated
+    PerformanceComparison:
+      type: object
+      properties:
+        comparison_id:
+          type: string
+        baseline_test_id:
+          type: string
+        current_test_id:
+          type: string
+        comparison_metrics:
+          type: object
+          additionalProperties:
+            type: number
+            format: float
+        regression_detected:
+          type: boolean
+        improvement_areas:
+          type: array
+          items:
+            type: string
+        degradation_areas:
+          type: array
+          items:
+            type: string
+        recommendations:
+          type: array
+          items:
+            type: string
+      required:
+      - comparison_id
+      - baseline_test_id
+      - current_test_id
+      - comparison_metrics
+      - regression_detected
+      - improvement_areas
+      - degradation_areas
+      - recommendations
+    DBTModelTestRequest:
+      type: object
+      required:
+      - model_names
+      properties:
+        model_names:
+          type: array
+          items:
+            type: string
+        test_type:
+          type: string
+          default: all
+    DBTTestResult:
+      type: object
+      properties:
+        status:
+          type: string
+        total_tests:
+          type: integer
+        passed_tests:
+          type: integer
+        failed_tests:
+          type: integer
+        test_details:
+          type: array
+          items:
+            type: object
+            additionalProperties: true
+        execution_time:
+          type: number
+          format: float
+      required:
+      - status
+      - total_tests
+      - passed_tests
+      - failed_tests
+      - test_details
+      - execution_time
+    FixtureGenerationRequest:
+      type: object
+      required:
+      - fixture_names
+      properties:
+        fixture_names:
+          type: array
+          items:
+            type: string
+        generation_strategy:
+          type: string
+          default: sample
+    FixtureGenerationResult:
+      type: object
+      properties:
+        fixture_name:
+          type: string
+        status:
+          type: string
+        records_generated:
+          type: integer
+        file_path:
+          type: string
+        error:
+          type: string
+          nullable: true
+      required:
+      - fixture_name
+      - status
+      - records_generated
+      - file_path
+    FixtureGenerationEnvelope:
+      type: object
+      properties:
+        meta:
+          $ref: '#/components/schemas/ResponseMeta'
+        data:
+          type: object
+          properties:
+            fixtures:
+              type: array
+              items:
+                $ref: '#/components/schemas/FixtureGenerationResult'
+            total_generated:
+              type: integer
+          required:
+          - fixtures
+          - total_generated
+      required: [meta, data]
+    MartCreateRequest:
+      type: object
+      required:
+      - mart_name
+      - description
+      - business_domain
+      - data_sources
+      - key_dimensions
+      - metrics
+      properties:
+        mart_name:
+          type: string
+        description:
+          type: string
+        business_domain:
+          type: string
+        data_sources:
+          type: array
+          items:
+            type: string
+        key_dimensions:
+          type: array
+          items:
+            type: string
+        metrics:
+          type: array
+          items:
+            type: string
+        refresh_schedule:
+          type: string
+          default: daily
+        retention_days:
+          type: integer
+          default: 365
+    MartResponse:
+      type: object
+      properties:
+        mart_name:
+          type: string
+        description:
+          type: string
+        business_domain:
+          type: string
+        data_sources:
+          type: array
+          items:
+            type: string
+        key_dimensions:
+          type: array
+          items:
+            type: string
+        metrics:
+          type: array
+          items:
+            type: string
+        refresh_schedule:
+          type: string
+        retention_days:
+          type: integer
+        documentation_url:
+          type: string
+          nullable: true
+      required:
+      - mart_name
+      - description
+      - business_domain
+      - data_sources
+      - key_dimensions
+      - metrics
+      - refresh_schedule
+      - retention_days
+    DBTModel:
+      type: object
+      properties:
+        model_name:
+          type: string
+        model_path:
+          type: string
+        model_type:
+          type: string
+        schema_name:
+          type: string
+        materialization:
+          type: string
+        dependencies:
+          type: array
+          items:
+            type: string
+        tags:
+          type: array
+          items:
+            type: string
+        description:
+          type: string
+        status:
+          type: string
+        last_run:
+          type: string
+          format: date-time
+          nullable: true
+        last_success:
+          type: string
+          format: date-time
+          nullable: true
+        error_count:
+          type: integer
+      required:
+      - model_name
+      - model_path
+      - model_type
+      - schema_name
+      - materialization
+      - dependencies
+      - tags
+      - description
+      - status
+      - error_count
+    DBTDependencyAnalysis:
+      type: object
+      properties:
+        model_name:
+          type: string
+        upstream_dependencies:
+          type: array
+          items:
+            type: string
+        downstream_dependents:
+          type: array
+          items:
+            type: string
+        impact_score:
+          type: integer
+        recommendations:
+          type: array
+          items:
+            type: string
+      required:
+      - model_name
+      - upstream_dependencies
+      - downstream_dependents
+      - impact_score
+      - recommendations
+    DBTLineageDocumentation:
+      type: object
+      properties:
+        generated_at:
+          type: string
+          format: date-time
+        total_models:
+          type: integer
+        total_marts:
+          type: integer
+        lineage_graph:
+          type: object
+          additionalProperties: true
+        critical_paths:
+          type: array
+          items:
+            type: string
+        data_quality_checks:
+          type: array
+          items:
+            type: string
+      required:
+      - generated_at
+      - total_models
+      - total_marts
+      - lineage_graph
+      - critical_paths
+      - data_quality_checks
+    DBTFreshnessCheck:
+      type: object
+      properties:
+        table_name:
+          type: string
+        last_updated:
+          type: string
+          format: date-time
+        freshness_hours:
+          type: number
+          format: float
+        threshold_hours:
+          type: integer
+        status:
+          type: string
+      required:
+      - table_name
+      - freshness_hours
+      - threshold_hours
+      - status
+    TestScheduleCreateRequest:
+      type: object
+      required:
+      - schedule_name
+      - test_selector
+      properties:
+        schedule_name:
+          type: string
+        test_selector:
+          type: string
+        schedule_cron:
+          type: string
+          default: 0 */4 * * *
+        enabled:
+          type: boolean
+          default: true
+        alert_on_failure:
+          type: boolean
+          default: true
+        environment:
+          type: string
+          default: production
+    DBTTestSchedule:
+      type: object
+      properties:
+        schedule_name:
+          type: string
+        test_selector:
+          type: string
+        schedule_cron:
+          type: string
+        enabled:
+          type: boolean
+        last_run:
+          type: string
+          format: date-time
+          nullable: true
+        next_run:
+          type: string
+          format: date-time
+          nullable: true
+        failure_count:
+          type: integer
+        max_failures:
+          type: integer
+        alert_on_failure:
+          type: boolean
+        environment:
+          type: string
+      required:
+      - schedule_name
+      - test_selector
+      - schedule_cron
+      - enabled
+      - failure_count
+      - max_failures
+      - alert_on_failure
+      - environment
+    ForecastRequest:
+      type: object
+      required:
+      - forecast_type
+      - target_variable
+      - start_date
+      - end_date
+      properties:
+        forecast_type:
+          type: string
+          enum: [load, price, renewable, demand]
+        target_variable:
+          type: string
+        geography:
+          type: string
+          default: US
+        start_date:
+          type: string
+          format: date-time
+        end_date:
+          type: string
+          format: date-time
+        quantiles:
+          type: array
+          items:
+            type: string
+        interval:
+          type: string
+          enum: [1H, 1D, 7D, 1M]
+          default: 1H
+        model_version:
+          type: string
+          nullable: true
+        include_feature_importance:
+          type: boolean
+          default: false
+        scenario_id:
+          type: string
+          nullable: true
+    TriggerCondition:
+      type: object
+      required:
+      - data_source
+      - threshold_type
+      - threshold_value
+      properties:
+        data_source:
+          type: string
+        geography:
+          type: string
+          default: US
+        threshold_type:
+          type: string
+        threshold_value:
+          type: number
+          format: float
+        lookback_hours:
+          type: integer
+          default: 24
+        min_change_required:
+          type: boolean
+          default: true
+        fields:
+          type: array
+          items:
+            type: string
+        metadata:
+          type: object
+          additionalProperties: true
+    TriggerCreateRequest:
+      type: object
+      required:
+      - name
+      - conditions
+      - forecast_config
+      properties:
+        name:
+          type: string
+        description:
+          type: string
+          default: ''
+        conditions:
+          type: array
+          items:
+            $ref: '#/components/schemas/TriggerCondition'
+        forecast_config:
+          allOf:
+          - $ref: '#/components/schemas/ForecastRequest'
+        priority:
+          type: number
+          format: float
+          default: 1.0
+        cooldown_minutes:
+          type: integer
+          default: 30
+        enabled:
+          type: boolean
+          default: true
+    TriggerUpdateRequest:
+      type: object
+      properties:
+        name:
+          type: string
+        description:
+          type: string
+        conditions:
+          type: array
+          items:
+            $ref: '#/components/schemas/TriggerCondition'
+        forecast_config:
+          allOf:
+          - $ref: '#/components/schemas/ForecastRequest'
+        priority:
+          type: number
+          format: float
+        cooldown_minutes:
+          type: integer
+        enabled:
+          type: boolean
+    TriggerResponse:
+      type: object
+      properties:
+        trigger_id:
+          type: string
+        name:
+          type: string
+        description:
+          type: string
+        conditions:
+          type: array
+          items:
+            $ref: '#/components/schemas/TriggerCondition'
+        forecast_config:
+          type: object
+          additionalProperties: true
+        priority:
+          type: number
+          format: float
+        cooldown_minutes:
+          type: integer
+        enabled:
+          type: boolean
+        last_triggered:
+          type: string
+          format: date-time
+          nullable: true
+        trigger_count:
+          type: integer
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+      required:
+      - trigger_id
+      - name
+      - description
+      - conditions
+      - forecast_config
+      - priority
+      - cooldown_minutes
+      - enabled
+      - trigger_count
+      - created_at
+      - updated_at
+    TriggerListResponse:
+      type: object
+      properties:
+        data:
+          type: array
+          items:
+            $ref: '#/components/schemas/TriggerResponse'
+        meta:
+          $ref: '#/components/schemas/ResponseMeta'
+        links:
+          $ref: '#/components/schemas/PaginationLinks'
+      required:
+      - data
+      - meta
+      - links
+    TriggerEvent:
+      type: object
+      properties:
+        event_id:
+          type: string
+        trigger_id:
+          type: string
+        data_source:
+          type: string
+        geography:
+          type: string
+        timestamp:
+          type: string
+          format: date-time
+        data_changes:
+          type: object
+          additionalProperties:
+            type: number
+            format: float
+        priority_score:
+          type: number
+          format: float
+        metadata:
+          type: object
+          additionalProperties: true
+      required:
+      - event_id
+      - trigger_id
+      - data_source
+      - geography
+      - timestamp
+      - data_changes
+      - priority_score
+    ReforecastJob:
+      type: object
+      properties:
+        job_id:
+          type: string
+        trigger_event:
+          $ref: '#/components/schemas/TriggerEvent'
+        forecast_request:
+          type: object
+          additionalProperties: true
+        priority:
+          type: number
+          format: float
+        created_at:
+          type: string
+          format: date-time
+        scheduled_for:
+          type: string
+          format: date-time
+        status:
+          type: string
+        attempts:
+          type: integer
+        max_attempts:
+          type: integer
+        completed_at:
+          type: string
+          format: date-time
+          nullable: true
+        error_message:
+          type: string
+          nullable: true
+      required:
+      - job_id
+      - trigger_event
+      - forecast_request
+      - priority
+      - created_at
+      - scheduled_for
+      - status
+      - attempts
+      - max_attempts
+    JobListResponse:
+      type: object
+      properties:
+        data:
+          type: array
+          items:
+            $ref: '#/components/schemas/ReforecastJob'
+        meta:
+          $ref: '#/components/schemas/ResponseMeta'
+        links:
+          $ref: '#/components/schemas/PaginationLinks'
+      required:
+      - data
+      - meta
+      - links
+    TriggerEventsEnvelope:
+      type: object
+      properties:
+        meta:
+          $ref: '#/components/schemas/ResponseMeta'
+        data:
+          type: array
+          items:
+            $ref: '#/components/schemas/TriggerEvent'
+      required: [meta, data]
+    DebounceConfig:
+      type: object
+      properties:
+        enabled:
+          type: boolean
+          default: true
+        window_seconds:
+          type: integer
+          default: 300
+        max_concurrent_triggers:
+          type: integer
+          default: 5
+        priority_threshold:
+          type: number
+          format: float
+          default: 0.5
+      required:
+      - enabled
+      - window_seconds
+      - max_concurrent_triggers
+      - priority_threshold
+    DebounceConfigEnvelope:
+      type: object
+      properties:
+        meta:
+          $ref: '#/components/schemas/ResponseMeta'
+        data:
+          $ref: '#/components/schemas/DebounceConfig'
+      required: [meta, data]
+    TriggerRerunResponse:
+      type: object
+      properties:
+        meta:
+          $ref: '#/components/schemas/ResponseMeta'
+        data:
+          type: object
+          properties:
+            event_id:
+              type: string
+            job_id:
+              type: string
+              nullable: true
+            data_source:
+              type: string
+            geography:
+              type: string
+            forecast_type:
+              type: string
+            target_variable:
+              type: string
+            trigger_reason:
+              type: string
+            priority:
+              type: number
+              format: float
+            status:
+              type: string
+            message:
+              type: string
+          required:
+          - event_id
+          - data_source
+          - geography
+          - forecast_type
+          - target_variable
+          - trigger_reason
+          - priority
+          - status
+          - message
+      required: [meta, data]
+    KafkaStatusEnvelope:
+      type: object
+      properties:
+        meta:
+          $ref: '#/components/schemas/ResponseMeta'
+        data:
+          type: object
+          properties:
+            consumer_running:
+              type: boolean
+            topics:
+              type: array
+              items:
+                type: string
+            bootstrap_servers:
+              type: array
+              items:
+                type: string
+            group_id:
+              type: string
+              nullable: true
+            event_queue_size:
+              type: integer
+            max_queue_size:
+              type: integer
+            processing_jobs:
+              type: integer
+            pending_jobs:
+              type: integer
+          additionalProperties: true
+      required: [meta, data]
+    TriggerAnalyticsEnvelope:
+      type: object
+      properties:
+        meta:
+          $ref: '#/components/schemas/ResponseMeta'
+        data:
+          type: object
+          properties:
+            period_days:
+              type: integer
+            total_triggers:
+              type: integer
+            active_triggers:
+              type: integer
+            total_events_processed:
+              type: integer
+            average_events_per_trigger:
+              type: number
+              format: float
+            successful_jobs:
+              type: integer
+            failed_jobs:
+              type: integer
+            average_processing_time_ms:
+              type: number
+              format: float
+            trigger_efficiency:
+              type: number
+              format: float
+            event_throughput_per_minute:
+              type: number
+              format: float
+            queue_utilization_percent:
+              type: number
+              format: float
+          additionalProperties: true
+      required: [meta, data]
+    ModelCreateRequest:
+      type: object
+      required:
+      - model_name
+      - model_type
+      - config
+      properties:
+        model_name:
+          type: string
+        model_type:
+          type: string
+        description:
+          type: string
+          default: ''
+        config:
+          type: object
+          additionalProperties: true
+        tags:
+          type: object
+          additionalProperties:
+            type: string
+    ModelResponse:
+      type: object
+      properties:
+        model_name:
+          type: string
+        model_type:
+          type: string
+        description:
+          type: string
+        latest_version:
+          type: string
+          nullable: true
+        total_versions:
+          type: integer
+        status:
+          type: string
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+        tags:
+          type: object
+          additionalProperties:
+            type: string
+      required:
+      - model_name
+      - model_type
+      - description
+      - total_versions
+      - status
+      - created_at
+      - updated_at
+      - tags
+    ModelListResponse:
+      type: object
+      properties:
+        data:
+          type: array
+          items:
+            $ref: '#/components/schemas/ModelResponse'
+        meta:
+          $ref: '#/components/schemas/ResponseMeta'
+        links:
+          $ref: '#/components/schemas/PaginationLinks'
+      required:
+      - data
+      - meta
+      - links
+    ModelVersionResponse:
+      type: object
+      properties:
+        version_id:
+          type: string
+        model_name:
+          type: string
+        version_number:
+          type: string
+        description:
+          type: string
+        config:
+          type: object
+          additionalProperties: true
+        training_start_date:
+          type: string
+          format: date-time
+        training_end_date:
+          type: string
+          format: date-time
+        model_path:
+          type: string
+        model_size_bytes:
+          type: integer
+        performance_metrics:
+          type: object
+          additionalProperties:
+            type: number
+            format: float
+        feature_importance:
+          type: object
+          additionalProperties:
+            type: number
+            format: float
+        validation_results:
+          type: object
+          additionalProperties: true
+        status:
+          type: string
+        created_at:
+          type: string
+          format: date-time
+        created_by:
+          type: string
+        tags:
+          type: object
+          additionalProperties:
+            type: string
+      required:
+      - version_id
+      - model_name
+      - version_number
+      - description
+      - config
+      - training_start_date
+      - training_end_date
+      - model_path
+      - model_size_bytes
+      - performance_metrics
+      - feature_importance
+      - validation_results
+      - status
+      - created_at
+      - created_by
+      - tags
+    ModelVersionListResponse:
+      type: object
+      properties:
+        data:
+          type: array
+          items:
+            $ref: '#/components/schemas/ModelVersionResponse'
+        meta:
+          $ref: '#/components/schemas/ResponseMeta'
+        links:
+          $ref: '#/components/schemas/PaginationLinks'
+      required:
+      - data
+      - meta
+      - links
+    ModelTrainingEnqueueResponse:
+      type: object
+      properties:
+        meta:
+          $ref: '#/components/schemas/ResponseMeta'
+        data:
+          type: object
+          properties:
+            job_id:
+              type: string
+            status:
+              type: string
+            message:
+              type: string
+          required:
+          - job_id
+          - status
+          - message
+      required: [meta, data]
+    TrainingJobResponse:
+      type: object
+      properties:
+        job_id:
+          type: string
+        model_name:
+          type: string
+        config:
+          type: object
+          additionalProperties: true
+        status:
+          type: string
+        progress:
+          type: number
+          format: float
+        current_stage:
+          type: string
+        started_at:
+          type: string
+          format: date-time
+          nullable: true
+        completed_at:
+          type: string
+          format: date-time
+          nullable: true
+        error_message:
+          type: string
+          nullable: true
+        model_version_id:
+          type: string
+          nullable: true
+        created_at:
+          type: string
+          format: date-time
+        scheduled_for:
+          type: string
+          format: date-time
+          nullable: true
+      required:
+      - job_id
+      - model_name
+      - config
+      - status
+      - progress
+      - current_stage
+      - created_at
+    TrainingJobListResponse:
+      type: object
+      properties:
+        data:
+          type: array
+          items:
+            $ref: '#/components/schemas/TrainingJobResponse'
+        meta:
+          $ref: '#/components/schemas/ResponseMeta'
+        links:
+          $ref: '#/components/schemas/PaginationLinks'
+      required:
+      - data
+      - meta
+      - links
+    ChampionSelectionResponse:
+      type: object
+      properties:
+        champion_selected:
+          type: boolean
+        champion_version:
+          type: string
+          nullable: true
+        champion_version_id:
+          type: string
+          nullable: true
+        performance_metrics:
+          type: object
+          additionalProperties:
+            type: number
+            format: float
+        selection_criteria:
+          type: object
+          additionalProperties: true
+      required:
+      - champion_selected
+      - selection_criteria
+    PromotionResponse:
+      type: object
+      properties:
+        promotion_successful:
+          type: boolean
+        model_name:
+          type: string
+        promoted_version_id:
+          type: string
+        message:
+          type: string
+      required:
+      - promotion_successful
+      - model_name
+      - promoted_version_id
+      - message
+    TrainingJobUpdateResponse:
+      type: object
+      properties:
+        update_successful:
+          type: boolean
+        job_id:
+          type: string
+        progress:
+          type: number
+          format: float
+        stage:
+          type: string
+        metrics:
+          type: object
+          additionalProperties: true
+      required:
+      - update_successful
+      - job_id
+      - progress
+      - stage
+    TrainingJobCompletionResponse:
+      type: object
+      properties:
+        completion_successful:
+          type: boolean
+        job_id:
+          type: string
+        job_success:
+          type: boolean
+        error_message:
+          type: string
+          nullable: true
+      required:
+      - completion_successful
+      - job_id
+      - job_success
+    TrainingJobCancellationResponse:
+      type: object
+      properties:
+        cancellation_successful:
+          type: boolean
+        job_id:
+          type: string
+        message:
+          type: string
+      required:
+      - cancellation_successful
+      - job_id
+      - message
+    ComparisonResponse:
+      type: object
+      properties:
+        comparison_id:
+          type: string
+        champion_version:
+          type: string
+        challenger_version:
+          type: string
+        comparison_metrics:
+          type: object
+          additionalProperties:
+            type: number
+            format: float
+        statistical_significance:
+          type: object
+          additionalProperties:
+            type: number
+            format: float
+        business_impact:
+          type: object
+          additionalProperties:
+            type: number
+            format: float
+        recommendation:
+          type: string
+        comparison_date:
+          type: string
+          format: date-time
+        notes:
+          type: string
+          nullable: true
+      required:
+      - comparison_id
+      - champion_version
+      - challenger_version
+      - comparison_metrics
+      - statistical_significance
+      - business_impact
+      - recommendation
+      - comparison_date
+    ComparisonListResponse:
+      type: object
+      properties:
+        data:
+          type: array
+          items:
+            $ref: '#/components/schemas/ComparisonResponse'
+        meta:
+          $ref: '#/components/schemas/ResponseMeta'
+        links:
+          $ref: '#/components/schemas/PaginationLinks'
+      required:
+      - data
+      - meta
+      - links
+    RetrainScheduleResponse:
+      type: object
+      properties:
+        schedule_id:
+          type: string
+        model_name:
+          type: string
+        cron_expression:
+          type: string
+        enabled:
+          type: boolean
+        last_run:
+          type: string
+          format: date-time
+          nullable: true
+        next_run:
+          type: string
+          format: date-time
+          nullable: true
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+      required:
+      - schedule_id
+      - model_name
+      - cron_expression
+      - enabled
+      - created_at
+      - updated_at
+    RetrainScheduleListResponse:
+      type: object
+      properties:
+        data:
+          type: array
+          items:
+            $ref: '#/components/schemas/RetrainScheduleResponse'
+        meta:
+          $ref: '#/components/schemas/ResponseMeta'
+        links:
+          $ref: '#/components/schemas/PaginationLinks'
+      required:
+      - data
+      - meta
+      - links
+    EnvironmentCreateRequest:
+      type: object
+      required:
+      - environment_id
+      - environment_name
+      - description
+      properties:
+        environment_id:
+          type: string
+        environment_name:
+          type: string
+        description:
+          type: string
+        base_image:
+          type: string
+          default: jupyter/scipy-notebook:latest
+        resource_limits:
+          type: object
+          additionalProperties:
+            type: string
+          default:
+            cpu: '2'
+            memory: 4Gi
+        resource_requests:
+          type: object
+          additionalProperties:
+            type: string
+          default:
+            cpu: 500m
+            memory: 1Gi
+        storage_size:
+          type: string
+          default: 10Gi
+        environment_variables:
+          type: object
+          additionalProperties:
+            type: string
+        allowed_packages:
+          type: array
+          items:
+            type: string
+        network_policy:
+          type: string
+          default: restricted
+    NotebookEnvironment:
+      type: object
+      properties:
+        environment_id:
+          type: string
+        environment_name:
+          type: string
+        description:
+          type: string
+        base_image:
+          type: string
+        resource_limits:
+          type: object
+          additionalProperties:
+            type: string
+        resource_requests:
+          type: object
+          additionalProperties:
+            type: string
+        storage_size:
+          type: string
+        environment_variables:
+          type: object
+          additionalProperties:
+            type: string
+        allowed_packages:
+          type: array
+          items:
+            type: string
+        network_policy:
+          type: string
+        created_at:
+          type: string
+          format: date-time
+      required:
+      - environment_id
+      - environment_name
+      - description
+      - base_image
+      - resource_limits
+      - resource_requests
+      - storage_size
+      - environment_variables
+      - allowed_packages
+      - network_policy
+      - created_at
+    NotebookEnvironmentListResponse:
+      type: object
+      properties:
+        meta:
+          $ref: '#/components/schemas/ResponseMeta'
+        data:
+          type: object
+          additionalProperties: true
+      required: [meta, data]
+    SessionCreateRequest:
+      type: object
+      required:
+      - environment_id
+      properties:
+        environment_id:
+          type: string
+        template_id:
+          type: string
+          nullable: true
+        customizations:
+          type: object
+          additionalProperties: true
+    NotebookSession:
+      type: object
+      properties:
+        session_id:
+          type: string
+        environment_id:
+          type: string
+        user_id:
+          type: string
+        tenant_id:
+          type: string
+        status:
+          type: string
+        pod_name:
+          type: string
+          nullable: true
+        pod_ip:
+          type: string
+          nullable: true
+        notebook_url:
+          type: string
+          nullable: true
+        start_time:
+          type: string
+          format: date-time
+          nullable: true
+        last_activity:
+          type: string
+          format: date-time
+          nullable: true
+        resource_usage:
+          type: object
+          additionalProperties: true
+      required:
+      - session_id
+      - environment_id
+      - user_id
+      - tenant_id
+      - status
+      - resource_usage
+    NotebookTemplate:
+      type: object
+      properties:
+        template_id:
+          type: string
+        template_name:
+          type: string
+        description:
+          type: string
+        category:
+          type: string
+        required_packages:
+          type: array
+          items:
+            type: string
+        sample_queries:
+          type: array
+          items:
+            type: object
+            additionalProperties: true
+        documentation_links:
+          type: array
+          items:
+            type: string
+        tags:
+          type: array
+          items:
+            type: string
+      required:
+      - template_id
+      - template_name
+      - description
+      - category
+      - required_packages
+      - sample_queries
+      - documentation_links
+      - tags
+    DeveloperGuide:
+      type: object
+      properties:
+        user_id:
+          type: string
+        guide_content:
+          type: string
+        generated_at:
+          type: string
+          format: date-time
+      required:
+      - user_id
+      - guide_content
+      - generated_at
+    PpaContract:
+      type: object
+      properties:
+        contract_id:
+          type: string
+        name:
+          type: string
+        counterparty:
+          type: string
+        capacity_mw:
+          type: number
+          format: float
+        price_usd_mwh:
+          type: number
+          format: float
+        start_date:
+          type: string
+          format: date
+        end_date:
+          type: string
+          format: date
+        meta:
+          type: object
+          additionalProperties: true
+      required:
+      - contract_id
+      - name
+      - counterparty
+      - capacity_mw
+      - price_usd_mwh
+      - start_date
+      - end_date
+      - meta
+    PpaContractListResponse:
+      type: object
+      properties:
+        data:
+          type: array
+          items:
+            $ref: '#/components/schemas/PpaContract'
+        meta:
+          $ref: '#/components/schemas/ResponseMeta'
+        links:
+          $ref: '#/components/schemas/PaginationLinks'
+      required:
+      - data
+      - meta
+      - links
+    PpaValuation:
+      type: object
+      properties:
+        contract_id:
+          type: string
+        valuation_date:
+          type: string
+          format: date
+        period_start:
+          type: string
+          format: date
+          nullable: true
+        period_end:
+          type: string
+          format: date
+          nullable: true
+        metric:
+          type: string
+          nullable: true
+        present_value:
+          type: number
+          format: float
+          nullable: true
+        cashflow:
+          type: number
+          format: float
+          nullable: true
+        irr:
+          type: number
+          format: float
+          nullable: true
+        currency:
+          type: string
+        meta:
+          type: object
+          additionalProperties: true
+      required:
+      - contract_id
+      - valuation_date
+      - currency
+      - meta
+    PpaValuationResponse:
+      type: object
+      properties:
+        contract_id:
+          type: string
+        valuation_date:
+          type: string
+          format: date
+        period_start:
+          type: string
+          format: date
+          nullable: true
+        period_end:
+          type: string
+          format: date
+          nullable: true
+        metric:
+          type: string
+          nullable: true
+        present_value:
+          type: number
+          format: float
+          nullable: true
+        cashflow:
+          type: number
+          format: float
+          nullable: true
+        irr:
+          type: number
+          format: float
+          nullable: true
+        currency:
+          type: string
+        meta:
+          type: object
+          additionalProperties: true
+      required:
+      - contract_id
+      - valuation_date
+      - currency
+      - meta
+    PpaValuationListResponse:
+      type: object
+      properties:
+        data:
+          type: array
+          items:
+            $ref: '#/components/schemas/PpaValuation'
+        meta:
+          $ref: '#/components/schemas/ResponseMeta'
+        links:
+          $ref: '#/components/schemas/PaginationLinks'
+      required:
+      - data
+      - meta
+      - links
+    ErrorResponse:
+      type: object
+      properties:
+        detail:
+          oneOf:
+          - type: string
+          - type: object
+            additionalProperties: true
+        status:
+          type: integer
+        title:
+          type: string
+      additionalProperties: true
+

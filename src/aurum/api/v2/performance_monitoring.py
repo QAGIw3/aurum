@@ -13,13 +13,12 @@ from __future__ import annotations
 
 import time
 from datetime import datetime
-from typing import Dict, List, Optional
+from typing import Any, Dict, List, Optional
 from uuid import uuid4
 
-from fastapi import APIRouter, HTTPException, Query, Request, Response, Depends
+from fastapi import APIRouter, HTTPException, Query, Request, Response
 from pydantic import BaseModel, Field
 
-from ..deps import get_settings
 from ..services.performance_monitoring_service import (
     get_performance_monitoring_service,
     PerformanceBudget,
@@ -114,8 +113,8 @@ class PerformanceDashboardResponse(BaseModel):
     """Response containing performance dashboard."""
 
     budget_compliance: Dict[str, bool]
-    recent_tests: List[Dict[str, any]]
-    performance_trends: Dict[str, any]
+    recent_tests: List[Dict[str, Any]]
+    performance_trends: Dict[str, Any]
     recommendations: List[str]
     last_updated: datetime
 
@@ -128,43 +127,61 @@ class ComparisonResponse(BaseModel):
     current_test_id: str
     comparison_metrics: Dict[str, float]
     regression_detected: bool
+    regression_score: float
     improvement_areas: List[str]
     degradation_areas: List[str]
     recommendations: List[str]
 
 
-@router.get("/budgets", response_model=Dict[str, any])
+@router.get("/budgets", response_model=Dict[str, Any])
 async def list_performance_budgets(
     request: Request,
     response: Response
-) -> Dict[str, any]:
+) -> Dict[str, Any]:
     """List all performance budgets with compliance status."""
     start_time = time.perf_counter()
 
     try:
         service = get_performance_monitoring_service()
 
-        # Get budgets with compliance status
-        budgets = []
-        for budget_key, budget in service._budgets.items():
-            compliance_status = "unknown"
+        compliance_map = await service.check_performance_budgets()
+        raw_budgets = service.list_performance_budgets()
 
-            # Check compliance (mock implementation)
-            compliance_status = "compliant"  # Would check actual metrics
+        summary = {
+            "total": len(raw_budgets),
+            "active": sum(1 for budget in raw_budgets if budget.enabled),
+            "compliant": 0,
+            "violated": 0,
+            "unknown": 0,
+        }
 
-            budgets.append({
-                "endpoint": budget.endpoint,
-                "method": budget.method,
-                "p95_latency_ms": budget.p95_latency_ms,
-                "p99_latency_ms": budget.p99_latency_ms,
-                "max_error_rate": budget.max_error_rate,
-                "min_throughput_rps": budget.min_throughput_rps,
-                "max_memory_mb": budget.max_memory_mb,
-                "max_cpu_percent": budget.max_cpu_percent,
-                "description": budget.description,
-                "enabled": budget.enabled,
-                "compliance_status": compliance_status
-            })
+        budgets: List[Dict[str, Any]] = []
+        for budget in raw_budgets:
+            compliance_flag = compliance_map.get(budget.key)
+            if compliance_flag is None:
+                compliance_status = "unknown"
+            else:
+                compliance_status = "compliant" if compliance_flag else "violated"
+            summary[compliance_status] += 1
+
+            budget_payload = budget.model_dump(
+                include={
+                    "endpoint",
+                    "method",
+                    "p95_latency_ms",
+                    "p99_latency_ms",
+                    "max_error_rate",
+                    "min_throughput_rps",
+                    "max_memory_mb",
+                    "max_cpu_percent",
+                    "description",
+                    "enabled",
+                    "created_at",
+                }
+            )
+            budget_payload["method"] = budget_payload["method"].upper()
+            budget_payload["compliance_status"] = compliance_status
+            budgets.append(budget_payload)
 
         query_time_ms = (time.perf_counter() - start_time) * 1000
 
@@ -173,6 +190,7 @@ async def list_performance_budgets(
             operation="list_performance_budgets",
             query_time_ms=query_time_ms
         )
+        meta["summary"] = summary
 
         return {
             "meta": meta,
@@ -193,11 +211,11 @@ async def list_performance_budgets(
         )
 
 
-@router.post("/budgets", response_model=Dict[str, any], status_code=201)
+@router.post("/budgets", response_model=Dict[str, Any], status_code=201)
 async def create_performance_budget(
     request: Request,
     budget_data: BudgetCreateRequest
-) -> Dict[str, any]:
+) -> Dict[str, Any]:
     """Create a new performance budget."""
     start_time = time.perf_counter()
 
@@ -207,7 +225,7 @@ async def create_performance_budget(
         # Create budget
         budget = PerformanceBudget(
             endpoint=budget_data.endpoint,
-            method=budget_data.method,
+            method=budget_data.method.upper(),
             p95_latency_ms=budget_data.p95_latency_ms,
             p99_latency_ms=budget_data.p99_latency_ms,
             max_error_rate=budget_data.max_error_rate,
@@ -218,9 +236,7 @@ async def create_performance_budget(
             enabled=budget_data.enabled
         )
 
-        # Store budget (mock implementation)
-        budget_key = f"{budget.method}:{budget.endpoint}"
-        service._budgets[budget_key] = budget
+        budget_key = service.register_performance_budget(budget)
 
         query_time_ms = (time.perf_counter() - start_time) * 1000
 
@@ -237,6 +253,8 @@ async def create_performance_budget(
             ),
             "data": {
                 "budget_key": budget_key,
+                "budget": budget.model_dump(),
+                "compliance_status": "unknown",
                 "message": "Performance budget created successfully"
             }
         }
@@ -255,30 +273,36 @@ async def create_performance_budget(
         )
 
 
-@router.get("/scenarios", response_model=Dict[str, any])
+@router.get("/scenarios", response_model=Dict[str, Any])
 async def list_load_test_scenarios(
     request: Request,
     response: Response
-) -> Dict[str, any]:
+) -> Dict[str, Any]:
     """List available load test scenarios."""
     start_time = time.perf_counter()
 
     try:
         service = get_performance_monitoring_service()
 
-        # Get scenarios
         scenarios = []
-        for scenario_id, scenario in service._scenarios.items():
-            scenarios.append({
-                "scenario_id": scenario.scenario_id,
-                "name": scenario.name,
-                "description": scenario.description,
-                "script_path": scenario.script_path,
-                "duration_seconds": scenario.duration_seconds,
-                "virtual_users": scenario.virtual_users,
-                "environment": scenario.environment,
-                "enabled": scenario.enabled
-            })
+        for scenario in service.list_load_test_scenarios():
+            scenario_payload = scenario.model_dump(
+                include={
+                    "scenario_id",
+                    "name",
+                    "description",
+                    "script_path",
+                    "duration_seconds",
+                    "virtual_users",
+                    "ramp_up_seconds",
+                    "ramp_down_seconds",
+                    "environment",
+                    "thresholds",
+                    "enabled",
+                    "created_at",
+                }
+            )
+            scenarios.append(scenario_payload)
 
         query_time_ms = (time.perf_counter() - start_time) * 1000
 
@@ -287,6 +311,10 @@ async def list_load_test_scenarios(
             operation="list_load_test_scenarios",
             query_time_ms=query_time_ms
         )
+        meta["summary"] = {
+            "total": len(scenarios),
+            "enabled": sum(1 for scenario in scenarios if scenario.get("enabled")),
+        }
 
         return {
             "meta": meta,
@@ -307,11 +335,11 @@ async def list_load_test_scenarios(
         )
 
 
-@router.post("/scenarios/{scenario_id}/run", response_model=Dict[str, any], status_code=202)
+@router.post("/scenarios/{scenario_id}/run", response_model=Dict[str, Any], status_code=202)
 async def run_load_test_scenario(
     request: Request,
     scenario_id: str
-) -> Dict[str, any]:
+) -> Dict[str, Any]:
     """Execute a load test scenario."""
     start_time = time.perf_counter()
 
@@ -365,7 +393,7 @@ async def get_test_result(
 
     try:
         service = get_performance_monitoring_service()
-        test_result = service._test_results.get(test_id)
+        test_result = service.get_test_result(test_id)
 
         if not test_result:
             raise HTTPException(status_code=404, detail="Test result not found")
@@ -464,7 +492,9 @@ async def compare_performance_runs(
         # Compare performance
         comparison_id = await service.compare_performance(baseline_test_id, current_test_id)
 
-        comparison = service._comparisons[comparison_id]
+        comparison = service.get_comparison(comparison_id)
+        if comparison is None:
+            raise HTTPException(status_code=404, detail="Comparison not found")
 
         query_time_ms = (time.perf_counter() - start_time) * 1000
 
@@ -480,6 +510,7 @@ async def compare_performance_runs(
             current_test_id=comparison.current_test_id,
             comparison_metrics=comparison.comparison_metrics,
             regression_detected=comparison.regression_detected,
+            regression_score=comparison.regression_score,
             improvement_areas=comparison.improvement_areas,
             degradation_areas=comparison.degradation_areas,
             recommendations=comparison.recommendations
@@ -499,10 +530,10 @@ async def compare_performance_runs(
         )
 
 
-@router.post("/ci-check", response_model=Dict[str, any], status_code=202)
+@router.post("/ci-check", response_model=Dict[str, Any], status_code=202)
 async def run_ci_performance_check(
     request: Request
-) -> Dict[str, any]:
+) -> Dict[str, Any]:
     """Run performance check for CI/CD pipeline."""
     start_time = time.perf_counter()
 
@@ -542,11 +573,11 @@ async def run_ci_performance_check(
         )
 
 
-@router.get("/metrics/prometheus", response_model=Dict[str, any])
+@router.get("/metrics/prometheus", response_model=Dict[str, Any])
 async def get_prometheus_metrics(
     request: Request,
     response: Response
-) -> Dict[str, any]:
+) -> Dict[str, Any]:
     """Get Prometheus metrics for comparison."""
     start_time = time.perf_counter()
 
@@ -587,7 +618,7 @@ async def get_prometheus_metrics(
 async def get_performance_monitoring_health(
     request: Request,
     response: Response
-) -> Dict[str, any]:
+) -> Dict[str, Any]:
     """Get performance monitoring service health status."""
     start_time = time.perf_counter()
 

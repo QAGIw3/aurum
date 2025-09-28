@@ -1,0 +1,95 @@
+# External timeseries observations topic → Iceberg (external.timeseries_observation)
+#
+# Required environment variables:
+#   AURUM_KAFKA_BOOTSTRAP_SERVERS  - Kafka brokers
+#   AURUM_SCHEMA_REGISTRY_URL      - Confluent Schema Registry endpoint
+#   ICEBERG_CATALOG_NAME           - Iceberg catalog name (e.g. nessie)
+#   ICEBERG_CATALOG_TYPE           - Catalog type (nessie, hive, rest)
+#   ICEBERG_URI                    - Catalog endpoint / Hive metastore URI
+#   ICEBERG_WAREHOUSE              - Warehouse path (e.g. s3://aurum-curated/iceberg)
+#   EXTERNAL_TENANT_ID             - Tenant identifier stamped onto rows
+#
+# Optional environment variables:
+#   EXTERNAL_TIMESERIES_TOPIC_PATTERN - Regex pattern for topics (default aurum\\.ext\\.timeseries\\.obs\\.v1)
+#   EXTERNAL_TIMESERIES_GROUP_ID      - Kafka consumer group (default seatunnel.external.timeseries)
+#   EXTERNAL_TIMESERIES_START_MODE    - Kafka start mode (default latest)
+#   EXTERNAL_TIMESERIES_TABLE         - Iceberg table (default timeseries_observation)
+#   EXTERNAL_ICEBERG_DB               - Iceberg database/schema (default external)
+#   EXTERNAL_WRITE_DISTRIBUTION       - Iceberg write distribution mode (default hash)
+#   EXTERNAL_WRITE_FORMAT             - Iceberg file format (default parquet)
+#   EXTERNAL_CHECKPOINT_INTERVAL_MS   - Checkpoint interval in ms (default 30000)
+#   EXTERNAL_CHECKPOINT_TIMEOUT_MS    - Checkpoint timeout in ms (default 60000)
+#   EXTERNAL_INGEST_JOB_ID            - Ingest job identifier written to rows
+#   EXTERNAL_INGEST_RUN_ID            - Ingest run identifier written to rows
+#   EXTERNAL_INGEST_BATCH_ID          - Ingest batch identifier written to rows
+
+env {
+  job.mode = "STREAMING"
+  checkpoint.interval = ${EXTERNAL_CHECKPOINT_INTERVAL_MS}
+  checkpoint.timeout = ${EXTERNAL_CHECKPOINT_TIMEOUT_MS}
+  checkpoint.mode = "EXACTLY_ONCE"
+}
+
+source {
+  Kafka {
+    bootstrap.servers = "${AURUM_KAFKA_BOOTSTRAP_SERVERS}"
+    pattern = "${EXTERNAL_TIMESERIES_TOPIC_PATTERN}"
+    format = "avro"
+    start_mode = "${EXTERNAL_TIMESERIES_START_MODE}"
+    consumer.group = "${EXTERNAL_TIMESERIES_GROUP_ID}"
+    commit_on_checkpoint = true
+    avro {
+      schema.registry.url = "${AURUM_SCHEMA_REGISTRY_URL}"
+    }
+    result_table_name = "external_obs_raw"
+  }
+}
+
+transform {
+  Sql {
+    source_table_name = "external_obs_raw"
+    result_table_name = "external_obs_enriched"
+    query = """
+      SELECT
+        '${EXTERNAL_TENANT_ID}' AS tenant_id,
+        provider,
+        series_id,
+        TO_TIMESTAMP(ts / 1000000.0) AS ts,
+        (DATE '1970-01-01' + asof_date * INTERVAL '1' DAY) AS asof_date,
+        value,
+        value_raw,
+        unit_code,
+        geo_id,
+        dataset_code,
+        frequency_code,
+        status,
+        quality_flag,
+        TO_TIMESTAMP(ingest_ts / 1000000.0) AS ingest_ts,
+        '${EXTERNAL_INGEST_JOB_ID}' AS ingest_job_id,
+        '${EXTERNAL_INGEST_RUN_ID}' AS ingest_run_id,
+        '${EXTERNAL_INGEST_BATCH_ID}' AS ingest_batch_id,
+        source_event_id,
+        CASE WHEN metadata IS NULL THEN NULL ELSE CAST(metadata AS STRING) END AS metadata,
+        TO_TIMESTAMP(ingest_ts / 1000000.0) AS created_at,
+        TO_TIMESTAMP(ingest_ts / 1000000.0) AS updated_at
+      FROM external_obs_raw
+    """
+  }
+}
+
+sink {
+  Iceberg {
+    plugin_input = "external_obs_enriched"
+    catalog_name = "${ICEBERG_CATALOG_NAME}"
+    catalog_type = "${ICEBERG_CATALOG_TYPE}"
+    uri = "${ICEBERG_URI}"
+    warehouse = "${ICEBERG_WAREHOUSE}"
+    database = "${EXTERNAL_ICEBERG_DB}"
+    table = "${EXTERNAL_TIMESERIES_TABLE}"
+    write.distribution-mode = "${EXTERNAL_WRITE_DISTRIBUTION}"
+    format = "${EXTERNAL_WRITE_FORMAT}"
+    upsert = true
+    primary_keys = ["tenant_id", "provider", "series_id", "ts", "asof_date"]
+  }
+}
+

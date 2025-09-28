@@ -17,7 +17,7 @@ from collections import defaultdict, deque
 from enum import Enum
 from datetime import datetime, timedelta
 from typing import Any, Dict, List, Optional, Set, Callable, Awaitable
-from uuid import uuid4
+from uuid import uuid4, UUID
 
 from pydantic import BaseModel, Field
 
@@ -193,6 +193,10 @@ class AutoReforecastService:
 
         self.logger = logging.getLogger(__name__)
         self.telemetry = get_telemetry_facade()
+
+        # Optional persistence hooks
+        self._job_repository = None  # type: ignore[var-annotated]
+        self._tenant_resolver: Optional[Callable[["TriggerEvent"], Optional[str]]] = None
 
         self.logger.info("Auto-reforecast service initialized")
 
@@ -558,6 +562,9 @@ class AutoReforecastService:
 
                 self.pending_jobs[job.job_id] = job
 
+                # Persist to repository if configured
+                await self._maybe_persist_job(job, event)
+
                 # Update trigger stats
                 trigger.last_triggered = event.timestamp
                 trigger.trigger_count += 1
@@ -631,6 +638,9 @@ class AutoReforecastService:
             job.status = "processing"
             job.attempts += 1
 
+            # Persist status transition
+            await self._maybe_update_job_status(job, status="processing", started_at=datetime.utcnow())
+
             self.telemetry.info(
                 "Executing reforecast job",
                 job_id=job.job_id,
@@ -660,8 +670,7 @@ class AutoReforecastService:
             )
 
             # In real implementation, would use ML model to generate forecast
-            # For now, simulate forecast generation
-            await asyncio.sleep(0.1)  # Simulate processing time
+            await asyncio.sleep(0.1)
 
             # Cache the forecast
             cache_manager = get_unified_cache_manager()
@@ -675,13 +684,16 @@ class AutoReforecastService:
                     "forecast_type": forecast_request.forecast_type.value,
                     "feature_count": len(features)
                 },
-                ttl_seconds=3600  # 1 hour cache
+                ttl_seconds=3600
             )
 
             # Invalidate related forecasts
             await self._invalidate_related_forecasts(job.forecast_request)
 
             job.status = "completed"
+
+            # Persist completion
+            await self._maybe_update_job_status(job, status="completed", completed_at=datetime.utcnow())
 
             self.telemetry.info(
                 "Reforecast job completed successfully",
@@ -700,6 +712,9 @@ class AutoReforecastService:
         except Exception as e:
             job.status = "failed"
             job.error_message = str(e)
+
+            # Persist failure
+            await self._maybe_update_job_status(job, status="failed", completed_at=datetime.utcnow(), error_message=str(e))
 
             self.telemetry.error(
                 "Reforecast job failed",
@@ -1053,6 +1068,70 @@ class AutoReforecastService:
         )
 
         return self.debounce_config
+
+    # Persistence wiring
+    def set_job_repository(self, job_repository, tenant_resolver: Optional[Callable[[TriggerEvent], Optional[str]]] = None) -> None:
+        """Configure job repository and tenant resolver for persistence."""
+        self._job_repository = job_repository
+        if tenant_resolver is not None:
+            self._tenant_resolver = tenant_resolver
+        elif self._tenant_resolver is None:
+            # Default resolver: look for 'tenant_id' in event metadata
+            def _default_resolver(event: TriggerEvent) -> Optional[str]:
+                tenant = event.metadata.get("tenant_id") if event.metadata else None
+                return str(tenant) if tenant else None
+            self._tenant_resolver = _default_resolver
+
+    async def _maybe_persist_job(self, job: ReforcastJob, event: TriggerEvent) -> None:
+        repo = getattr(self, "_job_repository", None)
+        resolver = self._tenant_resolver
+        if not repo or not resolver:
+            return
+        try:
+            tenant_id = resolver(event)
+            if not tenant_id:
+                return
+            await repo.enqueue_job(UUID(tenant_id), job)  # type: ignore[arg-type]
+        except Exception as e:
+            self.telemetry.warning(
+                "job_persistence_enqueue_failed",
+                job_id=job.job_id,
+                error=str(e)
+            )
+
+    async def _maybe_update_job_status(
+        self,
+        job: ReforcastJob,
+        *,
+        status: Optional[str] = None,
+        started_at: Optional[datetime] = None,
+        completed_at: Optional[datetime] = None,
+        attempts: Optional[int] = None,
+        error_message: Optional[str] = None,
+    ) -> None:
+        repo = getattr(self, "_job_repository", None)
+        resolver = self._tenant_resolver
+        if not repo or not resolver:
+            return
+        try:
+            tenant_id = resolver(job.trigger_event)
+            if not tenant_id:
+                return
+            await repo.update_status(
+                UUID(tenant_id),
+                UUID(job.job_id),
+                status=status,
+                started_at=started_at,
+                completed_at=completed_at,
+                attempts=attempts,
+                error_message=error_message,
+            )
+        except Exception as e:
+            self.telemetry.warning(
+                "job_persistence_update_failed",
+                job_id=job.job_id,
+                error=str(e)
+            )
 
 
 # Global auto-reforecast service instance

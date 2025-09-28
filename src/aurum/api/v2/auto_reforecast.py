@@ -12,12 +12,12 @@ from __future__ import annotations
 import time
 from datetime import datetime
 from typing import Dict, List, Optional, Any
-from uuid import uuid4
+from uuid import uuid4, UUID
 
 from fastapi import APIRouter, HTTPException, Query, Request, Response, Depends
 from pydantic import BaseModel, Field
 
-from ..deps import get_settings
+from ..deps import get_settings, get_tenant_id
 from ..services.auto_reforecast_service import (
     get_auto_reforecast_service,
     ForecastTrigger,
@@ -26,6 +26,10 @@ from ..services.auto_reforecast_service import (
     TriggerCondition,
     DebounceConfig,
     BackpressureConfig
+)
+from ..database.auto_reforecast import (
+    get_auto_reforecast_repository,
+    get_auto_reforecast_job_repository,
 )
 from ...api.v2.forecasting import ForecastRequest
 from ...observability.telemetry_facade import get_telemetry_facade
@@ -112,24 +116,26 @@ async def list_forecast_triggers(
     response: Response,
     limit: int = Query(20, ge=1, le=100),
     offset: int = Query(0, ge=0),
-    enabled_only: bool = Query(False, description="Only return enabled triggers")
+    enabled_only: bool = Query(False, description="Only return enabled triggers"),
+    tenant: Optional[str] = Depends(get_tenant_id),
 ) -> TriggerListResponse:
     """List all forecast triggers with pagination."""
     start_time = time.perf_counter()
 
-    try:
-        service = get_auto_reforecast_service()
+    if not tenant:
+        raise HTTPException(status_code=400, detail="Missing tenant context")
 
-        # Get triggers (mock implementation)
-        triggers = await service.list_triggers(
-            enabled_only=enabled_only,
-            limit=limit,
-            offset=offset
-        )
+    try:
+        settings = get_settings(request)
+        repo = get_auto_reforecast_repository(settings)
+
+        triggers = await repo.list_triggers(UUID(tenant))
+        if enabled_only:
+            triggers = [t for t in triggers if t.enabled]
+        triggers = triggers[offset: offset + limit]
 
         query_time_ms = (time.perf_counter() - start_time) * 1000
 
-        # Convert to response format
         trigger_responses = [
             TriggerResponse(
                 trigger_id=trigger.trigger_id,
@@ -142,8 +148,8 @@ async def list_forecast_triggers(
                 enabled=trigger.enabled,
                 last_triggered=trigger.last_triggered,
                 trigger_count=trigger.trigger_count,
-                created_at=datetime.utcnow(),  # Mock
-                updated_at=datetime.utcnow()   # Mock
+                created_at=datetime.utcnow(),
+                updated_at=datetime.utcnow(),
             )
             for trigger in triggers
         ]
@@ -159,7 +165,7 @@ async def list_forecast_triggers(
         return TriggerListResponse(
             data=trigger_responses,
             meta=meta,
-            links={}  # Could add pagination links
+            links={}
         )
 
     except Exception as exc:
@@ -179,17 +185,21 @@ async def list_forecast_triggers(
 @router.post("/triggers", response_model=TriggerResponse, status_code=201)
 async def create_forecast_trigger(
     request: Request,
-    trigger_data: TriggerCreateRequest
+    trigger_data: TriggerCreateRequest,
+    tenant: Optional[str] = Depends(get_tenant_id),
 ) -> TriggerResponse:
     """Create a new forecast trigger."""
     start_time = time.perf_counter()
 
+    if not tenant:
+        raise HTTPException(status_code=400, detail="Missing tenant context")
+
     try:
+        settings = get_settings(request)
+        repo = get_auto_reforecast_repository(settings)
         service = get_auto_reforecast_service()
 
-        # Convert to service format
         forecast_request = ForecastRequest(**trigger_data.forecast_config)
-
         trigger = ForecastTrigger(
             trigger_id=str(uuid4()),
             name=trigger_data.name,
@@ -201,8 +211,10 @@ async def create_forecast_trigger(
             enabled=trigger_data.enabled
         )
 
-        # Save trigger (mock implementation)
-        saved_trigger = await service.create_trigger(trigger)
+        saved_trigger = await repo.create_trigger(UUID(tenant), trigger)
+
+        # Keep service cache in sync
+        service.add_trigger(saved_trigger)
 
         query_time_ms = (time.perf_counter() - start_time) * 1000
 
@@ -224,7 +236,7 @@ async def create_forecast_trigger(
             last_triggered=saved_trigger.last_triggered,
             trigger_count=saved_trigger.trigger_count,
             created_at=datetime.utcnow(),
-            updated_at=datetime.utcnow()
+            updated_at=datetime.utcnow(),
         )
 
     except Exception as exc:
@@ -244,14 +256,19 @@ async def create_forecast_trigger(
 @router.get("/triggers/{trigger_id}", response_model=TriggerResponse)
 async def get_forecast_trigger(
     request: Request,
-    trigger_id: str
+    trigger_id: str,
+    tenant: Optional[str] = Depends(get_tenant_id),
 ) -> TriggerResponse:
     """Get a specific forecast trigger."""
     start_time = time.perf_counter()
 
+    if not tenant:
+        raise HTTPException(status_code=400, detail="Missing tenant context")
+
     try:
-        service = get_auto_reforecast_service()
-        trigger = await service.get_trigger(trigger_id)
+        settings = get_settings(request)
+        repo = get_auto_reforecast_repository(settings)
+        trigger = await repo.get_trigger(UUID(tenant), UUID(trigger_id))
 
         if not trigger:
             raise HTTPException(status_code=404, detail="Trigger not found")
@@ -275,8 +292,8 @@ async def get_forecast_trigger(
             enabled=trigger.enabled,
             last_triggered=trigger.last_triggered,
             trigger_count=trigger.trigger_count,
-            created_at=datetime.utcnow(),  # Mock
-            updated_at=datetime.utcnow()   # Mock
+            created_at=datetime.utcnow(),
+            updated_at=datetime.utcnow(),
         )
 
     except HTTPException:
@@ -299,28 +316,34 @@ async def get_forecast_trigger(
 async def update_forecast_trigger(
     request: Request,
     trigger_id: str,
-    trigger_data: TriggerUpdateRequest
+    trigger_data: TriggerUpdateRequest,
+    tenant: Optional[str] = Depends(get_tenant_id),
 ) -> TriggerResponse:
     """Update a forecast trigger."""
     start_time = time.perf_counter()
 
+    if not tenant:
+        raise HTTPException(status_code=400, detail="Missing tenant context")
+
     try:
+        settings = get_settings(request)
+        repo = get_auto_reforecast_repository(settings)
         service = get_auto_reforecast_service()
 
-        # Get existing trigger
-        existing_trigger = await service.get_trigger(trigger_id)
+        existing_trigger = await repo.get_trigger(UUID(tenant), UUID(trigger_id))
         if not existing_trigger:
             raise HTTPException(status_code=404, detail="Trigger not found")
 
-        # Apply updates
         updates = trigger_data.dict(exclude_unset=True)
         for key, value in updates.items():
             if key == "forecast_config" and value:
                 value = ForecastRequest(**value)
             setattr(existing_trigger, key, value)
 
-        # Save updated trigger (mock implementation)
-        updated_trigger = await service.update_trigger(existing_trigger)
+        updated_trigger = await repo.update_trigger(UUID(tenant), existing_trigger)
+
+        # Sync service cache
+        await service.update_trigger(updated_trigger)
 
         query_time_ms = (time.perf_counter() - start_time) * 1000
 
@@ -341,8 +364,8 @@ async def update_forecast_trigger(
             enabled=updated_trigger.enabled,
             last_triggered=updated_trigger.last_triggered,
             trigger_count=updated_trigger.trigger_count,
-            created_at=datetime.utcnow(),  # Mock
-            updated_at=datetime.utcnow()
+            created_at=datetime.utcnow(),
+            updated_at=datetime.utcnow(),
         )
 
     except HTTPException:
@@ -364,17 +387,26 @@ async def update_forecast_trigger(
 @router.delete("/triggers/{trigger_id}", status_code=204)
 async def delete_forecast_trigger(
     request: Request,
-    trigger_id: str
+    trigger_id: str,
+    tenant: Optional[str] = Depends(get_tenant_id),
 ) -> Response:
     """Delete a forecast trigger."""
     start_time = time.perf_counter()
 
-    try:
-        service = get_auto_reforecast_service()
-        success = await service.delete_trigger(trigger_id)
+    if not tenant:
+        raise HTTPException(status_code=400, detail="Missing tenant context")
 
+    try:
+        settings = get_settings(request)
+        repo = get_auto_reforecast_repository(settings)
+        service = get_auto_reforecast_service()
+
+        success = await repo.delete_trigger(UUID(tenant), UUID(trigger_id))
         if not success:
             raise HTTPException(status_code=404, detail="Trigger not found")
+
+        # Remove from service cache
+        service.remove_trigger(trigger_id)
 
         query_time_ms = (time.perf_counter() - start_time) * 1000
 
@@ -402,30 +434,147 @@ async def delete_forecast_trigger(
         )
 
 
+@router.post("/triggers/{trigger_id}/enable", response_model=TriggerResponse)
+async def enable_forecast_trigger(
+    request: Request,
+    trigger_id: str,
+    tenant: Optional[str] = Depends(get_tenant_id),
+) -> TriggerResponse:
+    start_time = time.perf_counter()
+
+    if not tenant:
+        raise HTTPException(status_code=400, detail="Missing tenant context")
+
+    try:
+        settings = get_settings(request)
+        repo = get_auto_reforecast_repository(settings)
+        service = get_auto_reforecast_service()
+
+        trigger = await repo.get_trigger(UUID(tenant), UUID(trigger_id))
+        if not trigger:
+            raise HTTPException(status_code=404, detail="Trigger not found")
+        if not trigger.enabled:
+            trigger.enabled = True
+            trigger = await repo.update_trigger(UUID(tenant), trigger)
+            service.enable_trigger(trigger_id)
+
+        query_time_ms = (time.perf_counter() - start_time) * 1000
+        telemetry = get_telemetry_facade()
+        telemetry.record_success(
+            operation="enable_forecast_trigger",
+            query_time_ms=query_time_ms
+        )
+
+        return TriggerResponse(
+            trigger_id=trigger.trigger_id,
+            name=trigger.name,
+            description=trigger.description,
+            conditions=trigger.conditions,
+            forecast_config=trigger.forecast_config.dict() if hasattr(trigger.forecast_config, 'dict') else trigger.forecast_config,
+            priority=trigger.priority,
+            cooldown_minutes=trigger.cooldown_minutes,
+            enabled=trigger.enabled,
+            last_triggered=trigger.last_triggered,
+            trigger_count=trigger.trigger_count,
+            created_at=datetime.utcnow(),
+            updated_at=datetime.utcnow(),
+        )
+
+    except HTTPException:
+        raise
+    except Exception as exc:
+        query_time_ms = (time.perf_counter() - start_time) * 1000
+        telemetry = get_telemetry_facade()
+        telemetry.record_error(
+            operation="enable_forecast_trigger",
+            error=exc,
+            query_time_ms=query_time_ms
+        )
+        raise HTTPException(status_code=500, detail=f"Failed to enable trigger: {str(exc)}")
+
+
+@router.post("/triggers/{trigger_id}/disable", response_model=TriggerResponse)
+async def disable_forecast_trigger(
+    request: Request,
+    trigger_id: str,
+    tenant: Optional[str] = Depends(get_tenant_id),
+) -> TriggerResponse:
+    start_time = time.perf_counter()
+
+    if not tenant:
+        raise HTTPException(status_code=400, detail="Missing tenant context")
+
+    try:
+        settings = get_settings(request)
+        repo = get_auto_reforecast_repository(settings)
+        service = get_auto_reforecast_service()
+
+        trigger = await repo.get_trigger(UUID(tenant), UUID(trigger_id))
+        if not trigger:
+            raise HTTPException(status_code=404, detail="Trigger not found")
+        if trigger.enabled:
+            trigger.enabled = False
+            trigger = await repo.update_trigger(UUID(tenant), trigger)
+            service.disable_trigger(trigger_id)
+
+        query_time_ms = (time.perf_counter() - start_time) * 1000
+        telemetry = get_telemetry_facade()
+        telemetry.record_success(
+            operation="disable_forecast_trigger",
+            query_time_ms=query_time_ms
+        )
+
+        return TriggerResponse(
+            trigger_id=trigger.trigger_id,
+            name=trigger.name,
+            description=trigger.description,
+            conditions=trigger.conditions,
+            forecast_config=trigger.forecast_config.dict() if hasattr(trigger.forecast_config, 'dict') else trigger.forecast_config,
+            priority=trigger.priority,
+            cooldown_minutes=trigger.cooldown_minutes,
+            enabled=trigger.enabled,
+            last_triggered=trigger.last_triggered,
+            trigger_count=trigger.trigger_count,
+            created_at=datetime.utcnow(),
+            updated_at=datetime.utcnow(),
+        )
+
+    except HTTPException:
+        raise
+    except Exception as exc:
+        query_time_ms = (time.perf_counter() - start_time) * 1000
+        telemetry = get_telemetry_facade()
+        telemetry.record_error(
+            operation="disable_forecast_trigger",
+            error=exc,
+            query_time_ms=query_time_ms
+        )
+        raise HTTPException(status_code=500, detail=f"Failed to disable trigger: {str(exc)}")
+
+
 @router.get("/jobs", response_model=JobListResponse)
 async def list_reforecast_jobs(
     request: Request,
     response: Response,
     limit: int = Query(20, ge=1, le=100),
     offset: int = Query(0, ge=0),
-    status: Optional[str] = Query(None, description="Filter by job status")
+    status: Optional[str] = Query(None, description="Filter by job status"),
+    tenant: Optional[str] = Depends(get_tenant_id),
 ) -> JobListResponse:
     """List reforecast jobs with pagination and filtering."""
     start_time = time.perf_counter()
 
-    try:
-        service = get_auto_reforecast_service()
+    if not tenant:
+        raise HTTPException(status_code=400, detail="Missing tenant context")
 
-        # Get jobs (mock implementation)
-        jobs = await service.list_jobs(
-            status=status,
-            limit=limit,
-            offset=offset
-        )
+    try:
+        settings = get_settings(request)
+        job_repo = get_auto_reforecast_job_repository(settings)
+
+        jobs = await job_repo.list_jobs(UUID(tenant), status=status, limit=limit, offset=offset)
 
         query_time_ms = (time.perf_counter() - start_time) * 1000
 
-        # Convert to response format
         job_responses = [
             JobResponse(
                 job_id=job.job_id,
@@ -438,7 +587,7 @@ async def list_reforecast_jobs(
                 attempts=job.attempts,
                 max_attempts=job.max_attempts,
                 completed_at=datetime.utcnow() if job.status == "completed" else None,
-                error_message=None  # Mock
+                error_message=getattr(job, "error_message", None),
             )
             for job in jobs
         ]
@@ -454,7 +603,7 @@ async def list_reforecast_jobs(
         return JobListResponse(
             data=job_responses,
             meta=meta,
-            links={}  # Could add pagination links
+            links={}
         )
 
     except Exception as exc:
@@ -484,7 +633,6 @@ async def list_trigger_events(
     try:
         service = get_auto_reforecast_service()
 
-        # Get events (mock implementation)
         events = await service.list_trigger_events(
             limit=limit,
             since=since
@@ -610,23 +758,27 @@ async def trigger_forecast_rerun_endpoint(
     forecast_type: str = Query("load", description="Type of forecast to rerun"),
     target_variable: str = Query("load_mw", description="Target variable to forecast"),
     trigger_reason: str = Query("manual_trigger", description="Reason for triggering rerun"),
-    priority: float = Query(1.0, description="Priority of the trigger event")
+    priority: float = Query(1.0, description="Priority of the trigger event"),
+    tenant: Optional[str] = Depends(get_tenant_id),
 ) -> Dict[str, any]:
-    """Trigger a forecast re-run based on data changes.
-
-    This endpoint allows manual triggering of forecast re-runs when new data
-    becomes available or when specific conditions are met. It integrates with
-    the Kafka event bus to process the trigger through the normal event pipeline.
-    """
+    """Trigger a forecast re-run based on data changes."""
     start_time = time.perf_counter()
+
+    if not tenant:
+        raise HTTPException(status_code=400, detail="Missing tenant context")
 
     try:
         from ...api.v2.forecasting import ForecastType, QuantileLevel, ForecastInterval
         from datetime import datetime
 
-        service = get_auto_reforecast_service()
+        settings = get_settings(request)
+        job_repo = get_auto_reforecast_job_repository(settings)
 
-        # Create a manual trigger event
+        service = get_auto_reforecast_service()
+        # Ensure service has a job repository and tenant resolver
+        service.set_job_repository(job_repo)
+
+        # Create a manual trigger event with tenant metadata for persistence
         event = TriggerEvent(
             event_id=str(uuid4()),
             trigger_id="manual_trigger",
@@ -636,6 +788,7 @@ async def trigger_forecast_rerun_endpoint(
             data_changes={"manual_trigger": 1.0},
             priority_score=priority,
             metadata={
+                "tenant_id": tenant,
                 "trigger_reason": trigger_reason,
                 "forecast_type": forecast_type,
                 "target_variable": target_variable,
@@ -643,13 +796,10 @@ async def trigger_forecast_rerun_endpoint(
             }
         )
 
-        # Process the trigger event through the normal pipeline
         await service._process_trigger_event(event)
 
-        # Find the created job
         job_id = None
         if service.pending_jobs:
-            # Get the most recently created job
             latest_job = max(service.pending_jobs.values(), key=lambda j: j.created_at)
             job_id = latest_job.job_id
 
@@ -756,11 +906,9 @@ async def restart_kafka_consumer(
     try:
         service = get_auto_reforecast_service()
 
-        # Stop existing consumer
         if service.kafka_consumer:
             await service.kafka_consumer.stop()
 
-        # Restart consumer with current configuration
         await service._start_kafka_consumer()
 
         query_time_ms = (time.perf_counter() - start_time) * 1000
@@ -811,12 +959,9 @@ async def get_trigger_events(
     try:
         service = get_auto_reforecast_service()
 
-        # Verify trigger exists
         if trigger_id not in service.triggers:
             raise HTTPException(status_code=404, detail="Trigger not found")
 
-        # Get events for this trigger (mock implementation)
-        # In a real implementation, this would query stored events
         events = await service.list_trigger_events(
             trigger_id=trigger_id,
             limit=limit,
@@ -864,8 +1009,6 @@ async def get_trigger_performance_analytics(
     try:
         service = get_auto_reforecast_service()
 
-        # Calculate analytics (mock implementation)
-        # In a real implementation, this would analyze historical data
         analytics = {
             "period_days": days,
             "total_triggers": len(service.triggers),

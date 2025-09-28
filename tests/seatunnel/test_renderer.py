@@ -20,6 +20,21 @@ def _set_common_timescale_env(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("AURUM_TIMESCALE_PASSWORD", "ts_pass")
 
 
+def _set_common_iceberg_env(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("AURUM_KAFKA_BOOTSTRAP_SERVERS", "kafka:9092")
+    monkeypatch.setenv("AURUM_SCHEMA_REGISTRY_URL", "http://schema-registry:8081")
+    monkeypatch.setenv("ICEBERG_CATALOG_NAME", "nessie")
+    monkeypatch.setenv("ICEBERG_CATALOG_TYPE", "nessie")
+    monkeypatch.setenv("ICEBERG_URI", "http://nessie:19120/api/v1")
+    monkeypatch.setenv("ICEBERG_WAREHOUSE", "s3://aurum-curated/iceberg")
+    monkeypatch.setenv("EXTERNAL_TENANT_ID", "aurum")
+    monkeypatch.setenv("EXTERNAL_CHECKPOINT_INTERVAL_MS", "30000")
+    monkeypatch.setenv("EXTERNAL_CHECKPOINT_TIMEOUT_MS", "60000")
+    monkeypatch.setenv("EXTERNAL_INGEST_JOB_ID", "seatunnel.external.test")
+    monkeypatch.setenv("EXTERNAL_INGEST_RUN_ID", "unit-test-run")
+    monkeypatch.setenv("EXTERNAL_INGEST_BATCH_ID", "batch-1")
+
+
 def test_render_noaa_weather_kafka_to_timescale(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     _set_common_timescale_env(monkeypatch)
     monkeypatch.setenv("NOAA_TOPIC_PATTERN", "aurum.ref.noaa.weather.v1")
@@ -44,6 +59,70 @@ def test_render_noaa_weather_kafka_to_timescale(monkeypatch: pytest.MonkeyPatch,
     assert "noaa_weather_timeseries" in rendered
     assert "bootstrap.servers = \"kafka:9092\"" in rendered
     assert "schema.registry.url = \"http://schema-registry:8081\"" in rendered
+
+
+def test_render_external_timeseries_kafka_to_iceberg(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    _set_common_iceberg_env(monkeypatch)
+    monkeypatch.setenv("EXTERNAL_TIMESERIES_TOPIC_PATTERN", "aurum\\.ext\\.timeseries\\.obs\\.v1")
+    monkeypatch.setenv("EXTERNAL_TIMESERIES_GROUP_ID", "seatunnel.external.timeseries")
+    monkeypatch.setenv("EXTERNAL_TIMESERIES_START_MODE", "latest")
+    monkeypatch.setenv("EXTERNAL_TIMESERIES_TABLE", "timeseries_observation")
+    monkeypatch.setenv("EXTERNAL_ICEBERG_DB", "external")
+    monkeypatch.setenv("EXTERNAL_WRITE_DISTRIBUTION", "hash")
+    monkeypatch.setenv("EXTERNAL_WRITE_FORMAT", "parquet")
+
+    output_path = tmp_path / "external_timeseries.conf"
+    render_template(
+        job="external_timeseries_kafka_to_iceberg",
+        template_path=TEMPLATES_DIR / "external_timeseries_kafka_to_iceberg.conf.tmpl",
+        output_path=output_path,
+        required_vars=[
+            "AURUM_KAFKA_BOOTSTRAP_SERVERS",
+            "AURUM_SCHEMA_REGISTRY_URL",
+            "ICEBERG_CATALOG_NAME",
+            "ICEBERG_CATALOG_TYPE",
+            "ICEBERG_URI",
+            "ICEBERG_WAREHOUSE",
+            "EXTERNAL_TENANT_ID",
+        ],
+    )
+
+    rendered = output_path.read_text(encoding="utf-8")
+    assert "external_obs_enriched" in rendered
+    assert "primary_keys = [\"tenant_id\", \"provider\", \"series_id\", \"ts\", \"asof_date\"]" in rendered
+    assert "seatunnel.external.test" in rendered
+
+
+def test_render_external_series_catalog_kafka_to_iceberg(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    _set_common_iceberg_env(monkeypatch)
+    monkeypatch.setenv("EXTERNAL_SERIES_TOPIC_PATTERN", "aurum\\.ext\\.series_catalog\\.upsert\\.v1")
+    monkeypatch.setenv("EXTERNAL_SERIES_GROUP_ID", "seatunnel.external.series")
+    monkeypatch.setenv("EXTERNAL_SERIES_START_MODE", "latest")
+    monkeypatch.setenv("EXTERNAL_SERIES_TABLE", "series_catalog")
+    monkeypatch.setenv("EXTERNAL_SERIES_WRITE_DISTRIBUTION", "hash")
+    monkeypatch.setenv("EXTERNAL_SERIES_WRITE_FORMAT", "parquet")
+    monkeypatch.setenv("EXTERNAL_ICEBERG_DB", "external")
+
+    output_path = tmp_path / "external_series.conf"
+    render_template(
+        job="external_series_catalog_kafka_to_iceberg",
+        template_path=TEMPLATES_DIR / "external_series_catalog_kafka_to_iceberg.conf.tmpl",
+        output_path=output_path,
+        required_vars=[
+            "AURUM_KAFKA_BOOTSTRAP_SERVERS",
+            "AURUM_SCHEMA_REGISTRY_URL",
+            "ICEBERG_CATALOG_NAME",
+            "ICEBERG_CATALOG_TYPE",
+            "ICEBERG_URI",
+            "ICEBERG_WAREHOUSE",
+            "EXTERNAL_TENANT_ID",
+        ],
+    )
+
+    rendered = output_path.read_text(encoding="utf-8")
+    assert "external_series_enriched" in rendered
+    assert "primary_keys = [\"tenant_id\", \"provider\", \"series_id\"]" in rendered
+    assert "seatunnel.external.test" in rendered
 
 
 def test_render_pjm_lmp_to_kafka(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:

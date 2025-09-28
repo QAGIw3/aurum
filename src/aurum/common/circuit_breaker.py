@@ -72,6 +72,8 @@ class CircuitBreaker:
 
     def _update_metrics(self):
         """Update Prometheus metrics for this circuit breaker."""
+        if self._metrics is None:
+            return
         state_value = 1 if self._state == CircuitBreakerState.CLOSED else 0
         self._metrics.gauge(f"circuit_breaker_state_{self.name}", state_value)
         self._metrics.gauge(f"circuit_breaker_failures_{self.name}", self._failures)
