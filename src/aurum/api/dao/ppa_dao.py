@@ -9,7 +9,7 @@ from aurum.core import AurumSettings
 
 from ..config import TrinoConfig
 from ..database.trino_client import get_trino_client
-from ..state import configure as configure_state, get_settings
+from aurum.core.settings import get_settings as _core_get_settings
 
 
 class PpaDao:
@@ -17,7 +17,7 @@ class PpaDao:
 
     def __init__(self, settings: Optional[AurumSettings] = None) -> None:
         try:
-            self._settings = settings or get_settings()
+            self._settings = settings or _core_get_settings()
         except RuntimeError:
             self._settings = AurumSettings.from_env()
             configure_state(self._settings)
@@ -27,7 +27,7 @@ class PpaDao:
     def _resolve_config(self, trino_cfg: Optional[TrinoConfig]) -> TrinoConfig:
         return trino_cfg or self._default_trino_cfg
 
-    def execute(
+    async def execute(
         self,
         sql: str,
         *,
@@ -37,7 +37,7 @@ class PpaDao:
         client = get_trino_client(cfg)
 
         start = time.perf_counter()
-        rows = client.execute_query_sync(sql, use_cache=True)
+        rows = await client.execute_query(sql, use_cache=True)
         elapsed_ms = (time.perf_counter() - start) * 1000.0
         return rows, elapsed_ms
 

@@ -17,6 +17,7 @@ if _SRC_PATH and _SRC_PATH not in sys.path:
 
 from aurum.airflow_utils import build_failure_callback, build_preflight_callable
 from aurum.airflow_utils import iso as iso_utils
+from aurum.airflow_utils.datasets import iso_trigger, iso_ingest
 
 
 
@@ -77,11 +78,18 @@ def build_seatunnel_task():
     return render, execute, watermark
 
 
+try:  # Dataset scheduling
+    from airflow.datasets import Dataset  # type: ignore
+    DATASET_SCHEDULE = [Dataset(iso_trigger("aeso", "smp_window_ready"))]
+except Exception:  # pragma: no cover
+    Dataset = None  # type: ignore
+    DATASET_SCHEDULE = "*/5 * * * *"
+
 with DAG(
     dag_id="ingest_iso_prices_aeso",
     description="Ingest AESO SMP (system price) via SeaTunnel",
     default_args=DEFAULT_ARGS,
-    schedule_interval="*/5 * * * *",
+    schedule=DATASET_SCHEDULE,
     start_date=datetime(2024, 1, 1),
     catchup=False,
     max_active_runs=1,
@@ -106,6 +114,14 @@ with DAG(
     aeso_render, aeso_exec, aeso_watermark = build_seatunnel_task()
 
     end = EmptyOperator(task_id="end")
+
+    # Attach dataset lineage
+    try:
+        if Dataset is not None:
+            preflight.inlets = [Dataset(iso_trigger("aeso", "smp_window_ready"))]  # type: ignore[attr-defined]
+            aeso_watermark.outlets = [Dataset(iso_ingest("aeso", "smp"))]  # type: ignore[attr-defined]
+    except Exception:
+        pass
 
     start >> preflight >> register_sources >> aeso_render >> aeso_exec >> aeso_watermark >> end
 

@@ -8,7 +8,7 @@ from typing import Any, Dict, List, Mapping, Optional, Sequence, Tuple
 
 from aurum.core import AurumSettings
 from ..config import CacheConfig, TrinoConfig
-from ..state import get_settings
+from aurum.core.settings import get_settings as _core_get_settings
 
 LOGGER = logging.getLogger(__name__)
 
@@ -17,7 +17,7 @@ class EiaDao:
     """Data Access Object for EIA series operations."""
     
     def __init__(self, settings: Optional[AurumSettings] = None):
-        self._settings = settings or get_settings()
+        self._settings = settings or _core_get_settings()
         self._trino_config = TrinoConfig.from_settings(self._settings)
         self._cache_config = CacheConfig.from_settings(self._settings)
     

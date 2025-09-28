@@ -12,6 +12,7 @@ from airflow.operators.empty import EmptyOperator
 from airflow.operators.python import PythonOperator
 
 from aurum.airflow_utils import build_failure_callback, build_preflight_callable
+from aurum.airflow_utils.datasets import URIS
 from aurum.airflow_utils import iso as iso_utils
 
 
@@ -89,6 +90,15 @@ VENV_PYTHON = os.environ.get("AURUM_VENV_PYTHON", ".venv/bin/python")
 BIN_PATH = os.environ.get("AURUM_BIN_PATH", ".venv/bin:$PATH")
 PYTHONPATH_ENTRY = os.environ.get("AURUM_PYTHONPATH_ENTRY", "/opt/airflow/src")
 
+try:  # dataset support
+    from airflow.datasets import Dataset  # type: ignore
+    DATASET_SCHEDULE = [Dataset(URIS.INGEST_ISO_LMP_RAW)]  # emitted by upstream ingest
+    PRODUCED_DATASETS = [Dataset(URIS.INGEST_ISO_LMP_TIMESCALE)]  # emitted after load
+except Exception:  # pragma: no cover
+    Dataset = None  # type: ignore
+    DATASET_SCHEDULE = "0 * * * *"
+    PRODUCED_DATASETS = None
+
 SOURCES = (
     iso_utils.IngestSource(
         "iso_lmp_timescale",
@@ -144,7 +154,7 @@ with DAG(
     dag_id="ingest_iso_prices_timescale",
     description="Stream ISO LMP Kafka topics into TimescaleDB",
     default_args=DEFAULT_ARGS,
-    schedule_interval="0 * * * *",
+    schedule=DATASET_SCHEDULE,
     start_date=datetime(2024, 1, 1),
     catchup=False,
     max_active_runs=1,
@@ -183,6 +193,16 @@ with DAG(
     )
 
     end = EmptyOperator(task_id="end")
+
+    # Attach dataset lineage where supported
+    try:
+        if Dataset is not None:
+            # This DAG is triggered by upstream raw ISO LMP dataset
+            preflight.inlets = [Dataset(URIS.INGEST_ISO_LMP_RAW)]  # type: ignore[attr-defined]
+            # After loading and DQ, watermark indicates availability of conformed dataset
+            watermark.outlets = PRODUCED_DATASETS  # type: ignore[attr-defined]
+    except Exception:
+        pass
 
     start >> preflight >> register_source >> load_timescale >> dq_check >> watermark >> end
 

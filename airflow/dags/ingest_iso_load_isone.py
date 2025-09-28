@@ -17,6 +17,7 @@ if _SRC_PATH and _SRC_PATH not in sys.path:
 
 from aurum.airflow_utils import build_failure_callback, build_preflight_callable
 from aurum.airflow_utils import iso as iso_utils
+from aurum.airflow_utils.datasets import iso_trigger, iso_ingest
 
 
 DEFAULT_ARGS: dict[str, Any] = {
@@ -78,11 +79,21 @@ def build_isone_load_task(
     )
 
 
+try:  # Dataset scheduling
+    from airflow.datasets import Dataset  # type: ignore
+    DATASET_SCHEDULE = [
+        Dataset(iso_trigger("isone", "load_window_ready")),
+        Dataset(iso_trigger("isone", "generation_window_ready")),
+    ]
+except Exception:  # pragma: no cover
+    Dataset = None  # type: ignore
+    DATASET_SCHEDULE = "*/5 * * * *"
+
 with DAG(
     dag_id="ingest_iso_load_isone",
     description="Download ISO-NE load and generation data and publish via SeaTunnel",
     default_args=DEFAULT_ARGS,
-    schedule_interval="*/5 * * * *",
+    schedule=DATASET_SCHEDULE,
     start_date=datetime(2024, 1, 1),
     catchup=False,
     max_active_runs=1,
@@ -135,6 +146,18 @@ with DAG(
     start >> preflight >> register_sources
     register_sources >> load_render >> load_exec >> load_watermark
     register_sources >> generation_render >> generation_exec >> generation_watermark
+    # Attach dataset lineage
+    try:
+        if Dataset is not None:
+            preflight.inlets = [
+                Dataset(iso_trigger("isone", "load_window_ready")),
+                Dataset(iso_trigger("isone", "generation_window_ready")),
+            ]  # type: ignore[attr-defined]
+            load_watermark.outlets = [Dataset(iso_ingest("isone", "load"))]  # type: ignore[attr-defined]
+            generation_watermark.outlets = [Dataset(iso_ingest("isone", "generation_mix"))]  # type: ignore[attr-defined]
+    except Exception:
+        pass
+
     [load_watermark, generation_watermark] >> end
 
     dag.on_failure_callback = build_failure_callback(source="aurum.airflow.ingest_iso_load_isone")

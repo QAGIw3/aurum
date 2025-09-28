@@ -29,10 +29,16 @@ from .telemetry.context import (
     log_structured,
     normalize_tenant_id,
 )
-from .routes import _get_principal, _require_admin
+from .deps import get_principal, require_admin
 from aurum.core import AurumSettings
 from aurum.core.settings import validate_migration_health
 from ..observability.metrics import increment_runtime_override_updates
+
+try:
+    import jsonschema
+    JSONSCHEMA_AVAILABLE = True
+except ImportError:
+    JSONSCHEMA_AVAILABLE = False
 
 
 class RateLimitConfigUpdate(BaseModel):
@@ -727,3 +733,519 @@ async def get_migration_health(
     _require_admin(principal)
     status = validate_migration_health()
     return {"data": status}
+
+
+@router.post("/v1/admin/config/validate")
+async def validate_configuration(
+    config_data: Dict[str, Any],
+    config_type: str = Query(..., description="Type of configuration to validate"),
+    principal: dict = Depends(_get_principal),
+) -> Dict[str, Any]:
+    """Validate configuration data against JSON schema."""
+
+    _require_admin(principal)
+
+    user_id = get_user_id()
+    request_id = get_request_id()
+
+    try:
+        if not JSONSCHEMA_AVAILABLE:
+            raise HTTPException(
+                status_code=503,
+                detail="JSON schema validation not available - jsonschema package not installed"
+            )
+
+        # Load schema for the config type
+        schema = _load_config_schema(config_type)
+        if not schema:
+            raise HTTPException(
+                status_code=400,
+                detail=f"No schema available for configuration type: {config_type}"
+            )
+
+        # Validate configuration
+        jsonschema.validate(instance=config_data, schema=schema)
+
+        log_structured(
+            "info",
+            "configuration_validation_success",
+            config_type=config_type,
+            user_id=user_id,
+            request_id=request_id,
+        )
+
+        return {
+            "meta": {"request_id": request_id, "valid": True},
+            "data": {"validation_result": "Configuration is valid"}
+        }
+
+    except jsonschema.ValidationError as exc:
+        log_structured(
+            "warning",
+            "configuration_validation_failed",
+            config_type=config_type,
+            error=str(exc),
+            user_id=user_id,
+            request_id=request_id,
+        )
+
+        return {
+            "meta": {"request_id": request_id, "valid": False},
+            "data": {
+                "validation_errors": [
+                    {
+                        "field": ".".join(str(p) for p in exc.absolute_path),
+                        "message": exc.message,
+                        "value": exc.instance,
+                    }
+                ]
+            }
+        }
+    except Exception as exc:
+        log_structured(
+            "error",
+            "configuration_validation_error",
+            config_type=config_type,
+            error=str(exc),
+            user_id=user_id,
+            request_id=request_id,
+        )
+        raise HTTPException(status_code=500, detail=f"Configuration validation failed: {str(exc)}")
+
+
+@router.get("/v1/admin/config/schemas")
+async def list_configuration_schemas(
+    principal: dict = Depends(_get_principal),
+) -> Dict[str, Any]:
+    """List available configuration schemas."""
+
+    _require_admin(principal)
+
+    request_id = get_request_id()
+
+    try:
+        schemas = _list_available_schemas()
+
+        return {
+            "meta": {"request_id": request_id, "total_count": len(schemas)},
+            "data": {"schemas": schemas}
+        }
+    except Exception as exc:
+        log_structured(
+            "error",
+            "schema_listing_failed",
+            error=str(exc),
+            user_id=get_user_id(),
+            request_id=request_id,
+        )
+        raise HTTPException(status_code=500, detail=f"Failed to list schemas: {str(exc)}")
+
+
+def _load_config_schema(config_type: str) -> Optional[Dict[str, Any]]:
+    """Load JSON schema for a configuration type."""
+    import os
+    from pathlib import Path
+
+    config_dir = Path(__file__).resolve().parents[3] / "config"
+
+    # Map config types to schema files
+    schema_files = {
+        "eia_ingest_datasets": "eia_ingest_datasets.schema.json",
+        "cpi_ingest_datasets": "cpi_ingest_datasets.schema.json",
+        "fred_ingest_datasets": "fred_ingest_datasets.schema.json",
+        "iso_ingest_datasets": "iso_ingest_datasets.schema.json",
+        "noaa_ingest_datasets": "noaa_ingest_datasets.json",
+    }
+
+    schema_file = schema_files.get(config_type)
+    if not schema_file:
+        return None
+
+    schema_path = config_dir / schema_file
+    if not schema_path.exists():
+        return None
+
+    try:
+        import json
+        with open(schema_path, 'r') as f:
+            return json.load(f)
+    except Exception:
+        return None
+
+
+def _list_available_schemas() -> List[str]:
+    """List all available configuration schema types."""
+    import os
+    from pathlib import Path
+
+    config_dir = Path(__file__).resolve().parents[3] / "config"
+
+    schema_files = []
+    for file_path in config_dir.glob("*.schema.json"):
+        schema_type = file_path.stem.replace("_ingest_datasets", "").replace("_", "")
+        schema_files.append(schema_type)
+
+    return sorted(schema_files)
+
+
+@router.post("/v1/admin/config/backup")
+async def create_configuration_backup(
+    config_types: List[str] = Query(..., description="Configuration types to backup"),
+    principal: dict = Depends(_get_principal),
+) -> Dict[str, Any]:
+    """Create a backup of specified configuration types."""
+
+    _require_admin(principal)
+
+    user_id = get_user_id()
+    request_id = get_request_id()
+
+    try:
+        backup_data = {}
+
+        for config_type in config_types:
+            backup_data[config_type] = _backup_configuration_type(config_type)
+
+        log_structured(
+            "info",
+            "configuration_backup_created",
+            config_types=config_types,
+            backup_size=len(str(backup_data)),
+            user_id=user_id,
+            request_id=request_id,
+        )
+
+        return {
+            "meta": {"request_id": request_id, "backed_up_types": config_types},
+            "data": {"backup": backup_data}
+        }
+    except Exception as exc:
+        log_structured(
+            "error",
+            "configuration_backup_failed",
+            config_types=config_types,
+            error=str(exc),
+            user_id=user_id,
+            request_id=request_id,
+        )
+        raise HTTPException(status_code=500, detail=f"Configuration backup failed: {str(exc)}")
+
+
+@router.post("/v1/admin/config/restore")
+async def restore_configuration(
+    backup_data: Dict[str, Any],
+    principal: dict = Depends(_get_principal),
+) -> Dict[str, Any]:
+    """Restore configuration from backup data."""
+
+    _require_admin(principal)
+
+    user_id = get_user_id()
+    request_id = get_request_id()
+
+    try:
+        restored_types = []
+
+        for config_type, config_data in backup_data.items():
+            _restore_configuration_type(config_type, config_data)
+            restored_types.append(config_type)
+
+        log_structured(
+            "info",
+            "configuration_restore_completed",
+            restored_types=restored_types,
+            user_id=user_id,
+            request_id=request_id,
+        )
+
+        return {
+            "meta": {"request_id": request_id, "restored_types": restored_types},
+            "data": {"message": f"Successfully restored {len(restored_types)} configuration types"}
+        }
+    except Exception as exc:
+        log_structured(
+            "error",
+            "configuration_restore_failed",
+            error=str(exc),
+            user_id=user_id,
+            request_id=request_id,
+        )
+        raise HTTPException(status_code=500, detail=f"Configuration restore failed: {str(exc)}")
+
+
+def _backup_configuration_type(config_type: str) -> Dict[str, Any]:
+    """Backup a specific configuration type."""
+    import json
+    from pathlib import Path
+
+    config_dir = Path(__file__).resolve().parents[3] / "config"
+
+    # Map config types to actual files
+    config_files = {
+        "eia": ["eia_catalog.json", "eia_ingest_datasets.json", "eia_bulk_datasets.json"],
+        "cpi": ["cpi_catalog.json", "cpi_ingest_datasets.json"],
+        "fred": ["fred_catalog.json", "fred_ingest_datasets.json"],
+        "iso": ["iso_catalog.json", "iso_ingest_datasets.json", "iso_nodes.csv"],
+        "noaa": ["noaa_ingest_datasets.json", "noaa_stations_expanded.csv"],
+    }
+
+    files = config_files.get(config_type, [])
+    backup = {}
+
+    for file_name in files:
+        file_path = config_dir / file_name
+        if file_path.exists():
+            try:
+                if file_name.endswith('.json'):
+                    with open(file_path, 'r') as f:
+                        backup[file_name] = json.load(f)
+                else:
+                    with open(file_path, 'r') as f:
+                        backup[file_name] = f.read()
+            except Exception as e:
+                backup[file_name] = {"error": f"Failed to read: {str(e)}"}
+
+    return backup
+
+
+def _restore_configuration_type(config_type: str, config_data: Dict[str, Any]) -> None:
+    """Restore a specific configuration type from backup data."""
+    import json
+    from pathlib import Path
+
+    config_dir = Path(__file__).resolve().parents[3] / "config"
+
+    for file_name, content in config_data.items():
+        file_path = config_dir / file_name
+        try:
+            if file_name.endswith('.json') and isinstance(content, dict):
+                with open(file_path, 'w') as f:
+                    json.dump(content, f, indent=2)
+            elif isinstance(content, str):
+                with open(file_path, 'w') as f:
+                    f.write(content)
+        except Exception as e:
+            raise Exception(f"Failed to restore {file_name}: {str(e)}")
+
+
+@router.get("/v1/admin/schemas")
+async def list_schemas(
+    schema_type: Optional[str] = Query(None, description="Filter by schema type"),
+    principal: dict = Depends(_get_principal),
+) -> Dict[str, Any]:
+    """List all registered schemas."""
+
+    _require_admin(principal)
+
+    user_id = get_user_id()
+    request_id = get_request_id()
+
+    try:
+        from .models.schema_manager import get_schema_manager, SchemaType
+
+        schema_manager = get_schema_manager()
+
+        if schema_type:
+            try:
+                type_enum = SchemaType(schema_type)
+                schemas = schema_manager.list_schemas(type_enum)
+            except ValueError:
+                raise HTTPException(status_code=400, detail=f"Invalid schema type: {schema_type}")
+        else:
+            schemas = schema_manager.list_schemas()
+
+        schema_data = [schema.to_dict() for schema in schemas]
+
+        log_structured(
+            "info",
+            "schemas_listed",
+            schema_count=len(schemas),
+            schema_type=schema_type,
+            user_id=user_id,
+            request_id=request_id,
+        )
+
+        return {
+            "meta": {
+                "request_id": request_id,
+                "total_count": len(schemas),
+                "schema_type": schema_type,
+            },
+            "data": {"schemas": schema_data}
+        }
+    except Exception as exc:
+        log_structured(
+            "error",
+            "schema_listing_failed",
+            error=str(exc),
+            user_id=user_id,
+            request_id=request_id,
+        )
+        raise HTTPException(status_code=500, detail=f"Failed to list schemas: {str(exc)}")
+
+
+@router.get("/v1/admin/schemas/{schema_name}")
+async def get_schema(
+    schema_name: str,
+    version: str = Query("latest", description="Schema version"),
+    principal: dict = Depends(_get_principal),
+) -> Dict[str, Any]:
+    """Get a specific schema."""
+
+    _require_admin(principal)
+
+    user_id = get_user_id()
+    request_id = get_request_id()
+
+    try:
+        from .models.schema_manager import get_schema_manager
+
+        schema_manager = get_schema_manager()
+        schema = schema_manager.get_schema(schema_name, version)
+
+        if not schema:
+            raise HTTPException(status_code=404, detail=f"Schema {schema_name}:{version} not found")
+
+        metadata = schema_manager.get_schema_metadata(schema_name, version)
+
+        log_structured(
+            "info",
+            "schema_retrieved",
+            schema_name=schema_name,
+            version=version,
+            user_id=user_id,
+            request_id=request_id,
+        )
+
+        return {
+            "meta": {"request_id": request_id, "schema_name": schema_name, "version": version},
+            "data": {
+                "schema": schema,
+                "metadata": metadata.to_dict() if metadata else None
+            }
+        }
+    except HTTPException:
+        raise
+    except Exception as exc:
+        log_structured(
+            "error",
+            "schema_retrieval_failed",
+            schema_name=schema_name,
+            version=version,
+            error=str(exc),
+            user_id=user_id,
+            request_id=request_id,
+        )
+        raise HTTPException(status_code=500, detail=f"Failed to retrieve schema: {str(exc)}")
+
+
+@router.post("/v1/admin/schemas/{schema_name}/validate")
+async def validate_schema_data(
+    schema_name: str,
+    data: Dict[str, Any],
+    version: str = Query("latest", description="Schema version to validate against"),
+    principal: dict = Depends(_get_principal),
+) -> Dict[str, Any]:
+    """Validate data against a schema."""
+
+    _require_admin(principal)
+
+    user_id = get_user_id()
+    request_id = get_request_id()
+
+    try:
+        from .models.schema_manager import validate_api_schema
+
+        validation_result = validate_api_schema(schema_name, data, version)
+
+        log_structured(
+            "info",
+            "schema_validation_completed",
+            schema_name=schema_name,
+            version=version,
+            valid=validation_result.valid,
+            error_count=len(validation_result.errors),
+            warning_count=len(validation_result.warnings),
+            user_id=user_id,
+            request_id=request_id,
+        )
+
+        return {
+            "meta": {
+                "request_id": request_id,
+                "schema_name": schema_name,
+                "version": version,
+                "validation_time": validation_result.validated_at.isoformat(),
+            },
+            "data": {
+                "valid": validation_result.valid,
+                "errors": validation_result.errors,
+                "warnings": validation_result.warnings,
+                "schema_version": validation_result.schema_version,
+            }
+        }
+    except Exception as exc:
+        log_structured(
+            "error",
+            "schema_validation_failed",
+            schema_name=schema_name,
+            version=version,
+            error=str(exc),
+            user_id=user_id,
+            request_id=request_id,
+        )
+        raise HTTPException(status_code=500, detail=f"Schema validation failed: {str(exc)}")
+
+
+@router.get("/v1/admin/schemas/{schema_name}/compatibility")
+async def check_schema_compatibility(
+    schema_name: str,
+    from_version: str = Query(..., description="Source version"),
+    to_version: str = Query(..., description="Target version"),
+    principal: dict = Depends(_get_principal),
+) -> Dict[str, Any]:
+    """Check compatibility between two schema versions."""
+
+    _require_admin(principal)
+
+    user_id = get_user_id()
+    request_id = get_request_id()
+
+    try:
+        from .models.schema_manager import get_schema_manager
+
+        schema_manager = get_schema_manager()
+        compatibility = schema_manager.check_compatibility(from_version, to_version, schema_name)
+
+        log_structured(
+            "info",
+            "schema_compatibility_checked",
+            schema_name=schema_name,
+            from_version=from_version,
+            to_version=to_version,
+            compatible=compatibility.get("compatible", False),
+            user_id=user_id,
+            request_id=request_id,
+        )
+
+        return {
+            "meta": {
+                "request_id": request_id,
+                "schema_name": schema_name,
+                "from_version": from_version,
+                "to_version": to_version,
+            },
+            "data": compatibility
+        }
+    except Exception as exc:
+        log_structured(
+            "error",
+            "schema_compatibility_check_failed",
+            schema_name=schema_name,
+            from_version=from_version,
+            to_version=to_version,
+            error=str(exc),
+            user_id=user_id,
+            request_id=request_id,
+        )
+        raise HTTPException(status_code=500, detail=f"Schema compatibility check failed: {str(exc)}")

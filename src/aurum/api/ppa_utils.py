@@ -8,7 +8,7 @@ from datetime import date, datetime
 from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
 from typing import Any, Dict, List, Optional
 
-from .state import get_settings
+from aurum.core.settings import get_settings as _core_get_settings
 
 LOGGER = logging.getLogger(__name__)
 

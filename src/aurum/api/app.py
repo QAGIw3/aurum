@@ -102,16 +102,13 @@ from aurum.api.rate_limiting.concurrency_middleware import (
     ConcurrencyMiddleware,
     OffloadInstruction,
     create_concurrency_middleware_from_settings,
-    local_diagnostics_router,
 )
-from aurum.api.rate_limiting.redis_concurrency import diagnostics_router
 from aurum.api.rate_limiting.consolidated_policy_engine import get_unified_rate_limiter
-from aurum.api.rate_limiting.admin_router import router as ratelimit_admin_router
 from aurum.api.rate_limiting.config import CacheConfig
-from aurum.api.offload import offload_router
 from aurum.api.router_registry import RouterSpec, get_v1_router_specs, get_v2_router_specs
 from aurum.api.routes import configure_routes
 from .lifespan_manager import setup_lifespan
+from .container import DependencyInjectionContainer, register_core_services
 from .app_offload import build_offload_predicate as _build_offload_predicate
 from .middleware.registry import apply_middleware_stack
 from .middleware.admin_guard import AdminRouteGuard
@@ -460,23 +457,218 @@ def _register_versioned_routers(app: FastAPI, settings: AurumSettings, logger: l
     return bool(included_specs)
 
 
-def create_app(settings: Optional[AurumSettings] = None) -> FastAPI:
-    """Create and configure an Aurum FastAPI application instance.
+class ApplicationFactory:
+    """Factory for creating FastAPI applications with proper configuration."""
 
-    Uses feature flags to enable gradual migration between legacy and simplified modes.
-    """
-    settings = settings or AurumSettings.from_env()
-    logger = logging.getLogger(__name__)
+    @staticmethod
+    def create_app(settings: Optional[AurumSettings] = None) -> FastAPI:
+        """Create and configure an Aurum FastAPI application instance.
 
-    # Log migration status
-    log_api_migration_status()
+        Uses feature flags to enable gradual migration between legacy and simplified modes.
+        """
+        settings = settings or AurumSettings.from_env()
+        logger = logging.getLogger(__name__)
 
-    if is_api_feature_enabled():
-        ApiMigrationMetrics.simplified_calls += 1
-        return _create_simplified_app(settings, logger)
-    else:
-        ApiMigrationMetrics.legacy_calls += 1
-        return _create_legacy_app(settings, logger)
+        # Log migration status
+        log_api_migration_status()
+
+        if is_api_feature_enabled():
+            ApiMigrationMetrics.simplified_calls += 1
+            return ApplicationFactory._create_simplified_app(settings, logger)
+        else:
+            ApiMigrationMetrics.legacy_calls += 1
+            return ApplicationFactory._create_legacy_app(settings, logger)
+
+    @staticmethod
+    def _create_simplified_app(settings: AurumSettings, logger: logging.Logger) -> FastAPI:
+        """Create simplified API with essential middleware only."""
+        logger.info("Creating simplified API configuration")
+
+        _configure_admin_groups(settings)
+        _require_admin_groups(settings, logger)
+
+        app = FastAPI(
+            title=settings.api.api_title,
+            version=settings.api.version,
+            default_response_class=JSONResponse,
+            timeout=settings.api.request_timeout_seconds,
+            responses=GLOBAL_ERROR_RESPONSES,
+            lifespan=setup_lifespan(settings),
+        )
+        # Bind settings and DI container to application state
+        app.state.settings = settings
+        container = DependencyInjectionContainer.from_settings(settings)
+        register_core_services(container)
+        app.state.container = container
+        app.add_exception_handler(Exception, _api_exception_handler)
+        configure_routes(settings)
+        # Avoid module-level/global configuration side effects
+
+        # Essential telemetry
+        configure_telemetry(settings.telemetry.service_name, fastapi_app=app, enable_psycopg=True)
+
+        # Apply basic middleware (CORS, GZip, RFC7807 exceptions)
+        app_with_basic_middleware = apply_middleware_stack(app, settings)
+
+        # Enforce admin access and authentication as the outermost middlewares
+        admin_guard_enabled = bool(getattr(getattr(settings, "api", None), "admin_guard_enabled", False))
+        app.add_middleware(AdminRouteGuard, enabled=admin_guard_enabled)
+
+        oidc_config = OIDCConfig.from_settings(settings)
+        app.add_middleware(AuthMiddleware, config=oidc_config)
+
+        # Apply concurrency and rate limiting separately to avoid circular imports
+        app_with_concurrency = _install_concurrency_middleware(app_with_basic_middleware, settings)
+        wrapped_app = _install_rate_limit_middleware(app_with_concurrency, settings)
+
+        # Core health endpoints
+        try:
+            from .health import router as health_router
+            app.include_router(health_router)
+        except Exception as e:
+            logger.warning(f"Failed to load health router: {e}")
+
+        # Scenarios router - now handled by router registry
+        # Legacy scenarios router removed in favor of v1/v2 registry-driven mounting
+
+        # Versioned routers (v1/v2) and supplemental admin routers are now
+        # registered exclusively via the router registry.
+
+        # Basic route registration (honor light init flag)
+        if os.getenv("AURUM_API_LIGHT_INIT", "0") == "1":
+            _include_fallback_routes(app, logger)
+        else:
+            if not _register_versioned_routers(app, settings, logger):
+                _include_fallback_routes(app, logger)
+
+        # Normalize Accept-Encoding so "*" implies gzip support for middleware
+        @app.middleware("http")
+        async def ensure_gzip_wildcard(request, call_next):  # type: ignore[no-redef]
+            accept_encoding = request.headers.get("accept-encoding")
+            if accept_encoding:
+                values = {value.strip().lower() for value in accept_encoding.split(",") if value.strip()}
+                if "*" in values and "gzip" not in values:
+                    headers = MutableHeaders(scope=request.scope)
+                    headers["accept-encoding"] = "gzip, " + accept_encoding
+            return await call_next(request)
+
+        # Access logging & unified request IDs
+        from aurum.api.http.middleware import access_log_middleware
+        app.middleware("http")(access_log_middleware)
+
+        # Always set Vary headers for content negotiation and compression
+        from aurum.api.http.middleware.headers import create_response_headers_middleware
+
+        @app.middleware("http")
+        async def vary_headers(request, call_next):  # type: ignore[no-redef]
+            response = await call_next(request)
+            # Ensure Vary includes Accept and Accept-Encoding
+            vary = response.headers.get("Vary", "")
+            parts = {p.strip() for p in vary.split(",") if p.strip()}
+            parts.update({"Accept", "Accept-Encoding"})
+            response.headers["Vary"] = ", ".join(sorted(parts))
+            return response
+
+        # Inject standard response headers (request id, api version)
+        app.middleware("http")(create_response_headers_middleware(settings))
+
+        return wrapped_app
+
+    @staticmethod
+    def _create_legacy_app(settings: AurumSettings, logger: logging.Logger) -> FastAPI:
+        """Create legacy API with full feature set."""
+        logger.info("Creating legacy API configuration with full features")
+
+        _configure_admin_groups(settings)
+        _require_admin_groups(settings, logger)
+
+        app = FastAPI(
+            title=settings.api.api_title,
+            version=settings.api.version,
+            default_response_class=JSONResponse,
+            timeout=settings.api.request_timeout_seconds,
+            responses=GLOBAL_ERROR_RESPONSES,
+            lifespan=setup_lifespan(settings),
+        )
+        # Bind settings and DI container to application state
+        app.state.settings = settings
+        container = DependencyInjectionContainer.from_settings(settings)
+        register_core_services(container)
+        app.state.container = container
+        app.add_exception_handler(Exception, _api_exception_handler)
+        configure_routes(settings)
+        # Avoid module-level/global configuration side effects
+
+        # Full telemetry setup
+        configure_telemetry(settings.telemetry.service_name, fastapi_app=app, enable_psycopg=True)
+
+        # Apply complete middleware stack
+        app_with_middleware = apply_middleware_stack(app, settings)
+
+        # Enforce admin access and authentication as the outermost middlewares
+        admin_guard_enabled = bool(getattr(getattr(settings, "api", None), "admin_guard_enabled", False))
+        app.add_middleware(AdminRouteGuard, enabled=admin_guard_enabled)
+
+        oidc_config = OIDCConfig.from_settings(settings)
+        app.add_middleware(AuthMiddleware, config=oidc_config)
+
+        # Apply concurrency and rate limiting separately to avoid circular imports
+        app_with_concurrency = _install_concurrency_middleware(app_with_middleware, settings)
+        wrapped_app = _install_rate_limit_middleware(app_with_concurrency, settings)
+
+        # Core health endpoints
+        try:
+            from .health import router as health_router
+            app.include_router(health_router)
+        except Exception as e:
+            logger.warning(f"Failed to load health router: {e}")
+
+        # Scenarios router - now handled by router registry
+        # Legacy scenarios router removed in favor of v1/v2 registry-driven mounting
+
+        # Versioned routers (v1/v2) and supplemental admin routers are now
+        # registered exclusively via the router registry.
+
+        # Basic route registration (honor light init flag)
+        if os.getenv("AURUM_API_LIGHT_INIT", "0") == "1":
+            _include_fallback_routes(app, logger)
+        else:
+            if not _register_versioned_routers(app, settings, logger):
+                _include_fallback_routes(app, logger)
+
+        # Normalize Accept-Encoding so "*" implies gzip support for middleware
+        @app.middleware("http")
+        async def ensure_gzip_wildcard(request, call_next):  # type: ignore[no-redef]
+            accept_encoding = request.headers.get("accept-encoding")
+            if accept_encoding:
+                values = {value.strip().lower() for value in accept_encoding.split(",") if value.strip()}
+                if "*" in values and "gzip" not in values:
+                    headers = MutableHeaders(scope=request.scope)
+                    headers["accept-encoding"] = "gzip, " + accept_encoding
+            return await call_next(request)
+
+        # Access logging & unified request IDs
+        from aurum.api.http.middleware import access_log_middleware
+        app.middleware("http")(access_log_middleware)
+
+        # Always set Vary headers for content negotiation and compression
+        from aurum.api.http.middleware.headers import create_response_headers_middleware
+
+        @app.middleware("http")
+        async def vary_headers(request, call_next):  # type: ignore[no-redef]
+            response = await call_next(request)
+            # Ensure Vary includes Accept and Accept-Encoding
+            vary = response.headers.get("Vary", "")
+            parts = {p.strip() for p in vary.split(",") if p.strip()}
+            parts.update({"Accept", "Accept-Encoding"})
+            response.headers["Vary"] = ", ".join(sorted(parts))
+            return response
+
+        # Inject standard response headers (request id, api version)
+        app.middleware("http")(create_response_headers_middleware(settings))
+
+        return wrapped_app
+
 
 def _include_fallback_routes(app: FastAPI, logger: logging.Logger) -> None:
     """Include minimal fallback routers for curves/metadata when running light init."""
@@ -522,321 +714,3 @@ def _include_fallback_routes(app: FastAPI, logger: logging.Logger) -> None:
         app.include_router(fallback)
     except Exception as exc:
         logger.warning(f"Failed to install fallback routers: {exc}")
-
-
-def _create_simplified_app(settings: AurumSettings, logger: logging.Logger) -> FastAPI:
-    """Create simplified API with essential middleware only."""
-    logger.info("Creating simplified API configuration")
-
-    _configure_admin_groups(settings)
-    _require_admin_groups(settings, logger)
-
-    app = FastAPI(
-        title=settings.api.api_title,
-        version=settings.api.version,
-        default_response_class=JSONResponse,
-        timeout=settings.api.request_timeout_seconds,
-        responses=GLOBAL_ERROR_RESPONSES,
-        lifespan=setup_lifespan(settings),
-    )
-    app.state.settings = settings
-    app.add_exception_handler(Exception, _api_exception_handler)
-    configure_routes(settings)
-    # Configure shared API state for modules that rely on it
-    try:
-        from .state import configure as _configure_state
-        _configure_state(settings)
-    except Exception:
-        pass
-
-    # Essential telemetry
-    configure_telemetry(settings.telemetry.service_name, fastapi_app=app, enable_psycopg=True)
-
-    # Apply basic middleware (CORS, GZip, RFC7807 exceptions)
-    app_with_basic_middleware = apply_middleware_stack(app, settings)
-    
-    # Enforce admin access and authentication as the outermost middlewares
-    admin_guard_enabled = bool(getattr(getattr(settings, "api", None), "admin_guard_enabled", False))
-    app.add_middleware(AdminRouteGuard, enabled=admin_guard_enabled)
-
-    oidc_config = OIDCConfig.from_settings(settings)
-    app.add_middleware(AuthMiddleware, config=oidc_config)
-
-    # Apply concurrency and rate limiting separately to avoid circular imports
-    app_with_concurrency = _install_concurrency_middleware(app_with_basic_middleware, settings)
-    wrapped_app = _install_rate_limit_middleware(app_with_concurrency, settings)
-
-    # Core health endpoints
-    try:
-        from .health import router as health_router
-        app.include_router(health_router)
-    except Exception as e:
-        logger.warning(f"Failed to load health router: {e}")
-
-    # Scenarios router - now handled by router registry
-    # Legacy scenarios router removed in favor of v1/v2 registry-driven mounting
-
-    try:
-        from .runtime_config import router as runtime_config_router
-        app.include_router(runtime_config_router)
-    except Exception as e:
-        logger.warning(f"Failed to load runtime config router: {e}")
-
-    app.include_router(diagnostics_router)
-    app.include_router(local_diagnostics_router)
-    app.include_router(ratelimit_admin_router)
-    app.include_router(offload_router)
-
-    # Basic route registration (honor light init flag)
-    if os.getenv("AURUM_API_LIGHT_INIT", "0") == "1":
-        _include_fallback_routes(app, logger)
-    else:
-        if not _register_versioned_routers(app, settings, logger):
-            _include_fallback_routes(app, logger)
-
-    # Normalize Accept-Encoding so "*" implies gzip support for middleware
-    @app.middleware("http")
-    async def ensure_gzip_wildcard(request, call_next):  # type: ignore[no-redef]
-        accept_encoding = request.headers.get("accept-encoding")
-        if accept_encoding:
-            values = {value.strip().lower() for value in accept_encoding.split(",") if value.strip()}
-            if "*" in values and "gzip" not in values:
-                headers = MutableHeaders(scope=request.scope)
-                headers["accept-encoding"] = "gzip, " + accept_encoding
-        return await call_next(request)
-
-    # Access logging & unified request IDs
-    from aurum.api.http.middleware import access_log_middleware
-    app.middleware("http")(access_log_middleware)
-
-    # Always set Vary headers for content negotiation and compression
-    from aurum.api.http.middleware.headers import create_response_headers_middleware
-
-    @app.middleware("http")
-    async def vary_headers(request, call_next):  # type: ignore[no-redef]
-        response = await call_next(request)
-        # Ensure Vary includes Accept and Accept-Encoding
-        vary = response.headers.get("Vary", "")
-        parts = {p.strip() for p in vary.split(",") if p.strip()}
-        parts.update({"Accept", "Accept-Encoding"})
-        response.headers["Vary"] = ", ".join(sorted(parts))
-        return response
-
-    # Inject standard response headers (request id, api version)
-    app.middleware("http")(create_response_headers_middleware(settings))
-
-    # Back-compat for tests: expose starlette Middleware.options like older versions
-    try:  # pragma: no cover - compatibility shim for introspection only
-        for mi in app.user_middleware:
-            if not hasattr(mi, "options") and hasattr(mi, "kwargs"):
-                setattr(mi, "options", getattr(mi, "kwargs"))
-    except Exception:
-        pass
-
-    _register_metrics_endpoint(app, settings)
-
-    # Return the wrapped ASGI app so servers can run the full stack
-    return wrapped_app
-
-def _create_legacy_app(settings: AurumSettings, logger: logging.Logger) -> FastAPI:
-    """Create legacy API with full feature set."""
-    logger.info("Creating legacy API configuration with full features")
-
-    _configure_admin_groups(settings)
-    _require_admin_groups(settings, logger)
-
-    app = FastAPI(
-        title=settings.api.api_title,
-        version=settings.api.version,
-        default_response_class=JSONResponse,
-        timeout=settings.api.request_timeout_seconds,
-        responses=GLOBAL_ERROR_RESPONSES,
-        lifespan=setup_lifespan(settings),
-    )
-    app.state.settings = settings
-    app.add_exception_handler(Exception, _api_exception_handler)
-    configure_routes(settings)
-    # Configure shared API state for modules that rely on it
-    try:
-        from .state import configure as _configure_state
-        _configure_state(settings)
-    except Exception:
-        pass
-
-    # Essential telemetry
-    configure_telemetry(settings.telemetry.service_name, fastapi_app=app, enable_psycopg=True)
-
-    # Essential middleware - configure CORS from settings
-    cors_origins = getattr(settings.api, "cors_origins", []) or []
-    allow_origins = cors_origins if cors_origins else ["*"]
-
-    app.add_middleware(
-        CORSMiddleware,
-        allow_origins=allow_origins,
-        allow_credentials=True,
-        allow_methods=["*"],
-        allow_headers=["*"],
-    )
-    # Configure GZip with threshold from settings; 0 disables gzip
-    gzip_min = int(getattr(settings.api, "gzip_min_bytes", 500) or 0)
-    if gzip_min > 0:
-        app.add_middleware(GZipMiddleware, minimum_size=gzip_min)
-        # Ensure tests can introspect minimum_size via Middleware.options
-        try:  # pragma: no cover - compatibility shim
-            mi = app.user_middleware[-1]
-            if getattr(mi, "cls", None).__name__ == "GZipMiddleware" and not hasattr(mi, "options"):
-                setattr(mi, "options", {"minimum_size": gzip_min})
-        except Exception:
-            pass
-
-    # Core health endpoints
-    try:
-        from .health import router as health_router
-        app.include_router(health_router)
-    except Exception as e:
-        logger.warning(f"Failed to load health router: {e}")
-
-    # Scenarios router - now handled by router registry
-    # Legacy scenarios router removed in favor of v1/v2 registry-driven mounting
-
-    try:
-        from .runtime_config import router as runtime_config_router
-        app.include_router(runtime_config_router)
-    except Exception as e:
-        logger.warning(f"Failed to load runtime config router: {e}")
-
-    # Admin guard (configurable) - added before auth so auth executes first
-    admin_guard_enabled = bool(getattr(getattr(settings, "api", None), "admin_guard_enabled", False))
-    app.add_middleware(AdminRouteGuard, enabled=admin_guard_enabled)
-
-    oidc_config = OIDCConfig.from_settings(settings)
-    app.add_middleware(AuthMiddleware, config=oidc_config)
-
-    app.include_router(diagnostics_router)
-    app.include_router(local_diagnostics_router)
-    app.include_router(ratelimit_admin_router)
-    app.include_router(offload_router)
-
-    # Basic route registration (honor light init flag)
-    if os.getenv("AURUM_API_LIGHT_INIT", "0") == "1":
-        _include_fallback_routes(app, logger)
-    else:
-        if not _register_versioned_routers(app, settings, logger):
-            _include_fallback_routes(app, logger)
-
-    # Normalize Accept-Encoding so "*" implies gzip support for middleware
-    @app.middleware("http")
-    async def ensure_gzip_wildcard(request, call_next):  # type: ignore[no-redef]
-        accept_encoding = request.headers.get("accept-encoding")
-        if accept_encoding:
-            values = {value.strip().lower() for value in accept_encoding.split(",") if value.strip()}
-            if "*" in values and "gzip" not in values:
-                headers = MutableHeaders(scope=request.scope)
-                headers["accept-encoding"] = "gzip, " + accept_encoding
-        return await call_next(request)
-
-    # Access logging & unified request IDs
-    from aurum.api.http.middleware import access_log_middleware
-    app.middleware("http")(access_log_middleware)
-
-    # Always set Vary headers for content negotiation and compression
-    from aurum.api.http.middleware.headers import create_response_headers_middleware
-
-    @app.middleware("http")
-    async def vary_headers(request, call_next):  # type: ignore[no-redef]
-        response = await call_next(request)
-        # Ensure Vary includes Accept and Accept-Encoding
-        vary = response.headers.get("Vary", "")
-        parts = {p.strip() for p in vary.split(",") if p.strip()}
-        parts.update({"Accept", "Accept-Encoding"})
-        response.headers["Vary"] = ", ".join(sorted(parts))
-        return response
-
-    # Inject standard response headers (request id, api version)
-    app.middleware("http")(create_response_headers_middleware(settings))
-
-    # Back-compat for tests: expose starlette Middleware.options like older versions
-    try:  # pragma: no cover - compatibility shim for introspection only
-        for mi in app.user_middleware:
-            if not hasattr(mi, "options") and hasattr(mi, "kwargs"):
-                setattr(mi, "options", getattr(mi, "kwargs"))
-    except Exception:
-        pass
-
-    _register_metrics_endpoint(app, settings)
-
-    app_with_concurrency = _install_concurrency_middleware(app, settings)
-    return _install_rate_limit_middleware(app_with_concurrency, settings)
-
-
-# Admin groups configuration (populated during app creation)
-ADMIN_GROUPS: set[str] = set()
-
-
-def _configure_admin_groups(settings: AurumSettings) -> None:
-    """Populate admin groups from settings without falling back to open access."""
-    global ADMIN_GROUPS
-    groups = getattr(getattr(settings, "auth", None), "admin_groups", frozenset())
-    ADMIN_GROUPS = {group.lower() for group in groups}
-
-
-def _require_admin_groups(settings: AurumSettings, logger: logging.Logger) -> None:
-    guard_enabled = bool(getattr(getattr(settings, "api", None), "admin_guard_enabled", False))
-    auth_cfg = getattr(settings, "auth", None)
-    auth_disabled = bool(getattr(auth_cfg, "disabled", False))
-    if guard_enabled and not auth_disabled and not ADMIN_GROUPS:
-        raise RuntimeError(
-            "admin_guard_enabled but no AURUM_API_ADMIN_GROUP configured; refuse to start with open admin access",
-        )
-    if not ADMIN_GROUPS and guard_enabled:
-        logger.warning("admin guard enabled without explicit admin groups; access will always be denied")
-
-
-def _is_admin(user_data: Dict[str, Any]) -> bool:
-    """Check if a user is an admin based on their verified groups or scopes."""
-    if not ADMIN_GROUPS:
-        return False
-
-    claims = user_data.get("claims") or {}
-    principal_groups: list[str] = []
-
-    if "groups" in claims and isinstance(claims["groups"], list):
-        principal_groups.extend(str(group).lower() for group in claims["groups"] if group)
-
-    if "roles" in claims and isinstance(claims["roles"], list):
-        principal_groups.extend(str(role).lower() for role in claims["roles"] if role)
-
-    # Fallback to top-level groups provided by middleware (already lower-cased there)
-    groups = user_data.get("groups") or []
-    if isinstance(groups, list):
-        principal_groups.extend(str(group).lower() for group in groups if group)
-    elif isinstance(groups, str):
-        principal_groups.append(groups.lower())
-
-    if any(group in ADMIN_GROUPS for group in principal_groups):
-        return True
-
-    # Scope-based admin access
-    scopes = claims.get("scope")
-    if isinstance(scopes, str):
-        scope_tokens = {token.strip().lower() for token in scopes.split() if token.strip()}
-    elif isinstance(scopes, list):
-        scope_tokens = {str(token).lower() for token in scopes if token}
-    else:
-        scope_tokens = set()
-
-    admin_scopes = {
-        "admin",
-        "admin:read",
-        "admin:write",
-        "aurum:admin",
-    }
-    return bool(scope_tokens & admin_scopes)
-
-
-# Expose a module-level app for tests and simple runners
-try:
-    app = create_app(AurumSettings.from_env())
-except Exception:  # pragma: no cover - avoid import-time hard failures
-    # Defer app creation if environment is not ready
-    app = None  # type: ignore[assignment]

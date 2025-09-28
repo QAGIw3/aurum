@@ -10,9 +10,9 @@ from typing import Any, Dict, Iterable, List, Optional, Tuple
 from datetime import date as _date
 
 from .config import CacheConfig, TrinoConfig
-from .state import get_settings
-from .service import query_dimensions
+from aurum.core.settings import get_settings as _core_get_settings
 from .database.backend_selector import get_data_backend
+from .services.metadata_service import MetadataService
 from ..reference import iso_locations as ref_iso
 from ..reference import units as ref_units
 from ..reference import calendars as ref_cal
@@ -27,7 +27,7 @@ class MetadataV2Service:
         limit: int,
     ) -> Tuple[List[Dict[str, Any]], int]:
         # Prefer the pluggable backend selector; fall back to legacy Trino flow
-        settings = get_settings()
+        settings = _core_get_settings()
         try:
             backend = get_data_backend(settings)
             backend_type = getattr(settings.data_backend.backend_type, "value", str(settings.data_backend.backend_type))
@@ -75,20 +75,15 @@ class MetadataV2Service:
                     asof_dt = _date.fromisoformat(asof)
                 except Exception:
                     asof_dt = None
-            values, _counts = query_dimensions(
-                trino_cfg,
-                cache_cfg,
-                asof=asof_dt,
-                asset_class=None,
-                iso=None,
-                location=None,
-                market=None,
-                product=None,
-                block=None,
-                tenor_type=None,
-                per_dim_limit=1000,
-                include_counts=False,
+            metadata_service = MetadataService()
+            filters = {}
+            if asof_dt:
+                filters['asof'] = asof_dt
+
+            values = await metadata_service.query_dimensions(
+                filters=filters,
             )
+            _counts = sum(len(dim_values) for dim_values in values.values())
         ordered_dims = ["asset_class", "iso", "location", "market", "product", "block", "tenor_type"]
         items = [
             {"dimension": dim, "values": list(values.get(dim, [])), "asof": asof or "latest"}

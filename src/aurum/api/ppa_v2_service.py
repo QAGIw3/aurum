@@ -13,7 +13,7 @@ from typing import Any, Dict, List, Optional
 
 from .config import TrinoConfig
 from .services.ppa_service import PpaService, normalize_currency_code
-from .state import get_settings
+from aurum.core.settings import get_settings as _core_get_settings
 
 
 def _format_date(value: Any) -> Optional[str]:

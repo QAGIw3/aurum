@@ -10,11 +10,12 @@ This router is always enabled by default. The AURUM_API_V1_SPLIT_CURVES flag is 
 
 from __future__ import annotations
 
+import asyncio
 import time
 from datetime import date
 from typing import Dict, Optional
 
-from fastapi import APIRouter, HTTPException, Query, Request, Response
+from fastapi import APIRouter, HTTPException, Query, Request, Response, Depends
 
 from aurum.core.pagination import Cursor
 
@@ -30,9 +31,8 @@ from ..http import (
     MAX_PAGE_SIZE,
 )
 from ..config import CacheConfig
-from ..state import get_settings
-from ..models import CurveDiffPoint, CurveDiffResponse, CurvePoint, CurveResponse, Meta
-from ..query import ORDER_COLUMNS as CURVE_ORDER_COLUMNS, DIFF_ORDER_COLUMNS as CURVE_DIFF_ORDER_COLUMNS
+from ..container import provide_service
+from ..contracts import CacheDirective, CurvesDiffQuery, CurvesQuery, KeysetCursor, Pagination, ServiceCallContext
 from ..services.curves_service import CurvesService
 from ..routes import (
     CURVE_CACHE_TTL,
@@ -40,7 +40,6 @@ from ..routes import (
     CURVE_MAX_LIMIT,
     CURVE_STRIP_CACHE_TTL,
     _current_request_id,
-    _trino_config,
 )
 
 router = APIRouter()
@@ -50,9 +49,30 @@ CURVE_CURSOR_FIELDS = list(CURVE_ORDER_COLUMNS)
 CURVE_DIFF_CURSOR_FIELDS = list(CURVE_DIFF_ORDER_COLUMNS)
 
 
+def _resolve_service(service: CurvesService = Depends(provide_service(CurvesService))) -> CurvesService:  # type: ignore[arg-type]
+    return service
+
+
+def _run_async(coro):
+    try:
+        loop = asyncio.get_running_loop()
+        if loop.is_running():
+            return loop.run_until_complete(coro)  # type: ignore[misc]
+    except RuntimeError:
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        try:
+            return loop.run_until_complete(coro)
+        finally:
+            loop.close()
+            asyncio.set_event_loop(None)
+    return asyncio.run(coro)
+
+
 @router.get("/v1/curves", response_model=CurveResponse)
 def list_curves(
     request: Request,
+    service: CurvesService = Depends(provide_service(CurvesService)),  # type: ignore[arg-type]
     asof: Optional[date] = Query(None, description="As-of date filter (YYYY-MM-DD)"),
     curve_key: Optional[str] = Query(None),
     asset_class: Optional[str] = Query(None),
@@ -168,25 +188,25 @@ def list_curves(
                 detail=f"Query with dimensions {list(combo.keys())} and limit > 500 may be too expensive. Consider adding more specific filters.",
             )
 
-    try:
-        rows, elapsed_ms = query_curves(
-            trino_cfg,
-            cache_cfg,
-            asof=asof,
-            curve_key=curve_key,
-            asset_class=asset_class,
-            iso=iso,
-            location=location,
-            market=market,
-            product=product,
-            block=block,
-            tenor_type=tenor_type,
-            limit=effective_limit + 1,
-            offset=effective_offset or 0,
-            cursor_after=cursor_after,
-            cursor_before=cursor_before,
-            descending=descending,
+    # service provided by DI
+    cache_directive = CacheDirective(namespace="curves", ttl_seconds=CURVE_CACHE_TTL)
+
+    async def _fetch():
+        result = await service.query_data(
+            filters=current_filters,
+            pagination=Pagination(
+                limit=effective_limit + 1,
+                offset=effective_offset or 0,
+                cursor_after=KeysetCursor.from_dict(cursor_after) if cursor_after else None,
+                cursor_before=KeysetCursor.from_dict(cursor_before) if cursor_before else None,
+                descending=descending,
+            ),
+            context=ServiceCallContext(cache_directive=cache_directive),
         )
+        return result.data, result.metadata.elapsed_ms
+
+    try:
+        rows, elapsed_ms = _run_async(_fetch())
     except RuntimeError as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
 
@@ -287,6 +307,7 @@ def list_curves(
 @router.get("/v1/curves/diff", response_model=CurveDiffResponse)
 def list_curves_diff(
     request: Request,
+    service: CurvesService = Depends(provide_service(CurvesService)),  # type: ignore[arg-type]
     asof_a: date = Query(..., description="First as-of date"),
     asof_b: date = Query(..., description="Second as-of date"),
     curve_key: Optional[str] = Query(None),
@@ -394,9 +415,7 @@ def list_curves_diff(
             )
 
     try:
-        rows, elapsed_ms = query_curves_diff(
-            trino_cfg,
-            cache_cfg,
+        rows, elapsed_ms = service.query_curves_diff(
             asof_a=asof_a,
             asof_b=asof_b,
             curve_key=curve_key,
@@ -409,7 +428,7 @@ def list_curves_diff(
             tenor_type=tenor_type,
             limit=effective_limit + 1,
             offset=offset or 0,
-            cursor_after=cursor_after,
+            cache_ttl=CURVE_DIFF_CACHE_TTL,
         )
     except RuntimeError as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
@@ -430,6 +449,7 @@ def list_curves_diff(
 @router.get("/v1/curves/strips", response_model=CurveResponse)
 def list_curve_strips(
     request: Request,
+    service: CurvesService = Depends(provide_service(CurvesService)),  # type: ignore[arg-type]
     asof: Optional[date] = Query(None),
     type: str = Query(..., pattern="^(CALENDAR|SEASON|QUARTER)$", description="Strip type"),
     curve_key: Optional[str] = Query(None),
@@ -458,9 +478,7 @@ def list_curve_strips(
         effective_offset = int(payload.get("offset", 0))
 
     try:
-        rows, elapsed_ms = query_curves(
-            trino_cfg,
-            cache_cfg,
+        rows, elapsed_ms = service.query_curves(
             asof=asof,
             curve_key=curve_key,
             asset_class=asset_class,
@@ -472,6 +490,7 @@ def list_curve_strips(
             tenor_type=type,
             limit=effective_limit + 1,
             offset=effective_offset,
+            cache_ttl=CURVE_STRIP_CACHE_TTL,
         )
     except RuntimeError as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc

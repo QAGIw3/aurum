@@ -12,7 +12,7 @@ from typing import Optional, Dict, Any
 from ...logging.structured_logger import get_logger
 from .config import CacheConfig
 from .cache import AsyncCache, CacheBackend
-from .unified_cache_manager import UnifiedCacheManager, set_unified_cache_manager
+from .consolidated_manager import UnifiedCacheManager, set_unified_cache_manager
 from ...core.settings import get_settings
 
 
@@ -84,7 +84,7 @@ async def shutdown_unified_cache_system(unified_manager: Optional[UnifiedCacheMa
     
     try:
         if unified_manager is None:
-            from .unified_cache_manager import get_unified_cache_manager
+            from .consolidated_manager import get_unified_cache_manager
             unified_manager = get_unified_cache_manager()
             
         if unified_manager:
@@ -176,7 +176,7 @@ async def validate_cache_system() -> Dict[str, Any]:
     Returns:
         Validation results.
     """
-    from .unified_cache_manager import get_unified_cache_manager
+    from .consolidated_manager import get_unified_cache_manager
     
     validation_results = {
         "unified_manager_available": False,

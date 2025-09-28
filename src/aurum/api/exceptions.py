@@ -121,6 +121,87 @@ class DataProcessingException(AurumAPIException):
         )
 
 
+class CurveNotFoundException(NotFoundException):
+    """Exception raised when a curve cannot be found."""
+
+    def __init__(
+        self,
+        curve_key: str,
+        request_id: Optional[str] = None,
+    ):
+        super().__init__(
+            detail=f"Curve '{curve_key}' not found",
+            request_id=request_id,
+            context={"curve_key": curve_key},
+        )
+
+
+class ScenarioNotFoundException(NotFoundException):
+    """Exception raised when a scenario cannot be found."""
+
+    def __init__(
+        self,
+        scenario_id: str,
+        request_id: Optional[str] = None,
+    ):
+        super().__init__(
+            detail=f"Scenario '{scenario_id}' not found",
+            request_id=request_id,
+            context={"scenario_id": scenario_id},
+        )
+
+
+class InsufficientDataException(AurumAPIException):
+    """Exception raised when insufficient data is available for the requested operation."""
+
+    def __init__(
+        self,
+        detail: str,
+        request_id: Optional[str] = None,
+        required_data: Optional[str] = None,
+        context: Optional[Dict[str, Any]] = None,
+    ):
+        super().__init__(
+            status_code=422,
+            detail=detail,
+            request_id=request_id,
+            context=context or {"required_data": required_data},
+        )
+
+
+class RateLimitExceededException(AurumAPIException):
+    """Exception raised when rate limits are exceeded."""
+
+    def __init__(
+        self,
+        detail: str,
+        request_id: Optional[str] = None,
+        retry_after: Optional[int] = None,
+        context: Optional[Dict[str, Any]] = None,
+    ):
+        super().__init__(
+            status_code=429,
+            detail=detail,
+            request_id=request_id,
+            context=context or {"retry_after": retry_after},
+        )
+
+
+class CacheUnavailableException(ServiceUnavailableException):
+    """Exception raised when cache is unavailable."""
+
+    def __init__(
+        self,
+        service: str = "cache",
+        request_id: Optional[str] = None,
+    ):
+        super().__init__(
+            detail=f"Cache service '{service}' is unavailable",
+            request_id=request_id,
+            service=service,
+        )
+
+
 def handle_api_exception(request: Request, exc: Exception) -> HTTPException:
     """Convert exceptions to standardized HTTP responses with consistent error envelopes."""
     from ..telemetry.context import get_request_id

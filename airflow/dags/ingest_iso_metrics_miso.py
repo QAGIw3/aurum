@@ -18,6 +18,7 @@ if _SRC_PATH and _SRC_PATH not in sys.path:
 
 from aurum.airflow_utils import build_failure_callback, build_preflight_callable
 from aurum.airflow_utils import iso as iso_utils
+from aurum.airflow_utils.datasets import iso_trigger, iso_ingest
 
 
 DEFAULT_ARGS: dict[str, Any] = {
@@ -91,11 +92,18 @@ def _build_job(
     )
 
 
+try:  # dataset scheduling for LMP
+    from airflow.datasets import Dataset  # type: ignore
+    DATASET_SCHEDULE_LMP = [Dataset(iso_trigger("miso", "lmp_window_ready"))]
+except Exception:  # pragma: no cover
+    Dataset = None  # type: ignore
+    DATASET_SCHEDULE_LMP = "*/5 * * * *"
+
 with DAG(
     dag_id="ingest_iso_metrics_miso",
     description="Ingest MISO real-time LMP observations",
     default_args=DEFAULT_ARGS,
-    schedule_interval="*/5 * * * *",
+    schedule=DATASET_SCHEDULE_LMP,
     start_date=datetime(2024, 1, 1),
     catchup=False,
     max_active_runs=1,
@@ -163,15 +171,33 @@ with DAG(
 
     end = EmptyOperator(task_id="end", trigger_rule=TriggerRule.NONE_FAILED)
 
+    # Attach dataset lineage
+    try:
+        if Dataset is not None:
+            preflight_lmp.inlets = [Dataset(iso_trigger("miso", "lmp_window_ready"))]  # type: ignore[attr-defined]
+            lmp_watermark.outlets = [Dataset(iso_ingest("miso", "lmp"))]  # type: ignore[attr-defined]
+    except Exception:
+        pass
+
     start >> preflight_lmp >> register_sources_lmp >> lmp_ingest >> lmp_watermark >> end
     dag.on_failure_callback = build_failure_callback(source="aurum.airflow.ingest_iso_metrics_miso")
 
+
+try:  # dataset scheduling for load/genmix
+    from airflow.datasets import Dataset  # type: ignore
+    DATASET_SCHEDULE_LG = [
+        Dataset(iso_trigger("miso", "load_window_ready")),
+        Dataset(iso_trigger("miso", "genmix_window_ready")),
+    ]
+except Exception:  # pragma: no cover
+    Dataset = None  # type: ignore
+    DATASET_SCHEDULE_LG = "45 * * * *"
 
 with DAG(
     dag_id="ingest_iso_metrics_miso_load_genmix",
     description="Ingest MISO load and generation mix observations",
     default_args=DEFAULT_ARGS,
-    schedule_interval="45 * * * *",
+    schedule=DATASET_SCHEDULE_LG,
     start_date=datetime(2024, 1, 1),
     catchup=False,
     max_active_runs=1,
@@ -233,6 +259,18 @@ with DAG(
     )
 
     end_load = EmptyOperator(task_id="end", trigger_rule=TriggerRule.NONE_FAILED)
+
+    # Attach dataset lineage
+    try:
+        if Dataset is not None:
+            preflight_load.inlets = [
+                Dataset(iso_trigger("miso", "load_window_ready")),
+                Dataset(iso_trigger("miso", "genmix_window_ready")),
+            ]  # type: ignore[attr-defined]
+            load_watermark.outlets = [Dataset(iso_ingest("miso", "load"))]  # type: ignore[attr-defined]
+            genmix_watermark.outlets = [Dataset(iso_ingest("miso", "genmix"))]  # type: ignore[attr-defined]
+    except Exception:
+        pass
 
     start_load >> preflight_load >> register_sources_load
     register_sources_load >> load_render >> load_exec >> load_watermark

@@ -36,6 +36,7 @@ from ..services import MetadataService
 from aurum.core import AurumSettings
 from ..cache.consolidated_manager import get_unified_cache_manager
 from ..cache.enhanced_cache_manager import CacheNamespace
+from ..container import provide_service
 
 router = APIRouter(prefix="/v2", tags=["metadata"])
 
@@ -173,8 +174,8 @@ async def list_dimensions_v2(
             filters={"asof": asof},
         )
 
-        svc = MetadataService()
-        paginated_data, total_count = await svc.list_dimensions(asof=asof, offset=offset, limit=effective_limit)
+        service = await provide_service(MetadataService)()
+        paginated_data, total_count = await service.list_dimensions(asof=asof, offset=offset, limit=effective_limit)
 
         next_cursor = build_next_cursor(
             offset=offset,
@@ -265,8 +266,8 @@ async def list_locations_v2(
             filters={"iso": iso},
         )
 
-        svc = MetadataService()
-        paginated_data, total_count = await svc.list_locations(iso=iso, offset=offset, limit=effective_limit)
+        service = await provide_service(MetadataService)()
+        paginated_data, total_count = await service.list_locations(iso=iso, offset=offset, limit=effective_limit)
 
         next_cursor = build_next_cursor(
             offset=offset,
@@ -362,8 +363,8 @@ async def list_units_v2(
             filters=None,
         )
 
-        svc = MetadataService()
-        paginated_data, total_count = await svc.list_units(offset=offset, limit=effective_limit)
+        service = await provide_service(MetadataService)()
+        paginated_data, total_count = await service.list_units(offset=offset, limit=effective_limit)
 
         next_cursor = build_next_cursor(
             offset=offset,
@@ -437,8 +438,8 @@ async def list_calendars_v2(
             filters=None,
         )
 
-        svc = MetadataService()
-        paginated_data, total_count = await svc.list_calendars(offset=offset, limit=effective_limit)
+        service = await provide_service(MetadataService)()
+        paginated_data, total_count = await service.list_calendars(offset=offset, limit=effective_limit)
 
         next_cursor = build_next_cursor(
             offset=offset,

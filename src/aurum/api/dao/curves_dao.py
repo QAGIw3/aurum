@@ -3,334 +3,145 @@
 from __future__ import annotations
 
 import logging
-from typing import Any, Dict, List, Optional, Tuple
+import time
+from datetime import date
+from typing import Any, Dict, List, Optional
 
 from aurum.core import AurumSettings
-from ..config import CacheConfig, TrinoConfig
-from ..state import get_settings
+
+from ..contracts import (
+    CurvesDiffQuery,
+    CurvesQuery,
+    Pagination,
+    QueryContext,
+    QueryResult,
+)
+from ..database.trino_client import get_trino_client
+from ..query import build_curve_diff_query, build_curve_query, build_filter_clause
+from ..deps import get_settings  # FastAPI dependency (used only when DAO is used within request context)
 
 LOGGER = logging.getLogger(__name__)
 
 
 class CurvesDao:
     """Data Access Object for curves operations."""
-    
+
     def __init__(self, settings: Optional[AurumSettings] = None):
-        self._settings = settings or get_settings()
-        self._trino_config = TrinoConfig.from_settings(self._settings)
-        self._cache_config = CacheConfig.from_settings(self._settings)
-    
-    def _build_curve_query(
+        # Prefer explicit settings passed by service; fall back to core settings getter
+        if settings is not None:
+            self._settings = settings
+        else:
+            try:
+                # When used inside a FastAPI request, services should pass settings explicitly.
+                # As a very last resort for backwards compatibility in non-request contexts,
+                # use core settings which must be pre-configured by startup.
+                from aurum.core.settings import get_settings as _core_get_settings
+                self._settings = _core_get_settings()
+            except Exception:
+                from aurum.core.settings import AurumSettings as _AurumSettings
+                self._settings = _AurumSettings.from_env()
+        self._trino_client = get_trino_client()
+
+    async def _execute(
         self,
-        *,
-        iso: Optional[str] = None,
-        market: Optional[str] = None,
-        location: Optional[str] = None,
-        product: Optional[str] = None,
-        block: Optional[str] = None,
-        asof: Optional[str] = None,
-        strip: Optional[str] = None,
-        offset: int = 0,
-        limit: int = 100,
-    ) -> Tuple[str, Dict[str, Any]]:
-        """Build SQL query for curve data."""
-        
-        query = """
-        SELECT 
-            iso,
-            market,
-            location,
-            product,
-            block,
-            strip,
-            asof,
-            forward_date,
-            forward_value,
-            created_at,
-            updated_at
-        FROM iceberg.market.curve_observation
-        WHERE 1=1
-        """
-        
-        params: Dict[str, Any] = {}
-        
-        # Add filters
-        if iso:
-            query += " AND iso = %(iso)s"
-            params["iso"] = iso
-            
-        if market:
-            query += " AND market = %(market)s"
-            params["market"] = market
-            
-        if location:
-            query += " AND location = %(location)s"
-            params["location"] = location
-            
-        if product:
-            query += " AND product = %(product)s"
-            params["product"] = product
-            
-        if block:
-            query += " AND block = %(block)s"
-            params["block"] = block
-            
-        if asof:
-            query += " AND asof = %(asof)s"
-            params["asof"] = asof
-            
-        if strip:
-            query += " AND strip = %(strip)s"
-            params["strip"] = strip
-        
-        # Add ordering and pagination
-        query += " ORDER BY iso, market, location, product, asof, forward_date"
-        query += " OFFSET %(offset)s LIMIT %(limit)s"
-        params["offset"] = offset
-        params["limit"] = limit
-        
-        return query, params
-    
-    def _build_curve_diff_query(
-        self,
-        *,
-        iso: Optional[str] = None,
-        market: Optional[str] = None,
-        location: Optional[str] = None,
-        product: Optional[str] = None,
-        block: Optional[str] = None,
-        from_asof: str,
-        to_asof: str,
-        strip: Optional[str] = None,
-        offset: int = 0,
-        limit: int = 100,
-    ) -> Tuple[str, Dict[str, Any]]:
-        """Build SQL query for curve diff data."""
-        
-        query = """
-        WITH from_curves AS (
-            SELECT 
-                iso, market, location, product, block, strip,
-                forward_date, forward_value as from_value
-            FROM iceberg.market.curve_observation
-            WHERE asof = %(from_asof)s
-        ),
-        to_curves AS (
-            SELECT 
-                iso, market, location, product, block, strip,
-                forward_date, forward_value as to_value
-            FROM iceberg.market.curve_observation
-            WHERE asof = %(to_asof)s
-        )
-        SELECT 
-            COALESCE(f.iso, t.iso) as iso,
-            COALESCE(f.market, t.market) as market,
-            COALESCE(f.location, t.location) as location,
-            COALESCE(f.product, t.product) as product,
-            COALESCE(f.block, t.block) as block,
-            COALESCE(f.strip, t.strip) as strip,
-            COALESCE(f.forward_date, t.forward_date) as forward_date,
-            f.from_value,
-            t.to_value,
-            (t.to_value - f.from_value) as diff_value,
-            CASE 
-                WHEN f.from_value IS NULL OR f.from_value = 0 THEN NULL
-                ELSE ((t.to_value - f.from_value) / f.from_value) * 100
-            END as pct_change
-        FROM from_curves f
-        FULL OUTER JOIN to_curves t ON (
-            f.iso = t.iso AND
-            f.market = t.market AND
-            f.location = t.location AND
-            f.product = t.product AND
-            f.block = t.block AND
-            f.strip = t.strip AND
-            f.forward_date = t.forward_date
-        )
-        WHERE 1=1
-        """
-        
-        params: Dict[str, Any] = {
-            "from_asof": from_asof,
-            "to_asof": to_asof,
-        }
-        
-        # Add filters
-        if iso:
-            query += " AND COALESCE(f.iso, t.iso) = %(iso)s"
-            params["iso"] = iso
-            
-        if market:
-            query += " AND COALESCE(f.market, t.market) = %(market)s"
-            params["market"] = market
-            
-        if location:
-            query += " AND COALESCE(f.location, t.location) = %(location)s"
-            params["location"] = location
-            
-        if product:
-            query += " AND COALESCE(f.product, t.product) = %(product)s"
-            params["product"] = product
-            
-        if block:
-            query += " AND COALESCE(f.block, t.block) = %(block)s"
-            params["block"] = block
-            
-        if strip:
-            query += " AND COALESCE(f.strip, t.strip) = %(strip)s"
-            params["strip"] = strip
-        
-        # Add ordering and pagination
-        query += " ORDER BY iso, market, location, product, forward_date"
-        query += " OFFSET %(offset)s LIMIT %(limit)s"
-        params["offset"] = offset
-        params["limit"] = limit
-        
-        return query, params
-    
+        sql: str,
+        params: Dict[str, Any],
+        context: Optional[QueryContext],
+    ) -> tuple[float, List[Dict[str, Any]]]:
+        start = time.perf_counter()
+        rows = await self._trino_client.execute_query(sql, params, use_cache=True)
+        elapsed_ms = (time.perf_counter() - start) * 1000.0
+        return elapsed_ms, [dict(row) for row in rows]
+
     async def query_curves(
         self,
         *,
-        iso: Optional[str] = None,
-        market: Optional[str] = None,
-        location: Optional[str] = None,
-        product: Optional[str] = None,
-        block: Optional[str] = None,
-        asof: Optional[str] = None,
-        strip: Optional[str] = None,
-        offset: int = 0,
-        limit: int = 100,
-    ) -> List[Dict[str, Any]]:
-        """Query curve data."""
-        from ..database import get_trino_client
-        
-        query, params = self._build_curve_query(
-            iso=iso,
-            market=market,
-            location=location,
-            product=product,
-            block=block,
-            asof=asof,
-            strip=strip,
-            offset=offset,
-            limit=limit,
+        query: CurvesQuery,
+        pagination: Pagination,
+        context: QueryContext | None = None,
+    ) -> QueryResult[List[Dict[str, Any]]]:
+        sql = build_curve_query(
+            asof=query.asof,
+            curve_key=query.curve_key,
+            asset_class=query.asset_class,
+            iso=query.iso,
+            location=query.location,
+            market=query.market,
+            product=query.product,
+            block=query.block,
+            tenor_type=query.tenor_type,
+            limit=pagination.limit,
+            offset=pagination.offset,
+            cursor_after=(
+                pagination.cursor_after.as_params() if pagination.cursor_after else None
+            ),
+            cursor_before=(
+                pagination.cursor_before.as_params() if pagination.cursor_before else None
+            ),
+            descending=pagination.descending,
         )
-        
-        trino_client = get_trino_client()
-        rows = await trino_client.execute_query(query, params, use_cache=True)
-        
-        return [dict(row) for row in rows]
-    
+        params = query.as_params()
+        elapsed, rows = await self._execute(sql, params, context)
+        return QueryResult(data=rows, elapsed_ms=elapsed, raw_query=sql)
+
     async def query_curves_diff(
         self,
         *,
-        iso: Optional[str] = None,
-        market: Optional[str] = None,
-        location: Optional[str] = None,
-        product: Optional[str] = None,
-        block: Optional[str] = None,
-        from_asof: str,
-        to_asof: str,
-        strip: Optional[str] = None,
-        offset: int = 0,
-        limit: int = 100,
-    ) -> List[Dict[str, Any]]:
-        """Query curve diff data between two asof dates."""
-        from ..database import get_trino_client
-        
-        query, params = self._build_curve_diff_query(
-            iso=iso,
-            market=market,
-            location=location,
-            product=product,
-            block=block,
-            from_asof=from_asof,
-            to_asof=to_asof,
-            strip=strip,
-            offset=offset,
-            limit=limit,
+        query: CurvesDiffQuery,
+        pagination: Pagination,
+        context: QueryContext | None = None,
+    ) -> QueryResult[List[Dict[str, Any]]]:
+        sql = build_curve_diff_query(
+            asof_a=query.asof_a,
+            asof_b=query.asof_b,
+            curve_key=query.curve_key,
+            asset_class=query.asset_class,
+            iso=query.iso,
+            location=query.location,
+            market=query.market,
+            product=query.product,
+            block=query.block,
+            tenor_type=query.tenor_type,
+            limit=pagination.limit,
+            offset=pagination.offset,
+            cursor_after=(
+                pagination.cursor_after.as_params() if pagination.cursor_after else None
+            ),
         )
-        
-        trino_client = get_trino_client()
-        rows = await trino_client.execute_query(query, params, use_cache=True)
-        
-        return [dict(row) for row in rows]
-    
+        params = query.as_params()
+        elapsed, rows = await self._execute(sql, params, context)
+        return QueryResult(data=rows, elapsed_ms=elapsed, raw_query=sql)
+
     async def query_curve_strips(
         self,
         *,
-        iso: Optional[str] = None,
-        market: Optional[str] = None,
-        location: Optional[str] = None,
-        product: Optional[str] = None,
-        block: Optional[str] = None,
-        asof: Optional[str] = None,
-        offset: int = 0,
-        limit: int = 100,
-    ) -> List[Dict[str, Any]]:
-        """Query curve strips data (aggregated by strip)."""
-        from ..database import get_trino_client
-        
-        query = """
-        SELECT 
-            iso,
-            market,
-            location,
-            product,
-            block,
-            strip,
-            asof,
-            AVG(forward_value) as avg_value,
-            MIN(forward_value) as min_value,
-            MAX(forward_value) as max_value,
-            COUNT(*) as point_count,
-            MIN(forward_date) as first_date,
-            MAX(forward_date) as last_date
-        FROM iceberg.market.curve_observation
-        WHERE 1=1
-        """
-        
-        params: Dict[str, Any] = {}
-        
-        # Add filters
-        if iso:
-            query += " AND iso = %(iso)s"
-            params["iso"] = iso
-            
-        if market:
-            query += " AND market = %(market)s"
-            params["market"] = market
-            
-        if location:
-            query += " AND location = %(location)s"
-            params["location"] = location
-            
-        if product:
-            query += " AND product = %(product)s"
-            params["product"] = product
-            
-        if block:
-            query += " AND block = %(block)s"
-            params["block"] = block
-            
-        if asof:
-            query += " AND asof = %(asof)s"
-            params["asof"] = asof
-        
-        # Group by strip and add ordering/pagination
-        query += """
-        GROUP BY iso, market, location, product, block, strip, asof
-        ORDER BY iso, market, location, product, strip
-        OFFSET %(offset)s LIMIT %(limit)s
-        """
-        params["offset"] = offset
-        params["limit"] = limit
-        
-        trino_client = get_trino_client()
-        rows = await trino_client.execute_query(query, params, use_cache=True)
-        
-        return [dict(row) for row in rows]
-    
+        query: CurvesQuery,
+        pagination: Pagination,
+        context: QueryContext | None = None,
+    ) -> QueryResult[List[Dict[str, Any]]]:
+        base = "iceberg.market.curve_observation"
+        filters = query.as_params()
+        where_clause = build_filter_clause(filters)
+        if where_clause:
+            where_clause = where_clause.replace("WHERE", "WHERE")
+        group_by = "GROUP BY iso, market, location, product, block, strip, asof"
+        order_clause = "ORDER BY iso, market, location, product, strip"
+        offset_clause = f"OFFSET {max(0, pagination.offset)}"
+        limit_clause = f"LIMIT {max(1, pagination.limit)}"
+        sql = (
+            "SELECT iso, market, location, product, block, strip, asof, "
+            "AVG(forward_value) AS avg_value, "
+            "MIN(forward_value) AS min_value, "
+            "MAX(forward_value) AS max_value, "
+            "COUNT(*) AS point_count, "
+            "MIN(forward_date) AS first_date, "
+            "MAX(forward_date) AS last_date "
+            f"FROM {base} {where_clause} {group_by} {order_clause} "
+            f"{offset_clause} {limit_clause}"
+        )
+        elapsed, rows = await self._execute(sql, filters, context)
+        return QueryResult(data=rows, elapsed_ms=elapsed, raw_query=sql)
+
     async def invalidate_curve_cache(
         self,
         *,
@@ -341,30 +152,30 @@ class CurvesDao:
         """Invalidate curve cache."""
         from ..cache.consolidated_manager import get_unified_cache_manager
         from ..container import get_service
-        
+
         cache_manager = get_unified_cache_manager()
-        
+
         # Build cache key pattern based on parameters
         key_pattern = "curves:"
-        
+
         if iso:
             key_pattern += f"{hash(iso)}:"
         else:
             key_pattern += "*:"
-        
+
         if market:
             key_pattern += f"{hash(market)}:"
         else:
             key_pattern += "*:"
-        
+
         if location:
             key_pattern += f"{hash(location)}"
         else:
             key_pattern += "*"
-        
+
         # Delete matching cache keys
         deleted_count = await cache_manager.delete_pattern(key_pattern)
-        
+
         LOGGER.info(
             "Invalidated curve cache",
             extra={
@@ -375,5 +186,5 @@ class CurvesDao:
                 "deleted_keys": deleted_count,
             }
         )
-        
+
         return {"curves": deleted_count}

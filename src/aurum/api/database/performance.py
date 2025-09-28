@@ -7,7 +7,7 @@ from fastapi import APIRouter, HTTPException, Query, Request
 
 from aurum.telemetry.context import get_request_id
 from .database_monitor import get_database_monitor
-from ..state import request_settings
+from aurum.api.deps import get_settings as request_settings
 
 try:  # pragma: no cover - optional dependency
     import asyncpg

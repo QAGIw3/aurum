@@ -17,7 +17,7 @@ from .health_checks import (
     check_timescale_ready,
     check_trino_deep_health,
 )
-from .state import get_settings
+from aurum.core.settings import get_settings as _core_get_settings
 
 
 class HealthCheckLevel(Enum):
@@ -106,7 +106,7 @@ class HealthCheckService:
         """Run comprehensive readiness checks."""
         suite = HealthCheckSuite(level=HealthCheckLevel.READINESS)
         
-        settings = get_settings()
+    settings = _core_get_settings()
         trino_cfg = TrinoConfig.from_settings(settings)
         cache_cfg = CacheConfig.from_settings(settings)
         schema_registry_url = getattr(settings.kafka, "schema_registry_url", None)

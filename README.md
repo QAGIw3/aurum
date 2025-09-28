@@ -23,7 +23,8 @@ Aurum is a comprehensive market intelligence platform for energy trading, provid
 - 📚 [API Documentation](docs/api/README.md) - API usage and examples
 - ☸️ [Kubernetes Development](docs/k8s-dev.md) - K8s workflow
 - 🔒 [Security & Auth](docs/security/tenant-rls.md) - Authentication setup
-- �� [Runbooks](docs/runbooks/) - Operations guides
+- [SRE & On-call](docs/sre/README.md) - Paging policy and runbooks
+-  [Runbooks](docs/runbooks/) - Operations guides
 - 💡 [Contributing](CONTRIBUTING.md) - Development guidelines
 
 ## Repository Structure
@@ -93,6 +94,26 @@ make lint
 - Releases: automatic SemVer + changelog via GitHub Actions `Release` workflow.
 - E2E: `make e2e-up && make e2e-seed && make e2e-test && make e2e-down` or run the `E2E Pipeline` workflow.
 ```
+
+### Airflow Dataset URIs
+- Convention: use the `dataset://aurum` scheme with path semantics to describe lineage and triggers.
+  - Format: `dataset://aurum/<domain>/<subdomain>/<name>`
+  - Examples:
+    - Triggers: `dataset://aurum/triggers/pjm_da_window_ready`
+    - Ingested: `dataset://aurum/ingest/iso/miso/lmp`
+    - Warehouse: `dataset://aurum/ingest/eia_series_timescale`
+- Utilities: `src/aurum/airflow_utils/datasets.py` centralizes helpers and constants.
+  - Import helpers:
+    - `from aurum.airflow_utils.datasets import dataset_uri, iso_trigger, iso_ingest, noaa_trigger, noaa_ingest, URIS`
+  - Usage with Airflow (>= 2.4):
+    - `from airflow.datasets import Dataset`
+    - `schedule=[Dataset(URIS.TRIGGER_PJM_DA_WINDOW)]`
+    - `task.inlets = [Dataset(iso_trigger("miso", "lmp_window_ready"))]`
+    - `task.outlets = [Dataset(iso_ingest("isone", "load"))]`
+- Extending conventions:
+  - Prefer `dataset_uri(...)` to construct new URIs consistently.
+  - For repeated values, add a constant to `URIS` to avoid duplication across DAGs.
+  - Keep names short, lowercased, and hierarchical for clarity (e.g., `ingest/iso/isone/generation_mix`).
 
 ### Kubernetes Development
 See [K8s Development Guide](docs/k8s-dev.md) for complete instructions on:

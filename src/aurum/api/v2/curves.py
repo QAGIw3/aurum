@@ -22,7 +22,9 @@ from fastapi import APIRouter, HTTPException, Query, Request, Response, Depends
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
-from ..deps import get_settings, get_cache_manager
+from ..deps import get_settings
+from ..container import provide_service
+from ..contracts import CacheDirective, CurvesQuery, ServiceCallContext, Pagination
 from ..services import CurvesService
 from aurum.core import AurumSettings
 from ..cache.consolidated_manager import get_unified_cache_manager
@@ -76,23 +78,24 @@ async def get_curves_v2(
         if settings:
             pass
 
-        # Get curve service façade
-        service = CurvesService()
+        service = await provide_service(CurvesService)()  # resolve via DI
+        if service is None:
+            raise HTTPException(status_code=503, detail="CurvesService unavailable")
 
-        # Resolve pagination using hardened utilities (embeds filters for integrity)
+        query_filters = {"name_filter": name_filter}
         offset, effective_limit = resolve_pagination(
             cursor=cursor,
             limit=limit,
             default_limit=limit,
-            filters={"name_filter": name_filter},
+            filters=query_filters,
         )
 
-        # List curves
-        curves = await service.list_curves(
-            offset=offset,
-            limit=effective_limit,
-            name_filter=name_filter,
+        result = await service.query_data(
+            filters={"name_filter": name_filter},
+            pagination=Pagination(limit=effective_limit, offset=offset),
+            context=ServiceCallContext(cache_directive=CacheDirective(namespace="curves", ttl_seconds=settings.api.cache.curve_ttl if settings.api.cache else 120)),
         )
+        curves = result.data
 
         # Compute pagination cursors and envelope
         has_more = len(curves) == effective_limit
@@ -100,13 +103,13 @@ async def get_curves_v2(
             offset=offset,
             limit=effective_limit,
             has_more=has_more,
-            filters={"name_filter": name_filter},
+            filters=query_filters,
         )
         from .pagination import build_prev_cursor
         prev_cursor = build_prev_cursor(
             offset=offset,
             limit=effective_limit,
-            filters={"name_filter": name_filter},
+            filters=query_filters,
         )
         meta, links = build_pagination_envelope(
             request_url=request.url,

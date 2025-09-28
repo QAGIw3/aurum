@@ -80,6 +80,8 @@ dependencies = [
 [project.scripts]
 aurum-feature = "aurum.cli.feature:main"
 aurum-api = "aurum.api.__main__:main"
+aurum-ml = "aurum.ml.cli:main"
+aurum-anomaly-service = "aurum.streaming.services.anomaly_service:main"
 
 [project.optional-dependencies]
 test = [

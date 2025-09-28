@@ -17,6 +17,7 @@ if _SRC_PATH and _SRC_PATH not in sys.path:
 
 from aurum.airflow_utils import build_failure_callback, build_preflight_callable
 from aurum.airflow_utils import iso as iso_utils
+from aurum.airflow_utils.datasets import URIS
 
 
 DEFAULT_ARGS: dict[str, Any] = {
@@ -48,11 +49,20 @@ SOURCES = (
 )
 
 
+try:  # dataset scheduling
+    from airflow.datasets import Dataset  # type: ignore
+    DATASET_SCHEDULE = [Dataset(URIS.TRIGGER_PJM_DA_WINDOW)]  # upstream trigger per window
+    PRODUCED_DATASETS = [Dataset(URIS.INGEST_PJM_DA_LMP)]  # produced upon success
+except Exception:  # pragma: no cover
+    Dataset = None  # type: ignore
+    DATASET_SCHEDULE = "25 * * * *"
+    PRODUCED_DATASETS = None
+
 with DAG(
     dag_id="ingest_iso_prices_pjm",
     description="Download PJM day-ahead LMP and publish via SeaTunnel",
     default_args=DEFAULT_ARGS,
-    schedule_interval="25 * * * *",
+    schedule=DATASET_SCHEDULE,
     start_date=datetime(2024, 1, 1),
     catchup=False,
     max_active_runs=1,
@@ -116,6 +126,14 @@ with DAG(
     )
 
     end = EmptyOperator(task_id="end")
+
+    # Attach dataset lineage where supported
+    try:
+        if Dataset is not None:
+            preflight.inlets = [Dataset(URIS.TRIGGER_PJM_DA_WINDOW)]  # type: ignore[attr-defined]
+            watermark.outlets = PRODUCED_DATASETS  # type: ignore[attr-defined]
+    except Exception:
+        pass
 
     start >> preflight >> register_sources >> render >> exec_k8s >> watermark >> end
 

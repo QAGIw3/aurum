@@ -19,9 +19,9 @@ class BaseAsyncDao(ABC):
     
     def __init__(self, settings: Optional[AurumSettings] = None):
         """Initialize the async DAO with settings and backend adapter."""
-        from ..state import get_settings
+        from ...core.settings import get_settings as _core_get_settings
         
-        self._settings = settings or get_settings()
+        self._settings = settings or _core_get_settings()
         self._backend_adapter = BackendAdapter(self._settings)
         self._backend: Optional[DataBackend] = None
     

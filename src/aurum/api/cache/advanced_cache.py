@@ -460,8 +460,8 @@ def get_advanced_cache_manager() -> AdvancedCacheManager:
     """Get the global advanced cache manager."""
     global _advanced_cache_manager
     if _advanced_cache_manager is None:
-        from .state import get_settings
-        settings = get_settings()
+        from aurum.core.settings import get_settings as _core_get_settings
+        settings = _core_get_settings()
         _advanced_cache_manager = AdvancedCacheManager(settings.api.cache)
     return _advanced_cache_manager
 

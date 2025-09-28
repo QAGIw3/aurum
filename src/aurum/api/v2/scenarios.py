@@ -21,7 +21,7 @@ from fastapi import APIRouter, HTTPException, Query, Request, Response, Depends
 from pydantic import BaseModel, Field
 
 from ..http import respond_with_etag
-from ..container import get_service
+from ..container import provide_service
 from ..async_service import AsyncScenarioService
 from ..deps import get_settings, get_cache_manager
 from aurum.core import AurumSettings
@@ -45,8 +45,8 @@ from .pagination import (
 
 
 async def get_scenario_service() -> AsyncScenarioService:
-    """Provide AsyncScenarioService compatible with existing awaited usage."""
-    return get_service(AsyncScenarioService)
+    """Provide AsyncScenarioService compatible with existing awaited usage via DI."""
+    return await provide_service(AsyncScenarioService)()
 
 router = APIRouter(prefix="/v2", tags=["scenarios"])
 # NOTE: the prefix keeps paths aligned with the app wiring so tests can mount

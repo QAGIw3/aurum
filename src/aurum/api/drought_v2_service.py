@@ -7,7 +7,7 @@ from typing import Any, Dict, List, Optional
 
 from .config import TrinoConfig
 from .services.drought_service import DroughtService
-from .state import get_settings
+from aurum.core.settings import get_settings as _core_get_settings
 from .database.backend_selector import get_data_backend
 
 

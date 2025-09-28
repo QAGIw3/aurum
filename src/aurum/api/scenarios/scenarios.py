@@ -66,7 +66,7 @@ def _get_async_scenario_service():
             async def create_bulk_scenario_runs(self, tenant_id: str, scenario_id, runs: list, bulk_idempotency_key=None):
                 return [], []
         return AsyncScenarioService
-from .routes import _resolve_tenant, _resolve_tenant_optional
+from ..deps import resolve_tenant, resolve_tenant_optional
 from ..http import (
     decode_cursor,
     encode_cursor,

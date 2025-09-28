@@ -18,7 +18,7 @@ from ..config import CacheConfig
 from ..http import respond_with_etag
 from ..models import CachePurgeDetail, CachePurgeResponse, Meta
 from ..service import _maybe_redis_client, invalidate_scenario_outputs_cache, invalidate_eia_series_cache
-from ..state import get_settings
+from aurum.core.settings import get_settings as _core_get_settings
 from ...telemetry.context import get_request_id
 
 # Reuse route helpers for admin enforcement

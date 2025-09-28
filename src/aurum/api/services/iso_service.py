@@ -8,7 +8,6 @@ Migrated from legacy service.py functions: query_iso_lmp_* family.
 
 import hashlib
 import json
-import logging
 import time
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -19,9 +18,11 @@ from ..dao.trino_async_dao import TrinoAsyncDao
 from ..config import CacheConfig
 from ..cache.unified_cache_manager import get_unified_cache_manager
 from ..cache.enhanced_cache_manager import CacheNamespace
-from ..service import _cache_key, _iso_lmp_cache_key, _iso_lmp_effective_ttl
+from ..cache.utils import cache_key as _cache_key, iso_lmp_cache_key, iso_lmp_effective_ttl
+from ..logging.structured_logger import get_logger
+from ..telemetry.context import log_structured
 
-LOGGER = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 try:  # pragma: no cover - optional dependency
     from prometheus_client import Counter as _PromCounter
@@ -94,9 +95,9 @@ class IsoService(QueryableServiceInterface):
             # Use legacy query function for now (will migrate later)
             from ..service import query_iso_lmp_last_24h
             from ..config import CacheConfig
-            from ..state import get_settings
+            from ...core.settings import get_settings as _core_get_settings
 
-            cache_cfg = CacheConfig.from_settings(get_settings())
+            cache_cfg = CacheConfig.from_settings(_core_get_settings())
             results, query_time = query_iso_lmp_last_24h(
                 iso_code=iso_code,
                 market=market,
@@ -168,9 +169,9 @@ class IsoService(QueryableServiceInterface):
 
             from ..service import query_iso_lmp_hourly
             from ..config import CacheConfig
-            from ..state import get_settings
+            from ...core.settings import get_settings as _core_get_settings
 
-            cache_cfg = CacheConfig.from_settings(get_settings())
+            cache_cfg = CacheConfig.from_settings(_core_get_settings())
             results, query_time = query_iso_lmp_hourly(
                 iso_code=iso_code,
                 market=market,
@@ -244,9 +245,9 @@ class IsoService(QueryableServiceInterface):
 
             from ..service import query_iso_lmp_daily
             from ..config import CacheConfig
-            from ..state import get_settings
+            from ...core.settings import get_settings as _core_get_settings
 
-            cache_cfg = CacheConfig.from_settings(get_settings())
+            cache_cfg = CacheConfig.from_settings(_core_get_settings())
             results, query_time = query_iso_lmp_daily(
                 iso_code=iso_code,
                 market=market,
@@ -321,9 +322,9 @@ class IsoService(QueryableServiceInterface):
 
             from ..service import query_iso_lmp_negative
             from ..config import CacheConfig
-            from ..state import get_settings
+            from ...core.settings import get_settings as _core_get_settings
 
-            cache_cfg = CacheConfig.from_settings(get_settings())
+            cache_cfg = CacheConfig.from_settings(_core_get_settings())
             results, query_time = query_iso_lmp_negative(
                 iso_code=iso_code,
                 market=market,

@@ -20,7 +20,7 @@ from . import service
 from .cache.cache import CacheManager
 from .config import CacheConfig, TrinoConfig
 from .http import respond_with_etag as http_respond_with_etag
-from .state import get_settings
+from aurum.core.settings import get_settings as _core_get_settings
 from aurum.observability import metrics as observability_metrics
 from aurum.observability.metrics import (
     METRICS_MIDDLEWARE,
@@ -40,7 +40,7 @@ except ModuleNotFoundError:  # pragma: no cover - drought features optional
 LOGGER = logging.getLogger(__name__)
 
 
-# --- Global configuration state ------------------------------------------------
+# --- Global configuration state (being phased out in favor of dependency injection) ---
 
 _CATALOG_PATH = FilePath(__file__).resolve().parents[2] / "config" / "droughtgov_catalog.json"
 
@@ -69,7 +69,7 @@ EIA_SERIES_DIMENSIONS_CACHE_TTL = 300
 
 def _settings() -> AurumSettings:
     """Return the globally configured settings instance."""
-    return get_settings()
+    return _core_get_settings()
 
 
 def _trino_config() -> TrinoConfig:
@@ -85,26 +85,28 @@ def _cache_config(*, ttl_override: int | None = None) -> CacheConfig:
 # --- Route configuration ------------------------------------------------------
 
 def _load_admin_groups(settings: AurumSettings) -> Set[str]:
-    auth_cfg = getattr(settings, "auth", None)
-    if auth_cfg is None:
-        return set()
-    if getattr(auth_cfg, "disabled", False):
-        return set()
-    raw_groups = getattr(auth_cfg, "admin_groups", None)
-    if not raw_groups:
-        return set()
-    return {str(item).strip().lower() for item in raw_groups if str(item).strip()}
+    """Load admin groups from settings (deprecated - use ApplicationContext instead)."""
+    from .container import get_app_context
+    app_context = get_app_context()
+    app_context.settings = settings
+    return app_context.get_admin_groups()
 
 
 def configure_routes(settings: AurumSettings) -> None:
     """Initialise shared route configuration from settings."""
 
+    # Use application context instead of global variables
+    from .container import get_app_context
+    app_context = get_app_context()
+    app_context.settings = settings
+
+    # Legacy global variables (being phased out)
     global ADMIN_GROUPS, _TILE_CACHE_CFG, _TILE_CACHE, _INMEM_TTL
     global METADATA_CACHE_TTL
     global CURVE_MAX_LIMIT, CURVE_CACHE_TTL, CURVE_DIFF_CACHE_TTL, CURVE_STRIP_CACHE_TTL
     global EIA_SERIES_CACHE_TTL, EIA_SERIES_DIMENSIONS_CACHE_TTL, EIA_SERIES_MAX_LIMIT
 
-    ADMIN_GROUPS = _load_admin_groups(settings)
+    ADMIN_GROUPS = app_context.get_admin_groups()
     _TILE_CACHE_CFG = CacheConfig.from_settings(settings)
     _TILE_CACHE = None
     api_cfg = getattr(settings, "api", None)

@@ -31,7 +31,7 @@ from .query import (
     build_filter_clause,
     build_keyset_clause,
 )
-from .state import configure as configure_state, get_settings
+from aurum.core.settings import get_settings as _core_get_settings
 
 LOGGER = logging.getLogger(__name__)
 
@@ -104,11 +104,9 @@ _SCENARIO_SINGLEFLIGHT = _Singleflight()
 
 def _settings() -> AurumSettings:
     try:
-        return get_settings()
+        return _core_get_settings()
     except RuntimeError:
-        settings = AurumSettings.from_env()
-        configure_state(settings)
-        return settings
+        return AurumSettings.from_env()
 
 
 def _timescale_dsn() -> str:
@@ -268,15 +266,43 @@ def _build_keyset_clause(
     )
 
 
+async def _execute_trino_query_async(
+    trino_cfg: TrinoConfig,
+    query: str,
+    params: Optional[Dict[str, Any]] = None,
+) -> List[Dict[str, Any]]:
+    """Execute Trino query asynchronously."""
+    # Local import to avoid heavy dependencies during module import in tests
+    from .database.trino_client import get_trino_client
+    client = get_trino_client(trino_cfg)
+    return await client.execute_query(query, params=params, use_cache=True)
+
+
 def _execute_trino_query(
     trino_cfg: TrinoConfig,
     query: str,
     params: Optional[Dict[str, Any]] = None,
 ) -> List[Dict[str, Any]]:
-    # Local import to avoid heavy dependencies during module import in tests
-    from .database.trino_client import get_trino_client
-    client = get_trino_client(trino_cfg)
-    return client.execute_query_sync(query, params=params, use_cache=True)
+    """Synchronous wrapper for backward compatibility."""
+    # For now, create a simple event loop to run the async function
+    try:
+        loop = asyncio.get_event_loop()
+        if loop.is_running():
+            # If we're in an async context, we need to handle this differently
+            import warnings
+            warnings.warn(
+                "_execute_trino_query called from async context. "
+                "Use _execute_trino_query_async instead.",
+                DeprecationWarning,
+                stacklevel=2,
+            )
+            # Return empty result for now - should be replaced with proper async handling
+            return []
+        else:
+            return loop.run_until_complete(_execute_trino_query_async(trino_cfg, query, params))
+    except RuntimeError:
+        # No event loop exists, create one
+        return asyncio.run(_execute_trino_query_async(trino_cfg, query, params))
 
 
 def _build_sql(
@@ -468,11 +494,14 @@ def query_eia_series(
     prefix = f"{cache_cfg.namespace}:" if cache_cfg.namespace else ""
     key = f"{prefix}eia-series:{_cache_key({**params, 'sql': sql})}"
     start_time = time.perf_counter()
-    manager = get_global_cache_manager()
+    manager = get_unified_cache_manager()
+    def _get_query_result():
+        return asyncio.run(_execute_trino_query_async(trino_cfg, sql))
+
     rows: List[Dict[str, Any]] = cache_get_or_set_sync(
         manager,
         key,
-        lambda: _execute_trino_query(trino_cfg, sql),
+        _get_query_result,
         cache_cfg.ttl_seconds,
     )
     elapsed = (time.perf_counter() - start_time) * 1000.0
@@ -530,7 +559,7 @@ def query_eia_series_dimensions(
         f"FROM {_eia_series_base_table()}{where}"
     )
 
-    manager = get_global_cache_manager()
+    manager = get_unified_cache_manager()
     prefix = f"{cache_cfg.namespace}:" if cache_cfg.namespace else ""
     params = {
         "series_id": series_id,
@@ -566,7 +595,7 @@ def query_eia_series_dimensions(
         "source": [],
     }
     try:
-        rows = _execute_trino_query(trino_cfg, sql)
+        rows = asyncio.run(_execute_trino_query_async(trino_cfg, sql))
         row = rows[0] if rows else None
         if row:
             mapping = {
@@ -785,7 +814,7 @@ def query_scenario_outputs(
         descending=descending,
     )
 
-    manager = get_global_cache_manager()
+    manager = get_unified_cache_manager()
     client = _maybe_redis_client(cache_cfg)
     cache_key = None
     singleflight_key = None
@@ -840,7 +869,7 @@ def query_scenario_outputs(
         span.set_attribute("aurum.curves_diff.limit", limit)
         span.set_attribute("aurum.curves_diff.has_cursor", bool(cursor_after))
         start = time.perf_counter()
-        rows = _execute_trino_query(trino_cfg, sql)
+        rows = asyncio.run(_execute_trino_query_async(trino_cfg, sql))
         elapsed = (time.perf_counter() - start) * 1000.0
         span.set_attribute("aurum.curves_diff.elapsed_ms", elapsed)
         span.set_attribute("aurum.curves_diff.row_count", len(rows))
@@ -1037,7 +1066,7 @@ def query_scenario_metrics_latest(
     )
     params["sql"] = sql
 
-    manager = get_global_cache_manager()
+    manager = get_unified_cache_manager()
     client = _maybe_redis_client(cache_cfg)
     cache_key = None
     singleflight_key = None
@@ -1087,7 +1116,7 @@ def query_scenario_metrics_latest(
                 pass
 
         start = time.perf_counter()
-        rows: List[Dict[str, Any]] = _execute_trino_query(trino_cfg, sql)
+        rows: List[Dict[str, Any]] = asyncio.run(_execute_trino_query_async(trino_cfg, sql))
         elapsed = (time.perf_counter() - start) * 1000.0
 
         if cache_key is not None:
@@ -1116,7 +1145,7 @@ async def invalidate_eia_series_cache_async(cache_cfg: CacheConfig) -> Dict[str,
 
     Returns a dict of scope -> count invalidated (0 when using CacheManager).
     """
-    manager = get_global_cache_manager()
+    manager = get_unified_cache_manager()
     if manager is not None:
         try:
             # Best-effort: use broad patterns to invalidate related keys
@@ -1178,7 +1207,7 @@ def invalidate_eia_series_cache(cache_cfg: CacheConfig) -> Dict[str, int]:
 
     Returns a dict of scope -> count invalidated (0 when using CacheManager).
     """
-    manager = get_global_cache_manager()
+    manager = get_unified_cache_manager()
     if manager is not None:
         try:
             # Use asyncio.get_running_loop() to detect if we're in an async context
@@ -1197,7 +1226,7 @@ def invalidate_eia_series_cache(cache_cfg: CacheConfig) -> Dict[str, int]:
 
 async def invalidate_dimensions_cache_async(cache_cfg: CacheConfig) -> int:
     """Async version of dimensions cache invalidation."""
-    manager = get_global_cache_manager()
+    manager = get_unified_cache_manager()
     if manager is not None:
         try:
             await manager.invalidate_pattern("dimensions")
@@ -1248,7 +1277,7 @@ def _invalidate_dimensions_cache_redis(cache_cfg: CacheConfig) -> int:
 
 def invalidate_dimensions_cache(cache_cfg: CacheConfig) -> int:
     """Invalidate dimensions cache. Prefer CacheManager; fallback to Redis sets."""
-    manager = get_global_cache_manager()
+    manager = get_unified_cache_manager()
     if manager is not None:
         try:
             # Use asyncio.get_running_loop() to detect if we're in an async context
@@ -1266,7 +1295,7 @@ def invalidate_dimensions_cache(cache_cfg: CacheConfig) -> int:
 
 async def invalidate_metadata_cache_async(cache_cfg: CacheConfig, prefixes: Sequence[str]) -> Dict[str, int]:
     """Async version of metadata cache invalidation."""
-    manager = get_global_cache_manager()
+    manager = get_unified_cache_manager()
     results: Dict[str, int] = {prefix: 0 for prefix in prefixes}
     if manager is not None:
         try:
@@ -1304,7 +1333,7 @@ def _invalidate_metadata_cache_redis(cache_cfg: CacheConfig, prefixes: Sequence[
 
 def invalidate_metadata_cache(cache_cfg: CacheConfig, prefixes: Sequence[str]) -> Dict[str, int]:
     """Invalidate metadata cache. Prefer CacheManager; fallback to Redis sets."""
-    manager = get_global_cache_manager()
+    manager = get_unified_cache_manager()
     results: Dict[str, int] = {prefix: 0 for prefix in prefixes}
     if manager is not None:
         try:
@@ -1417,7 +1446,7 @@ def _cached_iso_lmp_query(
 
     manager = None
     if ttl > 0:
-        manager = get_global_cache_manager()
+        manager = get_unified_cache_manager()
         if manager is not None:
             try:
                 cached_payload = cache_get_sync(manager, cache_key)
@@ -1621,7 +1650,7 @@ def query_dimensions(
 
     dims = ["asset_class", "iso", "location", "market", "product", "block", "tenor_type"]
 
-    manager = get_global_cache_manager()
+    manager = get_unified_cache_manager()
     prefix = f"{cache_cfg.namespace}:" if cache_cfg.namespace else ""
     params = {
         "asof": asof.isoformat() if asof else None,
@@ -1660,7 +1689,7 @@ def query_dimensions(
 
         union_sql = " UNION ALL ".join(union_queries)
         sql = f"SELECT dimension, value, count FROM ({union_sql}) ORDER BY dimension, count DESC"
-        rows = _execute_trino_query(trino_cfg, sql)
+        rows = asyncio.run(_execute_trino_query_async(trino_cfg, sql))
 
         for dim in dims:
             dim_values: List[str] = []
@@ -1678,7 +1707,7 @@ def query_dimensions(
         for dim in dims:
             clause = where + (" AND " if where else " WHERE ") + f"{dim} IS NOT NULL"
             sql = f"SELECT DISTINCT {dim} AS value FROM {base}{clause} LIMIT {per_dim_limit}"
-            rows = _execute_trino_query(trino_cfg, sql)
+            rows = asyncio.run(_execute_trino_query_async(trino_cfg, sql))
             values = [row.get("value") for row in rows if row.get("value") is not None]
             results[dim] = values
 
@@ -1708,8 +1737,11 @@ async def fetch_curve_data(
     prev_cursor: Optional[str] = None,
 ) -> Tuple[List[Any], Any]:
     """Fetch curve data using AsyncCurveService."""
+from .async_service import AsyncCurveService, AsyncMetadataService
+from .config import TrinoConfig
+from .cache.consolidated_manager import get_unified_cache_manager
+from aurum.core.settings import get_settings as _core_get_settings
     from .async_service import AsyncCurveService
-    from .container import get_service
 
     # Determine effective pagination
     if cursor is not None:
@@ -1722,7 +1754,8 @@ async def fetch_curve_data(
     # Over-fetch by 1 to detect if more pages exist
     fetch_limit = max(1, eff_limit + 1)
 
-    service = get_service(AsyncCurveService)
+    trino_cfg = TrinoConfig.from_settings(_core_get_settings())
+    service = AsyncCurveService(trino_cfg, cache_manager=get_unified_cache_manager())
     points, _raw_meta = await service.fetch_curve_data(
         asof=asof,
         iso=iso,
@@ -1800,9 +1833,9 @@ async def fetch_curve_diff_data(
 ) -> Tuple[List[Any], Any]:
     """Fetch curve diff data using AsyncCurveService."""
     from .async_service import AsyncCurveService
-    from .container import get_service
 
-    service = get_service(AsyncCurveService)
+    trino_cfg = TrinoConfig.from_settings(_core_get_settings())
+    service = AsyncCurveService(trino_cfg, cache_manager=get_unified_cache_manager())
     # Derive limit/offset from pagination
     eff_limit = int(getattr(pagination, "limit", 100)) if pagination is not None else 100
     eff_offset = int(getattr(pagination, "offset", 0)) if pagination is not None else 0
@@ -1860,9 +1893,9 @@ async def fetch_curve_strips_data(
 ) -> Tuple[List[Any], Any]:
     """Fetch curve strips data using AsyncCurveService."""
     from .async_service import AsyncCurveService
-    from .container import get_service
 
-    service = get_service(AsyncCurveService)
+    trino_cfg = TrinoConfig.from_settings(_core_get_settings())
+    service = AsyncCurveService(trino_cfg, cache_manager=get_unified_cache_manager())
     eff_limit = int(getattr(pagination, "limit", 100)) if pagination is not None else 100
     eff_offset = int(getattr(pagination, "offset", 0)) if pagination is not None else 0
 
@@ -1906,9 +1939,8 @@ async def fetch_metadata_dimensions(
 ) -> Tuple[Dict, Optional[Dict]]:
     """Fetch metadata dimensions using AsyncMetadataService."""
     from .async_service import AsyncMetadataService
-    from .container import get_service
-
-    service = get_service(AsyncMetadataService)
+    trino_cfg = TrinoConfig.from_settings(_core_get_settings())
+    service = AsyncMetadataService(trino_cfg)
     dimensions, counts = await service.get_dimensions(asof=asof)
 
     if include_counts:

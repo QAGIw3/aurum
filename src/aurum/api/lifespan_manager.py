@@ -682,7 +682,7 @@ class LifespanManager:
         }
 
 
-# Global lifespan manager instance
+# Process-wide singleton removed; use per-app instance stored on app.state
 _lifespan_manager: Optional[LifespanManager] = None
 
 
@@ -717,15 +717,14 @@ def get_lifespan_manager(settings: Optional[AurumSettings] = None) -> LifespanMa
     Returns:
         Lifespan manager instance
     """
+    # Note: For backward compatibility, maintain a module-level reference during process lifetime,
+    # but prefer attaching to app.state in setup_lifespan(). This preserves idempotent startup.
     global _lifespan_manager
-
     if _lifespan_manager is None:
         if settings is None:
-            from ..core.settings import get_settings
-            settings = get_settings()
-
+            from ..core.settings import get_settings as _core_get_settings
+            settings = _core_get_settings()
         _lifespan_manager = LifespanManager(settings)
-
     return _lifespan_manager
 
 

@@ -200,7 +200,7 @@ async def get_drought_indices(
 
     # Delegate to service
     from ..config import TrinoConfig
-    from ..state import get_settings
+    from ...core.settings import get_settings as _core_get_settings
 
     trino_cfg = TrinoConfig.from_settings(get_settings())
     drought_service = DroughtService()
@@ -255,7 +255,7 @@ async def get_drought_usdm(
         parsed_region_type, parsed_region_id = _parse_region_param(region)
 
     from ..config import TrinoConfig
-    from ..state import get_settings
+    from ...core.settings import get_settings as _core_get_settings
 
     trino_cfg = TrinoConfig.from_settings(get_settings())
     drought_service = DroughtService()
@@ -311,7 +311,7 @@ async def get_drought_layers(
     if region:
         parsed_region_type, parsed_region_id = _parse_region_param(region)
     from ..config import TrinoConfig
-    from ..state import get_settings
+    from ...core.settings import get_settings as _core_get_settings
 
     trino_cfg = TrinoConfig.from_settings(get_settings())
     drought_service = DroughtService()

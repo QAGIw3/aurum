@@ -102,8 +102,8 @@ class QueryOptimizer:
                 raise RuntimeError("trino package not available")
 
             # Get Trino config from settings
-            from .state import get_settings
-            settings = get_settings()
+            from aurum.core.settings import get_settings as _core_get_settings
+            settings = _core_get_settings()
             trino_config = settings.trino
 
             conn = trino.dbapi.connect(

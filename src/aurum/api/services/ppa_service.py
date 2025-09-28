@@ -237,7 +237,7 @@ class PpaService:
             f"LIMIT {int(limit)} OFFSET {int(offset)}"
         )
 
-        rows, elapsed = self._dao.execute(sql, trino_cfg=trino_cfg)
+        rows, elapsed = await self._dao.execute(sql, trino_cfg=trino_cfg)
         for record in rows:
             for numeric_key in ("value", "cashflow", "npv", "irr"):
                 if record.get(numeric_key) is not None:
@@ -276,7 +276,7 @@ class PpaService:
             f"{where} ORDER BY contract_month NULLS LAST, tenor_label"
         )
 
-        rows, elapsed = self._dao.execute(sql, trino_cfg=trino_cfg)
+        rows, elapsed = await self._dao.execute(sql, trino_cfg=trino_cfg)
         if not rows:
             return [], elapsed
 

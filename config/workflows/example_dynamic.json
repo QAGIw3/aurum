@@ -1,0 +1,82 @@
+{
+  "dag_id": "example_dynamic_pipeline",
+  "description": "Example dynamic DAG with templates, conditionals, and fallbacks",
+  "schedule": "0 6 * * *",
+  "start_date": "2024-01-01",
+  "catchup": false,
+  "max_active_runs": 1,
+  "tags": ["aurum", "dynamic", "example"],
+  "default_args": {
+    "owner": "aurum-data",
+    "retries": 2
+  },
+  "feature_flags": {
+    "enable_monitoring": true,
+    "enable_version_suffix": true,
+    "dag_version": "1"
+  },
+  "datasets": [
+    "dataset://aurum/examples/upstream_ready"
+  ],
+  "tasks": [
+    { "id": "start", "type": "empty", "params": {}, "depends_on": [] },
+
+    {
+      "id": "preflight",
+      "type": "python",
+      "params": {
+        "callable": "aurum.airflow_utils:build_preflight_callable",
+        "op_kwargs": { "required_variables": ["aurum_kafka_bootstrap"], "factory": true }
+      },
+      "depends_on": ["start"]
+    },
+
+    {
+      "id": "extract_data",
+      "type": "bash",
+      "params": { "command": "echo 'Extracting data'" },
+      "depends_on": ["preflight"],
+      "pool": "api_calls",
+      "retries": 3,
+      "retry_delay_minutes": 5,
+      "outlets": ["dataset://aurum/examples/extract_done"]
+    },
+
+    {
+      "id": "maybe_transform",
+      "type": "branch",
+      "params": { "condition": "{{ ds }}", "branch_map": {"true": "transform_data", "false": "skip_transform"} },
+      "depends_on": ["extract_data"]
+    },
+
+    { "id": "skip_transform", "type": "empty", "params": {}, "depends_on": ["maybe_transform"] },
+
+    {
+      "id": "transform_data",
+      "type": "bash",
+      "params": { "command": "echo 'Transforming data'" },
+      "depends_on": ["maybe_transform"],
+      "on_failure": { "fallback": { "command": "echo 'Running fallback transformation'", "trigger_rule": "one_failed" } }
+    },
+
+    {
+      "id": "load_data",
+      "type": "bash",
+      "params": { "command": "echo 'Loading data'" },
+      "depends_on": ["transform_data", "skip_transform"],
+      "pool": "db_writes",
+      "outlets": ["dataset://aurum/examples/load_done"]
+    },
+
+    {
+      "id": "notify_downstream",
+      "type": "trigger_dag",
+      "params": { "dag_id": "refresh_curve_marts", "conf": {"source": "example_dynamic"} },
+      "depends_on": ["load_data"]
+    },
+
+    { "id": "mapped_echo", "type": "bash", "params": { "command": "echo {{ params.item }}", "map": { "kwargs": [ {"bash_command": "echo 1"}, {"bash_command": "echo 2"}, {"bash_command": "echo 3"} ] } }, "depends_on": ["load_data"] },
+
+    { "id": "end", "type": "empty", "params": {}, "depends_on": ["mapped_echo", "notify_downstream"] }
+  ]
+}

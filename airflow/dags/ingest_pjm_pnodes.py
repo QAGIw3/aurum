@@ -11,6 +11,17 @@ from airflow.operators.empty import EmptyOperator
 from airflow.operators.python import PythonOperator
 
 from aurum.airflow_utils import build_failure_callback, build_preflight_callable, metrics
+from aurum.airflow_utils.datasets import URIS
+
+try:  # Dataset scheduling (Airflow >= 2.4)
+    from airflow.datasets import Dataset  # type: ignore
+
+    DATASET_SCHEDULE = [Dataset(URIS.TRIGGER_PJM_PNODES_DAILY)]  # upstream trigger
+    PRODUCED_DATASETS = [Dataset(URIS.INGEST_PJM_PNODES)]  # downstream signal
+except Exception:  # pragma: no cover - keep compatibility when datasets not available
+    Dataset = None  # type: ignore
+    DATASET_SCHEDULE = "0 7 * * *"
+    PRODUCED_DATASETS = None
 
 
 DEFAULT_ARGS: dict[str, Any] = {
@@ -70,7 +81,7 @@ with DAG(
     dag_id="ingest_pjm_pnodes",
     description="Ingest PJM PNODES metadata",
     default_args=DEFAULT_ARGS,
-    schedule_interval="0 7 * * *",
+    schedule=DATASET_SCHEDULE,
     start_date=datetime(2024, 1, 1),
     catchup=False,
     max_active_runs=1,
@@ -145,6 +156,16 @@ with DAG(
         task_id="pnodes_watermark",
         python_callable=lambda **ctx: _update_watermark("pjm_pnodes", ctx["logical_date"]),
     )
+
+    # Attach dataset outlets/inlets where supported
+    try:
+        if Dataset is not None:
+            # This task produces the dataset upon completion
+            pnodes_watermark.outlets = PRODUCED_DATASETS  # type: ignore[attr-defined]
+            # Optional: register that the first task consumes the schedule dataset
+            pnodes_task.inlets = [Dataset(URIS.TRIGGER_PJM_PNODES_DAILY)]  # type: ignore[attr-defined]
+    except Exception:
+        pass
 
     end = EmptyOperator(task_id="end")
 

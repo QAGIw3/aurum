@@ -16,13 +16,6 @@ from .consolidated_manager import (
 
 # Backward compatibility imports
 from .cache import AsyncCache, CacheBackend, CacheEntry, CacheManager
-from .unified_cache_manager import (
-    LegacyUnifiedCacheManager as UnifiedCacheManagerCompat,
-    CacheStrategy as LegacyCacheStrategy,
-    CacheAnalytics as LegacyCacheAnalytics,
-    get_unified_cache_manager as get_unified_cache_manager_compat,
-    set_unified_cache_manager as set_unified_cache_manager_compat
-)
 
 __all__ = [
     # Primary unified interface (recommended)
@@ -42,9 +35,4 @@ __all__ = [
     "CacheBackend",
     "CacheEntry",
     "CacheManager",
-    "UnifiedCacheManagerCompat",
-    "LegacyCacheStrategy",
-    "LegacyCacheAnalytics",
-    "get_unified_cache_manager_compat",
-    "set_unified_cache_manager_compat"
 ]

@@ -248,7 +248,8 @@ class AdminService(ServiceInterface):
 
     def invalidate_dimensions_cache(self, cache_cfg: CacheConfig) -> int:
         """Invalidate dimensions cache. Prefer CacheManager; fallback to Redis sets."""
-        manager = get_global_cache_manager()
+        from ..cache.consolidated_manager import get_unified_cache_manager
+        manager = get_unified_cache_manager()
         if manager is not None:
             try:
                 manager.invalidate_pattern("dimensions")
@@ -260,7 +261,8 @@ class AdminService(ServiceInterface):
 
     async def invalidate_metadata_cache_async(self, cache_cfg: CacheConfig, prefixes: Sequence[str]) -> Dict[str, int]:
         """Async version of metadata cache invalidation."""
-        manager = get_global_cache_manager()
+        from ..cache.consolidated_manager import get_unified_cache_manager
+        manager = get_unified_cache_manager()
         if manager is not None:
             try:
                 counts = {}
@@ -303,7 +305,8 @@ class AdminService(ServiceInterface):
 
     def invalidate_metadata_cache(self, cache_cfg: CacheConfig, prefixes: Sequence[str]) -> Dict[str, int]:
         """Invalidate metadata cache. Prefer CacheManager; fallback to Redis sets."""
-        manager = get_global_cache_manager()
+        from ..cache.consolidated_manager import get_unified_cache_manager
+        manager = get_unified_cache_manager()
         if manager is not None:
             try:
                 counts = {}

@@ -11,7 +11,7 @@ from pydantic import BaseModel
 from aurum.telemetry.context import get_request_id
 from ..routes import _get_principal, _require_admin
 from .trino_client import get_trino_client
-from ..state import get_settings
+from ...core.settings import get_settings as _core_get_settings
 from .config import TrinoCatalogType, TrinoAccessLevel
 
 

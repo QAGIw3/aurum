@@ -28,6 +28,7 @@ from aurum.lakefs_client import emit_lakefs_lineage
 from aurum.parsers.runner import build_seatunnel_task
 from aurum.staleness.watermark_tracker import WatermarkTracker
 from aurum.telemetry.context import log_structured
+from aurum.airflow_utils.datasets import noaa_trigger, noaa_ingest
 
 
 def update_watermark(
@@ -426,14 +427,26 @@ with DAG(
     start >> validate_config >> dataset_tasks >> end
 
 # Create individual DAGs for each NOAA dataset with their specific schedules
+try:  # Dataset scheduling support
+    from airflow.datasets import Dataset  # type: ignore
+except Exception:  # pragma: no cover
+    Dataset = None  # type: ignore
+
 for dataset_key, dataset_config in NOAA_DATASETS.items():
     dag_id = f"noaa_{dataset_key}_ingest"
+
+    # Compute schedule: Dataset-based when available; fallback to cron
+    _schedule = None
+    if Dataset is not None:
+        _schedule = [Dataset(noaa_trigger(dataset_key + "_window_ready"))]
+    else:
+        _schedule = dataset_config["schedule"]
 
     with DAG(
         dag_id=dag_id,
         description=f"NOAA {dataset_config['description']} ingestion",
         default_args=DEFAULT_ARGS,
-        schedule_interval=dataset_config["schedule"],
+        schedule=_schedule,
         catchup=True,
         max_active_runs=1,
         tags=["noaa", "weather", "ingestion", "api", dataset_key],
@@ -473,6 +486,14 @@ for dataset_key, dataset_config in NOAA_DATASETS.items():
             start_task >> validate_task >> ingest >> timescale >> lineage >> [watermark, staleness_check]
         else:
             start_task >> validate_task >> ingest >> [watermark, staleness_check]
+
+        # Attach dataset inlets/outlets where supported
+        try:
+            if Dataset is not None:
+                validate_task.inlets = [Dataset(noaa_trigger(dataset_key + "_window_ready"))]  # type: ignore[attr-defined]
+                watermark.outlets = [Dataset(noaa_ingest(dataset_key))]  # type: ignore[attr-defined]
+        except Exception:
+            pass
 
         # Set up failure callback
         dataset_dag.on_failure_callback = build_failure_callback(source=f"aurum.airflow.{dag_id}")

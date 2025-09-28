@@ -670,8 +670,9 @@ def get_unified_cache_manager(
 
     if _unified_cache_manager is None:
         if config is None:
-            from ..config import get_settings
-            settings = get_settings()
+            # Avoid api.state; pull directly from core settings which must be configured at startup
+            from ...core.settings import get_settings as _core_get_settings
+            settings = _core_get_settings()
             config = CacheConfig.from_settings(settings)
 
         _unified_cache_manager = UnifiedCacheManager(

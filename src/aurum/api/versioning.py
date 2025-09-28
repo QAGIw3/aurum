@@ -15,6 +15,7 @@ from pydantic import BaseModel
 
 from ..telemetry.context import get_request_id
 from ..telemetry import get_logger
+from ..observability.metrics import get_metrics_client
 
 
 class VersionStatus(Enum):
@@ -23,6 +24,14 @@ class VersionStatus(Enum):
     DEPRECATED = "deprecated"   # Still supported but deprecated
     SUNSET = "sunset"          # Will be removed soon
     RETIRED = "retired"        # No longer supported
+
+
+class ContentNegotiationStrategy(Enum):
+    """Strategies for API version content negotiation."""
+    HEADER_BASED = "header"        # Use Accept-Version header
+    PATH_BASED = "path"           # Use /v1/, /v2/ path prefix
+    QUERY_BASED = "query"         # Use ?version=v1 query parameter
+    AUTO_NEGOTIATION = "auto"      # Try header, then path, then default to latest
 
 
 class DeprecationInfo(BaseModel):
@@ -106,6 +115,7 @@ class VersionManager:
         self._usage_stats: Dict[str, Dict[str, int]] = {}
         self._logger = get_logger(__name__)
         self._feature_frozen_versions: Set[str] = set()
+        self._negotiation_strategy = ContentNegotiationStrategy.AUTO_NEGOTIATION
 
     async def register_version(
         self,
@@ -148,6 +158,107 @@ class VersionManager:
         async with self._lock:
             self._default_version = version
 
+    def set_negotiation_strategy(self, strategy: ContentNegotiationStrategy) -> None:
+        """Set the content negotiation strategy."""
+        self._negotiation_strategy = strategy
+
+    async def negotiate_version(
+        self,
+        request: Request,
+        path_version: Optional[str] = None
+    ) -> Tuple[APIVersion, str]:
+        """Negotiate API version based on request headers, path, and strategy.
+
+        Returns:
+            Tuple of (selected_version, negotiation_method)
+        """
+        # Try different negotiation methods based on strategy
+        if self._negotiation_strategy == ContentNegotiationStrategy.HEADER_BASED:
+            return await self._negotiate_by_header(request)
+        elif self._negotiation_strategy == ContentNegotiationStrategy.PATH_BASED:
+            return await self._negotiate_by_path(path_version)
+        elif self._negotiation_strategy == ContentNegotiationStrategy.QUERY_BASED:
+            return await self._negotiate_by_query(request)
+        else:  # AUTO_NEGOTIATION
+            return await self._auto_negotiate(request, path_version)
+
+    async def _negotiate_by_header(self, request: Request) -> Tuple[APIVersion, str]:
+        """Negotiate version using Accept-Version header."""
+        accept_version = request.headers.get("Accept-Version")
+        if accept_version:
+            version = await self.get_version(accept_version)
+            if version and version.is_supported():
+                return version, "header"
+
+        # Fall back to default
+        default_version = await self.get_version(self._default_version)
+        if not default_version:
+            raise HTTPException(status_code=406, detail="No acceptable API version found")
+
+        return default_version, "default"
+
+    async def _negotiate_by_path(self, path_version: Optional[str]) -> Tuple[APIVersion, str]:
+        """Negotiate version using path prefix."""
+        if path_version:
+            version = await self.get_version(path_version)
+            if version and version.is_supported():
+                return version, "path"
+
+        # Fall back to default
+        default_version = await self.get_version(self._default_version)
+        if not default_version:
+            raise HTTPException(status_code=406, detail="No acceptable API version found")
+
+        return default_version, "default"
+
+    async def _negotiate_by_query(self, request: Request) -> Tuple[APIVersion, str]:
+        """Negotiate version using query parameter."""
+        version_param = request.query_params.get("version")
+        if version_param:
+            version = await self.get_version(version_param)
+            if version and version.is_supported():
+                return version, "query"
+
+        # Fall back to default
+        default_version = await self.get_version(self._default_version)
+        if not default_version:
+            raise HTTPException(status_code=406, detail="No acceptable API version found")
+
+        return default_version, "default"
+
+    async def _auto_negotiate(
+        self,
+        request: Request,
+        path_version: Optional[str]
+    ) -> Tuple[APIVersion, str]:
+        """Auto-negotiate version using multiple strategies."""
+        # 1. Try Accept-Version header first
+        accept_version = request.headers.get("Accept-Version")
+        if accept_version:
+            version = await self.get_version(accept_version)
+            if version and version.is_supported():
+                return version, "header"
+
+        # 2. Try path-based version
+        if path_version:
+            version = await self.get_version(path_version)
+            if version and version.is_supported():
+                return version, "path"
+
+        # 3. Try query parameter
+        version_param = request.query_params.get("version")
+        if version_param:
+            version = await self.get_version(version_param)
+            if version and version.is_supported():
+                return version, "query"
+
+        # 4. Fall back to default version
+        default_version = await self.get_version(self._default_version)
+        if not default_version:
+            raise HTTPException(status_code=406, detail="No acceptable API version found")
+
+        return default_version, "default"
+
     async def get_default_version(self) -> str:
         """Get the default API version."""
         return self._default_version
@@ -159,6 +270,148 @@ class VersionManager:
 
         async with self._lock:
             self._version_aliases[alias] = version
+
+    async def record_version_usage(self, version: str, endpoint: str, method: str) -> None:
+        """Record API version usage for analytics."""
+        async with self._lock:
+            if version not in self._usage_stats:
+                self._usage_stats[version] = {}
+
+            endpoint_key = f"{method}:{endpoint}"
+            self._usage_stats[version][endpoint_key] = self._usage_stats[version].get(endpoint_key, 0) + 1
+
+        # Record metrics
+        metrics_client = get_metrics_client()
+        if metrics_client:
+            try:
+                metrics_client.counter(
+                    "aurum_api_version_usage_total",
+                    1,
+                    tags={"version": version, "endpoint": endpoint, "method": method}
+                )
+            except Exception:
+                pass  # Metrics recording shouldn't break functionality
+
+    async def get_version_analytics(self) -> Dict[str, Any]:
+        """Get analytics about API version usage."""
+        async with self._lock:
+            total_requests = sum(
+                sum(endpoints.values()) for endpoints in self._usage_stats.values()
+            )
+
+            version_breakdown = {}
+            for version, endpoints in self._usage_stats.items():
+                version_total = sum(endpoints.values())
+                version_breakdown[version] = {
+                    "total_requests": version_total,
+                    "percentage": (version_total / total_requests * 100) if total_requests > 0 else 0,
+                    "endpoints": len(endpoints),
+                    "top_endpoints": sorted(
+                        endpoints.items(),
+                        key=lambda x: x[1],
+                        reverse=True
+                    )[:5]  # Top 5 endpoints
+                }
+
+            return {
+                "total_requests": total_requests,
+                "version_breakdown": version_breakdown,
+                "deprecated_versions_in_use": [
+                    v for v in self._usage_stats.keys()
+                    if self._versions.get(v, APIVersion("0.0.0")).is_deprecated()
+                ],
+                "migration_recommendations": self._generate_migration_recommendations(version_breakdown)
+            }
+
+    def _generate_migration_recommendations(self, version_breakdown: Dict[str, Any]) -> List[str]:
+        """Generate migration recommendations based on usage patterns."""
+        recommendations = []
+
+        for version, data in version_breakdown.items():
+            if data["percentage"] > 10:  # Significant usage
+                version_obj = self._versions.get(version)
+                if version_obj and version_obj.is_deprecated():
+                    recommendations.append(
+                        f"Consider migrating {version} users ({data['percentage']:.1f}% of traffic) "
+                        f"to {self._default_version} before sunset"
+                    )
+
+        return recommendations
+
+
+class VersionNegotiationMiddleware:
+    """Middleware for automatic API version negotiation."""
+
+    def __init__(self, app, version_manager: VersionManager):
+        self.app = app
+        self.version_manager = version_manager
+
+    async def __call__(self, scope, receive, send):
+        if scope["type"] != "http":
+            await self.app(scope, receive, send)
+            return
+
+        # Extract version information from request
+        path = scope.get("path", "")
+        query_string = scope.get("query_string", b"").decode()
+        headers = dict(scope.get("headers", []))
+
+        # Parse path for version prefix (e.g., /v1/endpoint)
+        path_version = self._extract_path_version(path)
+
+        # Parse query parameters
+        query_params = {}
+        if query_string:
+            for param in query_string.split("&"):
+                if "=" in param:
+                    key, value = param.split("=", 1)
+                    query_params[key] = value
+
+        # Create request-like object for version negotiation
+        class MockRequest:
+            def __init__(self, headers, query_params):
+                self.headers = headers
+                self.query_params = query_params
+
+        mock_request = MockRequest(headers, query_params)
+
+        try:
+            # Negotiate version
+            selected_version, negotiation_method = await self.version_manager.negotiate_version(
+                mock_request, path_version
+            )
+
+            # Add version information to scope
+            scope["state"] = scope.get("state", {})
+            scope["state"]["api_version"] = selected_version
+            scope["state"]["version_negotiation_method"] = negotiation_method
+
+            # Record usage
+            await self.version_manager.record_version_usage(
+                selected_version.version, path, scope.get("method", "GET")
+            )
+
+        except HTTPException:
+            # Version negotiation failed, let the app handle it
+            pass
+
+        await self.app(scope, receive, send)
+
+    def _extract_path_version(self, path: str) -> Optional[str]:
+        """Extract version from path prefix (e.g., /v1/endpoint -> v1)."""
+        if path.startswith("/v"):
+            # Look for version pattern like /v1/, /v2/, etc.
+            parts = path.split("/")
+            if len(parts) > 1 and parts[1].startswith("v") and len(parts[1]) <= 8:
+                version_part = parts[1]
+                if version_part[1:].replace(".", "").isdigit():
+                    return version_part
+        return None
+
+
+def create_version_negotiation_middleware(app, version_manager: VersionManager):
+    """Create version negotiation middleware."""
+    return VersionNegotiationMiddleware(app, version_manager)
 
     async def deprecate_version(
         self,

@@ -1,9 +1,4 @@
 """Tests for test fixtures and golden file validation."""
-
-from __future__ import annotations
-
-import json
-import pytest
 import tempfile
 from pathlib import Path
 from unittest.mock import MagicMock, patch

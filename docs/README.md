@@ -69,6 +69,13 @@ New to Aurum? Start here:
 - **[API Offload Strategies](api/offload.md)** - Async processing and performance optimization
 
 ### Operational Runbooks
+- **[SRE Index](sre/README.md)** - Paging policy, on-call, chaos drills
+- **[Paging Policy](sre/paging-policy.md)** - When/what/how we page
+- **[API On-call](runbooks/api-oncall-runbook.md)** - API incident response
+- **[Airflow On-call](runbooks/airflow-oncall-runbook.md)** - Scheduler/workers incidents
+- **[Kafka On-call](runbooks/kafka-oncall-runbook.md)** - Broker/consumer/lag incidents
+- **[Trino On-call](runbooks/trino-oncall-runbook.md)** - Query pool/worker incidents
+- **[Chaos Drills](runbooks/chaos-drills-runbook.md)** - Monthly resilience exercises
 - **[Platform Operations](runbooks/oncall-platform-runbook.md)** - On-call procedures
 - **[External Data Operations](runbooks/external-data.md)** - Data pipeline operations
 - **[Multi-region Failover](runbooks/multi-region-failover-runbook.md)** - Disaster recovery

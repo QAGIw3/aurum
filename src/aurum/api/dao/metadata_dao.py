@@ -7,7 +7,7 @@ from typing import Any, Dict, List, Optional, Sequence
 
 from aurum.core import AurumSettings
 from ..config import CacheConfig, TrinoConfig
-from ..state import get_settings
+from aurum.core.settings import get_settings as _core_get_settings
 
 LOGGER = logging.getLogger(__name__)
 
@@ -16,7 +16,7 @@ class MetadataDao:
     """Data Access Object for metadata and dimensions operations."""
     
     def __init__(self, settings: Optional[AurumSettings] = None):
-        self._settings = settings or get_settings()
+        self._settings = settings or _core_get_settings()
         self._trino_config = TrinoConfig.from_settings(self._settings)
         self._cache_config = CacheConfig.from_settings(self._settings)
     
@@ -317,7 +317,6 @@ class MetadataDao:
     ) -> Dict[str, int]:
         """Invalidate metadata caches."""
         from ..cache.consolidated_manager import get_unified_cache_manager
-        from ..container import get_service
         
         cache_manager = get_unified_cache_manager()
         
@@ -329,7 +328,7 @@ class MetadataDao:
         
         for prefix in prefixes:
             pattern = f"{prefix}*"
-            deleted_count = await cache_manager.delete_pattern(pattern)
+            deleted_count = await cache_manager.invalidate_pattern(pattern)
             results[prefix.rstrip(":")] = deleted_count
             total_deleted += deleted_count
         

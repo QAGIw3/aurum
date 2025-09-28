@@ -23,15 +23,7 @@ from .models import (
     CalendarBlocksResponse,
     CalendarHoursResponse,
 )
-from .service import (
-    fetch_metadata_dimensions,
-    fetch_iso_locations,
-    fetch_units_canonical,
-    fetch_units_mapping,
-    fetch_calendars,
-    fetch_calendar_blocks,
-    fetch_calendar_hours,
-)
+from .services.metadata_service import MetadataService
 
 router = APIRouter()
 
@@ -45,10 +37,11 @@ async def get_dimensions(
     start_time = time.perf_counter()
 
     try:
-        dimensions, counts = await fetch_metadata_dimensions(
+        metadata_service = MetadataService()
+        dimensions = await metadata_service.fetch_metadata_dimensions(
             asof=asof,
-            include_counts=include_counts,
         )
+        counts = len(dimensions) if include_counts else None
 
         query_time_ms = (time.perf_counter() - start_time) * 1000
 
@@ -78,7 +71,8 @@ async def get_iso_locations(
     start_time = time.perf_counter()
 
     try:
-        locations = await fetch_iso_locations(iso=iso, prefix=prefix)
+        metadata_service = MetadataService()
+        locations = await metadata_service.fetch_iso_locations(iso=iso, prefix=prefix)
 
         query_time_ms = (time.perf_counter() - start_time) * 1000
 
@@ -107,7 +101,8 @@ async def get_iso_location(
     start_time = time.perf_counter()
 
     try:
-        location = await fetch_iso_locations(iso=iso, location_ids=[location_id])
+        metadata_service = MetadataService()
+        location = await metadata_service.fetch_iso_locations(iso=iso, location_ids=[location_id])
 
         if not location:
             raise HTTPException(
@@ -141,7 +136,8 @@ async def get_units_canonical() -> UnitsCanonicalResponse:
     start_time = time.perf_counter()
 
     try:
-        units = await fetch_units_canonical()
+        metadata_service = MetadataService()
+        units = await metadata_service.fetch_units_canonical()
 
         query_time_ms = (time.perf_counter() - start_time) * 1000
 
@@ -169,7 +165,8 @@ async def get_units_mapping(
     start_time = time.perf_counter()
 
     try:
-        mappings = await fetch_units_mapping(prefix=prefix)
+        metadata_service = MetadataService()
+        mappings = await metadata_service.fetch_units_mapping(prefix=prefix)
 
         query_time_ms = (time.perf_counter() - start_time) * 1000
 
@@ -195,7 +192,8 @@ async def get_calendars() -> CalendarsResponse:
     start_time = time.perf_counter()
 
     try:
-        calendars = await fetch_calendars()
+        metadata_service = MetadataService()
+        calendars = await metadata_service.fetch_calendars()
 
         query_time_ms = (time.perf_counter() - start_time) * 1000
 
@@ -221,7 +219,8 @@ async def get_calendar_blocks(name: str) -> CalendarBlocksResponse:
     start_time = time.perf_counter()
 
     try:
-        blocks = await fetch_calendar_blocks(name)
+        metadata_service = MetadataService()
+        blocks = await metadata_service.fetch_calendar_blocks(name=name)
 
         query_time_ms = (time.perf_counter() - start_time) * 1000
 
@@ -251,7 +250,8 @@ async def get_calendar_hours(
     start_time = time.perf_counter()
 
     try:
-        hours = await fetch_calendar_hours(name, block, date)
+        metadata_service = MetadataService()
+        hours = await metadata_service.fetch_calendar_hours(name, block, date)
 
         query_time_ms = (time.perf_counter() - start_time) * 1000
 
@@ -282,7 +282,8 @@ async def expand_calendar_block(
     start_time = time.perf_counter()
 
     try:
-        hours = await fetch_calendar_hours(name, block, start, end)
+        metadata_service = MetadataService()
+        hours = await metadata_service.fetch_calendar_hours(name, block, start, end)
 
         query_time_ms = (time.perf_counter() - start_time) * 1000
 

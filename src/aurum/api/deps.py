@@ -100,6 +100,74 @@ def require_tenant_id(request: Request) -> str:
     raise HTTPException(status_code=400, detail="Missing tenant context")
 
 
+def resolve_tenant(request: Request, explicit: Optional[str]) -> str:
+    """Resolve tenant from request state, principal, headers, or explicit parameter."""
+    if tenant := getattr(request.state, "tenant", None):
+        return tenant
+    principal = getattr(request.state, "principal", {}) or {}
+    if tenant := principal.get("tenant"):
+        return tenant
+    header_tenant = request.headers.get("X-Aurum-Tenant")
+    if header_tenant:
+        return header_tenant
+    if explicit:
+        return explicit
+    raise HTTPException(status_code=400, detail="Tenant identifier required")
+
+
+def resolve_tenant_optional(request: Request, explicit: Optional[str]) -> Optional[str]:
+    """Resolve tenant from request state, principal, headers, or explicit parameter (optional)."""
+    if tenant := getattr(request.state, "tenant", None):
+        return tenant
+    principal = getattr(request.state, "principal", {}) or {}
+    if tenant := principal.get("tenant"):
+        return tenant
+    header_tenant = request.headers.get("X-Aurum-Tenant")
+    if header_tenant:
+        return header_tenant
+    return explicit
+
+
+def is_admin(principal: dict[str, Any] | None) -> bool:
+    """Check if the principal has admin privileges."""
+    from .container import get_app_context
+
+    if not principal:
+        return False
+
+    app_context = get_app_context()
+    admin_groups = app_context.get_admin_groups()
+    if not admin_groups:
+        return False
+
+    claims = principal.get("claims") or {}
+    candidate_groups: set[str] = set()
+
+    # Check groups claim
+    groups = claims.get("groups") or []
+    if isinstance(groups, list):
+        candidate_groups.update(str(g).strip().lower() for g in groups if str(g).strip())
+
+    # Check roles claim
+    roles = claims.get("roles") or []
+    if isinstance(roles, list):
+        candidate_groups.update(str(r).strip().lower() for r in roles if str(r).strip())
+
+    # Check direct groups field
+    direct_groups = principal.get("groups") or []
+    if isinstance(direct_groups, list):
+        candidate_groups.update(str(g).strip().lower() for g in direct_groups if str(g).strip())
+
+    return bool(candidate_groups & admin_groups)
+
+
+def require_admin(request: Request) -> None:
+    """Require admin privileges, raising HTTPException if not admin."""
+    principal = get_principal(request)
+    if not is_admin(principal):
+        raise HTTPException(status_code=403, detail="Admin privileges required")
+
+
 __all__ = [
     "get_settings",
     "get_cache_manager",
@@ -107,4 +175,8 @@ __all__ = [
     "get_principal",
     "get_tenant_id",
     "require_tenant_id",
+    "resolve_tenant",
+    "resolve_tenant_optional",
+    "is_admin",
+    "require_admin",
 ]

@@ -41,7 +41,11 @@ class RouterSpec:
 
 
 def _try_import_router(module_path: str, *, attr: str = "router") -> APIRouter | None:
-    """Import a router from the given module path, logging failures."""
+    """Import a router from the given module path, logging failures.
+
+    Falls back to common attribute names when a module exposes a non-standard
+    router symbol (e.g. ``offload_router`` or diagnostics routers).
+    """
 
     if os.getenv("AURUM_API_LIGHT_INIT", "0") == "1":
         router = _LIGHTWEIGHT_ROUTER_CACHE.get(module_path)
@@ -60,7 +64,15 @@ def _try_import_router(module_path: str, *, attr: str = "router") -> APIRouter |
     if isinstance(router, APIRouter):
         return router
 
-    logger.warning("Module '%s' does not expose '%s' of type APIRouter", module_path, attr)
+    # Fallback attribute names commonly used across the codebase
+    for candidate in ("router", "offload_router", "diagnostics_router", "local_diagnostics_router"):
+        if candidate == attr:
+            continue
+        candidate_obj = getattr(module, candidate, None)
+        if isinstance(candidate_obj, APIRouter):
+            return candidate_obj
+
+    logger.warning("Module '%s' does not expose an APIRouter (looked for '%s' and common fallbacks)", module_path, attr)
     return None
 
 
@@ -162,13 +174,33 @@ def get_v1_router_specs(_settings: AurumSettings) -> list[RouterSpec]:
                 seen.add(module_path)
 
     supplemental_modules: tuple[tuple[str, Mapping[str, Any]], ...] = (
+        # External/public handlers that remained outside v1 package
         ("aurum.api.handlers.external", {}),
+        # Database admin surfaces
         ("aurum.api.database.performance", {"prefix": "/v1/admin/db", "tags": ["Database"]}),
         ("aurum.api.database.query_analysis", {"prefix": "/v1/admin/db", "tags": ["Database"]}),
         ("aurum.api.database.optimization", {"prefix": "/v1/admin/db", "tags": ["Database"]}),
         ("aurum.api.database.connections", {"prefix": "/v1/admin/db", "tags": ["Database"]}),
         ("aurum.api.database.health", {"prefix": "/v1/admin/db", "tags": ["Database"]}),
         ("aurum.api.database.trino_admin", {"prefix": "/v1/admin/trino", "tags": ["Trino"]}),
+        # Streaming/admin management outside v1 package
+        ("aurum.api.scenarios.streaming_management", {}),
+        # Runtime/admin configuration and version management
+        ("aurum.api.runtime_config", {}),
+        ("aurum.api.version_management", {}),
+        # Rate limiting management (legacy admin endpoints)
+        ("aurum.api.rate_limiting.rate_limit_management", {}),
+        ("aurum.api.rate_limiting.admin_router", {}),
+        # Concurrency diagnostics (both local and Redis-backed)
+        ("aurum.api.rate_limiting.concurrency_middleware", {}),
+        ("aurum.api.rate_limiting.redis_concurrency", {}),
+        # Offload status endpoints (non-standard symbol name 'offload_router')
+        ("aurum.api.offload", {"tags": ["Offload"]}),
+        # Market feeds (websockets) — not in OpenAPI schema
+        (
+            "aurum.api.websocket.market_feeds",
+            {"tags": ["Market Data"], "include_in_schema": False},
+        ),
     )
 
     for module_path, include_kwargs in supplemental_modules:
@@ -218,6 +250,7 @@ def get_v2_router_specs(_settings: AurumSettings) -> list[RouterSpec]:
         "aurum.api.v2.developer_workspace",
         "aurum.api.v2.performance_monitoring",
         "aurum.api.v2.dbt_management",
+        "aurum.api.v2.market_streaming",
     )
     specs = _build_specs(module_paths)
     for spec in specs:

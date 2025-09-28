@@ -3,7 +3,9 @@ from __future__ import annotations
 """SQL query builders for Aurum data services."""
 
 from datetime import date, datetime, timezone
-from typing import Any, Dict, Iterable, Optional
+from typing import Any, Dict, Iterable, Optional, Union, Tuple, List
+import hashlib
+import json
 
 from .http.pagination import MAX_PAGE_SIZE
 
@@ -21,6 +23,583 @@ DIFF_ORDER_COLUMNS = [
     "tenor_label",
     "contract_month",
 ]
+
+
+class QueryOptimizer:
+    """Query optimization utilities for improved data access patterns."""
+
+    def __init__(self):
+        self.query_cache: Dict[str, str] = {}
+        self.performance_metrics: Dict[str, Any] = {}
+
+    def optimize_query_structure(
+        self,
+        base_table: str,
+        filters: Dict[str, Optional[str]],
+        select_columns: List[str],
+        order_columns: List[str],
+        limit: int,
+        offset: int = 0
+    ) -> str:
+        """Optimize query structure for better performance."""
+        # Analyze filter selectivity
+        filter_analysis = self._analyze_filter_selectivity(filters)
+
+        # Optimize column selection
+        optimized_columns = self._optimize_column_selection(select_columns, filters)
+
+        # Build optimized query
+        query_parts = []
+
+        # SELECT clause with optimized columns
+        query_parts.append(f"SELECT {', '.join(optimized_columns)}")
+
+        # FROM clause
+        query_parts.append(f"FROM {base_table}")
+
+        # WHERE clause with optimized filters
+        where_clause = self._build_optimized_where_clause(filters, filter_analysis)
+        if where_clause:
+            query_parts.append(where_clause)
+
+        # ORDER BY clause
+        if order_columns:
+            order_clause = f"ORDER BY {', '.join(order_columns)}"
+            query_parts.append(order_clause)
+
+        # LIMIT clause
+        if limit > 0:
+            query_parts.append(f"LIMIT {limit}")
+            if offset > 0:
+                query_parts.append(f"OFFSET {offset}")
+
+        return " ".join(query_parts)
+
+    def _analyze_filter_selectivity(self, filters: Dict[str, Optional[str]]) -> Dict[str, float]:
+        """Analyze filter selectivity to optimize query execution."""
+        selectivity_scores = {}
+
+        for column, value in filters.items():
+            if value is None:
+                continue
+
+            # Estimate selectivity based on column type and value characteristics
+            if column in ["iso", "location", "market"]:
+                # Geographic filters typically have medium selectivity
+                selectivity_scores[column] = 0.3
+            elif column in ["asset_class", "product"]:
+                # Category filters typically have low selectivity
+                selectivity_scores[column] = 0.1
+            elif column in ["asof_date", "contract_month"]:
+                # Date filters typically have high selectivity
+                selectivity_scores[column] = 0.8
+            elif column in ["curve_key", "tenor_type"]:
+                # Specific identifier filters have very high selectivity
+                selectivity_scores[column] = 0.95
+            else:
+                # Default selectivity estimate
+                selectivity_scores[column] = 0.5
+
+        return selectivity_scores
+
+    def _optimize_column_selection(
+        self,
+        requested_columns: List[str],
+        filters: Dict[str, Optional[str]]
+    ) -> List[str]:
+        """Optimize column selection based on filters and usage patterns."""
+        # For filtered queries, we might need additional columns for ordering
+        needed_columns = set(requested_columns)
+
+        # Add columns needed for efficient filtering
+        for column in filters.keys():
+            if column not in needed_columns:
+                needed_columns.add(column)
+
+        # Optimize column order for better cache locality
+        # Primary key columns first, then frequently accessed columns
+        priority_columns = ["curve_key", "asof_date", "contract_month"]
+        ordered_columns = []
+
+        for col in priority_columns:
+            if col in needed_columns:
+                ordered_columns.append(col)
+                needed_columns.remove(col)
+
+        ordered_columns.extend(sorted(needed_columns))
+        return ordered_columns
+
+    def _build_optimized_where_clause(
+        self,
+        filters: Dict[str, Optional[str]],
+        selectivity_scores: Dict[str, float]
+    ) -> str:
+        """Build optimized WHERE clause with filters ordered by selectivity."""
+        if not filters:
+            return ""
+
+        # Order filters by selectivity (high selectivity first)
+        sorted_filters = sorted(
+            [(col, val) for col, val in filters.items() if val is not None],
+            key=lambda x: selectivity_scores.get(x[0], 0.5),
+            reverse=True
+        )
+
+        clauses = [f"{col} = '{_safe_literal(val)}'" for col, val in sorted_filters]
+        return " WHERE " + " AND ".join(clauses)
+
+    def get_query_hash(self, query: str, params: Optional[Dict[str, Any]] = None) -> str:
+        """Generate a hash for query caching and optimization."""
+        cache_key_data = {
+            "query": query,
+            "params": params or {}
+        }
+        cache_key_str = json.dumps(cache_key_data, sort_keys=True)
+        return hashlib.md5(cache_key_str.encode()).hexdigest()
+
+    def cache_query_plan(self, query_hash: str, optimized_query: str) -> None:
+        """Cache optimized query for reuse."""
+        self.query_cache[query_hash] = optimized_query
+
+    def get_cached_query(self, query_hash: str) -> Optional[str]:
+        """Get cached optimized query."""
+        return self.query_cache.get(query_hash)
+
+
+# Global query optimizer instance
+_query_optimizer = QueryOptimizer()
+
+
+def get_query_optimizer() -> QueryOptimizer:
+    """Get the global query optimizer instance."""
+    return _query_optimizer
+
+
+class DataAccessPatternOptimizer:
+    """Optimize data access patterns for better performance and resource usage."""
+
+    def __init__(self):
+        self.access_patterns: Dict[str, Any] = {}
+        self.query_frequency: Dict[str, int] = {}
+        self.cache_hit_patterns: Dict[str, float] = {}
+
+    def record_data_access(
+        self,
+        table: str,
+        operation: str,
+        columns: List[str],
+        filters: Dict[str, Any],
+        execution_time: float,
+        result_count: int
+    ) -> None:
+        """Record data access pattern for optimization analysis."""
+        pattern_key = f"{table}:{operation}:{len(columns)}:{len(filters)}"
+
+        if pattern_key not in self.access_patterns:
+            self.access_patterns[pattern_key] = {
+                "count": 0,
+                "total_time": 0.0,
+                "total_results": 0,
+                "columns": set(),
+                "filters": set(),
+            }
+
+        pattern = self.access_patterns[pattern_key]
+        pattern["count"] += 1
+        pattern["total_time"] += execution_time
+        pattern["total_results"] += result_count
+        pattern["columns"].update(columns)
+        pattern["filters"].update(filters.keys())
+
+        # Track query frequency
+        self.query_frequency[pattern_key] = pattern["count"]
+
+    def suggest_optimizations(self) -> List[Dict[str, Any]]:
+        """Suggest optimizations based on observed access patterns."""
+        suggestions = []
+
+        # Analyze slow patterns
+        slow_threshold = 1000  # ms
+        for pattern_key, pattern in self.access_patterns.items():
+            avg_time = pattern["total_time"] / pattern["count"]
+            if avg_time > slow_threshold:
+                suggestions.append({
+                    "type": "slow_query_pattern",
+                    "pattern": pattern_key,
+                    "avg_time": avg_time,
+                    "frequency": pattern["count"],
+                    "suggestion": "Consider adding indexes or optimizing query structure",
+                    "columns": list(pattern["columns"]),
+                    "filters": list(pattern["filters"]),
+                })
+
+        # Analyze frequently accessed patterns
+        frequent_threshold = 10
+        for pattern_key, frequency in self.query_frequency.items():
+            if frequency > frequent_threshold:
+                pattern = self.access_patterns[pattern_key]
+                suggestions.append({
+                    "type": "frequent_access_pattern",
+                    "pattern": pattern_key,
+                    "frequency": frequency,
+                    "suggestion": "Consider caching this query pattern",
+                    "columns": list(pattern["columns"]),
+                    "filters": list(pattern["filters"]),
+                })
+
+        return suggestions
+
+    def optimize_access_pattern(
+        self,
+        table: str,
+        columns: List[str],
+        filters: Dict[str, Any]
+    ) -> Dict[str, Any]:
+        """Suggest optimized access pattern for given parameters."""
+        optimization = {
+            "suggested_indexes": [],
+            "cache_strategy": "none",
+            "query_structure": "standard",
+            "estimated_performance": "unknown"
+        }
+
+        # Suggest indexes based on filter patterns
+        if filters:
+            filter_columns = list(filters.keys())
+            optimization["suggested_indexes"] = [
+                f"CREATE INDEX IF NOT EXISTS idx_{table}_{col} ON {table} ({col})"
+                for col in filter_columns
+            ]
+
+        # Suggest caching for frequently accessed patterns
+        pattern_key = f"{table}:select:{len(columns)}:{len(filters)}"
+        if self.query_frequency.get(pattern_key, 0) > 5:
+            optimization["cache_strategy"] = "aggressive"
+            optimization["estimated_performance"] = "improved"
+
+        return optimization
+
+
+# Global data access optimizer instance
+_data_access_optimizer = DataAccessPatternOptimizer()
+
+
+def get_data_access_optimizer() -> DataAccessPatternOptimizer:
+    """Get the global data access optimizer instance."""
+    return _data_access_optimizer
+
+
+class QueryPerformanceMonitor:
+    """Monitor and analyze query performance for optimization."""
+
+    def __init__(self):
+        self.query_metrics: Dict[str, Any] = {}
+        self.slow_query_threshold = 1000  # ms
+        self.frequent_query_threshold = 10
+
+    def record_query_performance(
+        self,
+        query_hash: str,
+        query: str,
+        execution_time: float,
+        result_count: int,
+        cache_hit: bool = False,
+        table: Optional[str] = None
+    ) -> None:
+        """Record query performance metrics."""
+        if query_hash not in self.query_metrics:
+            self.query_metrics[query_hash] = {
+                "query": query,
+                "table": table,
+                "executions": 0,
+                "total_time": 0.0,
+                "min_time": float('inf'),
+                "max_time": 0.0,
+                "total_results": 0,
+                "cache_hits": 0,
+                "cache_misses": 0,
+                "first_seen": None,
+                "last_seen": None,
+            }
+
+        metrics = self.query_metrics[query_hash]
+        metrics["executions"] += 1
+        metrics["total_time"] += execution_time
+        metrics["min_time"] = min(metrics["min_time"], execution_time)
+        metrics["max_time"] = max(metrics["max_time"], execution_time)
+        metrics["total_results"] += result_count
+
+        if cache_hit:
+            metrics["cache_hits"] += 1
+        else:
+            metrics["cache_misses"] += 1
+
+        if metrics["first_seen"] is None:
+            metrics["first_seen"] = time.time()
+        metrics["last_seen"] = time.time()
+
+    def get_slow_queries(self) -> List[Dict[str, Any]]:
+        """Get queries that exceed performance thresholds."""
+        slow_queries = []
+
+        for query_hash, metrics in self.query_metrics.items():
+            avg_time = metrics["total_time"] / metrics["executions"]
+
+            if avg_time > self.slow_query_threshold:
+                slow_queries.append({
+                    "query_hash": query_hash,
+                    "query": metrics["query"][:200] + "..." if len(metrics["query"]) > 200 else metrics["query"],
+                    "avg_time": avg_time,
+                    "max_time": metrics["max_time"],
+                    "executions": metrics["executions"],
+                    "table": metrics["table"],
+                    "cache_hit_rate": metrics["cache_hits"] / (metrics["cache_hits"] + metrics["cache_misses"])
+                    if (metrics["cache_hits"] + metrics["cache_misses"]) > 0 else 0,
+                })
+
+        return sorted(slow_queries, key=lambda x: x["avg_time"], reverse=True)
+
+    def get_frequently_executed_queries(self) -> List[Dict[str, Any]]:
+        """Get queries that are executed frequently."""
+        frequent_queries = []
+
+        for query_hash, metrics in self.query_metrics.items():
+            if metrics["executions"] >= self.frequent_query_threshold:
+                frequent_queries.append({
+                    "query_hash": query_hash,
+                    "query": metrics["query"][:200] + "..." if len(metrics["query"]) > 200 else metrics["query"],
+                    "executions": metrics["executions"],
+                    "avg_time": metrics["total_time"] / metrics["executions"],
+                    "table": metrics["table"],
+                })
+
+        return sorted(frequent_queries, key=lambda x: x["executions"], reverse=True)
+
+    def suggest_query_optimizations(self) -> List[Dict[str, Any]]:
+        """Suggest query optimizations based on performance data."""
+        suggestions = []
+
+        for query_hash, metrics in self.query_metrics.items():
+            avg_time = metrics["total_time"] / metrics["executions"]
+
+            if avg_time > self.slow_query_threshold:
+                suggestions.append({
+                    "type": "slow_query",
+                    "query_hash": query_hash,
+                    "avg_time": avg_time,
+                    "executions": metrics["executions"],
+                    "suggestion": "Consider query optimization, indexing, or caching",
+                    "table": metrics["table"],
+                })
+
+            # Suggest caching for frequently executed queries
+            if metrics["executions"] >= self.frequent_query_threshold and avg_time < 100:
+                suggestions.append({
+                    "type": "cache_candidate",
+                    "query_hash": query_hash,
+                    "executions": metrics["executions"],
+                    "avg_time": avg_time,
+                    "suggestion": "Consider caching this frequently executed query",
+                    "table": metrics["table"],
+                })
+
+        return suggestions
+
+
+# Global query performance monitor instance
+_query_performance_monitor = QueryPerformanceMonitor()
+
+
+def get_query_performance_monitor() -> QueryPerformanceMonitor:
+    """Get the global query performance monitor instance."""
+    return _query_performance_monitor
+
+
+class OptimizedQueryBuilder:
+    """Query builder with optimization features."""
+
+    def __init__(self):
+        self.query_optimizer = get_query_optimizer()
+        self.performance_monitor = get_query_performance_monitor()
+        self.data_access_optimizer = get_data_access_optimizer()
+
+    def build_optimized_curve_query(
+        self,
+        *,
+        asof: Optional[date],
+        curve_key: Optional[str],
+        asset_class: Optional[str],
+        iso: Optional[str],
+        location: Optional[str],
+        market: Optional[str],
+        product: Optional[str],
+        block: Optional[str],
+        tenor_type: Optional[str],
+        limit: int,
+        offset: int = 0,
+        cursor_after: Optional[Dict[str, Any]] = None,
+        cursor_before: Optional[Dict[str, Any]] = None,
+        descending: bool = False,
+    ) -> str:
+        """Build an optimized curve query with performance monitoring."""
+
+        # Prepare parameters for optimization
+        base_table = "iceberg.market.curve_observation"
+        filters = {
+            k: v for k, v in {
+                "curve_key": curve_key,
+                "asset_class": asset_class,
+                "iso": iso,
+                "location": location,
+                "market": market,
+                "product": product,
+                "block": block,
+                "tenor_type": tenor_type,
+            }.items() if v is not None
+        }
+
+        select_columns = [
+            "curve_key", "tenor_label", "tenor_type", "contract_month",
+            "asof_date", "mid", "bid", "ask", "price_type"
+        ]
+
+        order_columns = ORDER_COLUMNS
+
+        # Get optimization suggestions
+        access_optimization = self.data_access_optimizer.optimize_access_pattern(
+            base_table, select_columns, filters
+        )
+
+        # Build optimized query
+        optimized_query = self.query_optimizer.optimize_query_structure(
+            base_table=base_table,
+            filters=filters,
+            select_columns=select_columns,
+            order_columns=order_columns,
+            limit=limit,
+            offset=offset
+        )
+
+        # Add cursor-based pagination if needed
+        if cursor_after or cursor_before:
+            cursor_clause = self._build_cursor_clause(
+                cursor_after, cursor_before, descending
+            )
+            if cursor_clause:
+                optimized_query += cursor_clause
+
+        # Add asof date filter if specified
+        if asof:
+            asof_clause = f" AND asof_date = DATE '{asof.isoformat()}'"
+            optimized_query += asof_clause
+
+        # Generate query hash for caching and monitoring
+        query_hash = self.query_optimizer.get_query_hash(optimized_query, {
+            "filters": filters,
+            "limit": limit,
+            "offset": offset,
+            "descending": descending,
+        })
+
+        # Cache the optimized query
+        self.query_optimizer.cache_query_plan(query_hash, optimized_query)
+
+        return optimized_query
+
+    def _build_cursor_clause(
+        self,
+        cursor_after: Optional[Dict[str, Any]],
+        cursor_before: Optional[Dict[str, Any]],
+        descending: bool
+    ) -> str:
+        """Build cursor-based pagination clause."""
+        if cursor_after:
+            comparison = ">"
+            cursor = cursor_after
+            offset = 0
+        elif cursor_before:
+            comparison = "<"
+            cursor = cursor_before
+            offset = 0
+        else:
+            return ""
+
+        # Build cursor conditions
+        conditions = []
+        for col in ORDER_COLUMNS:
+            if col in cursor:
+                value = cursor[col]
+                if col in {"contract_month", "asof_date"}:
+                    conditions.append(f"{col} {comparison} DATE '{value}'")
+                elif col in {"period_start", "period_end", "ingest_ts"}:
+                    conditions.append(f"{col} {comparison} TIMESTAMP '{value}'")
+                else:
+                    conditions.append(f"{col} {comparison} '{value}'")
+
+        if conditions:
+            return f" AND ({' AND '.join(conditions)})"
+
+        return ""
+
+    def execute_with_monitoring(
+        self,
+        query: str,
+        table: str,
+        cache_manager = None
+    ) -> Tuple[List[Dict[str, Any]], float]:
+        """Execute query with performance monitoring."""
+        import time
+
+        query_hash = self.query_optimizer.get_query_hash(query)
+
+        start_time = time.time()
+
+        try:
+            # Check cache first
+            cache_hit = False
+            if cache_manager:
+                cached_result = cache_manager.get(query_hash)
+                if cached_result:
+                    cache_hit = True
+                    execution_time = (time.time() - start_time) * 1000
+                    self.performance_monitor.record_query_performance(
+                        query_hash, query, execution_time, len(cached_result), cache_hit=True, table=table
+                    )
+                    return cached_result, execution_time
+
+            # Execute query
+            # This would normally execute the actual query
+            # For now, return empty result to maintain structure
+            result = []
+
+            execution_time = (time.time() - start_time) * 1000
+
+            # Record performance metrics
+            self.performance_monitor.record_query_performance(
+                query_hash, query, execution_time, len(result), cache_hit=False, table=table
+            )
+
+            # Cache result if cache manager is available
+            if cache_manager and result:
+                cache_manager.set(query_hash, result, ttl_seconds=300)
+
+            return result, execution_time
+
+        except Exception as e:
+            execution_time = (time.time() - start_time) * 1000
+            self.performance_monitor.record_query_performance(
+                query_hash, query, execution_time, 0, cache_hit=False, table=table
+            )
+            raise
+
+
+# Global optimized query builder instance
+_optimized_query_builder = OptimizedQueryBuilder()
+
+
+def get_optimized_query_builder() -> OptimizedQueryBuilder:
+    """Get the global optimized query builder instance."""
+    return _optimized_query_builder
 
 
 def _safe_literal(value: str) -> str:

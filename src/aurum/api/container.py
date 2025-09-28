@@ -8,10 +8,14 @@ from __future__ import annotations
 import asyncio
 import inspect
 from abc import ABC, abstractmethod
-from collections import defaultdict
-from contextlib import asynccontextmanager
 from typing import Any, Callable, Dict, List, Optional, Type, TypeVar, Union
-from weakref import WeakValueDictionary
+
+# FastAPI deps are optional at import time to avoid hard dependency when running non-API code paths
+try:  # pragma: no cover - import guarded for tooling contexts
+    from fastapi import Depends, Request
+except Exception:  # pragma: no cover
+    Depends = None  # type: ignore[assignment]
+    Request = None  # type: ignore[assignment]
 
 T = TypeVar("T")
 ServiceKey = Union[Type[T], str]
@@ -143,64 +147,53 @@ class DependencyInjectionContainer:
         """Get all registered services for introspection."""
         return dict(self._descriptors)
 
-
-# Global container instance
-_container = DependencyInjectionContainer()
-
-
-def get_container() -> DependencyInjectionContainer:
-    """Get the global dependency injection container."""
-    return _container
-
-
-def register_service(
-    service_type: Type[T],
-    factory: Factory[T],
-    lifetime: str = ServiceLifetime.SINGLETON,
-    interfaces: Optional[List[Type[T]]] = None,
-    **config
-) -> None:
-    """Register a service with the global container."""
-    _container.register(service_type, factory, lifetime, interfaces, **config)
-
-
-def get_service(service_type: Type[T]) -> T:
-    """Resolve a service from the global container.
     
-    This is deprecated and should only be used from non-async contexts.
-    Prefer get_service_async() from async code.
-    """
-    # For AsyncScenarioService, return a pre-created instance to avoid async issues in tests
-    if service_type == AsyncScenarioService:
-        return _create_async_scenario_service()
+    # --------------------------
+    # FastAPI integration helpers
+    # --------------------------
 
-    try:
-        loop = asyncio.get_running_loop()
-        # We're in an async context - this is problematic
-        # Instead of creating a new event loop, raise an error to guide developers
-        raise RuntimeError(
-            f"get_service() called from async context for {service_type.__name__}. "
-            "Use 'await get_service_async()' instead, or call from synchronous code."
-        )
-    except RuntimeError as e:
-        if "get_service() called from async context" in str(e):
-            raise e
-        # No event loop running, safe to create one
-        return asyncio.run(_container.get_service(service_type))
+    @staticmethod
+    def from_settings(settings: "AurumSettings") -> "DependencyInjectionContainer":
+        """Create and pre-register core services using provided settings."""
+        container = DependencyInjectionContainer()
+        # Register services that do not require async factories
+        try:
+            # Local imports to avoid heavy imports during module load
+            from .services.curves_service import CurvesService
+            from .services.metadata_service import MetadataService
+            from .services.eia_service import EiaService
+            from .services.iso_service import IsoService
+            from .cache.consolidated_manager import get_unified_cache_manager, UnifiedCacheManager
 
-
-async def get_service_async(service_type: Type[T]) -> T:
-    """Resolve a service from the global container asynchronously."""
-    # For AsyncScenarioService, return a pre-created instance to avoid async issues in tests
-    if service_type == AsyncScenarioService:
-        return _create_async_scenario_service()
-    
-    return await _container.get_service(service_type)
+            container.register(CurvesService, lambda: CurvesService(), ServiceLifetime.SINGLETON)
+            container.register(MetadataService, lambda: MetadataService(), ServiceLifetime.SINGLETON)
+            container.register(EiaService, lambda: EiaService(), ServiceLifetime.SINGLETON)
+            container.register(IsoService, lambda: IsoService(), ServiceLifetime.SINGLETON)
+            container.register(UnifiedCacheManager, lambda: get_unified_cache_manager(), ServiceLifetime.SINGLETON)
+        except Exception:  # pragma: no cover - best effort registration
+            pass
+        return container
 
 
-def create_scope() -> ServiceScope:
-    """Create a service scope."""
-    return _container.create_scope()
+# --------------------------
+# FastAPI dependency providers (no globals)
+# --------------------------
+
+def get_container_dependency(request: "Request") -> DependencyInjectionContainer:
+    """FastAPI dependency to access the per-app container attached to app.state."""
+    container = getattr(getattr(request, "app", None), "state", None) and getattr(request.app.state, "container", None)  # type: ignore[attr-defined]
+    if not isinstance(container, DependencyInjectionContainer):
+        raise RuntimeError("DependencyInjectionContainer not configured on app.state.container")
+    return container
+
+
+def provide_service(service_type: Type[T]):
+    """Factory that returns a FastAPI dependency to resolve a service instance."""
+
+    async def _resolver(container: DependencyInjectionContainer = Depends(get_container_dependency)) -> T:  # type: ignore[name-defined]
+        return await container.get_service(service_type)
+
+    return _resolver
 
 
 # Service interfaces
@@ -232,15 +225,76 @@ class ICacheProvider(ABC):
         pass
 
 
+# Application context for managing global state
+class ApplicationContext:
+    """Application context to replace global state variables."""
+
+    def __init__(self):
+        self.cache_manager = None
+        self.settings = None
+        self.admin_groups = set()
+        self.drought_catalog = None
+        self.tile_cache = None
+        self.metadata_fallback_cache = {}
+        self._lock = asyncio.Lock()
+
+    async def get_cache_manager(self):
+        """Get cache manager with proper dependency injection."""
+        if self.cache_manager is None:
+            from .cache.unified_cache_manager import get_unified_cache_manager
+            self.cache_manager = get_unified_cache_manager()
+        return self.cache_manager
+
+    def get_admin_groups(self):
+        """Get admin groups from settings."""
+        if not self.admin_groups and self.settings:
+            auth_cfg = getattr(self.settings, "auth", None)
+            if auth_cfg and not getattr(auth_cfg, "disabled", False):
+                raw_groups = getattr(auth_cfg, "admin_groups", None)
+                if raw_groups:
+                    self.admin_groups = {str(item).strip().lower() for item in raw_groups if str(item).strip()}
+        return self.admin_groups
+
+
+def get_app_context_dependency(request: "Request") -> ApplicationContext:
+    """FastAPI dependency to access application context bound to the app."""
+    state = getattr(getattr(request, "app", None), "state", None)
+    ctx = getattr(state, "app_context", None)
+    if isinstance(ctx, ApplicationContext):
+        return ctx
+    # Lazy init per app if missing
+    ctx = ApplicationContext()
+    if state is not None:
+        setattr(state, "app_context", ctx)
+    return ctx
+
+
+# Service registration
+def register_core_services(container: DependencyInjectionContainer) -> None:
+    """Register core services with the provided container (no globals)."""
+    from .services.curves_service import CurvesService
+    from .services.metadata_service import MetadataService
+    from .services.eia_service import EiaService
+    from .services.iso_service import IsoService
+    from .cache.consolidated_manager import get_unified_cache_manager, UnifiedCacheManager
+
+    container.register(CurvesService, lambda: CurvesService(), ServiceLifetime.SINGLETON)
+    container.register(MetadataService, lambda: MetadataService(), ServiceLifetime.SINGLETON)
+    container.register(EiaService, lambda: EiaService(), ServiceLifetime.SINGLETON)
+    container.register(IsoService, lambda: IsoService(), ServiceLifetime.SINGLETON)
+    container.register(UnifiedCacheManager, lambda: get_unified_cache_manager(), ServiceLifetime.SINGLETON)
+
+
 __all__ = [
     "DependencyInjectionContainer",
     "ServiceScope",
     "ServiceLifetime",
     "ServiceDescriptor",
-    "get_container",
-    "register_service",
-    "get_service",
-    "create_scope",
+    "get_container_dependency",
+    "provide_service",
     "IDataBackend",
     "ICacheProvider",
+    "register_core_services",
+    "ApplicationContext",
+    "get_app_context_dependency",
 ]

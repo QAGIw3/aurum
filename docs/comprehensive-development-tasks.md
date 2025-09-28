@@ -77,6 +77,52 @@ Based on comprehensive analysis of the codebase, these tasks address:
 - `src/aurum/api/websocket/market_feeds.py`
 - `src/aurum/streaming/real_time_engine.py`
 
+Status: MVP implemented and wired
+- Kafka ingestion with circuit breaker/backpressure (in-memory fallback) via `KafkaProcessor`.
+- WebSocket feeds at `/ws/market/live` coordinated by `MarketDataWebSocketCoordinator`.
+- Real-time engine with interpolation, reconciliation, alerts, and inference (forecast + anomalies).
+- v2 diagnostics and controls under `/v2/market` (snapshot, reconciliation, ingest, seed historical, metrics).
+
+Quickstart
+- Local (in-memory): no Kafka required. Start API and connect to `ws://localhost:8000/ws/market/live`.
+  1) Send AUTH: `{ "type": "auth", "payload": { "user_id": "u", "tenant_id": "t" } }`
+  2) Subscribe: `{ "type": "subscribe", "payload": { "stream_id": "curve::TEST", "filters": { "curve_id": "TEST" } } }`
+  3) Ingest: `POST /v2/market/curves/TEST/ingest` with `{ tenor, price, timestamp }`.
+  4) Receive `data` messages with event, snapshot, reconciliation, and inference payloads.
+- Real Kafka (optional): set env vars and restart API
+  - `AURUM_STREAMING_ENABLED=true`
+  - `AURUM_STREAMING_KAFKA_BOOTSTRAP_SERVERS=localhost:9092`
+  - `AURUM_STREAMING_CURVE_TOPIC=market.curves` | `AURUM_STREAMING_ALERT_TOPIC=market.alerts`
+  - SASL/SSL via corresponding `AURUM_STREAMING_KAFKA_*` variables.
+
+Notes
+- Backpressure is applied on internal queues and consumer polling cadence.
+- Circuit breaker opens on handler failures (ratio threshold, timed reset).
+- Reconciliation compares live points against seeded historical baselines.
+- Inference is best-effort and disabled gracefully if ML helpers are missing.
+
+Production Kafka wiring
+- Headers (standardized): `content-type`, `schema`, `event-type`, `trace-id`, `emitted-at`, `producer`.
+- Commit strategies (env):
+  - `AURUM_STREAMING_KAFKA_COMMIT_STRATEGY` = `auto` | `sync` | `batch`
+  - `AURUM_STREAMING_KAFKA_COMMIT_BATCH_SIZE` (default 100)
+  - `AURUM_STREAMING_KAFKA_COMMIT_INTERVAL` seconds (default 5.0)
+- Observability (Prometheus): counters/gauges/histograms for processed/failed, backpressure, commits, in-memory queue size, and handler duration.
+
+Avro emission via Confluent + Schema Registry
+- Enable producer-only Avro path (consumer remains aiokafka unless changed):
+  - `AURUM_STREAMING_KAFKA_USE_CONFLUENT=true`
+  - `AURUM_STREAMING_SCHEMA_REGISTRY_URL=http://localhost:8081`
+  - Optional subject override: `AURUM_STREAMING_AVRO_VALUE_SUBJECT` (defaults to `<topic>-value`)
+  - Keep `AURUM_STREAMING_KAFKA_BOOTSTRAP_SERVERS` and security envs as usual.
+- Implementation uses `OptimizedKafkaProducer` with `AvroSerializer` and subject-based schema resolution.
+
+Expose Prometheus `/metrics`
+- API already supports metrics endpoint; enable via env:
+  - `AURUM_API_METRICS_ENABLED=true`
+  - Optional path override: `AURUM_API_METRICS_PATH=/metrics`
+- Endpoint served by FastAPI app lifecycle with multiprocess support when `PROMETHEUS_MULTIPROC_DIR` is set.
+
 ---
 
 ### 3. **Advanced Analytics and ML Platform**

@@ -70,7 +70,7 @@ async def invalidate_scenario_cache_v2(
     try:
         # Invalidate scenario caches via Redis indexes
         from ..config import CacheConfig
-        from ..state import get_settings
+        from ...core.settings import get_settings as _core_get_settings
         from ..service import invalidate_scenario_outputs_cache
 
         settings = get_settings()

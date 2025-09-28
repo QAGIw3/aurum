@@ -6,196 +6,289 @@ Phase 1.3 Service Layer Decomposition: Extracted from monolithic service.py
 Provides clean business logic layer with data access through DAO pattern.
 """
 
-import hashlib
+import asyncio
 import json
-import logging
-import time
 from datetime import date
-from typing import Any, Dict, List, Optional, AsyncGenerator, Tuple
+from typing import Any, Dict, Iterable, List, Optional, Tuple
 
 from aurum.telemetry import get_tracer
 
-from .base_service import QueryableServiceInterface, ExportableServiceInterface
+from ..cache.unified_cache_manager import CacheNamespace, UnifiedCacheManager, get_unified_cache_manager
+from ..contracts import (
+    CacheDirective,
+    CacheStatus,
+    CurvesDiffQuery,
+    CurvesQuery,
+    KeysetCursor,
+    Pagination,
+    QueryContext,
+    ServiceCallContext,
+    ServiceExecutionMetadata,
+    ServiceExecutionResult,
+)
 from ..dao.curves_dao import CurvesDao
-from ..config import CacheConfig, TrinoConfig
-from ..cache.unified_cache_manager import get_unified_cache_manager
-from ..cache.utils import cache_get_sync, cache_set_sync, cache_get_or_set_sync
-from ..query import build_curve_query, build_curve_diff_query
+from ..logging.structured_logger import get_logger
+from .base_service import ExportableServiceInterface, QueryableServiceInterface
 
-LOGGER = logging.getLogger(__name__)
-
-try:  # pragma: no cover - optional dependency
-    from prometheus_client import Counter as _PromCounter
-except Exception:  # pragma: no cover - metrics optional
-    _PromCounter = None  # type: ignore[assignment]
-
-if _PromCounter:
-    SERVICE_CACHE_COUNTER = _PromCounter(
-        "aurum_service_cache_operations_total",
-        "Service cache operations",
-        ["endpoint", "event"]
-    )
-else:
-    SERVICE_CACHE_COUNTER = None
-
-def _cache_key(params: Dict[str, Any]) -> str:
-    """Generate cache key from parameters."""
-    normalized = {}
-    for k, v in params.items():
-        if v is not None:
-            if isinstance(v, date):
-                normalized[k] = v.isoformat()
-            else:
-                normalized[k] = str(v)
-    
-    data = json.dumps(normalized, sort_keys=True)
-    return hashlib.md5(data.encode("utf-8")).hexdigest()
-
-def _execute_trino_query(trino_cfg: TrinoConfig, sql: str) -> List[Dict[str, Any]]:
-    """Execute Trino query - simplified implementation for migration."""
-    # This would normally execute the actual query
-    # For now, return empty result to maintain structure
-    return []
+logger = get_logger(__name__)
 
 
-class CurvesService(QueryableServiceInterface, ExportableServiceInterface):
-    """Curves domain service implementing business logic and data access through DAO.
-    
-    Handles curve observations, diffs, and strips with caching and export capabilities.
-    """
-    
-    def __init__(self):
+class CurvesService(QueryableServiceInterface, ExportableServiceInterface[Dict[str, Any]]):
+    """Curves domain service backed by CurvesDao and unified cache manager."""
+
+    def __init__(self) -> None:
         self._dao = CurvesDao()
+        self._cache_manager: Optional[UnifiedCacheManager] = None
 
-    async def list_curves(
-        self, 
-        *, 
-        offset: int, 
-        limit: int, 
-        name_filter: Optional[str] = None
-    ) -> List[Any]:
-        """List curves with optional name filtering."""
-        # For backward compatibility, delegate to query_data
-        filters = {"iso": name_filter} if name_filter else None
-        return await self.query_data(offset=offset, limit=limit, filters=filters)
+    # ------------------------------------------------------------------
+    # Contract helpers
+    # ------------------------------------------------------------------
 
-    async def get_curve_diff(
-        self, 
-        *, 
-        curve_id: str, 
-        from_timestamp: str, 
-        to_timestamp: str
-    ) -> Any:
-        """Get curve diff between two timestamps."""
-        # Parse curve_id for filtering (simplified implementation)
-        filters = {"iso": curve_id.split(":")[0] if ":" in curve_id else None}
-        
-        results = await self._dao.query_curves_diff(
-            iso=filters.get("iso"),
-            from_asof=from_timestamp,
-            to_asof=to_timestamp,
-            limit=1000
+    def _resolve_cache_manager(self) -> Optional[UnifiedCacheManager]:
+        if self._cache_manager is None:
+            try:
+                self._cache_manager = get_unified_cache_manager()
+            except Exception:  # pragma: no cover - defensive
+                self._cache_manager = None
+        return self._cache_manager
+
+    def _build_pagination(self, pagination: Optional[Pagination], *, default_limit: int = 100) -> Pagination:
+        if pagination is None:
+            return Pagination(limit=default_limit, offset=0)
+        return Pagination(
+            limit=max(1, pagination.limit),
+            offset=max(0, pagination.offset),
+            cursor_after=pagination.cursor_after,
+            cursor_before=pagination.cursor_before,
+            descending=pagination.descending,
+            overfetch=pagination.overfetch,
         )
-        
-        return {"diff_data": results, "from_asof": from_timestamp, "to_asof": to_timestamp}
 
-    async def query_data(
-        self, 
-        *,
-        offset: int = 0,
-        limit: int = 100,
-        filters: Optional[Dict[str, Any]] = None
-    ) -> List[Dict[str, Any]]:
-        """Query curve data with pagination and filtering (QueryableServiceInterface)."""
-        if filters is None:
-            filters = {}
-            
-        return await self._dao.query_curves(
+    def _build_query_context(self, context: Optional[ServiceCallContext]) -> QueryContext:
+        if context is None:
+            return QueryContext()
+        return QueryContext(
+            trace_id=context.trace_id,
+            span_name=context.span_name,
+            tenant_id=context.tenant_id,
+            timeout_seconds=None,
+            extra=context.extra,
+        )
+
+    def _build_curves_query(self, filters: Optional[Dict[str, Any]]) -> CurvesQuery:
+        filters = filters or {}
+        return CurvesQuery(
+            asof=filters.get("asof"),
+            curve_key=filters.get("curve_key"),
+            asset_class=filters.get("asset_class"),
             iso=filters.get("iso"),
-            market=filters.get("market"),
             location=filters.get("location"),
+            market=filters.get("market"),
             product=filters.get("product"),
             block=filters.get("block"),
-            asof=filters.get("asof"),
-            strip=filters.get("strip"),
-            offset=offset,
-            limit=limit,
+            tenor_type=filters.get("tenor_type"),
         )
+
+    def _curve_cache_key(self, *, query: CurvesQuery, pagination: Pagination) -> str:
+        payload = {**query.as_params(), "limit": pagination.limit, "offset": pagination.offset}
+        if pagination.cursor_after:
+            payload["cursor_after"] = pagination.cursor_after.as_params()
+        if pagination.cursor_before:
+            payload["cursor_before"] = pagination.cursor_before.as_params()
+        if pagination.descending:
+            payload["descending"] = True
+        return json.dumps(payload, sort_keys=True, default=str)
+
+    def _curve_diff_cache_key(self, *, query: CurvesDiffQuery, pagination: Pagination) -> str:
+        payload = {**query.as_params(), "limit": pagination.limit, "offset": pagination.offset}
+        return json.dumps(payload, sort_keys=True, default=str)
+
+    async def _cache_get(self, cache_key: str) -> Optional[List[Dict[str, Any]]]:
+        manager = self._resolve_cache_manager()
+        if manager is None:
+            return None
+        namespaced_key = CacheNamespace.CURVES.value + ":" + cache_key
+        return await manager.get(namespaced_key, CacheNamespace.CURVES)
+
+    async def _cache_set(self, cache_key: str, payload: List[Dict[str, Any]], ttl: int) -> None:
+        if ttl <= 0:
+            return
+        manager = self._resolve_cache_manager()
+        if manager is None:
+            return
+        namespaced_key = CacheNamespace.CURVES.value + ":" + cache_key
+        await manager.set(namespaced_key, payload, ttl=ttl, namespace=CacheNamespace.CURVES)
+
+    def _run_sync(self, coro):
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            loop = None
+
+        if loop and loop.is_running():
+            new_loop = asyncio.new_event_loop()
+            try:
+                return new_loop.run_until_complete(coro)
+            finally:
+                new_loop.close()
+        return asyncio.run(coro)
+
+    # ------------------------------------------------------------------
+    # QueryableServiceInterface
+    # ------------------------------------------------------------------
+
+    async def query_data(
+        self,
+        *,
+        filters: Optional[Dict[str, Any]] = None,
+        pagination: Optional[Pagination] = None,
+        context: Optional[ServiceCallContext] = None,
+    ) -> ServiceExecutionResult[List[Dict[str, Any]]]:
+        curves_query = self._build_curves_query(filters)
+        page = self._build_pagination(pagination)
+        query_context = self._build_query_context(context)
+
+        manager = self._resolve_cache_manager()
+        cache_directive = context.cache_directive if context and context.cache_directive else None
+        allow_bypass = cache_directive.allow_bypass if cache_directive else False
+        ttl_seconds = cache_directive.ttl_seconds if cache_directive else (manager.config.ttl_seconds if manager and getattr(manager, "config", None) else 0)
+        cache_key = self._curve_cache_key(query=curves_query, pagination=page)
+        cache_status = CacheStatus.BYPASS
+
+        if manager and not allow_bypass:
+            cached_rows = await self._cache_get(cache_key)
+            if cached_rows is not None:
+                metadata = ServiceExecutionMetadata(
+                    elapsed_ms=0.0,
+                    cache_status=CacheStatus.HIT,
+                    cache_key=cache_key,
+                    cache_version=cache_directive.version if cache_directive else None,
+                    row_count=len(cached_rows),
+                )
+                return ServiceExecutionResult(data=cached_rows, metadata=metadata)
+
+        tracer = get_tracer("aurum.api.curves")
+        with tracer.start_as_current_span("curves.list") as span:
+            span.set_attribute("aurum.curves.limit", page.limit)
+            span.set_attribute("aurum.curves.offset", page.offset)
+            span.set_attribute("aurum.curves.has_cursor", bool(page.cursor_after or page.cursor_before))
+            dao_result = await self._dao.query_curves(
+                query=curves_query,
+                pagination=page,
+                context=query_context,
+            )
+
+        if manager and ttl_seconds > 0 and dao_result.data:
+            try:
+                await self._cache_set(cache_key, dao_result.data, ttl=ttl_seconds)
+                cache_status = CacheStatus.MISS
+            except Exception:
+                logger.debug("Failed to populate curves cache", exc_info=True)
+                cache_status = CacheStatus.BYPASS
+
+        metadata = ServiceExecutionMetadata(
+            elapsed_ms=dao_result.elapsed_ms,
+            cache_status=cache_status,
+            cache_key=cache_key if cache_directive or (manager and ttl_seconds > 0) else None,
+            cache_version=cache_directive.version if cache_directive else None,
+            backend=getattr(self._dao._trino_client, "backend_label", None),
+            row_count=len(dao_result.data),
+        )
+        return ServiceExecutionResult(data=dao_result.data, metadata=metadata)
+
+    async def query_diff(
+        self,
+        *,
+        diff: CurvesDiffQuery,
+        pagination: Optional[Pagination] = None,
+        context: Optional[ServiceCallContext] = None,
+    ) -> ServiceExecutionResult[List[Dict[str, Any]]]:
+        page = self._build_pagination(pagination)
+        query_context = self._build_query_context(context)
+
+        manager = self._resolve_cache_manager()
+        cache_directive = context.cache_directive if context and context.cache_directive else None
+        allow_bypass = cache_directive.allow_bypass if cache_directive else False
+        ttl_seconds = (
+            cache_directive.ttl_seconds
+            if cache_directive
+            else (manager.config.ttl_seconds if manager else 0)
+        )
+        cache_key = self._curve_diff_cache_key(query=diff, pagination=page)
+        cache_status = CacheStatus.BYPASS
+
+        if manager and not allow_bypass:
+            cached_rows = await self._cache_get(cache_key)
+            if cached_rows is not None:
+                metadata = ServiceExecutionMetadata(
+                    elapsed_ms=0.0,
+                    cache_status=CacheStatus.HIT,
+                    cache_key=cache_key,
+                    cache_version=cache_directive.version if cache_directive else None,
+                    row_count=len(cached_rows),
+                )
+                return ServiceExecutionResult(data=cached_rows, metadata=metadata)
+
+        tracer = get_tracer("aurum.api.curves")
+        with tracer.start_as_current_span("curves.diff") as span:
+            dao_result = await self._dao.query_curves_diff(
+                query=diff,
+                pagination=page,
+                context=query_context,
+            )
+
+        if manager and ttl_seconds > 0 and dao_result.data:
+            try:
+                await self._cache_set(cache_key, dao_result.data, ttl=ttl_seconds)
+                cache_status = CacheStatus.MISS
+            except Exception:
+                logger.debug("Failed to populate curves diff cache", exc_info=True)
+                cache_status = CacheStatus.BYPASS
+
+        metadata = ServiceExecutionMetadata(
+            elapsed_ms=dao_result.elapsed_ms,
+            cache_status=cache_status,
+            cache_key=cache_key if cache_directive or (manager and ttl_seconds > 0) else None,
+            cache_version=cache_directive.version if cache_directive else None,
+            backend=getattr(self._dao._trino_client, "backend_label", None),
+            row_count=len(dao_result.data),
+        )
+        return ServiceExecutionResult(data=dao_result.data, metadata=metadata)
+
+    # ------------------------------------------------------------------
+    # ExportableServiceInterface
+    # ------------------------------------------------------------------
 
     async def export_data(
         self,
         *,
         format: str = "json",
         filters: Optional[Dict[str, Any]] = None,
-        chunk_size: int = 1000
-    ) -> AsyncGenerator[Dict[str, Any], None]:
-        """Export curve data in specified format (ExportableServiceInterface)."""
-        if filters is None:
-            filters = {}
-        
-        offset = 0
-        
+        chunk_size: int = 1000,
+        context: Optional[ServiceCallContext] = None,
+    ) -> Iterable[Dict[str, Any]]:
+        """Stream curve data in chunks; awaited per chunk by callers."""
+        page = Pagination(limit=max(1, chunk_size), offset=0)
         while True:
-            chunk = await self._dao.query_curves(
-                iso=filters.get("iso"),
-                market=filters.get("market"),
-                location=filters.get("location"),
-                product=filters.get("product"),
-                block=filters.get("block"),
-                asof=filters.get("asof"),
-                strip=filters.get("strip"),
-                offset=offset,
-                limit=chunk_size,
-            )
-            
-            if not chunk:
+            result = await self.query_data(filters=filters, pagination=page, context=context)
+            rows = result.data
+            if not rows:
                 break
-                
             if format == "json":
-                for row in chunk:
+                for row in rows:
                     yield row
             else:
-                # For other formats, yield as batch
-                yield {"format": format, "data": chunk, "offset": offset}
-            
-            offset += chunk_size
-            
-            # Safety break for large datasets
-            if len(chunk) < chunk_size:
+                yield {"format": format, "data": rows, "offset": page.offset}
+            if len(rows) < page.limit:
                 break
+            page = Pagination(limit=page.limit, offset=page.offset + page.limit)
 
-    async def stream_curve_export(
-        self,
-        *,
-        asof: Optional[str] = None,
-        iso: Optional[str] = None,
-        market: Optional[str] = None,
-        location: Optional[str] = None,
-        product: Optional[str] = None,
-        block: Optional[str] = None,
-        chunk_size: int = 1000,
-    ) -> AsyncGenerator[Dict[str, Any], None]:
-        """Async generator yielding export rows for curves (legacy method)."""
-        filters = {
-            "asof": asof,
-            "iso": iso,
-            "market": market,
-            "location": location,
-            "product": product,
-            "block": block,
-        }
-        
-        async for item in self.export_data(filters=filters, chunk_size=chunk_size):
-            yield item
-
-    async def invalidate_cache(self) -> Dict[str, int]:
-        """Invalidate curve-related caches (ServiceInterface)."""
-        return await self._dao.invalidate_curve_cache()
+    # ------------------------------------------------------------------
+    # Legacy bridge methods (used by routers that still expect sync semantics)
+    # ------------------------------------------------------------------
 
     def query_curves(
         self,
-        trino_cfg: TrinoConfig,
-        cache_cfg: CacheConfig,
         *,
         asof: Optional[date],
         curve_key: Optional[str],
@@ -211,26 +304,10 @@ class CurvesService(QueryableServiceInterface, ExportableServiceInterface):
         cursor_after: Optional[Dict[str, Any]] = None,
         cursor_before: Optional[Dict[str, Any]] = None,
         descending: bool = False,
+        cache_ttl: int = 120,
     ) -> Tuple[List[Dict[str, Any]], float]:
-        """Query curves with caching and performance tracking."""
-        params = {
-            "asof": asof,
-            "curve_key": curve_key,
-            "asset_class": asset_class,
-            "iso": iso,
-            "location": location,
-            "market": market,
-            "product": product,
-            "block": block,
-            "tenor_type": tenor_type,
-            "limit": limit,
-            "offset": offset,
-            "cursor_after": cursor_after,
-            "cursor_before": cursor_before,
-            "descending": descending,
-        }
-        sql = build_curve_query(
-            asof=asof,
+        curves_query = CurvesQuery(
+            asof=asof.isoformat() if isinstance(asof, date) else asof,
             curve_key=curve_key,
             asset_class=asset_class,
             iso=iso,
@@ -239,58 +316,29 @@ class CurvesService(QueryableServiceInterface, ExportableServiceInterface):
             product=product,
             block=block,
             tenor_type=tenor_type,
+        )
+        page = Pagination(
             limit=limit,
             offset=offset,
-            cursor_after=cursor_after,
-            cursor_before=cursor_before,
+            cursor_after=KeysetCursor.from_dict(cursor_after) if cursor_after else None,
+            cursor_before=KeysetCursor.from_dict(cursor_before) if cursor_before else None,
             descending=descending,
         )
 
-        # try cache via UnifiedCacheManager
-        manager = get_unified_cache_manager()
-        cache_key = f"curves:{_cache_key({**params, 'sql': sql})}"
-        if manager is not None:
-            # Use synchronous cache operations for backward compatibility
-            cached_rows = cache_get_sync(manager, cache_key)
-            if cached_rows is not None:
-                if SERVICE_CACHE_COUNTER:
-                    try:
-                        SERVICE_CACHE_COUNTER.labels(endpoint="curves", event="hit").inc()
-                    except Exception:
-                        pass
-                return cached_rows, 0.0
+        async def _runner() -> Tuple[List[Dict[str, Any]], float]:
+            result = await self.query_data(
+                filters=curves_query.as_params(),
+                pagination=page,
+                context=ServiceCallContext(
+                    cache_directive=CacheDirective(namespace=CacheNamespace.CURVES.value, ttl_seconds=cache_ttl)
+                ),
+            )
+            return result.data, result.metadata.elapsed_ms
 
-        effective_limit = max(int(limit), 0)
-        effective_offset = max(int(offset), 0)
-
-        tracer = get_tracer("aurum.api.service")
-        with tracer.start_as_current_span("query_curves.execute") as span:
-            span.set_attribute("aurum.curves.limit", effective_limit)
-            span.set_attribute("aurum.curves.offset", effective_offset)
-            span.set_attribute("aurum.curves.has_cursor", bool(cursor_after or cursor_before))
-            start = time.perf_counter()
-            rows = _execute_trino_query(trino_cfg, sql)
-            elapsed = (time.perf_counter() - start) * 1000.0
-            span.set_attribute("aurum.curves.elapsed_ms", elapsed)
-            span.set_attribute("aurum.curves.row_count", len(rows))
-
-        if manager is not None:
-            try:
-                cache_set_sync(manager, cache_key, rows, cache_cfg.ttl_seconds)
-                if SERVICE_CACHE_COUNTER:
-                    try:
-                        SERVICE_CACHE_COUNTER.labels(endpoint="curves", event="miss").inc()
-                    except Exception:
-                        pass
-            except Exception:
-                LOGGER.debug("CacheManager set failed for curves", exc_info=True)
-
-        return rows, elapsed
+        return self._run_sync(_runner())
 
     def query_curves_diff(
         self,
-        trino_cfg: TrinoConfig,
-        cache_cfg: CacheConfig,
         *,
         asof_a: date,
         asof_b: date,
@@ -304,25 +352,9 @@ class CurvesService(QueryableServiceInterface, ExportableServiceInterface):
         tenor_type: Optional[str],
         limit: int,
         offset: int = 0,
-        cursor_after: Optional[Dict[str, Any]] = None,
+        cache_ttl: int = 120,
     ) -> Tuple[List[Dict[str, Any]], float]:
-        """Query curve differences between two dates with caching."""
-        params = {
-            "asof_a": asof_a,
-            "asof_b": asof_b,
-            "curve_key": curve_key,
-            "asset_class": asset_class,
-            "iso": iso,
-            "location": location,
-            "market": market,
-            "product": product,
-            "block": block,
-            "tenor_type": tenor_type,
-            "limit": limit,
-            "offset": offset,
-            "cursor_after": cursor_after,
-        }
-        sql = build_curve_diff_query(
+        diff_query = CurvesDiffQuery(
             asof_a=asof_a,
             asof_b=asof_b,
             curve_key=curve_key,
@@ -333,73 +365,32 @@ class CurvesService(QueryableServiceInterface, ExportableServiceInterface):
             product=product,
             block=block,
             tenor_type=tenor_type,
-            limit=limit,
-            offset=offset,
-            cursor_after=cursor_after,
         )
+        page = Pagination(limit=limit, offset=offset)
 
-        prefix = f"{cache_cfg.namespace}:" if cache_cfg.namespace else ""
-        key = f"{prefix}curves-diff:{_cache_key({**params, 'sql': sql})}"
-        start = time.perf_counter()
-        manager = get_global_cache_manager()
-        rows: List[Dict[str, Any]] = cache_get_or_set_sync(
-            manager,
-            key,
-            lambda: _execute_trino_query(trino_cfg, sql),
-            cache_cfg.ttl_seconds,
-        )
-        # Normalize fields
-        for row in rows:
-            row.pop("tenant_id", None)
-            attribution_val = row.get("attribution")
-            if isinstance(attribution_val, str):
-                try:
-                    row["attribution"] = json.loads(attribution_val)
-                except json.JSONDecodeError:
-                    row["attribution"] = None
-        elapsed = (time.perf_counter() - start) * 1000.0
-        
-        return rows, elapsed
+        async def _runner() -> Tuple[List[Dict[str, Any]], float]:
+            result = await self.query_diff(
+                diff=diff_query,
+                pagination=page,
+                context=ServiceCallContext(
+                    cache_directive=CacheDirective(namespace=CacheNamespace.CURVES.value, ttl_seconds=cache_ttl)
+                ),
+            )
+            return result.data, result.metadata.elapsed_ms
 
-    async def invalidate_curve_cache(
+        return self._run_sync(_runner())
+
+    async def invalidate_cache(
         self,
-        iso: Optional[str] = None,
-        market: Optional[str] = None,
-        location: Optional[str] = None,
-    ) -> None:
-        """Invalidate curve cache using CacheManager."""
-        from ..cache.cache import CacheManager
-        from ..container import get_service
-
-        cache_manager = get_service(CacheManager)
-
-        # Build cache key pattern based on parameters
-        key_pattern = "curves:"
-
-        if iso:
-            key_pattern += f"{hash(iso)}:"
-        else:
-            key_pattern += "*:"  # Wildcard for any ISO
-
-        if market:
-            key_pattern += f"{hash(market)}:"
-        else:
-            key_pattern += "*:"  # Wildcard for any market
-
-        if location:
-            key_pattern += f"{hash(location)}"
-        else:
-            key_pattern += "*"  # Wildcard for any location
-
-        # Delete matching cache keys
-        deleted_count = await cache_manager.delete_pattern(key_pattern)
-
-        LOGGER.info(
-            "Invalidated curve cache",
-            extra={
-                "iso": iso,
-                "market": market,
-                "location": location,
-                "deleted_keys": deleted_count,
-            }
-        )
+        *,
+        scope: Optional[str] = None,
+        tenant_id: Optional[str] = None,
+        context: Optional[ServiceCallContext] = None,
+    ) -> Dict[str, int]:
+        manager = self._resolve_cache_manager()
+        if manager is None:
+            return {"curves": 0}
+        prefix = CacheNamespace.CURVES.value
+        await manager.invalidate_pattern(f"{prefix}:*")
+        logger.info("Curves cache invalidated", extra={"scope": scope, "tenant": tenant_id})
+        return {"curves": 0}

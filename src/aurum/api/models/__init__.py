@@ -80,6 +80,7 @@ from .admin import (
     UnitsMappingResponse,
 )
 from .base import AurumBaseModel
+from .schema_manager import SchemaManager, SchemaMetadata, SchemaValidationResult
 from .cache import CachePurgeDetail, CachePurgeResponse
 from .common import Meta, ErrorEnvelope, ValidationErrorDetail, ValidationErrorResponse, ProblemDetail
 from .curves import (

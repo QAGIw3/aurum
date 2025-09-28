@@ -3,7 +3,19 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, Generic, Iterable, List, Optional, TypeVar
+
+from ..contracts import (
+    CacheDirective,
+    Pagination,
+    QueryContext,
+    ServiceCallContext,
+    ServiceExecutionMetadata,
+    ServiceExecutionResult,
+)
+
+TData = TypeVar("TData")
+TExport = TypeVar("TExport")
 
 
 class ServiceInterface(ABC):
@@ -14,7 +26,13 @@ class ServiceInterface(ABC):
     """
     
     @abstractmethod
-    async def invalidate_cache(self) -> Dict[str, int]:
+    async def invalidate_cache(
+        self,
+        *,
+        scope: Optional[str] = None,
+        tenant_id: Optional[str] = None,
+        context: Optional[ServiceCallContext] = None,
+    ) -> Dict[str, int]:
         """Invalidate domain-specific caches.
         
         Returns:
@@ -28,12 +46,12 @@ class QueryableServiceInterface(ServiceInterface):
     
     @abstractmethod
     async def query_data(
-        self, 
+        self,
         *,
-        offset: int = 0,
-        limit: int = 100,
-        filters: Optional[Dict[str, Any]] = None
-    ) -> List[Dict[str, Any]]:
+        filters: Optional[Dict[str, Any]] = None,
+        pagination: Optional[Pagination] = None,
+        context: Optional[ServiceCallContext] = None,
+    ) -> ServiceExecutionResult[List[Dict[str, Any]]]:
         """Query domain data with pagination and filtering.
         
         Args:
@@ -54,8 +72,9 @@ class DimensionalServiceInterface(ServiceInterface):
     async def get_dimensions(
         self,
         *,
-        filters: Optional[Dict[str, Any]] = None
-    ) -> Dict[str, List[str]]:
+        filters: Optional[Dict[str, Any]] = None,
+        context: Optional[ServiceCallContext] = None,
+    ) -> ServiceExecutionResult[Dict[str, List[str]]]:
         """Get available dimensions for filtering.
         
         Args:
@@ -67,7 +86,7 @@ class DimensionalServiceInterface(ServiceInterface):
         pass
 
 
-class ExportableServiceInterface(ServiceInterface):
+class ExportableServiceInterface(ServiceInterface, Generic[TExport]):
     """Interface for services that support data export."""
     
     @abstractmethod
@@ -76,8 +95,9 @@ class ExportableServiceInterface(ServiceInterface):
         *,
         format: str = "json",
         filters: Optional[Dict[str, Any]] = None,
-        chunk_size: int = 1000
-    ):
+        chunk_size: int = 1000,
+        context: Optional[ServiceCallContext] = None,
+    ) -> Iterable[TExport]:
         """Export domain data in specified format.
         
         Args:

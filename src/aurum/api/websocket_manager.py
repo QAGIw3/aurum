@@ -8,7 +8,7 @@ import time
 import uuid
 from datetime import datetime, timedelta
 from enum import Enum
-from typing import Any, Dict, List, Optional, Set, Callable, Awaitable
+from typing import Any, Dict, List, Mapping, Optional, Set, Callable, Awaitable
 
 from fastapi import WebSocket, WebSocketDisconnect, HTTPException
 from pydantic import BaseModel
@@ -167,10 +167,16 @@ class WebSocketConnection:
     async def send_data(self, stream_id: str, data: Any) -> None:
         """Send data to the client."""
         try:
-            await self.send_message(MessageType.DATA, {
-                "stream_id": stream_id,
-                "data": data
-            })
+            if isinstance(data, Mapping):
+                payload = dict(data)
+                payload.setdefault("stream_id", stream_id)
+            else:
+                payload = {
+                    "stream_id": stream_id,
+                    "data": data,
+                }
+
+            await self.send_message(MessageType.DATA, payload)
             self.last_activity = datetime.utcnow()
         except Exception as exc:
             # Connection might be closed
@@ -201,10 +207,14 @@ class WebSocketConnection:
                 await self.send_error("Rate limit exceeded", "Too many messages")
                 return
 
+        request_id = get_request_id()
+        if not isinstance(request_id, str) or not request_id:
+            request_id = uuid.uuid4().hex
+
         message = WebSocketMessage(
             type=message_type,
             payload=payload,
-            request_id=get_request_id()
+            request_id=request_id
         )
 
         await self.websocket.send_text(message.to_json())

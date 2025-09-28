@@ -207,3 +207,105 @@ def test_list_environments_returns_tenant_scoped_data(developer_workspace_client
     environments = body["data"]["environments"]
     assert any(env["environment_id"] == "lab" for env in environments)
     assert body["data"]["tenant_id"] == "tenant-test"
+
+
+def _create_environment(client: TestClient, environment_id: str = "sandbox") -> None:
+    payload = {
+        "environment_id": environment_id,
+        "environment_name": environment_id.capitalize(),
+        "description": f"{environment_id} environment",
+    }
+
+    response = client.post(
+        "/v2/developer-workspace/environments",
+        json=payload,
+        headers={"X-Aurum-Tenant": "tenant-test"},
+    )
+    assert response.status_code == 201
+
+
+def test_create_session_endpoint(developer_workspace_client) -> None:
+    client, service = developer_workspace_client
+
+    _create_environment(client)
+
+    response = client.post(
+        "/v2/developer-workspace/sessions",
+        json={"environment_id": "sandbox"},
+        headers={"X-Aurum-Tenant": "tenant-test"},
+    )
+
+    assert response.status_code == 201
+    body = response.json()
+    assert body["meta"]["operation"] == "create_notebook_session"
+    session_id = body["data"]["session_id"]
+    assert session_id in service._sessions
+
+
+def test_get_session_status_endpoint(developer_workspace_client) -> None:
+    client, _ = developer_workspace_client
+
+    _create_environment(client)
+
+    create_resp = client.post(
+        "/v2/developer-workspace/sessions",
+        json={"environment_id": "sandbox"},
+        headers={"X-Aurum-Tenant": "tenant-test"},
+    )
+    session_id = create_resp.json()["data"]["session_id"]
+
+    response = client.get(
+        f"/v2/developer-workspace/sessions/{session_id}",
+        headers={"X-Aurum-Tenant": "tenant-test"},
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["session_id"] == session_id
+    assert body["environment_id"] == "sandbox"
+    assert body["status"] == "running"
+
+
+def test_list_sessions_endpoint_returns_active_sessions(developer_workspace_client) -> None:
+    client, _ = developer_workspace_client
+
+    _create_environment(client, environment_id="analysis")
+
+    client.post(
+        "/v2/developer-workspace/sessions",
+        json={"environment_id": "analysis"},
+        headers={"X-Aurum-Tenant": "tenant-test"},
+    )
+
+    response = client.get(
+        "/v2/developer-workspace/sessions",
+        headers={"X-Aurum-Tenant": "tenant-test"},
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["data"]["active_sessions"] == 1
+    assert body["data"]["sessions"][0]["environment_id"] == "analysis"
+
+
+def test_terminate_session_endpoint_stops_session(developer_workspace_client) -> None:
+    client, service = developer_workspace_client
+
+    _create_environment(client, environment_id="stop-test")
+
+    create_resp = client.post(
+        "/v2/developer-workspace/sessions",
+        json={"environment_id": "stop-test"},
+        headers={"X-Aurum-Tenant": "tenant-test"},
+    )
+    session_id = create_resp.json()["data"]["session_id"]
+
+    response = client.delete(
+        f"/v2/developer-workspace/sessions/{session_id}",
+        headers={"X-Aurum-Tenant": "tenant-test"},
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["data"]["status"] == "terminated"
+    assert service._sessions[session_id].status == "stopped"

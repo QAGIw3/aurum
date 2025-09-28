@@ -6,13 +6,9 @@ from datetime import datetime, date as _date
 from typing import Any, Dict, List, Optional, Tuple
 
 from .config import CacheConfig
-from .state import get_settings
-from .service import (
-    query_iso_lmp_last_24h,
-    query_iso_lmp_hourly,
-    query_iso_lmp_daily,
-)
+from aurum.core.settings import get_settings as _core_get_settings
 from .database.backend_selector import get_data_backend
+from .services.iso_service import IsoService
 
 
 class IsoV2Service:
@@ -24,7 +20,7 @@ class IsoV2Service:
         limit: int,
     ) -> List[Dict[str, Any]]:
         """Return last-24h LMP rows for an ISO with paging via slicing."""
-        settings = get_settings()
+        settings = _core_get_settings()
         # Try backend selector first; fall back to Timescale-backed helper
         try:
             backend = get_data_backend(settings)
@@ -56,12 +52,12 @@ class IsoV2Service:
         except Exception:
             cache_cfg: CacheConfig = CacheConfig.from_settings(settings)
             fetch_limit = max(1, int(offset) + int(limit))
-            rows, _elapsed = query_iso_lmp_last_24h(
+            iso_service = IsoService()
+            rows = await iso_service.lmp_last_24h(
                 iso_code=iso,
                 market=None,
                 location_id=None,
                 limit=fetch_limit,
-                cache_cfg=cache_cfg,
             )
             return rows[int(offset) : int(offset) + int(limit)]
 
@@ -74,7 +70,7 @@ class IsoV2Service:
         limit: int,
     ) -> List[Dict[str, Any]]:
         """Return hourly LMP aggregates for a given date with paging via slicing."""
-        settings = get_settings()
+        settings = _core_get_settings()
         cache_cfg: CacheConfig = CacheConfig.from_settings(settings)
         # Interpret date as YYYY-MM-DD
         try:
@@ -122,14 +118,14 @@ class IsoV2Service:
             return rows
         except Exception:
             fetch_limit = max(1, int(offset) + int(limit))
-            rows, _elapsed = query_iso_lmp_hourly(
+            iso_service = IsoService()
+            rows = await iso_service.lmp_hourly(
                 iso_code=iso,
                 market=None,
                 location_id=None,
                 start=start_dt,
                 end=end_dt,
                 limit=fetch_limit,
-                cache_cfg=cache_cfg,
             )
             return rows[int(offset) : int(offset) + int(limit)]
 
@@ -141,7 +137,7 @@ class IsoV2Service:
         offset: int,
         limit: int,
     ) -> List[Dict[str, Any]]:
-        settings = get_settings()
+        settings = _core_get_settings()
         cache_cfg: CacheConfig = CacheConfig.from_settings(settings)
         try:
             d = _date.fromisoformat(date)
@@ -187,14 +183,14 @@ class IsoV2Service:
             return rows
         except Exception:
             fetch_limit = max(1, int(offset) + int(limit))
-            rows, _elapsed = query_iso_lmp_daily(
+            iso_service = IsoService()
+            rows = await iso_service.lmp_daily(
                 iso_code=iso,
                 market=None,
                 location_id=None,
                 start=start_dt,
                 end=end_dt,
                 limit=fetch_limit,
-                cache_cfg=cache_cfg,
             )
             return rows[int(offset) : int(offset) + int(limit)]
 

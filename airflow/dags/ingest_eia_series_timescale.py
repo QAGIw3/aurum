@@ -6,6 +6,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Any
 
 from airflow import DAG
+from aurum.airflow_utils.datasets import URIS
 from airflow.operators.bash import BashOperator
 from airflow.operators.empty import EmptyOperator
 from airflow.operators.python import PythonOperator
@@ -162,11 +163,20 @@ def build_timescale_task(task_id: str) -> BashOperator:
     )
 
 
+try:  # dataset scheduling
+    from airflow.datasets import Dataset  # type: ignore
+    DATASET_SCHEDULE = [Dataset(URIS.INGEST_EIA_SERIES_RAW)]  # emitted by upstream ingest
+    PRODUCED_DATASETS = [Dataset(URIS.INGEST_EIA_SERIES_TIMESCALE)]  # emitted after load
+except Exception:  # pragma: no cover
+    Dataset = None  # type: ignore
+    DATASET_SCHEDULE = "0 * * * *"
+    PRODUCED_DATASETS = None
+
 with DAG(
     dag_id="ingest_eia_series_timescale",
     description="Stream EIA series Kafka topics into TimescaleDB",
     default_args=DEFAULT_ARGS,
-    schedule_interval="0 * * * *",
+    schedule=DATASET_SCHEDULE,
     start_date=datetime(2024, 1, 1),
     catchup=False,
     max_active_runs=1,
@@ -212,5 +222,13 @@ with DAG(
         python_callable=emit_lakefs_lineage,
         op_kwargs={"dataset": "timescale.public.eia_series_timeseries"},
     )
+
+    # Attach dataset lineage where supported
+    try:
+        if Dataset is not None:
+            preflight.inlets = [Dataset(URIS.INGEST_EIA_SERIES_RAW)]  # type: ignore[attr-defined]
+            lakefs_commit.outlets = PRODUCED_DATASETS  # type: ignore[attr-defined]
+    except Exception:
+        pass
 
     start >> preflight >> register_source >> load_timescale >> watermark >> lakefs_commit >> end

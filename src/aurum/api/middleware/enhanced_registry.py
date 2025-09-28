@@ -28,6 +28,7 @@ from ..observability.metrics import get_metrics_client
 from ..logging.structured_logger import get_logger
 from ..rate_limiting.unified_rate_limiter import get_unified_rate_limiter
 from ..telemetry.context import extract_tenant_id_from_headers, get_request_id
+from .performance_monitor import MiddlewarePerformanceMonitor, MiddlewareStackOptimizer
 
 
 class MiddlewareType(str, Enum):
@@ -45,8 +46,8 @@ class MiddlewareType(str, Enum):
 
 
 class MiddlewarePriority(int, Enum):
-    """Middleware priority levels (higher = applied first)."""
-    SECURITY = 1000    # Security headers, CORS
+    """Middleware priority levels (higher = applied first/outside)."""
+    SECURITY = 1000    # Security headers, CORS (outermost)
     LOGGING = 900      # Request/response logging
     METRICS = 800      # Metrics collection
     AUTH = 700         # Authentication/authorization
@@ -55,7 +56,135 @@ class MiddlewarePriority(int, Enum):
     CONCURRENCY = 400  # Concurrency control
     COMPRESSION = 300  # GZip compression
     CUSTOM = 200       # Custom middleware
-    SYSTEM = 100       # System middleware
+    SYSTEM = 100       # System middleware (innermost)
+
+
+class MiddlewareOptimization:
+    """Middleware performance optimization utilities."""
+
+    def __init__(self):
+        self.performance_metrics = {}
+        self.optimization_suggestions = []
+
+    def record_middleware_performance(
+        self,
+        middleware_name: str,
+        execution_time: float,
+        request_size: int = 0,
+        response_size: int = 0
+    ) -> None:
+        """Record middleware performance metrics."""
+        if middleware_name not in self.performance_metrics:
+            self.performance_metrics[middleware_name] = []
+
+        self.performance_metrics[middleware_name].append({
+            "execution_time": execution_time,
+            "request_size": request_size,
+            "response_size": response_size,
+            "timestamp": time.time()
+        })
+
+        # Keep only last 1000 measurements per middleware
+        if len(self.performance_metrics[middleware_name]) > 1000:
+            self.performance_metrics[middleware_name] = self.performance_metrics[middleware_name][-1000:]
+
+    def analyze_performance(self) -> Dict[str, Any]:
+        """Analyze middleware performance and suggest optimizations."""
+        analysis = {}
+
+        for middleware_name, metrics in self.performance_metrics.items():
+            if not metrics:
+                continue
+
+            execution_times = [m["execution_time"] for m in metrics]
+            avg_time = sum(execution_times) / len(execution_times)
+
+            analysis[middleware_name] = {
+                "avg_execution_time": avg_time,
+                "max_execution_time": max(execution_times),
+                "min_execution_time": min(execution_times),
+                "total_measurements": len(metrics),
+                "optimization_needed": avg_time > 10.0,  # Flag if > 10ms average
+            }
+
+            # Generate optimization suggestions
+            if avg_time > 10.0:
+                self.optimization_suggestions.append({
+                    "middleware": middleware_name,
+                    "issue": "slow_execution",
+                    "avg_time": avg_time,
+                    "suggestion": "Consider optimizing or moving this middleware to a different layer"
+                })
+
+        return analysis
+
+    def get_optimization_suggestions(self) -> List[Dict[str, Any]]:
+        """Get middleware optimization suggestions."""
+        return self.optimization_suggestions.copy()
+
+
+# Global middleware optimizer instance
+_middleware_optimizer = MiddlewareOptimization()
+
+
+def get_middleware_optimizer() -> MiddlewareOptimization:
+    """Get the global middleware optimizer instance."""
+    return _middleware_optimizer
+
+
+def create_middleware_health_router() -> APIRouter:
+    """Create a router for middleware health and optimization endpoints."""
+    from fastapi import APIRouter, Depends
+    from ..deps import require_admin
+    from ..telemetry.context import get_request_id
+
+    router = APIRouter(prefix="/admin/middleware", tags=["Middleware"])
+
+    @router.get("/health")
+    async def get_middleware_health(
+        principal: dict = Depends(require_admin),
+    ) -> Dict[str, Any]:
+        """Get middleware performance and health status."""
+        optimizer = get_middleware_optimizer()
+        analysis = optimizer.analyze_performance()
+
+        return {
+            "meta": {"request_id": get_request_id()},
+            "data": {
+                "analysis": analysis,
+                "optimization_suggestions": optimizer.get_optimization_suggestions(),
+            }
+        }
+
+    @router.post("/optimize")
+    async def optimize_middleware_stack(
+        principal: dict = Depends(require_admin),
+    ) -> Dict[str, Any]:
+        """Analyze and suggest middleware stack optimizations."""
+        optimizer = get_middleware_optimizer()
+
+        # Get current middleware order (this would need to be implemented)
+        current_order = [
+            "cors", "security", "logging", "auth", "governance",
+            "rate_limiting", "concurrency", "compression"
+        ]
+
+        suggested_order = optimizer.suggest_middleware_reordering(current_order)
+
+        return {
+            "meta": {"request_id": get_request_id()},
+            "data": {
+                "current_order": current_order,
+                "suggested_order": suggested_order,
+                "reordering_benefits": [
+                    "Security middleware applied first (outermost)",
+                    "Performance-critical middleware applied last (innermost)",
+                    "Reduced latency for cached responses",
+                ]
+            }
+        }
+
+    return router
 
 
 @dataclass

@@ -11,7 +11,7 @@ from aurum.core import AurumSettings
 
 from ..config import TrinoConfig
 from ..database.trino_client import get_trino_client
-from ..state import configure as configure_state, get_settings
+from aurum.core.settings import get_settings as _core_get_settings
 
 
 def _sanitize(value: str) -> str:
@@ -25,7 +25,7 @@ class DroughtDao:
 
     def __init__(self, settings: Optional[AurumSettings] = None) -> None:
         try:
-            self._settings = settings or get_settings()
+        self._settings = settings or _core_get_settings()
         except RuntimeError:
             self._settings = AurumSettings.from_env()
             configure_state(self._settings)

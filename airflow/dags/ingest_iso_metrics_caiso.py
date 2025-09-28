@@ -17,6 +17,7 @@ if _SRC_PATH and _SRC_PATH not in sys.path:
 
 from aurum.airflow_utils import build_failure_callback, build_preflight_callable
 from aurum.airflow_utils import iso as iso_utils
+from aurum.airflow_utils.datasets import iso_trigger, iso_ingest
 
 
 DEFAULT_ARGS: dict[str, Any] = {
@@ -62,11 +63,21 @@ def _build_job(task_prefix: str, job_name: str, source_name: str, *, env_entries
     )
 
 
+try:  # Dataset scheduling
+    from airflow.datasets import Dataset  # type: ignore
+    DATASET_SCHEDULE = [
+        Dataset(iso_trigger("caiso", "load_window_ready")),
+        Dataset(iso_trigger("caiso", "genmix_window_ready")),
+    ]
+except Exception:  # pragma: no cover
+    Dataset = None  # type: ignore
+    DATASET_SCHEDULE = "30 * * * *"
+
 with DAG(
     dag_id="ingest_iso_metrics_caiso",
     description="Ingest CAISO load and generation mix observations via SeaTunnel",
     default_args=DEFAULT_ARGS,
-    schedule_interval="30 * * * *",
+    schedule=DATASET_SCHEDULE,
     start_date=datetime(2024, 1, 1),
     catchup=False,
     max_active_runs=1,
@@ -129,6 +140,18 @@ with DAG(
     )
 
     end = EmptyOperator(task_id="end")
+
+    # Attach dataset lineage
+    try:
+        if Dataset is not None:
+            preflight.inlets = [
+                Dataset(iso_trigger("caiso", "load_window_ready")),
+                Dataset(iso_trigger("caiso", "genmix_window_ready")),
+            ]  # type: ignore[attr-defined]
+            load_watermark.outlets = [Dataset(iso_ingest("caiso", "load"))]  # type: ignore[attr-defined]
+            genmix_watermark.outlets = [Dataset(iso_ingest("caiso", "genmix"))]  # type: ignore[attr-defined]
+    except Exception:
+        pass
 
     start >> preflight >> register_sources
     register_sources >> load_render >> load_exec >> load_watermark

@@ -13,9 +13,9 @@ from pydantic import BaseModel, Field
 
 from ..reference import eia_catalog as ref_eia
 from .config import CacheConfig, TrinoConfig
-from .state import get_settings
-from .service import query_eia_series, query_eia_series_dimensions
+from aurum.core.settings import get_settings as _core_get_settings
 from .database.backend_selector import get_data_backend
+from .services.eia_service import EiaService
 
 
 class DatasetItem(BaseModel):
@@ -70,7 +70,7 @@ class EiaV2Service:
             except Exception:
                 return None
 
-        settings = get_settings()
+        settings = _core_get_settings()
         # Try backend selector first for ClickHouse/Timescale/Trino
         try:
             backend = get_data_backend(settings)
@@ -114,28 +114,17 @@ class EiaV2Service:
                 for r in result.rows
             ]
         except Exception:
-            trino_cfg = TrinoConfig.from_settings(settings)
-            cache_cfg = CacheConfig.from_settings(settings)
+            # Fallback to EIA service with DAO pattern
+            eia_service = EiaService()
+            start_dt = _to_dt_or_none(start_date)
+            end_dt = _to_dt_or_none(end_date)
 
-            rows, _elapsed_ms = query_eia_series(
-                trino_cfg,
-                cache_cfg,
+            rows = await eia_service.get_series(
                 series_id=series_id,
-                frequency=None,
-                area=None,
-                sector=None,
-                dataset=None,
-                unit=None,
-                canonical_unit=None,
-                canonical_currency=None,
-                source=None,
-                start=_to_dt_or_none(start_date),
-                end=_to_dt_or_none(end_date),
-                limit=limit,
+                start_date=start_date if start_dt else None,
+                end_date=end_date if end_dt else None,
                 offset=offset,
-                cursor_after=None,
-                cursor_before=None,
-                descending=False,
+                limit=limit,
             )
 
         points: List[SeriesPointItem] = []
@@ -165,25 +154,26 @@ class EiaV2Service:
         source: Optional[str] = None,
     ) -> Dict[str, List[str]]:
         """Return distinct dimension values for EIA series observations."""
-        settings = get_settings()
+        settings = _core_get_settings()
         # Use selector only when no filters are provided (simple DISTINCTs). Otherwise, use legacy helper.
         if any(v is not None for v in (series_id, frequency, area, sector, dataset, unit, canonical_unit, canonical_currency, source)):
             trino_cfg = TrinoConfig.from_settings(settings)
             cache_cfg = CacheConfig.from_settings(settings)
             freq = frequency.upper() if frequency else None
-            values, _elapsed_ms = query_eia_series_dimensions(
-                trino_cfg,
-                cache_cfg,
-                series_id=series_id,
-                frequency=freq,
-                area=area,
-                sector=sector,
-                dataset=dataset,
-                unit=unit,
-                canonical_unit=canonical_unit,
-                canonical_currency=canonical_currency,
-                source=source,
-            )
+            eia_service = EiaService()
+            filters = {
+                "series_id": series_id,
+                "frequency": freq,
+                "area": area,
+                "sector": sector,
+                "dataset": dataset,
+                "unit": unit,
+                "canonical_unit": canonical_unit,
+                "canonical_currency": canonical_currency,
+                "source": source,
+            }
+            values = await eia_service.get_dimensions(filters=filters)
+            _elapsed_ms = 0  # Simplified for now
             return values
 
         try:
@@ -214,19 +204,20 @@ class EiaV2Service:
             trino_cfg = TrinoConfig.from_settings(settings)
             cache_cfg = CacheConfig.from_settings(settings)
             freq = frequency.upper() if frequency else None
-            values, _elapsed_ms = query_eia_series_dimensions(
-                trino_cfg,
-                cache_cfg,
-                series_id=series_id,
-                frequency=freq,
-                area=area,
-                sector=sector,
-                dataset=dataset,
-                unit=unit,
-                canonical_unit=canonical_unit,
-                canonical_currency=canonical_currency,
-                source=source,
-            )
+            eia_service = EiaService()
+            filters = {
+                "series_id": series_id,
+                "frequency": freq,
+                "area": area,
+                "sector": sector,
+                "dataset": dataset,
+                "unit": unit,
+                "canonical_unit": canonical_unit,
+                "canonical_currency": canonical_currency,
+                "source": source,
+            }
+            values = await eia_service.get_dimensions(filters=filters)
+            _elapsed_ms = 0  # Simplified for now
             return values
 
 

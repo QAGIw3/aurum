@@ -36,7 +36,7 @@ from ..models import (
     Meta,
 )
 from ..auth import AuthMiddleware, OIDCConfig
-from ..container import get_service
+from ..container import provide_service
 from ..rate_limiting import RateLimitManager, QuotaTier
 from ..trino_client import TrinoClient
 from ...data.external_dao import ExternalDAO

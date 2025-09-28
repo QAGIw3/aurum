@@ -528,3 +528,158 @@ async def bulk_deprecate_versions(
             status_code=500,
             detail=f"Failed to bulk deprecate versions: {str(exc)}"
         ) from exc
+
+
+@router.get("/v1/admin/versions/analytics")
+async def get_version_analytics(
+    request: Request,
+    principal: dict = Depends(_get_principal),
+) -> Dict[str, Any]:
+    """Get analytics about API version usage and migration patterns."""
+
+    _require_admin(principal)
+
+    start_time = time.perf_counter()
+    user_id = get_user_id()
+    request_id = get_request_id()
+
+    try:
+        version_manager = get_version_manager()
+        analytics = await version_manager.get_version_analytics()
+
+        log_structured(
+            "info",
+            "version_analytics_retrieved",
+            user_id=user_id,
+            request_id=request_id,
+        )
+
+        return {
+            "meta": {
+                "request_id": request_id,
+                "query_time_ms": int((time.perf_counter() - start_time) * 1000),
+            },
+            "data": analytics
+        }
+    except Exception as exc:
+        log_structured(
+            "error",
+            "version_analytics_failed",
+            error=str(exc),
+            user_id=user_id,
+            request_id=request_id,
+        )
+        raise HTTPException(status_code=500, detail=f"Failed to retrieve version analytics: {str(exc)}")
+
+
+@router.post("/v1/admin/versions/migrate/{from_version}")
+async def initiate_version_migration(
+    from_version: str,
+    to_version: str = Query(..., description="Target version for migration"),
+    principal: dict = Depends(_get_principal),
+) -> Dict[str, Any]:
+    """Initiate migration from one API version to another."""
+
+    _require_admin(principal)
+
+    start_time = time.perf_counter()
+    user_id = get_user_id()
+    request_id = get_request_id()
+
+    try:
+        version_manager = get_version_manager()
+
+        # Validate versions
+        source_version = await version_manager.get_version(from_version)
+        target_version = await version_manager.get_version(to_version)
+
+        if not source_version:
+            raise HTTPException(status_code=404, detail=f"Source version {from_version} not found")
+        if not target_version:
+            raise HTTPException(status_code=404, detail=f"Target version {to_version} not found")
+
+        # Check if migration is valid
+        if source_version.status == VersionStatus.RETIRED:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Cannot migrate from retired version {from_version}"
+            )
+
+        # Create migration plan
+        migration_plan = {
+            "source_version": from_version,
+            "target_version": to_version,
+            "migration_type": "gradual" if source_version.status == VersionStatus.DEPRECATED else "immediate",
+            "estimated_impact": await _estimate_migration_impact(version_manager, from_version),
+            "recommended_actions": await _get_migration_actions(version_manager, from_version, to_version),
+        }
+
+        log_structured(
+            "info",
+            "version_migration_initiated",
+            from_version=from_version,
+            to_version=to_version,
+            user_id=user_id,
+            request_id=request_id,
+        )
+
+        return {
+            "meta": {
+                "request_id": request_id,
+                "query_time_ms": int((time.perf_counter() - start_time) * 1000),
+            },
+            "data": migration_plan
+        }
+    except HTTPException:
+        raise
+    except Exception as exc:
+        log_structured(
+            "error",
+            "version_migration_failed",
+            from_version=from_version,
+            to_version=to_version,
+            error=str(exc),
+            user_id=user_id,
+            request_id=request_id,
+        )
+        raise HTTPException(status_code=500, detail=f"Failed to initiate migration: {str(exc)}")
+
+
+async def _estimate_migration_impact(version_manager: VersionManager, version: str) -> Dict[str, Any]:
+    """Estimate the impact of migrating from a specific version."""
+    analytics = await version_manager.get_version_analytics()
+
+    if version not in analytics["version_breakdown"]:
+        return {"impact_level": "unknown", "affected_endpoints": 0}
+
+    version_data = analytics["version_breakdown"][version]
+
+    impact_level = "low" if version_data["percentage"] < 5 else "medium" if version_data["percentage"] < 20 else "high"
+
+    return {
+        "impact_level": impact_level,
+        "affected_endpoints": version_data["endpoints"],
+        "traffic_percentage": version_data["percentage"],
+        "recommendation": f"Consider {impact_level}-impact migration strategy"
+    }
+
+
+async def _get_migration_actions(
+    version_manager: VersionManager,
+    from_version: str,
+    to_version: str
+) -> List[str]:
+    """Get recommended actions for version migration."""
+    actions = [
+        f"Update documentation to highlight {to_version} as the preferred version",
+        "Add deprecation warnings to {from_version} endpoints",
+        "Monitor migration progress through version analytics",
+    ]
+
+    # Add version-specific actions
+    source_version = await version_manager.get_version(from_version)
+    if source_version and source_version.deprecation_info:
+        if source_version.deprecation_info.migration_guide:
+            actions.append(f"Provide migration guide: {source_version.deprecation_info.migration_guide}")
+
+    return actions

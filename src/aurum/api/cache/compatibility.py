@@ -9,7 +9,7 @@ from __future__ import annotations
 import warnings
 from typing import Any, Dict, Optional, Union
 
-from .unified_cache_manager import UnifiedCacheManager, get_unified_cache_manager
+from .consolidated_manager import UnifiedCacheManager, get_unified_cache_manager
 from .cache import AsyncCache, CacheManager as OriginalCacheManager
 from .enhanced_cache_manager import EnhancedCacheManager as OriginalEnhancedCacheManager
 from .cache_governance import CacheNamespace
@@ -26,14 +26,14 @@ class CacheManagerCompat(OriginalCacheManager):
         
         if not self._unified_manager and cache_service:
             # Create a unified manager if none exists
-            from .unified_cache_manager import UnifiedCacheManager, set_unified_cache_manager
+            from .consolidated_manager import UnifiedCacheManager, set_unified_cache_manager
             self._unified_manager = UnifiedCacheManager()
             # Initialize it asynchronously when first used
             
     async def _ensure_unified_manager(self):
         """Ensure unified manager is initialized."""
         if not self._unified_manager:
-            from .unified_cache_manager import UnifiedCacheManager, set_unified_cache_manager
+            from .consolidated_manager import UnifiedCacheManager, set_unified_cache_manager
             self._unified_manager = UnifiedCacheManager()
             set_unified_cache_manager(self._unified_manager)
             
@@ -130,7 +130,7 @@ class EnhancedCacheManagerCompat:
         self.cache = cache
         
         if not self._unified_manager:
-            from .unified_cache_manager import UnifiedCacheManager, set_unified_cache_manager
+            from .consolidated_manager import UnifiedCacheManager, set_unified_cache_manager
             self._unified_manager = UnifiedCacheManager()
             set_unified_cache_manager(self._unified_manager)
             
