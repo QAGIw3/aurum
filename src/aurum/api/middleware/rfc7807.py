@@ -14,7 +14,7 @@ from pydantic import ValidationError
 
 from ..models import ProblemDetail, ValidationErrorDetail
 from ..exceptions import AurumAPIException
-from ...telemetry.context import get_request_id
+from ...telemetry.context import get_request_id, get_correlation_id, log_structured
 
 logger = logging.getLogger(__name__)
 
@@ -61,7 +61,21 @@ class RFC7807ExceptionMiddleware(BaseHTTPMiddleware):
                 request_id=request_id
             )
 
-        # Log the exception for observability
+        # Log the exception for observability (structured + standard logger)
+        try:
+            level = "error" if problem_detail.status >= 500 else "warning"
+            log_structured(
+                level,
+                "rfc7807_error_response",
+                problem_type=problem_detail.type,
+                title=problem_detail.title,
+                status_code=problem_detail.status,
+                detail=problem_detail.detail,
+                instance=problem_detail.instance,
+            )
+        except Exception:
+            pass
+
         if problem_detail.status >= 500:
             logger.error(
                 "Server error occurred",
@@ -83,10 +97,16 @@ class RFC7807ExceptionMiddleware(BaseHTTPMiddleware):
                 }
             )
 
+        headers = {"Content-Type": "application/problem+json"}
+        correlation_id = get_correlation_id()
+        if request_id:
+            headers["X-Request-Id"] = request_id
+        if correlation_id:
+            headers["X-Correlation-Id"] = correlation_id
         return JSONResponse(
             status_code=problem_detail.status,
             content=problem_detail.model_dump(exclude_none=True),
-            headers={"Content-Type": "application/problem+json"}
+            headers=headers,
         )
 
     def _create_problem_detail(
@@ -183,7 +203,7 @@ class RFC7807ExceptionMiddleware(BaseHTTPMiddleware):
         
         return ProblemDetail(
             type=f"{self.base_url}/problems/{problem_type}",
-            title=exc_name.replace("Exception", " Error").replace("", " ").title(),
+            title=exc_name.replace("Exception", " Error").replace("_", " ").title(),
             status=exc.status_code,
             detail=exc.detail,
             instance=instance,

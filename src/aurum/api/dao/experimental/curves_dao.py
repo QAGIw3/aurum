@@ -9,7 +9,7 @@ from uuid import UUID
 from pydantic import BaseModel
 
 from .base_dao import TrinoDAO
-from ..models import CurvePoint, CurveResponse
+from ...models import CurvePoint, CurveResponse
 
 
 class CurveFilter(BaseModel):

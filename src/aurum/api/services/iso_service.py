@@ -14,8 +14,8 @@ from typing import Any, Dict, List, Optional, Tuple
 from aurum.telemetry import get_tracer
 
 from .base_service import QueryableServiceInterface
-from ..dao.trino_async_dao import TrinoAsyncDao
 from ..config import CacheConfig
+from ..database.timescale_client import get_timescale_client
 from ..cache.unified_cache_manager import get_unified_cache_manager
 from ..cache.enhanced_cache_manager import CacheNamespace
 from ..cache.utils import cache_key as _cache_key, iso_lmp_cache_key, iso_lmp_effective_ttl
@@ -50,8 +50,8 @@ class IsoService(QueryableServiceInterface):
     """
 
     def __init__(self):
-        self._dao = TrinoAsyncDao()
         self._cache_manager = get_unified_cache_manager()
+        self._timescale = get_timescale_client()
 
     async def lmp_last_24h(
         self,
@@ -92,19 +92,28 @@ class IsoService(QueryableServiceInterface):
             if ISO_CACHE_MISSES:
                 ISO_CACHE_MISSES.inc()
 
-            # Use legacy query function for now (will migrate later)
-            from ..service import query_iso_lmp_last_24h
-            from ..config import CacheConfig
-            from ...core.settings import get_settings as _core_get_settings
-
-            cache_cfg = CacheConfig.from_settings(_core_get_settings())
-            results, query_time = query_iso_lmp_last_24h(
-                iso_code=iso_code,
-                market=market,
-                location_id=location_id,
-                limit=limit,
-                cache_cfg=cache_cfg,
+            # Execute directly against Timescale warehouse (materialized view)
+            where = ["1=1"]
+            params: Dict[str, Any] = {}
+            if iso_code:
+                where.append("iso_code = %(iso_code)s")
+                params["iso_code"] = iso_code.upper()
+            if market:
+                where.append("market = %(market)s")
+                params["market"] = market.upper()
+            if location_id:
+                where.append("upper(location_id) = upper(%(location_id)s)")
+                params["location_id"] = location_id
+            sql = (
+                "SELECT iso_code, market, delivery_date, interval_start, interval_end, interval_minutes, "
+                "location_id, location_name, location_type, price_total, price_energy, price_congestion, "
+                "price_loss, currency, uom, settlement_point, source_run_id, ingest_ts, record_hash, metadata "
+                "FROM public.iso_lmp_last_24h WHERE " + " AND ".join(where) +
+                " ORDER BY interval_start DESC LIMIT %(limit)s"
             )
+            params["limit"] = min(limit, 2000)
+            results = await self._timescale.execute_query(sql, params)
+            query_time = 0.0
 
             # Cache the result
             ttl_seconds = _iso_lmp_effective_ttl(cache_cfg)
@@ -167,19 +176,31 @@ class IsoService(QueryableServiceInterface):
             if ISO_CACHE_MISSES:
                 ISO_CACHE_MISSES.inc()
 
-            from ..service import query_iso_lmp_hourly
             from ..config import CacheConfig
             from ...core.settings import get_settings as _core_get_settings
 
             cache_cfg = CacheConfig.from_settings(_core_get_settings())
-            results, query_time = query_iso_lmp_hourly(
-                iso_code=iso_code,
-                market=market,
-                location_id=location_id,
-                date=date,
-                limit=limit,
-                cache_cfg=cache_cfg,
+            where = ["1=1"]
+            params: Dict[str, Any] = {"limit": min(limit, 2000)}
+            if iso_code:
+                where.append("iso_code = %(iso_code)s")
+                params["iso_code"] = iso_code.upper()
+            if market:
+                where.append("market = %(market)s")
+                params["market"] = market.upper()
+            if location_id:
+                where.append("upper(location_id) = upper(%(location_id)s)")
+                params["location_id"] = location_id
+            if date:
+                where.append("interval_start::date = DATE %(date)s")
+                params["date"] = date
+            sql = (
+                "SELECT iso_code, market, interval_start, location_id, currency, uom, price_avg, price_min, "
+                "price_max, price_stddev, sample_count FROM public.iso_lmp_hourly WHERE "
+                + " AND ".join(where) + " ORDER BY interval_start DESC LIMIT %(limit)s"
             )
+            results = await self._timescale.execute_query(sql, params)
+            query_time = 0.0
 
             ttl_seconds = _iso_lmp_effective_ttl(cache_cfg)
             await self._cache_manager.set(
@@ -243,20 +264,34 @@ class IsoService(QueryableServiceInterface):
             if ISO_CACHE_MISSES:
                 ISO_CACHE_MISSES.inc()
 
-            from ..service import query_iso_lmp_daily
             from ..config import CacheConfig
             from ...core.settings import get_settings as _core_get_settings
 
             cache_cfg = CacheConfig.from_settings(_core_get_settings())
-            results, query_time = query_iso_lmp_daily(
-                iso_code=iso_code,
-                market=market,
-                location_id=location_id,
-                start_date=start_date,
-                end_date=end_date,
-                limit=limit,
-                cache_cfg=cache_cfg,
+            where = ["1=1"]
+            params: Dict[str, Any] = {"limit": min(limit, 2000)}
+            if iso_code:
+                where.append("iso_code = %(iso_code)s")
+                params["iso_code"] = iso_code.upper()
+            if market:
+                where.append("market = %(market)s")
+                params["market"] = market.upper()
+            if location_id:
+                where.append("upper(location_id) = upper(%(location_id)s)")
+                params["location_id"] = location_id
+            if start_date:
+                where.append("interval_start >= %(start)s")
+                params["start"] = start_date
+            if end_date:
+                where.append("interval_start <= %(end)s")
+                params["end"] = end_date
+            sql = (
+                "SELECT iso_code, market, interval_start, location_id, currency, uom, price_avg, price_min, "
+                "price_max, price_stddev, sample_count FROM public.iso_lmp_daily WHERE "
+                + " AND ".join(where) + " ORDER BY interval_start DESC LIMIT %(limit)s"
             )
+            results = await self._timescale.execute_query(sql, params)
+            query_time = 0.0
 
             ttl_seconds = _iso_lmp_effective_ttl(cache_cfg)
             await self._cache_manager.set(
@@ -320,20 +355,36 @@ class IsoService(QueryableServiceInterface):
             if ISO_CACHE_MISSES:
                 ISO_CACHE_MISSES.inc()
 
-            from ..service import query_iso_lmp_negative
             from ..config import CacheConfig
             from ...core.settings import get_settings as _core_get_settings
 
             cache_cfg = CacheConfig.from_settings(_core_get_settings())
-            results, query_time = query_iso_lmp_negative(
-                iso_code=iso_code,
-                market=market,
-                location_id=location_id,
-                start_date=start_date,
-                end_date=end_date,
-                limit=limit,
-                cache_cfg=cache_cfg,
+            where = ["1=1"]
+            params: Dict[str, Any] = {"limit": min(limit, 1000)}
+            if iso_code:
+                where.append("iso_code = %(iso_code)s")
+                params["iso_code"] = iso_code.upper()
+            if market:
+                where.append("market = %(market)s")
+                params["market"] = market.upper()
+            if location_id:
+                where.append("upper(location_id) = upper(%(location_id)s)")
+                params["location_id"] = location_id
+            if start_date:
+                where.append("delivery_date >= %(start)s")
+                params["start"] = start_date
+            if end_date:
+                where.append("delivery_date <= %(end)s")
+                params["end"] = end_date
+            sql = (
+                "SELECT iso_code, market, delivery_date, interval_start, interval_end, interval_minutes, "
+                "location_id, location_name, location_type, price_total, price_energy, price_congestion, price_loss, "
+                "currency, uom, settlement_point, source_run_id, ingest_ts, record_hash, metadata "
+                "FROM public.iso_lmp_negative_7d WHERE " + " AND ".join(where) +
+                " ORDER BY price_total ASC LIMIT %(limit)s"
             )
+            results = await self._timescale.execute_query(sql, params)
+            query_time = 0.0
 
             ttl_seconds = _iso_lmp_effective_ttl(cache_cfg)
             await self._cache_manager.set(

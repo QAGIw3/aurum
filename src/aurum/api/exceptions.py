@@ -5,6 +5,7 @@ from __future__ import annotations
 from typing import Any, Dict, Optional
 
 from fastapi import HTTPException, Request
+from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 from starlette.datastructures import MutableHeaders
 from starlette.types import Message
@@ -40,6 +41,43 @@ class ValidationException(AurumAPIException):
         super().__init__(
             status_code=400,
             detail=detail,
+            request_id=request_id,
+            context=context,
+        )
+
+
+class BadRequestException(AurumAPIException):
+    """Generic 400 Bad Request exception for client input errors."""
+
+    def __init__(
+        self,
+        detail: str = "Bad request",
+        request_id: Optional[str] = None,
+        context: Optional[Dict[str, Any]] = None,
+    ):
+        super().__init__(
+            status_code=400,
+            detail=detail,
+            request_id=request_id,
+            context=context,
+        )
+
+
+class QueryParameterValidationException(BadRequestException):
+    """Exception raised for invalid query parameter values."""
+
+    def __init__(
+        self,
+        parameter: str,
+        message: str,
+        request_id: Optional[str] = None,
+        value: Any | None = None,
+    ):
+        context: Dict[str, Any] = {"parameter": parameter}
+        if value is not None:
+            context["value"] = value
+        super().__init__(
+            detail=message,
             request_id=request_id,
             context=context,
         )
@@ -121,6 +159,23 @@ class DataProcessingException(AurumAPIException):
         )
 
 
+class NotImplementedException(AurumAPIException):
+    """Exception raised when an endpoint is not implemented (501)."""
+
+    def __init__(
+        self,
+        detail: str = "Not implemented",
+        request_id: Optional[str] = None,
+        context: Optional[Dict[str, Any]] = None,
+    ):
+        super().__init__(
+            status_code=501,
+            detail=detail,
+            request_id=request_id,
+            context=context,
+        )
+
+
 class CurveNotFoundException(NotFoundException):
     """Exception raised when a curve cannot be found."""
 
@@ -130,7 +185,8 @@ class CurveNotFoundException(NotFoundException):
         request_id: Optional[str] = None,
     ):
         super().__init__(
-            detail=f"Curve '{curve_key}' not found",
+            resource_type="Curve",
+            resource_id=curve_key,
             request_id=request_id,
             context={"curve_key": curve_key},
         )
@@ -145,7 +201,8 @@ class ScenarioNotFoundException(NotFoundException):
         request_id: Optional[str] = None,
     ):
         super().__init__(
-            detail=f"Scenario '{scenario_id}' not found",
+            resource_type="Scenario",
+            resource_id=scenario_id,
             request_id=request_id,
             context={"scenario_id": scenario_id},
         )
@@ -282,9 +339,10 @@ async def create_rfc7807_error_response(
     This function is the async-compatible entry point for creating RFC7807
     Problem Detail responses. It should be used in exception handlers.
     """
-    from ..telemetry.context import get_request_id
+    from ..telemetry.context import get_request_id, get_correlation_id
     
     request_id = get_request_id()
+    correlation_id = get_correlation_id()
     instance = str(request.url)
     base_url = base_url.rstrip("/")
     
@@ -292,10 +350,14 @@ async def create_rfc7807_error_response(
     if isinstance(error, AurumAPIException):
         type_mapping = {
             "ValidationException": "validation-error",
+            "BadRequestException": "bad-request",
+            "QueryParameterValidationException": "invalid-parameter",
             "NotFoundException": "not-found", 
             "ForbiddenException": "forbidden",
             "ServiceUnavailableException": "service-unavailable",
-            "DataProcessingException": "data-processing-error"
+            "RateLimitExceededException": "too-many-requests",
+            "DataProcessingException": "data-processing-error",
+            "NotImplementedException": "not-implemented"
         }
         
         exc_name = error.__class__.__name__
@@ -314,6 +376,28 @@ async def create_rfc7807_error_response(
             request_id=request_id or error.request_id
         )
     
+    # Handle FastAPI Request validation errors
+    elif isinstance(error, RequestValidationError):
+        errors = []
+        for err in error.errors():
+            field = ".".join(str(loc) for loc in err.get("loc", []))
+            errors.append(ValidationErrorDetail(
+                field=field,
+                message=err.get("msg", "Validation error"),
+                value=err.get("input"),
+                code=err.get("type"),
+            ))
+
+        problem = ProblemDetail(
+            type=f"{base_url}/problems/validation-error",
+            title="Validation Error",
+            status=422,
+            detail="Request validation failed",
+            instance=instance,
+            request_id=request_id,
+            errors=errors,
+        )
+
     # Handle FastAPI HTTP exceptions
     elif isinstance(error, HTTPException):
         status_titles = {
@@ -352,10 +436,27 @@ async def create_rfc7807_error_response(
             request_id=request_id
         )
     
+    headers: Dict[str, str] = {"Content-Type": "application/problem+json"}
+    if request_id:
+        headers["X-Request-Id"] = request_id
+    if correlation_id:
+        headers["X-Correlation-Id"] = correlation_id
+
+    # Propagate Retry-After header when present in context of known exceptions
+    retry_after: Optional[int] = None
+    if isinstance(error, AurumAPIException):
+        # Our convention: retry_after may be in context
+        try:
+            retry_after = int(error.context.get("retry_after")) if error.context else None
+        except Exception:
+            retry_after = None
+    if problem.status in (429, 503, 504) and retry_after is not None:
+        headers["Retry-After"] = str(retry_after)
+
     return JSONResponse(
         status_code=problem.status,
         content=problem.model_dump(exclude_none=True),
-        headers={"Content-Type": "application/problem+json"}
+        headers=headers,
     )
 
 

@@ -40,8 +40,13 @@ from ..telemetry.context import get_request_id, get_tenant_id, log_structured
 from ..observability.telemetry_facade import get_telemetry_facade, MetricCategory
 from ..cache.consolidated_manager import get_unified_cache_manager
 from ..dao.trino_async_dao import TrinoAsyncDao
-from libs.storage.timescale import TimescaleSeriesRepo
-from libs.storage.timescale_ops import TimescalePerformanceOps
+# Optional Timescale dependencies; allow import without SQLAlchemy when unused
+try:  # pragma: no cover - optional local library
+    from libs.storage.timescale import TimescaleSeriesRepo  # type: ignore
+    from libs.storage.timescale_ops import TimescalePerformanceOps  # type: ignore
+except Exception:  # pragma: no cover - tolerate absence in test/import contexts
+    TimescaleSeriesRepo = None  # type: ignore[assignment]
+    TimescalePerformanceOps = None  # type: ignore[assignment]
 
 
 _CATALOG_NAME_PATTERN = re.compile(r"^[A-Za-z0-9_]+$")

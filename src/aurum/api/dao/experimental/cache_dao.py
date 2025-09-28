@@ -1,4 +1,7 @@
-"""DAO for cache data operations."""
+"""DAO for cache data operations.
+
+Moved under `aurum.api.dao.experimental`.
+"""
 
 from __future__ import annotations
 
@@ -258,4 +261,3 @@ class CacheDAO(BaseCacheDAO[CacheEntry, str]):
                 continue
 
         return warmed_count
-

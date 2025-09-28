@@ -13,6 +13,7 @@ from typing import Any, Dict, List, Optional, Sequence
 from .base_service import ServiceInterface
 from ..config import CacheConfig
 from ..cache.unified_cache_manager import get_unified_cache_manager
+from ..cache.enhanced_cache_manager import CacheNamespace
 from ..cache.utils import cache_get_sync, cache_set_sync
 
 LOGGER = logging.getLogger(__name__)
@@ -98,7 +99,6 @@ class AdminService(ServiceInterface):
         scenario_id: str,
     ) -> None:
         """Invalidate scenario outputs cache."""
-        client = _maybe_redis_client(cache_cfg)
         manager = get_unified_cache_manager()
         _publish_cache_invalidation_event(tenant_id, scenario_id)
         
@@ -112,6 +112,8 @@ class AdminService(ServiceInterface):
             except Exception:
                 LOGGER.debug("CacheManager version bump failed; attempting Redis path", exc_info=True)
         
+        # Deprecated Redis path retained for fallback only
+        client = _maybe_redis_client(cache_cfg)
         if client is not None:
             _bump_scenario_cache_version(client, cache_cfg.namespace, tenant_id)
             index_key = _scenario_cache_index_key(cache_cfg.namespace, tenant_id, scenario_id)
@@ -138,7 +140,7 @@ class AdminService(ServiceInterface):
         if manager is not None:
             try:
                 # Best-effort: use broad patterns to invalidate related keys
-                await manager.invalidate_pattern("eia-series")
+                await manager.invalidate_pattern(f"{CacheNamespace.EXTERNAL_DATA.value}:eia-series:*")
                 return {"eia-series": 0, "eia-series-dimensions": 0}
             except Exception:
                 LOGGER.debug("UnifiedCacheManager invalidate_pattern failed; attempting Redis path", exc_info=True)
@@ -190,7 +192,7 @@ class AdminService(ServiceInterface):
         if manager is not None:
             try:
                 # Using broad invalidation pattern for UnifiedCacheManager
-                asyncio.create_task(manager.invalidate_pattern("eia-series"))
+                asyncio.create_task(manager.invalidate_pattern(f"{CacheNamespace.EXTERNAL_DATA.value}:eia-series:*"))
                 return {"eia-series": 0, "eia-series-dimensions": 0}
             except Exception:
                 LOGGER.debug("UnifiedCacheManager invalidate_pattern failed; attempting Redis path", exc_info=True)
@@ -202,7 +204,7 @@ class AdminService(ServiceInterface):
         manager = get_unified_cache_manager()
         if manager is not None:
             try:
-                await manager.invalidate_pattern("dimensions")
+                await manager.invalidate_pattern(f"{CacheNamespace.METADATA.value}:dimensions:*")
                 return 0
             except Exception:
                 LOGGER.debug("UnifiedCacheManager invalidate_pattern failed; attempting Redis path", exc_info=True)
@@ -267,7 +269,7 @@ class AdminService(ServiceInterface):
             try:
                 counts = {}
                 for prefix in prefixes:
-                    await manager.invalidate_pattern(prefix)
+                    await manager.invalidate_pattern(f"{CacheNamespace.METADATA.value}:{prefix}:*")
                     counts[prefix] = 0  # CacheManager doesn't return counts
                 return counts
             except Exception:
@@ -311,7 +313,7 @@ class AdminService(ServiceInterface):
             try:
                 counts = {}
                 for prefix in prefixes:
-                    manager.invalidate_pattern(prefix)
+                    manager.invalidate_pattern(f"{CacheNamespace.METADATA.value}:{prefix}:*")
                     counts[prefix] = 0  # CacheManager doesn't return counts
                 return counts
             except Exception:

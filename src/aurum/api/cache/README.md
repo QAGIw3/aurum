@@ -34,6 +34,8 @@ health = await cache.get_health()
 
 ## Migration from Legacy Cache
 
+The unified entry point is `aurum.api.cache.consolidated_manager` (also re-exported as `aurum.api.cache.unified_cache_manager`). Prefer importing `get_unified_cache_manager` from either path.
+
 ### Old Way (Deprecated)
 ```python
 from aurum.api.cache import AsyncCache, CacheBackend
@@ -43,9 +45,12 @@ await cache.set("key", "value")
 
 ### New Way (Recommended)
 ```python
-from aurum.api.cache import get_unified_cache_manager, CacheNamespace, TTLPolicy
+from aurum.api.cache import get_unified_cache_manager
+from aurum.api.cache.enhanced_cache_manager import CacheNamespace
+
 cache = get_unified_cache_manager()
-await cache.set("key", "value", namespace=CacheNamespace.GENERAL, ttl_policy=TTLPolicy.MEDIUM)
+await cache.set("config:feature_flags", {"x": True}, CacheNamespace.SYSTEM_CONFIG, ttl_seconds=86400)
+value = await cache.get("config:feature_flags", CacheNamespace.SYSTEM_CONFIG)
 ```
 
 ## TTL Policies

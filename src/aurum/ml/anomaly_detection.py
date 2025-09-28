@@ -79,11 +79,23 @@ class AdaptiveAnomalyDetector:
         buffer_arr = np.array(self._buffer, dtype=float)
         mean = float(np.mean(buffer_arr))
         std = float(np.std(buffer_arr, ddof=1)) if len(buffer_arr) > 1 else 0.0
-        z_score = float((value - mean) / std) if std > 0 else 0.0
+        if std <= 1e-12:
+            if value == mean:
+                z_score = 0.0
+            else:
+                z_score = float('inf') if value > mean else float('-inf')
+        else:
+            z_score = float((value - mean) / std)
 
         median = float(np.median(buffer_arr))
         mad = float(np.median(np.abs(buffer_arr - median)))
-        mad_score = 0.0 if mad == 0 else 0.6745 * (value - median) / mad
+        if mad <= 1e-12:
+            if value == median:
+                mad_score = 0.0
+            else:
+                mad_score = float('inf') if value > median else float('-inf')
+        else:
+            mad_score = 0.6745 * (value - median) / mad
 
         triggered = abs(z_score) >= self.z_threshold or abs(mad_score) >= self.mad_threshold
         current_index = index_position if index_position is not None else self._count

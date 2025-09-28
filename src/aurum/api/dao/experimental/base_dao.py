@@ -9,7 +9,7 @@ from datetime import datetime
 
 from pydantic import BaseModel
 
-from ..telemetry.context import log_structured
+from ...telemetry.context import log_structured
 
 logger = logging.getLogger(__name__)
 

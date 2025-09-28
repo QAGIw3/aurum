@@ -27,7 +27,7 @@ from pydantic import BaseModel, Field
 from ..telemetry.context import get_request_id, get_tenant_id, log_structured
 from ..observability.telemetry_facade import get_telemetry_facade, MetricCategory
 from ..cache.consolidated_manager import get_unified_cache_manager
-from ..daos.base_dao import TrinoDAO
+from ..dao.experimental import TrinoDAO
 
 
 class PolicyCategory(str, Enum):

@@ -40,7 +40,8 @@ def log_api_operation(
     if duration_ms is not None:
         log_context["duration_ms"] = duration_ms
 
-    log_structured(level, f"api_{operation}_{status}", **log_context)
+    # Standardized event naming and fields
+    log_structured(level, "api_operation", **log_context)
 
 
 def log_performance_metric(
@@ -150,10 +151,11 @@ def log_api_request(
         duration_ms: Request duration in milliseconds
         **context: Additional context fields
     """
+    # Standardized field names
     log_context = {
-        "http_method": method,
-        "http_endpoint": endpoint,
-        "http_status_code": status_code,
+        "method": method,
+        "endpoint": endpoint,
+        "status_code": status_code,
         **context
     }
 
@@ -161,7 +163,7 @@ def log_api_request(
         log_context["duration_ms"] = duration_ms
 
     level = "error" if status_code >= 500 else "warning" if status_code >= 400 else "info"
-    log_structured(level, f"http_{method.lower()}", **log_context)
+    log_structured(level, "http_request_completed", **log_context)
 
 
 __all__ = [

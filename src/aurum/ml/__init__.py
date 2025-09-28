@@ -40,7 +40,7 @@ from .evaluation import (
 )
 from .registry import ModelMetadata, ModelRegistry
 from .retraining import RetrainOutcome, retrain_best_forecaster
-from .ab_testing import ABTestResult, run_ab_test
+from .ab_testing import ABTestResult, ABTestingService, run_ab_test
 
 __all__ = [
     "FeaturePipeline",
@@ -81,6 +81,7 @@ __all__ = [
     "RetrainOutcome",
     "retrain_best_forecaster",
     "ABTestResult",
+    "ABTestingService",
     "run_ab_test",
 ]
 

@@ -1,0 +1,56 @@
+"""Tenant orchestration primitives for Aurum's multi-tenant control plane."""
+
+from .tenant_manager import (
+    TenantManager,
+    TenantStore,
+    InMemoryTenantStore,
+    TenantRecord,
+    TenantConfiguration,
+    TenantLifecycleState,
+    TenantQuota,
+    TenantUsageSnapshot,
+    TenantBillingAdapter,
+    TenantAnalyticsAdapter,
+    TenantLifecycleHooks,
+    TenantProvisioningResult,
+    TenantProvisioningError,
+    TenantQuotaExceeded,
+)
+from .isolation import (
+    TenantIsolationController,
+    TenantIsolationStrategy,
+    DataIsolationStrategy,
+    ComputeIsolationStrategy,
+    RowLevelSecurityIsolation,
+    SchemaPerTenantIsolation,
+    WorkloadPoolIsolation,
+    IsolationFailure,
+)
+from .runtime import set_tenant_manager, get_tenant_manager
+
+__all__ = [
+    "TenantManager",
+    "TenantStore",
+    "InMemoryTenantStore",
+    "TenantRecord",
+    "TenantConfiguration",
+    "TenantLifecycleState",
+    "TenantQuota",
+    "TenantUsageSnapshot",
+    "TenantBillingAdapter",
+    "TenantAnalyticsAdapter",
+    "TenantLifecycleHooks",
+    "TenantProvisioningResult",
+    "TenantProvisioningError",
+    "TenantQuotaExceeded",
+    "TenantIsolationController",
+    "TenantIsolationStrategy",
+    "DataIsolationStrategy",
+    "ComputeIsolationStrategy",
+    "RowLevelSecurityIsolation",
+    "SchemaPerTenantIsolation",
+    "WorkloadPoolIsolation",
+    "IsolationFailure",
+    "set_tenant_manager",
+    "get_tenant_manager",
+]

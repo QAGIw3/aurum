@@ -10,21 +10,15 @@ if _os.getenv("AURUM_API_LIGHT_INIT", "0") == "1":
     __all__: list[str] = []
 else:
     _EXPORTS: dict[str, tuple[str, str | None]] = {
-        # Application factory: export the module for testing convenience
+        # Application factories: single, plus env-specific convenience
         "create_app": ("aurum.api.app", "create_app"),
+        "create_dev_app": ("aurum.api.app", "create_dev_app"),
+        "create_prod_app": ("aurum.api.app", "create_prod_app"),
+        "create_test_app": ("aurum.api.app", "create_test_app"),
+        # Back-compat: export module for test convenience
         "app": ("aurum.api.app", None),
-        # Routers
+        # Routers (kept minimal; prefer router registry within factory)
         "health_router": ("aurum.api.health", "router"),
-        "curves_router": ("aurum.api.v1.curves", "router"),
-        "metadata_router": ("aurum.api.metadata", "router"),
-        "scenarios_router": ("aurum.api.scenarios.scenarios", "router"),
-        "cache_analytics_router": ("aurum.api.cache.cache_analytics", "router"),
-        "version_management_router": ("aurum.api.version_management", "router"),
-        "rate_limit_management_router": ("aurum.api.rate_limiting.rate_limit_management", "router"),
-        "streaming_endpoints_router": ("aurum.api.scenarios.streaming_endpoints", "router"),
-        "streaming_management_router": ("aurum.api.scenarios.streaming_management", "router"),
-        "documentation_manager_router": ("aurum.api.documentation_manager", "router"),
-        "feature_management_router": ("aurum.api.features.feature_management", "router"),
         # Exceptions
         "AurumAPIException": ("aurum.api.exceptions", "AurumAPIException"),
         "ValidationException": ("aurum.api.exceptions", "ValidationException"),
@@ -39,10 +33,9 @@ else:
         "AsyncCache": ("aurum.api.cache.cache", "AsyncCache"),
         "CacheManager": ("aurum.api.cache.cache", "CacheManager"),
         "CacheBackend": ("aurum.api.cache.cache", "CacheBackend"),
-        "get_advanced_cache_manager": ("aurum.api.cache.advanced_cache", "get_advanced_cache_manager"),
+        # Prefer unified cache manager; warming service remains available for now
+        "get_unified_cache_manager": ("aurum.api.cache.consolidated_manager", "get_unified_cache_manager"),
         "get_cache_warming_service": ("aurum.api.cache.advanced_cache", "get_cache_warming_service"),
-        "AdvancedCacheManager": ("aurum.api.cache.advanced_cache", "AdvancedCacheManager"),
-        "CacheWarmingService": ("aurum.api.cache.advanced_cache", "CacheWarmingService"),
         # Observability helpers
         "get_metrics_collector": ("aurum.observability.metrics", "get_metrics_collector"),
         "get_trace_collector": ("aurum.observability.tracing", "get_trace_collector"),

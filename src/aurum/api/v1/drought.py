@@ -34,12 +34,13 @@ from ...telemetry.context import get_request_id
 # Reuse helpers and metrics from the monolith to avoid duplication
 from ..routes import (  # type: ignore
     _drought_catalog,
-    _tile_cache,
     _record_tile_cache_metric,
     _observe_tile_fetch,
     _TILE_CACHE_CFG,
     _parse_region_param,
 )
+from ..cache.enhanced_cache_manager import CacheNamespace
+from ..cache.consolidated_manager import get_unified_cache_manager
 
 router = APIRouter()
 
@@ -65,20 +66,20 @@ def proxy_drought_tile(
     except Exception:
         raise HTTPException(status_code=404, detail="tile_not_available")
 
-    cache_client = _tile_cache()
-    cache_key = f"drought:tile:{dataset.lower()}:{index.upper()}:{timescale.upper()}:{slug}:{z}:{x}:{y}"
-    if cache_client is not None:
+    manager = get_unified_cache_manager()
+    cache_key = f"external:drought:tile:{dataset.lower()}:{index.upper()}:{timescale.upper()}:{slug}:{z}:{x}:{y}"
+    cached = None
+    if manager is not None:
         try:
-            cached = cache_client.get(cache_key)
+            cached = await manager.get(cache_key, CacheNamespace.EXTERNAL_DATA)
         except Exception:
             cached = None
             _record_tile_cache_metric("tile", "error")
-        if cached:
-            _record_tile_cache_metric("tile", "hit")
-            return Response(content=cached, media_type="image/png")
-        _record_tile_cache_metric("tile", "miss")
+    if cached:
+        _record_tile_cache_metric("tile", "hit")
+        return Response(content=cached, media_type="image/png")
     else:
-        _record_tile_cache_metric("tile", "bypass")
+        _record_tile_cache_metric("tile", "miss")
 
     start_fetch = time.perf_counter()
     try:
@@ -92,9 +93,9 @@ def proxy_drought_tile(
     _observe_tile_fetch("tile", "success", duration)
 
     content = resp.content
-    if cache_client is not None and _TILE_CACHE_CFG is not None:
+    if manager is not None and _TILE_CACHE_CFG is not None:
         try:
-            cache_client.setex(cache_key, _TILE_CACHE_CFG.ttl_seconds, content)
+            await manager.set(cache_key, content, CacheNamespace.EXTERNAL_DATA, _TILE_CACHE_CFG.ttl_seconds)
         except Exception:
             pass
     media_type = resp.headers.get("Content-Type", "image/png")
@@ -119,11 +120,11 @@ def get_drought_tile_metadata(
     except Exception:
         raise HTTPException(status_code=404, detail="info_not_available")
 
-    cache_client = _tile_cache()
-    cache_key = f"drought:info:{dataset.lower()}:{index.upper()}:{timescale.upper()}:{slug}"
-    if cache_client is not None:
+    manager = get_unified_cache_manager()
+    cache_key = f"external:drought:info:{dataset.lower()}:{index.upper()}:{timescale.upper()}:{slug}"
+    if manager is not None:
         try:
-            cached = cache_client.get(cache_key)
+            cached = await manager.get(cache_key, CacheNamespace.EXTERNAL_DATA)
         except Exception:
             cached = None
             _record_tile_cache_metric("info", "error")
@@ -137,8 +138,6 @@ def get_drought_tile_metadata(
                 pass
         else:
             _record_tile_cache_metric("info", "miss")
-    else:
-        _record_tile_cache_metric("info", "bypass")
 
     start_fetch = time.perf_counter()
     try:
@@ -152,9 +151,9 @@ def get_drought_tile_metadata(
     _observe_tile_fetch("info", "success", duration)
 
     payload = resp.json()
-    if cache_client is not None and _TILE_CACHE_CFG is not None:
+    if manager is not None and _TILE_CACHE_CFG is not None:
         try:
-            cache_client.setex(cache_key, _TILE_CACHE_CFG.ttl_seconds, resp.text)
+            await manager.set(cache_key, resp.text, CacheNamespace.EXTERNAL_DATA, _TILE_CACHE_CFG.ttl_seconds)
         except Exception:
             pass
 

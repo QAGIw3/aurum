@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from calendar import monthrange
+import asyncio
 from datetime import date, datetime
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -156,6 +157,23 @@ class PpaService:
     def __init__(self, dao: Optional[PpaDao] = None) -> None:
         self._dao = dao or PpaDao()
 
+
+def _run_sync(coro):
+    """Run an async coroutine and return its result from sync context.
+
+    Uses a new event loop if one is already running to avoid RuntimeError.
+    """
+    try:
+        asyncio.get_running_loop()
+    except RuntimeError:
+        return asyncio.run(coro)
+    else:
+        loop = asyncio.new_event_loop()
+        try:
+            return loop.run_until_complete(coro)
+        finally:
+            loop.close()
+
     # ------------------------------------------------------------------
     async def list_contracts(
         self,
@@ -237,7 +255,7 @@ class PpaService:
             f"LIMIT {int(limit)} OFFSET {int(offset)}"
         )
 
-        rows, elapsed = await self._dao.execute(sql, trino_cfg=trino_cfg)
+        rows, elapsed = _run_sync(self._dao.execute(sql, trino_cfg=trino_cfg))
         for record in rows:
             for numeric_key in ("value", "cashflow", "npv", "irr"):
                 if record.get(numeric_key) is not None:
@@ -276,7 +294,7 @@ class PpaService:
             f"{where} ORDER BY contract_month NULLS LAST, tenor_label"
         )
 
-        rows, elapsed = await self._dao.execute(sql, trino_cfg=trino_cfg)
+        rows, elapsed = _run_sync(self._dao.execute(sql, trino_cfg=trino_cfg))
         if not rows:
             return [], elapsed
 

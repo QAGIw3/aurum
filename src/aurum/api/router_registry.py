@@ -244,6 +244,7 @@ def get_v2_router_specs(_settings: AurumSettings) -> list[RouterSpec]:
         "aurum.api.v2.bidding",
         "aurum.api.v2.carbon_rec",
         "aurum.api.v2.risk_engine",
+        "aurum.api.v2.risk_management",
         "aurum.api.v2.stress_testing",
         "aurum.api.v2.regulatory_tracker",
         "aurum.api.v2.plugin_system",

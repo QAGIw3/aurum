@@ -652,6 +652,11 @@ class UnifiedCacheManager:
 # Global instance
 _unified_cache_manager: Optional[UnifiedCacheManager] = None
 
+# Backwards-compatibility alias for legacy name
+class LegacyUnifiedCacheManager(UnifiedCacheManager):
+    """Alias for older imports expecting LegacyUnifiedCacheManager."""
+    pass
+
 
 def get_unified_cache_manager(
     config: Optional[CacheConfig] = None,
@@ -683,6 +688,16 @@ def get_unified_cache_manager(
     return _unified_cache_manager
 
 
+def set_unified_cache_manager(instance: Optional[UnifiedCacheManager]) -> None:
+    """Set or clear the global unified cache manager instance.
+
+    This provides a simple testing hook to inject a specific manager
+    or reset the global instance state.
+    """
+    global _unified_cache_manager
+    _unified_cache_manager = instance
+
+
 # Backward compatibility functions
 async def get_cache(key: str, namespace: CacheNamespace = CacheNamespace.GENERAL) -> Any:
     """Backward compatibility function."""
@@ -705,4 +720,3 @@ async def invalidate_cache_pattern(pattern: str, namespace: CacheNamespace = Cac
     """Backward compatibility function."""
     manager = get_unified_cache_manager()
     return await manager.invalidate_pattern(pattern, namespace)
-

@@ -1,5 +1,7 @@
 """Test utilities for DAO layer with async fakes.
 
+Relocated to `aurum.api.dao.experimental.test`.
+
 Provides fake implementations of DAOs for testing purposes that:
 - Support async operations
 - Maintain realistic behavior and timing
@@ -16,4 +18,3 @@ __all__ = [
     "FakeScenariosDAO",
     "FakeCacheDAO",
 ]
-

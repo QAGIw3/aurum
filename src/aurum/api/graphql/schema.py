@@ -10,11 +10,12 @@ REST API.
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 from dataclasses import asdict
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from enum import Enum
-from typing import Any, AsyncGenerator, Dict, List, Optional, Tuple
+from typing import Any, AsyncGenerator, Dict, Iterable, List, Optional, Tuple
 
 import strawberry
 from strawberry.types import Info
@@ -47,6 +48,27 @@ from ..v2.forecasting import (
 )
 from ..v2.pagination import build_next_cursor, build_prev_cursor, resolve_pagination
 from ...observability.telemetry_facade import MetricCategory, get_telemetry_facade
+
+try:  # Federation support is optional in some environments
+    from strawberry.federation import type as federation_type
+    from strawberry.federation.schema import Schema as FederationSchema
+except Exception:  # pragma: no cover - fallback when federation extras missing
+    federation_type = strawberry.type  # type: ignore
+    FederationSchema = strawberry.Schema  # type: ignore
+
+from .resolvers import (
+    EnergyMarketKey,
+    build_client_manifest,
+    build_graphql_documentation,
+    create_compliance_schedule as create_compliance_schedule_resolver,
+    delete_compliance_schedule as delete_compliance_schedule_resolver,
+    get_gateway,
+    resolve_compliance_schedules,
+    resolve_energy_market_series,
+    resolve_reports_for_portfolio,
+    run_compliance_report as run_compliance_report_resolver,
+    enforce_complexity_limits,
+)
 
 
 LOGGER = logging.getLogger(__name__)
@@ -188,6 +210,139 @@ class ValidationResultType:
 
 
 # ---------------------------------------------------------------------------
+# Energy market & compliance GraphQL types
+# ---------------------------------------------------------------------------
+@strawberry.enum
+class EnergyGranularity(Enum):
+    """Supported aggregation windows for ISO market data."""
+
+    LAST_24H = "LAST_24H"
+    HOURLY = "HOURLY"
+    DAILY = "DAILY"
+    NEGATIVE = "NEGATIVE"
+
+
+@strawberry.type
+class EnergyMarketPointType:
+    """Single ISO LMP observation."""
+
+    iso_code: Optional[str]
+    market: Optional[str]
+    interval_start: datetime
+    interval_end: Optional[datetime]
+    interval_minutes: Optional[int]
+    location_id: Optional[str]
+    location_name: Optional[str]
+    location_type: Optional[str]
+    price_total: Optional[float]
+    price_energy: Optional[float]
+    price_congestion: Optional[float]
+    price_loss: Optional[float]
+    currency: Optional[str]
+    uom: Optional[str]
+    settlement_point: Optional[str]
+    metadata: strawberry.scalars.JSON
+
+
+@strawberry.type
+class EnergyMarketFilterDescriptor:
+    """Echo of the filter used to build the market series."""
+
+    iso_code: Optional[str]
+    market: Optional[str]
+    location_id: Optional[str]
+    granularity: EnergyGranularity
+    limit: int
+    start: Optional[str] = None
+    end: Optional[str] = None
+
+
+@strawberry.type
+class EnergyMarketSeriesType:
+    """ISO market data series with query metadata."""
+
+    filter: EnergyMarketFilterDescriptor
+    query_time_ms: int
+    points: List[EnergyMarketPointType]
+
+
+@federation_type(keys=["iso_code", "location_id"])
+class EnergyLocationType:
+    """Federated resource describing an ISO node that other services can extend."""
+
+    iso_code: str
+    location_id: str
+    market: Optional[str]
+    location_name: Optional[str]
+    location_type: Optional[str]
+    metadata: strawberry.scalars.JSON
+
+
+@strawberry.type
+class ComplianceScheduleGraphType:
+    """Compliance report schedule descriptor."""
+
+    schedule_id: str
+    portfolio_id: Optional[str]
+    schedule_time_utc: str
+    enabled: bool
+    retention_days: int
+    max_reports: Optional[int]
+    last_run: Optional[datetime]
+    next_run: Optional[datetime]
+    report_config: strawberry.scalars.JSON
+
+
+@strawberry.type
+class ComplianceReportArtifactType:
+    """Materialised compliance report metadata."""
+
+    portfolio_id: Optional[str]
+    filename: str
+    path: str
+    size: Optional[int]
+    modified: Optional[datetime]
+    metadata: strawberry.scalars.JSON
+
+
+@strawberry.type
+class ComplianceReportRunResultType:
+    """Result of triggering an ad-hoc compliance report run."""
+
+    schedule_id: str
+    artifact_path: Optional[str]
+
+
+@strawberry.type
+class FederatedServiceResultType:
+    """Invocation result when delegating to federated services."""
+
+    service: str
+    data: Optional[strawberry.scalars.JSON]
+    errors: Optional[strawberry.scalars.JSON]
+
+
+@strawberry.type
+class GraphQLDocumentationType:
+    """GraphQL playground and schema documentation metadata."""
+
+    playground_url: str
+    schema_sdl: Optional[str]
+    operations: List[strawberry.scalars.JSON]
+    federated_services: strawberry.scalars.JSON
+
+
+@strawberry.type
+class ClientManifestType:
+    """Client SDK manifest with generated operations and headers."""
+
+    endpoint: str
+    generated_at: int
+    headers: strawberry.scalars.JSON
+    operations: List[strawberry.scalars.JSON]
+
+
+# ---------------------------------------------------------------------------
 # Input types
 # ---------------------------------------------------------------------------
 @strawberry.input
@@ -288,6 +443,30 @@ class BatchOperationInput:
     operation_type: str
     scenario_ids: List[str]
     parameters: Optional[strawberry.scalars.JSON] = None
+
+
+@strawberry.input
+class EnergyMarketFilterInput:
+    """Input filter for ISO market data queries."""
+
+    iso_code: Optional[str] = None
+    market: Optional[str] = None
+    location_id: Optional[str] = None
+    granularity: EnergyGranularity = EnergyGranularity.LAST_24H
+    limit: int = strawberry.field(default=96, description="Maximum number of points to return")
+    start: Optional[datetime] = strawberry.field(default=None, description="Start timestamp for aggregated queries")
+    end: Optional[datetime] = strawberry.field(default=None, description="End timestamp for aggregated queries")
+
+
+@strawberry.input
+class ComplianceScheduleInput:
+    """Input payload for creating compliance schedules."""
+
+    portfolio_id: Optional[str] = None
+    schedule_time_utc: str = "00:00"
+    retention_days: int = 30
+    max_reports: Optional[int] = 100
+    report_config: strawberry.scalars.JSON
 
 
 # ---------------------------------------------------------------------------
@@ -498,6 +677,133 @@ def _resolve_tenant(info: Info, explicit_tenant: Optional[str]) -> str:
         return resolved
 
     raise ValueError("Tenant identifier is required for this operation")
+
+
+def _energy_point_from_row(row: Dict[str, Any]) -> EnergyMarketPointType:
+    return EnergyMarketPointType(
+        iso_code=row.get("iso_code"),
+        market=row.get("market"),
+        interval_start=_ensure_datetime(row.get("interval_start")) or datetime.utcnow(),
+        interval_end=_ensure_datetime(row.get("interval_end")),
+        interval_minutes=row.get("interval_minutes"),
+        location_id=row.get("location_id"),
+        location_name=row.get("location_name"),
+        location_type=row.get("location_type"),
+        price_total=row.get("price_total"),
+        price_energy=row.get("price_energy"),
+        price_congestion=row.get("price_congestion"),
+        price_loss=row.get("price_loss"),
+        currency=row.get("currency"),
+        uom=row.get("uom"),
+        settlement_point=row.get("settlement_point"),
+        metadata=_ensure_metadata(row.get("metadata")),
+    )
+
+
+def _energy_series_from_raw(raw: Dict[str, Any]) -> EnergyMarketSeriesType:
+    filter_payload = raw.get("filter", {})
+    granularity = _safe_granularity(filter_payload.get("granularity"))
+    descriptor = EnergyMarketFilterDescriptor(
+        iso_code=filter_payload.get("iso_code"),
+        market=filter_payload.get("market"),
+        location_id=filter_payload.get("location_id"),
+        granularity=granularity,
+        limit=int(filter_payload.get("limit", 0) or 0),
+        start=_stringify(filter_payload.get("start")),
+        end=_stringify(filter_payload.get("end")),
+    )
+
+    points = [_energy_point_from_row(item) for item in raw.get("points", [])]
+    return EnergyMarketSeriesType(
+        filter=descriptor,
+        query_time_ms=int(raw.get("query_time_ms", 0) or 0),
+        points=points,
+    )
+
+
+def _schedule_from_raw(raw: Dict[str, Any]) -> ComplianceScheduleGraphType:
+    return ComplianceScheduleGraphType(
+        schedule_id=str(raw.get("schedule_id")),
+        portfolio_id=raw.get("portfolio_id"),
+        schedule_time_utc=str(raw.get("schedule_time_utc", "00:00")),
+        enabled=bool(raw.get("enabled", True)),
+        retention_days=int(raw.get("retention_days", 30) or 30),
+        max_reports=raw.get("max_reports"),
+        last_run=_ensure_datetime(raw.get("last_run")),
+        next_run=_ensure_datetime(raw.get("next_run")),
+        report_config=_ensure_metadata(raw.get("report_config")),
+    )
+
+
+def _report_artifact_from_raw(raw: Dict[str, Any]) -> ComplianceReportArtifactType:
+    return ComplianceReportArtifactType(
+        portfolio_id=raw.get("portfolio_id"),
+        filename=str(raw.get("filename")),
+        path=str(raw.get("path")),
+        size=int(raw.get("size")) if raw.get("size") is not None else None,
+        modified=_ensure_datetime(raw.get("modified")),
+        metadata=_ensure_metadata(raw.get("metadata")),
+    )
+
+
+def _ensure_datetime(value: Any) -> Optional[datetime]:
+    if isinstance(value, datetime):
+        return value
+    if value is None:
+        return None
+    if isinstance(value, (int, float)):
+        return datetime.fromtimestamp(float(value), tz=timezone.utc)
+    if isinstance(value, str):
+        cleaned = value.strip()
+        if cleaned.endswith("Z"):
+            cleaned = cleaned[:-1] + "+00:00"
+        try:
+            return datetime.fromisoformat(cleaned)
+        except ValueError:
+            try:
+                return datetime.fromtimestamp(float(cleaned), tz=timezone.utc)
+            except Exception:
+                return None
+    return None
+
+
+def _ensure_metadata(value: Any) -> Dict[str, Any]:
+    if value is None:
+        return {}
+    if hasattr(value, "model_dump"):
+        try:
+            return value.model_dump()  # type: ignore[attr-defined]
+        except Exception:
+            return {}
+    if isinstance(value, dict):
+        return value
+    if isinstance(value, str):
+        try:
+            parsed = json.loads(value)
+            return parsed if isinstance(parsed, dict) else {"raw": value}
+        except Exception:
+            return {"raw": value}
+    return {"raw": str(value)}
+
+
+def _safe_granularity(value: Any) -> EnergyGranularity:
+    if isinstance(value, EnergyGranularity):
+        return value
+    label = str(value or EnergyGranularity.LAST_24H.value)
+    try:
+        return EnergyGranularity(label)
+    except ValueError:
+        return EnergyGranularity.LAST_24H
+
+
+def _stringify(value: Any) -> Optional[str]:
+    if value is None:
+        return None
+    if isinstance(value, str):
+        return value
+    if isinstance(value, datetime):
+        return value.isoformat()
+    return str(value)
 
 
 # ---------------------------------------------------------------------------
@@ -776,6 +1082,132 @@ class Query:
             _forecast_response_to_graphql(forecast)
             for forecast in history_response
         ]
+
+    @strawberry.field
+    async def energy_markets(
+        self,
+        info: Info,
+        filters: Optional[List[EnergyMarketFilterInput]] = None,
+    ) -> List[EnergyMarketSeriesType]:
+        """Expose ISO market data series with batching to avoid N+1 patterns."""
+
+        tenant = _resolve_tenant(info, None)
+        await log_structured(
+            "graphql_energy_market_query",
+            tenant_id=tenant,
+            filter_count=len(filters or []),
+        )
+
+        effective_filters = filters or []
+        if not effective_filters:
+            raise ValueError("At least one filter must be provided for energyMarkets")
+
+        keys: List[EnergyMarketKey] = []
+        for item in effective_filters:
+            limit = max(1, min(item.limit, 500))
+            keys.append(
+                EnergyMarketKey(
+                    iso_code=item.iso_code,
+                    market=item.market,
+                    location_id=item.location_id,
+                    granularity=item.granularity.value,
+                    limit=limit,
+                    start=_stringify(item.start),
+                    end=_stringify(item.end),
+                )
+            )
+
+        raw_series = await resolve_energy_market_series(info, keys)
+        return [_energy_series_from_raw(payload) for payload in raw_series]
+
+    @strawberry.field
+    async def compliance_schedules(
+        self,
+        info: Info,
+        portfolio_id: Optional[str] = None,
+    ) -> List[ComplianceScheduleGraphType]:
+        """List configured risk compliance schedules."""
+
+        _resolve_tenant(info, None)
+        raw = await resolve_compliance_schedules(info)
+        if portfolio_id:
+            raw = [item for item in raw if item.get("portfolio_id") == portfolio_id]
+        return [_schedule_from_raw(item) for item in raw]
+
+    @strawberry.field
+    async def compliance_reports(
+        self,
+        info: Info,
+        portfolio_id: str,
+        limit: int = 20,
+    ) -> List[ComplianceReportArtifactType]:
+        """Fetch persisted compliance report artifacts for a portfolio."""
+
+        _resolve_tenant(info, None)
+        fetch_limit = max(1, min(limit, 200))
+        raw = await resolve_reports_for_portfolio(info, portfolio_id, fetch_limit)
+        return [_report_artifact_from_raw(item) for item in raw]
+
+    @strawberry.field
+    async def federated_service(
+        self,
+        info: Info,
+        service: str,
+        query: str,
+        variables: Optional[strawberry.scalars.JSON] = None,
+    ) -> FederatedServiceResultType:
+        """Delegate a GraphQL operation to a federated microservice."""
+
+        _resolve_tenant(info, None)
+        await enforce_complexity_limits(info, base_cost=5)
+
+        gateway = get_gateway(info)
+        raw_variables: Optional[Dict[str, Any]]
+        if isinstance(variables, dict):
+            raw_variables = variables
+        elif variables is None:
+            raw_variables = None
+        elif hasattr(variables, "items"):
+            raw_variables = dict(variables)  # type: ignore[arg-type]
+        else:
+            raw_variables = None
+
+        result = await gateway.execute(service, query, raw_variables)
+        return FederatedServiceResultType(
+            service=service,
+            data=result.get("data"),
+            errors=result.get("errors"),
+        )
+
+    @strawberry.field
+    async def graphql_documentation(self, info: Info) -> GraphQLDocumentationType:
+        """Return GraphQL playground metadata and federated service registry."""
+
+        _resolve_tenant(info, None)
+        await enforce_complexity_limits(info, base_cost=1)
+        payload = build_graphql_documentation(info)
+        operations = [op for op in payload.get("operations", [])]
+        return GraphQLDocumentationType(
+            playground_url=str(payload.get("playground_url", "/graphql")),
+            schema_sdl=payload.get("schema_sdl"),
+            operations=operations,
+            federated_services=payload.get("federated_services", {}),
+        )
+
+    @strawberry.field
+    async def client_manifest(self, info: Info) -> ClientManifestType:
+        """Return a manifest that downstream teams can use for SDK generation."""
+
+        _resolve_tenant(info, None)
+        await enforce_complexity_limits(info, base_cost=1)
+        payload = build_client_manifest(info)
+        ops = [op for op in payload.get("operations", [])]
+        return ClientManifestType(
+            endpoint=str(payload.get("endpoint", "/graphql")),
+            generated_at=int(payload.get("generated_at", 0)),
+            headers=payload.get("headers", {}),
+            operations=ops,
+        )
 
 
 # ---------------------------------------------------------------------------

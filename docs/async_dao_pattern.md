@@ -2,6 +2,8 @@
 
 This document describes the async Data Access Object (DAO) pattern implementation for Aurum's database operations with automatic connection pooling.
 
+Note: The legacy package `aurum.api.daos` is deprecated. New generic DAO abstractions (e.g., `BaseDAO`, `TrinoDAO`) now live under `aurum.api.dao.experimental`. Existing async DAOs (e.g., `BaseAsyncDao`, `TrinoAsyncDao`, `TimescaleAsyncDao`, `ClickHouseAsyncDao`, `EiaAsyncDao`) continue to be imported from `aurum.api.dao`.
+
 ## Overview
 
 The async DAO pattern provides a clean separation between business logic and data access logic while leveraging asynchronous operations and connection pooling for optimal performance.

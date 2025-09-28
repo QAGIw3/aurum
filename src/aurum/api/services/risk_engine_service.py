@@ -29,7 +29,7 @@ from pydantic import BaseModel, Field
 from ..telemetry.context import get_request_id, get_tenant_id, log_structured
 from ..observability.telemetry_facade import get_telemetry_facade, MetricCategory
 from ..cache.consolidated_manager import get_unified_cache_manager
-from ..daos.base_dao import TrinoDAO
+from ..dao.experimental import TrinoDAO
 from ...scenarios.monte_carlo import MonteCarloConfig, SimulationResult, BaseMonteCarloModel
 
 
@@ -232,6 +232,16 @@ class RiskEngineService:
         """Add position to portfolio for risk analysis."""
         self._portfolio_positions[portfolio_id].append(position)
         self.telemetry.info("Portfolio position added", portfolio_id=portfolio_id, asset_id=position.asset_id)
+
+    async def get_portfolio_positions(self, portfolio_id: str) -> List[PortfolioPosition]:
+        """Return current positions for a portfolio.
+
+        Exposes a safe accessor for positions managed by the risk engine. The
+        returned list is a shallow copy to prevent external mutation of
+        internal state.
+        """
+        positions = self._portfolio_positions.get(portfolio_id, [])
+        return list(positions)
 
     async def set_risk_distribution(self, asset_type: str, config: RiskDistributionConfig) -> None:
         """Set risk distribution for asset type."""
@@ -1089,9 +1099,15 @@ class RiskEngineService:
         }
 
 
+_risk_engine_service: Optional[RiskEngineService] = None
+
+
 def get_risk_engine_service() -> RiskEngineService:
-    """Get the global risk engine service instance."""
-    return RiskEngineService()
+    """Get the global risk engine service instance (singleton)."""
+    global _risk_engine_service
+    if _risk_engine_service is None:
+        _risk_engine_service = RiskEngineService()
+    return _risk_engine_service
 
 
 async def calculate_portfolio_risk_metrics(

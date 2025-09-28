@@ -31,9 +31,9 @@ from .pagination import (
 )
 from ...telemetry.context import get_request_id
 from ..models import EiaSeriesDimensionsData, EiaSeriesDimensionsResponse, Meta
-from ..deps import get_settings, get_cache_manager
+from ..deps import get_settings, get_cache_manager, get_unified_cache_manager_dep
 from aurum.core import AurumSettings
-from ..cache.consolidated_manager import get_unified_cache_manager
+from ..cache.consolidated_manager import get_unified_cache_manager  # legacy import (avoid breaking), use dep wrapper in Depends
 from ..cache.enhanced_cache_manager import CacheNamespace
 
 router = APIRouter(prefix="/v2", tags=["eia"])
@@ -80,7 +80,7 @@ async def list_eia_datasets_v2(
     cursor: Optional[str] = Query(None, description="Cursor for pagination"),
     limit: int = Query(10, ge=1, le=100, description="Maximum number of items to return"),
     settings: AurumSettings = Depends(get_settings),
-    cache_manager = Depends(get_unified_cache_manager),
+    cache_manager = Depends(get_unified_cache_manager_dep),
 ) -> EiaDatasetsResponse:
     """List EIA datasets with enhanced pagination and error handling."""
     start_time = time.perf_counter()
@@ -186,7 +186,7 @@ async def get_eia_series_v2(
     cursor: Optional[str] = Query(None, description="Cursor for pagination"),
     limit: int = Query(10, ge=1, le=100, description="Maximum number of items to return"),
     settings: AurumSettings = Depends(get_settings),
-    cache_manager = Depends(get_unified_cache_manager),
+    cache_manager = Depends(get_unified_cache_manager_dep),
 ) -> EiaSeriesResponse:
     """Get EIA series data with enhanced pagination and error handling."""
     start_time = time.perf_counter()
@@ -304,7 +304,7 @@ async def get_eia_series_dimensions_v2(
     canonical_currency: Optional[str] = Query(None, description="Canonical currency filter"),
     source: Optional[str] = Query(None, description="Source filter"),
     settings: AurumSettings = Depends(get_settings),
-    cache_manager = Depends(get_unified_cache_manager),
+    cache_manager = Depends(get_unified_cache_manager_dep),
 ) -> EiaSeriesDimensionsResponse:
     """List distinct EIA series dimension values (v2)."""
     start_time = time.perf_counter()

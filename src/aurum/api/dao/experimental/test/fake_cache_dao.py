@@ -1,4 +1,7 @@
-"""Fake CacheDAO for testing."""
+"""Fake CacheDAO for testing.
+
+Relocated to `aurum.api.dao.experimental.test`.
+"""
 
 import asyncio
 from datetime import datetime, timedelta
@@ -135,4 +138,3 @@ class FakeCacheDAO(CacheDAO):
     def set_access_delay(self, delay_seconds: float) -> None:
         """Set delay for cache access operations."""
         self._access_delay = delay_seconds
-

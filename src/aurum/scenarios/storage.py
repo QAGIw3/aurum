@@ -34,6 +34,7 @@ from ..api.scenario_models import (
     ScenarioOutputPoint,
 )
 from ..telemetry.context import get_correlation_id, get_tenant_id, get_user_id, log_structured
+from ..tenancy.runtime import get_tenant_manager
 
 
 class ScenarioStore:
@@ -72,10 +73,15 @@ class ScenarioStore:
             raise RuntimeError("ScenarioStore not initialized")
 
         async with self.pool.acquire() as conn:
-            # Set tenant context for RLS policies
             tenant_id = get_tenant_id()
             if tenant_id:
-                await conn.execute("SET LOCAL app.current_tenant = $1", tenant_id)
+                manager = get_tenant_manager()
+                if manager is not None:
+                    session_settings = manager.isolation.session_settings(tenant_id)
+                    for setting, value in session_settings.items():
+                        await conn.execute(f"SET LOCAL {setting} = $1", value)
+                else:
+                    await conn.execute("SET LOCAL app.current_tenant = $1", tenant_id)
             yield conn
 
     # === SCENARIO OPERATIONS ===

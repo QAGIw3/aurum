@@ -319,7 +319,9 @@ addopts = [
     "--cov=aurum.api.database.trino_client",
     "--cov=aurum.api.rate_limiting.concurrency_middleware",
     "--cov=aurum.api.rate_limiting.sliding_window",
+    "--cov=aurum.ml",
     "--cov=aurum.observability",
+    "--cov=aurum.tenancy.runtime",
     "--cov-report=term-missing",
     "--cov-report=html:htmlcov",
     "--cov-report=xml",
@@ -341,6 +343,7 @@ asyncio_mode = "auto"
 source = [
     "src/aurum/api/database",
     "src/aurum/api/rate_limiting",
+    "src/aurum/ml",
 ]
 omit = [
     "*/tests/*",

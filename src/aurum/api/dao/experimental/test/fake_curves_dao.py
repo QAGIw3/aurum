@@ -7,7 +7,7 @@ from unittest.mock import AsyncMock
 from uuid import uuid4
 
 from ..curves_dao import CurvesDAO, CurveFilter
-from ...models import CurveResponse, CurvePoint
+from ....models import CurveResponse, CurvePoint
 
 
 class FakeCurvesDAO(CurvesDAO):
@@ -354,4 +354,3 @@ class FakeCurvesDAO(CurvesDAO):
             ))
 
         return strip_points
-

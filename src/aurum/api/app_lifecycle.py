@@ -85,6 +85,7 @@ def register_metrics_endpoint(app: FastAPI, settings: AurumSettings) -> None:
         except ValueError:  # pragma: no cover - defensive
             continue
 
+    # Ensure endpoint is registered with GET only and no side effects on import
     @app.get(metrics_path)
     async def prometheus_metrics() -> Response:  # type: ignore[override]
         if generate_latest is None:
@@ -107,6 +108,9 @@ def register_metrics_endpoint(app: FastAPI, settings: AurumSettings) -> None:
             raise HTTPException(status_code=500, detail="Failed to render metrics") from exc
 
         return Response(content=payload, media_type=CONTENT_TYPE_LATEST)
+
+
+__all__ = ["register_trino_lifecycle", "register_metrics_endpoint"]
 
 
 __all__ = ["register_trino_lifecycle", "register_metrics_endpoint"]

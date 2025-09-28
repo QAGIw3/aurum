@@ -9,7 +9,8 @@ from fastapi import FastAPI, Depends
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.gzip import GZipMiddleware
 
-from libs.common.config import AurumSettings, get_settings
+from libs.common.config import AurumSettings
+from aurum.core.settings import get_settings_manager
 from libs.common.cache import CacheManager
 from libs.common.observability import configure_observability, get_observability
 from libs.storage import TimescaleSeriesRepo, PostgresMetaRepo, TrinoAnalyticRepo
@@ -64,7 +65,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     """FastAPI lifespan context manager for startup/shutdown."""
     global _container
     
-    settings = get_settings()
+    settings = get_settings_manager().get()
     
     # Startup
     logger.info(f"Starting Aurum API v{settings.api.version}")
@@ -81,7 +82,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
 def create_app(settings: AurumSettings | None = None) -> FastAPI:
     """Create FastAPI application with clean dependency injection."""
     if settings is None:
-        settings = get_settings()
+        settings = get_settings_manager().get()
     
     app = FastAPI(
         title=settings.api.title,

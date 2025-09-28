@@ -22,7 +22,7 @@ from pydantic import BaseModel, Field
 
 from ..observability.telemetry_facade import get_telemetry_facade, MetricCategory
 from ..cache.consolidated_manager import get_unified_cache_manager
-from ..daos.base_dao import TrinoDAO
+from ..dao.experimental import TrinoDAO
 
 
 class CarbonInstrumentType(str, Enum):
@@ -63,7 +63,7 @@ class CarbonInstrument(BaseModel):
     verification_standard: str
     verification_body: str
     issuance_date: datetime
-    metadata: Dict[str, Any] = field(default_factory=dict)
+    metadata: Dict[str, Any] = Field(default_factory=dict)
 
 
 class CarbonPricing(BaseModel):
@@ -79,7 +79,7 @@ class CarbonPricing(BaseModel):
     pricing_method: str  # "market_price", "shadow_price", "compliance_cost"
     market_source: str
     confidence: float = 1.0
-    metadata: Dict[str, Any] = field(default_factory=dict)
+    metadata: Dict[str, Any] = Field(default_factory=dict)
 
 
 class PortfolioCarbonExposure(BaseModel):
@@ -109,8 +109,8 @@ class RECTrading(BaseModel):
     quantity_mwh: float
     status: str = "issued"  # "issued", "traded", "retired", "expired"
     current_owner: str
-    trading_history: List[Dict[str, Any]] = field(default_factory=list)
-    metadata: Dict[str, Any] = field(default_factory=dict)
+    trading_history: List[Dict[str, Any]] = Field(default_factory=list)
+    metadata: Dict[str, Any] = Field(default_factory=dict)
 
 
 class CarbonRecService:

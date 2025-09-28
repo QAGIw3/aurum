@@ -23,6 +23,7 @@ from aurum.telemetry.context import (
     get_trace_span_ids,
     log_structured,
 )
+from aurum.observability.metrics import get_metrics_client
 
 ACCESS_LOGGER = logging.getLogger("aurum.api.access")
 
@@ -82,18 +83,42 @@ async def access_log_middleware(
                 "http_request_failed",
                 method=request.method,
                 path=request.url.path,
-                status=500,
+                status_code=500,
                 duration_ms=round(duration_ms, 2),
                 client_ip=request.client.host if request.client else None,
                 tenant=principal.get("tenant"),
                 subject=principal.get("sub"),
                 error_type=exc.__class__.__name__,
                 error_message=str(exc),
-                service_name=os.getenv("AURUM_OTEL_SERVICE_NAME", "aurum-api"),
                 query_params=query_params,
                 trace_id=trace_id,
                 span_id=span_id,
             )
+
+            # Error metrics
+            try:
+                metrics = get_metrics_client()
+                if metrics:
+                    metrics.counter(
+                        "aurum_http_requests_total",
+                        labels={
+                            "method": request.method,
+                            "path": request.url.path,
+                            "status_code": "500",
+                        },
+                        value=1.0,
+                    )
+                    metrics.histogram(
+                        "aurum_http_request_duration_ms",
+                        round(duration_ms, 2),
+                        labels={
+                            "method": request.method,
+                            "path": request.url.path,
+                            "status_code": "500",
+                        },
+                    )
+            except Exception:
+                pass
             raise
 
         duration_ms = (time.perf_counter() - start) * 1000.0
@@ -113,6 +138,9 @@ async def access_log_middleware(
                 response.headers["X-Trace-Id"] = trace_id
             if span_id:
                 response.headers["X-Span-Id"] = span_id
+            # Emit W3C traceparent response header when IDs available
+            if trace_id and span_id:
+                response.headers.setdefault("traceparent", f"00-{trace_id}-{span_id}-01")
         except Exception:  # pragma: no cover - defensive
             pass
 
@@ -121,17 +149,41 @@ async def access_log_middleware(
             "http_request_completed",
             method=request.method,
             path=request.url.path,
-            status=response.status_code,
+            status_code=response.status_code,
             duration_ms=round(duration_ms, 2),
             client_ip=request.client.host if request.client else None,
             tenant=principal.get("tenant"),
             subject=principal.get("sub"),
             response_size=len(response.body) if hasattr(response, "body") else 0,
             user_agent=request.headers.get("user-agent", "unknown"),
-            service_name=os.getenv("AURUM_OTEL_SERVICE_NAME", "aurum-api"),
             query_params=query_params,
             trace_id=trace_id,
             span_id=span_id,
         )
+
+        # Success metrics
+        try:
+            metrics = get_metrics_client()
+            if metrics:
+                metrics.counter(
+                    "aurum_http_requests_total",
+                    labels={
+                        "method": request.method,
+                        "path": request.url.path,
+                        "status_code": str(response.status_code),
+                    },
+                    value=1.0,
+                )
+                metrics.histogram(
+                    "aurum_http_request_duration_ms",
+                    round(duration_ms, 2),
+                    labels={
+                        "method": request.method,
+                        "path": request.url.path,
+                        "status_code": str(response.status_code),
+                    },
+                )
+        except Exception:
+            pass
 
     return response

@@ -199,15 +199,65 @@ class SecuritySettings(BaseSettings):
 
 class WorkerSettings(BaseSettings):
     """Background worker settings."""
-    
+
     # Celery
     broker_url: str = Field(default="redis://localhost:6379/1", description="Celery broker URL")
     result_backend: str = Field(default="redis://localhost:6379/1", description="Celery result backend")
     default_queue: str = Field(default="default", description="Default task queue")
-    
+
     # Task routing
     enable_async_offload: bool = Field(default=False, description="Enable async task offload")
     task_timeout: int = Field(default=3600, description="Task timeout seconds")
+
+
+class TenancySettings(BaseSettings):
+    """Configuration for Aurum's multi-tenant control plane."""
+
+    model_config = SettingsConfigDict(
+        env_prefix="AURUM_TENANCY_",
+        env_file=".env",
+        case_sensitive=False,
+    )
+
+    enabled: bool = Field(default=True, description="Enable multi-tenant capabilities")
+    require_registered_tenant: bool = Field(
+        default=True,
+        description="Reject requests for tenants that are not provisioned",
+    )
+    default_plan: str = Field(default="standard", description="Default subscription plan")
+    default_features: List[str] = Field(default_factory=list, description="Features enabled for new tenants")
+    header_name: str = Field(default="X-Aurum-Tenant", description="Header used to resolve tenant id")
+    query_param: str = Field(default="tenant_id", description="Query parameter fallback for tenant id")
+    default_tenant: Optional[str] = Field(default=None, description="Fallback tenant id when none provided")
+    cross_tenant_roles: List[str] = Field(
+        default_factory=lambda: ["aurum:admin", "aurum:superadmin"],
+        description="Roles permitted to operate across tenants",
+    )
+    auto_provision: bool = Field(
+        default=False,
+        description="Automatically provision tenants when first encountered",
+    )
+    isolation_rls_tables: List[str] = Field(
+        default_factory=list,
+        description="Tables that require row-level security policies",
+    )
+    isolation_schema_template: str = Field(
+        default="tenant_{tenant_id}",
+        description="Template used for per-tenant schema creation",
+    )
+    compute_pools: List[str] = Field(default_factory=list, description="Named compute pools available")
+    default_compute_pool: Optional[str] = Field(
+        default=None,
+        description="Default compute pool assignment",
+    )
+    default_quotas: Dict[str, Dict[str, Any]] = Field(
+        default_factory=dict,
+        description="Default resource quotas applied to new tenants",
+    )
+    bootstrap_tenants: List[Dict[str, Any]] = Field(
+        default_factory=list,
+        description="Tenants to provision automatically at startup",
+    )
 
 
 class AurumSettings(BaseSettings):
@@ -234,6 +284,7 @@ class AurumSettings(BaseSettings):
     observability: ObservabilitySettings = Field(default_factory=ObservabilitySettings)
     security: SecuritySettings = Field(default_factory=SecuritySettings)
     workers: WorkerSettings = Field(default_factory=WorkerSettings)
+    tenancy: TenancySettings = Field(default_factory=TenancySettings)
     
     # Pagination defaults
     pagination_default_size: int = Field(default=100, description="Default pagination size")

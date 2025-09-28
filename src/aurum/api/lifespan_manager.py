@@ -257,7 +257,20 @@ class CacheLifecycleHook(LifecycleHook):
         try:
             # Initialize unified cache manager
             cache_manager = get_unified_cache_manager()
-            # Cache manager initializes itself automatically
+            # Also initialize golden query cache to use the same backend
+            try:
+                from .cache.golden_query_cache import initialize_golden_query_cache
+                if getattr(cache_manager, "backends", None):
+                    # Prefer default backend if available
+                    backend = getattr(cache_manager, "default_backend", None)
+                    if backend is None and isinstance(cache_manager.backends, dict):
+                        # Fallback to any available backend
+                        backend = next(iter(cache_manager.backends.values()), None)
+                    if backend is not None:
+                        await initialize_golden_query_cache(backend)
+            except Exception:
+                # Golden cache is optional; log at debug level only
+                self.logger.debug("GoldenQueryCache init skipped", exc_info=True)
             self.logger.info("Cache system initialized")
         except Exception as e:
             self.logger.error("Cache initialization failed", error=str(e))
@@ -474,6 +487,13 @@ class LifespanManager:
         self.add_hook(CacheLifecycleHook(self.settings))
         self.add_hook(RateLimiterLifecycleHook(self.settings))
         self.add_hook(MetricsLifecycleHook(self.settings))
+        # Risk compliance scheduler (optional)
+        try:
+            from .services.risk_compliance_service import RiskComplianceLifecycleHook
+            self.add_hook(RiskComplianceLifecycleHook())
+        except Exception:
+            # Optional; skip if dependencies missing
+            pass
 
     def add_hook(self, hook: LifecycleHook) -> None:
         """Add a lifecycle hook.
@@ -702,7 +722,9 @@ def setup_lifespan(settings: Optional[AurumSettings] = None):
 
     @asynccontextmanager
     async def lifespan(app: FastAPI):
-        async with manager:
+        # Use the manager's FastAPI-aware lifespan context to ensure
+        # proper startup/shutdown sequencing and app.state wiring.
+        async with manager.lifespan(app):
             yield
 
     return lifespan
@@ -882,4 +904,3 @@ __all__ = [
     "HealthStatus",
     "DependencyScope",
 ]
-

@@ -8,6 +8,7 @@ from contextlib import contextmanager
 from contextvars import ContextVar, Token
 from datetime import datetime
 from typing import Iterator, Optional, Dict, Any, Mapping, Iterable
+import re
 import os
 
 try:  # pragma: no cover - optional dependency
@@ -291,3 +292,29 @@ def log_structured(
         STRUCTURED_LOGGER.critical(message)
     else:
         STRUCTURED_LOGGER.info(message)
+
+
+# --------------------------
+# Tenant helpers (compat)
+# --------------------------
+
+class TenantIdValidationError(ValueError):
+    """Raised when a tenant identifier fails validation."""
+
+
+def normalize_tenant_id(raw: Optional[str]) -> Optional[str]:
+    """Normalize and validate a tenant identifier.
+
+    - Strips whitespace
+    - Lowercases
+    - Requires alphanumeric start; allows hyphen/underscore afterward
+    - Max length 64 characters
+    """
+    if raw is None:
+        return None
+    value = str(raw).strip().lower()
+    if not value:
+        return None
+    if not re.fullmatch(r"[a-z0-9][a-z0-9-_]{0,63}", value):
+        raise TenantIdValidationError(f"Invalid tenant id: {raw}")
+    return value

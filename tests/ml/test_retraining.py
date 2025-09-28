@@ -8,7 +8,7 @@ from aurum.ml import FeaturePipelineConfig, ModelRegistry, retrain_best_forecast
 
 
 def test_retrain_best_forecaster_registers_model(tmp_path):
-    idx = pd.date_range("2024-01-01", periods=120, freq="H")
+    idx = pd.date_range("2024-01-01", periods=120, freq="h")
     values = 30 + 3 * np.sin(np.linspace(0, 6 * np.pi, len(idx)))
     series = pd.Series(values, index=idx)
 
@@ -22,7 +22,7 @@ def test_retrain_best_forecaster_registers_model(tmp_path):
         horizon=6,
         initial_train_size=48,
         step=6,
-        freq_hint="H",
+        freq_hint="h",
         feature_config=FeaturePipelineConfig(rolling_windows=(6, 12), lags=(1, 24), include_calendar=False),
         enable_ab_testing=True,
     )

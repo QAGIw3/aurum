@@ -15,6 +15,7 @@ from threading import Lock
 from typing import Any, Dict, List, Optional, Set
 
 from aurum.core import AurumSettings
+from aurum.telemetry.context import TenantIdValidationError, normalize_tenant_id
 from fastapi import HTTPException
 from starlette.requests import Request
 from starlette.responses import JSONResponse
@@ -386,6 +387,8 @@ class AuthMiddleware:
                 if "." in domain:
                     tenant = domain.split(".")[0]
 
+        tenant = self._normalize_tenant_candidate(tenant)
+
         # Attach principal to request.state for downstream use
         scope.setdefault("state", {})
         groups_claim = []
@@ -462,36 +465,37 @@ class AuthMiddleware:
 
                     # Extract tenant from various possible sources
                     # Priority: direct tenant claim -> org -> organization -> domain extraction -> groups
-                    principal["tenant"] = (
+                    tenant_candidate = (
                         claims.get("tenant") or
                         claims.get("org") or
                         claims.get("organization")
                     )
 
                     # If no direct tenant claim, try to extract from domain/email
-                    if not principal["tenant"]:
+                    if not tenant_candidate:
                         if principal["email"] and "@" in principal["email"]:
                             domain = principal["email"].split("@")[1]
                             if "." in domain:
-                                principal["tenant"] = domain.split(".")[0]
+                                tenant_candidate = domain.split(".")[0]
 
                     # If still no tenant, try to extract from groups
-                    if not principal["tenant"]:
+                    if not tenant_candidate:
                         if principal["groups"]:
                             for group in principal["groups"]:
                                 group_str = str(group).lower()
                                 if "tenant:" in group_str:
                                     tenant_part = group_str.split("tenant:")[-1].strip()
                                     if tenant_part:
-                                        principal["tenant"] = tenant_part
+                                        tenant_candidate = tenant_part
                                         break
                                 elif "org:" in group_str:
                                     org_part = group_str.split("org:")[-1].strip()
                                     if org_part:
-                                        principal["tenant"] = org_part
+                                        tenant_candidate = org_part
                                         break
 
                     # Validate tenant_id is present and not empty
+                    principal["tenant"] = self._normalize_tenant_candidate(tenant_candidate)
                     if not principal["tenant"]:
                         raise HTTPException(
                             status_code=401,
@@ -541,6 +545,18 @@ class AuthMiddleware:
         except Exception:
             raise HTTPException(status_code=401, detail="Token verification failed")
         return claims
+
+    @staticmethod
+    def _normalize_tenant_candidate(candidate: Optional[str]) -> Optional[str]:
+        if candidate is None:
+            return None
+        value = str(candidate).strip()
+        if not value:
+            return None
+        try:
+            return normalize_tenant_id(value)
+        except TenantIdValidationError as exc:
+            raise HTTPException(status_code=400, detail="invalid_tenant_id") from exc
 
 
 __all__ = ["AuthMiddleware", "OIDCConfig"]

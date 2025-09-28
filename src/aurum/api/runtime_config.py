@@ -30,6 +30,10 @@ from .telemetry.context import (
     normalize_tenant_id,
 )
 from .deps import get_principal, require_admin
+
+# Backwards-compatibility aliases for local dependency names used below
+_get_principal = get_principal
+_require_admin = require_admin
 from aurum.core import AurumSettings
 from aurum.core.settings import validate_migration_health
 from ..observability.metrics import increment_runtime_override_updates

@@ -6,7 +6,7 @@ from typing import Any, Dict, List, Optional
 from uuid import uuid4
 
 from ..scenarios_dao import ScenariosDAO, ScenarioFilter, ScenarioRunFilter
-from ...scenarios.scenario_models import ScenarioResponse, ScenarioRunResponse
+from ....scenarios.scenario_models import ScenarioResponse, ScenarioRunResponse
 
 
 class FakeScenariosDAO(ScenariosDAO):
@@ -188,4 +188,3 @@ class FakeScenariosDAO(ScenariosDAO):
             self._operation_count += 1
             return True
         return False
-

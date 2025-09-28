@@ -114,7 +114,7 @@ from ..telemetry.context import get_request_id, get_tenant_id, get_user_id, log_
 from ..observability.telemetry_facade import get_telemetry_facade, MetricCategory
 from ..cache.consolidated_manager import get_unified_cache_manager
 from .feature_store_service import get_feature_store_service
-from ..daos.base_dao import TrinoDAO
+from ..dao.experimental import TrinoDAO
 
 
 class _NoOpTelemetry:

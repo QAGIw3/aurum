@@ -1,3 +1,37 @@
+### Aurum Configuration
+
+This project centralizes configuration via `AurumSettings` and a `SettingsManager`.
+
+- Single source: `aurum.core.settings.SettingsManager.get()` returns the active `AurumSettings`.
+- Validation: core sanity checks run on reload; failures are logged and ignored if a previous good config exists.
+- Environment overlays: optional `config/base.(yaml|json)` + `config/<ENV>.(yaml|json)` are merged over environment variables.
+- Hot-reload: enabled by default in development; toggle with `AURUM_SETTINGS_HOT_RELOAD_ENABLED`.
+
+Environment variables remain the first-class inputs. Overlays are intended for operational defaults and environment-specific adjustments.
+
+Hot-reload monitors overlay files and reapplies changes at runtime without restarts. Use for safe TTL and feature toggles; avoid secrets.
+
+Schema export for docs:
+
+```bash
+python -c "from aurum.core.settings import get_settings_manager; get_settings_manager().export_schema('docs/config.schema.json') and print('ok')"
+```
+
+Key env vars:
+
+- `AURUM_ENV`: environment name (development|staging|production)
+- `AURUM_CONFIG_PATH`: path to `config/` directory (defaults to repo `config/`)
+- `AURUM_SETTINGS_HOT_RELOAD_ENABLED`: enable file watcher (true/false)
+
+Programmatic access:
+
+```python
+from aurum.core.settings import get_settings_manager
+
+settings = get_settings_manager().get()
+print(settings.api.title, settings.redis.url)
+```
+
 # Configuration Reference
 
 Centralized environment configuration for Aurum services is defined in `src/aurum/core/settings.py` and loaded by `AurumSettings.from_env()` with prefix `AURUM_` and nested fields using `__` (double underscore) delimiter.

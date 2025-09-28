@@ -13,6 +13,7 @@ Migration phases:
 
 import atexit
 import contextlib
+import copy
 import fnmatch
 import json
 import logging
@@ -87,7 +88,8 @@ def _patch_testclient_for_gzip() -> None:
     TestClient._aurum_gzip_patched = True  # type: ignore[attr-defined]
 
 
-_patch_testclient_for_gzip()
+if os.getenv("PYTEST_CURRENT_TEST") or os.getenv("AURUM_ENABLE_TEST_GZIP_PATCH", "0").lower() in ("1", "true", "yes"):  # pragma: no cover - only for tests
+    _patch_testclient_for_gzip()
 
 from aurum.core import AurumSettings
 from aurum.core.settings import get_flag_env
@@ -111,8 +113,25 @@ from .lifespan_manager import setup_lifespan
 from .container import DependencyInjectionContainer, register_core_services
 from .app_offload import build_offload_predicate as _build_offload_predicate
 from .middleware.registry import apply_middleware_stack
+from .middleware.logging_context import logging_context_middleware
 from .middleware.admin_guard import AdminRouteGuard
+from .middleware.tenant_context import TenantContextMiddleware, TenantContextOptions
 from .auth import AuthMiddleware, OIDCConfig
+from aurum.tenancy import (
+    InMemoryTenantStore,
+    TenantAnalyticsAdapter,
+    TenantBillingAdapter,
+    TenantConfiguration,
+    TenantIsolationController,
+    TenantIsolationStrategy,
+    TenantManager,
+    TenantProvisioningError,
+    TenantQuota,
+    WorkloadPoolIsolation,
+    RowLevelSecurityIsolation,
+    SchemaPerTenantIsolation,
+    set_tenant_manager,
+)
 
 try:  # pragma: no cover - optional dependency
     from prometheus_client import CONTENT_TYPE_LATEST, CollectorRegistry, generate_latest
@@ -198,6 +217,143 @@ GLOBAL_ERROR_RESPONSES = {
 }
 
 
+def _build_quota_map(raw: Optional[Mapping[str, Any]]) -> Dict[str, TenantQuota]:
+    if not raw:
+        return {}
+    quotas: Dict[str, TenantQuota] = {}
+    for name, data in raw.items():
+        if not isinstance(data, Mapping):
+            continue
+        quotas[name] = TenantQuota(
+            name=name,
+            hard_limit=data.get("hard_limit"),
+            soft_limit=data.get("soft_limit"),
+            burst_limit=data.get("burst_limit"),
+            period=data.get("period", "monthly"),
+            unit=data.get("unit", "requests"),
+            usage=data.get("usage", 0.0),
+            metadata=data.get("metadata", {}),
+        )
+    return quotas
+
+
+def _bootstrap_tenant(
+    manager: TenantManager,
+    spec: Mapping[str, Any],
+    fallback_quotas: Optional[Mapping[str, Any]],
+) -> None:
+    tenant_id = spec.get("tenant_id")
+    if not tenant_id or not isinstance(tenant_id, str):
+        LOGGER.warning("Skipping bootstrap tenant missing tenant_id: %s", spec)
+        return
+    display_name = spec.get("display_name") if isinstance(spec.get("display_name"), str) else tenant_id
+
+    baseline = copy.deepcopy(getattr(manager, "_baseline_configuration", None))
+    config = baseline or TenantConfiguration(plan=spec.get("plan", "standard"))
+
+    overrides: Dict[str, Any] = {}
+    for key in ("plan", "database_schema", "compute_pool", "billing_account", "contact_email", "data_retention_days", "export_formats"):
+        if spec.get(key) is not None:
+            overrides[key] = spec[key]
+    for key in ("features", "settings", "metadata", "labels", "customizations"):
+        if spec.get(key) is not None:
+            overrides.setdefault(key, spec[key])
+    if spec.get("configuration"):
+        config.apply_overrides(spec["configuration"])
+    if overrides:
+        config.apply_overrides(overrides)
+
+    quotas = _build_quota_map(fallback_quotas)
+    quotas.update(_build_quota_map(spec.get("quotas")))
+
+    try:
+        manager.provision_tenant(
+            tenant_id,
+            display_name=display_name,
+            configuration=config,
+            quotas=quotas,
+            metadata=spec.get("tenant_metadata") or spec.get("metadata") or {},
+        )
+    except TenantProvisioningError:
+        LOGGER.debug("Bootstrap tenant %s already provisioned", tenant_id)
+
+
+def _initialize_tenant_manager(
+    settings: AurumSettings,
+    container: DependencyInjectionContainer,
+) -> Tuple[Optional[TenantManager], Optional[TenantContextOptions]]:
+    tenancy_cfg = getattr(settings, "tenancy", None)
+    if not tenancy_cfg or not getattr(tenancy_cfg, "enabled", True):
+        set_tenant_manager(None)
+        return None, None
+
+    strategies: list[TenantIsolationStrategy] = []
+    if tenancy_cfg.isolation_rls_tables:
+        strategies.append(
+            TenantIsolationStrategy(
+                data=RowLevelSecurityIsolation(tables=tuple(tenancy_cfg.isolation_rls_tables))
+            )
+        )
+    if tenancy_cfg.isolation_schema_template:
+        strategies.append(
+            TenantIsolationStrategy(
+                data=SchemaPerTenantIsolation(template=tenancy_cfg.isolation_schema_template)
+            )
+        )
+    if tenancy_cfg.compute_pools:
+        strategies.append(
+            TenantIsolationStrategy(
+                compute=WorkloadPoolIsolation(
+                    tuple(tenancy_cfg.compute_pools),
+                    tenancy_cfg.default_compute_pool,
+                )
+            )
+        )
+
+    controller = TenantIsolationController(tuple(strategies))
+
+    baseline_config = TenantConfiguration(plan=tenancy_cfg.default_plan)
+    if tenancy_cfg.default_features:
+        baseline_config.features.update({feature: True for feature in tenancy_cfg.default_features})
+    baseline_config.compute_pool = tenancy_cfg.default_compute_pool
+
+    billing = TenantBillingAdapter()
+    analytics = TenantAnalyticsAdapter(require_roles=tenancy_cfg.cross_tenant_roles)
+
+    manager = TenantManager(
+        store=InMemoryTenantStore(),
+        isolation=controller,
+        billing=billing,
+        analytics=analytics,
+        baseline_configuration=baseline_config,
+        default_quotas=tenancy_cfg.default_quotas,
+    )
+
+    for tenant_spec in tenancy_cfg.bootstrap_tenants or []:
+        if isinstance(tenant_spec, Mapping):
+            _bootstrap_tenant(manager, tenant_spec, tenancy_cfg.default_quotas)
+
+    if tenancy_cfg.default_tenant and tenancy_cfg.auto_provision:
+        try:
+            manager.ensure_tenant(tenancy_cfg.default_tenant)
+        except TenantProvisioningError:
+            LOGGER.debug("Default tenant %s already provisioned", tenancy_cfg.default_tenant)
+
+    container.register_singleton(TenantManager, manager)
+    set_tenant_manager(manager)
+
+    tenant_options = TenantContextOptions(
+        header_name=tenancy_cfg.header_name,
+        query_param=tenancy_cfg.query_param,
+        default_tenant=tenancy_cfg.default_tenant,
+        require_tenant=tenancy_cfg.require_registered_tenant,
+        allow_cross_tenant_roles=tenancy_cfg.cross_tenant_roles,
+        auto_provision=tenancy_cfg.auto_provision,
+    )
+
+    return manager, tenant_options
+
+
 async def _api_exception_handler(request: Request, exc: Exception) -> JSONResponse:
     """Translate arbitrary exceptions into RFC7807 compliant JSON error responses."""
     from .exceptions import create_rfc7807_error_response
@@ -248,7 +404,7 @@ def log_api_migration_status():
     logger.info(f"API Migration Metrics: Legacy calls: {ApiMigrationMetrics.legacy_calls}, "
                 f"Simplified calls: {ApiMigrationMetrics.simplified_calls}")
 
-from typing import Any, Callable, Dict, Optional, Union
+from typing import Any, Callable, Dict, Mapping, Optional, Tuple, Union
 
 
 def _build_offload_predicate(
@@ -494,12 +650,16 @@ class ApplicationFactory:
             timeout=settings.api.request_timeout_seconds,
             responses=GLOBAL_ERROR_RESPONSES,
             lifespan=setup_lifespan(settings),
+            docs_url="/docs" if getattr(settings, "debug", False) else None,
+            redoc_url="/redoc" if getattr(settings, "debug", False) else None,
         )
         # Bind settings and DI container to application state
         app.state.settings = settings
         container = DependencyInjectionContainer.from_settings(settings)
         register_core_services(container)
         app.state.container = container
+        tenant_manager, tenant_context_options = _initialize_tenant_manager(settings, container)
+        app.state.tenant_manager = tenant_manager
         app.add_exception_handler(Exception, _api_exception_handler)
         configure_routes(settings)
         # Avoid module-level/global configuration side effects
@@ -507,8 +667,12 @@ class ApplicationFactory:
         # Essential telemetry
         configure_telemetry(settings.telemetry.service_name, fastapi_app=app, enable_psycopg=True)
 
-        # Apply basic middleware (CORS, GZip, RFC7807 exceptions)
+        # Apply basic middleware (Logging context, CORS, GZip, RFC7807 exceptions)
         app_with_basic_middleware = apply_middleware_stack(app, settings)
+
+        # Register lifecycle-managed resources and metrics endpoint
+        _register_trino_lifecycle(app)
+        _register_metrics_endpoint(app, settings)
 
         # Enforce admin access and authentication as the outermost middlewares
         admin_guard_enabled = bool(getattr(getattr(settings, "api", None), "admin_guard_enabled", False))
@@ -516,6 +680,12 @@ class ApplicationFactory:
 
         oidc_config = OIDCConfig.from_settings(settings)
         app.add_middleware(AuthMiddleware, config=oidc_config)
+        if tenant_manager and tenant_context_options:
+            app.add_middleware(
+                TenantContextMiddleware,
+                manager=tenant_manager,
+                options=tenant_context_options,
+            )
 
         # Apply concurrency and rate limiting separately to avoid circular imports
         app_with_concurrency = _install_concurrency_middleware(app_with_basic_middleware, settings)
@@ -552,7 +722,7 @@ class ApplicationFactory:
                     headers["accept-encoding"] = "gzip, " + accept_encoding
             return await call_next(request)
 
-        # Access logging & unified request IDs
+        # Access logging
         from aurum.api.http.middleware import access_log_middleware
         app.middleware("http")(access_log_middleware)
 
@@ -589,12 +759,16 @@ class ApplicationFactory:
             timeout=settings.api.request_timeout_seconds,
             responses=GLOBAL_ERROR_RESPONSES,
             lifespan=setup_lifespan(settings),
+            docs_url="/docs" if getattr(settings, "debug", False) else None,
+            redoc_url="/redoc" if getattr(settings, "debug", False) else None,
         )
         # Bind settings and DI container to application state
         app.state.settings = settings
         container = DependencyInjectionContainer.from_settings(settings)
         register_core_services(container)
         app.state.container = container
+        tenant_manager, tenant_context_options = _initialize_tenant_manager(settings, container)
+        app.state.tenant_manager = tenant_manager
         app.add_exception_handler(Exception, _api_exception_handler)
         configure_routes(settings)
         # Avoid module-level/global configuration side effects
@@ -602,8 +776,12 @@ class ApplicationFactory:
         # Full telemetry setup
         configure_telemetry(settings.telemetry.service_name, fastapi_app=app, enable_psycopg=True)
 
-        # Apply complete middleware stack
+        # Apply complete middleware stack (Logging context, CORS, GZip, RFC7807)
         app_with_middleware = apply_middleware_stack(app, settings)
+
+        # Register lifecycle-managed resources and metrics endpoint
+        _register_trino_lifecycle(app)
+        _register_metrics_endpoint(app, settings)
 
         # Enforce admin access and authentication as the outermost middlewares
         admin_guard_enabled = bool(getattr(getattr(settings, "api", None), "admin_guard_enabled", False))
@@ -611,6 +789,12 @@ class ApplicationFactory:
 
         oidc_config = OIDCConfig.from_settings(settings)
         app.add_middleware(AuthMiddleware, config=oidc_config)
+        if tenant_manager and tenant_context_options:
+            app.add_middleware(
+                TenantContextMiddleware,
+                manager=tenant_manager,
+                options=tenant_context_options,
+            )
 
         # Apply concurrency and rate limiting separately to avoid circular imports
         app_with_concurrency = _install_concurrency_middleware(app_with_middleware, settings)
@@ -647,7 +831,7 @@ class ApplicationFactory:
                     headers["accept-encoding"] = "gzip, " + accept_encoding
             return await call_next(request)
 
-        # Access logging & unified request IDs
+        # Access logging
         from aurum.api.http.middleware import access_log_middleware
         app.middleware("http")(access_log_middleware)
 
@@ -714,3 +898,74 @@ def _include_fallback_routes(app: FastAPI, logger: logging.Logger) -> None:
         app.include_router(fallback)
     except Exception as exc:
         logger.warning(f"Failed to install fallback routers: {exc}")
+
+
+# --- Admin group helpers (minimal, explicit, side-effect free) -----------------
+
+def _configure_admin_groups(settings: AurumSettings) -> None:
+    """Configure admin groups in process-local context.
+
+    Uses the application context to expose `settings.auth.admin_groups` to routes.
+    No globals are mutated here beyond the central app context.
+    """
+    try:
+        from .container import get_app_context
+        app_context = get_app_context()
+        app_context.settings = settings
+    except Exception:
+        # Best-effort: continue without admin group wiring
+        pass
+
+
+def _require_admin_groups(settings: AurumSettings, logger: logging.Logger) -> None:
+    """Log a warning if admin guard is enabled but no admin groups are configured."""
+    try:
+        admin_guard_enabled = bool(getattr(getattr(settings, "api", None), "admin_guard_enabled", False))
+        admin_groups = getattr(getattr(settings, "auth", None), "admin_groups", frozenset())
+        if admin_guard_enabled and not admin_groups:
+            logger.warning("Admin guard enabled but no admin groups configured")
+    except Exception:
+        pass
+
+
+# --- Public factory entry points ----------------------------------------------
+
+def create_app(settings: Optional[AurumSettings] = None) -> FastAPI:
+    """Create a FastAPI application using the consolidated factory.
+
+    This is the single entry point for app creation used by production code and tests.
+    """
+    return ApplicationFactory.create_app(settings)
+
+
+def create_dev_app(settings: Optional[AurumSettings] = None) -> FastAPI:
+    """Create a development-configured app (docs enabled, debug-friendly)."""
+    s = settings or AurumSettings.from_env()
+    try:
+        setattr(s, "debug", True)
+        setattr(s, "environment", "development")
+    except Exception:
+        pass
+    return ApplicationFactory.create_app(s)
+
+
+def create_prod_app(settings: Optional[AurumSettings] = None) -> FastAPI:
+    """Create a production-configured app (no docs by default)."""
+    s = settings or AurumSettings.from_env()
+    try:
+        setattr(s, "debug", False)
+        setattr(s, "environment", "production")
+    except Exception:
+        pass
+    return ApplicationFactory.create_app(s)
+
+
+def create_test_app(settings: Optional[AurumSettings] = None) -> FastAPI:
+    """Create a test-configured app with docs enabled for convenience."""
+    s = settings or AurumSettings.from_env()
+    try:
+        setattr(s, "debug", True)
+        setattr(s, "environment", "test")
+    except Exception:
+        pass
+    return ApplicationFactory.create_app(s)

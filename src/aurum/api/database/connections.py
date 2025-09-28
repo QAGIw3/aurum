@@ -7,6 +7,7 @@ from fastapi import APIRouter, HTTPException, Query, Request
 
 from aurum.telemetry.context import get_request_id
 from .trino_client import get_trino_client
+from .timescale_client import get_timescale_client
 
 router = APIRouter()
 
@@ -37,6 +38,20 @@ async def get_database_connections(
             }
         except Exception as exc:  # pragma: no cover - defensive observation path
             connections["trino"] = {"error": str(exc)}
+
+        # Timescale connection pool metrics
+        try:
+            timescale_client = get_timescale_client()
+            ts_metrics = await timescale_client.get_pool_metrics()
+            connections["timescale"] = {
+                "active": ts_metrics.get("active_connections", 0),
+                "idle": ts_metrics.get("idle_connections", 0),
+                "total": ts_metrics.get("total_connections", 0),
+                "max": ts_metrics.get("max_connections", 0),
+                "utilization": ts_metrics.get("pool_utilization", 0.0),
+            }
+        except Exception as exc:  # pragma: no cover - defensive path
+            connections["timescale"] = {"error": str(exc)}
 
         aggregate = {
             "active": 0,

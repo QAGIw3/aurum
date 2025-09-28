@@ -32,6 +32,7 @@ from .pagination import (
     build_pagination_envelope,
 )
 from ...telemetry.context import get_request_id
+from ..exceptions import QueryParameterValidationException, NotImplementedException
 
 router = APIRouter(prefix="/v2", tags=["ppa"])
 
@@ -44,30 +45,21 @@ def _normalize_text(value: Optional[str]) -> Optional[str]:
 
 
 def _validation_error(request: Request, parameter: str, message: str) -> HTTPException:
-    return HTTPException(
-        status_code=400,
-        detail={
-            "type": "invalid_query_parameter",
-            "title": "Invalid query parameter",
-            "detail": message,
-            "parameter": parameter,
-            "instance": request.url.path,
-            "request_id": get_request_id(),
-        },
-    )
+    # Raise standardized domain exception; middleware/handler will convert to RFC7807
+    raise QueryParameterValidationException(parameter=parameter, message=message, request_id=get_request_id())
 
 
 def _validate_tenant_id(request: Request, tenant_id: str) -> str:
     normalized = _normalize_text(tenant_id)
     if not normalized:
-        raise _validation_error(request, "tenant_id", "tenant_id must be provided")
+        _validation_error(request, "tenant_id", "tenant_id must be provided")
     return normalized
 
 
 def _validate_contract_id(request: Request, contract_id: str) -> str:
     normalized = _normalize_text(contract_id)
     if not normalized:
-        raise _validation_error(request, "contract_id", "contract_id must be provided")
+        _validation_error(request, "contract_id", "contract_id must be provided")
     return normalized
 
 
@@ -85,13 +77,13 @@ def _normalize_date_query(request: Request, parameter: str, value: Optional[str]
         try:
             parsed_date = date.fromisoformat(text)
         except ValueError as exc:
-            raise _validation_error(request, parameter, f"{parameter} must be a valid ISO-8601 date") from exc
+            _validation_error(request, parameter, f"{parameter} must be a valid ISO-8601 date")
     return parsed_date.isoformat()
 
 
 def _ensure_date_order(request: Request, start: Optional[str], end: Optional[str]) -> None:
     if start and end and start > end:
-        raise _validation_error(request, "date_range", "start_date must be on or before end_date")
+        _validation_error(request, "date_range", "start_date must be on or before end_date")
 
 
 class PpaContractResponse(BaseModel):
@@ -247,14 +239,7 @@ async def list_ppa_contracts_v2(
         duration_ms = (time.perf_counter() - start_time) * 1000
         raise HTTPException(
             status_code=500,
-            detail={
-                "type": "internal_error",
-                "title": "Internal server error",
-                "detail": f"Failed to list PPA contracts: {str(exc)}",
-                "instance": "/v2/ppa/contracts",
-                "request_id": get_request_id(),
-                "processing_time_ms": round(duration_ms, 2)
-            }
+            detail=f"Failed to list PPA contracts: {str(exc)}"
         )
 
 
@@ -271,12 +256,11 @@ async def valuate_ppa_v2(
 
     try:
         # Not implemented yet: v2 valuation requires scenario context.
-        raise HTTPException(status_code=501, detail={
-            "type": "not_implemented",
-            "title": "Valuation not implemented",
-            "detail": "PPA valuation in v2 requires scenario context and is not available yet",
-            "instance": "/v2/ppa/valuate",
-        })
+        raise NotImplementedException(
+            detail="PPA valuation in v2 requires scenario context and is not available yet",
+            context={"endpoint": "/v2/ppa/valuate"},
+            request_id=get_request_id(),
+        )
 
         duration_ms = (time.perf_counter() - start_time) * 1000
 
@@ -286,17 +270,7 @@ async def valuate_ppa_v2(
         raise
     except Exception as exc:
         duration_ms = (time.perf_counter() - start_time) * 1000
-        raise HTTPException(
-            status_code=500,
-            detail={
-                "type": "internal_error",
-                "title": "Internal server error",
-                "detail": f"Failed to valuate PPA: {str(exc)}",
-                "instance": "/v2/ppa/valuate",
-                "request_id": get_request_id(),
-                "processing_time_ms": round(duration_ms, 2)
-            }
-        )
+        raise HTTPException(status_code=500, detail=f"Failed to valuate PPA: {str(exc)}")
 
 
 @router.get("/ppa/contracts/{contract_id}/valuations", response_model=PpaValuationListResponse)
@@ -436,14 +410,4 @@ async def list_ppa_valuations_v2(
         raise
     except Exception as exc:
         duration_ms = (time.perf_counter() - start_time) * 1000
-        raise HTTPException(
-            status_code=500,
-            detail={
-                "type": "internal_error",
-                "title": "Internal server error",
-                "detail": f"Failed to list PPA valuations: {str(exc)}",
-                "instance": f"/v2/ppa/contracts/{contract_id}/valuations",
-                "request_id": get_request_id(),
-                "processing_time_ms": round(duration_ms, 2)
-            }
-        )
+        raise HTTPException(status_code=500, detail=f"Failed to list PPA valuations: {str(exc)}")

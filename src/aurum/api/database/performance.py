@@ -8,11 +8,7 @@ from fastapi import APIRouter, HTTPException, Query, Request
 from aurum.telemetry.context import get_request_id
 from .database_monitor import get_database_monitor
 from aurum.api.deps import get_settings as request_settings
-
-try:  # pragma: no cover - optional dependency
-    import asyncpg
-except ImportError:  # pragma: no cover - optional dependency
-    asyncpg = None  # type: ignore[assignment]
+from .timescale_client import get_timescale_client
 
 router = APIRouter()
 
@@ -57,45 +53,38 @@ async def _sample_timescale_slow_queries(
     limit: int = 10,
     min_mean_ms: float = 250.0,
 ) -> List[Dict[str, Any]]:
-    """Return top slow Timescale queries from pg_stat_statements."""
-    if asyncpg is None or not dsn:
+    """Return top slow Timescale queries from pg_stat_statements using pooled client."""
+    if not dsn:
         return []
 
-    query = (
+    client = get_timescale_client(dsn)
+    sql = (
         "SELECT query, calls, total_time, mean_time, rows, shared_blks_hit, "
-        "shared_blks_read FROM pg_stat_statements "
-        "WHERE calls > 0 ORDER BY mean_time DESC LIMIT $1"
+        "shared_blks_read FROM pg_stat_statements WHERE calls > 0 "
+        "ORDER BY mean_time DESC LIMIT %(limit)s"
     )
-
     try:
-        conn = await asyncpg.connect(dsn)
-    except Exception:  # pragma: no cover - defensive
-        return []
-
-    try:
-        records = await conn.fetch(query, limit)
-    except Exception:  # pragma: no cover - extension missing
-        records = []
-    finally:
-        await conn.close()
+        rows = await client.execute_query(sql, {"limit": limit})
+    except Exception:
+        rows = []
 
     slow_queries: List[Dict[str, Any]] = []
-    for record in records:
-        mean_time = float(record.get("mean_time", 0.0))
+    for row in rows:
+        mean_time = float(row.get("mean_time", 0.0) or 0.0)
         if mean_time < min_mean_ms:
             continue
-        text = str(record.get("query", "")).strip()
+        text = str(row.get("query", "")).strip()
         if len(text) > 500:
             text = f"{text[:497]}..."
         slow_queries.append(
             {
                 "query": text,
-                "calls": int(record.get("calls", 0)),
+                "calls": int(row.get("calls", 0) or 0),
                 "mean_time_ms": mean_time,
-                "total_time_ms": float(record.get("total_time", 0.0)),
-                "rows": int(record.get("rows", 0)),
-                "shared_blocks_hit": int(record.get("shared_blks_hit", 0)),
-                "shared_blocks_read": int(record.get("shared_blks_read", 0)),
+                "total_time_ms": float(row.get("total_time", 0.0) or 0.0),
+                "rows": int(row.get("rows", 0) or 0),
+                "shared_blocks_hit": int(row.get("shared_blks_hit", 0) or 0),
+                "shared_blocks_read": int(row.get("shared_blks_read", 0) or 0),
             }
         )
 

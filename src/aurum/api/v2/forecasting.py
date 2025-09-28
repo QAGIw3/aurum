@@ -23,7 +23,7 @@ from fastapi import APIRouter, HTTPException, Query, Request, Response, Depends
 from pydantic import BaseModel, Field, validator
 from enum import Enum
 
-from ..deps import get_settings, get_cache_manager
+from ..deps import get_settings, get_cache_manager, get_unified_cache_manager_dep
 from ..telemetry.context import get_request_id, get_tenant_id
 from aurum.core import AurumSettings
 from ..cache.consolidated_manager import get_unified_cache_manager
@@ -209,7 +209,7 @@ async def generate_forecast(
     request: ForecastRequest,
     response: Response,
     settings: AurumSettings = Depends(get_settings),
-    cache_manager = Depends(get_unified_cache_manager)
+    cache_manager = Depends(get_unified_cache_manager_dep)
 ) -> ForecastResponse:
     """Generate a probabilistic forecast with quantiles.
 
@@ -343,7 +343,7 @@ async def get_forecast(
     forecast_id: str,
     response: Response,
     settings: AurumSettings = Depends(get_settings),
-    cache_manager = Depends(get_unified_cache_manager)
+    cache_manager = Depends(get_unified_cache_manager_dep)
 ) -> ForecastResponse:
     """Retrieve a previously generated forecast by ID.
 

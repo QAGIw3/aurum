@@ -75,7 +75,7 @@ class AurumGraphQLRouter(GraphQLRouter):
             context["user_id"] = websocket.headers.get("X-Aurum-User")
             context["websocket"] = websocket
         
-        await log_structured(
+        log_structured(
             "graphql_context_created",
             tenant_id=context.get("tenant_id"),
             user_id=context.get("user_id"),
@@ -99,7 +99,7 @@ class AurumGraphQLRouter(GraphQLRouter):
         async with lock:
             cached = await self._response_cache.get_cached_response(params, request)
             if cached is not None:
-                await log_structured(
+                log_structured(
                     "graphql_cache_hit",
                     tenant_id=params.tenant_id,
                     cache_key=params.cache_key,
@@ -110,7 +110,7 @@ class AurumGraphQLRouter(GraphQLRouter):
             response = await super().graphql_http_server(request)
             cached_response = await self._response_cache.store_response(params, request, response)
 
-            await log_structured(
+            log_structured(
                 "graphql_cache_miss",
                 tenant_id=params.tenant_id,
                 cache_key=params.cache_key,

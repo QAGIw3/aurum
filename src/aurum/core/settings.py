@@ -7,7 +7,10 @@ import logging
 from enum import Enum
 from pathlib import Path
 from types import SimpleNamespace
-from typing import Any, Dict, Iterable, List, Mapping, Optional
+from typing import Any, Dict, Iterable, List, Mapping, Optional, Callable
+import threading
+import hashlib
+from datetime import datetime
 
 print(f"DEBUG: Loading settings.py - AURUM_ENABLE_MIGRATION_MONITORING = {os.getenv('AURUM_ENABLE_MIGRATION_MONITORING', 'NOT_SET')}")
 
@@ -1500,6 +1503,444 @@ class ExternalAuditSettings:
     def _parse_sinks(self, sinks_str: str) -> List[str]:
         """Parse sink configuration string into a list of sink identifiers."""
         return [self._normalize_sink(sink) for sink in sinks_str.split(",") if sink.strip()]
+
+
+# ----------------------
+# Centralized settings manager with validation, env inheritance, and hot-reload
+# ----------------------
+
+def _deep_merge_dicts(base: Dict[str, Any], override: Dict[str, Any]) -> Dict[str, Any]:
+    """Deep-merge two dictionaries without mutating inputs.
+
+    Values from override win over base. Nested dictionaries are merged recursively.
+    """
+    if not base:
+        return dict(override or {})
+    if not override:
+        return dict(base)
+    result: Dict[str, Any] = dict(base)
+    for key, value in override.items():
+        if isinstance(value, dict) and isinstance(result.get(key), dict):
+            result[key] = _deep_merge_dicts(result[key], value)
+        else:
+            result[key] = value
+    return result
+
+
+def _apply_overrides_to_object(target: Any, overrides: Dict[str, Any]) -> None:
+    """Apply nested overrides to an object in-place.
+
+    Supports nested `SimpleNamespace` and objects with attributes. If an attribute
+    is itself a mapping-like object, nested overrides are applied recursively.
+    """
+    if not overrides:
+        return
+
+    for key, value in overrides.items():
+        if not hasattr(target, key):
+            # Skip unknown keys to preserve forward-compatibility
+            continue
+        current = getattr(target, key)
+        if isinstance(value, dict) and not isinstance(current, (str, int, float, bool, type(None))):
+            try:
+                _apply_overrides_to_object(current, value)
+            except Exception:
+                # Fallback to assignment if recursive apply fails
+                try:
+                    setattr(target, key, value)
+                except Exception:
+                    pass
+        else:
+            try:
+                setattr(target, key, value)
+            except Exception:
+                pass
+
+
+def _load_overlay_files(base_path: Path, environment: str) -> Dict[str, Any]:
+    """Load configuration overlays from config/<base|environment>.{yaml,json}.
+
+    Later overlays override earlier ones. Missing files are ignored.
+    """
+    overlays: List[Dict[str, Any]] = []
+
+    candidates: List[Path] = []
+    for name in ("base", environment):
+        for ext in (".yaml", ".yml", ".json"):
+            candidates.append(base_path / f"{name}{ext}")
+
+    for candidate in candidates:
+        if not candidate.exists():
+            continue
+        try:
+            if candidate.suffix in (".yaml", ".yml"):
+                try:
+                    import yaml  # type: ignore
+                except Exception:
+                    logger.warning("YAML overlay %s ignored (PyYAML not available)", candidate)
+                    continue
+                with candidate.open("r", encoding="utf-8") as fh:
+                    payload = yaml.safe_load(fh) or {}
+            else:
+                with candidate.open("r", encoding="utf-8") as fh:
+                    payload = json.load(fh) or {}
+            if isinstance(payload, dict):
+                overlays.append(payload)
+            else:
+                logger.warning("Overlay file %s must contain an object; skipping", candidate)
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("Failed to load overlay %s: %s", candidate, exc)
+
+    merged: Dict[str, Any] = {}
+    for piece in overlays:
+        merged = _deep_merge_dicts(merged, piece)
+    return merged
+
+
+def _snapshot_core_settings(settings: "AurumSettings") -> Dict[str, Any]:
+    """Create a stable snapshot of relevant configuration for change detection/logging."""
+    try:
+        api = getattr(settings, "api", None)
+        redis = getattr(settings, "redis", None)
+        trino = getattr(settings, "trino", None)
+        database = getattr(settings, "database", None)
+        concurrency = getattr(api, "concurrency", None) if api else None
+
+        return {
+            "environment": getattr(settings, "environment", None),
+            "debug": getattr(settings, "debug", None),
+            "api": {
+                "host": getattr(api, "host", None),
+                "port": getattr(api, "port", None),
+                "title": getattr(api, "title", None),
+                "version": getattr(api, "version", None),
+                "gzip_min_bytes": getattr(api, "gzip_min_bytes", None),
+                "metrics": {
+                    "enabled": getattr(getattr(api, "metrics", None), "enabled", None),
+                    "path": getattr(getattr(api, "metrics", None), "path", None),
+                },
+                "concurrency": {
+                    "enabled": getattr(concurrency, "enabled", None) if concurrency else None,
+                    "max_concurrent_requests": getattr(concurrency, "max_concurrent_requests", None) if concurrency else None,
+                    "max_requests_per_second": getattr(concurrency, "max_requests_per_second", None) if concurrency else None,
+                } if concurrency else None,
+            },
+            "redis": {
+                "url": getattr(redis, "url", None),
+                "ttl_seconds": getattr(redis, "ttl_seconds", None),
+                "namespace": getattr(redis, "namespace", None),
+                "mode": getattr(redis, "mode", None).value if getattr(redis, "mode", None) and hasattr(getattr(redis, "mode", None), "value") else str(getattr(redis, "mode", None)),
+            } if redis else None,
+            "trino": {
+                "host": getattr(trino, "host", None),
+                "port": getattr(trino, "port", None),
+                "catalog": getattr(trino, "catalog", None),
+                "database_schema": getattr(trino, "database_schema", None),
+                "metrics_label": getattr(trino, "metrics_label", None),
+            } if trino else None,
+            "database": {
+                "url": getattr(database, "url", None),
+                "timescale_dsn": getattr(database, "timescale_dsn", None),
+            } if database else None,
+        }
+    except Exception:  # pragma: no cover - defensive
+        return {}
+
+
+class _SettingsValidationError(Exception):
+    """Raised when configuration validation fails."""
+
+
+class SettingsManager:
+    """Centralized settings manager providing:
+
+    - Single source of truth via `get()`
+    - Environment-specific overlay inheritance from `config/`
+    - Change detection and optional hot-reloading
+    - Optional validation hooks
+    - Schema export for documentation
+    """
+
+    def __init__(
+        self,
+        *,
+        env_prefix: str = "AURUM_",
+        environment: Optional[str] = None,
+        config_base_path: Optional[str | Path] = None,
+        hot_reload_enabled: Optional[bool] = None,
+        reload_interval_seconds: float = 2.0,
+        on_change: Optional[Callable[["AurumSettings"], None]] = None,
+    ) -> None:
+        self.env_prefix = env_prefix
+        self.environment = (environment or os.getenv(f"{env_prefix}ENV", "development")).strip() or "development"
+
+        base_from_env = os.getenv("AURUM_CONFIG_PATH") or os.getenv("AURUM_SETTINGS_PATH")
+        if config_base_path is not None:
+            self.config_base_path = Path(config_base_path)
+        elif base_from_env:
+            self.config_base_path = Path(base_from_env)
+        else:
+            # Default to <repo_root>/config when possible, otherwise CWD/config
+            try:
+                self.config_base_path = Path(__file__).resolve().parents[3] / "config"
+            except Exception:
+                self.config_base_path = Path.cwd() / "config"
+
+        if hot_reload_enabled is None:
+            # Enable hot-reload by default in development only
+            auto = self.environment.lower() in {"development", "dev", "local"}
+            hrenv = os.getenv("AURUM_SETTINGS_HOT_RELOAD_ENABLED", "true" if auto else "false").lower()
+            hot_reload_enabled = hrenv in ("true", "1", "yes")
+
+        self.hot_reload_enabled = bool(hot_reload_enabled)
+        self.reload_interval_seconds = max(0.5, float(reload_interval_seconds))
+        self._stop_event = threading.Event()
+        self._thread: Optional[threading.Thread] = None
+        self._on_change = on_change
+
+        self._current_settings: Optional[AurumSettings] = None
+        self._last_overlay_hash: str = ""
+        self._last_snapshot_hash: str = ""
+        self._last_overlay_mtimes: Dict[str, float] = {}
+
+        # Initial build
+        self.reload()
+
+        # Start watch loop if enabled
+        if self.hot_reload_enabled:
+            self._start_thread()
+
+    # ---------------------- Public API ----------------------
+    def get(self) -> "AurumSettings":
+        if self._current_settings is None:
+            raise RuntimeError("SettingsManager not initialized")
+        return self._current_settings
+
+    def reload(self) -> None:
+        """Rebuild settings from environment and overlays, validate, and activate."""
+        overlays = _load_overlay_files(self.config_base_path, self.environment)
+        overlay_hash = hashlib.sha1(json.dumps(overlays, sort_keys=True, default=str).encode("utf-8")).hexdigest()
+
+        # Always rebuild to allow env changes to take effect
+        new_settings = AurumSettings()
+        try:
+            # Apply nested overrides to well-known namespaces
+            # Expected keys include: api, redis, database, trino, auth, telemetry, pagination, async_offload
+            for key in ("api", "redis", "database", "trino", "auth", "telemetry", "pagination", "async_offload"):
+                if key in overlays and hasattr(new_settings, key):
+                    _apply_overrides_to_object(getattr(new_settings, key), overlays[key])
+            # Also allow top-level fields like environment/debug
+            for key in ("environment", "debug"):
+                if key in overlays:
+                    try:
+                        setattr(new_settings, key, overlays[key])
+                    except Exception:
+                        pass
+
+            # Basic validation
+            self._validate(new_settings)
+        except Exception as exc:  # pragma: no cover - log and keep previous settings
+            logger.warning("Settings validation failed during reload: %s", exc)
+            if self._current_settings is None:
+                # No previous configuration; propagate
+                raise
+            return
+
+        snapshot = _snapshot_core_settings(new_settings)
+        snapshot_hash = hashlib.sha1(json.dumps(snapshot, sort_keys=True, default=str).encode("utf-8")).hexdigest()
+
+        self._current_settings = new_settings
+        configure_settings(new_settings)
+        self._last_overlay_hash = overlay_hash
+        self._last_snapshot_hash = snapshot_hash
+        self._update_overlay_mtimes()
+
+        if callable(self._on_change):
+            try:
+                self._on_change(new_settings)
+            except Exception:  # pragma: no cover - user callback errors should not disrupt
+                pass
+
+        logger.info(
+            "Settings loaded",
+            extra={
+                "environment": self.environment,
+                "config_path": str(self.config_base_path),
+                "changed_at": datetime.utcnow().isoformat() + "Z",
+            },
+        )
+
+    def stop(self) -> None:
+        if not self._thread:
+            return
+        self._stop_event.set()
+        try:
+            self._thread.join(timeout=2.0)
+        except Exception:
+            pass
+        finally:
+            self._thread = None
+
+    def export_schema(self, target_path: str | Path) -> Path:
+        """Export JSON Schema for configuration to the provided file path.
+
+        Uses the typed schema from `libs.common.config.AurumSettings` as the canonical
+        documentation surface.
+        """
+        from importlib import import_module
+
+        try:
+            mod = import_module("libs.common.config")
+            TypedAurum = getattr(mod, "AurumSettings")
+            schema = TypedAurum.model_json_schema()  # type: ignore[attr-defined]
+        except Exception as exc:  # pragma: no cover - schema export is best-effort
+            logger.warning("Unable to generate config schema from typed model: %s", exc)
+            schema = {
+                "$schema": "https://json-schema.org/draft/2020-12/schema",
+                "title": "AurumSettings",
+                "description": "Fallback schema. Install pydantic models for full schema.",
+                "type": "object",
+            }
+
+        target = Path(target_path)
+        target.parent.mkdir(parents=True, exist_ok=True)
+        with target.open("w", encoding="utf-8") as fh:
+            json.dump(schema, fh, indent=2)
+        return target
+
+    # ---------------------- Internals ----------------------
+    def _start_thread(self) -> None:
+        if self._thread:
+            return
+        self._thread = threading.Thread(target=self._watch_loop, name="AurumSettingsHotReload", daemon=True)
+        self._thread.start()
+
+    def _update_overlay_mtimes(self) -> None:
+        mtimes: Dict[str, float] = {}
+        for name in ("base", self.environment):
+            for ext in (".yaml", ".yml", ".json"):
+                path = self.config_base_path / f"{name}{ext}"
+                try:
+                    stat = path.stat()
+                except FileNotFoundError:
+                    continue
+                mtimes[str(path)] = getattr(stat, "st_mtime", 0.0)
+        self._last_overlay_mtimes = mtimes
+
+    def _overlays_changed(self) -> bool:
+        if not self._last_overlay_mtimes:
+            return True
+        for name in ("base", self.environment):
+            for ext in (".yaml", ".yml", ".json"):
+                path = self.config_base_path / f"{name}{ext}"
+                key = str(path)
+                if not path.exists():
+                    if key in self._last_overlay_mtimes:
+                        return True
+                    continue
+                try:
+                    mtime = path.stat().st_mtime
+                except Exception:
+                    continue
+                if self._last_overlay_mtimes.get(key) != mtime:
+                    return True
+        return False
+
+    def _watch_loop(self) -> None:  # pragma: no cover - background watcher
+        try:
+            while not self._stop_event.wait(self.reload_interval_seconds):
+                if self._overlays_changed():
+                    try:
+                        self.reload()
+                    except Exception as exc:
+                        logger.warning("Settings reload failed: %s", exc)
+        except Exception:
+            # Never raise from background thread
+            pass
+
+    def _validate(self, settings: "AurumSettings") -> None:
+        """Perform sanity checks across key configuration sections.
+
+        Raises _SettingsValidationError on failure.
+        """
+        issues: List[str] = []
+
+        # API validation
+        api = getattr(settings, "api", None)
+        if api is not None:
+            try:
+                port = int(getattr(api, "port", 0))
+                if not (1 <= port <= 65535):
+                    issues.append(f"api.port out of range: {port}")
+            except Exception:
+                issues.append("api.port must be an integer")
+
+            try:
+                gz = int(getattr(api, "gzip_min_bytes", 0))
+                if gz < 0:
+                    issues.append("api.gzip_min_bytes must be >= 0")
+            except Exception:
+                issues.append("api.gzip_min_bytes must be an integer")
+
+            conc = getattr(api, "concurrency", None)
+            if conc is not None:
+                try:
+                    mcr = int(getattr(conc, "max_concurrent_requests", 0))
+                    if mcr < 1:
+                        issues.append("api.concurrency.max_concurrent_requests must be >= 1")
+                except Exception:
+                    issues.append("api.concurrency.max_concurrent_requests must be an integer")
+
+                try:
+                    mps = float(getattr(conc, "max_requests_per_second", 0.0))
+                    if mps <= 0:
+                        issues.append("api.concurrency.max_requests_per_second must be > 0")
+                except Exception:
+                    issues.append("api.concurrency.max_requests_per_second must be a number")
+
+        # Redis validation
+        redis = getattr(settings, "redis", None)
+        if redis is not None:
+            url_value = getattr(redis, "url", "") or ""
+            if not isinstance(url_value, str) or not url_value:
+                issues.append("redis.url must be a non-empty string")
+            elif not (url_value.startswith("redis://") or url_value.startswith("rediss://")):
+                issues.append("redis.url must start with 'redis://' or 'rediss://'")
+
+            try:
+                ttl = int(getattr(redis, "ttl_seconds", 0))
+                if ttl < 0:
+                    issues.append("redis.ttl_seconds must be >= 0")
+            except Exception:
+                issues.append("redis.ttl_seconds must be an integer")
+
+        # Trino validation
+        trino = getattr(settings, "trino", None)
+        if trino is not None:
+            host = getattr(trino, "host", "") or ""
+            try:
+                port = int(getattr(trino, "port", 0))
+            except Exception:
+                port = 0
+            if not host:
+                issues.append("trino.host must be set")
+            if not (1 <= port <= 65535):
+                issues.append("trino.port must be in [1,65535]")
+
+        if issues:
+            raise _SettingsValidationError("; ".join(issues))
+
+
+# Global manager (lazy-initialized)
+_settings_manager: Optional[SettingsManager] = None
+
+
+def get_settings_manager() -> SettingsManager:
+    """Get or create the global SettingsManager instance."""
+    global _settings_manager
+    if _settings_manager is None:
+        _settings_manager = SettingsManager()
+    return _settings_manager
 
 
 __all__ = [

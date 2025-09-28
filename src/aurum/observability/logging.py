@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import sys
 import traceback
 from typing import Any, Dict
@@ -18,25 +19,32 @@ from ..telemetry.context import (
 
 
 class JsonFormatter(logging.Formatter):
-    """JSON formatter for structured logging."""
+    """JSON formatter for standardized structured logging.
+
+    Produces a schema aligned with the telemetry structured logger so logs across
+    the system are consistent and easily queryable.
+    """
 
     def format(self, record: logging.LogRecord) -> str:
-        """Format log record as JSON."""
+        """Format log record as JSON using a unified schema."""
         log_entry = {
             "timestamp": self.formatTime(record, "%Y-%m-%dT%H:%M:%S.%fZ"),
             "level": record.levelname,
+            "event": record.getMessage(),
             "logger": record.name,
-            "message": record.getMessage(),
             "module": record.module,
             "function": record.funcName,
             "line": record.lineno,
+            # Identity & correlation
+            "service": os.getenv("AURUM_OTEL_SERVICE_NAME", "aurum-api"),
             "request_id": getattr(record, "request_id", None),
-            "trace_id": getattr(record, "trace_id", None),
-            "span_id": getattr(record, "span_id", None),
+            "correlation_id": getattr(record, "correlation_id", None),
             "tenant_id": getattr(record, "tenant_id", None),
             "user_id": getattr(record, "user_id", None),
-            "correlation_id": getattr(record, "correlation_id", None),
             "session_id": getattr(record, "session_id", None),
+            # Tracing
+            "trace_id": getattr(record, "trace_id", None),
+            "span_id": getattr(record, "span_id", None),
         }
 
         # Add exception info if present
@@ -44,7 +52,7 @@ class JsonFormatter(logging.Formatter):
             log_entry["exception"] = self.formatException(record.exc_info)
             log_entry["stack_trace"] = traceback.format_exception(*record.exc_info)
 
-        # Add extra fields
+        # Add extra fields, remapping certain legacy keys to standardized names
         for key, value in record.__dict__.items():
             if key not in {
                 "name", "msg", "args", "levelname", "levelno", "pathname",
@@ -53,6 +61,22 @@ class JsonFormatter(logging.Formatter):
                 "thread", "threadName", "processName", "process", "message",
                 "request_id", "trace_id", "span_id"
             } and not key.startswith("_"):
+                # Normalize common fields
+                if key == "status":
+                    log_entry["status_code"] = value
+                    continue
+                if key == "duration":
+                    log_entry["duration_ms"] = value
+                    continue
+                if key == "service_name":
+                    log_entry["service"] = value
+                    continue
+                # Do not duplicate event; allow optional free-text message via 'message'
+                if key == "event":
+                    # prefer record message for event; include provided event as 'message' if different
+                    if isinstance(value, str) and value != record.getMessage():
+                        log_entry.setdefault("message", value)
+                    continue
                 log_entry[key] = value
 
         return json.dumps(log_entry, default=str)
@@ -153,22 +177,46 @@ class ObservabilityLogger:
         self.logger.exception(msg, *args, extra=self._extract_extra(kwargs))
 
     def _extract_extra(self, kwargs: Dict[str, Any]) -> Dict[str, Any]:
-        """Extract extra fields for logging."""
-        extra = {}
+        """Extract and normalize extra fields for logging."""
+        extra: Dict[str, Any] = {}
 
-        # Extract known fields
-        for key in ["request_id", "trace_id", "span_id", "user_id", "tenant_id",
-                   "correlation_id", "session_id", "component", "operation",
-                   "duration", "error_code", "metadata"]:
+        # Normalize common timing/status fields
+        if "duration_ms" in kwargs:
+            extra["duration_ms"] = kwargs["duration_ms"]
+        elif "duration" in kwargs:
+            extra["duration_ms"] = kwargs["duration"]
+
+        if "status_code" in kwargs:
+            extra["status_code"] = kwargs["status_code"]
+        elif "status" in kwargs:
+            extra["status_code"] = kwargs["status"]
+
+        # Extract known identifiers and common fields
+        for key in [
+            "request_id",
+            "trace_id",
+            "span_id",
+            "user_id",
+            "tenant_id",
+            "correlation_id",
+            "session_id",
+            "component",
+            "operation",
+            "error_code",
+            "endpoint",
+            "method",
+        ]:
             if key in kwargs:
                 extra[key] = kwargs[key]
 
+        # Allow optional free-text message distinct from 'event'
+        if "message" in kwargs:
+            extra["message"] = kwargs["message"]
+
         # Add any remaining kwargs as metadata
-        metadata = kwargs.get("metadata", {})
+        metadata = dict(kwargs.get("metadata", {}))
         for key, value in kwargs.items():
-            if key not in ["request_id", "trace_id", "span_id", "user_id", "tenant_id",
-                          "correlation_id", "session_id", "component", "operation",
-                          "duration", "error_code", "metadata"]:
+            if key not in extra and key not in {"duration", "status", "duration_ms", "status_code", "metadata", "message"}:
                 metadata[key] = value
 
         if metadata:
@@ -188,13 +236,13 @@ def log_api_request(
 ) -> None:
     """Log API request with structured data."""
     logger.info(
-        f"API Request: {method} {endpoint}",
+        f"http_request_completed",
         component="api",
         operation="request",
         endpoint=endpoint,
         method=method,
         status_code=status_code,
-        duration=duration,
+        duration_ms=duration,
         **kwargs
     )
 
@@ -208,11 +256,11 @@ def log_database_operation(
 ) -> None:
     """Log database operation with structured data."""
     logger.info(
-        f"Database Operation: {operation} on {table}",
+        "database_operation",
         component="database",
         operation=operation,
         table=table,
-        duration=duration,
+        duration_ms=duration,
         **kwargs
     )
 
@@ -228,13 +276,13 @@ def log_cache_operation(
 ) -> None:
     """Log cache operation with structured data."""
     logger.info(
-        f"Cache {operation}: {key}",
+        "cache_operation",
         component="cache",
         operation=operation,
         cache_type=cache_type,
         cache_key=key,
         cache_hit=hit,
-        duration=duration,
+        duration_ms=duration,
         **kwargs
     )
 
@@ -250,11 +298,11 @@ def log_external_call(
     """Log external service call with structured data."""
     log_level = "info" if success else "warning"
     getattr(logger, log_level)(
-        f"External call to {service}: {operation}",
+        "external_call",
         component="external",
         operation=operation,
         service=service,
-        duration=duration,
+        duration_ms=duration,
         success=success,
         **kwargs
     )
@@ -268,7 +316,7 @@ def log_error(
 ) -> None:
     """Log error with context and structured data."""
     logger.error(
-        f"Error in {context}: {str(error)}",
+        "error",
         component="error",
         operation=context,
         error_type=type(error).__name__,
@@ -286,11 +334,11 @@ def log_performance_issue(
 ) -> None:
     """Log performance issue when operation exceeds threshold."""
     logger.warning(
-        f"Performance issue in {operation}: {duration:.3f}s > {threshold:.3f}s",
+        "performance_slow_operation",
         component="performance",
         operation=operation,
-        duration=duration,
-        threshold=threshold,
+        duration_ms=duration,
+        threshold_ms=threshold,
         **kwargs
     )
 
@@ -304,7 +352,7 @@ def log_security_event(
 ) -> None:
     """Log security event with structured data."""
     logger.warning(
-        f"Security Event: {event}",
+        "security_event",
         component="security",
         operation=event,
         user_id=user_id,
@@ -321,7 +369,7 @@ def log_business_metric(
 ) -> None:
     """Log business metric with structured data."""
     logger.info(
-        f"Business Metric: {metric} = {value}",
+        "business_metric",
         component="business",
         operation="metric",
         metric_name=metric,

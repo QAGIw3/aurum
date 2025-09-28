@@ -28,7 +28,7 @@ from ..observability.telemetry_facade import get_telemetry_facade, MetricCategor
 from ..cache.consolidated_manager import get_unified_cache_manager
 from .feature_store_service import get_feature_store_service
 from .model_registry_service import get_model_registry_service
-from ..daos.base_dao import TrinoDAO
+from ..dao.experimental import TrinoDAO
 
 
 class ExplanationConfig(BaseModel):

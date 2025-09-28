@@ -24,7 +24,7 @@ from pydantic import BaseModel
 
 from ..observability.telemetry_facade import get_telemetry_facade
 from ..cache.consolidated_manager import get_unified_cache_manager
-from ..daos.base_dao import TrinoDAO
+from ..dao.experimental import TrinoDAO
 
 
 class AuctionEnvironment(BaseModel):

@@ -15,6 +15,7 @@ from starlette.types import ASGIApp
 from aurum.core import AurumSettings
 
 from .rfc7807 import RFC7807ExceptionMiddleware
+from .logging_context import logging_context_middleware
 
 
 MiddlewareFactory = Callable[[ASGIApp, AurumSettings], ASGIApp]
@@ -44,7 +45,8 @@ def _wrap_cors(app: FastAPI, settings: AurumSettings) -> None:
 
 def _wrap_rfc7807_exceptions(app: FastAPI, settings: AurumSettings) -> None:
     """Add RFC7807 compliant exception handling middleware."""
-    base_url = getattr(settings.api, "base_url", "https://api.aurum.com")
+    base_url = getattr(getattr(settings, "api", None), "public_base_url", None) or getattr(settings.api, "base_url", "https://api.aurum.com")
+    # Ensure RFC7807 is early to catch exceptions from subsequent middleware/routers
     app.add_middleware(RFC7807ExceptionMiddleware, base_url=base_url)
 
 
@@ -52,12 +54,16 @@ def apply_middleware_stack(app: FastAPI, settings: AurumSettings) -> ASGIApp:
     """Apply middleware in a well-defined order based on settings.
 
     Order:
-    - CORS (outermost)
+    - Logging context (outermost)
+    - CORS
     - GZip
     - RFC7807 Exception handling (critical for consistent error responses)
     - Concurrency/queueing (handled separately in app.py to avoid circular imports)
     - Sliding-window rate limiting (handled separately in app.py to avoid circular imports)
     """
+
+    # Bind logging/correlation context first to ensure downstream logs have IDs
+    app.middleware("http")(logging_context_middleware)
 
     # Outer wrappers change request/response headers early
     _wrap_cors(app, settings)

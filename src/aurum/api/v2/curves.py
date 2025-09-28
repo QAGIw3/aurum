@@ -22,7 +22,7 @@ from fastapi import APIRouter, HTTPException, Query, Request, Response, Depends
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
-from ..deps import get_settings
+from ..deps import get_settings, get_unified_cache_manager_dep
 from ..container import provide_service
 from ..contracts import CacheDirective, CurvesQuery, ServiceCallContext, Pagination
 from ..services import CurvesService
@@ -66,7 +66,7 @@ async def get_curves_v2(
     limit: int = Query(10, ge=1, le=100, description="Maximum number of items to return"),
     name_filter: Optional[str] = Query(None, description="Filter by curve name"),
     settings: AurumSettings = Depends(get_settings),
-    cache_manager = Depends(get_unified_cache_manager),
+    cache_manager = Depends(get_unified_cache_manager_dep),
 ) -> CurveListResponse:
     """List curves with enhanced pagination and error handling."""
     start_time = time.perf_counter()

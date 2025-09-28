@@ -1,6 +1,8 @@
 """Advanced forecasting models and shared interfaces."""
 from __future__ import annotations
 
+import inspect
+
 from dataclasses import dataclass, field
 from typing import Callable, Iterable, Optional, Protocol, Sequence
 
@@ -315,7 +317,7 @@ class RegressionForecaster:
 
         if future_features is not None:
             future_df = future_features.copy()
-            horizon_features = future_df.iloc[:steps].reindex(columns, fill_value=np.nan)
+            horizon_features = future_df.iloc[:steps].reindex(columns=columns, fill_value=np.nan)
         else:
             horizon_features = pd.DataFrame(np.nan, index=range(steps), columns=columns)
 
@@ -388,7 +390,7 @@ class EnsembleForecaster:
         self._trained_members.clear()
         for factory in self.member_factories:
             model = factory()
-            model.fit(series, features)
+            self._call_fit(model, series, features)
             self._trained_members.append(model)
 
     def forecast(self, steps: int, future_features: Optional[pd.DataFrame] = None) -> ForecastResult:
@@ -397,7 +399,7 @@ class EnsembleForecaster:
         if steps <= 0:
             raise ValueError("steps must be positive")
 
-        member_results = [model.forecast(steps, future_features) for model in self._trained_members]
+        member_results = [self._call_forecast(model, steps, future_features) for model in self._trained_members]
         preds = None
         lowers = None
         uppers = None
@@ -431,6 +433,23 @@ class EnsembleForecaster:
         if total <= 0:
             raise ValueError("weights must sum to a positive value")
         return [float(w) / total for w in self.weights]
+
+    @staticmethod
+    def _call_fit(model: BaseForecaster, series: pd.Series, features: Optional[pd.DataFrame]) -> None:
+        params = inspect.signature(model.fit).parameters
+        if "features" in params:
+            model.fit(series, features)
+        else:
+            model.fit(series)
+
+    @staticmethod
+    def _call_forecast(
+        model: BaseForecaster, steps: int, future_features: Optional[pd.DataFrame]
+    ) -> ForecastResult:
+        params = inspect.signature(model.forecast).parameters
+        if "future_features" in params:
+            return model.forecast(steps, future_features=future_features)
+        return model.forecast(steps)
 
 
 __all__ = [

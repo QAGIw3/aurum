@@ -238,6 +238,27 @@ class ApplicationContext:
         self.metadata_fallback_cache = {}
         self._lock = asyncio.Lock()
 
+
+# --------------------------
+# Legacy shim helpers
+# --------------------------
+def get_service(service_type: Type[T]) -> T:
+    """Legacy helper to obtain a service instance synchronously.
+
+    Currently supports AsyncScenarioService for modules that import this
+    function directly. New code should prefer dependency injection via
+    `provide_service` or resolve from the app's container.
+    """
+    try:
+        from .async_service import AsyncScenarioService  # type: ignore
+        from aurum.core.settings import get_settings as _core_get_settings
+
+        if service_type is AsyncScenarioService:  # type: ignore[name-defined]
+            return AsyncScenarioService(_core_get_settings())  # type: ignore[return-value]
+    except Exception:
+        pass
+    raise NotImplementedError(f"get_service does not support: {service_type}")
+
     async def get_cache_manager(self):
         """Get cache manager with proper dependency injection."""
         if self.cache_manager is None:

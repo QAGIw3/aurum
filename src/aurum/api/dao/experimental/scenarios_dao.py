@@ -9,7 +9,7 @@ from uuid import UUID
 from pydantic import BaseModel
 
 from .base_dao import TrinoDAO
-from ..scenarios.scenario_models import ScenarioResponse, ScenarioRunResponse
+from ...scenarios.scenario_models import ScenarioResponse, ScenarioRunResponse
 
 
 class ScenarioFilter(BaseModel):
@@ -336,4 +336,3 @@ class ScenariosDAO(TrinoDAO[ScenarioResponse, str]):
             error_message=row.get("error_message"),
             progress=row.get("progress", 0.0)
         )
-

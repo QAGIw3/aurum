@@ -17,7 +17,7 @@ from fastapi import APIRouter, Depends, Request, Response
 from ..config import CacheConfig
 from ..http import respond_with_etag
 from ..models import CachePurgeDetail, CachePurgeResponse, Meta
-from ..service import _maybe_redis_client, invalidate_scenario_outputs_cache, invalidate_eia_series_cache
+from ..service import _maybe_redis_client, invalidate_scenario_outputs_cache, invalidate_eia_series_cache_async
 from aurum.core.settings import get_settings as _core_get_settings
 from ...telemetry.context import get_request_id
 
@@ -89,12 +89,12 @@ def invalidate_curve_cache_admin(request: Request) -> CachePurgeResponse:
 
 
 @router.post("/v1/admin/cache/eia/series/invalidate", response_model=CachePurgeResponse)
-def invalidate_eia_series_cache_admin(request: Request) -> CachePurgeResponse:
+async def invalidate_eia_series_cache_admin(request: Request) -> CachePurgeResponse:
     """Invalidate cached EIA series queries in Redis (admin-only)."""
     _require_admin(getattr(request.state, "principal", None) or {})
     request_id = get_request_id() or "unknown"
     cache_cfg = CacheConfig.from_settings(get_settings())
-    results = invalidate_eia_series_cache(cache_cfg)
+    results = await invalidate_eia_series_cache_async(cache_cfg)
     data = [
         CachePurgeDetail(scope="eia-series", redis_keys_removed=results.get("eia-series", 0), local_entries_removed=0),
         CachePurgeDetail(scope="eia-series-dimensions", redis_keys_removed=results.get("eia-series-dimensions", 0), local_entries_removed=0),

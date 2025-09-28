@@ -7,7 +7,7 @@ from aurum.ml.forecasting import ForecastingPipeline, HoltWintersForecaster, Nai
 
 def test_forecasting_pipeline_selects_best_model():
     # Synthetic seasonal signal
-    idx = pd.date_range("2024-01-01", periods=120, freq="H")
+    idx = pd.date_range("2024-01-01", periods=120, freq="h")
     values = 20 + 5 * np.sin(np.linspace(0, 10 * np.pi, len(idx)))
     series = pd.Series(values, index=idx)
 

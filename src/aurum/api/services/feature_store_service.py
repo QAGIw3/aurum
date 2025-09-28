@@ -22,7 +22,7 @@ from pandas import DataFrame
 from pydantic import BaseModel, Field
 
 from ..telemetry.context import get_request_id, log_structured
-from ..daos.base_dao import TrinoDAO
+from ..dao.experimental import TrinoDAO
 from ...telemetry.context import get_tenant_id
 
 

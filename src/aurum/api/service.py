@@ -14,16 +14,13 @@ from contextlib import contextmanager
 from datetime import date, datetime, timezone
 from typing import Any, Dict, Iterable, List, Mapping, Optional, Sequence, Tuple
 
-try:  # pragma: no cover - optional dependency
-    import psycopg
-except ModuleNotFoundError:  # pragma: no cover - allow stubbing in tests
-    psycopg = None  # type: ignore[assignment]
-
 from aurum.core import AurumSettings
 from aurum.core.pagination import Cursor as _Cursor
 from aurum.telemetry import get_tracer
 
 from .config import CacheConfig, TrinoConfig
+from .database.timescale_client import get_timescale_client
+from .services.admin_service import AdminService
 from .query import (
     DIFF_ORDER_COLUMNS,
     build_curve_diff_query,
@@ -192,34 +189,30 @@ def _eia_series_base_table() -> str:
     return _settings().database.eia_series_base_table
 
 
-def _fetch_timescale_rows(sql: str, params: Mapping[str, object]) -> Tuple[List[Dict[str, Any]], float]:
+async def _fetch_timescale_rows(sql: str, params: Mapping[str, object]) -> Tuple[List[Dict[str, Any]], float]:
     start_time = time.perf_counter()
-    rows: List[Dict[str, Any]] = []
-    if psycopg is None:  # pragma: no cover - guard when dependency missing
-        raise RuntimeError("psycopg is required for Timescale queries")
-    with psycopg.connect(_timescale_dsn(), autocommit=True) as conn:
-        with conn.cursor() as cur:
-            cur.execute(sql, params)
-            columns = [col[0] for col in cur.description]
-            for record in cur.fetchall():
-                row: Dict[str, Any] = {}
-                for column, value in zip(columns, record):
-                    if isinstance(value, datetime):
-                        if value.tzinfo is None:
-                            value = value.replace(tzinfo=timezone.utc)
-                        row[column] = value
-                    elif isinstance(value, date):
-                        row[column] = value
-                    elif column == "metadata" and isinstance(value, str):
-                        try:
-                            row[column] = json.loads(value)
-                        except json.JSONDecodeError:
-                            row[column] = None
-                    else:
-                        row[column] = value
-                rows.append(row)
+    client = get_timescale_client(_timescale_dsn())
+    records = await client.execute_query(sql, dict(params))
+    normalized: List[Dict[str, Any]] = []
+    for record in records:
+        row: Dict[str, Any] = {}
+        for column, value in record.items():
+            if isinstance(value, datetime):
+                if value.tzinfo is None:
+                    value = value.replace(tzinfo=timezone.utc)
+                row[column] = value
+            elif isinstance(value, date):
+                row[column] = value
+            elif column == "metadata" and isinstance(value, str):
+                try:
+                    row[column] = json.loads(value)
+                except json.JSONDecodeError:
+                    row[column] = None
+            else:
+                row[column] = value
+        normalized.append(row)
     elapsed_ms = (time.perf_counter() - start_time) * 1000.0
-    return rows, elapsed_ms
+    return normalized, elapsed_ms
 
 SCENARIO_OUTPUT_ORDER_COLUMNS = [
     "scenario_id",
@@ -278,31 +271,12 @@ async def _execute_trino_query_async(
     return await client.execute_query(query, params=params, use_cache=True)
 
 
-def _execute_trino_query(
+async def _execute_trino_query(
     trino_cfg: TrinoConfig,
     query: str,
     params: Optional[Dict[str, Any]] = None,
 ) -> List[Dict[str, Any]]:
-    """Synchronous wrapper for backward compatibility."""
-    # For now, create a simple event loop to run the async function
-    try:
-        loop = asyncio.get_event_loop()
-        if loop.is_running():
-            # If we're in an async context, we need to handle this differently
-            import warnings
-            warnings.warn(
-                "_execute_trino_query called from async context. "
-                "Use _execute_trino_query_async instead.",
-                DeprecationWarning,
-                stacklevel=2,
-            )
-            # Return empty result for now - should be replaced with proper async handling
-            return []
-        else:
-            return loop.run_until_complete(_execute_trino_query_async(trino_cfg, query, params))
-    except RuntimeError:
-        # No event loop exists, create one
-        return asyncio.run(_execute_trino_query_async(trino_cfg, query, params))
+    return await _execute_trino_query_async(trino_cfg, query, params)
 
 
 def _build_sql(
@@ -433,7 +407,7 @@ def _build_sql_eia_series(
     )
 
 
-def query_eia_series(
+async def query_eia_series(
     trino_cfg: TrinoConfig,
     cache_cfg: CacheConfig,
     *,
@@ -491,24 +465,13 @@ def query_eia_series(
         descending=descending,
     )
 
-    prefix = f"{cache_cfg.namespace}:" if cache_cfg.namespace else ""
-    key = f"{prefix}eia-series:{_cache_key({**params, 'sql': sql})}"
     start_time = time.perf_counter()
-    manager = get_unified_cache_manager()
-    def _get_query_result():
-        return asyncio.run(_execute_trino_query_async(trino_cfg, sql))
-
-    rows: List[Dict[str, Any]] = cache_get_or_set_sync(
-        manager,
-        key,
-        _get_query_result,
-        cache_cfg.ttl_seconds,
-    )
+    rows = await _execute_trino_query_async(trino_cfg, sql)
     elapsed = (time.perf_counter() - start_time) * 1000.0
     return rows, elapsed
 
 
-def query_eia_series_dimensions(
+async def query_eia_series_dimensions(
     trino_cfg: TrinoConfig,
     cache_cfg: CacheConfig,
     *,
@@ -559,31 +522,8 @@ def query_eia_series_dimensions(
         f"FROM {_eia_series_base_table()}{where}"
     )
 
-    manager = get_unified_cache_manager()
-    prefix = f"{cache_cfg.namespace}:" if cache_cfg.namespace else ""
-    params = {
-        "series_id": series_id,
-        "frequency": frequency,
-        "area": area,
-        "sector": sector,
-        "dataset": dataset,
-        "unit": unit,
-        "canonical_unit": canonical_unit,
-        "canonical_currency": canonical_currency,
-        "source": source,
-    }
-    cache_key = f"{prefix}eia-series-dimensions:{_cache_key({**params, 'sql': sql})}"
-    if manager is not None:
-        cached_payload = cache_get_sync(manager, cache_key)
-        if cached_payload is not None:
-            if SERVICE_CACHE_COUNTER:
-                try:
-                    SERVICE_CACHE_COUNTER.labels(endpoint="eia_series_dimensions", event="hit").inc()
-                except Exception:
-                    pass
-            return cached_payload, 0.0
-
     start_time = time.perf_counter()
+    rows = await _execute_trino_query_async(trino_cfg, sql, params)
     results: Dict[str, List[str]] = {
         "dataset": [],
         "area": [],
@@ -594,40 +534,24 @@ def query_eia_series_dimensions(
         "frequency": [],
         "source": [],
     }
-    try:
-        rows = asyncio.run(_execute_trino_query_async(trino_cfg, sql))
-        row = rows[0] if rows else None
-        if row:
-            mapping = {
-                "dataset": row.get("dataset_values"),
-                "area": row.get("area_values"),
-                "sector": row.get("sector_values"),
-                "unit": row.get("unit_values"),
-                "canonical_unit": row.get("canonical_unit_values"),
-                "canonical_currency": row.get("canonical_currency_values"),
-                "frequency": row.get("frequency_values"),
-                "source": row.get("source_values"),
-            }
-            for key, values in mapping.items():
-                if not values:
-                    continue
-                items = [str(item) for item in values if item is not None]
-                results[key] = sorted(set(items))
-    except Exception:
-        # Fall through with empty results; upstream caller handles
-        pass
+    row = rows[0] if rows else None
+    if row:
+        mapping = {
+            "dataset": row.get("dataset_values"),
+            "area": row.get("area_values"),
+            "sector": row.get("sector_values"),
+            "unit": row.get("unit_values"),
+            "canonical_unit": row.get("canonical_unit_values"),
+            "canonical_currency": row.get("canonical_currency_values"),
+            "frequency": row.get("frequency_values"),
+            "source": row.get("source_values"),
+        }
+        for key, values in mapping.items():
+            if not values:
+                continue
+            items = [str(item) for item in values if item is not None]
+            results[key] = sorted(set(items))
     elapsed = (time.perf_counter() - start_time) * 1000.0
-
-    if manager is not None:
-        try:
-            cache_set_sync(manager, cache_key, results, cache_cfg.ttl_seconds)
-            if SERVICE_CACHE_COUNTER:
-                try:
-                    SERVICE_CACHE_COUNTER.labels(endpoint="eia_series_dimensions", event="miss").inc()
-                except Exception:
-                    pass
-        except Exception:
-            LOGGER.debug("CacheManager set failed for EIA series dimensions", exc_info=True)
 
     return results, elapsed
 
@@ -818,11 +742,10 @@ def query_scenario_outputs(
     client = _maybe_redis_client(cache_cfg)
     cache_key = None
     singleflight_key = None
-    prefix = f"{cache_cfg.namespace}:" if cache_cfg.namespace else ""
     if client is not None:
         # Legacy Redis path for testing/compatibility
         version = _get_scenario_cache_version(client, cache_cfg.namespace, tenant_id)
-        cache_key = f"{prefix}scenario-outputs:v{version}:{_cache_key({**params, 'sql': sql})}"
+        cache_key = f"{cache_cfg.namespace}scenario-outputs:v{version}:{_cache_key({**params, 'sql': sql})}"
         cached = client.get(cache_key)
         if cached:  # pragma: no cover - best effort cache usage
             try:
@@ -836,7 +759,7 @@ def query_scenario_outputs(
     elif manager is not None:
         version_key = _scenario_cache_version_key(cache_cfg.namespace, tenant_id)
         version_val = cache_get_sync(manager, version_key) or "1"
-        cache_key = f"{prefix}scenario-outputs:v{version_val}:{_cache_key({**params, 'sql': sql})}"
+        cache_key = f"{cache_cfg.namespace}scenario-outputs:v{version_val}:{_cache_key({**params, 'sql': sql})}"
         cached_payload = cache_get_sync(manager, cache_key)
         if cached_payload is not None:
             if SCENARIO_CACHE_HITS:
@@ -869,7 +792,7 @@ def query_scenario_outputs(
         span.set_attribute("aurum.curves_diff.limit", limit)
         span.set_attribute("aurum.curves_diff.has_cursor", bool(cursor_after))
         start = time.perf_counter()
-        rows = asyncio.run(_execute_trino_query_async(trino_cfg, sql))
+        rows = await _execute_trino_query_async(trino_cfg, sql)
         elapsed = (time.perf_counter() - start) * 1000.0
         span.set_attribute("aurum.curves_diff.elapsed_ms", elapsed)
         span.set_attribute("aurum.curves_diff.row_count", len(rows))
@@ -1070,10 +993,9 @@ def query_scenario_metrics_latest(
     client = _maybe_redis_client(cache_cfg)
     cache_key = None
     singleflight_key = None
-    prefix = f"{cache_cfg.namespace}:" if cache_cfg.namespace else ""
     if client is not None:
         version = _get_scenario_cache_version(client, cache_cfg.namespace, tenant_id)
-        cache_key = f"{prefix}scenario-metrics:v{version}:{_cache_key(params)}"
+        cache_key = f"{cache_cfg.namespace}scenario-metrics:v{version}:{_cache_key(params)}"
         cached = client.get(cache_key)
         if cached:
             try:
@@ -1087,7 +1009,7 @@ def query_scenario_metrics_latest(
     elif manager is not None:
         version_key = _scenario_cache_version_key(cache_cfg.namespace, tenant_id)
         version_val = cache_get_sync(manager, version_key) or "1"
-        cache_key = f"{prefix}scenario-metrics:v{version_val}:{_cache_key(params)}"
+        cache_key = f"{cache_cfg.namespace}scenario-metrics:v{version_val}:{_cache_key(params)}"
         cached_payload = cache_get_sync(manager, cache_key)
         if cached_payload is not None:
             if SCENARIO_CACHE_HITS:
@@ -1116,7 +1038,7 @@ def query_scenario_metrics_latest(
                 pass
 
         start = time.perf_counter()
-        rows: List[Dict[str, Any]] = asyncio.run(_execute_trino_query_async(trino_cfg, sql))
+        rows = await _execute_trino_query_async(trino_cfg, sql)
         elapsed = (time.perf_counter() - start) * 1000.0
 
         if cache_key is not None:
@@ -1141,157 +1063,22 @@ def query_scenario_metrics_latest(
 
 
 async def invalidate_eia_series_cache_async(cache_cfg: CacheConfig) -> Dict[str, int]:
-    """Async version of EIA series cache invalidation. Prefer CacheManager; fallback to Redis sets.
-
-    Returns a dict of scope -> count invalidated (0 when using CacheManager).
-    """
-    manager = get_unified_cache_manager()
-    if manager is not None:
-        try:
-            # Best-effort: use broad patterns to invalidate related keys
-            # Current CacheManager.invalidate_pattern clears all; keep scope keys for reporting
-            await manager.invalidate_pattern("eia-series")
-            return {"eia-series": 0, "eia-series-dimensions": 0}
-        except Exception:
-            LOGGER.debug("CacheManager invalidate_pattern failed; attempting Redis path", exc_info=True)
-
-    # Fallback to Redis logic
-    return _invalidate_eia_series_cache_redis(cache_cfg)
-
-
-def _invalidate_eia_series_cache_redis(cache_cfg: CacheConfig) -> Dict[str, int]:
-    """Redis-based EIA series cache invalidation fallback."""
-    client = _maybe_redis_client(cache_cfg)
-    prefix = f"{cache_cfg.namespace}:" if cache_cfg.namespace else ""
-    scopes = {
-        "eia-series": f"{prefix}eia-series:index",
-        "eia-series-dimensions": f"{prefix}eia-series-dimensions:index",
-    }
-    results: Dict[str, int] = {key: 0 for key in scopes}
-    if client is None:
-        return results
-
-    for scope, index_key in scopes.items():
-        try:
-            members = client.smembers(index_key)
-        except Exception:
-            continue
-        if not members:
-            client.delete(index_key)
-            continue
-        keys: list[str] = []
-        for member in members:
-            decoded = _decode_member(member)
-            if decoded:
-                keys.append(decoded)
-        if keys:
-            try:
-                client.delete(*keys)
-            except Exception:
-                pass
-            results[scope] = len(keys)
-        try:
-            client.srem(index_key, *members)
-        except Exception:
-            pass
-        try:
-            if hasattr(client, "scard") and client.scard(index_key) == 0:
-                client.delete(index_key)
-        except Exception:
-            client.delete(index_key)
-    return results
+    return await AdminService().invalidate_eia_series_cache_async(cache_cfg)
 
 
 def invalidate_eia_series_cache(cache_cfg: CacheConfig) -> Dict[str, int]:
-    """Invalidate EIA series caches. Prefer CacheManager; fallback to Redis sets.
-
-    Returns a dict of scope -> count invalidated (0 when using CacheManager).
-    """
-    manager = get_unified_cache_manager()
-    if manager is not None:
-        try:
-            # Use asyncio.get_running_loop() to detect if we're in an async context
-            try:
-                asyncio.get_running_loop()
-                # We're in an async context - this function shouldn't be called from async code
-                # Return fallback to Redis instead of creating a new event loop
-                LOGGER.warning("invalidate_eia_series_cache called from async context, using Redis fallback")
-            except RuntimeError:
-                # No event loop, safe to use asyncio.run
-                asyncio.run(manager.invalidate_pattern("eia-series"))  # type: ignore[arg-type]
-                return {"eia-series": 0, "eia-series-dimensions": 0}
-        except Exception:
-            LOGGER.debug("CacheManager invalidate_pattern failed; attempting Redis path", exc_info=True)
+    """Invalidate EIA series caches. Prefer CacheManager; fallback to Redis sets."""
+    return asyncio.get_event_loop().run_until_complete(invalidate_eia_series_cache_async(cache_cfg))
 
 
 async def invalidate_dimensions_cache_async(cache_cfg: CacheConfig) -> int:
-    """Async version of dimensions cache invalidation."""
-    manager = get_unified_cache_manager()
-    if manager is not None:
-        try:
-            await manager.invalidate_pattern("dimensions")
-            return 0
-        except Exception:
-            LOGGER.debug("CacheManager invalidate_pattern failed; attempting Redis path", exc_info=True)
-    
-    # Fallback to Redis logic
-    return _invalidate_dimensions_cache_redis(cache_cfg)
-
-
-def _invalidate_dimensions_cache_redis(cache_cfg: CacheConfig) -> int:
-    """Redis-based dimensions cache invalidation fallback."""
-    client = _maybe_redis_client(cache_cfg)
-    if client is None:
-        return 0
-    prefix = f"{cache_cfg.namespace}:" if cache_cfg.namespace else ""
-    index_key = f"{prefix}dimensions:index"
-    try:
-        members = client.smembers(index_key)
-    except Exception:
-        return 0
-    if not members:
-        client.delete(index_key)
-        return 0
-    keys: list[str] = []
-    for member in members:
-        decoded = _decode_member(member)
-        if decoded:
-            keys.append(decoded)
-    if not keys:
-        return 0
-    try:
-        client.delete(*keys)
-    except Exception:
-        pass
-    try:
-        client.srem(index_key, *members)
-    except Exception:
-        pass
-    try:
-        if hasattr(client, "scard") and client.scard(index_key) == 0:
-            client.delete(index_key)
-    except Exception:
-        client.delete(index_key)
-    return len(keys)
+    return await AdminService().invalidate_dimensions_cache_async(cache_cfg)
 
 
 def invalidate_dimensions_cache(cache_cfg: CacheConfig) -> int:
     """Invalidate dimensions cache. Prefer CacheManager; fallback to Redis sets."""
-    manager = get_unified_cache_manager()
-    if manager is not None:
-        try:
-            # Use asyncio.get_running_loop() to detect if we're in an async context
-            try:
-                asyncio.get_running_loop()
-                # We're in an async context - this function shouldn't be called from async code
-                # Return fallback to Redis instead of creating a new event loop
-                LOGGER.warning("invalidate_dimensions_cache called from async context, using Redis fallback")
-            except RuntimeError:
-                # No event loop, safe to use asyncio.run
-                asyncio.run(manager.invalidate_pattern("dimensions"))  # type: ignore[arg-type]
-                return 0
-        except Exception:
-            LOGGER.debug("CacheManager invalidate_pattern failed; attempting Redis path", exc_info=True)
+    return asyncio.get_event_loop().run_until_complete(invalidate_dimensions_cache_async(cache_cfg))
+
 
 async def invalidate_metadata_cache_async(cache_cfg: CacheConfig, prefixes: Sequence[str]) -> Dict[str, int]:
     """Async version of metadata cache invalidation."""
@@ -1299,8 +1086,14 @@ async def invalidate_metadata_cache_async(cache_cfg: CacheConfig, prefixes: Sequ
     results: Dict[str, int] = {prefix: 0 for prefix in prefixes}
     if manager is not None:
         try:
-            for prefix in prefixes:
-                await manager.invalidate_pattern(f"metadata:{prefix}")
+            loop = asyncio.new_event_loop()
+            try:
+                for prefix in prefixes:
+                    loop.run_until_complete(
+                        manager.invalidate_pattern(f"metadata:{prefix}")  # type: ignore[arg-type]
+                    )
+            finally:
+                loop.close()
             return results
         except Exception:
             LOGGER.debug("CacheManager metadata invalidate failed; attempting Redis path", exc_info=True)
@@ -1344,12 +1137,33 @@ def invalidate_metadata_cache(cache_cfg: CacheConfig, prefixes: Sequence[str]) -
                 # Return fallback to Redis instead of creating a new event loop
                 LOGGER.warning("invalidate_metadata_cache called from async context, using Redis fallback")
             except RuntimeError:
-                # No event loop, safe to use asyncio.run
-                for prefix in prefixes:
-                    asyncio.run(manager.invalidate_pattern(f"metadata:{prefix}"))  # type: ignore[arg-type]
+                loop = asyncio.new_event_loop()
+                try:
+                    for prefix in prefixes:
+                        loop.run_until_complete(
+                            manager.invalidate_pattern(f"metadata:{prefix}")  # type: ignore[arg-type]
+                        )
+                finally:
+                    loop.close()
                 return results
         except Exception:
             LOGGER.debug("CacheManager metadata invalidate failed; attempting Redis path", exc_info=True)
+
+
+def invalidate_scenario_outputs_cache(
+    cache_cfg: CacheConfig,
+    tenant_id: Optional[str],
+    scenario_id: str,
+) -> None:
+    """Compatibility wrapper to invalidate scenario outputs cache.
+
+    Delegates to the AdminService implementation.
+    """
+    try:
+        from .services.admin_service import AdminService
+        AdminService().invalidate_scenario_outputs_cache(cache_cfg, tenant_id, scenario_id)
+    except Exception:
+        LOGGER.warning("Failed to invalidate scenario outputs cache via AdminService", exc_info=True)
 
 if _PromCounter is not None:  # pragma: no cover - optional metrics dependency
     ISO_LMP_CACHE_COUNTER = _PromCounter(
@@ -1689,7 +1503,7 @@ def query_dimensions(
 
         union_sql = " UNION ALL ".join(union_queries)
         sql = f"SELECT dimension, value, count FROM ({union_sql}) ORDER BY dimension, count DESC"
-        rows = asyncio.run(_execute_trino_query_async(trino_cfg, sql))
+        rows = await _execute_trino_query_async(trino_cfg, sql)
 
         for dim in dims:
             dim_values: List[str] = []
@@ -1707,7 +1521,7 @@ def query_dimensions(
         for dim in dims:
             clause = where + (" AND " if where else " WHERE ") + f"{dim} IS NOT NULL"
             sql = f"SELECT DISTINCT {dim} AS value FROM {base}{clause} LIMIT {per_dim_limit}"
-            rows = asyncio.run(_execute_trino_query_async(trino_cfg, sql))
+            rows = await _execute_trino_query_async(trino_cfg, sql)
             values = [row.get("value") for row in rows if row.get("value") is not None]
             results[dim] = values
 
@@ -1737,11 +1551,10 @@ async def fetch_curve_data(
     prev_cursor: Optional[str] = None,
 ) -> Tuple[List[Any], Any]:
     """Fetch curve data using AsyncCurveService."""
-from .async_service import AsyncCurveService, AsyncMetadataService
-from .config import TrinoConfig
-from .cache.consolidated_manager import get_unified_cache_manager
-from aurum.core.settings import get_settings as _core_get_settings
     from .async_service import AsyncCurveService
+    from .config import TrinoConfig
+    from .cache.consolidated_manager import get_unified_cache_manager
+    from aurum.core.settings import get_settings as _core_get_settings
 
     # Determine effective pagination
     if cursor is not None:
@@ -1879,7 +1692,7 @@ async def fetch_curve_diff_data(
         for point in points
     ]
 
-    return data, None
+    return data, _meta
 
 
 async def fetch_curve_strips_data(
@@ -1930,7 +1743,7 @@ async def fetch_curve_strips_data(
         for point in points
     ]
 
-    return data, None
+    return data, _meta
 
 
 async def fetch_metadata_dimensions(

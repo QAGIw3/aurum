@@ -9,7 +9,8 @@ from typing import Dict, List, Optional
 from fastapi import APIRouter, HTTPException, Query, Request
 
 from ..telemetry.context import get_request_id, get_tenant_id
-from .advanced_cache import get_advanced_cache_manager, get_cache_warming_service
+from .consolidated_manager import get_unified_cache_manager
+from .advanced_cache import get_cache_warming_service  # warming service retained for now
 from .golden_query_cache import get_golden_query_cache
 from .cache_models import (
     CacheAnalyticsResponse,
@@ -36,7 +37,7 @@ async def get_cache_analytics(
     start_time = time.perf_counter()
 
     try:
-        cache_manager = get_advanced_cache_manager()
+        cache_manager = get_unified_cache_manager()
 
         if namespace:
             # Get analytics for specific namespace
@@ -47,7 +48,11 @@ async def get_cache_analytics(
             all_analytics = await cache_manager.get_all_analytics()
 
         # Get memory usage
-        memory_usage = await cache_manager.get_memory_usage()
+        # Compat: try to fetch memory usage if available
+        try:
+            memory_usage = await cache_manager.cache.get_stats() if cache_manager and cache_manager.cache else {}
+        except Exception:
+            memory_usage = {}
         golden_cache = get_golden_query_cache()
         ttl_overrides = await golden_cache.list_query_ttl_overrides()
 
@@ -106,8 +111,8 @@ async def get_cache_stats(
     start_time = time.perf_counter()
 
     try:
-        cache_manager = get_advanced_cache_manager()
-        stats = await cache_manager.get_cache_stats()
+        cache_manager = get_unified_cache_manager()
+        stats = await cache_manager.get_stats() if cache_manager else {}
 
         query_time_ms = (time.perf_counter() - start_time) * 1000
 
@@ -366,22 +371,27 @@ async def get_performance_recommendations(
     start_time = time.perf_counter()
 
     try:
-        cache_manager = get_advanced_cache_manager()
-        analytics = await cache_manager.get_all_analytics()
-        stats = await cache_manager.get_cache_stats()
+        cache_manager = get_unified_cache_manager()
+        stats = await cache_manager.get_stats() if cache_manager else {}
+        # Unified manager exposes hit/miss in stats; keep simple recommendation set
+        analytics = stats.get("unified_cache", {})
 
         recommendations = []
 
         # Analyze hit rates by namespace
-        for namespace, data in analytics.items():
-            if data.hit_rate < 0.5:
+        ns_stats = analytics.get("namespace_stats", {}) if isinstance(analytics, dict) else {}
+        for namespace, data in ns_stats.items():
+            hit = float(data.get("hits", 0))
+            total = hit + float(data.get("misses", 0))
+            hit_rate = (hit / total) if total > 0 else 0.0
+            if hit_rate < 0.5:
                 recommendations.append(
-                    f"Low hit rate ({data.hit_rate:.1%}) in namespace '{namespace}' - "
+                    f"Low hit rate ({hit_rate:.1%}) in namespace '{namespace}' - "
                     "consider increasing TTL or reducing data volatility"
                 )
-            elif data.hit_rate > 0.95:
+            elif hit_rate > 0.95:
                 recommendations.append(
-                    f"High hit rate ({data.hit_rate:.1%}) in namespace '{namespace}' - "
+                    f"High hit rate ({hit_rate:.1%}) in namespace '{namespace}' - "
                     "consider increasing TTL to reduce cache misses"
                 )
 
@@ -476,8 +486,10 @@ async def clear_namespace(
     start_time = time.perf_counter()
 
     try:
-        cache_manager = get_advanced_cache_manager()
-        await cache_manager.clear_namespace(namespace)
+        # Use unified manager invalidate by pattern; namespace prefix
+        cache_manager = get_unified_cache_manager()
+        if cache_manager:
+            await cache_manager.invalidate_pattern(f"{namespace}:*")
 
         query_time_ms = (time.perf_counter() - start_time) * 1000
 

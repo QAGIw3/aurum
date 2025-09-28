@@ -11,11 +11,9 @@ import hashlib
 import json
 from typing import Any, Awaitable, Callable, Optional
 
-from .cache import CacheManager
-
 
 async def cache_get_or_set(
-    manager: Optional[CacheManager],
+    manager: Optional[Any],
     key_suffix: str,
     supplier: Callable[[], Awaitable[Any]] | Callable[[], Any],
     ttl_seconds: int,
@@ -25,14 +23,26 @@ async def cache_get_or_set(
     If `manager` is None, simply computes the value.
     The `supplier` can be sync or async.
     """
-    if isinstance(manager, CacheManager):
-        cached = await manager.get_cache_entry(key_suffix)
+    if manager is not None:
+        # Prefer unified interface if available
+        if callable(getattr(manager, "get_cache_entry", None)):
+            cached = await manager.get_cache_entry(key_suffix)
+        elif callable(getattr(manager, "get", None)):
+            cached = await manager.get(key_suffix)
+        else:
+            cached = None
         if cached is not None:
             return cached
         value = supplier()
         if asyncio.iscoroutine(value):
             value = await value
-        await manager.set_cache_entry(key_suffix, value, ttl_seconds=ttl_seconds)
+        if callable(getattr(manager, "set_cache_entry", None)):
+            await manager.set_cache_entry(key_suffix, value, ttl_seconds=ttl_seconds)
+        elif callable(getattr(manager, "set", None)):
+            await manager.set(key_suffix, value, ttl_seconds)
+        else:
+            # Unknown manager shape; fall back to computing only
+            return value
         return value
 
     value = supplier()
@@ -42,7 +52,7 @@ async def cache_get_or_set(
 
 
 def cache_get_or_set_sync(
-    manager: Optional[CacheManager],
+    manager: Optional[Any],
     key_suffix: str,
     supplier: Callable[[], Any],
     ttl_seconds: int,
@@ -52,7 +62,7 @@ def cache_get_or_set_sync(
     Executes cache operations using a short-lived event loop if necessary.
     Intended for transitional use in synchronous service paths.
     """
-    if isinstance(manager, CacheManager):
+    if manager is not None:
         try:
             loop = asyncio.get_running_loop()
             running = loop.is_running()
@@ -71,12 +81,23 @@ def cache_get_or_set_sync(
                 _loop = asyncio.new_event_loop()
                 asyncio.set_event_loop(_loop)
                 try:
-                    existing = _loop.run_until_complete(manager.get_cache_entry(key_suffix))
+                    if callable(getattr(manager, "get_cache_entry", None)):
+                        existing = _loop.run_until_complete(manager.get_cache_entry(key_suffix))
+                    elif callable(getattr(manager, "get", None)):
+                        existing = _loop.run_until_complete(manager.get(key_suffix))
+                    else:
+                        existing = None
                     if existing is not None:
                         result_box["result"] = existing
                         return
                     value = supplier()
-                    _loop.run_until_complete(manager.set_cache_entry(key_suffix, value, ttl_seconds=ttl_seconds))
+                    if callable(getattr(manager, "set_cache_entry", None)):
+                        _loop.run_until_complete(manager.set_cache_entry(key_suffix, value, ttl_seconds=ttl_seconds))
+                    elif callable(getattr(manager, "set", None)):
+                        _loop.run_until_complete(manager.set(key_suffix, value, ttl_seconds))
+                    else:
+                        result_box["result"] = value
+                        return
                     result_box["result"] = value
                 except BaseException as exc:
                     error_box["error"] = exc
@@ -98,11 +119,19 @@ def cache_get_or_set_sync(
         loop2 = asyncio.new_event_loop()
         try:
             asyncio.set_event_loop(loop2)
-            existing = loop2.run_until_complete(manager.get_cache_entry(key_suffix))
+            if callable(getattr(manager, "get_cache_entry", None)):
+                existing = loop2.run_until_complete(manager.get_cache_entry(key_suffix))
+            elif callable(getattr(manager, "get", None)):
+                existing = loop2.run_until_complete(manager.get(key_suffix))
+            else:
+                existing = None
             if existing is not None:
                 return existing
             value = supplier()
-            loop2.run_until_complete(manager.set_cache_entry(key_suffix, value, ttl_seconds=ttl_seconds))
+            if callable(getattr(manager, "set_cache_entry", None)):
+                loop2.run_until_complete(manager.set_cache_entry(key_suffix, value, ttl_seconds=ttl_seconds))
+            elif callable(getattr(manager, "set", None)):
+                loop2.run_until_complete(manager.set(key_suffix, value, ttl_seconds))
             return value
         finally:
             try:
@@ -118,9 +147,9 @@ def cache_get_or_set_sync(
 __all__ = ["cache_get_or_set", "cache_get_or_set_sync"]
 
 
-def cache_get_sync(manager: Optional[CacheManager], key_suffix: str) -> Any:
+def cache_get_sync(manager: Optional[Any], key_suffix: str) -> Any:
     """Synchronously get a cache entry if manager is available, else None."""
-    if not isinstance(manager, CacheManager):
+    if manager is None:
         return None
     try:
         loop = asyncio.get_running_loop()
@@ -139,7 +168,12 @@ def cache_get_sync(manager: Optional[CacheManager], key_suffix: str) -> Any:
             _loop = asyncio.new_event_loop()
             asyncio.set_event_loop(_loop)
             try:
-                result_box["result"] = _loop.run_until_complete(manager.get_cache_entry(key_suffix))
+                if callable(getattr(manager, "get_cache_entry", None)):
+                    result_box["result"] = _loop.run_until_complete(manager.get_cache_entry(key_suffix))
+                elif callable(getattr(manager, "get", None)):
+                    result_box["result"] = _loop.run_until_complete(manager.get(key_suffix))
+                else:
+                    result_box["result"] = None
             except BaseException as exc:
                 error_box["error"] = exc
             finally:
@@ -159,7 +193,11 @@ def cache_get_sync(manager: Optional[CacheManager], key_suffix: str) -> Any:
     loop2 = asyncio.new_event_loop()
     try:
         asyncio.set_event_loop(loop2)
-        return loop2.run_until_complete(manager.get_cache_entry(key_suffix))
+        if callable(getattr(manager, "get_cache_entry", None)):
+            return loop2.run_until_complete(manager.get_cache_entry(key_suffix))
+        if callable(getattr(manager, "get", None)):
+            return loop2.run_until_complete(manager.get(key_suffix))
+        return None
     finally:
         try:
             loop2.stop()
@@ -168,9 +206,9 @@ def cache_get_sync(manager: Optional[CacheManager], key_suffix: str) -> Any:
             asyncio.set_event_loop(None)
 
 
-def cache_set_sync(manager: Optional[CacheManager], key_suffix: str, value: Any, ttl_seconds: int) -> None:
+def cache_set_sync(manager: Optional[Any], key_suffix: str, value: Any, ttl_seconds: int) -> None:
     """Synchronously set a cache entry if manager is available."""
-    if not isinstance(manager, CacheManager):
+    if manager is None:
         return
     try:
         loop = asyncio.get_running_loop()
@@ -188,7 +226,10 @@ def cache_set_sync(manager: Optional[CacheManager], key_suffix: str, value: Any,
             _loop = asyncio.new_event_loop()
             asyncio.set_event_loop(_loop)
             try:
-                _loop.run_until_complete(manager.set_cache_entry(key_suffix, value, ttl_seconds=ttl_seconds))
+                if callable(getattr(manager, "set_cache_entry", None)):
+                    _loop.run_until_complete(manager.set_cache_entry(key_suffix, value, ttl_seconds=ttl_seconds))
+                elif callable(getattr(manager, "set", None)):
+                    _loop.run_until_complete(manager.set(key_suffix, value, ttl_seconds))
             except BaseException as exc:
                 error_box["error"] = exc
             finally:
@@ -205,16 +246,20 @@ def cache_set_sync(manager: Optional[CacheManager], key_suffix: str, value: Any,
             raise error_box["error"]
         return
 
-        loop2 = asyncio.new_event_loop()
-        try:
-            asyncio.set_event_loop(loop2)
+    # No running loop; operate directly
+    loop2 = asyncio.new_event_loop()
+    try:
+        asyncio.set_event_loop(loop2)
+        if callable(getattr(manager, "set_cache_entry", None)):
             loop2.run_until_complete(manager.set_cache_entry(key_suffix, value, ttl_seconds=ttl_seconds))
+        elif callable(getattr(manager, "set", None)):
+            loop2.run_until_complete(manager.set(key_suffix, value, ttl_seconds))
+    finally:
+        try:
+            loop2.stop()
         finally:
-            try:
-                loop2.stop()
-            finally:
-                loop2.close()
-                asyncio.set_event_loop(None)
+            loop2.close()
+            asyncio.set_event_loop(None)
 
 
 def cache_key(params: dict[str, Any]) -> str:
