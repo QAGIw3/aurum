@@ -27,6 +27,13 @@
               "value": 1000,
               "color": "red"
             }
+          ],
+          "links": [
+            {
+              "title": "View Traces",
+              "type": "link",
+              "url": "d/tempo/explore?orgId=1&left=(datasource:'tempo',query:\"{service.name='aurum-api'}\",time:now-1h)"
+            }
           ]
         },
         {
@@ -50,6 +57,13 @@
             {
               "value": 2.0,
               "color": "red"
+            }
+          ],
+          "links": [
+            {
+              "title": "Trace p95 Latency",
+              "type": "link",
+              "url": "d/tempo/explore?orgId=1&left=(datasource:'tempo',query:\"{service.name='aurum-api'}|rate('1m')\",time:now-1h)"
             }
           ]
         },

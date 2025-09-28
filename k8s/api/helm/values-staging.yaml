@@ -1,0 +1,17 @@
+autoscaling:
+  minReplicas: 3
+  maxReplicas: 8
+  targetCPUUtilizationPercentage: 65
+  targetMemoryUtilizationPercentage: 80
+
+reforecastCron:
+  enabled: true
+  schedule: "0 */4 * * *"  # every 4 hours
+  tenant: "staging-tenant"
+  auth:
+    enabled: true
+    secretName: autoreforecast-api-token
+    secretKey: token
+    # Set sealed secret payload with kubeseal output
+    encryptedToken: ""
+

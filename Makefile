@@ -77,6 +77,9 @@ clean: ## Clean up build artifacts
 perf-k6: ## Run k6 smoke tests against v2 endpoints
 	k6 run perf/k6/curves.js
 
+ci-perf-budget: ## Run k6 perf budget in CI (fails on threshold breach)
+	python3 scripts/ci/run_k6_perf_budget.py
+
 compose-bootstrap: ## Run one-shot bootstrap against local Compose stack
 	COMPOSE_PROFILES=core,bootstrap docker compose -f compose/docker-compose.dev.yml up bootstrap --exit-code-from bootstrap
 
@@ -282,6 +285,16 @@ git-release: ## Create a release
 	git push origin main --tags; \
 	echo "✅ Release v$${version} created"
 
+# Semantic Release (automated SemVer + changelog)
+semantic-release: ## Run semantic-release to version, tag, and publish changelog
+	semantic-release version && semantic-release publish
+
+# Commit message conventions (Conventional Commits)
+git-commit-check: ## Check last commit message for Conventional Commits compliance
+	cz check --message "$$((git log -1 --pretty=%B))" || (
+		echo "❌ Commit does not follow Conventional Commits. See https://www.conventionalcommits.org" && exit 1
+	)
+
 # Documentation
 docs-serve: ## Serve documentation locally
 	@echo "Documentation available at http://localhost:8000"
@@ -331,3 +344,29 @@ canary-api: ## Run basic API canary against local Compose or cluster
 chaos-worker: ## Simulate worker cancellation/retry scenarios (placeholder)
 	@echo "Injecting test scenarios to exercise cancellation/retry..."
 	@echo "(Implement producer that sends fast-cancel + failing payloads and checks metrics)"
+
+# Container image vulnerability scanning
+image-scan: ## Scan local images with Trivy (requires trivy installed)
+	@which trivy >/dev/null 2>&1 || (echo "trivy not installed. See https://aquasecurity.github.io/trivy/" && exit 1)
+	trivy image --severity HIGH,CRITICAL ghcr.io/aurum/api:latest || true
+	trivy image --severity HIGH,CRITICAL ghcr.io/aurum/aurum-worker:latest || true
+
+# E2E via docker-compose.e2e.yml
+e2e-up: ## Start E2E stack (db, cache, kafka, api, external)
+	docker compose -f docker-compose.e2e.yml up -d postgres redis kafka schema-registry
+	docker compose -f docker-compose.e2e.yml up -d aurum-api aurum-external-data
+	@echo "Waiting for services..."; \
+	for i in $$(seq 1 60); do \
+		(if curl -fsS http://localhost:8000/health/ready >/dev/null && curl -fsS http://localhost:8001/health/external >/dev/null; then echo "✅ Services ready"; exit 0; else echo "..."; sleep 5; fi); \
+	done; \
+	echo "⚠️ Services did not become ready in time" && exit 1
+
+e2e-seed: ## Load seed data into E2E stack
+	docker compose -f docker-compose.e2e.yml run --rm data-seeder
+
+e2e-test: ## Run E2E tests
+	docker compose -f docker-compose.e2e.yml build --no-cache test-runner data-seeder
+	docker compose -f docker-compose.e2e.yml run --rm test-runner
+
+e2e-down: ## Stop E2E stack and remove volumes
+	docker compose -f docker-compose.e2e.yml down -v

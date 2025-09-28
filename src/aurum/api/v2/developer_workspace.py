@@ -19,7 +19,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response
 from pydantic import BaseModel, Field
 
 from ..auth import Permission, require_permission
-from ..deps import get_principal, get_settings, get_tenant_id
+from ..deps import get_principal, require_tenant_id
 from ..services.developer_workspace_service import (
     get_developer_workspace_service,
     NotebookEnvironment,
@@ -54,7 +54,7 @@ class SessionCreateRequest(BaseModel):
 
     environment_id: str = Field(..., description="Environment to use")
     template_id: Optional[str] = Field(None, description="Template to deploy")
-    customizations: Dict[str, any] = Field(default_factory=dict, description="Template customizations")
+    customizations: Dict[str, Any] = Field(default_factory=dict, description="Template customizations")
     estimated_notebook_size_bytes: Optional[int] = Field(
         None,
         ge=0,
@@ -91,7 +91,7 @@ class SessionResponse(BaseModel):
     notebook_url: Optional[str]
     start_time: Optional[datetime]
     last_activity: Optional[datetime]
-    resource_usage: Dict[str, any]
+    resource_usage: Dict[str, Any]
 
 
 class TemplateResponse(BaseModel):
@@ -102,7 +102,7 @@ class TemplateResponse(BaseModel):
     description: str
     category: str
     required_packages: List[str]
-    sample_queries: List[Dict[str, any]]
+    sample_queries: List[Dict[str, Any]]
     documentation_links: List[str]
     tags: List[str]
 
@@ -118,10 +118,18 @@ class DeveloperGuideResponse(BaseModel):
 @router.post("/environments", response_model=EnvironmentResponse, status_code=201)
 async def create_notebook_environment(
     request: Request,
-    environment_data: EnvironmentCreateRequest
+    environment_data: EnvironmentCreateRequest,
+    principal: Dict[str, Any] | None = Depends(get_principal),
 ) -> EnvironmentResponse:
     """Create a new notebook environment."""
     start_time = time.perf_counter()
+
+    if not principal:
+        raise HTTPException(status_code=401, detail="Unauthorized")
+
+    tenant_id = require_tenant_id(request)
+
+    require_permission(principal, Permission.DEVELOPER_WORKSPACE_WRITE, tenant_id)
 
     try:
         service = get_developer_workspace_service()
@@ -140,8 +148,19 @@ async def create_notebook_environment(
             network_policy=environment_data.network_policy
         )
 
-        # Create environment
-        env_id = await service.create_notebook_environment(environment)
+        # Create environment scoped to tenant
+        env_id = await service.create_notebook_environment(tenant_id, environment)
+
+        created_environment = await service.get_notebook_environment(tenant_id, env_id)
+        metadata = await service.get_notebook_environment_metadata(tenant_id, env_id) or {}
+
+        created_at = datetime.utcnow()
+        created_at_raw = metadata.get("created_at")
+        if created_at_raw:
+            try:
+                created_at = datetime.fromisoformat(created_at_raw)
+            except ValueError:
+                pass
 
         query_time_ms = (time.perf_counter() - start_time) * 1000
 
@@ -152,19 +171,28 @@ async def create_notebook_environment(
         )
 
         return EnvironmentResponse(
-            environment_id=environment.environment_id,
-            environment_name=environment.environment_name,
-            description=environment.description,
-            base_image=environment.base_image,
-            resource_limits=environment.resource_limits,
-            resource_requests=environment.resource_requests,
-            storage_size=environment.storage_size,
-            environment_variables=environment.environment_variables,
-            allowed_packages=environment.allowed_packages,
-            network_policy=environment.network_policy,
-            created_at=datetime.utcnow()
+            environment_id=created_environment.environment_id,
+            environment_name=created_environment.environment_name,
+            description=created_environment.description,
+            base_image=created_environment.base_image,
+            resource_limits=created_environment.resource_limits,
+            resource_requests=created_environment.resource_requests,
+            storage_size=created_environment.storage_size,
+            environment_variables=created_environment.environment_variables,
+            allowed_packages=created_environment.allowed_packages,
+            network_policy=created_environment.network_policy,
+            created_at=created_at,
         )
 
+    except ValueError as exc:
+        query_time_ms = (time.perf_counter() - start_time) * 1000
+        telemetry = get_telemetry_facade()
+        telemetry.record_error(
+            operation="create_notebook_environment",
+            error=exc,
+            query_time_ms=query_time_ms,
+        )
+        raise HTTPException(status_code=409, detail=str(exc))
     except Exception as exc:
         query_time_ms = (time.perf_counter() - start_time) * 1000
         telemetry = get_telemetry_facade()
@@ -179,19 +207,45 @@ async def create_notebook_environment(
         )
 
 
-@router.get("/environments", response_model=Dict[str, any])
+@router.get("/environments", response_model=Dict[str, Any])
 async def list_environments(
     request: Request,
-    response: Response
-) -> Dict[str, any]:
+    response: Response,
+    principal: Dict[str, Any] | None = Depends(get_principal),
+) -> Dict[str, Any]:
     """List available notebook environments."""
     start_time = time.perf_counter()
 
+    if not principal:
+        raise HTTPException(status_code=401, detail="Unauthorized")
+
+    tenant_id = require_tenant_id(request)
+
+    require_permission(principal, Permission.DEVELOPER_WORKSPACE_READ, tenant_id)
+
     try:
         service = get_developer_workspace_service()
-
-        # Get service health to extract environment info
         health = await service.get_service_health()
+        environments = await service.list_notebook_environments(tenant_id)
+
+        env_payloads = []
+        for environment in environments:
+            metadata = await service.get_notebook_environment_metadata(tenant_id, environment.environment_id) or {}
+            env_payloads.append(
+                {
+                    "environment_id": environment.environment_id,
+                    "environment_name": environment.environment_name,
+                    "description": environment.description,
+                    "base_image": environment.base_image,
+                    "resource_limits": environment.resource_limits,
+                    "resource_requests": environment.resource_requests,
+                    "storage_size": environment.storage_size,
+                    "environment_variables": environment.environment_variables,
+                    "allowed_packages": environment.allowed_packages,
+                    "network_policy": environment.network_policy,
+                    "metadata": metadata,
+                }
+            )
 
         query_time_ms = (time.perf_counter() - start_time) * 1000
 
@@ -204,22 +258,13 @@ async def list_environments(
         return {
             "meta": meta,
             "data": {
-                "environments_available": health.get("environments_available", 0),
-                "available_environments": ["ml_standard", "api_explorer"],  # Mock
-                "environments": [
-                    {
-                        "environment_id": "ml_standard",
-                        "environment_name": "ML Development",
-                        "description": "Standard ML development environment",
-                        "base_image": "jupyter/scipy-notebook:latest"
-                    },
-                    {
-                        "environment_id": "api_explorer",
-                        "environment_name": "API Explorer",
-                        "description": "Lightweight environment for API testing",
-                        "base_image": "jupyter/minimal-notebook:latest"
-                    }
-                ]
+                "tenant_id": tenant_id,
+                "environments_available": len(env_payloads),
+                "available_environments": [env["environment_id"] for env in env_payloads],
+                "service_snapshot": {
+                    "reported_available": health.get("environments_available", len(env_payloads)),
+                },
+                "environments": env_payloads,
             }
         }
 
@@ -237,27 +282,25 @@ async def list_environments(
         )
 
 
-@router.post("/sessions", response_model=Dict[str, any], status_code=201)
+@router.post("/sessions", response_model=Dict[str, Any], status_code=201)
 async def create_notebook_session(
     request: Request,
     session_data: SessionCreateRequest,
     principal: Dict[str, Any] | None = Depends(get_principal)
-) -> Dict[str, any]:
+) -> Dict[str, Any]:
     """Create a new notebook session."""
     start_time = time.perf_counter()
 
+    if not principal:
+        raise HTTPException(status_code=401, detail="Unauthorized")
+
+    tenant_id = require_tenant_id(request)
+
+    user_id = principal.get("sub") or principal.get("email") or "unknown"
+
+    require_permission(principal, Permission.DEVELOPER_WORKSPACE_WRITE, tenant_id)
+
     try:
-        if not principal:
-            raise HTTPException(status_code=401, detail="Unauthorized")
-
-        tenant_id = get_tenant_id(request)
-        if not tenant_id:
-            raise HTTPException(status_code=400, detail="Missing tenant context")
-
-        user_id = principal.get("sub") or principal.get("email") or "unknown"
-
-        require_permission(principal, Permission.DEVELOPER_WORKSPACE_WRITE, tenant_id)
-
         service = get_developer_workspace_service()
 
         configuration: Dict[str, Any] = {}
@@ -337,6 +380,89 @@ async def create_notebook_session(
         )
 
 
+@router.get("/sessions", response_model=Dict[str, Any])
+async def list_notebook_sessions(
+    request: Request,
+    response: Response,
+    principal: Dict[str, Any] | None = Depends(get_principal),
+) -> Dict[str, Any]:
+    """List active notebook sessions for the authenticated user."""
+    start_time = time.perf_counter()
+
+    if not principal:
+        raise HTTPException(status_code=401, detail="Unauthorized")
+
+    tenant_id = require_tenant_id(request)
+    user_id = principal.get("sub") or principal.get("email") or "unknown"
+
+    try:
+        require_permission(principal, Permission.DEVELOPER_WORKSPACE_READ, tenant_id)
+
+        service = get_developer_workspace_service()
+        sessions = await service.list_user_sessions(user_id)
+
+        session_payloads = []
+        for session in sessions:
+            if session.tenant_id != tenant_id:
+                continue
+            payload = SessionResponse(
+                session_id=session.session_id,
+                environment_id=session.environment_id,
+                user_id=session.user_id,
+                tenant_id=session.tenant_id,
+                status=session.status,
+                pod_name=session.pod_name,
+                pod_ip=session.pod_ip,
+                notebook_url=session.notebook_url,
+                start_time=session.start_time,
+                last_activity=session.last_activity,
+                resource_usage=session.resource_usage,
+            )
+            session_payloads.append(payload.model_dump())
+
+        query_time_ms = (time.perf_counter() - start_time) * 1000
+
+        telemetry = get_telemetry_facade()
+        meta = telemetry.create_response_metadata(
+            operation="list_notebook_sessions",
+            query_time_ms=query_time_ms,
+        )
+
+        response.headers.setdefault("X-Total-Count", str(len(session_payloads)))
+
+        return {
+            "meta": meta,
+            "data": {
+                "tenant_id": tenant_id,
+                "user_id": user_id,
+                "active_sessions": len(session_payloads),
+                "sessions": session_payloads,
+            },
+        }
+
+    except TenantAccessError as exc:
+        query_time_ms = (time.perf_counter() - start_time) * 1000
+        telemetry = get_telemetry_facade()
+        telemetry.record_error(
+            operation="list_notebook_sessions",
+            error=exc,
+            query_time_ms=query_time_ms,
+        )
+        raise HTTPException(status_code=403, detail=str(exc))
+    except Exception as exc:
+        query_time_ms = (time.perf_counter() - start_time) * 1000
+        telemetry = get_telemetry_facade()
+        telemetry.record_error(
+            operation="list_notebook_sessions",
+            error=exc,
+            query_time_ms=query_time_ms,
+        )
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to list notebook sessions: {str(exc)}",
+        )
+
+
 @router.get("/sessions/{session_id}", response_model=SessionResponse)
 async def get_session_status(
     request: Request,
@@ -346,21 +472,19 @@ async def get_session_status(
     """Get notebook session status."""
     start_time = time.perf_counter()
 
-    try:
-        if not principal:
-            raise HTTPException(status_code=401, detail="Unauthorized")
+    if not principal:
+        raise HTTPException(status_code=401, detail="Unauthorized")
 
-        tenant_id = get_tenant_id(request)
-        if not tenant_id:
-            raise HTTPException(status_code=400, detail="Missing tenant context")
+    tenant_id = require_tenant_id(request)
+
+    try:
+        require_permission(principal, Permission.DEVELOPER_WORKSPACE_READ, tenant_id)
 
         service = get_developer_workspace_service()
         session = await service.get_session_status(session_id, tenant_id)
 
         if not session:
             raise HTTPException(status_code=404, detail="Session not found")
-
-        require_permission(principal, Permission.DEVELOPER_WORKSPACE_READ, tenant_id)
 
         query_time_ms = (time.perf_counter() - start_time) * 1000
 
@@ -406,6 +530,74 @@ async def get_session_status(
         raise HTTPException(
             status_code=500,
             detail=f"Failed to get session status: {str(exc)}"
+        )
+
+
+@router.delete("/sessions/{session_id}", response_model=Dict[str, Any])
+async def terminate_session(
+    request: Request,
+    session_id: str,
+    principal: Dict[str, Any] | None = Depends(get_principal),
+) -> Dict[str, Any]:
+    """Terminate a notebook session."""
+    start_time = time.perf_counter()
+
+    if not principal:
+        raise HTTPException(status_code=401, detail="Unauthorized")
+
+    tenant_id = require_tenant_id(request)
+
+    try:
+        require_permission(principal, Permission.DEVELOPER_WORKSPACE_WRITE, tenant_id)
+
+        service = get_developer_workspace_service()
+        terminated = await service.terminate_notebook_session(session_id, tenant_id)
+
+        if not terminated:
+            raise HTTPException(status_code=404, detail="Session not found or already stopped")
+
+        query_time_ms = (time.perf_counter() - start_time) * 1000
+
+        telemetry = get_telemetry_facade()
+        telemetry.record_success(
+            operation="terminate_notebook_session",
+            query_time_ms=query_time_ms,
+        )
+
+        return {
+            "meta": telemetry.create_response_metadata(
+                operation="terminate_notebook_session",
+                query_time_ms=query_time_ms,
+            ),
+            "data": {
+                "session_id": session_id,
+                "status": "terminated",
+                "message": "Notebook session termination initiated",
+            },
+        }
+
+    except TenantAccessError as exc:
+        query_time_ms = (time.perf_counter() - start_time) * 1000
+        telemetry = get_telemetry_facade()
+        telemetry.record_error(
+            operation="terminate_notebook_session",
+            error=exc,
+            query_time_ms=query_time_ms,
+        )
+        raise HTTPException(status_code=403, detail=str(exc))
+    except HTTPException:
+        raise
+    except Exception as exc:
+        query_time_ms = (time.perf_counter() - start_time) * 1000
+        telemetry = get_telemetry_facade()
+        telemetry.record_error(
+            operation="terminate_notebook_session",
+            error=exc,
+            query_time_ms=query_time_ms,
+        )
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to terminate notebook session: {str(exc)}",
         )
 
 
@@ -461,12 +653,12 @@ async def list_notebook_templates(
         )
 
 
-@router.get("/api-examples", response_model=Dict[str, any])
+@router.get("/api-examples", response_model=Dict[str, Any])
 async def get_api_examples(
     request: Request,
     response: Response,
     category: str = Query("all", description="API example category")
-) -> Dict[str, any]:
+) -> Dict[str, Any]:
     """Get API usage examples and documentation."""
     start_time = time.perf_counter()
 
@@ -553,7 +745,7 @@ async def get_developer_guide(
 async def get_developer_workspace_health(
     request: Request,
     response: Response
-) -> Dict[str, any]:
+) -> Dict[str, Any]:
     """Get developer workspace service health status."""
     start_time = time.perf_counter()
 

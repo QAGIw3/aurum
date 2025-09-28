@@ -6,7 +6,7 @@ import json
 import logging
 import os
 from datetime import datetime, timedelta, timezone
-from typing import Any, Dict, Optional, Sequence
+from typing import Any, Dict, Optional, Sequence, List
 
 from airflow import DAG
 from airflow.operators.python import PythonOperator
@@ -26,6 +26,7 @@ MAINTENANCE_SCHEDULES = {
     'manifest_rewrite': os.getenv("AURUM_ICEBERG_MANIFEST_SCHEDULE", "0 4 * * *"),  # Daily at 4 AM
     'orphan_cleanup': os.getenv("AURUM_ICEBERG_ORPHAN_SCHEDULE", "0 5 * * *"),      # Daily at 5 AM
     'metadata_refresh': os.getenv("AURUM_ICEBERG_METADATA_SCHEDULE", "0 6 * * 1"), # Weekly on Monday
+    'deep_compaction': os.getenv("AURUM_ICEBERG_DEEP_COMPACTION_SCHEDULE", "0 2 * * 0"), # Weekly on Sunday
     'statistics_update': os.getenv("AURUM_ICEBERG_STATS_SCHEDULE", "0 1 * * *"),   # Daily at 1 AM
 }
 
@@ -391,11 +392,27 @@ comprehensive_maintenance_dag = create_maintenance_dag(
     dry_run=os.getenv("AURUM_ICEBERG_MAINTENANCE_DRY_RUN", "false").lower() in {"1", "true", "yes", "on"}
 )
 
+# Weekly deep compaction with larger target file size override via TABLE_CONFIGS
+deep_compaction_tables = _get_tables_by_priority('high') + _get_tables_by_priority('medium')
+for t in deep_compaction_tables:
+    cfg = _get_table_config(t)
+    if cfg:
+        cfg['target_file_size_mb'] = max(cfg.get('target_file_size_mb', 128), 256)
+
+deep_compaction_dag = create_maintenance_dag(
+    dag_id="iceberg_deep_compaction",
+    schedule=MAINTENANCE_SCHEDULES['deep_compaction'],
+    operations=["rewrite_data_files"],
+    tables=deep_compaction_tables,
+    dry_run=os.getenv("AURUM_ICEBERG_MAINTENANCE_DRY_RUN", "false").lower() in {"1", "true", "yes", "on"}
+)
+
 # Export DAGs
 __all__ = [
     "snapshot_expiry_dag",
     "compaction_dag",
     "manifest_rewrite_dag",
     "orphan_cleanup_dag",
-    "comprehensive_maintenance_dag"
+    "comprehensive_maintenance_dag",
+    "deep_compaction_dag"
 ]

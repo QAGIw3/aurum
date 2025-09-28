@@ -199,24 +199,27 @@ async def test_environment_persistence_roundtrip(workspace_service: DeveloperWor
         description="Unit test environment",
     )
 
-    env_id = await workspace_service.create_notebook_environment(env)
+    tenant_id = "tenant-test"
+
+    env_id = await workspace_service.create_notebook_environment(tenant_id, env)
     assert env_id == "test-env"
 
-    cached = await workspace_service.get_notebook_environment(env_id)
+    cached = await workspace_service.get_notebook_environment(tenant_id, env_id)
     assert cached.environment_name == "Test Env"
 
     updated = await workspace_service.update_notebook_environment(
+        tenant_id,
         env_id,
         {"description": "Updated"},
     )
     assert updated.description == "Updated"
 
-    metadata = await workspace_service.get_notebook_environment_metadata(env_id)
+    metadata = await workspace_service.get_notebook_environment_metadata(tenant_id, env_id)
     assert metadata["version"] >= 2
 
-    deleted = await workspace_service.delete_notebook_environment(env_id)
+    deleted = await workspace_service.delete_notebook_environment(tenant_id, env_id)
     assert deleted is True
-    assert await workspace_service.get_notebook_environment(env_id) is None
+    assert await workspace_service.get_notebook_environment(tenant_id, env_id) is None
 
 
 @pytest.mark.asyncio
@@ -253,7 +256,10 @@ async def test_session_expiration(workspace_service: DeveloperWorkspaceService, 
 
     session.expires_at = datetime.utcnow() - timedelta(seconds=1)
 
-    await workspace_service._manage_notebook_session(session_id, workspace_service._environments["ml_standard"])
+    environment = await workspace_service.get_notebook_environment("tenant-123", "ml_standard")
+    assert environment is not None
+
+    await workspace_service._manage_notebook_session(session_id, environment)
 
     status = await workspace_service.get_session_status(session_id, "tenant-123")
     assert status is not None

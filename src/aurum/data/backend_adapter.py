@@ -215,3 +215,148 @@ class BackendContext:
         if self.adapter and self.adapter._backend:
             return self.adapter._backend.pool_metrics
         return None
+
+
+class MultiBackendAdapter:
+    """Adapter that can execute a query across multiple backends with fallback.
+
+    Tries backends in priority order. Falls back on error, timeout, or when
+    a latency threshold is exceeded. Returns the first successful result
+    along with metadata describing which backend was used and any fallbacks
+    attempted.
+    """
+
+    def __init__(
+        self,
+        settings: AurumSettings,
+        *,
+        backend_order: Optional[List[str]] = None,
+        latency_threshold_ms: Optional[float] = None,
+        timeout_seconds: Optional[float] = None,
+    ) -> None:
+        self.settings = settings
+        primary = settings.data_backend.backend_type.value
+        candidates = ["trino", "clickhouse", "timescale"]
+        order = backend_order or [primary] + [b for b in candidates if b != primary]
+        # Deduplicate while preserving order
+        seen: set[str] = set()
+        self.backend_order: List[str] = []
+        for b in order:
+            lb = b.lower()
+            if lb in candidates and lb not in seen:
+                seen.add(lb)
+                self.backend_order.append(lb)
+
+        self.latency_threshold_ms = latency_threshold_ms
+        self.timeout_seconds = timeout_seconds
+        self._backends: Dict[str, DataBackend] = {}
+
+    def _create_connection_config_for(self, backend_type: str) -> ConnectionConfig:
+        backend_settings = self.settings.data_backend
+        bt = backend_type.lower()
+        if bt == "trino":
+            return ConnectionConfig(
+                host=backend_settings.trino_host,
+                port=backend_settings.trino_port,
+                database=f"{backend_settings.trino_catalog}.{backend_settings.trino_database_schema}",
+                username=backend_settings.trino_user,
+                password=backend_settings.trino_password or "",
+                ssl=False,
+                timeout=30,
+            )
+        if bt == "clickhouse":
+            return ConnectionConfig(
+                host=backend_settings.clickhouse_host,
+                port=backend_settings.clickhouse_port,
+                database=backend_settings.clickhouse_database,
+                username=backend_settings.clickhouse_user,
+                password=backend_settings.clickhouse_password or "",
+                ssl=False,
+                timeout=30,
+            )
+        if bt == "timescale":
+            return ConnectionConfig(
+                host=backend_settings.timescale_host,
+                port=backend_settings.timescale_port,
+                database=backend_settings.timescale_database,
+                username=backend_settings.timescale_user,
+                password=backend_settings.timescale_password or "",
+                ssl=False,
+                timeout=30,
+            )
+        raise ValueError(f"Unsupported backend type: {backend_type}")
+
+    def _create_pool_config(self) -> PoolConfig:
+        backend_settings = self.settings.data_backend
+        return PoolConfig(
+            min_size=backend_settings.connection_pool_min_size,
+            max_size=backend_settings.connection_pool_max_size,
+            max_idle_time=backend_settings.connection_pool_max_idle_time,
+            connection_timeout=backend_settings.connection_pool_timeout_seconds,
+            acquire_timeout=backend_settings.connection_pool_acquire_timeout_seconds,
+        )
+
+    async def _get_backend(self, backend_type: str) -> DataBackend:
+        key = backend_type.lower()
+        if key not in self._backends:
+            cfg = self._create_connection_config_for(key)
+            pool_cfg = self._create_pool_config()
+            self._backends[key] = get_backend(key, cfg, pool_cfg)
+        return self._backends[key]
+
+    async def execute_query(self, query: str, params: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+        import asyncio
+        import time
+
+        attempts: List[Dict[str, Any]] = []
+
+        for idx, backend_type in enumerate(self.backend_order):
+            backend = await self._get_backend(backend_type)
+            try:
+                start = time.perf_counter()
+                if self.timeout_seconds is not None:
+                    result = await asyncio.wait_for(backend.execute_query(query, params), timeout=self.timeout_seconds)
+                else:
+                    result = await backend.execute_query(query, params)
+                elapsed_ms = (time.perf_counter() - start) * 1000.0
+
+                if (
+                    self.latency_threshold_ms is not None
+                    and elapsed_ms > self.latency_threshold_ms
+                    and idx < len(self.backend_order) - 1
+                ):
+                    attempts.append({
+                        "backend": backend_type,
+                        "reason": "latency_threshold_exceeded",
+                        "elapsed_ms": elapsed_ms,
+                    })
+                    continue
+
+                metadata = dict(result.metadata or {})
+                metadata.setdefault("backend", backend_type)
+                metadata["used_backend"] = backend_type
+                metadata["elapsed_ms"] = elapsed_ms
+                if attempts:
+                    metadata["fallback_chain"] = attempts
+
+                return {
+                    "columns": result.columns,
+                    "rows": result.rows,
+                    "metadata": metadata,
+                }
+            except asyncio.TimeoutError:
+                attempts.append({"backend": backend_type, "reason": "timeout"})
+                continue
+            except Exception as exc:
+                attempts.append({"backend": backend_type, "reason": "error", "error": str(exc)})
+                continue
+
+        raise RuntimeError(f"All backends failed: {attempts}")
+
+    async def close(self) -> None:
+        for backend in self._backends.values():
+            try:
+                await backend.close()
+            except Exception:
+                pass
+        self._backends.clear()

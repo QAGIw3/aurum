@@ -799,7 +799,7 @@ class SimplifiedSettings:
         self.cache_ttl = default_cache_ttl
         self.redis_ttl_seconds = int(env.get(f"{self.env_prefix}REDIS_TTL_SECONDS", str(default_cache_ttl)))
         # Security settings
-        self.auth_enabled = env.get(f"{self.env_prefix}AUTH_ENABLED", "false").lower() in ("true", "1", "yes")
+        self.auth_enabled = env.get(f"{self.env_prefix}AUTH_ENABLED", "true").lower() in ("true", "1", "yes")
         self.jwt_secret = env.get(f"{self.env_prefix}JWT_SECRET", "")
         self.admin_emails = self._split_env_list(env.get(f"{self.env_prefix}ADMIN_EMAILS", ""))
 
@@ -1107,7 +1107,42 @@ class SimplifiedSettings:
         )
 
         self.telemetry = SimpleNamespace(service_name=self.service_name)
-        self.auth = SimpleNamespace(enabled=self.auth_enabled)
+
+        # Authentication / authorization configuration
+        auth_disabled = self._get_bool_from_env(
+            env,
+            [f"{self.env_prefix}API_AUTH_DISABLED", f"{self.env_prefix}AUTH_DISABLED"],
+            False,
+        )
+        oidc_issuer = env.get(f"{self.env_prefix}API_OIDC_ISSUER")
+        oidc_audience = env.get(f"{self.env_prefix}API_OIDC_AUDIENCE")
+        oidc_jwks_url = env.get(f"{self.env_prefix}API_OIDC_JWKS_URL")
+        jwt_leeway_seconds = self._get_int_from_env(
+            env,
+            [f"{self.env_prefix}API_JWT_LEEWAY"],
+            60,
+        )
+        forward_auth_header = env.get(f"{self.env_prefix}API_FORWARD_AUTH_HEADER")
+        forward_auth_claims_header = env.get(f"{self.env_prefix}API_FORWARD_AUTH_CLAIMS_HEADER")
+
+        raw_admin_groups = env.get(f"{self.env_prefix}API_ADMIN_GROUP", "")
+        admin_groups = {
+            group.strip().lower()
+            for group in raw_admin_groups.split(",")
+            if group.strip()
+        }
+
+        self.auth = SimpleNamespace(
+            disabled=auth_disabled or not oidc_issuer or not oidc_jwks_url,
+            enabled=not (auth_disabled or not oidc_issuer or not oidc_jwks_url),
+            oidc_issuer=oidc_issuer,
+            oidc_audience=oidc_audience,
+            oidc_jwks_url=oidc_jwks_url,
+            jwt_leeway_seconds=jwt_leeway_seconds,
+            forward_auth_header=forward_auth_header,
+            forward_auth_claims_header=forward_auth_claims_header,
+            admin_groups=frozenset(admin_groups),
+        )
         self.pagination = SimpleNamespace(default_page_size=100, max_page_size=1000)
         self.messaging = SimpleNamespace(enabled=False)
         self.async_offload = SimpleNamespace(

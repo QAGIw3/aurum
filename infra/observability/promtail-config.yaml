@@ -1,0 +1,44 @@
+server:
+  http_listen_port: 9080
+  grpc_listen_port: 0
+
+positions:
+  filename: /run/promtail/positions.yaml
+
+clients:
+  - url: http://loki.aurum-dev.svc.cluster.local:3100/loki/api/v1/push
+
+scrape_configs:
+  - job_name: aurum-json-logs
+    static_configs:
+      - targets: [localhost]
+        labels:
+          job: aurum
+          host: ${HOSTNAME}
+          __path__: /var/log/containers/*aurum*.log
+    pipeline_stages:
+      - docker: {}
+      - json:
+          expressions:
+            timestamp: timestamp
+            level: level
+            event: event
+            service: service
+            trace_id: trace_id
+            span_id: span_id
+            request_id: request_id
+            correlation_id: correlation_id
+            tenant_id: tenant_id
+            user_id: user_id
+      - labels:
+          level:
+          event:
+          service:
+          request_id:
+          correlation_id:
+          tenant_id:
+          user_id:
+      - timestamp:
+          source: timestamp
+          format: RFC3339
+

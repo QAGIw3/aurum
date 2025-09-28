@@ -16,11 +16,17 @@ from typing import Any, Dict, List, Optional, Set
 
 from aurum.core import AurumSettings
 from fastapi import HTTPException
-from jose import jwt
-from jose.utils import base64url_decode
 from starlette.requests import Request
 from starlette.responses import JSONResponse
 from starlette.types import ASGIApp, Receive, Scope, Send
+
+try:  # pragma: no cover - import guard for optional dependency
+    from jose import jwt  # type: ignore[import]
+except Exception as _jwt_exc:  # pragma: no cover - import guard
+    jwt = None  # type: ignore[assignment]
+    _JWT_IMPORT_ERROR = _jwt_exc
+else:
+    _JWT_IMPORT_ERROR = None
 
 from .http.clients import request as http_request
 
@@ -382,10 +388,25 @@ class AuthMiddleware:
 
         # Attach principal to request.state for downstream use
         scope.setdefault("state", {})
+        groups_claim = []
+        raw_groups = claims.get("groups")
+        raw_roles = claims.get("roles")
+        if isinstance(raw_groups, list):
+            groups_claim.extend(str(item) for item in raw_groups if item)
+        elif isinstance(raw_groups, str):
+            groups_claim.append(raw_groups)
+
+        if isinstance(raw_roles, list):
+            groups_claim.extend(str(item) for item in raw_roles if item)
+        elif isinstance(raw_roles, str):
+            groups_claim.append(raw_roles)
+
+        normalized_groups = [group.lower() for group in groups_claim]
+
         scope["state"]["principal"] = {
             "sub": claims.get("sub"),
             "email": claims.get("email") or claims.get("preferred_username"),
-            "groups": claims.get("groups") or claims.get("roles") or [],
+            "groups": normalized_groups,
             "tenant": tenant,
             "claims": claims,
         }
@@ -422,7 +443,21 @@ class AuthMiddleware:
 
                     # Map common claim names
                     principal["email"] = claims.get("email") or claims.get("preferred_username")
-                    principal["groups"] = claims.get("groups") or claims.get("roles") or []
+
+                    raw_groups = []
+                    groups_claim = claims.get("groups") or []
+                    if isinstance(groups_claim, str):
+                        raw_groups.append(groups_claim)
+                    elif isinstance(groups_claim, list):
+                        raw_groups.extend(str(item) for item in groups_claim if item)
+
+                    roles_claim = claims.get("roles") or []
+                    if isinstance(roles_claim, str):
+                        raw_groups.append(roles_claim)
+                    elif isinstance(roles_claim, list):
+                        raw_groups.extend(str(item) for item in roles_claim if item)
+
+                    principal["groups"] = [group.lower() for group in raw_groups]
                     principal["claims"] = claims
 
                     # Extract tenant from various possible sources
@@ -475,6 +510,11 @@ class AuthMiddleware:
     def _verify_jwt(self, token: str) -> dict[str, Any]:
         if not (self.config.issuer and self.config.jwks_url):
             raise HTTPException(status_code=401, detail="OIDC not configured")
+        if jwt is None:
+            detail = "JWT verification backend unavailable"
+            if _JWT_IMPORT_ERROR is not None:
+                detail = f"{detail}: {_JWT_IMPORT_ERROR}"  # include root cause for visibility
+            raise HTTPException(status_code=500, detail=detail)
         try:
             unverified = jwt.get_unverified_header(token)
         except Exception:

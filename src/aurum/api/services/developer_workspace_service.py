@@ -166,6 +166,8 @@ class NotebookTemplate(BaseModel):
 class DeveloperWorkspaceService:
     """Developer Workspace Service for notebooks and API exploration."""
 
+    _GLOBAL_TENANT_SCOPE = "__default__"
+
     def __init__(self):
         """Initialize developer workspace service."""
         self.cache_manager = get_unified_cache_manager()
@@ -201,12 +203,11 @@ class DeveloperWorkspaceService:
         self._openapi_spec_cache: Optional[Dict[str, Any]] = None
 
         # State loading flags
-        self._environments_loaded = False
+        self._environments_loaded: Set[str] = set()
         self._sessions_loaded = False
         self._api_docs_loaded = False
 
         # Index keys for cache persistence
-        self._environment_index_key = f"{self._env_cache_prefix}:index"
         self._session_index_key = f"{self._session_cache_prefix}:index"
 
         # Locks for lazy-loading
@@ -279,7 +280,8 @@ class DeveloperWorkspaceService:
 
         # Merge defaults into active state without overwriting overrides
         for env_id, environment in self._default_environments.items():
-            self._environments.setdefault(env_id, environment)
+            storage_key = self._environment_storage_key(None, env_id)
+            self._environments.setdefault(storage_key, environment)
 
     def _load_openapi_spec(candidates: List[Path]) -> Optional[Dict[str, Any]]:
         for path in candidates:
@@ -448,42 +450,102 @@ class DeveloperWorkspaceService:
             return tenant
         return "system"
 
-    def _environment_cache_key(self, environment_id: str, suffix: str) -> str:
-        return f"{self._env_cache_prefix}:{environment_id}:{suffix}"
+    def _tenant_scope(self, tenant_id: Optional[str]) -> str:
+        return tenant_id or self._GLOBAL_TENANT_SCOPE
 
-    async def _ensure_environments_loaded(self) -> None:
-        if self._environments_loaded:
+    def _environment_storage_key(self, tenant_id: Optional[str], environment_id: str) -> str:
+        scope = self._tenant_scope(tenant_id)
+        return f"{scope}:{environment_id}"
+
+    def _split_environment_storage_key(self, storage_key: str) -> tuple[str, str]:
+        if ":" not in storage_key:
+            return (self._GLOBAL_TENANT_SCOPE, storage_key)
+        scope, env_id = storage_key.split(":", 1)
+        if not env_id:
+            return (scope or self._GLOBAL_TENANT_SCOPE, storage_key)
+        return scope or self._GLOBAL_TENANT_SCOPE, env_id
+
+    def _environment_cache_key(self, tenant_id: Optional[str], environment_id: str, suffix: str) -> str:
+        scope = self._tenant_scope(tenant_id)
+        return f"{self._env_cache_prefix}:{scope}:{environment_id}:{suffix}"
+
+    def _environment_index_key_for(self, tenant_id: Optional[str]) -> str:
+        scope = self._tenant_scope(tenant_id)
+        return f"{self._env_cache_prefix}:{scope}:index"
+
+    def _environment_lookup_keys(
+        self,
+        tenant_id: Optional[str],
+        environment_id: str,
+        *,
+        include_default: bool = True,
+    ) -> List[str]:
+        keys = [self._environment_storage_key(tenant_id, environment_id)]
+        if include_default and tenant_id is not None:
+            keys.append(self._environment_storage_key(None, environment_id))
+        return keys
+
+    def _resolve_environment(
+        self,
+        tenant_id: str,
+        environment_id: str,
+        *,
+        include_default: bool = True,
+    ) -> Optional[NotebookEnvironment]:
+        for key in self._environment_lookup_keys(tenant_id, environment_id, include_default=include_default):
+            environment = self._environments.get(key)
+            if environment is not None:
+                return environment
+        return None
+
+    def _resolve_environment_metadata(
+        self,
+        tenant_id: str,
+        environment_id: str,
+        *,
+        include_default: bool = True,
+    ) -> Optional[Dict[str, Any]]:
+        for key in self._environment_lookup_keys(tenant_id, environment_id, include_default=include_default):
+            metadata = self._environment_metadata.get(key)
+            if metadata is not None:
+                return dict(metadata)
+        return None
+
+    async def _ensure_environments_loaded(self, tenant_id: Optional[str]) -> None:
+        scope = self._tenant_scope(tenant_id)
+        if scope in self._environments_loaded:
             return
 
         async with self._environment_lock:
-            if self._environments_loaded:
+            if scope in self._environments_loaded:
                 return
 
-            await self._load_cached_environments()
+            await self._load_cached_environments(scope)
 
-            # Ensure defaults are present even if not persisted yet
-            timestamp = datetime.utcnow().isoformat()
-            for env_id, environment in self._default_environments.items():
-                if env_id not in self._environments:
-                    self._environments[env_id] = environment
-                    self._environment_metadata.setdefault(env_id, {
-                        "environment_id": env_id,
-                        "created_at": timestamp,
-                        "updated_at": timestamp,
-                        "created_by": "system",
-                        "updated_by": "system",
-                        "source": "default",
-                        "is_default": True,
-                        "version": 1,
-                    })
-                    self._environment_versions.setdefault(env_id, [])
+            if scope == self._GLOBAL_TENANT_SCOPE:
+                timestamp = datetime.utcnow().isoformat()
+                for env_id, environment in self._default_environments.items():
+                    storage_key = self._environment_storage_key(None, env_id)
+                    if storage_key not in self._environments:
+                        self._environments[storage_key] = environment
+                    metadata = self._environment_metadata.setdefault(storage_key, {})
+                    metadata.setdefault("environment_id", env_id)
+                    metadata.setdefault("tenant_id", None)
+                    metadata.setdefault("created_at", timestamp)
+                    metadata.setdefault("updated_at", timestamp)
+                    metadata.setdefault("created_by", "system")
+                    metadata.setdefault("updated_by", "system")
+                    metadata.setdefault("source", "default")
+                    metadata.setdefault("is_default", True)
+                    metadata.setdefault("version", 1)
+                    self._environment_versions.setdefault(storage_key, [])
 
-            self._environments_loaded = True
+            self._environments_loaded.add(scope)
 
-    async def _load_cached_environments(self) -> None:
+    async def _load_cached_environments(self, tenant_scope: str) -> None:
         try:
             index: List[str] = await self.cache_manager.get(
-                self._environment_index_key,
+                self._environment_index_key_for(tenant_scope),
                 namespace=CacheNamespace.SYSTEM_CONFIG,
                 default=[],
             )
@@ -494,7 +556,7 @@ class DeveloperWorkspaceService:
             loaded = 0
             for env_id in index:
                 data = await self.cache_manager.get(
-                    self._environment_cache_key(env_id, "data"),
+                    self._environment_cache_key(tenant_scope, env_id, "data"),
                     namespace=CacheNamespace.SYSTEM_CONFIG,
                     default=None,
                 )
@@ -508,26 +570,33 @@ class DeveloperWorkspaceService:
                     self.telemetry.warning(
                         "Cached notebook environment failed validation",
                         environment_id=env_id,
+                        tenant_scope=tenant_scope,
                         error=str(exc),
                     )
                     continue
 
-                self._environments[env_id] = environment
+                storage_key = self._environment_storage_key(tenant_scope, env_id)
+                self._environments[storage_key] = environment
                 metadata = await self.cache_manager.get(
-                    self._environment_cache_key(env_id, "metadata"),
+                    self._environment_cache_key(tenant_scope, env_id, "metadata"),
                     namespace=CacheNamespace.SYSTEM_CONFIG,
                     default=None,
                 )
                 if isinstance(metadata, dict):
-                    self._environment_metadata[env_id] = metadata
+                    metadata.setdefault("environment_id", env_id)
+                    metadata.setdefault(
+                        "tenant_id",
+                        None if tenant_scope == self._GLOBAL_TENANT_SCOPE else tenant_scope,
+                    )
+                    self._environment_metadata[storage_key] = metadata
 
                 history = await self.cache_manager.get(
-                    self._environment_cache_key(env_id, "history"),
+                    self._environment_cache_key(tenant_scope, env_id, "history"),
                     namespace=CacheNamespace.SYSTEM_CONFIG,
                     default=[],
                 )
                 if history:
-                    self._environment_versions[env_id] = history[-MAX_ENVIRONMENT_HISTORY:]
+                    self._environment_versions[storage_key] = history[-MAX_ENVIRONMENT_HISTORY:]
 
                 loaded += 1
 
@@ -535,25 +604,41 @@ class DeveloperWorkspaceService:
                 self.telemetry.info(
                     "Loaded notebook environments from cache",
                     count=loaded,
+                    tenant_scope=tenant_scope,
                 )
 
         except Exception as exc:  # pragma: no cover - defensive
-            self.telemetry.error("Failed to load cached notebook environments", error=str(exc))
+            self.telemetry.error(
+                "Failed to load cached notebook environments",
+                tenant_scope=tenant_scope,
+                error=str(exc),
+            )
 
-    async def _write_environment_index(self) -> None:
+    async def _write_environment_index(self, tenant_id: Optional[str]) -> None:
+        scope = self._tenant_scope(tenant_id)
         try:
-            environment_ids = sorted(self._environments.keys())
+            environment_ids = sorted(
+                env_id
+                for storage_key in self._environments.keys()
+                for key_scope, env_id in [self._split_environment_storage_key(storage_key)]
+                if key_scope == scope
+            )
             await self.cache_manager.set(
-                self._environment_index_key,
+                self._environment_index_key_for(scope),
                 environment_ids,
                 namespace=CacheNamespace.SYSTEM_CONFIG,
                 ttl_policy=TTLPolicy.PERSISTENT,
             )
         except Exception as exc:  # pragma: no cover - defensive
-            self.telemetry.error("Failed to write environment index", error=str(exc))
+            self.telemetry.error(
+                "Failed to write environment index",
+                tenant_scope=scope,
+                error=str(exc),
+            )
 
     async def _persist_environment(
         self,
+        tenant_id: Optional[str],
         environment: NotebookEnvironment,
         *,
         is_new: bool,
@@ -563,30 +648,36 @@ class DeveloperWorkspaceService:
         actor = updated_by or self._current_actor()
         timestamp = datetime.utcnow()
         timestamp_iso = timestamp.isoformat()
+        storage_key = self._environment_storage_key(tenant_id, env_id)
+        is_default = tenant_id is None and env_id in self._default_environments
+        source = "default" if is_default else "user"
 
-        metadata = self._environment_metadata.get(env_id, {}).copy()
+        metadata = self._environment_metadata.get(storage_key, {}).copy()
         if not metadata:
             metadata = {
                 "environment_id": env_id,
+                "tenant_id": None if tenant_id is None else tenant_id,
                 "created_at": timestamp_iso,
                 "created_by": actor,
-                "source": "default" if env_id in self._default_environments else "user",
+                "source": source,
             }
 
         metadata.setdefault("environment_id", env_id)
+        metadata.setdefault("tenant_id", None if tenant_id is None else tenant_id)
         metadata.setdefault("created_at", timestamp_iso)
         metadata.setdefault("created_by", actor)
-        metadata.setdefault("source", "default" if env_id in self._default_environments else "user")
+        metadata.setdefault("source", source)
         metadata["updated_at"] = timestamp_iso
         metadata["updated_by"] = actor
-        metadata["is_default"] = env_id in self._default_environments
+        metadata["is_default"] = is_default
         metadata["version"] = metadata.get("version", 0) + 1
 
         k8s_yaml = self._generate_k8s_yaml(environment)
-        metadata["k8s_yaml_key"] = self._environment_cache_key(env_id, "k8s")
+        yaml_cache_key = self._environment_cache_key(tenant_id, env_id, "k8s")
+        metadata["k8s_yaml_key"] = yaml_cache_key
 
-        self._environments[env_id] = environment
-        self._environment_metadata[env_id] = metadata
+        self._environments[storage_key] = environment
+        self._environment_metadata[storage_key] = metadata
 
         history_entry = {
             "version": metadata["version"],
@@ -594,19 +685,22 @@ class DeveloperWorkspaceService:
             "updated_by": actor,
             "environment": environment.dict(),
         }
-        history = self._environment_versions.setdefault(env_id, [])
+        history = self._environment_versions.setdefault(storage_key, [])
         history.append(history_entry)
         if len(history) > MAX_ENVIRONMENT_HISTORY:
-            self._environment_versions[env_id] = history[-MAX_ENVIRONMENT_HISTORY:]
-            history = self._environment_versions[env_id]
+            self._environment_versions[storage_key] = history[-MAX_ENVIRONMENT_HISTORY:]
+            history = self._environment_versions[storage_key]
 
         payloads = [
-            (self._environment_cache_key(env_id, "data"), environment.dict()),
-            (self._environment_cache_key(env_id, "metadata"), metadata),
-            (self._environment_cache_key(env_id, "history"), history),
-            (self._environment_cache_key(env_id, "k8s"), k8s_yaml),
-            (f"env_yaml:{env_id}", k8s_yaml),  # Backward compatibility
+            (self._environment_cache_key(tenant_id, env_id, "data"), environment.dict()),
+            (self._environment_cache_key(tenant_id, env_id, "metadata"), metadata),
+            (self._environment_cache_key(tenant_id, env_id, "history"), history),
+            (yaml_cache_key, k8s_yaml),
+            (f"env_yaml:{self._tenant_scope(tenant_id)}:{env_id}", k8s_yaml),
         ]
+
+        if tenant_id is None:
+            payloads.append((f"env_yaml:{env_id}", k8s_yaml))
 
         for key, value in payloads:
             await self.cache_manager.set(
@@ -616,11 +710,12 @@ class DeveloperWorkspaceService:
                 ttl_policy=TTLPolicy.PERSISTENT,
             )
 
-        await self._write_environment_index()
+        await self._write_environment_index(tenant_id)
 
         self.telemetry.info(
             "Notebook environment persisted",
             environment_id=env_id,
+            tenant_scope=self._tenant_scope(tenant_id),
             version=metadata["version"],
             is_new=is_new,
             actor=actor,
@@ -631,35 +726,47 @@ class DeveloperWorkspaceService:
             is_new=str(is_new).lower(),
         )
 
-    async def _delete_environment_from_cache(self, environment_id: str) -> None:
+    async def _delete_environment_from_cache(self, tenant_id: Optional[str], environment_id: str) -> None:
+        scope = self._tenant_scope(tenant_id)
         for suffix in ("data", "metadata", "history", "k8s"):
             await self.cache_manager.delete(
-                self._environment_cache_key(environment_id, suffix),
+                self._environment_cache_key(tenant_id, environment_id, suffix),
                 namespace=CacheNamespace.SYSTEM_CONFIG,
             )
-        await self.cache_manager.delete(f"env_yaml:{environment_id}")
 
-    async def create_notebook_environment(self, environment: NotebookEnvironment) -> str:
-        """Create a new notebook environment."""
-        await self._ensure_environments_loaded()
+        await self.cache_manager.delete(
+            f"env_yaml:{scope}:{environment_id}",
+            namespace=CacheNamespace.SYSTEM_CONFIG,
+        )
+        if tenant_id is None:
+            await self.cache_manager.delete(
+                f"env_yaml:{environment_id}",
+                namespace=CacheNamespace.SYSTEM_CONFIG,
+            )
+
+    async def create_notebook_environment(self, tenant_id: str, environment: NotebookEnvironment) -> str:
+        """Create a new notebook environment scoped to a tenant."""
+        await self._ensure_environments_loaded(tenant_id)
 
         env_id = environment.environment_id
-        if env_id in self._environments:
-            raise ValueError(f"Environment {env_id} already exists")
+        existing = self._resolve_environment(tenant_id, env_id, include_default=False)
+        if existing is not None:
+            raise ValueError(f"Environment {env_id} already exists for tenant {tenant_id}")
 
-        await self._persist_environment(environment, is_new=True)
+        await self._persist_environment(tenant_id, environment, is_new=True)
         return env_id
 
     async def update_notebook_environment(
         self,
+        tenant_id: str,
         environment_id: str,
         updates: Dict[str, Any]
     ) -> NotebookEnvironment:
-        await self._ensure_environments_loaded()
+        await self._ensure_environments_loaded(tenant_id)
 
-        current = self._environments.get(environment_id)
-        if not current:
-            raise ValueError(f"Environment {environment_id} not found")
+        current = self._resolve_environment(tenant_id, environment_id, include_default=True)
+        if current is None:
+            raise ValueError(f"Environment {environment_id} not found for tenant {tenant_id}")
 
         data = current.dict()
         data.update(updates)
@@ -669,35 +776,37 @@ class DeveloperWorkspaceService:
         except ValidationError as exc:
             self.telemetry.error(
                 "Invalid notebook environment update",
+                tenant_id=tenant_id,
                 environment_id=environment_id,
                 error=str(exc),
             )
             raise
 
-        await self._persist_environment(updated_environment, is_new=False)
+        storage_key = self._environment_storage_key(tenant_id, environment_id)
+        is_new_override = storage_key not in self._environments
+        await self._persist_environment(tenant_id, updated_environment, is_new=is_new_override)
         return updated_environment
 
-    async def delete_notebook_environment(self, environment_id: str) -> bool:
-        await self._ensure_environments_loaded()
+    async def delete_notebook_environment(self, tenant_id: str, environment_id: str) -> bool:
+        await self._ensure_environments_loaded(tenant_id)
 
-        if environment_id in self._default_environments:
-            raise ValueError(f"Default environment {environment_id} cannot be deleted")
-
-        environment = self._environments.get(environment_id)
+        storage_key = self._environment_storage_key(tenant_id, environment_id)
+        environment = self._environments.get(storage_key)
         if not environment:
             return False
 
-        self._environments.pop(environment_id, None)
-        self._environment_metadata.pop(environment_id, None)
-        self._environment_versions.pop(environment_id, None)
+        self._environments.pop(storage_key, None)
+        self._environment_metadata.pop(storage_key, None)
+        self._environment_versions.pop(storage_key, None)
 
-        await self._delete_environment_from_cache(environment_id)
-        await self._write_environment_index()
+        await self._delete_environment_from_cache(tenant_id, environment_id)
+        await self._write_environment_index(tenant_id)
 
         actor = self._current_actor()
         self.telemetry.info(
             "Notebook environment deleted",
             environment_id=environment_id,
+            tenant_id=tenant_id,
             actor=actor,
         )
         self.telemetry.increment_counter(
@@ -707,18 +816,31 @@ class DeveloperWorkspaceService:
 
         return True
 
-    async def list_notebook_environments(self) -> List[NotebookEnvironment]:
-        await self._ensure_environments_loaded()
-        return list(self._environments.values())
+    async def list_notebook_environments(self, tenant_id: str) -> List[NotebookEnvironment]:
+        await self._ensure_environments_loaded(tenant_id)
 
-    async def get_notebook_environment(self, environment_id: str) -> Optional[NotebookEnvironment]:
-        await self._ensure_environments_loaded()
-        return self._environments.get(environment_id)
+        combined: Dict[str, NotebookEnvironment] = {}
+        for storage_key, environment in self._environments.items():
+            scope, env_id = self._split_environment_storage_key(storage_key)
+            if scope == self._GLOBAL_TENANT_SCOPE:
+                combined.setdefault(env_id, environment)
+            elif scope == tenant_id:
+                combined[env_id] = environment
 
-    async def get_notebook_environment_metadata(self, environment_id: str) -> Optional[Dict[str, Any]]:
-        await self._ensure_environments_loaded()
-        metadata = self._environment_metadata.get(environment_id)
-        return dict(metadata) if metadata else None
+        return [combined[key].model_copy(deep=True) for key in sorted(combined.keys())]
+
+    async def get_notebook_environment(self, tenant_id: str, environment_id: str) -> Optional[NotebookEnvironment]:
+        await self._ensure_environments_loaded(tenant_id)
+        environment = self._resolve_environment(tenant_id, environment_id)
+        return environment.model_copy(deep=True) if environment else None
+
+    async def get_notebook_environment_metadata(
+        self,
+        tenant_id: str,
+        environment_id: str,
+    ) -> Optional[Dict[str, Any]]:
+        await self._ensure_environments_loaded(tenant_id)
+        return self._resolve_environment_metadata(tenant_id, environment_id)
 
     def _generate_k8s_yaml(self, environment: NotebookEnvironment) -> str:
         """Generate Kubernetes YAML for notebook deployment."""
@@ -876,8 +998,8 @@ class DeveloperWorkspaceService:
         """Start a new notebook session."""
         configuration = dict(configuration or {})
 
-        await self._ensure_environments_loaded()
-        environment = self._environments.get(environment_id)
+        await self._ensure_environments_loaded(tenant_id)
+        environment = self._resolve_environment(tenant_id, environment_id)
         if not environment:
             raise ValueError(f"Environment {environment_id} not found")
 

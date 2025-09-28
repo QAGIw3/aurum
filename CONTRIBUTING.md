@@ -43,9 +43,15 @@ Common targets:
 
 ## Commits & PRs
 
+- Use Conventional Commits (e.g., `feat:`, `fix:`, `chore:`). `cz commit` is available.
 - Write clear, focused commits; reference issues when applicable.
 - Summarize motivation, approach, and any trade-offs in the PR description.
 - Include before/after notes for user-visible changes (APIs, CLIs, config).
+
+### Release Process
+
+- Releases are automated via Semantic Release on the `main` branch.
+- Changelog is generated into `CHANGELOG.md` and GitHub Releases are created automatically.
 
 ## Security & Tenancy
 

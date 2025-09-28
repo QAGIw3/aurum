@@ -8,6 +8,7 @@ from contextlib import contextmanager
 from contextvars import ContextVar, Token
 from datetime import datetime
 from typing import Iterator, Optional, Dict, Any, Mapping, Iterable
+import os
 
 try:  # pragma: no cover - optional dependency
     from opentelemetry import trace as _otel_trace  # type: ignore
@@ -41,6 +42,28 @@ _SESSION_ID: ContextVar[Optional[str]] = ContextVar("aurum_session_id", default=
 
 # Logger for structured logging
 STRUCTURED_LOGGER = logging.getLogger("aurum.structured")
+if not STRUCTURED_LOGGER.handlers:
+    stdout_handler = logging.StreamHandler(sys.stdout)
+    # Message is a pre-serialized JSON string from log_structured; do not wrap
+    stdout_handler.setFormatter(logging.Formatter('%(message)s'))
+    STRUCTURED_LOGGER.addHandler(stdout_handler)
+
+    # Attach OpenTelemetry LoggingHandler if available to export logs via OTLP
+    try:  # pragma: no cover - optional dependency
+        from opentelemetry._logs import LoggingHandler as _OTelLoggingHandler  # type: ignore
+    except Exception:
+        _OTelLoggingHandler = None  # type: ignore[assignment]
+
+    if _OTelLoggingHandler is not None:
+        try:
+            otel_handler = _OTelLoggingHandler(level=logging.NOTSET)
+            STRUCTURED_LOGGER.addHandler(otel_handler)
+        except Exception:
+            # Fall back silently if OTel handler cannot be constructed
+            pass
+
+STRUCTURED_LOGGER.propagate = False
+STRUCTURED_LOGGER.setLevel(logging.INFO)
 
 
 def set_request_id(request_id: str) -> Token:
@@ -237,6 +260,7 @@ def log_structured(
         "timestamp": datetime.utcnow().isoformat(),
         "level": level,
         "event": event,
+        "service": os.getenv("AURUM_OTEL_SERVICE_NAME", "aurum-api"),
         "request_id": context["request_id"],
         "correlation_id": context["correlation_id"],
         "tenant_id": context["tenant_id"],

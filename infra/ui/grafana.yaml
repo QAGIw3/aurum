@@ -30,6 +30,39 @@ data:
         jsonData:
           httpMethod: GET
           manageAlerts: false
+      - uid: tempo
+        name: Tempo
+        type: tempo
+        access: proxy
+        url: http://tempo.aurum-dev.svc.cluster.local:3100
+        jsonData:
+          httpMethod: GET
+          serviceMap: true
+          nodeGraph: true
+          tracesToLogs:
+            datasourceUid: loki
+            tags: ["service.name", "http.method", "http.route", "http.status_code"]
+            mappedTags: [{key: "trace_id", value: "trace_id"}, {key: "span_id", value: "span_id"}]
+            spanStartTimeShift: "-1h"
+            spanEndTimeShift: "1h"
+            filterByTraceID: true
+            filterBySpanID: true
+      - uid: loki
+        name: Loki
+        type: loki
+        access: proxy
+        url: http://loki.aurum-dev.svc.cluster.local:3100
+        jsonData:
+          maxLines: 1000
+          derivedFields:
+            - name: trace_id
+              matcherRegex: "trace_id=([a-f0-9]{32})"
+              datasourceUid: tempo
+              url: "${__value.raw}"
+            - name: span_id
+              matcherRegex: "span_id=([a-f0-9]{16})"
+              datasourceUid: tempo
+              url: "${__value.raw}"
       - uid: aurum-postgres
         name: Postgres (Ops)
         type: postgres

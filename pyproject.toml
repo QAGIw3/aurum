@@ -98,6 +98,7 @@ dev = [
     "mypy==1.13.0",
     "ruff==0.8.4",
     "pre-commit==4.0.1",
+    "commitizen==3.24.0",
     "bandit==1.8.0",
     "safety==3.2.8",
     "flake8==7.1.1",
@@ -393,3 +394,15 @@ severity-threshold = "high"
 ignore = [
     "GHSA-1234-5678",  # Example: known false positive
 ]
+
+[tool.commitizen]
+name = "cz_conventional_commit"
+tag_format = "v$version"
+version = "0.1.0"
+update_changelog_on_bump = true
+
+[tool.semantic_release]
+branch = "main"
+changelog_file = "CHANGELOG.md"
+upload_to_pypi = false
+version_toml = ["pyproject.toml:project.version"]

@@ -301,6 +301,12 @@ class SimpleTrinoClient:
         self._pending_lock = _create_lock()
         self._default_tenant = self._config.get("trino_default_tenant_id", "default")
         self._closed = False
+        # Default Trino session properties (applied via X-Trino-Session header)
+        # Can be overridden per-query using params key "_trino_session".
+        self._default_session: Dict[str, str] = {
+            # Conservative defaults; callers can tune per workload
+            # Example: "join_distribution_type": "BROADCAST"
+        }
 
     @property
     def circuit_breaker_state(self) -> str:
@@ -552,6 +558,21 @@ class SimpleTrinoClient:
         tenant_label: str,
     ) -> List[Dict[str, Any]]:
         context_info = self._build_query_context(tenant_label)
+        # Extract per-query Trino session hints
+        trino_session: Dict[str, str] = {}
+        if isinstance(params, dict) and params.get("_trino_session"):
+            try:
+                raw = params.pop("_trino_session")  # do not forward to DBAPI
+                if isinstance(raw, dict):
+                    # coerce values to strings as required by Trino header format
+                    trino_session = {str(k): str(v) for k, v in raw.items() if v is not None}
+            except Exception:
+                trino_session = {}
+        # Merge with defaults (query-level wins)
+        if self._default_session:
+            merged = dict(self._default_session)
+            merged.update(trino_session)
+            trino_session = merged
 
         def _do_query(context: Dict[str, Optional[str]]) -> List[Dict[str, Any]]:
             cursor = conn.cursor()
@@ -564,6 +585,10 @@ class SimpleTrinoClient:
                 header_previous: Dict[str, Optional[str]] = {}
                 if self._enable_trace_tagging:
                     header_previous = self._apply_connection_context(conn, context)
+                # Apply Trino session properties via header if provided
+                session_prev: Dict[str, Optional[str]] = {}
+                if trino_session:
+                    session_prev = self._apply_trino_session(conn, trino_session)
                 start_time = time.perf_counter()
                 try:
                     if prepared is not None and hasattr(cursor, "execute_prepared"):
@@ -582,6 +607,8 @@ class SimpleTrinoClient:
                 finally:
                     if self._enable_trace_tagging:
                         self._restore_connection_headers(conn, header_previous)
+                    if trino_session:
+                        self._restore_trino_session(conn, session_prev)
 
                 description = getattr(cursor, "description", None)
                 has_results = bool(description)
@@ -858,6 +885,49 @@ class SimpleTrinoClient:
                 headers.pop(key, None)
             else:
                 headers[key] = value
+
+    def _apply_trino_session(self, conn: Any, session_kv: Dict[str, str]) -> Dict[str, Optional[str]]:
+        """Apply Trino session properties via X-Trino-Session header.
+
+        Trino expects a comma-separated list of key=value pairs.
+        Returns previous header value mapping for restoration.
+        """
+        if not session_kv:
+            return {}
+        session = getattr(conn, "_http_session", None)
+        if session is None or not hasattr(session, "headers"):
+            return {}
+        headers = session.headers
+        previous: Dict[str, Optional[str]] = {}
+        try:
+            existing = headers.get("X-Trino-Session")
+            previous["X-Trino-Session"] = existing
+            parts: list[str] = []
+            for k, v in session_kv.items():
+                if not k:
+                    continue
+                parts.append(f"{k}={v}")
+            value = ",".join(parts)
+            if value:
+                headers["X-Trino-Session"] = value
+        except Exception:
+            # Best-effort only
+            pass
+        return previous
+
+    def _restore_trino_session(self, conn: Any, previous: Dict[str, Optional[str]]) -> None:
+        """Restore X-Trino-Session header to previous value."""
+        if not previous:
+            return
+        session = getattr(conn, "_http_session", None)
+        if session is None or not hasattr(session, "headers"):
+            return
+        headers = session.headers
+        value = previous.get("X-Trino-Session")
+        if value is None:
+            headers.pop("X-Trino-Session", None)
+        else:
+            headers["X-Trino-Session"] = value
 
     def _maybe_prepare_statement(self, conn: Any, cursor: Any, sql: str) -> Optional[Any]:
         if not hasattr(cursor, "prepare"):

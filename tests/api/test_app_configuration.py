@@ -1,41 +1,6 @@
 from __future__ import annotations
 
-import importlib
-import sys
-from types import ModuleType
-from typing import Dict
-
 import pytest
-
-
-@pytest.fixture()
-def reload_api_app(monkeypatch: pytest.MonkeyPatch):
-    """Reload `aurum.api.app` with a clean environment for each invocation."""
-
-    keys = [
-        "AURUM_API_ADMIN_GROUP",
-        "AURUM_API_AUTH_DISABLED",
-        "AURUM_API_CORS_ORIGINS",
-        "AURUM_API_GZIP_MIN_BYTES",
-        "AURUM_API_INMEMORY_TTL",
-    ]
-
-    def _reload(env: Dict[str, str] | None = None) -> ModuleType:
-        for key in keys:
-            monkeypatch.delenv(key, raising=False)
-        if env:
-            for key, value in env.items():
-                monkeypatch.setenv(key, value)
-        if "aurum.api.app" in sys.modules:
-            return importlib.reload(sys.modules["aurum.api.app"])
-        return importlib.import_module("aurum.api.app")
-
-    yield _reload
-
-    for key in keys:
-        monkeypatch.delenv(key, raising=False)
-    if "aurum.api.app" in sys.modules:
-        importlib.reload(sys.modules["aurum.api.app"])
 
 
 def test_admin_groups_from_env_lowercase_and_trim(reload_api_app) -> None:
@@ -58,7 +23,7 @@ def test_is_admin_respects_membership_and_empty_guard(reload_api_app) -> None:
     assert module._is_admin({"groups": ["TeamA"]}) is True
     assert module._is_admin({"groups": ["Other"]}) is False
     module.ADMIN_GROUPS = set()
-    assert module._is_admin({}) is True
+    assert module._is_admin({}) is False
 
 
 def test_cors_and_gzip_configuration_are_env_driven(reload_api_app) -> None:

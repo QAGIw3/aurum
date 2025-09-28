@@ -6,6 +6,13 @@ namespace: aurum-staging
 resources:
   - ../base
 
+helmCharts:
+  - name: helm
+    releaseName: aurum-api
+    namespace: aurum-staging
+    chartHome: ../api
+    valuesFile: ../api/helm/values-staging.yaml
+
 # Environment-specific patches
 patchesStrategicMerge:
   - patches/replicas-staging.yaml

@@ -36,7 +36,7 @@ resources:
   - vector-rbac.yaml
   - jaeger.yaml
 #  - prometheus-rules.yaml
-  - ../api
+  # API is deployed via Helm in environment overlays
   - ../scenario-worker
   - ../external-collectors
   - airflow-network-policy.yaml

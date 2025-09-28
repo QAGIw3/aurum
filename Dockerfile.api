@@ -25,7 +25,7 @@ COPY src ./src
 
 RUN --mount=type=cache,target=/root/.cache/pip \
     pip install --upgrade pip setuptools wheel \
-    && pip install .[api]
+    && pip install .[api,ingest]
 
 FROM base AS runtime
 
@@ -46,6 +46,7 @@ WORKDIR /app
 
 COPY --from=builder --chown=aurum:aurum /opt/venv /opt/venv
 COPY --chown=aurum:aurum src /app/src
+COPY --chown=aurum:aurum scripts /app/scripts
 COPY --chown=aurum:aurum start_api.py /app/
 COPY --chown=aurum:aurum config /app/config
 

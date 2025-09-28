@@ -1,0 +1,55 @@
+{{- if .Values.reforecastCron.enabled }}
+{{- $svcHost := printf "%s.%s.svc.cluster.local" (include "aurum-api.fullname" .) .Release.Namespace -}}
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: {{ include "aurum-api.fullname" . }}-reforecast
+  labels:
+    {{- include "aurum-api.labels" . | nindent 4 }}
+spec:
+  schedule: {{ .Values.reforecastCron.schedule | quote }}
+  {{- if .Values.reforecastCron.startingDeadlineSeconds }}
+  startingDeadlineSeconds: {{ .Values.reforecastCron.startingDeadlineSeconds }}
+  {{- end }}
+  concurrencyPolicy: {{ default "Forbid" .Values.reforecastCron.concurrencyPolicy }}
+  successfulJobsHistoryLimit: {{ default 3 .Values.reforecastCron.successfulJobsHistoryLimit }}
+  failedJobsHistoryLimit: {{ default 3 .Values.reforecastCron.failedJobsHistoryLimit }}
+  jobTemplate:
+    spec:
+      template:
+        metadata:
+          labels:
+            {{- include "aurum-api.labels" . | nindent 12 }}
+        spec:
+          restartPolicy: OnFailure
+          containers:
+            - name: trigger
+              image: "{{ .Values.reforecastCron.image.repository }}:{{ .Values.reforecastCron.image.tag }}"
+              imagePullPolicy: {{ .Values.reforecastCron.image.pullPolicy }}
+              env:
+                - name: TENANT_ID
+                  value: {{ .Values.reforecastCron.tenant | quote }}
+                {{- if and .Values.reforecastCron.auth.enabled .Values.reforecastCron.auth.secretName }}
+                - name: API_TOKEN
+                  valueFrom:
+                    secretKeyRef:
+                      name: {{ .Values.reforecastCron.auth.secretName }}
+                      key: {{ .Values.reforecastCron.auth.secretKey | default "token" }}
+                {{- end }}
+              args:
+                - /bin/sh
+                - -c
+                - >
+                  set -euo pipefail;
+                  URL="{{- if .Values.reforecastCron.url -}}{{ .Values.reforecastCron.url }}{{- else -}}http://{{$svcHost}}:{{ .Values.service.port }}/v2/auto-reforecast/trigger-forecast-rerun{{- end -}}";
+                  HEADERS=("-H" "X-Aurum-Tenant: ${TENANT_ID}");
+                  {{- if and .Values.reforecastCron.auth.enabled .Values.reforecastCron.auth.headerName }}
+                  if [ -n "${API_TOKEN:-}" ]; then
+                    HEADERS+=("-H" "{{ .Values.reforecastCron.auth.headerName }}: {{ .Values.reforecastCron.auth.headerPrefix }}${API_TOKEN}");
+                  fi;
+                  {{- end }}
+                  curl -sS -X POST "${HEADERS[@]}" \
+                    "${URL}?data_source={{ .Values.reforecastCron.params.data_source }}&geography={{ .Values.reforecastCron.params.geography }}&forecast_type={{ .Values.reforecastCron.params.forecast_type }}&target_variable={{ .Values.reforecastCron.params.target_variable }}&trigger_reason={{ .Values.reforecastCron.params.trigger_reason }}&priority={{ .Values.reforecastCron.params.priority }}";
+{{- end }}
+
+

@@ -263,3 +263,32 @@ ingress:
         - path: /
           pathType: Prefix
   tls: []
+
+# Cron-based auto reforecast trigger
+reforecastCron:
+  enabled: false
+  schedule: "0 * * * *"  # hourly by default
+  startingDeadlineSeconds: 600
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 1
+  tenant: "default"
+  image:
+    repository: curlimages/curl
+    tag: 8.10.1
+    pullPolicy: IfNotPresent
+  # Optional explicit URL. Defaults to cluster DNS for the helm-managed Service
+  url: ""
+  params:
+    data_source: "scheduled_cron"
+    geography: "US"
+    forecast_type: "load"
+    target_variable: "load_mw"
+    trigger_reason: "scheduled_reforecast"
+    priority: 0.5
+  auth:
+    enabled: false
+    secretName: ""
+    secretKey: token
+    headerName: "Authorization"
+    headerPrefix: "Bearer "

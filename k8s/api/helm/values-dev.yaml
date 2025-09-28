@@ -1,0 +1,13 @@
+autoscaling:
+  minReplicas: 2
+  maxReplicas: 5
+  targetCPUUtilizationPercentage: 60
+  targetMemoryUtilizationPercentage: 75
+
+reforecastCron:
+  enabled: true
+  schedule: "*/30 * * * *"  # every 30 minutes
+  tenant: "dev-tenant"
+  auth:
+    enabled: false
+

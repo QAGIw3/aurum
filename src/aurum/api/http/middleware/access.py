@@ -18,6 +18,7 @@ from starlette.responses import Response
 
 from aurum.telemetry.context import (
     correlation_context,
+    request_id_context,
     get_request_id,
     get_trace_span_ids,
     log_structured,
@@ -37,7 +38,8 @@ async def access_log_middleware(
     tenant_id = request.headers.get("x-aurum-tenant")
     user_id = request.headers.get("x-user-id")
 
-    with correlation_context(
+    # Bind request_id separately so it is available to response header middleware
+    with request_id_context(request_id), correlation_context(
         correlation_id=correlation_id,
         tenant_id=tenant_id,
         user_id=user_id,

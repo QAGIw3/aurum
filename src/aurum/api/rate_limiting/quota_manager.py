@@ -18,6 +18,7 @@ will no‑op if no client is provided.
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import logging
 import time
 import uuid
@@ -70,6 +71,7 @@ class APIKey:
         is_active: bool = True
     ):
         self.key = key
+        self.key_hash = hashlib.sha256(key.encode("utf-8")).hexdigest()
         self.name = name
         self.quota = quota
         self.priority = priority
@@ -78,6 +80,11 @@ class APIKey:
         self.last_used_at: Optional[datetime] = None
         self.total_requests = 0
         self.failed_requests = 0
+
+    @property
+    def fingerprint(self) -> str:
+        """Short identifier safe for logs and redis keys."""
+        return self.key_hash[:16]
 
 
 class APIEndpoint:
@@ -231,17 +238,19 @@ class QuotaManager:
             backoff_factor=1.5
         )
 
-    def add_api_key(self, api_name: str, key: str, name: str, priority: int = 1):
-        """Add an API key for a service."""
+    def add_api_key(self, api_name: str, key: str, name: str, priority: int = 1) -> None:
+        """Add an API key for a service, resolving secrets from secure stores."""
         if api_name not in self.endpoints:
             raise ValueError(f"Unknown API: {api_name}")
+
+        secret_value, secret_origin = self._resolve_api_key_secret(key)
 
         if api_name not in self.api_keys:
             self.api_keys[api_name] = []
 
         endpoint = self.endpoints[api_name]
         api_key = APIKey(
-            key=key,
+            key=secret_value,
             name=name,
             quota=endpoint.rate_limit,
             priority=priority
@@ -249,6 +258,16 @@ class QuotaManager:
 
         self.api_keys[api_name].append(api_key)
         self.api_keys[api_name].sort(key=lambda k: k.priority, reverse=True)  # Higher priority first
+
+        logging.info(
+            "registered_api_key",
+            extra={
+                "api": api_name,
+                "alias": name,
+                "origin": secret_origin,
+                "fingerprint": api_key.fingerprint,
+            },
+        )
 
     def get_best_api_key(self, api_name: str) -> Optional[APIKey]:
         """Get the best available API key for a service."""
@@ -262,6 +281,79 @@ class QuotaManager:
 
         # Get the highest priority key
         return active_keys[0]
+
+    def _resolve_api_key_secret(self, key_spec: str) -> Tuple[str, str]:
+        """Resolve API key material from secure stores or fall back to inline value."""
+        key_spec = key_spec.strip()
+        if key_spec.startswith("vault://"):
+            secret = self._read_from_vault(key_spec[len("vault://") :])
+            return secret, "vault"
+
+        if key_spec.startswith("k8s://") or key_spec.startswith("file://"):
+            path_spec = key_spec.split("://", 1)[1]
+            secret_path = Path(path_spec)
+            if not secret_path.exists():
+                raise FileNotFoundError(f"Secret file not found: {path_spec}")
+            secret = secret_path.read_text(encoding="utf-8").strip()
+            if not secret:
+                raise ValueError(f"Secret file at {path_spec} is empty")
+            origin = "kubernetes" if key_spec.startswith("k8s://") else "file"
+            return secret, origin
+
+        if key_spec.startswith("env://"):
+            env_var = key_spec.split("://", 1)[1]
+            secret = os.getenv(env_var)
+            if not secret:
+                raise ValueError(f"Environment variable {env_var} is not set for API key material")
+            return secret.strip(), "env"
+
+        logging.warning(
+            "api_key_inline_secret",
+            extra={"message": "Plain API key provided; migrate to Vault or Kubernetes secret"},
+        )
+        return key_spec, "inline"
+
+    def _read_from_vault(self, locator: str) -> str:
+        """Read secret material from Vault using hvac if available."""
+        try:
+            import hvac  # type: ignore
+        except ImportError as exc:  # pragma: no cover - vault optional in tests
+            raise RuntimeError("Vault support requires the hvac package") from exc
+
+        if not locator:
+            raise ValueError("Vault locator cannot be empty")
+
+        path_spec = locator
+        mount_override = None
+        if "@" in locator.split("#", 1)[0]:
+            mount_override, path_spec = locator.split("@", 1)
+
+        if "#" in path_spec:
+            secret_path, field = path_spec.split("#", 1)
+        else:
+            secret_path, field = path_spec, "api_key"
+
+        mount_point = mount_override or os.getenv("AURUM_VAULT_MOUNT_POINT", "secret")
+        url = os.getenv("VAULT_ADDR")
+        token = os.getenv("VAULT_TOKEN")
+
+        if not url or not token:
+            raise RuntimeError("VAULT_ADDR and VAULT_TOKEN must be set to resolve Vault secrets")
+
+        client = hvac.Client(url=url, token=token)
+        if not client.is_authenticated():
+            raise RuntimeError("Vault authentication failed")
+
+        response = client.secrets.kv.v2.read_secret_version(path=secret_path, mount_point=mount_point)
+        data = response.get("data", {}).get("data", {})
+        if field not in data:
+            raise KeyError(f"Field '{field}' not present in Vault secret {secret_path}")
+
+        secret_value = data[field]
+        if not isinstance(secret_value, str) or not secret_value.strip():
+            raise ValueError(f"Vault secret {secret_path}#{field} is empty")
+
+        return secret_value.strip()
 
     async def check_quota_and_make_request(
         self,
@@ -318,15 +410,15 @@ class QuotaManager:
         # Check Redis for current usage
         try:
             # Minute limit
-            minute_key = f"quota:{api_name}:{api_key.key}:minute:{current_minute}"
+            minute_key = f"quota:{api_name}:{api_key.fingerprint}:minute:{current_minute}"
             minute_count = self.redis_client.get(minute_key) or 0
 
             # Hour limit
-            hour_key = f"quota:{api_name}:{api_key.key}:hour:{current_hour}"
+            hour_key = f"quota:{api_name}:{api_key.fingerprint}:hour:{current_hour}"
             hour_count = self.redis_client.get(hour_key) or 0
 
             # Day limit
-            day_key = f"quota:{api_name}:{api_key.key}:day:{current_day.isoformat()}"
+            day_key = f"quota:{api_name}:{api_key.fingerprint}:day:{current_day.isoformat()}"
             day_count = self.redis_client.get(day_key) or 0
 
             # Check limits
@@ -433,9 +525,9 @@ class QuotaManager:
 
         try:
             # Update Redis counters
-            minute_key = f"quota:{api_name}:{api_key.key}:minute:{current_minute}"
-            hour_key = f"quota:{api_name}:{api_key.key}:hour:{current_hour}"
-            day_key = f"quota:{api_name}:{api_key.key}:day:{current_day.isoformat()}"
+            minute_key = f"quota:{api_name}:{api_key.fingerprint}:minute:{current_minute}"
+            hour_key = f"quota:{api_name}:{api_key.fingerprint}:hour:{current_hour}"
+            day_key = f"quota:{api_name}:{api_key.fingerprint}:day:{current_day.isoformat()}"
 
             # Use pipelines for atomic operations
             pipe = self.redis_client.pipeline()
@@ -472,9 +564,9 @@ class QuotaManager:
         current_day = now.date()
 
         try:
-            minute_usage = int(self.redis_client.get(f"quota:{api_name}:{best_key.key}:minute:{current_minute}") or 0)
-            hour_usage = int(self.redis_client.get(f"quota:{api_name}:{best_key.key}:hour:{current_hour}") or 0)
-            day_usage = int(self.redis_client.get(f"quota:{api_name}:{best_key.key}:day:{current_day.isoformat()}") or 0)
+            minute_usage = int(self.redis_client.get(f"quota:{api_name}:{best_key.fingerprint}:minute:{current_minute}") or 0)
+            hour_usage = int(self.redis_client.get(f"quota:{api_name}:{best_key.fingerprint}:hour:{current_hour}") or 0)
+            day_usage = int(self.redis_client.get(f"quota:{api_name}:{best_key.fingerprint}:day:{current_day.isoformat()}") or 0)
         except (ConnectionError, TimeoutError):
             minute_usage = hour_usage = day_usage = 0
 

@@ -115,6 +115,7 @@ from .lifespan_manager import setup_lifespan
 from .app_offload import build_offload_predicate as _build_offload_predicate
 from .middleware.registry import apply_middleware_stack
 from .middleware.admin_guard import AdminRouteGuard
+from .auth import AuthMiddleware, OIDCConfig
 
 try:  # pragma: no cover - optional dependency
     from prometheus_client import CONTENT_TYPE_LATEST, CollectorRegistry, generate_latest
@@ -527,6 +528,9 @@ def _create_simplified_app(settings: AurumSettings, logger: logging.Logger) -> F
     """Create simplified API with essential middleware only."""
     logger.info("Creating simplified API configuration")
 
+    _configure_admin_groups(settings)
+    _require_admin_groups(settings, logger)
+
     app = FastAPI(
         title=settings.api.api_title,
         version=settings.api.version,
@@ -548,15 +552,16 @@ def _create_simplified_app(settings: AurumSettings, logger: logging.Logger) -> F
     # Essential telemetry
     configure_telemetry(settings.telemetry.service_name, fastapi_app=app, enable_psycopg=True)
 
-    # Apply the registered middleware stack (CORS, GZip, RFC7807 exception handling)
-    # Add an admin guard first to protect admin endpoints uniformly
-    # Introduce admin guard (configurable via settings)
-    admin_guard_enabled = bool(getattr(getattr(settings, "api", None), "admin_guard_enabled", False))
-    app.add_middleware(AdminRouteGuard, enabled=admin_guard_enabled)
-    
     # Apply basic middleware (CORS, GZip, RFC7807 exceptions)
     app_with_basic_middleware = apply_middleware_stack(app, settings)
     
+    # Enforce admin access and authentication as the outermost middlewares
+    admin_guard_enabled = bool(getattr(getattr(settings, "api", None), "admin_guard_enabled", False))
+    app.add_middleware(AdminRouteGuard, enabled=admin_guard_enabled)
+
+    oidc_config = OIDCConfig.from_settings(settings)
+    app.add_middleware(AuthMiddleware, config=oidc_config)
+
     # Apply concurrency and rate limiting separately to avoid circular imports
     app_with_concurrency = _install_concurrency_middleware(app_with_basic_middleware, settings)
     wrapped_app = _install_rate_limit_middleware(app_with_concurrency, settings)
@@ -600,6 +605,10 @@ def _create_simplified_app(settings: AurumSettings, logger: logging.Logger) -> F
                 headers["accept-encoding"] = "gzip, " + accept_encoding
         return await call_next(request)
 
+    # Access logging & unified request IDs
+    from aurum.api.http.middleware import access_log_middleware
+    app.middleware("http")(access_log_middleware)
+
     # Always set Vary headers for content negotiation and compression
     from aurum.api.http.middleware.headers import create_response_headers_middleware
 
@@ -632,6 +641,9 @@ def _create_simplified_app(settings: AurumSettings, logger: logging.Logger) -> F
 def _create_legacy_app(settings: AurumSettings, logger: logging.Logger) -> FastAPI:
     """Create legacy API with full feature set."""
     logger.info("Creating legacy API configuration with full features")
+
+    _configure_admin_groups(settings)
+    _require_admin_groups(settings, logger)
 
     app = FastAPI(
         title=settings.api.api_title,
@@ -693,9 +705,12 @@ def _create_legacy_app(settings: AurumSettings, logger: logging.Logger) -> FastA
     except Exception as e:
         logger.warning(f"Failed to load runtime config router: {e}")
 
-    # Admin guard (configurable)
+    # Admin guard (configurable) - added before auth so auth executes first
     admin_guard_enabled = bool(getattr(getattr(settings, "api", None), "admin_guard_enabled", False))
     app.add_middleware(AdminRouteGuard, enabled=admin_guard_enabled)
+
+    oidc_config = OIDCConfig.from_settings(settings)
+    app.add_middleware(AuthMiddleware, config=oidc_config)
 
     app.include_router(diagnostics_router)
     app.include_router(local_diagnostics_router)
@@ -719,6 +734,10 @@ def _create_legacy_app(settings: AurumSettings, logger: logging.Logger) -> FastA
                 headers = MutableHeaders(scope=request.scope)
                 headers["accept-encoding"] = "gzip, " + accept_encoding
         return await call_next(request)
+
+    # Access logging & unified request IDs
+    from aurum.api.http.middleware import access_log_middleware
+    app.middleware("http")(access_log_middleware)
 
     # Always set Vary headers for content negotiation and compression
     from aurum.api.http.middleware.headers import create_response_headers_middleware
@@ -750,45 +769,69 @@ def _create_legacy_app(settings: AurumSettings, logger: logging.Logger) -> FastA
     return _install_rate_limit_middleware(app_with_concurrency, settings)
 
 
-# Admin groups configuration
+# Admin groups configuration (populated during app creation)
 ADMIN_GROUPS: set[str] = set()
 
 
+def _configure_admin_groups(settings: AurumSettings) -> None:
+    """Populate admin groups from settings without falling back to open access."""
+    global ADMIN_GROUPS
+    groups = getattr(getattr(settings, "auth", None), "admin_groups", frozenset())
+    ADMIN_GROUPS = {group.lower() for group in groups}
+
+
+def _require_admin_groups(settings: AurumSettings, logger: logging.Logger) -> None:
+    guard_enabled = bool(getattr(getattr(settings, "api", None), "admin_guard_enabled", False))
+    auth_cfg = getattr(settings, "auth", None)
+    auth_disabled = bool(getattr(auth_cfg, "disabled", False))
+    if guard_enabled and not auth_disabled and not ADMIN_GROUPS:
+        raise RuntimeError(
+            "admin_guard_enabled but no AURUM_API_ADMIN_GROUP configured; refuse to start with open admin access",
+        )
+    if not ADMIN_GROUPS and guard_enabled:
+        logger.warning("admin guard enabled without explicit admin groups; access will always be denied")
+
+
 def _is_admin(user_data: Dict[str, Any]) -> bool:
-    """Check if a user is an admin based on their groups."""
-    if not ADMIN_GROUPS:  # If no admin groups configured, everyone is admin
+    """Check if a user is an admin based on their verified groups or scopes."""
+    if not ADMIN_GROUPS:
+        return False
+
+    claims = user_data.get("claims") or {}
+    principal_groups: list[str] = []
+
+    if "groups" in claims and isinstance(claims["groups"], list):
+        principal_groups.extend(str(group).lower() for group in claims["groups"] if group)
+
+    if "roles" in claims and isinstance(claims["roles"], list):
+        principal_groups.extend(str(role).lower() for role in claims["roles"] if role)
+
+    # Fallback to top-level groups provided by middleware (already lower-cased there)
+    groups = user_data.get("groups") or []
+    if isinstance(groups, list):
+        principal_groups.extend(str(group).lower() for group in groups if group)
+    elif isinstance(groups, str):
+        principal_groups.append(groups.lower())
+
+    if any(group in ADMIN_GROUPS for group in principal_groups):
         return True
 
-    user_groups = user_data.get("groups", [])
-    if isinstance(user_groups, str):
-        user_groups = [user_groups]
-
-    return any(group.lower() in ADMIN_GROUPS for group in user_groups)
-
-
-# Initialize admin groups from environment
-def _init_admin_groups():
-    """Initialize admin groups from environment variables."""
-    global ADMIN_GROUPS
-
-    # Check if auth is disabled
-    auth_disabled = os.getenv("AURUM_API_AUTH_DISABLED", "0").lower() in ("1", "true", "yes")
-
-    if auth_disabled:
-        # Clear admin groups when auth is disabled
-        ADMIN_GROUPS = set()
-        return
-
-    admin_groups_str = os.getenv("AURUM_API_ADMIN_GROUP", "")
-    if admin_groups_str:
-        groups = [group.strip().lower() for group in admin_groups_str.split(",") if group.strip()]
-        ADMIN_GROUPS = set(groups)
+    # Scope-based admin access
+    scopes = claims.get("scope")
+    if isinstance(scopes, str):
+        scope_tokens = {token.strip().lower() for token in scopes.split() if token.strip()}
+    elif isinstance(scopes, list):
+        scope_tokens = {str(token).lower() for token in scopes if token}
     else:
-        ADMIN_GROUPS = set()
+        scope_tokens = set()
 
-
-# Initialize admin groups at module load
-_init_admin_groups()
+    admin_scopes = {
+        "admin",
+        "admin:read",
+        "admin:write",
+        "aurum:admin",
+    }
+    return bool(scope_tokens & admin_scopes)
 
 
 # Expose a module-level app for tests and simple runners

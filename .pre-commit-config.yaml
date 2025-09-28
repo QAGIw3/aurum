@@ -67,6 +67,13 @@ repos:
           "--warn-unreachable"
         ]
 
+  - repo: https://github.com/commitizen-tools/commitizen
+    rev: v3.24.0
+    hooks:
+      - id: commitizen
+        stages: [commit-msg]
+        additional_dependencies: []
+
   - repo: local
     hooks:
       - id: check-requirements

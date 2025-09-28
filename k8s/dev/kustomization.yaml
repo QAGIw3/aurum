@@ -5,6 +5,13 @@ resources:
   - ../base
   - ../ui
 
+helmCharts:
+  - name: helm
+    releaseName: aurum-api
+    namespace: aurum-dev
+    chartHome: ../api
+    valuesFile: ../api/helm/values-dev.yaml
+
 patchesStrategicMerge:
   - patches/api-vault.yaml
   - patches/scenario-worker-vault.yaml

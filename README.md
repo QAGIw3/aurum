@@ -83,6 +83,15 @@ pytest tests/
 
 # Lint code
 make lint
+
+### CI/CD
+
+- Pre-commit: `pre-commit install` then `make git-pre-commit` to run all hooks.
+- Conventional Commits: follow `feat:`, `fix:`, `chore:`, etc. `cz commit` is supported.
+- Coverage gate: pytest enforces `--cov-fail-under=85` via `pyproject.toml`.
+- Image scanning: local `make image-scan`; CI uses Trivy and uploads SARIF.
+- Releases: automatic SemVer + changelog via GitHub Actions `Release` workflow.
+- E2E: `make e2e-up && make e2e-seed && make e2e-test && make e2e-down` or run the `E2E Pipeline` workflow.
 ```
 
 ### Kubernetes Development

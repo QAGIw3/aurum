@@ -43,6 +43,9 @@ class AuthPolicy:
     permissions: Set[Permission]
     tenant_scoped: bool = True
     user_scoped: bool = False
+    requires_admin: bool = False
+    path_pattern: str = ""
+    methods: Set[str] = frozenset()
 
     def allows(self, permission: Permission, tenant_id: Optional[str] = None, user_id: Optional[str] = None) -> bool:
         """Check if policy allows the given permission."""
@@ -98,38 +101,50 @@ class AuthorizationManager:
     def __init__(self, config: SecurityConfig):
         self.config = config
         self.security = HTTPBearer(auto_error=False)
-        self._policies: Dict[str, AuthPolicy] = self._default_policies()
+        self._policies = self._default_policies()
 
-    def _default_policies(self) -> Dict[str, AuthPolicy]:
-        """Get default authorization policies."""
-        return {
-            "/health": AuthPolicy(ResourceType.SYSTEM, {Permission.READ}, tenant_scoped=False),
-            "/ready": AuthPolicy(ResourceType.SYSTEM, {Permission.READ}, tenant_scoped=False),
-            "/metrics": AuthPolicy(ResourceType.SYSTEM, {Permission.READ}, tenant_scoped=False),
-            "/docs": AuthPolicy(ResourceType.SYSTEM, {Permission.READ}, tenant_scoped=False),
-            "/openapi.json": AuthPolicy(ResourceType.SYSTEM, {Permission.READ}, tenant_scoped=False),
-            "/v2/scenarios": AuthPolicy(ResourceType.SCENARIO, {Permission.READ}),
-            "/v2/scenarios/{scenario_id}": AuthPolicy(ResourceType.SCENARIO, {Permission.READ}),
-            "/v2/scenarios": AuthPolicy(ResourceType.SCENARIO, {Permission.WRITE}, requires_admin=True),
-            "/v2/admin/*": AuthPolicy(ResourceType.SYSTEM, {Permission.ADMIN}, requires_admin=True),
-        }
+    def _default_policies(self) -> List[AuthPolicy]:
+        """Default authorization policies keyed by path pattern and HTTP methods."""
+        def policy(path: str, methods: List[str], permissions: Set[Permission], **kwargs) -> AuthPolicy:
+            return AuthPolicy(
+                resource_type=kwargs.get("resource_type", ResourceType.SYSTEM),
+                permissions=permissions,
+                tenant_scoped=kwargs.get("tenant_scoped", True),
+                user_scoped=kwargs.get("user_scoped", False),
+                requires_admin=kwargs.get("requires_admin", False),
+                path_pattern=path,
+                methods=set(methods),
+            )
+
+        return [
+            policy("/health", ["GET"], {Permission.READ}, tenant_scoped=False),
+            policy("/ready", ["GET"], {Permission.READ}, tenant_scoped=False),
+            policy("/metrics", ["GET"], {Permission.READ}, tenant_scoped=False),
+            policy("/docs", ["GET"], {Permission.READ}, tenant_scoped=False),
+            policy("/openapi.json", ["GET"], {Permission.READ}, tenant_scoped=False),
+            policy("/v2/scenarios", ["GET"], {Permission.READ}, resource_type=ResourceType.SCENARIO),
+            policy("/v2/scenarios/{scenario_id}", ["GET"], {Permission.READ}, resource_type=ResourceType.SCENARIO),
+            policy("/v2/scenarios", ["POST", "PUT", "PATCH"], {Permission.WRITE}, resource_type=ResourceType.SCENARIO, requires_admin=True),
+            policy("/v2/scenarios/{scenario_id}", ["DELETE"], {Permission.DELETE}, resource_type=ResourceType.SCENARIO, requires_admin=True),
+            policy("/v2/admin/*", ["*"], {Permission.ADMIN}, requires_admin=True),
+        ]
 
     def get_policy(self, path: str, method: str) -> Optional[AuthPolicy]:
         """Get authorization policy for a path and method."""
-        # Normalize path
-        path = re.sub(r'/{[^}]+}', '/{id}', path)
+        normalized_path = re.sub(r'/{[^}]+}', '/{id}', path)
 
-        # Find matching policy
-        for pattern, policy in self._policies.items():
-            if self._matches_pattern(pattern, path):
-                return policy
+        for policy in self._policies:
+            if not self._matches_pattern(policy.path_pattern, normalized_path):
+                continue
+            if "*" not in policy.methods and method.upper() not in policy.methods:
+                continue
+            return policy
 
         return None
 
     def _matches_pattern(self, pattern: str, path: str) -> bool:
         """Check if path matches pattern (simple implementation)."""
-        # Convert pattern to regex
-        regex_pattern = pattern.replace('{id}', r'[^/]+')
+        regex_pattern = pattern.replace('{scenario_id}', r'[^/]+').replace('{id}', r'[^/]+').replace('*', r'.*')
         regex_pattern = f'^{regex_pattern}$'
         return bool(re.match(regex_pattern, path))
 
@@ -151,8 +166,8 @@ class AuthorizationManager:
 
             # Validate token format
             token = credentials.credentials
-            if not token or not token.startswith("Bearer "):
-                await self._log_auth_failure("invalid_token_format", None, None, client_ip, user_agent)
+            if not token:
+                await self._log_auth_failure("missing_token", None, None, client_ip, user_agent)
                 return None
 
             # Decode and validate JWT
@@ -194,10 +209,8 @@ class AuthorizationManager:
             tenant_id = SafeIdentifier.validate(tenant_id)
 
             # Convert permissions to enum values
-            try:
-                permissions = [Permission(p) for p in permissions]
-            except ValueError:
-                permissions = []
+            permissions = self._normalise_permissions(permissions, payload)
+            is_admin = is_admin or Permission.ADMIN in permissions
 
             return UserContext(
                 user_id=user_id,
@@ -214,6 +227,43 @@ class AuthorizationManager:
             raise InvalidTokenError("Invalid token")
         except Exception as e:
             raise InvalidTokenError(f"Token validation failed: {str(e)}")
+
+    def _normalise_permissions(self, permissions_claim: List[str], payload: Dict[str, Any]) -> List[Permission]:
+        """Convert permissions claim and OAuth scopes into Permission enums."""
+        resolved: Set[Permission] = set()
+
+        for entry in permissions_claim or []:
+            try:
+                resolved.add(Permission(entry))
+            except ValueError:
+                continue
+
+        scope_values: Set[str] = set()
+        scope_claim = payload.get("scope") or payload.get("scopes")
+        if isinstance(scope_claim, str):
+            scope_values.update(token.strip().lower() for token in scope_claim.split() if token.strip())
+        elif isinstance(scope_claim, (list, tuple)):
+            scope_values.update(str(token).lower() for token in scope_claim if token)
+
+        scope_permission_map = {
+            "curves:read": Permission.READ,
+            "curves:write": Permission.WRITE,
+            "curves:delete": Permission.DELETE,
+            "scenarios:read": Permission.READ,
+            "scenarios:write": Permission.WRITE,
+            "scenarios:delete": Permission.DELETE,
+            "admin": Permission.ADMIN,
+            "admin:read": Permission.ADMIN,
+            "admin:write": Permission.ADMIN,
+            "audit:read": Permission.AUDIT,
+        }
+
+        for scope in scope_values:
+            mapped = scope_permission_map.get(scope)
+            if mapped:
+                resolved.add(mapped)
+
+        return list(resolved)
 
     def authorize_request(
         self,
@@ -289,7 +339,7 @@ class AuthorizationManager:
             )
 
         # Check admin requirement
-        if hasattr(policy, 'requires_admin') and policy.requires_admin and not user_context.is_admin:
+        if policy.requires_admin and not user_context.is_admin:
             log_access_denied(
                 user_id=user_context.user_id,
                 tenant_id=user_context.tenant_id,

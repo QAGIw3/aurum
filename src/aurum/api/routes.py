@@ -161,24 +161,37 @@ def _get_principal(request: Request) -> Dict[str, Any] | None:
 
 
 def _is_admin(principal: Dict[str, Any] | None) -> bool:
-    if not ADMIN_GROUPS:
-        return True
     if not principal:
         return False
 
-    groups = principal.get("groups") or []
-    normalized = {str(group).lower() for group in groups if group}
-    if any(group in normalized for group in ADMIN_GROUPS):
-        return True
+    if not ADMIN_GROUPS:
+        return False
 
     claims = principal.get("claims") or {}
-    scopes = claims.get("scope", "")
-    if isinstance(scopes, str):
-        scope_list = scopes.split()
-    elif isinstance(scopes, list):
-        scope_list = [str(scope) for scope in scopes]
-    else:
-        scope_list = []
+
+    candidate_groups: Set[str] = set()
+
+    if "groups" in claims and isinstance(claims["groups"], list):
+        candidate_groups.update(str(group).lower() for group in claims["groups"] if group)
+
+    if "roles" in claims and isinstance(claims["roles"], list):
+        candidate_groups.update(str(role).lower() for role in claims["roles"] if role)
+
+    groups = principal.get("groups") or []
+    if isinstance(groups, list):
+        candidate_groups.update(str(group).lower() for group in groups if group)
+    elif isinstance(groups, str):
+        candidate_groups.add(groups.lower())
+
+    if candidate_groups & ADMIN_GROUPS:
+        return True
+
+    scopes_claim = claims.get("scope")
+    scope_tokens: Set[str] = set()
+    if isinstance(scopes_claim, str):
+        scope_tokens.update(token.strip().lower() for token in scopes_claim.split() if token.strip())
+    elif isinstance(scopes_claim, list):
+        scope_tokens.update(str(token).lower() for token in scopes_claim if token)
 
     admin_scopes = {
         "admin",
@@ -189,7 +202,7 @@ def _is_admin(principal: Dict[str, Any] | None) -> bool:
         "admin:rate_limits",
         "admin:trino",
     }
-    return any(scope in scope_list for scope in admin_scopes)
+    return bool(scope_tokens & admin_scopes)
 
 
 def _require_admin(principal: Dict[str, Any] | None) -> None:

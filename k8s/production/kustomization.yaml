@@ -6,6 +6,13 @@ namespace: aurum-prod
 resources:
   - ../base
 
+helmCharts:
+  - name: helm
+    releaseName: aurum-api
+    namespace: aurum-prod
+    chartHome: ../api
+    valuesFile: ../api/helm/values-prod.yaml
+
 # Environment-specific patches
 patchesStrategicMerge:
   - patches/replicas-production.yaml

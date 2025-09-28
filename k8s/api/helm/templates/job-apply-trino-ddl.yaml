@@ -1,0 +1,44 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: {{ include "aurum-api.fullname" . }}-apply-trino-ddl
+  labels:
+    {{- include "aurum-api.labels" . | nindent 4 }}
+  annotations:
+    "helm.sh/hook": post-install,post-upgrade
+    "helm.sh/hook-weight": "5"
+    "helm.sh/hook-delete-policy": before-hook-creation,hook-succeeded
+spec:
+  backoffLimit: 1
+  template:
+    metadata:
+      labels:
+        {{- include "aurum-api.selectorLabels" . | nindent 8 }}
+    spec:
+      serviceAccountName: {{ include "aurum-api.serviceAccountName" . }}
+      restartPolicy: Never
+      containers:
+        - name: apply-trino-ddl
+          image: {{ .Values.image.repository }}:{{ .Values.image.tag | default "latest" }}
+          imagePullPolicy: {{ .Values.image.pullPolicy | default "IfNotPresent" }}
+          command: ["python3", "scripts/trino/apply_ddl.py"]
+          args:
+            - "--server"
+            - {{ printf "http://%s:%s" .Values.config.AURUM_API_TRINO_HOST .Values.config.AURUM_API_TRINO_PORT | quote }}
+            - "--user"
+            - {{ .Values.config.AURUM_API_TRINO_USER | quote }}
+            - "--catalog"
+            - "iceberg"
+            - "--schema"
+            - "market"
+          env:
+            - name: PYTHONPATH
+              value: "/app/src"
+          resources:
+            requests:
+              cpu: 50m
+              memory: 128Mi
+            limits:
+              cpu: 500m
+              memory: 512Mi
+
