@@ -1593,7 +1593,7 @@ async def _generate_forecast_history(request: ForecastHistoryRequest) -> List[Fo
 # ---------------------------------------------------------------------------
 # Schema definition
 # ---------------------------------------------------------------------------
-schema = strawberry.Schema(
+schema = FederationSchema(
     query=Query,
     mutation=Mutation,
     subscription=Subscription,
