@@ -1338,6 +1338,41 @@ class Mutation:
             forecasts.append(_forecast_response_to_graphql(response))
         return forecasts
 
+    @strawberry.field
+    async def create_compliance_schedule(
+        self,
+        info: Info,
+        input: ComplianceScheduleInput,
+    ) -> ComplianceScheduleGraphType:
+        """Create a risk compliance report schedule."""
+
+        _resolve_tenant(info, None)
+        payload = await create_compliance_schedule_resolver(
+            info,
+            portfolio_id=input.portfolio_id,
+            schedule_time_utc=input.schedule_time_utc,
+            retention_days=input.retention_days,
+            max_reports=input.max_reports,
+            report_config=input.report_config or {},
+        )
+        return _schedule_from_raw(payload)
+
+    @strawberry.field
+    async def delete_compliance_schedule(self, info: Info, schedule_id: str) -> bool:
+        """Delete an existing compliance schedule."""
+
+        _resolve_tenant(info, None)
+        return await delete_compliance_schedule_resolver(info, schedule_id)
+
+    @strawberry.field
+    async def run_compliance_report(self, info: Info, schedule_id: str) -> ComplianceReportRunResultType:
+        """Execute a compliance report immediately for the provided schedule."""
+
+        _resolve_tenant(info, None)
+        result = await run_compliance_report_resolver(info, schedule_id)
+        artifact = result.get("artifact_path") if result else None
+        return ComplianceReportRunResultType(schedule_id=schedule_id, artifact_path=artifact)
+
 
 # ---------------------------------------------------------------------------
 # Subscription resolvers (mock implementations kept for parity)
