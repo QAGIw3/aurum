@@ -25,7 +25,7 @@ This smoke test exercises the scenario worker end-to-end against the compose sta
 1. Start the core services required by the scenario pipeline:
 
    ```bash
-   docker compose -f compose/docker-compose.dev.yml up -d postgres nessie kafka schema-registry trino scenario-worker
+   docker compose -f compose/docker-compose.dev.yml up -d postgres kafka schema-registry trino scenario-worker
    ```
 
 2. Produce a sample scenario request (the script emits a single policy assumption and will create a deterministic output row). The defaults match the compose configuration.
@@ -148,3 +148,45 @@ The new MISO Data Broker integration produces five-minute LMP observations throu
    ```
 
 Use the existing LMP QA dashboards (or `trino/ddl/iso_lmp_views.sql`) to confirm the new records appear alongside other ISO feeds.
+
+### Kafka DLQ replay runbook
+
+1) Identify the DLQ topic and timeframe
+- For curve observations use `aurum.curve.observation.dlq.v1`; for EIA series use `aurum.ref.eia.series.dlq.v1`.
+- Narrow by `dlq_timestamp`/`_ingest_ts` and optional keys such as `series_id`, `provider`.
+
+2) Inspect a sample
+
+```bash
+kcat -b $BOOT -t aurum.curve.observation.dlq.v1 -C -o -100 -c 5 -q | jq .
+```
+
+3) Export to JSONL for audit
+
+```bash
+kcat -b $BOOT -t aurum.curve.observation.dlq.v1 -C -o beginning -e \
+  | jq -c . > dlq_export.jsonl
+```
+
+4) Transform to original value schema if needed
+- Map DLQ envelope fields to the producer payload expected by the target topic.
+- Validate against the Avro subject for the destination (e.g., `aurum.curve.observation.v1-value`).
+
+5) Re-publish with backpressure and idempotency
+
+```bash
+python scripts/kafka/replay_dlq.py \
+  --input dlq_export.jsonl \
+  --dest-topic aurum.curve.observation.v1 \
+  --schema-registry $SCHEMA_REGISTRY_URL \
+  --bootstrap $BOOT \
+  --rate 200/s --retries 5 --idempotent
+```
+
+6) Verify downstream
+- Check consumer lag, processing metrics, and error rates.
+- Record replay window and message count in the incident ticket.
+
+Notes
+- Keep DLQ retention long enough to allow audit/replay (default 30d).
+- Use BACKWARD subject compatibility for DLQ record schema (`ingest.error.v1`).

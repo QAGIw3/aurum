@@ -8,6 +8,67 @@ import aurum.api.ppa_v2_service as svc_module
 
 @pytest.mark.asyncio
 @pytest.mark.unit
+async def test_list_contracts_normalizes_payload():
+    service = svc_module.PpaV2Service()
+
+    class FakeInnerService:
+        async def list_contracts(self, **kwargs):
+            assert kwargs["tenant_id"] == "tenant-123"
+            assert kwargs["counterparty_filter"] == "Utility"
+            assert kwargs["offset"] == 0
+            assert kwargs["limit"] == 5
+            return [
+                {
+                    "contract_id": " C-001 ",
+                    "name": "  ",
+                    "counterparty": " Utility Corp ",
+                    "capacity_mw": "10.50",
+                    "price_usd_mwh": Decimal("32.10"),
+                    "start_date": "2024-01-01T00:00:00Z",
+                    "end_date": "not-a-date",
+                },
+                {
+                    "id": "C-002",
+                    "name": None,
+                    "counterparty": None,
+                    "capacity_mw": None,
+                    "price_usd_mwh": "NaN",
+                    "start_date": "",
+                    "end_date": date(2024, 2, 1),
+                },
+            ]
+
+    service._service = FakeInnerService()
+
+    payload = await service.list_contracts(
+        tenant_id="tenant-123",
+        offset=0,
+        limit=5,
+        counterparty_filter="Utility",
+    )
+
+    assert len(payload) == 2
+    first, second = payload
+
+    assert first["contract_id"] == "C-001"
+    assert first["name"] == "C-001"
+    assert first["counterparty"] == "Utility Corp"
+    assert first["capacity_mw"] == pytest.approx(10.5)
+    assert first["price_usd_mwh"] == pytest.approx(32.1)
+    assert first["start_date"] == "2024-01-01"
+    assert first["end_date"] is None
+
+    assert second["contract_id"] == "C-002"
+    assert second["name"] == "C-002"
+    assert second["counterparty"] == "unknown"
+    assert second["capacity_mw"] == pytest.approx(0.0)
+    assert second["price_usd_mwh"] == pytest.approx(0.0)
+    assert second["start_date"] is None
+    assert second["end_date"] == "2024-02-01"
+
+
+@pytest.mark.asyncio
+@pytest.mark.unit
 async def test_list_valuations_hardens_payload(monkeypatch):
     sentinel_settings = object()
     monkeypatch.setattr(svc_module, "get_settings", lambda: sentinel_settings)

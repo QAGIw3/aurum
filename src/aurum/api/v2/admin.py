@@ -82,7 +82,7 @@ async def invalidate_scenario_cache_v2(
 
         # Create response with metadata
         response.headers["X-Request-Id"] = get_request_id()
-        response.headers["X-Tenant-Id"] = tenant_id
+        response.headers["X-Aurum-Tenant"] = tenant_id
         response.headers["X-Processing-Time-Ms"] = str(round(duration_ms, 2))
         response.headers["X-Keys-Purged"] = str(keys_purged)
 

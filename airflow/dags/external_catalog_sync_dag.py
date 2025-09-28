@@ -90,7 +90,8 @@ def _create_ge_validation_task(dag: DAG, table_name: str) -> BashOperator:
 
         {VENV_PYTHON} -c "
         import asyncio
-        from aurum.external.ge_validation import run_ge_validation
+from aurum.airflow_utils import ExpectationSuiteConfig, validate_dataframe, emit_lineage_event, LineageDataset
+from aurum.external.ge_validation import run_ge_validation
 
         async def main():
             await run_ge_validation(
@@ -109,6 +110,9 @@ def _create_ge_validation_task(dag: DAG, table_name: str) -> BashOperator:
             "PYTHONPATH": PYTHONPATH_ENTRY,
         },
         sla=SLA,
+        retries=3,
+        retry_delay=timedelta(minutes=10),
+        retry_exponential_backoff=True,
     )
 
 

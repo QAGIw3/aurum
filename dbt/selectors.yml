@@ -1,0 +1,21 @@
+selectors:
+  - name: ci
+    description: Minimal, deterministic set safe to run in PR using seeds
+    definition:
+      union:
+        - method: fqn
+          value: aurum.stg
+        - method: fqn
+          value: aurum.int
+        - method: fqn
+          value: aurum.marts.series
+        - method: fqn
+          value: aurum.marts.scenario
+        - method: tag
+          value: publish
+      exclude:
+        - method: tag
+          value: iceberg
+        - method: tag
+          value: timeseries
+

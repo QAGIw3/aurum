@@ -28,13 +28,13 @@ models:
 seeds:
   aurum:
     ref:
-      +schema: ref
+      +schema: "{{ target.schema ~ '_ref' if target.name == 'duckdb' else 'ref' }}"
     raw:
-      +schema: raw
+      +schema: "{{ target.schema ~ '_raw' if target.name == 'duckdb' else 'raw' }}"
     market:
       +schema: market_seed
     timescale:
-      +schema: public
+      +schema: "{{ target.schema ~ '_public' if target.name == 'duckdb' else 'public' }}"
       +database: "{{ 'timeseries' if target.name != 'duckdb' else (target.database if target.database else 'main') }}"
     environment:
-      +schema: environment
+      +schema: "{{ target.schema ~ '_environment' if target.name == 'duckdb' else 'environment' }}"

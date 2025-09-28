@@ -13,6 +13,8 @@ from fastapi.routing import APIRoute
 
 from aurum.core import AurumSettings
 
+from .deps import require_tenant_id
+
 logger = logging.getLogger(__name__)
 
 _LIGHTWEIGHT_ROUTER_CACHE: dict[str, APIRouter] = {}
@@ -78,6 +80,21 @@ def _build_specs(module_paths: Iterable[str], *, seen: set[str] | None = None) -
     return specs
 
 
+def _ensure_v2_tenant_dependency(router: APIRouter) -> APIRouter:
+    """Attach the required tenant dependency to a v2 router."""
+
+    if getattr(router, "_aurum_v2_tenant_dependency", False):
+        return router
+
+    dependency = Depends(require_tenant_id)
+    dependencies = list(getattr(router, "dependencies", ()) or [])
+    dependencies.append(dependency)
+    router.dependencies = dependencies
+
+    setattr(router, "_aurum_v2_tenant_dependency", True)
+    return router
+
+
 def _ensure_v1_deprecation(router: APIRouter) -> APIRouter:
     """Mark a router as deprecated and inject deprecation headers."""
 
@@ -115,6 +132,7 @@ def get_v1_router_specs(_settings: AurumSettings) -> list[RouterSpec]:
         "aurum.api.v1.scenarios",
         "aurum.api.v1.metadata",
         "aurum.api.v1.ppa",
+        "aurum.api.v1.model_registry",
     )
 
     specs.extend(_build_specs(mandatory_modules, seen=seen))
@@ -201,7 +219,10 @@ def get_v2_router_specs(_settings: AurumSettings) -> list[RouterSpec]:
         "aurum.api.v2.performance_monitoring",
         "aurum.api.v2.dbt_management",
     )
-    return _build_specs(module_paths)
+    specs = _build_specs(module_paths)
+    for spec in specs:
+        _ensure_v2_tenant_dependency(spec.router)
+    return specs
 
 
 __all__ = [

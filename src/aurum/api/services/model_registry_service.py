@@ -279,6 +279,11 @@ class RegisteredModel(BaseModel):
 
     def add_version(self, version: ModelVersion) -> None:
         """Add or replace a model version and update metadata."""
+        if version.version_number in self.versions:
+            raise ValueError(
+                f"Model version '{version.version_number}' already exists for {self.model_name}; versions are immutable"
+            )
+
         self.versions[version.version_number] = version
         self.latest_version = version.version_number
         self.updated_at = datetime.utcnow()
@@ -695,6 +700,11 @@ class ModelRegistryService:
         minor += 1
         return f"v{major}.{minor}"
 
+    def get_next_version_number(self, model_name: str) -> str:
+        """Return the next available semantic version label for a model."""
+
+        return self._generate_version_number(model_name)
+
     def _merge_selection_criteria(self, overrides: Optional[Dict[str, Any]]) -> Dict[str, Any]:
         """Merge default selection criteria with overrides."""
 
@@ -790,8 +800,11 @@ class ModelRegistryService:
         tags: Optional[Dict[str, str]] = None,
         owners: Optional[List[str]] = None,
         metadata: Optional[Dict[str, Any]] = None,
+        audit_metadata: Optional[Union[AuditMetadata, Mapping[str, Any]]] = None,
     ) -> RegisteredModel:
         """Ensure a model is tracked in the registry and return its metadata."""
+
+        created = model_name not in self.models
 
         model = self._ensure_model_record(
             model_name=model_name,
@@ -809,7 +822,177 @@ class ModelRegistryService:
             version_count=len(model.versions),
         )
 
+        if created:
+            self._record_audit_event(
+                action="register_model",
+                model_name=model_name,
+                reference={
+                    "model_type": model.model_type,
+                    "description": model.description,
+                    "owners": list(model.owners),
+                    "tags": dict(model.tags),
+                },
+                audit_metadata=audit_metadata,
+            )
+
         return model
+
+    def get_model(self, model_name: str) -> Optional[RegisteredModel]:
+        """Return registered model metadata when available."""
+
+        return self._get_model_record(model_name)
+
+    def update_model_metadata(
+        self,
+        model_name: str,
+        *,
+        description: Optional[str] = None,
+        status: Optional[str] = None,
+        tags: Optional[Dict[str, str]] = None,
+        owners: Optional[List[str]] = None,
+        metadata: Optional[Dict[str, Any]] = None,
+        audit_metadata: Optional[Union[AuditMetadata, Mapping[str, Any]]] = None,
+    ) -> RegisteredModel:
+        """Update mutable model metadata fields and record an audit trail."""
+
+        model = self._get_model_record(model_name)
+        if not model:
+            raise ValueError(f"Model '{model_name}' not found")
+
+        changes: Dict[str, Any] = {}
+
+        if description is not None and description != model.description:
+            changes["description"] = {
+                "previous": model.description,
+                "current": description,
+            }
+            model.description = description
+
+        if status is not None:
+            if status == "archived":
+                raise ValueError("Use archive_model to archive models")
+
+            allowed_statuses = {"active", "deprecated", "maintenance"}
+            if status not in allowed_statuses:
+                raise ValueError(f"Unsupported model status '{status}'")
+
+            if status != model.status:
+                changes["status"] = {
+                    "previous": model.status,
+                    "current": status,
+                }
+                model.status = status
+
+        if tags:
+            tags_added: Dict[str, str] = {}
+            tags_changed: Dict[str, Dict[str, str]] = {}
+
+            for key, value in tags.items():
+                previous = model.tags.get(key)
+                if previous is None:
+                    tags_added[key] = value
+                elif previous != value:
+                    tags_changed[key] = {"previous": previous, "current": value}
+                model.tags[key] = value
+
+            if tags_added:
+                changes["tags_added"] = tags_added
+            if tags_changed:
+                changes["tags_changed"] = tags_changed
+
+        if owners is not None:
+            normalized = list(dict.fromkeys(owners))
+            if normalized != model.owners:
+                changes["owners"] = {
+                    "previous": list(model.owners),
+                    "current": normalized,
+                }
+                model.owners = normalized
+
+        if metadata:
+            metadata_updates: Dict[str, Dict[str, Any]] = {}
+            for key, value in metadata.items():
+                previous = model.metadata.get(key)
+                if previous != value:
+                    metadata_updates[key] = {
+                        "previous": previous,
+                        "current": value,
+                    }
+                    model.metadata[key] = value
+
+            if metadata_updates:
+                changes["metadata_updates"] = metadata_updates
+
+        if not changes:
+            return model
+
+        model.updated_at = datetime.utcnow()
+
+        self.telemetry.info(
+            "model_registry.model_updated",
+            model_name=model_name,
+            fields=list(changes.keys()),
+        )
+
+        self._record_audit_event(
+            action="update_model_metadata",
+            model_name=model_name,
+            reference={"changes": changes},
+            audit_metadata=audit_metadata,
+        )
+
+        return model
+
+    def archive_model(
+        self,
+        model_name: str,
+        reason: Optional[str] = None,
+        audit_metadata: Optional[Union[AuditMetadata, Mapping[str, Any]]] = None,
+    ) -> bool:
+        """Archive a model without removing recorded versions."""
+
+        model = self._get_model_record(model_name)
+        if not model:
+            return False
+
+        if model.status == "archived":
+            return False
+
+        timestamp = datetime.utcnow()
+        model.status = "archived"
+        lifecycle_entry = {
+            "archived_at": timestamp.isoformat(),
+            "reason": reason,
+        }
+
+        lifecycle = model.metadata.get("lifecycle")
+        if isinstance(lifecycle, dict):
+            lifecycle.update(lifecycle_entry)
+        else:
+            model.metadata["lifecycle"] = lifecycle_entry
+
+        history = model.metadata.get("lifecycle_history")
+        if isinstance(history, list):
+            history.append(lifecycle_entry)
+        else:
+            model.metadata["lifecycle_history"] = [lifecycle_entry]
+
+        model.updated_at = timestamp
+
+        self.telemetry.info(
+            "model_registry.model_archived",
+            model_name=model_name,
+            reason=reason,
+        )
+
+        self._record_audit_event(
+            action="archive_model",
+            model_name=model_name,
+            reference=lifecycle_entry,
+            audit_metadata=audit_metadata,
+        )
+
+        return True
 
     async def list_models(
         self,
@@ -1293,6 +1476,8 @@ class ModelRegistryService:
         """Register a model version in the registry and persist metadata."""
 
         try:
+            model_created = version.model_name not in self.models
+
             # Ensure model metadata exists and is up to date
             model = self._ensure_model_record(
                 model_name=version.model_name,
@@ -1300,6 +1485,19 @@ class ModelRegistryService:
                 description=version.description,
                 tags=version.tags,
             )
+
+            if model_created:
+                self._record_audit_event(
+                    action="register_model",
+                    model_name=version.model_name,
+                    reference={
+                        "model_type": model.model_type,
+                        "description": model.description,
+                        "owners": list(model.owners),
+                        "tags": dict(model.tags),
+                    },
+                    audit_metadata=audit_metadata,
+                )
 
             # Persist to MLflow if configured
             mlflow_logged = False

@@ -17,8 +17,8 @@ Notes:
 from __future__ import annotations
 
 import time
+from datetime import date, datetime
 from typing import List, Optional
-from uuid import uuid4
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response
 from pydantic import BaseModel, Field
@@ -36,6 +36,64 @@ from ...telemetry.context import get_request_id
 router = APIRouter(prefix="/v2", tags=["ppa"])
 
 
+def _normalize_text(value: Optional[str]) -> Optional[str]:
+    if value is None:
+        return None
+    text = value.strip()
+    return text or None
+
+
+def _validation_error(request: Request, parameter: str, message: str) -> HTTPException:
+    return HTTPException(
+        status_code=400,
+        detail={
+            "type": "invalid_query_parameter",
+            "title": "Invalid query parameter",
+            "detail": message,
+            "parameter": parameter,
+            "instance": request.url.path,
+            "request_id": get_request_id(),
+        },
+    )
+
+
+def _validate_tenant_id(request: Request, tenant_id: str) -> str:
+    normalized = _normalize_text(tenant_id)
+    if not normalized:
+        raise _validation_error(request, "tenant_id", "tenant_id must be provided")
+    return normalized
+
+
+def _validate_contract_id(request: Request, contract_id: str) -> str:
+    normalized = _normalize_text(contract_id)
+    if not normalized:
+        raise _validation_error(request, "contract_id", "contract_id must be provided")
+    return normalized
+
+
+def _normalize_date_query(request: Request, parameter: str, value: Optional[str]) -> Optional[str]:
+    if value is None:
+        return None
+    text = value.strip()
+    if not text:
+        raise _validation_error(request, parameter, f"{parameter} must be a non-empty ISO-8601 date")
+    normalized = text[:-1] + "+00:00" if text.endswith("Z") else text
+    try:
+        parsed = datetime.fromisoformat(normalized)
+        parsed_date = parsed.date()
+    except ValueError:
+        try:
+            parsed_date = date.fromisoformat(text)
+        except ValueError as exc:
+            raise _validation_error(request, parameter, f"{parameter} must be a valid ISO-8601 date") from exc
+    return parsed_date.isoformat()
+
+
+def _ensure_date_order(request: Request, start: Optional[str], end: Optional[str]) -> None:
+    if start and end and start > end:
+        raise _validation_error(request, "date_range", "start_date must be on or before end_date")
+
+
 class PpaContractResponse(BaseModel):
     """Response for PPA contract data with v2 enhancements."""
     contract_id: str = Field(..., description="Contract identifier")
@@ -43,8 +101,8 @@ class PpaContractResponse(BaseModel):
     counterparty: str = Field(..., description="Counterparty")
     capacity_mw: float = Field(..., description="Capacity in MW")
     price_usd_mwh: float = Field(..., description="Price in USD/MWh")
-    start_date: str = Field(..., description="Start date")
-    end_date: str = Field(..., description="End date")
+    start_date: Optional[str] = Field(None, description="Start date")
+    end_date: Optional[str] = Field(None, description="End date")
     meta: dict = Field(..., description="Metadata")
 
 
@@ -58,7 +116,7 @@ class PpaContractListResponse(BaseModel):
 class PpaValuationResponse(BaseModel):
     """Response for PPA valuation data with v2 enhancements."""
     contract_id: str = Field(..., description="Contract identifier")
-    valuation_date: str = Field(..., description="Valuation date")
+    valuation_date: Optional[str] = Field(None, description="Valuation date")
     period_start: Optional[str] = Field(None, description="Valuation period start")
     period_end: Optional[str] = Field(None, description="Valuation period end")
     metric: Optional[str] = Field(None, description="Metric name")
@@ -90,18 +148,24 @@ async def list_ppa_contracts_v2(
     start_time = time.perf_counter()
 
     try:
+        tenant_id_value = _validate_tenant_id(request, tenant_id)
+        counterparty_value = _normalize_text(counterparty_filter)
+
         offset, effective_limit = resolve_pagination(
             cursor=cursor,
             limit=limit,
             default_limit=limit,
-            filters={"counterparty_filter": counterparty_filter},
+            filters={
+                "tenant_id": tenant_id_value,
+                "counterparty_filter": counterparty_value,
+            },
         )
 
         paginated_data = await service.list_contracts(
-            tenant_id=tenant_id,
+            tenant_id=tenant_id_value,
             offset=offset,
             limit=effective_limit + 1,
-            counterparty_filter=counterparty_filter,
+            counterparty_filter=counterparty_value,
         )
 
         has_more = len(paginated_data) > effective_limit
@@ -111,11 +175,28 @@ async def list_ppa_contracts_v2(
             offset=offset,
             limit=effective_limit,
             has_more=has_more,
-            filters={"counterparty_filter": counterparty_filter},
+            filters={
+                "tenant_id": tenant_id_value,
+                "counterparty_filter": counterparty_value,
+            },
         )
-        prev_cursor = build_prev_cursor(offset=offset, limit=effective_limit, filters={"counterparty_filter": counterparty_filter})
+        prev_cursor = build_prev_cursor(
+            offset=offset,
+            limit=effective_limit,
+            filters={
+                "tenant_id": tenant_id_value,
+                "counterparty_filter": counterparty_value,
+            },
+        )
+
+        request_url = request.url.include_query_params(tenant_id=tenant_id_value)
+        if counterparty_value is None:
+            request_url = request_url.remove_query_params("counterparty_filter")
+        else:
+            request_url = request_url.include_query_params(counterparty_filter=counterparty_value)
+
         meta_page, links = build_pagination_envelope(
-            request_url=request.url,
+            request_url=request_url,
             offset=offset,
             limit=effective_limit,
             total=None,
@@ -128,22 +209,24 @@ async def list_ppa_contracts_v2(
         # Convert to response format
         contracts = []
         for contract_data in paginated_data:
+            capacity_value = contract_data.get("capacity_mw", 0.0)
+            price_value = contract_data.get("price_usd_mwh", 0.0)
             contracts.append(PpaContractResponse(
                 contract_id=contract_data.get("contract_id", ""),
                 name=contract_data.get("name", ""),
                 counterparty=contract_data.get("counterparty", "unknown"),
-                capacity_mw=float(contract_data.get("capacity_mw", 0.0)),
-                price_usd_mwh=float(contract_data.get("price_usd_mwh", 0.0)),
-                start_date=str(contract_data.get("start_date", "")),
-                end_date=str(contract_data.get("end_date", "")),
-                meta={"tenant_id": tenant_id}
+                capacity_mw=float(capacity_value if capacity_value is not None else 0.0),
+                price_usd_mwh=float(price_value if price_value is not None else 0.0),
+                start_date=contract_data.get("start_date"),
+                end_date=contract_data.get("end_date"),
+                meta={"tenant_id": tenant_id_value}
             ))
 
         # Create response with enhanced metadata
         meta_out = dict(meta_page)
         meta_out.update({
             "request_id": get_request_id(),
-            "tenant_id": tenant_id,
+            "tenant_id": tenant_id_value,
             "returned_count": len(contracts),
             "processing_time_ms": round(duration_ms, 2),
         })
@@ -155,7 +238,8 @@ async def list_ppa_contracts_v2(
         )
 
         # Add ETag for caching with Link headers
-        return respond_with_etag(result, request, response, canonical_url=str(request.url.remove_query_params("cursor")))
+        canonical_url = str(request_url.remove_query_params("cursor"))
+        return respond_with_etag(result, request, response, canonical_url=canonical_url)
 
     except HTTPException:
         raise
@@ -231,20 +315,31 @@ async def list_ppa_valuations_v2(
     start_time = time.perf_counter()
 
     try:
+        tenant_id_value = _validate_tenant_id(request, tenant_id)
+        contract_id_value = _validate_contract_id(request, contract_id)
+        start_date_value = _normalize_date_query(request, "start_date", start_date)
+        end_date_value = _normalize_date_query(request, "end_date", end_date)
+        _ensure_date_order(request, start_date_value, end_date_value)
+
         offset, effective_limit = resolve_pagination(
             cursor=cursor,
             limit=limit,
             default_limit=limit,
-            filters={"contract_id": contract_id, "start_date": start_date, "end_date": end_date},
+            filters={
+                "tenant_id": tenant_id_value,
+                "contract_id": contract_id_value,
+                "start_date": start_date_value,
+                "end_date": end_date_value,
+            },
         )
 
         paginated_data = await service.list_valuations(
-            tenant_id=tenant_id,
-            contract_id=contract_id,
+            tenant_id=tenant_id_value,
+            contract_id=contract_id_value,
             offset=offset,
             limit=effective_limit + 1,
-            start_date=start_date,
-            end_date=end_date,
+            start_date=start_date_value,
+            end_date=end_date_value,
         )
 
         has_more = len(paginated_data) > effective_limit
@@ -254,11 +349,36 @@ async def list_ppa_valuations_v2(
             offset=offset,
             limit=effective_limit,
             has_more=has_more,
-            filters={"contract_id": contract_id, "start_date": start_date, "end_date": end_date},
+            filters={
+                "tenant_id": tenant_id_value,
+                "contract_id": contract_id_value,
+                "start_date": start_date_value,
+                "end_date": end_date_value,
+            },
         )
-        prev_cursor = build_prev_cursor(offset=offset, limit=effective_limit, filters={"contract_id": contract_id, "start_date": start_date, "end_date": end_date})
+        prev_cursor = build_prev_cursor(
+            offset=offset,
+            limit=effective_limit,
+            filters={
+                "tenant_id": tenant_id_value,
+                "contract_id": contract_id_value,
+                "start_date": start_date_value,
+                "end_date": end_date_value,
+            },
+        )
+
+        request_url = request.url.include_query_params(tenant_id=tenant_id_value)
+        if start_date_value is None:
+            request_url = request_url.remove_query_params("start_date")
+        else:
+            request_url = request_url.include_query_params(start_date=start_date_value)
+        if end_date_value is None:
+            request_url = request_url.remove_query_params("end_date")
+        else:
+            request_url = request_url.include_query_params(end_date=end_date_value)
+
         meta_page, links = build_pagination_envelope(
-            request_url=request.url,
+            request_url=request_url,
             offset=offset,
             limit=effective_limit,
             total=None,
@@ -272,26 +392,26 @@ async def list_ppa_valuations_v2(
         valuations = []
         for valuation_data in paginated_data:
             valuations.append(PpaValuationResponse(
-                contract_id=contract_id,
-                valuation_date=str(valuation_data.get("valuation_date")),
+                contract_id=contract_id_value,
+                valuation_date=valuation_data.get("valuation_date"),
                 period_start=valuation_data.get("period_start"),
                 period_end=valuation_data.get("period_end"),
                 metric=valuation_data.get("metric"),
                 present_value=valuation_data.get("present_value"),
                 cashflow=valuation_data.get("cashflow"),
                 irr=valuation_data.get("irr"),
-                currency=str(valuation_data.get("currency", "USD")),
-                meta={"tenant_id": tenant_id}
+                currency=str(valuation_data.get("currency") or "USD"),
+                meta={"tenant_id": tenant_id_value}
             ))
 
         # Create response with enhanced metadata
         meta_out = dict(meta_page)
         meta_out.update({
             "request_id": get_request_id(),
-            "contract_id": contract_id,
-            "tenant_id": tenant_id,
-            "start_date": start_date,
-            "end_date": end_date,
+            "contract_id": contract_id_value,
+            "tenant_id": tenant_id_value,
+            "start_date": start_date_value,
+            "end_date": end_date_value,
             "returned_count": len(valuations),
             "processing_time_ms": round(duration_ms, 2),
         })
@@ -303,12 +423,13 @@ async def list_ppa_valuations_v2(
         )
 
         # Add ETag for caching with Link headers
+        canonical_url = str(request_url.remove_query_params("cursor"))
         return respond_with_etag(
             result,
             request,
             response,
             next_cursor=next_cursor,
-            canonical_url=str(request.url)
+            canonical_url=canonical_url
         )
 
     except HTTPException:

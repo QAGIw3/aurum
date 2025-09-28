@@ -8,7 +8,12 @@ from __future__ import annotations
 
 from typing import Any, Optional
 
-from fastapi import Request
+from fastapi import HTTPException, Request
+
+from aurum.api.telemetry.context import (
+    TenantIdValidationError,
+    normalize_tenant_id,
+)
 
 from aurum.api.cache.cache import CacheManager
 from aurum.api.cache.unified_cache_manager import UnifiedCacheManager, get_unified_cache_manager
@@ -58,9 +63,41 @@ def get_principal(request: Request) -> Optional[dict[str, Any]]:
 
 
 def get_tenant_id(request: Request) -> Optional[str]:
-    """Return tenant id propagated by auth middleware, if available."""
+    """Return the normalized tenant identifier when available."""
+
+    # Prefer values injected by middleware or dependencies
     tenant = getattr(getattr(request, "state", None), "tenant", None)
-    return str(tenant) if tenant is not None else None
+    if tenant is None:
+        tenant = getattr(getattr(request, "state", None), "tenant_id", None)
+
+    # Fall back to explicit request hints
+    if tenant is None and hasattr(request, "query_params"):
+        tenant = request.query_params.get("tenant_id")
+
+    if tenant is None:
+        tenant = request.headers.get("x-aurum-tenant")
+
+    try:
+        normalized = normalize_tenant_id(tenant)
+    except TenantIdValidationError as exc:  # pragma: no cover - validation paths exercised in tests
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    if normalized:
+        # Ensure downstream code can rely on state for quick access
+        request.state.tenant = normalized  # type: ignore[attr-defined]
+        request.state.tenant_id = normalized  # type: ignore[attr-defined]
+
+    return normalized
+
+
+def require_tenant_id(request: Request) -> str:
+    """Require a tenant identifier, raising when absent."""
+
+    tenant = get_tenant_id(request)
+    if tenant:
+        return tenant
+
+    raise HTTPException(status_code=400, detail="Missing tenant context")
 
 
 __all__ = [
@@ -69,4 +106,5 @@ __all__ = [
     "get_unified_cache_manager_dep",
     "get_principal",
     "get_tenant_id",
+    "require_tenant_id",
 ]

@@ -8,6 +8,9 @@ from typing import Iterable, Sequence
 from .alerting import build_failure_callback, emit_alert
 from . import metrics
 from .variables import load_variable_mapping, validate_variable_mapping
+from .idempotency import IdempotentExecution, idempotent_run, get_idempotent_marker
+from .lineage import LineageDataset, LineageEventPayload, emit_lineage_event
+from .great_expectations import ExpectationSuiteConfig, validate_dataframe
 
 try:  # pragma: no cover - optional dependency on Airflow
     from .dag_factory import DagConfig, DagSchedule, build_default_args, dag_factory
@@ -193,6 +196,14 @@ __all__ = [
     "build_failure_callback",
     "validate_variable_mapping",
     "metrics",
+    "IdempotentExecution",
+    "idempotent_run",
+    "get_idempotent_marker",
+    "LineageDataset",
+    "LineageEventPayload",
+    "emit_lineage_event",
+    "ExpectationSuiteConfig",
+    "validate_dataframe",
 ]
 
 __all__.extend(_DAG_FACTORY_EXPORTS)

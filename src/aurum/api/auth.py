@@ -53,6 +53,10 @@ class Permission(str, Enum):
     # Tenant management
     TENANT_MANAGE = "tenant:manage"
 
+    # Model registry
+    MODEL_REGISTRY_READ = "model_registry:read"
+    MODEL_REGISTRY_WRITE = "model_registry:write"
+
 
 class Role(str, Enum):
     """User roles with associated permissions."""
@@ -79,12 +83,14 @@ class AuthorizationConfig:
                     Permission.CURVES_READ,
                     Permission.SCENARIOS_READ,
                     Permission.DEVELOPER_WORKSPACE_READ,
+                    Permission.MODEL_REGISTRY_READ,
                 },
                 Role.ANALYST: {
                     Permission.CURVES_READ,
                     Permission.SCENARIOS_READ,
                     Permission.SCENARIOS_RUN,
                     Permission.DEVELOPER_WORKSPACE_READ,
+                    Permission.MODEL_REGISTRY_READ,
                 },
                 Role.TRADER: {
                     Permission.CURVES_READ,
@@ -95,6 +101,7 @@ class AuthorizationConfig:
                     Permission.SCENARIOS_DELETE,
                     Permission.DEVELOPER_WORKSPACE_READ,
                     Permission.DEVELOPER_WORKSPACE_WRITE,
+                    Permission.MODEL_REGISTRY_READ,
                 },
                 Role.ADMIN: {
                     Permission.CURVES_READ,
@@ -109,6 +116,8 @@ class AuthorizationConfig:
                     Permission.TRINO_ADMIN,
                     Permission.DEVELOPER_WORKSPACE_READ,
                     Permission.DEVELOPER_WORKSPACE_WRITE,
+                    Permission.MODEL_REGISTRY_READ,
+                    Permission.MODEL_REGISTRY_WRITE,
                 },
                 Role.SUPER_ADMIN: {
                     Permission.CURVES_READ,
@@ -125,6 +134,8 @@ class AuthorizationConfig:
                     Permission.TENANT_MANAGE,
                     Permission.DEVELOPER_WORKSPACE_READ,
                     Permission.DEVELOPER_WORKSPACE_WRITE,
+                    Permission.MODEL_REGISTRY_READ,
+                    Permission.MODEL_REGISTRY_WRITE,
                 },
             },
             admin_groups={"admin", "administrator", "superuser"},

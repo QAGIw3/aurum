@@ -502,7 +502,7 @@ class TestAPIFeatureIntegration:
         assert response.status_code == 200
 
         # Test API v2 endpoints
-        response = client.get("/v2/health")
+        response = client.get("/v2/health", headers={"X-Aurum-Tenant": "integration-test"})
         assert response.status_code == 200
 
     async def test_api_error_handling(self):
@@ -518,7 +518,11 @@ class TestAPIFeatureIntegration:
         assert response.status_code == 404
 
         # Test malformed request
-        response = client.post("/v2/scenarios", data="invalid json")
+        response = client.post(
+            "/v2/scenarios",
+            data="invalid json",
+            headers={"X-Aurum-Tenant": "integration-test"},
+        )
         assert response.status_code in [400, 422]  # Bad Request or Unprocessable Entity
 
 

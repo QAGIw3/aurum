@@ -23,8 +23,10 @@ DEFAULT_ARGS: dict[str, Any] = {
     "depends_on_past": False,
     "email_on_failure": True,
     "email": ["aurum-ops@example.com"],
-    "retries": 1,
+    "retries": 3,
     "retry_delay": timedelta(minutes=5),
+    "retry_exponential_backoff": True,
+    "max_retry_delay": timedelta(minutes=30),
 }
 
 
@@ -126,7 +128,7 @@ def parse_vendor_workbook(vendor: str, **context: Any) -> None:
         if src_path and src_path not in sys.path:
             sys.path.insert(0, src_path)
         from aurum.parsers.enrichment import build_dlq_records, enrich_units_currency, partition_quarantine  # type: ignore
-        from aurum.dq import enforce_expectation_suite  # type: ignore
+from aurum.airflow_utils import ExpectationSuiteConfig, validate_dataframe, idempotent_run, LineageDataset, emit_lineage_event  # type: ignore
 
         enriched_df = enrich_units_currency(df)
         clean_df, quarantine_df = partition_quarantine(enriched_df)
@@ -134,8 +136,23 @@ def parse_vendor_workbook(vendor: str, **context: Any) -> None:
         canonical_df = clean_df.drop(columns=["quarantine_reason"], errors="ignore")
         schema_suite = repo_root / "ge" / "expectations" / "curve_schema.json"
         landing_suite = repo_root / "ge" / "expectations" / "curve_landing.json"
-        enforce_expectation_suite(canonical_df, schema_suite, suite_name="curve_schema")
-        enforce_expectation_suite(canonical_df, landing_suite, suite_name="curve_landing")
+        for suite_path, suite_name in (
+            (schema_suite, "curve_schema"),
+            (landing_suite, "curve_landing"),
+        ):
+            def _validate(sp=suite_path, sn=suite_name) -> None:
+                validate_dataframe(
+                    canonical_df,
+                    suite=ExpectationSuiteConfig(sp, sn, cache_results=True),
+                    context=context,
+                    metadata={"vendor": vendor},
+                )
+
+            idempotent_run(
+                context=context,
+                operation_key=f"expect:{suite_name}:{vendor}",
+                callable_=_validate,
+            )
     except Exception as exc:
         raise RuntimeError(f"Enrichment/validation failed for vendor {vendor}: {exc}") from exc
 
@@ -246,8 +263,8 @@ def run_great_expectations(**context: Any) -> None:
             src_path = os.environ.get("AURUM_PYTHONPATH_ENTRY", "/opt/airflow/src")
             if src_path and src_path not in sys.path:
                 sys.path.insert(0, src_path)
-            from aurum.dq import enforce_expectation_suite  # type: ignore
             import pandas as pd  # type: ignore
+            from aurum.airflow_utils import ExpectationSuiteConfig, validate_dataframe  # type: ignore
 
             repo_root = Path(__file__).resolve().parents[2]
             suite_path = repo_root / "ge" / "expectations" / "curve_business.yml"
@@ -262,8 +279,13 @@ def run_great_expectations(**context: Any) -> None:
                         print(f"Failed to read {parquet_path}: {exc}")
             if frames:
                 sample_df = pd.concat(frames, ignore_index=True)
-                enforce_expectation_suite(sample_df, suite_path, suite_name="curve_business")
-                status = "passed"
+                result = validate_dataframe(
+                    sample_df,
+                    suite=ExpectationSuiteConfig(suite_path, "curve_business", cache_results=True),
+                    context=context,
+                    metadata={"total_rows": total_rows},
+                )
+                status = result["status"]
             else:
                 print(f"No written parquet files found in {run_folder}; skipping curve GE checkpoint")
         except ModuleNotFoundError as exc:
@@ -282,7 +304,7 @@ def validate_scenario_outputs(**context: Any) -> None:
     suite_path = repo_root / "ge" / "expectations" / "scenario_output.json"
     try:
         import pandas as pd  # type: ignore
-        from aurum.dq import enforce_expectation_suite  # type: ignore
+        from aurum.airflow_utils import ExpectationSuiteConfig, validate_dataframe  # type: ignore
         from pyiceberg.catalog import load_catalog  # type: ignore
     except ModuleNotFoundError as exc:
         print(f"Skipping scenario expectations: {exc}")
@@ -321,8 +343,13 @@ def validate_scenario_outputs(**context: Any) -> None:
         ti.xcom_push(key="scenario_ge_status", value="skipped")
         return
 
-    enforce_expectation_suite(df, suite_path, suite_name="scenario_output")
-    ti.xcom_push(key="scenario_ge_status", value="passed")
+    result = validate_dataframe(
+        df,
+        suite=ExpectationSuiteConfig(suite_path, "scenario_output", cache_results=True),
+        context=context,
+        metadata={"branch": branch, "table": table_identifier},
+    )
+    ti.xcom_push(key="scenario_ge_status", value=result["status"])
 
 
 def emit_openlineage_events(**context: Any) -> None:
@@ -330,17 +357,12 @@ def emit_openlineage_events(**context: Any) -> None:
     if not endpoint:
         print("OPENLINEAGE_ENDPOINT not set; skipping OpenLineage emission")
         return
-    try:
-        import requests  # type: ignore
-    except ModuleNotFoundError as exc:  # pragma: no cover
-        raise RuntimeError("requests package is required for OpenLineage emission") from exc
 
     namespace = os.getenv("OPENLINEAGE_NAMESPACE", "aurum")
     job_name = os.getenv("OPENLINEAGE_JOB_NAME", "airflow.ingest_vendor_curves_eod")
-    run_id = context.get("run_id")
+    run_id = context.get("run_id") or os.getenv("OPENLINEAGE_RUN_ID", "unknown")
     ds = context.get("ds")
     tenant = os.getenv("OPENLINEAGE_TENANT", os.getenv("AURUM_DEFAULT_TENANT", "aurum"))
-    code_version = os.getenv("AURUM_CODE_VERSION") or os.getenv("GIT_COMMIT")
 
     ti = context.get("ti")
     vendor_tasks = os.getenv("AURUM_VENDOR_TASK_IDS", "parse_pw,parse_eugp,parse_rp").split(",")
@@ -378,12 +400,11 @@ def emit_openlineage_events(**context: Any) -> None:
             pass
         return path
 
-    inputs = [
-        {
-            "namespace": os.getenv("OPENLINEAGE_INPUT_NAMESPACE", "file"),
-            "name": _as_uri(file_path),
-            "facets": {},
-        }
+    lineage_inputs = [
+        LineageDataset(
+            namespace=os.getenv("OPENLINEAGE_INPUT_NAMESPACE", "file"),
+            name=_as_uri(file_path),
+        )
         for file_path in sorted(input_files)
     ]
 
@@ -401,55 +422,33 @@ def emit_openlineage_events(**context: Any) -> None:
     if total_quarantine:
         raw_facets.setdefault("additionalProperties", {})["quarantinedRows"] = total_quarantine
 
-    run_facets: Dict[str, Any] = {
+    run_facets = {
         "aurumMetadata": {
             "type": "CustomFacet",
-            "codeVersion": code_version or "unknown",
             "asOfDate": ds,
             "tenant": tenant,
         }
     }
-    if ds:
-        run_facets["nominalTime"] = {
-            "type": "NominalTimeRunFacet",
-            "nominalTime": f"{ds}T00:00:00Z",
-        }
 
-    event = {
-        "eventType": "COMPLETE",
-        "eventTime": datetime.now(timezone.utc).isoformat(),
-        "run": {
-            "runId": run_id or os.getenv("OPENLINEAGE_RUN_ID", "unknown"),
-            "facets": run_facets,
-        },
-        "job": {
-            "namespace": namespace,
-            "name": job_name,
-        },
-        "inputs": inputs,
-        "outputs": [
-            {
-                "namespace": "nessie",
-                "name": "iceberg.raw.curve_landing",
-                "facets": raw_facets,
-            },
-            {
-                "namespace": "nessie",
-                "name": "iceberg.market.curve_observation",
-                "facets": canonical_facets,
-            },
-        ],
-    }
+    outputs = [
+        LineageDataset("nessie", "iceberg.raw.curve_landing", raw_facets),
+        LineageDataset("nessie", "iceberg.market.curve_observation", canonical_facets),
+    ]
 
-    response = requests.post(endpoint, json=event, timeout=5)
-    try:
-        response.raise_for_status()
-    except Exception as exc:  # pragma: no cover - http error
-        raise RuntimeError(f"OpenLineage emission failed: {exc}") from exc
+    payload = emit_lineage_event(
+        endpoint=endpoint,
+        namespace=namespace,
+        job_name=job_name,
+        run_id=run_id,
+        inputs=lineage_inputs,
+        outputs=outputs,
+        extra_run_facets=run_facets,
+    )
 
-    if ti:
+    if payload and ti:
         ti.xcom_push(key="openlineage_status", value="sent")
-    print(f"OpenLineage event sent to {endpoint}")
+    if payload:
+        print(f"OpenLineage event sent to {endpoint}")
 
 
 def preview_nessie_diff(**context: Any) -> None:

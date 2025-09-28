@@ -240,7 +240,7 @@ class BackfillDriver:
                     progress = (completed / len(jobs)) * 100
                     self.logger.log(
                         LogLevel.INFO,
-                        f"Backfill progress: {completed}/{len(jobs)} jobs ({progress".1f"}%)",
+                        f"Backfill progress: {completed}/{len(jobs)} jobs ({progress:.1f}%)",
                         "backfill_progress",
                         job_id=self.config.job_id,
                         completed=completed,

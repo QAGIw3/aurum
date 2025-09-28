@@ -23,7 +23,7 @@ from typing import Any, Dict, List, Optional, Set, Union
 from uuid import uuid4
 
 import yaml
-from pydantic import BaseModel, Field, ValidationError, validator
+from pydantic import BaseModel, Field, ValidationError, ValidationInfo, field_validator
 
 from ..logging.structured_logger import get_logger
 
@@ -40,8 +40,10 @@ MAX_SESSION_HISTORY = 20
 SESSION_PERSIST_TTL = TTLPolicy.MEDIUM
 DEFAULT_SESSION_TTL_MINUTES = 240
 DEFAULT_STORAGE_QUOTA_GB = 50
+DEFAULT_MAX_CONCURRENT_SESSIONS = 5
 BYTES_PER_GIB = 1024 ** 3
-BYTES_PER_GIB = 1024 ** 3
+BYTES_PER_MIB = 1024 ** 2
+BYTES_PER_TIB = 1024 ** 4
 
 
 class StorageQuotaExceeded(RuntimeError):
@@ -58,6 +60,29 @@ class StorageQuotaExceeded(RuntimeError):
         super().__init__(
             f"Tenant {tenant_id} exceeds storage quota of {quota_gb} GiB "
             f"(current={current_gb:.2f} GiB, requested={requested_gb:.2f} GiB)"
+        )
+
+
+class SessionLimitExceeded(RuntimeError):
+    """Raised when a tenant exceeds the number of concurrent sessions."""
+
+    def __init__(self, tenant_id: str, limit: int):
+        self.tenant_id = tenant_id
+        self.limit = limit
+        super().__init__(
+            f"Tenant {tenant_id} exceeded the active notebook session limit of {limit}"
+        )
+
+
+class TenantAccessError(PermissionError):
+    """Raised when a tenant attempts to access another tenant's resource."""
+
+    def __init__(self, tenant_id: str, resource_tenant: str, resource_id: str):
+        self.tenant_id = tenant_id
+        self.resource_tenant = resource_tenant
+        self.resource_id = resource_id
+        super().__init__(
+            f"Tenant {tenant_id} cannot access resource {resource_id} belonging to tenant {resource_tenant}"
         )
 
 
@@ -84,26 +109,26 @@ class NotebookEnvironment(BaseModel):
     idle_timeout_minutes: int = 60
     max_runtime_hours: int = 8
 
-    @validator("environment_id", "environment_name", "description", allow_reuse=True)
-    def _validate_non_empty(cls, value: str, field):
+    @field_validator("environment_id", "environment_name", "description", mode="before")
+    def _validate_non_empty(cls, value: str, info: ValidationInfo) -> str:
         if not value:
-            raise ValueError(f"{field.name} must not be empty")
+            raise ValueError(f"{info.field_name} must not be empty")
         return value
 
-    @validator("resource_limits", "resource_requests", pre=True, allow_reuse=True)
-    def _validate_resources(cls, value: Dict[str, str], field):
+    @field_validator("resource_limits", "resource_requests", mode="before")
+    def _validate_resources(cls, value: Dict[str, str], info: ValidationInfo) -> Dict[str, str]:
         if not value:
-            raise ValueError(f"{field.name} must be provided")
+            raise ValueError(f"{info.field_name} must be provided")
         required = {"cpu", "memory"}
         missing = required - set(value.keys())
         if missing:
-            raise ValueError(f"{field.name} missing keys: {', '.join(sorted(missing))}")
+            raise ValueError(f"{info.field_name} missing keys: {', '.join(sorted(missing))}")
         return value
 
-    @validator("idle_timeout_minutes", "max_runtime_hours", allow_reuse=True)
-    def _validate_timeouts(cls, value: int, field):
+    @field_validator("idle_timeout_minutes", "max_runtime_hours", mode="before")
+    def _validate_timeouts(cls, value: int, info: ValidationInfo) -> int:
         if value <= 0:
-            raise ValueError(f"{field.name} must be positive")
+            raise ValueError(f"{info.field_name} must be positive")
         return value
 
 
@@ -204,11 +229,15 @@ class DeveloperWorkspaceService:
         self._initialize_default_environments()
         self._initialize_default_templates()
 
+        # Tenant enforcement state
+        self._tenant_storage_quota_gb: Dict[str, int] = {}
+        self._tenant_storage_usage_bytes: defaultdict[str, int] = defaultdict(int)
+        self._tenant_active_sessions: defaultdict[str, Set[str]] = defaultdict(set)
+        self._tenant_session_limits: Dict[str, int] = {}
+
         # Environment snapshots for auditing
         self._environment_versions: Dict[str, List[Dict[str, Any]]] = defaultdict(list)
         self._session_versions: Dict[str, List[Dict[str, Any]]] = defaultdict(list)
-        self._tenant_storage_quota_gb: Dict[str, int] = {}
-        self._tenant_storage_usage_bytes: Dict[str, int] = defaultdict(int)
 
         # Defer API documentation loading until first use
         self._api_documentation_cache = {}
@@ -732,6 +761,111 @@ class DeveloperWorkspaceService:
 
         return yaml.dump(yaml_content, default_flow_style=False)
 
+    def _ensure_storage_quota_initialized(self, tenant_id: str) -> None:
+        if tenant_id not in self._tenant_storage_quota_gb:
+            self._tenant_storage_quota_gb[tenant_id] = DEFAULT_STORAGE_QUOTA_GB
+        _ = self._tenant_storage_usage_bytes[tenant_id]
+        _ = self._tenant_active_sessions[tenant_id]
+
+    def _configured_session_limit(self, tenant_id: str) -> int:
+        return self._tenant_session_limits.get(tenant_id, DEFAULT_MAX_CONCURRENT_SESSIONS)
+
+    def _enforce_session_limit(self, tenant_id: str) -> None:
+        limit = self._configured_session_limit(tenant_id)
+        if len(self._tenant_active_sessions[tenant_id]) >= limit:
+            raise SessionLimitExceeded(tenant_id, limit)
+
+    def _register_active_session(self, tenant_id: str, session_id: str) -> None:
+        self._tenant_active_sessions[tenant_id].add(session_id)
+
+    def _remove_active_session(self, tenant_id: str, session_id: str) -> None:
+        bucket = self._tenant_active_sessions.get(tenant_id)
+        if not bucket:
+            return
+        bucket.discard(session_id)
+        if not bucket:
+            self._tenant_active_sessions.pop(tenant_id, None)
+
+    def _enforce_storage_quota(self, tenant_id: str, requested_bytes: int) -> None:
+        quota_bytes = int(self._tenant_storage_quota_gb[tenant_id] * BYTES_PER_GIB)
+        current_bytes = self._tenant_storage_usage_bytes[tenant_id]
+        if current_bytes + requested_bytes > quota_bytes:
+            raise StorageQuotaExceeded(tenant_id, quota_bytes, requested_bytes, current_bytes)
+
+    def _track_tenant_storage_usage(self, tenant_id: str, notebook_size_bytes: int) -> None:
+        if notebook_size_bytes <= 0:
+            return
+        self._tenant_storage_usage_bytes[tenant_id] += notebook_size_bytes
+
+    def _release_tenant_storage_usage(self, tenant_id: str, notebook_size_bytes: int) -> None:
+        if notebook_size_bytes <= 0:
+            return
+        current = self._tenant_storage_usage_bytes.get(tenant_id, 0)
+        remaining = max(0, current - notebook_size_bytes)
+        if remaining:
+            self._tenant_storage_usage_bytes[tenant_id] = remaining
+        else:
+            self._tenant_storage_usage_bytes.pop(tenant_id, None)
+
+    def _coerce_positive_bytes(self, value: Any) -> int:
+        if value is None:
+            return 0
+        if isinstance(value, (int, float)):
+            return int(max(value, 0))
+        if isinstance(value, str):
+            candidate = value.strip()
+            if not candidate:
+                return 0
+            try:
+                return int(max(float(candidate), 0))
+            except ValueError:
+                return 0
+        return 0
+
+    def _storage_string_to_bytes(self, value: str) -> int:
+        if not value:
+            return 0
+        candidate = value.strip().lower()
+        multiplier = 1
+        suffixes = {
+            "gib": BYTES_PER_GIB,
+            "gi": BYTES_PER_GIB,
+            "gb": BYTES_PER_GIB,
+            "mib": 1024 ** 2,
+            "mi": 1024 ** 2,
+            "mb": 1024 ** 2,
+        }
+        for suffix, factor in suffixes.items():
+            if candidate.endswith(suffix):
+                multiplier = factor
+                candidate = candidate[: -len(suffix)]
+                break
+        try:
+            numeric = float(candidate)
+        except ValueError:
+            return 0
+        return int(max(numeric, 0) * multiplier)
+
+    def _estimate_session_storage_bytes(
+        self,
+        environment: NotebookEnvironment,
+        configuration: Dict[str, Any],
+    ) -> int:
+        raw_estimate = configuration.get("estimated_notebook_size_bytes")
+        if raw_estimate is not None:
+            return self._coerce_positive_bytes(raw_estimate)
+        return self._storage_string_to_bytes(environment.storage_size)
+
+    def _resolve_session_storage_bytes(
+        self,
+        environment: NotebookEnvironment,
+        configuration: Dict[str, Any],
+    ) -> int:
+        estimate = configuration.get("estimated_notebook_size_bytes")
+        if estimate is not None:
+            return self._coerce_positive_bytes(estimate)
+        return self._storage_string_to_bytes(environment.storage_size)
+
     async def start_notebook_session(
         self,
         environment_id: str,
@@ -740,19 +874,21 @@ class DeveloperWorkspaceService:
         configuration: Dict[str, Any] = None
     ) -> str:
         """Start a new notebook session."""
-        configuration = configuration or {}
+        configuration = dict(configuration or {})
 
         await self._ensure_environments_loaded()
-        self._ensure_storage_quota_initialized(tenant_id)
-        self._enforce_storage_quota(tenant_id, configuration)
-        session_id = str(uuid4())
-
-        # Get environment
         environment = self._environments.get(environment_id)
         if not environment:
             raise ValueError(f"Environment {environment_id} not found")
 
-        # Create session
+        self._ensure_storage_quota_initialized(tenant_id)
+        self._enforce_session_limit(tenant_id)
+
+        notebook_size_bytes = self._resolve_session_storage_bytes(environment, configuration)
+        self._enforce_storage_quota(tenant_id, notebook_size_bytes)
+
+        session_id = str(uuid4())
+
         session = NotebookSession(
             session_id=session_id,
             environment_id=environment_id,
@@ -761,27 +897,40 @@ class DeveloperWorkspaceService:
             status="starting",
             start_time=datetime.utcnow(),
             last_activity=datetime.utcnow(),
-            expires_at=datetime.utcnow() + timedelta(minutes=DEFAULT_SESSION_TTL_MINUTES)
+            expires_at=datetime.utcnow() + timedelta(minutes=DEFAULT_SESSION_TTL_MINUTES),
         )
 
-        self._sessions[session_id] = session
-        notebook_size_bytes = int(configuration.get("estimated_notebook_size_bytes", 0))
-        self._track_tenant_storage_usage(tenant_id, notebook_size_bytes)
+        try:
+            self._sessions[session_id] = session
+            self._register_active_session(tenant_id, session_id)
+            if notebook_size_bytes:
+                self._track_tenant_storage_usage(tenant_id, notebook_size_bytes)
 
-        self._session_metadata[session_id] = {
-            "session_id": session_id,
-            "tenant_id": tenant_id,
-            "user_id": user_id,
-            "environment_id": environment_id,
-            "created_at": session.start_time.isoformat(),
-            "status_history": [(session.status, session.start_time.isoformat())],
-            "configuration": configuration,
-            "notebook_size_bytes": notebook_size_bytes,
-        }
-        self._session_versions.setdefault(session_id, [])
+            configuration.setdefault("estimated_notebook_size_bytes", notebook_size_bytes)
 
-        await self._persist_session(session_id)
-        await self._write_session_index()
+            self._session_metadata[session_id] = {
+                "session_id": session_id,
+                "tenant_id": tenant_id,
+                "user_id": user_id,
+                "environment_id": environment_id,
+                "created_at": session.start_time.isoformat(),
+                "status_history": [(session.status, session.start_time.isoformat())],
+                "configuration": configuration,
+                "notebook_size_bytes": notebook_size_bytes,
+            }
+            self._session_versions.setdefault(session_id, [])
+
+            await self._persist_session(session_id)
+            await self._write_session_index()
+
+        except Exception:
+            self._remove_active_session(tenant_id, session_id)
+            if notebook_size_bytes:
+                self._release_tenant_storage_usage(tenant_id, notebook_size_bytes)
+            self._sessions.pop(session_id, None)
+            self._session_metadata.pop(session_id, None)
+            self._session_versions.pop(session_id, None)
+            raise
 
         asyncio.create_task(self._manage_notebook_session(session_id, environment))
 
@@ -821,15 +970,16 @@ class DeveloperWorkspaceService:
                 await asyncio.sleep(self._session_monitor_interval_seconds)
 
                 if session.expires_at and datetime.utcnow() >= session.expires_at:
-                session.status = "expired"
-                self.telemetry.info(
-                    "Notebook session expired",
-                    session_id=session_id,
-                    expires_at=session.expires_at.isoformat()
-                )
-                await self._stop_notebook_session(session_id, reason="expired")
-                break
-                # Update last activity
+                    session.status = "expired"
+                    self.telemetry.info(
+                        "Notebook session expired",
+                        session_id=session_id,
+                        expires_at=session.expires_at.isoformat(),
+                    )
+                    await self._stop_notebook_session(session_id, reason="expired")
+                    break
+
+                # Update last activity heartbeat
                 session.last_activity = datetime.utcnow()
 
                 # Check for idle timeout
@@ -870,7 +1020,13 @@ class DeveloperWorkspaceService:
             session.error_message = str(e)
             self._record_session_status(session_id, session.status)
             await self._persist_session(session_id)
+            notebook_size_bytes = self._session_metadata.get(session_id, {}).get("notebook_size_bytes", 0)
+            self._release_tenant_storage_usage(session.tenant_id, notebook_size_bytes)
+            self._remove_active_session(session.tenant_id, session_id)
             self.telemetry.error("Session management failed", session_id=session_id, error=str(e))
+
+    def _session_resource_key(self, session: NotebookSession) -> str:
+        return f"notebook:{session.tenant_id}:{session.session_id}"
 
     async def _stop_notebook_session(self, session_id: str, reason: str = "user_requested") -> None:
         """Stop notebook session."""
@@ -892,6 +1048,7 @@ class DeveloperWorkspaceService:
 
         notebook_size_bytes = self._session_metadata.get(session_id, {}).get("notebook_size_bytes", 0)
         self._release_tenant_storage_usage(session.tenant_id, notebook_size_bytes)
+        self._remove_active_session(session.tenant_id, session_id)
 
         self.telemetry.info(
             "Notebook session stopped",
@@ -909,22 +1066,35 @@ class DeveloperWorkspaceService:
         session_resource_key = self._session_resource_key(session)
         await self.cache_manager.delete(session_resource_key, namespace=CacheNamespace.USER_DATA)
 
-    async def get_session_status(self, session_id: str) -> Optional[NotebookSession]:
-        """Get notebook session status."""
+    async def get_session_status(self, session_id: str, tenant_id: str) -> Optional[NotebookSession]:
+        """Get notebook session status for requesting tenant."""
         await self._ensure_sessions_loaded()
-        return self._sessions.get(session_id)
+        session = self._sessions.get(session_id)
+        if not session:
+            return None
+        if session.tenant_id != tenant_id:
+            raise TenantAccessError(tenant_id, session.tenant_id, session_id)
+        return session
 
     async def list_user_sessions(self, user_id: str) -> List[NotebookSession]:
         """List active sessions for a user."""
         await self._ensure_sessions_loaded()
         return [s for s in self._sessions.values() if s.user_id == user_id and s.status == "running"]
 
-    async def terminate_notebook_session(self, session_id: str, reason: str = "user_requested") -> bool:
+    async def terminate_notebook_session(
+        self,
+        session_id: str,
+        tenant_id: str,
+        reason: str = "user_requested",
+    ) -> bool:
         await self._ensure_sessions_loaded()
 
         session = self._sessions.get(session_id)
         if not session:
             return False
+
+        if session.tenant_id != tenant_id:
+            raise TenantAccessError(tenant_id, session.tenant_id, session_id)
 
         if session.status in {"stopped", "stopping"}:
             return False
@@ -1684,7 +1854,7 @@ Generated on: {datetime.utcnow().isoformat()}
                     "source": [
                         f"# {query.get('name', f'Query {i+1}')}\n",
                         f"print('Executing: {query.get('description', '')}')\n",
-                        "# Add actual API call code here
+                        "# Add actual API call code here\n",
                     ]
                 })
 

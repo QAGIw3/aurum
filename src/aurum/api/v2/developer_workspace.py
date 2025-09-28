@@ -12,19 +12,22 @@ from __future__ import annotations
 
 import time
 from datetime import datetime
-from typing import Dict, List, Optional
+from typing import Any, Dict, List, Optional
 from uuid import uuid4
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response
 from pydantic import BaseModel, Field
 
 from ..auth import Permission, require_permission
-from ..deps import get_principal, get_settings
+from ..deps import get_principal, get_settings, get_tenant_id
 from ..services.developer_workspace_service import (
     get_developer_workspace_service,
     NotebookEnvironment,
     NotebookSession,
-    NotebookTemplate
+    NotebookTemplate,
+    SessionLimitExceeded,
+    StorageQuotaExceeded,
+    TenantAccessError,
 )
 from ...observability.telemetry_facade import get_telemetry_facade
 
@@ -52,6 +55,11 @@ class SessionCreateRequest(BaseModel):
     environment_id: str = Field(..., description="Environment to use")
     template_id: Optional[str] = Field(None, description="Template to deploy")
     customizations: Dict[str, any] = Field(default_factory=dict, description="Template customizations")
+    estimated_notebook_size_bytes: Optional[int] = Field(
+        None,
+        ge=0,
+        description="Estimated notebook size in bytes for quota enforcement",
+    )
 
 
 class EnvironmentResponse(BaseModel):
@@ -242,28 +250,33 @@ async def create_notebook_session(
         if not principal:
             raise HTTPException(status_code=401, detail="Unauthorized")
 
-        from ..services.developer_workspace_service import create_notebook_session
+        tenant_id = get_tenant_id(request)
+        if not tenant_id:
+            raise HTTPException(status_code=400, detail="Missing tenant context")
 
-        # Get user and tenant from request (mock)
         user_id = principal.get("sub") or principal.get("email") or "unknown"
-        tenant_id = principal.get("tenant") or "default"
 
         require_permission(principal, Permission.DEVELOPER_WORKSPACE_WRITE, tenant_id)
 
-        # Create session
-        session_id = await create_notebook_session(
+        service = get_developer_workspace_service()
+
+        configuration: Dict[str, Any] = {}
+        if session_data.estimated_notebook_size_bytes is not None:
+            configuration["estimated_notebook_size_bytes"] = session_data.estimated_notebook_size_bytes
+
+        session_id = await service.start_notebook_session(
             environment_id=session_data.environment_id,
             user_id=user_id,
-            tenant_id=tenant_id
+            tenant_id=tenant_id,
+            configuration=configuration,
         )
 
-        # Deploy template if specified
         if session_data.template_id:
-            service = get_developer_workspace_service()
+            await service.get_session_status(session_id, tenant_id)
             await service.deploy_notebook_template(
                 template_id=session_data.template_id,
                 session_id=session_id,
-                customizations=session_data.customizations
+                customizations=session_data.customizations,
             )
 
         query_time_ms = (time.perf_counter() - start_time) * 1000
@@ -286,6 +299,30 @@ async def create_notebook_session(
             }
         }
 
+    except StorageQuotaExceeded as exc:
+        telemetry = get_telemetry_facade()
+        telemetry.record_error(
+            operation="create_notebook_session",
+            error=exc,
+            query_time_ms=(time.perf_counter() - start_time) * 1000,
+        )
+        raise HTTPException(status_code=409, detail=str(exc))
+    except SessionLimitExceeded as exc:
+        telemetry = get_telemetry_facade()
+        telemetry.record_error(
+            operation="create_notebook_session",
+            error=exc,
+            query_time_ms=(time.perf_counter() - start_time) * 1000,
+        )
+        raise HTTPException(status_code=429, detail=str(exc))
+    except TenantAccessError as exc:
+        telemetry = get_telemetry_facade()
+        telemetry.record_error(
+            operation="create_notebook_session",
+            error=exc,
+            query_time_ms=(time.perf_counter() - start_time) * 1000,
+        )
+        raise HTTPException(status_code=403, detail=str(exc))
     except Exception as exc:
         query_time_ms = (time.perf_counter() - start_time) * 1000
         telemetry = get_telemetry_facade()
@@ -313,13 +350,17 @@ async def get_session_status(
         if not principal:
             raise HTTPException(status_code=401, detail="Unauthorized")
 
+        tenant_id = get_tenant_id(request)
+        if not tenant_id:
+            raise HTTPException(status_code=400, detail="Missing tenant context")
+
         service = get_developer_workspace_service()
-        session = await service.get_session_status(session_id)
+        session = await service.get_session_status(session_id, tenant_id)
 
         if not session:
             raise HTTPException(status_code=404, detail="Session not found")
 
-        require_permission(principal, Permission.DEVELOPER_WORKSPACE_READ, session.tenant_id)
+        require_permission(principal, Permission.DEVELOPER_WORKSPACE_READ, tenant_id)
 
         query_time_ms = (time.perf_counter() - start_time) * 1000
 
@@ -343,6 +384,15 @@ async def get_session_status(
             resource_usage=session.resource_usage
         )
 
+    except TenantAccessError as exc:
+        query_time_ms = (time.perf_counter() - start_time) * 1000
+        telemetry = get_telemetry_facade()
+        telemetry.record_error(
+            operation="get_session_status",
+            error=exc,
+            query_time_ms=query_time_ms
+        )
+        raise HTTPException(status_code=403, detail=str(exc))
     except HTTPException:
         raise
     except Exception as exc:

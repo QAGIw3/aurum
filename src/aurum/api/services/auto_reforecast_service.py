@@ -174,12 +174,20 @@ class AutoReforecastService:
 
         # Job tracking
         self.pending_jobs: Dict[str, ReforcastJob] = {}
-        self.processing_jobs: Set[str] = set()
+        self.processing_jobs: Dict[str, ReforcastJob] = {}
         self.completed_jobs: Dict[str, ReforcastJob] = {}
+        self._jobs_by_trigger: Dict[str, Set[str]] = defaultdict(set)
 
         # Rate limiting
         self.trigger_timestamps: Dict[str, deque] = defaultdict(deque)
         self.processing_rate_limiter: Dict[str, datetime] = {}
+        self._processed_event_ids: Dict[str, datetime] = {}
+        self._processed_event_window = timedelta(hours=6)
+        self._trigger_event_history: deque = deque(maxlen=500)
+        self._job_audit_log: Dict[str, List[Dict[str, Any]]] = defaultdict(list)
+        self._job_audit_entry_limit = 50
+        self._retry_backoff_base_seconds = 30
+        self._retry_backoff_max_seconds = 900
 
         # Kafka consumer (would be initialized)
         self.kafka_consumer = None
@@ -354,6 +362,12 @@ class AutoReforecastService:
                 priority_score = max(event.priority_score, trigger.priority)
 
                 if not self._should_trigger(trigger, event, priority_score):
+                    self._log_trigger_event(
+                        event,
+                        status="skipped",
+                        reason="debounce_filter",
+                        trigger=trigger
+                    )
                     continue
 
                 triggered_event = TriggerEvent(
@@ -366,6 +380,24 @@ class AutoReforecastService:
                     priority_score=priority_score,
                     metadata=dict(event.metadata)
                 )
+
+                if self._is_duplicate_event(triggered_event):
+                    self._log_trigger_event(
+                        triggered_event,
+                        status="duplicate",
+                        reason="idempotency_guard",
+                        trigger=trigger
+                    )
+                    continue
+
+                if self._has_active_job(trigger.trigger_id):
+                    self._log_trigger_event(
+                        triggered_event,
+                        status="skipped",
+                        reason="rate_limit_guard",
+                        trigger=trigger
+                    )
+                    continue
 
                 queued = False
 
@@ -382,6 +414,12 @@ class AutoReforecastService:
                             trigger_id=trigger.trigger_id,
                             priority=priority_score
                         )
+                        self._log_trigger_event(
+                            triggered_event,
+                            status="dropped",
+                            reason="queue_pressure",
+                            trigger=trigger
+                        )
                         continue
 
                     try:
@@ -395,9 +433,16 @@ class AutoReforecastService:
                             "Failed to queue trigger event - timeout",
                             trigger_id=trigger.trigger_id
                         )
+                        self._log_trigger_event(
+                            triggered_event,
+                            status="dropped",
+                            reason="queue_timeout",
+                            trigger=trigger
+                        )
                         continue
 
                 if queued:
+                    self._mark_event_processed(triggered_event)
                     self._record_trigger_activity(trigger, triggered_event)
 
                     self.telemetry.info(
@@ -405,6 +450,12 @@ class AutoReforecastService:
                         trigger_id=trigger.trigger_id,
                         event_id=triggered_event.event_id,
                         priority=triggered_event.priority_score
+                    )
+
+                    self._log_trigger_event(
+                        triggered_event,
+                        status="queued",
+                        trigger=trigger
                     )
 
         except Exception as e:
@@ -519,6 +570,105 @@ class AutoReforecastService:
 
         timestamps.append(datetime.utcnow())
 
+    def _log_trigger_event(
+        self,
+        event: TriggerEvent,
+        *,
+        status: str,
+        reason: Optional[str] = None,
+        trigger: Optional[ForecastTrigger] = None
+    ) -> None:
+        """Track trigger event outcomes for auditing."""
+
+        record = {
+            "event_id": event.event_id,
+            "trigger_id": event.trigger_id,
+            "trigger_name": trigger.name if trigger else None,
+            "data_source": event.data_source,
+            "geography": event.geography,
+            "priority": event.priority_score,
+            "status": status,
+            "reason": reason,
+            "event_timestamp": event.timestamp,
+            "recorded_at": datetime.utcnow(),
+        }
+
+        self._trigger_event_history.append(record)
+
+    def _is_duplicate_event(self, event: TriggerEvent) -> bool:
+        """Check whether the trigger event was already processed recently."""
+
+        last_seen = self._processed_event_ids.get(event.event_id)
+        if not last_seen:
+            return False
+
+        return datetime.utcnow() - last_seen < self._processed_event_window
+
+    def _mark_event_processed(self, event: TriggerEvent) -> None:
+        """Remember processed event for idempotency with eviction."""
+
+        self._processed_event_ids[event.event_id] = datetime.utcnow()
+
+        if len(self._processed_event_ids) > self._trigger_event_history.maxlen:
+            # Prune oldest entries beyond audit window size
+            cutoff = datetime.utcnow() - self._processed_event_window
+            self._processed_event_ids = {
+                event_id: seen_at
+                for event_id, seen_at in self._processed_event_ids.items()
+                if seen_at >= cutoff
+            }
+
+    def _has_active_job(self, trigger_id: str) -> bool:
+        """Determine if there is already an active job for the trigger."""
+
+        jobs = self._jobs_by_trigger.get(trigger_id)
+        return bool(jobs)
+
+    def _release_job_from_trigger(self, job: ReforcastJob) -> None:
+        """Remove job tracking for the trigger when lifecycle completes."""
+
+        jobs = self._jobs_by_trigger.get(job.trigger_event.trigger_id)
+        if not jobs:
+            return
+
+        jobs.discard(job.job_id)
+        if not jobs:
+            self._jobs_by_trigger.pop(job.trigger_event.trigger_id, None)
+
+    def _record_job_audit(
+        self,
+        job: ReforcastJob,
+        *,
+        status: str,
+        detail: Optional[str] = None
+    ) -> None:
+        """Append audit metadata for a job lifecycle transition."""
+
+        entry = {
+            "job_id": job.job_id,
+            "trigger_id": job.trigger_event.trigger_id,
+            "status": status,
+            "detail": detail,
+            "attempt": job.attempts,
+            "timestamp": datetime.utcnow(),
+        }
+
+        history = self._job_audit_log[job.job_id]
+        history.append(entry)
+
+        if len(history) > self._job_audit_entry_limit:
+            del history[: len(history) - self._job_audit_entry_limit]
+
+    def _compute_backoff_delay(self, attempt: int) -> timedelta:
+        """Compute exponential backoff delay for a retry attempt."""
+
+        attempt = max(attempt, 1)
+        delay_seconds = min(
+            self._retry_backoff_base_seconds * (2 ** (attempt - 1)),
+            self._retry_backoff_max_seconds
+        )
+        return timedelta(seconds=delay_seconds)
+
     async def _event_processor_loop(self) -> None:
         """Background task to process trigger events."""
         while not self._shutdown_event.is_set():
@@ -550,6 +700,15 @@ class AutoReforecastService:
             ]
 
             for trigger in matching_triggers:
+                if self._has_active_job(trigger.trigger_id):
+                    self._log_trigger_event(
+                        event,
+                        status="skipped",
+                        reason="rate_limit_guard",
+                        trigger=trigger
+                    )
+                    continue
+
                 # Create reforecast job
                 job = ReforcastJob(
                     job_id=str(uuid4()),
@@ -561,6 +720,8 @@ class AutoReforecastService:
                 )
 
                 self.pending_jobs[job.job_id] = job
+                self._jobs_by_trigger[trigger.trigger_id].add(job.job_id)
+                self._record_job_audit(job, status="queued")
 
                 # Persist to repository if configured
                 await self._maybe_persist_job(job, event)
@@ -616,6 +777,9 @@ class AutoReforecastService:
         if not self.backpressure_config.enabled:
             return True
 
+        if job.scheduled_for and job.scheduled_for > datetime.utcnow():
+            return False
+
         # Check processing rate
         rate_key = f"processing_rate:{job.forecast_request.forecast_type.value}"
         last_processed = self.processing_rate_limiter.get(rate_key)
@@ -632,14 +796,22 @@ class AutoReforecastService:
     async def _execute_reforecast_job(self, job: ReforcastJob) -> None:
         """Execute a reforecast job."""
         try:
-            self.pending_jobs.pop(job.job_id)
-            self.processing_jobs.add(job.job_id)
+            self.pending_jobs.pop(job.job_id, None)
+            self.processing_jobs[job.job_id] = job
 
             job.status = "processing"
             job.attempts += 1
+            job.error_message = None
 
-            # Persist status transition
-            await self._maybe_update_job_status(job, status="processing", started_at=datetime.utcnow())
+            # Persist status transition and audit
+            now = datetime.utcnow()
+            await self._maybe_update_job_status(
+                job,
+                status="processing",
+                started_at=now,
+                attempts=job.attempts
+            )
+            self._record_job_audit(job, status="processing")
 
             self.telemetry.info(
                 "Executing reforecast job",
@@ -666,7 +838,7 @@ class AutoReforecastService:
                 end_date=forecast_request.end_date,
                 geography=forecast_request.geography,
                 target_variable=forecast_request.target_variable,
-                scenario_id=job.trigger_event.metadata.get("scenario_id")
+                scenario_id=job.trigger_event.metadata.get("scenario_id") if job.trigger_event.metadata else None
             )
 
             # In real implementation, would use ML model to generate forecast
@@ -692,8 +864,14 @@ class AutoReforecastService:
 
             job.status = "completed"
 
-            # Persist completion
-            await self._maybe_update_job_status(job, status="completed", completed_at=datetime.utcnow())
+            completion_time = datetime.utcnow()
+            await self._maybe_update_job_status(
+                job,
+                status="completed",
+                completed_at=completion_time,
+                attempts=job.attempts
+            )
+            self._record_job_audit(job, status="completed")
 
             self.telemetry.info(
                 "Reforecast job completed successfully",
@@ -705,16 +883,26 @@ class AutoReforecastService:
             self.telemetry.increment_counter("reforecasts_completed", category=MetricCategory.BUSINESS)
             self.telemetry.record_histogram(
                 "reforecast_processing_time",
-                (datetime.utcnow() - job.created_at).total_seconds(),
+                (completion_time - job.created_at).total_seconds(),
                 category=MetricCategory.PERFORMANCE
             )
+
+            self._release_job_from_trigger(job)
+            self.completed_jobs[job.job_id] = job
 
         except Exception as e:
             job.status = "failed"
             job.error_message = str(e)
 
-            # Persist failure
-            await self._maybe_update_job_status(job, status="failed", completed_at=datetime.utcnow(), error_message=str(e))
+            failure_time = datetime.utcnow()
+            await self._maybe_update_job_status(
+                job,
+                status="failed",
+                completed_at=failure_time,
+                attempts=job.attempts,
+                error_message=str(e)
+            )
+            self._record_job_audit(job, status="failed", detail=str(e))
 
             self.telemetry.error(
                 "Reforecast job failed",
@@ -724,11 +912,18 @@ class AutoReforecastService:
             )
 
             if job.attempts < job.max_attempts:
-                # Retry job
-                job.scheduled_for = datetime.utcnow() + timedelta(minutes=job.attempts * 5)
+                delay = self._compute_backoff_delay(job.attempts)
+                job.scheduled_for = datetime.utcnow() + delay
+                job.status = "pending"
                 self.pending_jobs[job.job_id] = job
+                self.completed_jobs.pop(job.job_id, None)
+                self._record_job_audit(
+                    job,
+                    status="retry_scheduled",
+                    detail=f"in_{int(delay.total_seconds())}s"
+                )
             else:
-                # Move to completed (failed)
+                self._release_job_from_trigger(job)
                 self.completed_jobs[job.job_id] = job
 
                 self.telemetry.increment_counter(
@@ -737,8 +932,7 @@ class AutoReforecastService:
                 )
 
         finally:
-            self.processing_jobs.discard(job.job_id)
-            self.completed_jobs[job.job_id] = job
+            self.processing_jobs.pop(job.job_id, None)
 
     async def _invalidate_related_forecasts(self, forecast_request: ForecastRequest) -> None:
         """Invalidate related forecasts that may be affected by new data."""
@@ -782,6 +976,14 @@ class AutoReforecastService:
                 cutoff_time = datetime.utcnow() - timedelta(minutes=1)
                 self.processing_rate_limiter = {
                     key: ts for key, ts in self.processing_rate_limiter.items()
+                    if ts > cutoff_time
+                }
+
+                # Clean up processed event ids outside idempotency window
+                cutoff_time = datetime.utcnow() - self._processed_event_window
+                self._processed_event_ids = {
+                    event_id: ts
+                    for event_id, ts in self._processed_event_ids.items()
                     if ts > cutoff_time
                 }
 
@@ -984,8 +1186,8 @@ class AutoReforecastService:
         for job in self.pending_jobs.values():
             maybe_add(job)
 
-        for job_id in self.processing_jobs:
-            maybe_add(self.pending_jobs.get(job_id))
+        for job in self.processing_jobs.values():
+            maybe_add(job)
 
         for job in self.completed_jobs.values():
             maybe_add(job)
@@ -1000,41 +1202,72 @@ class AutoReforecastService:
         limit: int = 50,
         since: Optional[datetime] = None
     ) -> List[Dict[str, Any]]:
-        """Return recent trigger events derived from trigger metadata."""
+        """Return recent trigger event audit log entries."""
 
-        events: List[Dict[str, Any]] = []
+        results: List[Dict[str, Any]] = []
 
-        triggers: List[ForecastTrigger]
-        if trigger_id:
-            trigger = self.triggers.get(trigger_id)
-            triggers = [trigger] if trigger else []
-        else:
-            triggers = list(self.triggers.values())
-
-        for trigger in triggers:
-            if not trigger or not trigger.last_triggered:
+        for record in reversed(self._trigger_event_history):
+            if trigger_id and record.get("trigger_id") != trigger_id:
                 continue
 
-            if since and trigger.last_triggered < since:
+            recorded_at: datetime = record.get("recorded_at", datetime.utcnow())
+            if since and recorded_at < since:
                 continue
 
-            primary_condition = trigger.conditions[0] if trigger.conditions else None
+            event_timestamp = record.get("event_timestamp")
 
-            events.append(
+            results.append(
                 {
-                    "event_id": f"event_{trigger.trigger_id}_{int(trigger.last_triggered.timestamp())}",
-                    "trigger_id": trigger.trigger_id,
-                    "trigger_name": trigger.name,
-                    "timestamp": trigger.last_triggered.isoformat(),
-                    "data_source": primary_condition.data_source if primary_condition else "unknown",
-                    "geography": primary_condition.geography if primary_condition else "US",
-                    "priority_score": trigger.priority,
-                    "trigger_count": trigger.trigger_count,
+                    "event_id": record.get("event_id"),
+                    "trigger_id": record.get("trigger_id"),
+                    "trigger_name": record.get("trigger_name"),
+                    "data_source": record.get("data_source"),
+                    "geography": record.get("geography"),
+                    "priority": record.get("priority"),
+                    "status": record.get("status"),
+                    "reason": record.get("reason"),
+                    "event_timestamp": event_timestamp.isoformat() if isinstance(event_timestamp, datetime) else event_timestamp,
+                    "recorded_at": recorded_at.isoformat(),
                 }
             )
 
-        events.sort(key=lambda event: event["timestamp"], reverse=True)
-        return events[:limit]
+            if len(results) >= limit:
+                break
+
+        return results
+
+    async def get_job_audit(
+        self,
+        job_id: Optional[str] = None,
+        limit: int = 50
+    ) -> List[Dict[str, Any]]:
+        """Return job lifecycle audit information."""
+
+        def serialize(entry: Dict[str, Any]) -> Dict[str, Any]:
+            timestamp = entry.get("timestamp")
+            return {
+                "job_id": entry.get("job_id"),
+                "trigger_id": entry.get("trigger_id"),
+                "status": entry.get("status"),
+                "detail": entry.get("detail"),
+                "attempt": entry.get("attempt"),
+                "timestamp": timestamp.isoformat() if isinstance(timestamp, datetime) else timestamp,
+            }
+
+        if job_id:
+            entries = self._job_audit_log.get(job_id, [])
+            return [serialize(entry) for entry in entries[-limit:]]
+
+        aggregated: List[Dict[str, Any]] = []
+        for current_job_id, entries in self._job_audit_log.items():
+            for entry in entries:
+                if job_id and current_job_id != job_id:
+                    continue
+                aggregated.append(entry)
+
+        aggregated.sort(key=lambda entry: entry.get("timestamp", datetime.utcnow()), reverse=True)
+
+        return [serialize(entry) for entry in aggregated[:limit]]
 
     async def get_debounce_config(self) -> DebounceConfig:
         """Return the current debounce configuration."""

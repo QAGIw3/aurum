@@ -240,6 +240,69 @@ async def test_audit_metadata_recorded_for_register_compare_promote(
     assert promote_event.reference["status"] == "champion"
 
 
+@pytest.mark.asyncio
+async def test_register_model_version_is_immutable(model_registry_service: ModelRegistryService) -> None:
+    """Registering a duplicate version number should raise a conflict."""
+
+    base_version = _build_version("immutable_model", "v1.0", accuracy=0.81)
+    await model_registry_service.register_model_version(base_version)
+
+    duplicate = _build_version("immutable_model", "v1.0", accuracy=0.83)
+    with pytest.raises(ValueError) as exc_info:
+        await model_registry_service.register_model_version(duplicate)
+
+    assert "immutable" in str(exc_info.value)
+
+
+@pytest.mark.asyncio
+async def test_update_model_metadata_records_changes(model_registry_service: ModelRegistryService) -> None:
+    """Metadata updates should mutate fields and emit an audit event."""
+
+    version = _build_version("metadata_model", "v1.0", accuracy=0.9)
+    await model_registry_service.register_model_version(version)
+
+    updated = model_registry_service.update_model_metadata(
+        "metadata_model",
+        description="Updated description",
+        owners=["alice", "bob"],
+        tags={"domain": "pricing"},
+        metadata={"risk_level": "low"},
+        audit_metadata={"requested_by": "alice"},
+    )
+
+    assert updated.description == "Updated description"
+    assert updated.owners == ["alice", "bob"]
+    assert updated.tags["domain"] == "pricing"
+    assert updated.metadata["risk_level"] == "low"
+
+    audit_event = model_registry_service.get_latest_audit_event("update_model_metadata")
+    assert audit_event is not None
+    changes = audit_event.reference.get("changes", {})
+    assert changes.get("description", {}).get("current") == "Updated description"
+    assert "tags_added" in changes or "tags_changed" in changes
+
+
+@pytest.mark.asyncio
+async def test_archive_model_sets_status_and_audit(model_registry_service: ModelRegistryService) -> None:
+    """Archiving a model should update lifecycle metadata and produce audit event."""
+
+    version = _build_version("archive_model", "v1.0", accuracy=0.88)
+    await model_registry_service.register_model_version(version)
+
+    result = model_registry_service.archive_model("archive_model", reason="deprecated")
+    assert result is True
+
+    model = model_registry_service.get_model("archive_model")
+    assert model is not None
+    assert model.status == "archived"
+    lifecycle = model.metadata.get("lifecycle", {})
+    assert lifecycle.get("reason") == "deprecated"
+
+    audit_event = model_registry_service.get_latest_audit_event("archive_model")
+    assert audit_event is not None
+    assert audit_event.reference.get("reason") == "deprecated"
+
+
 def test_background_job_status_exposes_counts(model_registry_service: ModelRegistryService) -> None:
     """Background job status should reflect idle state with zero counts by default."""
 

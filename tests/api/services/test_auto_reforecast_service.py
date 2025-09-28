@@ -257,6 +257,125 @@ class TestAutoReforecastService:
         assert len(events) == 0
 
     @pytest.mark.asyncio
+    async def test_idempotent_trigger_events(self, service):
+        """Ensure duplicate trigger events are deduplicated and audited."""
+        trigger = create_weather_trigger()
+        await service.create_trigger(trigger)
+
+        event = TriggerEvent(
+            event_id="evt-1",
+            trigger_id=trigger.trigger_id,
+            data_source="weather",
+            geography="US",
+            timestamp=datetime.utcnow(),
+            data_changes={"temperature": 0.2},
+            priority_score=0.9,
+        )
+
+        await service._process_trigger_event(event)
+        assert service.event_queue.qsize() == 1
+
+        await service._process_trigger_event(event)
+        assert service.event_queue.qsize() == 1
+
+        history = await service.list_trigger_events(limit=5)
+        statuses = {item["status"] for item in history}
+        assert "queued" in statuses
+        assert "duplicate" in statuses
+
+    @pytest.mark.asyncio
+    async def test_rate_limit_guard_blocks_when_job_active(self, service):
+        """Do not enqueue new events when a job is active for the trigger."""
+        trigger = create_weather_trigger()
+        trigger.cooldown_minutes = 0
+        service.debounce_config.enabled = False
+        await service.create_trigger(trigger)
+
+        base_event = TriggerEvent(
+            event_id="evt-2",
+            trigger_id=trigger.trigger_id,
+            data_source="weather",
+            geography="US",
+            timestamp=datetime.utcnow(),
+            data_changes={"temperature": 0.3},
+            priority_score=0.9,
+        )
+
+        await service._process_trigger_event(base_event)
+        queued_event = await service.event_queue.get()
+        await service._process_event_for_reforecast(queued_event)
+
+        assert len(service.pending_jobs) == 1
+        assert service._has_active_job(trigger.trigger_id)
+
+        second_event = TriggerEvent(
+            event_id="evt-3",
+            trigger_id=trigger.trigger_id,
+            data_source="weather",
+            geography="US",
+            timestamp=datetime.utcnow(),
+            data_changes={"temperature": 0.4},
+            priority_score=0.8,
+        )
+
+        await service._process_trigger_event(second_event)
+        assert service.event_queue.qsize() == 0
+
+        history = await service.list_trigger_events(limit=5)
+        reasons = [item.get("reason") for item in history]
+        assert "rate_limit_guard" in reasons, history
+
+    @pytest.mark.asyncio
+    async def test_retry_backoff_and_job_audit(self, service):
+        """Failed jobs should back off with audit trail."""
+        trigger = create_weather_trigger()
+        await service.create_trigger(trigger)
+
+        event = TriggerEvent(
+            event_id="evt-4",
+            trigger_id=trigger.trigger_id,
+            data_source="weather",
+            geography="US",
+            timestamp=datetime.utcnow(),
+            data_changes={"temperature": 0.5},
+            priority_score=1.0,
+        )
+
+        await service._process_trigger_event(event)
+        queued_event = await service.event_queue.get()
+        await service._process_event_for_reforecast(queued_event)
+
+        assert len(service.pending_jobs) == 1
+        job = next(iter(service.pending_jobs.values()))
+
+        mock_feature_store = AsyncMock()
+        mock_feature_store.get_features_for_modeling.side_effect = RuntimeError("feature failure")
+        mock_cache = AsyncMock()
+        mock_cache.set = AsyncMock(return_value=None)
+        mock_cache.invalidate_pattern = AsyncMock(return_value=0)
+
+        with patch(
+            "src.aurum.api.services.auto_reforecast_service.get_feature_store_service",
+            return_value=mock_feature_store
+        ), patch(
+            "src.aurum.api.services.auto_reforecast_service.get_unified_cache_manager",
+            return_value=mock_cache
+        ):
+            await service._execute_reforecast_job(job)
+
+        assert job.status == "pending"
+        assert job.attempts == 1
+        assert job.scheduled_for > datetime.utcnow()
+        remaining_seconds = (job.scheduled_for - datetime.utcnow()).total_seconds()
+        assert remaining_seconds >= 25
+        assert len(service.pending_jobs) == 1
+        assert len(service.processing_jobs) == 0
+
+        audit_entries = await service.get_job_audit(job.job_id)
+        audit_statuses = [entry["status"] for entry in audit_entries]
+        assert audit_statuses == ["queued", "processing", "failed", "retry_scheduled"]
+
+    @pytest.mark.asyncio
     async def test_service_health(self, service):
         """Test service health check."""
         health = await service.get_service_health()

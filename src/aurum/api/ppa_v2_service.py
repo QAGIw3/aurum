@@ -16,6 +16,71 @@ from .services.ppa_service import PpaService, normalize_currency_code
 from .state import get_settings
 
 
+def _format_date(value: Any) -> Optional[str]:
+    """Convert assorted date/time payloads into ISO8601 ``YYYY-MM-DD`` strings."""
+
+    if value is None:
+        return None
+    if isinstance(value, datetime):
+        return value.date().isoformat()
+    if isinstance(value, date):
+        return value.isoformat()
+    if isinstance(value, str):
+        text = value.strip()
+        if not text:
+            return None
+        normalised = text[:-1] + "+00:00" if text.endswith("Z") else text
+        try:
+            return datetime.fromisoformat(normalised).date().isoformat()
+        except ValueError:
+            try:
+                return date.fromisoformat(text).isoformat()
+            except ValueError:
+                return None
+    return None
+
+
+def _optional_float(value: Any) -> Optional[float]:
+    """Safely coerce numeric payloads to floats, returning ``None`` on failure."""
+
+    if value is None:
+        return None
+    if isinstance(value, Decimal):
+        result = float(value)
+    elif isinstance(value, str):
+        text = value.strip()
+        if not text:
+            return None
+        try:
+            result = float(text)
+        except ValueError:
+            return None
+    else:
+        try:
+            result = float(value)
+        except (TypeError, ValueError):
+            return None
+    if math.isnan(result) or math.isinf(result):
+        return None
+    return float(result)
+
+
+def _present_value(row: Dict[str, Any]) -> Optional[float]:
+    for key in ("npv", "value"):
+        candidate = _optional_float(row.get(key))
+        if candidate is not None:
+            return candidate
+    return None
+
+
+def _normalise_currency(row: Dict[str, Any]) -> str:
+    for key in ("metric_currency", "currency", "metric_unit"):
+        candidate = normalize_currency_code(row.get(key))
+        if candidate and len(candidate) == 3 and candidate.isalpha():
+            return candidate
+    return "USD"
+
+
 class PpaV2Service:
     def __init__(self) -> None:
         self._service = PpaService()
@@ -28,12 +93,40 @@ class PpaV2Service:
         limit: int,
         counterparty_filter: Optional[str] = None,
     ) -> List[Dict[str, Any]]:
-        return await self._service.list_contracts(
+        raw_contracts = await self._service.list_contracts(
             tenant_id=tenant_id,
             offset=offset,
             limit=limit,
             counterparty_filter=counterparty_filter,
         )
+
+        sanitized: List[Dict[str, Any]] = []
+        for contract in raw_contracts:
+            capacity = _optional_float(contract.get("capacity_mw"))
+            price = _optional_float(contract.get("price_usd_mwh"))
+            start_date = _format_date(contract.get("start_date"))
+            end_date = _format_date(contract.get("end_date"))
+
+            contract_id = str(contract.get("contract_id") or contract.get("id") or "").strip()
+            name = str(contract.get("name") or contract_id).strip() or contract_id
+            counterparty_raw = contract.get("counterparty")
+            counterparty = str(counterparty_raw).strip() if counterparty_raw is not None else ""
+            if not counterparty:
+                counterparty = "unknown"
+
+            sanitized.append(
+                {
+                    "contract_id": contract_id,
+                    "name": name,
+                    "counterparty": counterparty,
+                    "capacity_mw": capacity if capacity is not None else 0.0,
+                    "price_usd_mwh": price if price is not None else 0.0,
+                    "start_date": start_date,
+                    "end_date": end_date,
+                }
+            )
+
+        return sanitized
 
     async def list_valuations(
         self,
@@ -59,63 +152,6 @@ class PpaV2Service:
             offset=offset,
             trino_cfg=trino_cfg,
         )
-
-        def _format_date(value: Any) -> Optional[str]:
-            if value is None:
-                return None
-            if isinstance(value, datetime):
-                return value.date().isoformat()
-            if isinstance(value, date):
-                return value.isoformat()
-            if isinstance(value, str):
-                text = value.strip()
-                if not text:
-                    return None
-                normalised = text[:-1] + "+00:00" if text.endswith("Z") else text
-                try:
-                    return datetime.fromisoformat(normalised).date().isoformat()
-                except ValueError:
-                    try:
-                        return date.fromisoformat(text).isoformat()
-                    except ValueError:
-                        return None
-            return None
-
-        def _optional_float(value: Any) -> Optional[float]:
-            if value is None:
-                return None
-            if isinstance(value, Decimal):
-                result = float(value)
-            elif isinstance(value, str):
-                text = value.strip()
-                if not text:
-                    return None
-                try:
-                    result = float(text)
-                except ValueError:
-                    return None
-            else:
-                try:
-                    result = float(value)
-                except (TypeError, ValueError):
-                    return None
-            if math.isnan(result) or math.isinf(result):
-                return None
-            return float(result)
-
-        def _present_value(row: Dict[str, Any]) -> Optional[float]:
-            for key in ("npv", "value"):
-                candidate = _optional_float(row.get(key))
-                if candidate is not None:
-                    return candidate
-            return None
-
-        def _normalise_currency(row: Dict[str, Any]) -> str:
-            for key in ("metric_currency", "currency", "metric_unit"):
-                candidate = normalize_currency_code(row.get(key))
-                if candidate and len(candidate) == 3 and candidate.isalpha():
-                    return candidate
-            return "USD"
 
         return [
             {

@@ -15,6 +15,7 @@ from airflow.models import Variable
 from aurum.slices import SliceClient, SliceConfig, SliceManager, SliceType
 from aurum.bulk_archive import BulkArchiveManager, ArchiveConfig
 from aurum.logging import create_logger, LogLevel
+from aurum.airflow_utils import idempotent_run
 
 
 # Default DAG arguments

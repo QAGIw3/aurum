@@ -64,7 +64,7 @@ def test_auto_reforecast_trigger_rerun_persists_job(client: TestClient):
     resp = client.post(
         "/v2/auto-reforecast/triggers",
         json=trigger_body,
-        headers={"X-Tenant-Id": tenant_id},
+        headers={"X-Aurum-Tenant": tenant_id},
     )
     assert resp.status_code in (200, 201), resp.text
     trigger = resp.json()["data"] if "data" in resp.json() else resp.json()
@@ -81,7 +81,7 @@ def test_auto_reforecast_trigger_rerun_persists_job(client: TestClient):
             "priority": 1.0,
             "trigger_reason": "e2e"
         },
-        headers={"X-Tenant-Id": tenant_id},
+        headers={"X-Aurum-Tenant": tenant_id},
     )
     assert resp2.status_code == 200, resp2.text
     data = resp2.json()["data"] if "data" in resp2.json() else resp2.json()
@@ -90,7 +90,7 @@ def test_auto_reforecast_trigger_rerun_persists_job(client: TestClient):
     # List jobs and assert presence
     resp3 = client.get(
         "/v2/auto-reforecast/jobs",
-        headers={"X-Tenant-Id": tenant_id},
+        headers={"X-Aurum-Tenant": tenant_id},
         params={"limit": 50}
     )
     assert resp3.status_code == 200, resp3.text

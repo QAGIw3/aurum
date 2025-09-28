@@ -30,7 +30,7 @@ def test_invalidate_scenario_cache_router(monkeypatch):
     assert res.status_code == 204
     # Headers convey metadata
     assert "X-Request-Id" in res.headers
-    assert res.headers.get("X-Tenant-Id") == "t1"
+    assert res.headers.get("X-Aurum-Tenant") == "t1"
 
 
 @pytest.mark.unit
@@ -82,4 +82,3 @@ def test_list_mappings_router(monkeypatch):
     payload = res.json()
     assert payload["data"][0]["provider"] == "eia"
     assert "ETag" in res.headers
-
