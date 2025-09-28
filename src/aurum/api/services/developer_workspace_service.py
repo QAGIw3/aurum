@@ -15,6 +15,7 @@ from __future__ import annotations
 import asyncio
 import json
 import random
+import re
 from collections import defaultdict
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -207,6 +208,7 @@ class DeveloperWorkspaceService:
         self._environment_versions: Dict[str, List[Dict[str, Any]]] = defaultdict(list)
         self._session_versions: Dict[str, List[Dict[str, Any]]] = defaultdict(list)
         self._tenant_storage_quota_gb: Dict[str, int] = {}
+        self._tenant_storage_usage_bytes: Dict[str, int] = defaultdict(int)
 
         # Defer API documentation loading until first use
         self._api_documentation_cache = {}
