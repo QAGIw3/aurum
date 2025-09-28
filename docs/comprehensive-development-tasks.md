@@ -31,12 +31,26 @@ Based on comprehensive analysis of the codebase, these tasks address:
 - Advanced error recovery and data correction
 - Parser performance analytics and optimization
 
+**Status:** ✅ Completed via new plugin framework (`src/aurum/parsers/vendor_curves/plugin.py`) with ML anomaly detection, schema inference, validation, recovery, performance instrumentation, and generic multi-format support. PDF parsing now leverages structured table extraction via Docling when available, with graceful fallback to `pdfminer.six` text parsing.
+
+**Verification:** Covered by targeted unit tests under `tests/parsers/` and exercised through `parse_with_diagnostics` for full diagnostics coverage. Configurable thresholds and learned alias maps validated with option-driven runs.
+
 **Business Impact:** Enables ingestion of 90%+ vendor formats automatically, reducing manual intervention by 80%.
 
 **Technical Files:**
 - `src/aurum/parsers/ml_parser.py`
 - `src/aurum/parsers/schema_inference.py`
 - `src/aurum/parsers/validation_engine.py`
+ - `src/aurum/parsers/vendor_curves/formats.py` (Docling PDF integration)
+ - `src/aurum/parsers/vendor_curves/plugin.py` (options + entry-point discovery)
+ - `src/aurum/parsers/learned_aliases.py` (historical alias maps)
+
+**New Capabilities:**
+- Structured PDF parsing via Docling (optional dependency).
+- Configurable thresholds via `options`:
+  - `{"anomaly": {"zscore_threshold": 3.0, "min_points": 5}, "validation": {"min_confidence": 0.7}}`
+- Plugin discovery through entry points group `aurum.vendor_parsers`.
+- Learned schema alias maps loaded from `config/learned_aliases.json` or `AURUM_LEARNED_ALIASES`.
 
 ---
 

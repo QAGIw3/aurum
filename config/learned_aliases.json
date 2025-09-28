@@ -1,0 +1,18 @@
+{
+  "tenor_label": ["period", "tenor", "mth", "contract"],
+  "mid": ["price", "mtm", "settle", "midpoint"],
+  "value": ["price", "mtm", "settle"],
+  "curve_key": ["curve", "identifier", "curve_id"],
+  "sheet_name": ["sheet", "tab", "worksheet"],
+  "price_type": ["type", "quote_type"],
+  "iso": ["hub", "market", "pool"],
+  "location": ["zone", "hub", "node"],
+  "market": ["region"],
+  "product": ["instrument"],
+  "block": ["hour", "hours", "shape"],
+  "currency": ["curr"],
+  "per_unit": ["unit", "perunit", "measure"],
+  "contract_month": ["delivery_month"],
+  "tenor_type": ["bucket_type", "granularity"]
+}
+

@@ -103,6 +103,11 @@ dev = [
     "safety==3.2.8",
     "flake8==7.1.1",
 ]
+parsers-pdf = [
+    "docling>=2,<3",
+    "pdfminer.six>=20221105",
+]
+
 # Shared dependency groups to eliminate duplication
 common = [
     # Core settings and configuration
@@ -220,8 +225,11 @@ quality = [
     "great-expectations==0.18.19",
 ]
 
+[project.entry-points."aurum.vendor_parsers"]
+demo_ep = "aurum_vendor_demo.demo:parse_demo"
+
 [tool.hatch.build.targets.wheel]
-packages = ["src/aurum"]
+packages = ["src/aurum", "src/aurum_vendor_demo"]
 
 [tool.black]
 line-length = 88
