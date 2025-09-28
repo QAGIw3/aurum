@@ -28,6 +28,8 @@ Enhanced Features:
 New Endpoints Added:
 - POST /models/{model_name}/select-champion - Automated champion selection
 - POST /models/{model_name}/promote-champion - Manual champion promotion  
+- POST /models/{model_name}/select-champion-challenger - Champion & challenger pairing
+- GET /jobs/background/status - Background job scheduler and trainer status
 - PUT /jobs/{job_id}/progress - Update training job progress
 - POST /jobs/{job_id}/complete - Complete training jobs
 - DELETE /jobs/{job_id} - Cancel training jobs
@@ -37,13 +39,12 @@ from __future__ import annotations
 
 import time
 from datetime import datetime
-from typing import Dict, List, Optional
+from typing import Any, Dict, List, Optional
 from uuid import uuid4
 
-from fastapi import APIRouter, HTTPException, Query, Request, Response, Depends
+from fastapi import APIRouter, Body, HTTPException, Query, Request, Response
 from pydantic import BaseModel, Field
 
-from ..deps import get_settings
 from ..services.model_registry_service import (
     get_model_registry_service,
     ModelVersion,
@@ -57,6 +58,17 @@ from ...observability.telemetry_facade import get_telemetry_facade
 router = APIRouter(prefix="/v2/models", tags=["model-registry"])
 
 
+class AuditMetadataRequest(BaseModel):
+    """Audit metadata accompanying mutating operations."""
+
+    requested_by: Optional[str] = Field(None, description="User initiating the action")
+    tenant_id: Optional[str] = Field(None, description="Tenant identifier")
+    request_id: Optional[str] = Field(None, description="Client-supplied request correlation id")
+    source: Optional[str] = Field(None, description="Originating system for the change")
+    notes: Optional[str] = Field(None, description="Additional audit context")
+    tags: Dict[str, Any] = Field(default_factory=dict, description="Arbitrary audit annotations")
+
+
 class ModelCreateRequest(BaseModel):
     """Request to register a new model."""
 
@@ -65,6 +77,7 @@ class ModelCreateRequest(BaseModel):
     description: str = Field("", description="Model description")
     config: Dict[str, any] = Field(..., description="Model configuration")
     tags: Dict[str, str] = Field(default_factory=dict, description="Model tags")
+    audit: Optional[AuditMetadataRequest] = Field(None, description="Audit metadata for the registration")
 
 
 class ModelResponse(BaseModel):
@@ -79,6 +92,7 @@ class ModelResponse(BaseModel):
     created_at: datetime
     updated_at: datetime
     tags: Dict[str, str]
+    audit: Optional[Dict[str, Any]] = None
 
 
 class ModelListResponse(BaseModel):
@@ -155,6 +169,7 @@ class ComparisonResponse(BaseModel):
     recommendation: str
     comparison_date: datetime
     notes: str
+    audit: Optional[Dict[str, Any]] = None
 
 
 class ComparisonListResponse(BaseModel):
@@ -163,6 +178,24 @@ class ComparisonListResponse(BaseModel):
     data: List[ComparisonResponse]
     meta: Dict[str, any]
     links: Dict[str, any]
+
+
+class ChampionSelectionRequest(BaseModel):
+    """Request for automated champion or champion/challenger selection."""
+
+    selection_criteria: Optional[Dict[str, Any]] = Field(None, description="Selection criteria overrides")
+    audit: Optional[AuditMetadataRequest] = Field(None, description="Audit metadata for the selection")
+
+
+class ChampionChallengerSelectionResponse(BaseModel):
+    """Response conveying champion and challenger selection."""
+
+    selection_id: str
+    model_name: str
+    champion: Optional[ModelVersionResponse]
+    challenger: Optional[ModelVersionResponse]
+    criteria: Dict[str, Any]
+    audit: Optional[Dict[str, Any]] = None
 
 
 class RetrainScheduleResponse(BaseModel):
@@ -184,6 +217,52 @@ class RetrainScheduleListResponse(BaseModel):
     data: List[RetrainScheduleResponse]
     meta: Dict[str, any]
     links: Dict[str, any]
+
+
+class PromoteChampionRequest(BaseModel):
+    """Request payload for promoting a version to champion."""
+
+    version_id: Optional[str] = Field(None, description="Version ID to promote to champion")
+    audit: Optional[AuditMetadataRequest] = Field(None, description="Audit metadata for the promotion")
+
+
+class BackgroundJobStatusResponse(BaseModel):
+    """Response describing background job execution state."""
+
+    scheduler_state: str
+    trainer_state: str
+    pending_jobs: int
+    running_jobs: int
+    completed_jobs: int
+    failed_jobs: int
+    cancelled_jobs: int
+    last_scheduler_heartbeat: Optional[datetime]
+    last_trainer_heartbeat: Optional[datetime]
+
+
+def _to_model_version_response(version: ModelVersion) -> ModelVersionResponse:
+    """Convert a ModelVersion domain object into an API response model."""
+
+    config_payload = version.config.dict() if hasattr(version.config, "dict") else version.config
+
+    return ModelVersionResponse(
+        version_id=version.version_id,
+        model_name=version.model_name,
+        version_number=version.version_number,
+        description=version.description,
+        config=config_payload,
+        training_start_date=version.training_start_date,
+        training_end_date=version.training_end_date,
+        model_path=version.model_path,
+        model_size_bytes=version.model_size_bytes,
+        performance_metrics=version.performance_metrics,
+        feature_importance=version.feature_importance,
+        validation_results=version.validation_results,
+        status=version.status,
+        created_at=version.created_at,
+        created_by=version.created_by,
+        tags=version.tags,
+    )
 
 
 @router.get("/models", response_model=ModelListResponse)
@@ -266,6 +345,8 @@ async def register_model(
 
         # Create initial model version
         model_config = ModelConfig(**model_data.config)
+        audit_payload = model_data.audit.dict(exclude_none=True) if model_data.audit else None
+        created_by = audit_payload.get("requested_by") if audit_payload and audit_payload.get("requested_by") else "system"
         initial_version = ModelVersion(
             version_id=str(uuid4()),
             model_name=model_data.model_name,
@@ -280,12 +361,15 @@ async def register_model(
             feature_importance={},
             validation_results={},
             status="active",
-            created_by="system",
+            created_by=created_by,
             tags=model_data.tags
         )
 
         # Register model (mock implementation)
-        registered_model = await service.register_model_version(initial_version)
+        registered_version = await service.register_model_version(
+            initial_version,
+            audit_metadata=audit_payload,
+        )
 
         query_time_ms = (time.perf_counter() - start_time) * 1000
 
@@ -295,16 +379,22 @@ async def register_model(
             query_time_ms=query_time_ms
         )
 
+        audit_event = service.get_latest_audit_event(
+            "register_model_version",
+            registered_version.version_id,
+        )
+
         return ModelResponse(
-            model_name=registered_model.model_name,
-            model_type=registered_model.config.model_type,
-            description=registered_model.description,
-            latest_version=registered_model.version_number,
+            model_name=registered_version.model_name,
+            model_type=registered_version.config.model_type,
+            description=registered_version.description,
+            latest_version=registered_version.version_number,
             total_versions=1,
-            status=registered_model.status,
-            created_at=registered_model.created_at,
-            updated_at=registered_model.created_at,
-            tags=registered_model.tags
+            status=registered_version.status,
+            created_at=registered_version.created_at,
+            updated_at=registered_version.created_at,
+            tags=registered_version.tags,
+            audit=audit_event.dict() if audit_event else None,
         )
 
     except Exception as exc:
@@ -575,6 +665,40 @@ async def get_training_job(
         )
 
 
+@router.get("/jobs/background/status", response_model=BackgroundJobStatusResponse)
+async def get_background_job_status(request: Request) -> BackgroundJobStatusResponse:
+    """Retrieve status of background scheduler and trainer jobs."""
+
+    start_time = time.perf_counter()
+
+    try:
+        service = get_model_registry_service()
+        status_payload = service.get_background_job_status()
+
+        query_time_ms = (time.perf_counter() - start_time) * 1000
+
+        telemetry = get_telemetry_facade()
+        telemetry.record_success(
+            operation="get_background_job_status",
+            query_time_ms=query_time_ms,
+        )
+
+        return BackgroundJobStatusResponse(**status_payload)
+
+    except Exception as exc:
+        query_time_ms = (time.perf_counter() - start_time) * 1000
+        telemetry = get_telemetry_facade()
+        telemetry.record_error(
+            operation="get_background_job_status",
+            error=exc,
+            query_time_ms=query_time_ms,
+        )
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to retrieve background job status: {str(exc)}",
+        )
+
+
 @router.get("/models/{model_name}/champion", response_model=Optional[ModelVersionResponse])
 async def get_champion_model(
     request: Request,
@@ -636,7 +760,8 @@ async def compare_model_versions(
     request: Request,
     model_name: str,
     champion_version: str = Query(..., description="Champion model version"),
-    challenger_version: str = Query(..., description="Challenger model version")
+    challenger_version: str = Query(..., description="Challenger model version"),
+    audit: Optional[AuditMetadataRequest] = Body(default=None, embed=True)
 ) -> ComparisonResponse:
     """Compare two model versions."""
     start_time = time.perf_counter()
@@ -645,10 +770,13 @@ async def compare_model_versions(
         service = get_model_registry_service()
 
         # Perform comparison (mock implementation)
+        audit_payload = audit.dict(exclude_none=True) if audit else None
+
         comparison = await service.compare_models(
             model_name=model_name,
             champion_version=champion_version,
-            challenger_version=challenger_version
+            challenger_version=challenger_version,
+            audit_metadata=audit_payload,
         )
 
         query_time_ms = (time.perf_counter() - start_time) * 1000
@@ -659,6 +787,8 @@ async def compare_model_versions(
             query_time_ms=query_time_ms
         )
 
+        audit_event = service.get_latest_audit_event("compare_models", comparison.comparison_id)
+
         return ComparisonResponse(
             comparison_id=comparison.comparison_id,
             champion_version=comparison.champion_version,
@@ -668,7 +798,8 @@ async def compare_model_versions(
             business_impact=comparison.business_impact,
             recommendation=comparison.recommendation,
             comparison_date=comparison.comparison_date,
-            notes=comparison.notes
+            notes=comparison.notes,
+            audit=audit_event.dict() if audit_event else None,
         )
 
     except Exception as exc:
@@ -814,10 +945,10 @@ async def list_retrain_schedules(
 
 
 @router.post("/models/{model_name}/select-champion", response_model=Dict[str, any], status_code=200)
-async def select_champion_model(
+async def select_champion_model(  # type: ignore[override]
     request: Request,
     model_name: str,
-    selection_criteria: Optional[Dict[str, any]] = None
+    payload: ChampionSelectionRequest = Body(default_factory=ChampionSelectionRequest)
 ) -> Dict[str, any]:
     """Automatically select champion model based on performance criteria."""
     start_time = time.perf_counter()
@@ -825,9 +956,13 @@ async def select_champion_model(
     try:
         service = get_model_registry_service()
 
+        selection_criteria = payload.selection_criteria
+        audit_payload = payload.audit.dict(exclude_none=True) if payload.audit else None
+
         champion = await service.select_champion_model(
             model_name=model_name,
-            selection_criteria=selection_criteria
+            selection_criteria=selection_criteria,
+            audit_metadata=audit_payload,
         )
 
         query_time_ms = (time.perf_counter() - start_time) * 1000
@@ -839,18 +974,21 @@ async def select_champion_model(
         )
 
         if champion:
+            audit_event = service.get_latest_audit_event("select_champion_model", champion.version_id)
             return {
                 "champion_selected": True,
                 "champion_version": champion.version_number,
                 "champion_version_id": champion.version_id,
                 "performance_metrics": champion.performance_metrics,
-                "selection_criteria": selection_criteria
+                "selection_criteria": selection_criteria,
+                "audit": audit_event.dict() if audit_event else None,
             }
         else:
             return {
                 "champion_selected": False,
                 "message": "No suitable champion model found",
-                "selection_criteria": selection_criteria
+                "selection_criteria": selection_criteria,
+                "audit": None,
             }
 
     except Exception as exc:
@@ -867,11 +1005,76 @@ async def select_champion_model(
         )
 
 
+@router.post(
+    "/models/{model_name}/select-champion-challenger",
+    response_model=ChampionChallengerSelectionResponse,
+    status_code=200,
+)
+async def select_champion_challenger_model(
+    request: Request,
+    model_name: str,
+    payload: ChampionSelectionRequest = Body(default_factory=ChampionSelectionRequest)
+) -> ChampionChallengerSelectionResponse:
+    """Select both champion and challenger candidates based on criteria."""
+
+    start_time = time.perf_counter()
+
+    try:
+        service = get_model_registry_service()
+
+        selection = await service.select_champion_challenger(
+            model_name=model_name,
+            selection_criteria=payload.selection_criteria,
+            audit_metadata=payload.audit.dict(exclude_none=True) if payload.audit else None,
+        )
+
+        if selection is None:
+            raise HTTPException(status_code=404, detail="No suitable champion/challenger pair found")
+
+        query_time_ms = (time.perf_counter() - start_time) * 1000
+
+        telemetry = get_telemetry_facade()
+        telemetry.record_success(
+            operation="select_champion_challenger",
+            query_time_ms=query_time_ms,
+        )
+
+        audit_event = service.get_latest_audit_event(
+            "select_champion_challenger",
+            selection.selection_id,
+        )
+
+        return ChampionChallengerSelectionResponse(
+            selection_id=selection.selection_id,
+            model_name=selection.model_name,
+            champion=_to_model_version_response(selection.champion) if selection.champion else None,
+            challenger=_to_model_version_response(selection.challenger) if selection.challenger else None,
+            criteria=selection.criteria,
+            audit=audit_event.dict() if audit_event else None,
+        )
+
+    except HTTPException:
+        raise
+    except Exception as exc:
+        query_time_ms = (time.perf_counter() - start_time) * 1000
+        telemetry = get_telemetry_facade()
+        telemetry.record_error(
+            operation="select_champion_challenger",
+            error=exc,
+            query_time_ms=query_time_ms,
+        )
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to select champion/challenger pair: {str(exc)}",
+        )
+
+
 @router.post("/models/{model_name}/promote-champion", response_model=Dict[str, any], status_code=200)
 async def promote_model_to_champion(
     request: Request,
     model_name: str,
-    version_id: str = Query(..., description="Version ID to promote to champion")
+    version_id: Optional[str] = Query(None, description="Version ID to promote to champion"),
+    payload: Optional[PromoteChampionRequest] = Body(default=None)
 ) -> Dict[str, any]:
     """Promote a specific model version to champion status."""
     start_time = time.perf_counter()
@@ -879,9 +1082,17 @@ async def promote_model_to_champion(
     try:
         service = get_model_registry_service()
 
+        body_version_id = payload.version_id if payload and payload.version_id else None
+        effective_version_id = version_id or body_version_id
+        if not effective_version_id:
+            raise HTTPException(status_code=400, detail="version_id is required")
+
+        audit_payload = payload.audit.dict(exclude_none=True) if payload and payload.audit else None
+
         success = await service.promote_to_champion(
             model_name=model_name,
-            version_id=version_id
+            version_id=effective_version_id,
+            audit_metadata=audit_payload,
         )
 
         query_time_ms = (time.perf_counter() - start_time) * 1000
@@ -892,11 +1103,19 @@ async def promote_model_to_champion(
             query_time_ms=query_time_ms
         )
 
+        audit_event = None
+        if success:
+            audit_event = service.get_latest_audit_event(
+                "promote_to_champion",
+                effective_version_id,
+            )
+
         return {
             "promotion_successful": success,
             "model_name": model_name,
-            "promoted_version_id": version_id,
-            "message": "Model promoted to champion" if success else "Promotion failed"
+            "promoted_version_id": effective_version_id,
+            "message": "Model promoted to champion" if success else "Promotion failed",
+            "audit": audit_event.dict() if audit_event else None,
         }
 
     except Exception as exc:

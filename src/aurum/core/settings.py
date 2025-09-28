@@ -1056,6 +1056,56 @@ class SimplifiedSettings:
             env.get("AURUM_CELERY_TASK_DEFAULT_QUEUE", "default"),
         )
 
+        mlflow_enabled = self._get_bool_from_env(
+            env,
+            [
+                f"{self.env_prefix}MODEL_REGISTRY_MLFLOW_ENABLED",
+                f"{self.env_prefix}MLFLOW_ENABLED",
+            ],
+            False,
+        )
+        mlflow_tracking_uri = (
+            env.get(f"{self.env_prefix}MODEL_REGISTRY_MLFLOW_TRACKING_URI")
+            or env.get(f"{self.env_prefix}MLFLOW_TRACKING_URI")
+            or env.get("MLFLOW_TRACKING_URI")
+        )
+        if mlflow_tracking_uri:
+            mlflow_tracking_uri = mlflow_tracking_uri.strip() or None
+
+        mlflow_registry_uri = (
+            env.get(f"{self.env_prefix}MODEL_REGISTRY_MLFLOW_REGISTRY_URI")
+            or env.get(f"{self.env_prefix}MLFLOW_REGISTRY_URI")
+            or env.get("MLFLOW_REGISTRY_URI")
+        )
+        if mlflow_registry_uri:
+            mlflow_registry_uri = mlflow_registry_uri.strip() or None
+
+        mlflow_experiment_name = (
+            env.get(f"{self.env_prefix}MODEL_REGISTRY_MLFLOW_EXPERIMENT_NAME")
+            or env.get(f"{self.env_prefix}MLFLOW_EXPERIMENT_NAME")
+        )
+        if mlflow_experiment_name:
+            mlflow_experiment_name = mlflow_experiment_name.strip() or None
+
+        mlflow_timeout_seconds = self._get_int_from_env(
+            env,
+            [
+                f"{self.env_prefix}MODEL_REGISTRY_MLFLOW_TIMEOUT_SECONDS",
+                f"{self.env_prefix}MLFLOW_TIMEOUT_SECONDS",
+            ],
+            30,
+        )
+
+        self.model_registry = SimpleNamespace(
+            mlflow=SimpleNamespace(
+                enabled=mlflow_enabled,
+                tracking_uri=mlflow_tracking_uri,
+                registry_uri=mlflow_registry_uri,
+                experiment_name=mlflow_experiment_name,
+                timeout_seconds=mlflow_timeout_seconds,
+            )
+        )
+
         self.telemetry = SimpleNamespace(service_name=self.service_name)
         self.auth = SimpleNamespace(enabled=self.auth_enabled)
         self.pagination = SimpleNamespace(default_page_size=100, max_page_size=1000)

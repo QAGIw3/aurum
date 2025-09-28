@@ -37,6 +37,27 @@ DEFAULT_IDLE_TIMEOUT_MINUTES = 60
 DEFAULT_MAX_RUNTIME_HOURS = 8
 MAX_SESSION_HISTORY = 20
 SESSION_PERSIST_TTL = TTLPolicy.MEDIUM
+DEFAULT_SESSION_TTL_MINUTES = 240
+DEFAULT_STORAGE_QUOTA_GB = 50
+BYTES_PER_GIB = 1024 ** 3
+BYTES_PER_GIB = 1024 ** 3
+
+
+class StorageQuotaExceeded(RuntimeError):
+    """Raised when a tenant exceeds the configured storage quota."""
+
+    def __init__(self, tenant_id: str, quota_bytes: int, requested_bytes: int, current_bytes: int):
+        self.tenant_id = tenant_id
+        self.quota_bytes = quota_bytes
+        self.requested_bytes = requested_bytes
+        self.current_bytes = current_bytes
+        quota_gb = quota_bytes / BYTES_PER_GIB
+        requested_gb = requested_bytes / BYTES_PER_GIB
+        current_gb = current_bytes / BYTES_PER_GIB
+        super().__init__(
+            f"Tenant {tenant_id} exceeds storage quota of {quota_gb} GiB "
+            f"(current={current_gb:.2f} GiB, requested={requested_gb:.2f} GiB)"
+        )
 
 
 class NotebookEnvironment(BaseModel):
@@ -97,6 +118,7 @@ class NotebookSession(BaseModel):
     pod_ip: Optional[str] = None
     start_time: Optional[datetime] = None
     last_activity: Optional[datetime] = None
+    expires_at: Optional[datetime] = None
     resource_usage: Dict[str, Any] = Field(default_factory=dict)
     error_message: Optional[str] = None
     notebook_url: Optional[str] = None
@@ -184,6 +206,7 @@ class DeveloperWorkspaceService:
         # Environment snapshots for auditing
         self._environment_versions: Dict[str, List[Dict[str, Any]]] = defaultdict(list)
         self._session_versions: Dict[str, List[Dict[str, Any]]] = defaultdict(list)
+        self._tenant_storage_quota_gb: Dict[str, int] = {}
 
         # Defer API documentation loading until first use
         self._api_documentation_cache = {}
@@ -718,6 +741,8 @@ class DeveloperWorkspaceService:
         configuration = configuration or {}
 
         await self._ensure_environments_loaded()
+        self._ensure_storage_quota_initialized(tenant_id)
+        self._enforce_storage_quota(tenant_id, configuration)
         session_id = str(uuid4())
 
         # Get environment
@@ -733,10 +758,14 @@ class DeveloperWorkspaceService:
             tenant_id=tenant_id,
             status="starting",
             start_time=datetime.utcnow(),
-            last_activity=datetime.utcnow()
+            last_activity=datetime.utcnow(),
+            expires_at=datetime.utcnow() + timedelta(minutes=DEFAULT_SESSION_TTL_MINUTES)
         )
 
         self._sessions[session_id] = session
+        notebook_size_bytes = int(configuration.get("estimated_notebook_size_bytes", 0))
+        self._track_tenant_storage_usage(tenant_id, notebook_size_bytes)
+
         self._session_metadata[session_id] = {
             "session_id": session_id,
             "tenant_id": tenant_id,
@@ -745,6 +774,7 @@ class DeveloperWorkspaceService:
             "created_at": session.start_time.isoformat(),
             "status_history": [(session.status, session.start_time.isoformat())],
             "configuration": configuration,
+            "notebook_size_bytes": notebook_size_bytes,
         }
         self._session_versions.setdefault(session_id, [])
 
@@ -788,6 +818,15 @@ class DeveloperWorkspaceService:
             while session.status == "running":
                 await asyncio.sleep(self._session_monitor_interval_seconds)
 
+                if session.expires_at and datetime.utcnow() >= session.expires_at:
+                session.status = "expired"
+                self.telemetry.info(
+                    "Notebook session expired",
+                    session_id=session_id,
+                    expires_at=session.expires_at.isoformat()
+                )
+                await self._stop_notebook_session(session_id, reason="expired")
+                break
                 # Update last activity
                 session.last_activity = datetime.utcnow()
 
@@ -849,6 +888,9 @@ class DeveloperWorkspaceService:
         self._record_session_status(session_id, session.status)
         await self._persist_session(session_id)
 
+        notebook_size_bytes = self._session_metadata.get(session_id, {}).get("notebook_size_bytes", 0)
+        self._release_tenant_storage_usage(session.tenant_id, notebook_size_bytes)
+
         self.telemetry.info(
             "Notebook session stopped",
             session_id=session_id,
@@ -861,6 +903,9 @@ class DeveloperWorkspaceService:
         )
 
         await self._delete_session_from_cache(session_id)
+
+        session_resource_key = self._session_resource_key(session)
+        await self.cache_manager.delete(session_resource_key, namespace=CacheNamespace.USER_DATA)
 
     async def get_session_status(self, session_id: str) -> Optional[NotebookSession]:
         """Get notebook session status."""

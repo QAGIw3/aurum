@@ -104,12 +104,13 @@ from __future__ import annotations
 import asyncio
 import logging
 from datetime import datetime, timedelta
-from typing import Any, Dict, List, Optional, Tuple
+from pathlib import Path
+from typing import Any, Dict, List, Mapping, Optional, Tuple, Union
 from uuid import uuid4
 
 from pydantic import BaseModel, Field
 
-from ..telemetry.context import get_request_id, get_tenant_id, log_structured
+from ..telemetry.context import get_request_id, get_tenant_id, get_user_id, log_structured
 from ..observability.telemetry_facade import get_telemetry_facade, MetricCategory
 from ..cache.consolidated_manager import get_unified_cache_manager
 from .feature_store_service import get_feature_store_service
@@ -223,6 +224,28 @@ class ModelComparison(BaseModel):
     notes: str = ""
 
 
+class AuditMetadata(BaseModel):
+    """Audit metadata captured for model registry operations."""
+
+    requested_by: Optional[str] = None
+    tenant_id: Optional[str] = None
+    request_id: Optional[str] = None
+    source: Optional[str] = "model_registry_service"
+    notes: Optional[str] = None
+    tags: Dict[str, Any] = Field(default_factory=dict)
+
+
+class AuditRecord(BaseModel):
+    """Audit record describing a model registry action."""
+
+    event_id: str = Field(default_factory=lambda: str(uuid4()))
+    action: str
+    model_name: str
+    reference: Dict[str, Any] = Field(default_factory=dict)
+    audit: AuditMetadata
+    timestamp: datetime = Field(default_factory=datetime.utcnow)
+
+
 class RetrainSchedule(BaseModel):
     """Schedule for model retraining."""
 
@@ -273,6 +296,19 @@ class RegisteredModel(BaseModel):
     def total_versions(self) -> int:
         """Return the number of tracked versions."""
         return len(self.versions)
+
+
+class ChampionChallengerSelection(BaseModel):
+    """Selection pairing of champion and challenger candidates."""
+
+    selection_id: str
+    model_name: str
+    champion_version_id: Optional[str]
+    challenger_version_id: Optional[str]
+    champion: Optional[ModelVersion]
+    challenger: Optional[ModelVersion]
+    criteria: Dict[str, Any] = Field(default_factory=dict)
+    created_at: datetime = Field(default_factory=datetime.utcnow)
 
 class ModelRegistryDAO(TrinoDAO):
     """DAO for model registry operations using Trino."""
@@ -383,7 +419,8 @@ class ModelRegistryService:
             mlflow_config: Optional MLflow configuration
             dao: Optional DAO for persistence
         """
-        self.mlflow_config = mlflow_config or {}
+        self.logger = logging.getLogger(__name__)
+        self.mlflow_config = self._normalize_mlflow_config(mlflow_config)
         self.dao = dao or ModelRegistryDAO()
 
         # Model storage
@@ -392,17 +429,24 @@ class ModelRegistryService:
         self.training_jobs: Dict[str, TrainingJob] = {}
         self.schedules: Dict[str, RetrainSchedule] = {}
         self.comparisons: Dict[str, ModelComparison] = {}
+        self.selections: Dict[str, ChampionChallengerSelection] = {}
+
+        # Audit trail
+        self.audit_events: List[AuditRecord] = []
+        self._audit_events_by_reference: Dict[Tuple[str, str], AuditRecord] = {}
+        self._latest_audit_event_by_action: Dict[str, AuditRecord] = {}
 
         # Background tasks
         self._scheduler_task: Optional[asyncio.Task] = None
         self._trainer_task: Optional[asyncio.Task] = None
         self._shutdown_event = asyncio.Event()
+        self._last_scheduler_heartbeat: Optional[datetime] = None
+        self._last_trainer_heartbeat: Optional[datetime] = None
 
         # MLflow integration
         self.mlflow_client = None
         self._initialize_mlflow()
 
-        self.logger = logging.getLogger(__name__)
         telemetry = get_telemetry_facade()
         self.telemetry = telemetry if telemetry is not None else _NoOpTelemetry()
 
@@ -411,16 +455,74 @@ class ModelRegistryService:
             self.mlflow_client is not None,
         )
 
+    @staticmethod
+    def _normalize_mlflow_config(config: Optional[Dict[str, Any]]) -> Dict[str, Any]:
+        """Return a sanitized MLflow configuration dictionary."""
+
+        if not config:
+            return {}
+
+        normalized: Dict[str, Any] = {}
+        for key, value in config.items():
+            if key == "enabled":
+                normalized[key] = bool(value)
+            elif value is not None and value != "":
+                normalized[key] = value
+
+        return normalized
+
     def _initialize_mlflow(self) -> None:
         """Initialize MLflow client."""
+
+        self.mlflow_client = None
+
+        if not self.mlflow_config or not self.mlflow_config.get("enabled", False):
+            self.logger.debug("MLflow integration disabled for model registry service")
+            return
+
         try:
-            if self.mlflow_config.get("enabled", False):
-                import mlflow
-                mlflow.set_tracking_uri(self.mlflow_config.get("tracking_uri", "http://localhost:5000"))
-                self.mlflow_client = mlflow
-                self.logger.info("MLflow client initialized")
-        except Exception as e:
-            self.logger.warning("MLflow initialization failed", error=str(e))
+            import mlflow
+
+            tracking_uri = self.mlflow_config.get("tracking_uri") or "http://localhost:5000"
+            registry_uri = self.mlflow_config.get("registry_uri")
+            experiment_name = self.mlflow_config.get("experiment_name")
+
+            mlflow.set_tracking_uri(tracking_uri)
+            if registry_uri:
+                mlflow.set_registry_uri(registry_uri)
+
+            if experiment_name:
+                try:
+                    mlflow.set_experiment(experiment_name)
+                except Exception:
+                    self.logger.warning(
+                        "Unable to set MLflow experiment '%s'", experiment_name, exc_info=True
+                    )
+
+            self.mlflow_client = mlflow
+            self.logger.info(
+                "MLflow client initialized (tracking_uri=%s, registry_uri=%s, experiment=%s)",
+                tracking_uri,
+                registry_uri,
+                experiment_name,
+            )
+
+        except Exception:
+            self.logger.warning("MLflow initialization failed", exc_info=True)
+
+    def update_mlflow_config(self, mlflow_config: Optional[Dict[str, Any]]) -> None:
+        """Update MLflow configuration and reinitialize the client if needed."""
+
+        if mlflow_config is None:
+            return
+
+        normalized = self._normalize_mlflow_config(mlflow_config)
+        if normalized == self.mlflow_config:
+            return
+
+        self.mlflow_config = normalized
+        self.logger.info("Updating MLflow configuration (enabled=%s)", normalized.get("enabled", False))
+        self._initialize_mlflow()
 
     def _get_model_record(self, model_name: str) -> Optional[RegisteredModel]:
         """Return registered model metadata if available."""
@@ -468,6 +570,105 @@ class ModelRegistryService:
         model.updated_at = datetime.utcnow()
         return model
 
+    def _build_audit_metadata(
+        self,
+        audit_metadata: Optional[Union[AuditMetadata, Mapping[str, Any]]] = None
+    ) -> AuditMetadata:
+        """Construct audit metadata from provided overrides and context vars."""
+
+        base = {
+            "requested_by": get_user_id(),
+            "tenant_id": get_tenant_id(),
+            "request_id": get_request_id(),
+            "source": "model_registry_service",
+        }
+
+        overrides: Dict[str, Any] = {}
+
+        if isinstance(audit_metadata, AuditMetadata):
+            overrides = {
+                key: value
+                for key, value in audit_metadata.dict(exclude_unset=True).items()
+                if value is not None
+            }
+        elif isinstance(audit_metadata, Mapping):
+            overrides = {key: value for key, value in audit_metadata.items() if value is not None}
+
+        overrides.setdefault("source", overrides.get("source") or "model_registry_service")
+        base.update(overrides)
+
+        return AuditMetadata(**base)
+
+    def _record_audit_event(
+        self,
+        action: str,
+        model_name: str,
+        reference: Optional[Dict[str, Any]] = None,
+        audit_metadata: Optional[Union[AuditMetadata, Mapping[str, Any]]] = None,
+    ) -> AuditRecord:
+        """Record and return an audit event for the model registry."""
+
+        metadata = self._build_audit_metadata(audit_metadata)
+        record = AuditRecord(
+            action=action,
+            model_name=model_name,
+            reference=reference or {},
+            audit=metadata,
+        )
+
+        self.audit_events.append(record)
+
+        reference_id: Optional[str] = None
+        for candidate_key in ("version_id", "comparison_id", "selection_id", "job_id"):
+            value = record.reference.get(candidate_key)
+            if value:
+                reference_id = str(value)
+                self._audit_events_by_reference[(action, reference_id)] = record
+                break
+
+        self._latest_audit_event_by_action[action] = record
+
+        log_structured(
+            "info",
+            "model_registry_audit_event",
+            action=action,
+            model_name=model_name,
+            reference=record.reference,
+            requested_by=metadata.requested_by,
+            tenant_id=metadata.tenant_id,
+            request_id=metadata.request_id,
+        )
+
+        return record
+
+    def get_audit_events(
+        self,
+        action: Optional[str] = None,
+        limit: int = 50,
+        offset: int = 0
+    ) -> List[AuditRecord]:
+        """Return audit events filtered by action."""
+
+        events = [event for event in self.audit_events if action is None or event.action == action]
+        events.sort(key=lambda event: event.timestamp, reverse=True)
+
+        if offset:
+            events = events[offset:]
+
+        return events[:limit]
+
+    def get_latest_audit_event(
+        self,
+        action: str,
+        reference_id: Optional[str] = None
+    ) -> Optional[AuditRecord]:
+        """Return the latest audit event for an action optionally keyed by reference id."""
+
+        if reference_id is not None:
+            return self._audit_events_by_reference.get((action, str(reference_id)))
+
+        return self._latest_audit_event_by_action.get(action)
+
     def _generate_version_number(self, model_name: str) -> str:
         """Generate a semantic version identifier for a new model version."""
         model = self.models.get(model_name)
@@ -493,6 +694,59 @@ class ModelRegistryService:
         # Increment the minor version by default
         minor += 1
         return f"v{major}.{minor}"
+
+    def _merge_selection_criteria(self, overrides: Optional[Dict[str, Any]]) -> Dict[str, Any]:
+        """Merge default selection criteria with overrides."""
+
+        default_criteria = {
+            "primary_metric": "accuracy",
+            "min_accuracy": 0.8,
+            "max_model_size_mb": 1000,
+            "min_validation_score": 0.75,
+        }
+
+        if overrides:
+            for key, value in overrides.items():
+                if value is not None:
+                    default_criteria[key] = value
+
+        return default_criteria
+
+    def _collect_selection_candidates(
+        self,
+        model: RegisteredModel,
+        criteria: Dict[str, Any]
+    ) -> List[ModelVersion]:
+        """Return model versions that satisfy the supplied selection criteria."""
+
+        candidates: List[ModelVersion] = []
+        primary_metric = criteria.get("primary_metric", "accuracy")
+        min_accuracy = criteria.get("min_accuracy", 0.0)
+        max_size_bytes = None
+        if criteria.get("max_model_size_mb") is not None:
+            max_size_bytes = criteria["max_model_size_mb"] * 1024 * 1024
+        min_validation_score = criteria.get("min_validation_score", 0.0)
+
+        for version in model.versions.values():
+            if version.status not in {"active", "champion"}:
+                continue
+
+            metrics = version.performance_metrics or {}
+            validation = version.validation_results or {}
+
+            if metrics.get(primary_metric, 0.0) < float(min_accuracy):
+                continue
+
+            if max_size_bytes is not None and version.model_size_bytes > max_size_bytes:
+                continue
+
+            if validation.get("mean_cv_score", 0.0) < float(min_validation_score):
+                continue
+
+            candidates.append(version)
+
+        return candidates
+
 
     async def start(self) -> None:
         """Start the model registry service."""
@@ -581,6 +835,7 @@ class ModelRegistryService:
         """Background task for scheduled model retraining."""
         while not self._shutdown_event.is_set():
             try:
+                self._last_scheduler_heartbeat = datetime.utcnow()
                 current_time = datetime.utcnow()
 
                 # Check all schedules
@@ -640,6 +895,7 @@ class ModelRegistryService:
         """Background task for executing training jobs."""
         while not self._shutdown_event.is_set():
             try:
+                self._last_trainer_heartbeat = datetime.utcnow()
                 # Find pending training jobs
                 pending_jobs = [
                     job for job in self.training_jobs.values()
@@ -1029,7 +1285,11 @@ class ModelRegistryService:
 
         return self.training_jobs.get(job_id)
 
-    async def register_model_version(self, version: ModelVersion) -> ModelVersion:
+    async def register_model_version(
+        self,
+        version: ModelVersion,
+        audit_metadata: Optional[Union[AuditMetadata, Mapping[str, Any]]] = None
+    ) -> ModelVersion:
         """Register a model version in the registry and persist metadata."""
 
         try:
@@ -1042,15 +1302,36 @@ class ModelRegistryService:
             )
 
             # Persist to MLflow if configured
+            mlflow_logged = False
             if self.mlflow_client:
-                with self.mlflow_client.start_run():
-                    self.mlflow_client.log_params(version.config.hyperparameters)
-                    self.mlflow_client.log_metrics(version.performance_metrics)
-                    self.mlflow_client.log_artifact(version.model_path)
+                try:
+                    with self.mlflow_client.start_run():
+                        self.mlflow_client.log_params(version.config.hyperparameters)
+                        self.mlflow_client.log_metrics(version.performance_metrics)
+
+                        model_path = version.model_path
+                        path_obj = Path(model_path) if model_path else None
+                        if path_obj and path_obj.exists():
+                            self.mlflow_client.log_artifact(str(path_obj))
+                        else:
+                            self.logger.debug(
+                                "Skipping MLflow artifact logging; path not found for model %s version %s",
+                                version.model_name,
+                                version.version_number,
+                            )
+
+                    mlflow_logged = True
+                except Exception:
+                    self.logger.warning(
+                        "Failed to persist model version %s to MLflow",
+                        version.version_id,
+                        exc_info=True,
+                    )
 
             # Store locally and update indices
             model.add_version(version)
             self.version_index[version.version_id] = version
+            version.metadata.setdefault("mlflow_logged", mlflow_logged)
 
             if version.status == "champion":
                 model.champion_version_id = version.version_id
@@ -1066,6 +1347,17 @@ class ModelRegistryService:
                 version=version.version_number,
                 metrics=version.performance_metrics,
                 total_versions=len(model.versions)
+            )
+
+            self._record_audit_event(
+                action="register_model_version",
+                model_name=version.model_name,
+                reference={
+                    "version_id": version.version_id,
+                    "version_number": version.version_number,
+                    "mlflow_logged": mlflow_logged,
+                },
+                audit_metadata=audit_metadata,
             )
 
             return version
@@ -1159,7 +1451,8 @@ class ModelRegistryService:
         model_name: str,
         champion_version: str,
         challenger_version: str,
-        test_data: Optional[Tuple[Dict[str, List[float]], List[float]]] = None
+        test_data: Optional[Tuple[Dict[str, List[float]], List[float]]] = None,
+        audit_metadata: Optional[Union[AuditMetadata, Mapping[str, Any]]] = None
     ) -> ModelComparison:
         """Compare two model versions for champion/challenger testing.
 
@@ -1278,13 +1571,30 @@ class ModelRegistryService:
                 recommendation=recommendation
             )
 
+            self._record_audit_event(
+                action="compare_models",
+                model_name=model_name,
+                reference={
+                    "comparison_id": comparison_id,
+                    "champion_version": champion_version,
+                    "challenger_version": challenger_version,
+                    "recommendation": recommendation,
+                },
+                audit_metadata=audit_metadata,
+            )
+
             return comparison
 
         except Exception as e:
             self.telemetry.error("Model comparison failed", error=str(e))
             raise
 
-    def promote_model(self, model_name: str, version: str) -> bool:
+    def promote_model(
+        self,
+        model_name: str,
+        version: str,
+        audit_metadata: Optional[Union[AuditMetadata, Mapping[str, Any]]] = None
+    ) -> bool:
         """Promote a model version to production.
 
         Args:
@@ -1322,6 +1632,17 @@ class ModelRegistryService:
                 model_name=model_name,
                 version=version,
                 version_id=target_version.version_id
+            )
+
+            self._record_audit_event(
+                action="promote_model",
+                model_name=model_name,
+                reference={
+                    "version_id": target_version.version_id,
+                    "version_number": version,
+                    "status": target_version.status,
+                },
+                audit_metadata=audit_metadata,
             )
 
             return True
@@ -1401,6 +1722,46 @@ class ModelRegistryService:
         """
         return self.training_jobs.get(job_id)
 
+    @staticmethod
+    def _task_state(task: Optional[asyncio.Task]) -> str:
+        """Return a human-readable state for an asyncio task."""
+
+        if task is None:
+            return "idle"
+        if task.cancelled():
+            return "cancelled"
+        if task.done():
+            return "stopped"
+        return "running"
+
+    def get_background_job_status(self) -> Dict[str, Any]:
+        """Return status information for background scheduler and trainer jobs."""
+
+        pending = running = completed = failed = cancelled = 0
+        for job in self.training_jobs.values():
+            if job.status == "pending":
+                pending += 1
+            elif job.status == "running":
+                running += 1
+            elif job.status == "completed":
+                completed += 1
+            elif job.status == "failed":
+                failed += 1
+            elif job.status == "cancelled":
+                cancelled += 1
+
+        return {
+            "scheduler_state": self._task_state(self._scheduler_task),
+            "trainer_state": self._task_state(self._trainer_task),
+            "pending_jobs": pending,
+            "running_jobs": running,
+            "completed_jobs": completed,
+            "failed_jobs": failed,
+            "cancelled_jobs": cancelled,
+            "last_scheduler_heartbeat": self._last_scheduler_heartbeat,
+            "last_trainer_heartbeat": self._last_trainer_heartbeat,
+        }
+
     def get_model_performance(self, model_name: str, version: str) -> Optional[Dict[str, float]]:
         """Get performance metrics for a model version.
 
@@ -1448,7 +1809,8 @@ class ModelRegistryService:
     async def select_champion_model(
         self,
         model_name: str,
-        selection_criteria: Optional[Dict[str, Any]] = None
+        selection_criteria: Optional[Dict[str, Any]] = None,
+        audit_metadata: Optional[Union[AuditMetadata, Mapping[str, Any]]] = None
     ) -> Optional[ModelVersion]:
         """Automatically select champion model based on performance criteria.
 
@@ -1475,37 +1837,9 @@ class ModelRegistryService:
                 self.telemetry.warning(f"No active model versions found for {model_name}")
                 return None
 
-            # Default selection criteria
-            default_criteria = {
-                "primary_metric": "accuracy",
-                "min_accuracy": 0.8,
-                "max_model_size_mb": 1000,
-                "min_validation_score": 0.75
-            }
-            
-            criteria = {**default_criteria, **(selection_criteria or {})}
-            
-            # Filter models based on criteria
-            eligible_models = []
-            for version in active_versions:
-                metrics = version.performance_metrics
-                validation = version.validation_results
-                
-                # Check minimum accuracy
-                if metrics.get(criteria["primary_metric"], 0) < criteria["min_accuracy"]:
-                    continue
-                
-                # Check model size
-                if version.model_size_bytes > criteria["max_model_size_mb"] * 1024 * 1024:
-                    continue
-                
-                # Check validation score
-                mean_cv_score = validation.get("mean_cv_score", 0)
-                if mean_cv_score < criteria["min_validation_score"]:
-                    continue
-                
-                eligible_models.append(version)
-            
+            criteria = self._merge_selection_criteria(selection_criteria)
+            eligible_models = self._collect_selection_candidates(model, criteria)
+
             if not eligible_models:
                 self.telemetry.warning(f"No models meet champion selection criteria for {model_name}")
                 return None
@@ -1513,18 +1847,37 @@ class ModelRegistryService:
             # Select the best model based on primary metric
             champion = max(
                 eligible_models,
-                key=lambda v: v.performance_metrics.get(criteria["primary_metric"], 0)
+                key=lambda v: (
+                    v.performance_metrics.get(criteria.get("primary_metric", "accuracy"), 0),
+                    v.created_at,
+                )
+            )
+            champion.champion_score = champion.performance_metrics.get(
+                criteria.get("primary_metric", "accuracy"),
+                0,
             )
             
             self.telemetry.info(
                 "Champion model selected",
                 model_name=model_name,
                 champion_version=champion.version_number,
-                primary_metric_value=champion.performance_metrics.get(criteria["primary_metric"])
+                primary_metric_value=champion.performance_metrics.get(criteria.get("primary_metric", "accuracy")),
+                candidate_count=len(eligible_models)
             )
             
             model.champion_version_id = champion.version_id
             model.updated_at = datetime.utcnow()
+
+            self._record_audit_event(
+                action="select_champion_model",
+                model_name=model_name,
+                reference={
+                    "version_id": champion.version_id,
+                    "version_number": champion.version_number,
+                    "criteria": criteria,
+                },
+                audit_metadata=audit_metadata,
+            )
 
             return champion
 
@@ -1532,7 +1885,89 @@ class ModelRegistryService:
             self.telemetry.error("Failed to select champion model", error=str(e))
             return None
 
-    async def promote_to_champion(self, model_name: str, version_id: str) -> bool:
+    async def select_champion_challenger(
+        self,
+        model_name: str,
+        selection_criteria: Optional[Dict[str, Any]] = None,
+        audit_metadata: Optional[Union[AuditMetadata, Mapping[str, Any]]] = None
+    ) -> Optional[ChampionChallengerSelection]:
+        """Select a champion and challenger pairing for a model."""
+
+        try:
+            champion = await self.select_champion_model(
+                model_name=model_name,
+                selection_criteria=selection_criteria,
+                audit_metadata=audit_metadata,
+            )
+
+            if champion is None:
+                return None
+
+            model = self._get_model_record(model_name)
+            if not model:
+                return None
+
+            criteria = self._merge_selection_criteria(selection_criteria)
+            candidates = self._collect_selection_candidates(model, criteria)
+            remaining = [candidate for candidate in candidates if candidate.version_id != champion.version_id]
+
+            challenger: Optional[ModelVersion] = None
+            if remaining:
+                challenger = max(
+                    remaining,
+                    key=lambda v: (
+                        v.performance_metrics.get(criteria.get("primary_metric", "accuracy"), 0),
+                        v.created_at,
+                    ),
+                )
+                challenger.champion_score = challenger.performance_metrics.get(
+                    criteria.get("primary_metric", "accuracy"),
+                    0,
+                )
+
+            selection = ChampionChallengerSelection(
+                selection_id=str(uuid4()),
+                model_name=model_name,
+                champion_version_id=champion.version_id,
+                challenger_version_id=challenger.version_id if challenger else None,
+                champion=champion,
+                challenger=challenger,
+                criteria=criteria,
+            )
+
+            self.selections[selection.selection_id] = selection
+
+            self.telemetry.info(
+                "Champion/challenger selection completed",
+                model_name=model_name,
+                champion_version=champion.version_number,
+                challenger_version=challenger.version_number if challenger else None,
+            )
+
+            self._record_audit_event(
+                action="select_champion_challenger",
+                model_name=model_name,
+                reference={
+                    "selection_id": selection.selection_id,
+                    "champion_version": champion.version_id,
+                    "challenger_version": challenger.version_id if challenger else None,
+                    "criteria": criteria,
+                },
+                audit_metadata=audit_metadata,
+            )
+
+            return selection
+
+        except Exception as exc:
+            self.telemetry.error("Failed to select champion/challenger pair", error=str(exc))
+            return None
+
+    async def promote_to_champion(
+        self,
+        model_name: str,
+        version_id: str,
+        audit_metadata: Optional[Union[AuditMetadata, Mapping[str, Any]]] = None
+    ) -> bool:
         """Promote a specific model version to champion status.
 
         Args:
@@ -1579,7 +2014,17 @@ class ModelRegistryService:
                 version=target_version.version_number,
                 version_id=version_id
             )
-            
+
+            self._record_audit_event(
+                action="promote_to_champion",
+                model_name=model_name,
+                reference={
+                    "version_id": version_id,
+                    "version_number": target_version.version_number,
+                },
+                audit_metadata=audit_metadata,
+            )
+
             return True
 
         except Exception as e:
@@ -1598,12 +2043,56 @@ class ModelRegistryService:
             "models_count": sum(len(model.versions) for model in self.models.values()),
             "training_jobs_count": len(self.training_jobs),
             "schedules_count": len(self.schedules),
-            "mlflow_enabled": self.mlflow_client is not None
+            "mlflow_enabled": self.mlflow_client is not None,
+            "background_jobs": self.get_background_job_status()
         }
 
 
 # Global model registry service instance
 _model_registry_service: Optional[ModelRegistryService] = None
+
+
+def _load_mlflow_config_from_settings() -> Dict[str, Any]:
+    """Load MLflow configuration from global settings if available."""
+
+    try:
+        from aurum.core.settings import get_settings as core_get_settings
+
+        settings = core_get_settings()
+        registry_settings = getattr(settings, "model_registry", None)
+        if not registry_settings:
+            return {}
+
+        mlflow_settings = getattr(registry_settings, "mlflow", None)
+        if not mlflow_settings:
+            return {}
+
+        config: Dict[str, Any] = {}
+        enabled = getattr(mlflow_settings, "enabled", None)
+        if enabled is not None:
+            config["enabled"] = bool(enabled)
+
+        tracking_uri = getattr(mlflow_settings, "tracking_uri", None)
+        if tracking_uri:
+            config["tracking_uri"] = tracking_uri
+
+        registry_uri = getattr(mlflow_settings, "registry_uri", None)
+        if registry_uri:
+            config["registry_uri"] = registry_uri
+
+        experiment_name = getattr(mlflow_settings, "experiment_name", None)
+        if experiment_name:
+            config["experiment_name"] = experiment_name
+
+        timeout_seconds = getattr(mlflow_settings, "timeout_seconds", None)
+        if timeout_seconds is not None:
+            config["timeout_seconds"] = timeout_seconds
+
+        return config
+
+    except Exception:
+        # Settings may not be configured in unit tests
+        return {}
 
 
 def get_model_registry_service(
@@ -1619,8 +2108,16 @@ def get_model_registry_service(
     """
     global _model_registry_service
 
+    resolved_config = mlflow_config if mlflow_config is not None else _load_mlflow_config_from_settings()
+
     if _model_registry_service is None:
-        _model_registry_service = ModelRegistryService(mlflow_config=mlflow_config)
+        config_to_use = resolved_config if resolved_config else None
+        _model_registry_service = ModelRegistryService(mlflow_config=config_to_use)
+    else:
+        if mlflow_config is not None:
+            _model_registry_service.update_mlflow_config(resolved_config)
+        elif resolved_config and not _model_registry_service.mlflow_config:
+            _model_registry_service.update_mlflow_config(resolved_config)
 
     return _model_registry_service
 

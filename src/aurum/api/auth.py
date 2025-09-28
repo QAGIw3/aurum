@@ -46,6 +46,10 @@ class Permission(str, Enum):
     RATE_LIMIT_MANAGE = "admin:rate_limits"
     TRINO_ADMIN = "admin:trino"
 
+    # Developer workspace
+    DEVELOPER_WORKSPACE_READ = "developer_workspace:read"
+    DEVELOPER_WORKSPACE_WRITE = "developer_workspace:write"
+
     # Tenant management
     TENANT_MANAGE = "tenant:manage"
 
@@ -74,11 +78,13 @@ class AuthorizationConfig:
                 Role.USER: {
                     Permission.CURVES_READ,
                     Permission.SCENARIOS_READ,
+                    Permission.DEVELOPER_WORKSPACE_READ,
                 },
                 Role.ANALYST: {
                     Permission.CURVES_READ,
                     Permission.SCENARIOS_READ,
                     Permission.SCENARIOS_RUN,
+                    Permission.DEVELOPER_WORKSPACE_READ,
                 },
                 Role.TRADER: {
                     Permission.CURVES_READ,
@@ -87,6 +93,8 @@ class AuthorizationConfig:
                     Permission.SCENARIOS_WRITE,
                     Permission.SCENARIOS_RUN,
                     Permission.SCENARIOS_DELETE,
+                    Permission.DEVELOPER_WORKSPACE_READ,
+                    Permission.DEVELOPER_WORKSPACE_WRITE,
                 },
                 Role.ADMIN: {
                     Permission.CURVES_READ,
@@ -99,6 +107,8 @@ class AuthorizationConfig:
                     Permission.FEATURE_FLAGS_MANAGE,
                     Permission.RATE_LIMIT_MANAGE,
                     Permission.TRINO_ADMIN,
+                    Permission.DEVELOPER_WORKSPACE_READ,
+                    Permission.DEVELOPER_WORKSPACE_WRITE,
                 },
                 Role.SUPER_ADMIN: {
                     Permission.CURVES_READ,
@@ -113,6 +123,8 @@ class AuthorizationConfig:
                     Permission.RATE_LIMIT_MANAGE,
                     Permission.TRINO_ADMIN,
                     Permission.TENANT_MANAGE,
+                    Permission.DEVELOPER_WORKSPACE_READ,
+                    Permission.DEVELOPER_WORKSPACE_WRITE,
                 },
             },
             admin_groups={"admin", "administrator", "superuser"},

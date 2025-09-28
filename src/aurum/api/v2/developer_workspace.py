@@ -15,10 +15,11 @@ from datetime import datetime
 from typing import Dict, List, Optional
 from uuid import uuid4
 
-from fastapi import APIRouter, HTTPException, Query, Request, Response, Depends
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response
 from pydantic import BaseModel, Field
 
-from ..deps import get_settings
+from ..auth import Permission, require_permission
+from ..deps import get_principal, get_settings
 from ..services.developer_workspace_service import (
     get_developer_workspace_service,
     NotebookEnvironment,
@@ -231,17 +232,23 @@ async def list_environments(
 @router.post("/sessions", response_model=Dict[str, any], status_code=201)
 async def create_notebook_session(
     request: Request,
-    session_data: SessionCreateRequest
+    session_data: SessionCreateRequest,
+    principal: Dict[str, Any] | None = Depends(get_principal)
 ) -> Dict[str, any]:
     """Create a new notebook session."""
     start_time = time.perf_counter()
 
     try:
+        if not principal:
+            raise HTTPException(status_code=401, detail="Unauthorized")
+
         from ..services.developer_workspace_service import create_notebook_session
 
         # Get user and tenant from request (mock)
-        user_id = "user_123"  # Would extract from auth
-        tenant_id = "tenant_123"  # Would extract from auth
+        user_id = principal.get("sub") or principal.get("email") or "unknown"
+        tenant_id = principal.get("tenant") or "default"
+
+        require_permission(principal, Permission.DEVELOPER_WORKSPACE_WRITE, tenant_id)
 
         # Create session
         session_id = await create_notebook_session(
@@ -296,17 +303,23 @@ async def create_notebook_session(
 @router.get("/sessions/{session_id}", response_model=SessionResponse)
 async def get_session_status(
     request: Request,
-    session_id: str
+    session_id: str,
+    principal: Dict[str, Any] | None = Depends(get_principal)
 ) -> SessionResponse:
     """Get notebook session status."""
     start_time = time.perf_counter()
 
     try:
+        if not principal:
+            raise HTTPException(status_code=401, detail="Unauthorized")
+
         service = get_developer_workspace_service()
         session = await service.get_session_status(session_id)
 
         if not session:
             raise HTTPException(status_code=404, detail="Session not found")
+
+        require_permission(principal, Permission.DEVELOPER_WORKSPACE_READ, session.tenant_id)
 
         query_time_ms = (time.perf_counter() - start_time) * 1000
 

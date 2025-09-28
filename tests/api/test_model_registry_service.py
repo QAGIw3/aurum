@@ -183,3 +183,100 @@ async def test_list_retrain_schedules_filters_enabled(model_registry_service: Mo
     all_schedules = await model_registry_service.list_retrain_schedules()
     identifiers = {schedule.schedule_id for schedule in all_schedules}
     assert disabled_id in identifiers
+
+
+@pytest.mark.asyncio
+async def test_audit_metadata_recorded_for_register_compare_promote(
+    model_registry_service: ModelRegistryService
+) -> None:
+    """Audit trail should capture register, compare, and promote operations."""
+
+    register_audit = {"requested_by": "qa-user", "tenant_id": "tenant-a", "request_id": "req-1"}
+    champion = _build_version("audit_model", "v1.0", accuracy=0.82)
+    challenger = _build_version("audit_model", "v2.0", accuracy=0.91)
+
+    registered = await model_registry_service.register_model_version(champion, audit_metadata=register_audit)
+    await model_registry_service.register_model_version(
+        challenger,
+        audit_metadata={"requested_by": "analyst", "tenant_id": "tenant-a"},
+    )
+
+    register_event = model_registry_service.get_latest_audit_event(
+        "register_model_version",
+        registered.version_id,
+    )
+    assert register_event is not None
+    assert register_event.audit.requested_by == "qa-user"
+    assert register_event.reference["version_id"] == registered.version_id
+
+    comparison = await model_registry_service.compare_models(
+        model_name="audit_model",
+        champion_version=registered.version_id,
+        challenger_version=challenger.version_id,
+        audit_metadata={"requested_by": "analyst", "notes": "side-by-side"},
+    )
+
+    compare_event = model_registry_service.get_latest_audit_event(
+        "compare_models",
+        comparison.comparison_id,
+    )
+    assert compare_event is not None
+    assert compare_event.audit.requested_by == "analyst"
+    assert compare_event.reference["challenger_version"] == challenger.version_id
+
+    promoted = model_registry_service.promote_model(
+        "audit_model",
+        challenger.version_number,
+        audit_metadata={"requested_by": "lead"},
+    )
+    assert promoted is True
+
+    promote_event = model_registry_service.get_latest_audit_event(
+        "promote_model",
+        challenger.version_id,
+    )
+    assert promote_event is not None
+    assert promote_event.audit.requested_by == "lead"
+    assert promote_event.reference["status"] == "champion"
+
+
+def test_background_job_status_exposes_counts(model_registry_service: ModelRegistryService) -> None:
+    """Background job status should reflect idle state with zero counts by default."""
+
+    status = model_registry_service.get_background_job_status()
+
+    assert status["scheduler_state"] == "idle"
+    assert status["trainer_state"] == "idle"
+    assert status["pending_jobs"] == 0
+    assert status["running_jobs"] == 0
+    assert status["completed_jobs"] == 0
+
+
+@pytest.mark.asyncio
+async def test_select_champion_challenger_returns_pair(
+    model_registry_service: ModelRegistryService
+) -> None:
+    """Champion/challenger selection should return both candidates and record audit."""
+
+    base = _build_version("pair_model", "v1.0", accuracy=0.80)
+    upgraded = _build_version("pair_model", "v2.0", accuracy=0.93)
+
+    await model_registry_service.register_model_version(base)
+    await model_registry_service.register_model_version(upgraded)
+
+    selection = await model_registry_service.select_champion_challenger(
+        "pair_model",
+        selection_criteria={"min_accuracy": 0.5},
+        audit_metadata={"requested_by": "ops"},
+    )
+
+    assert selection is not None
+    assert selection.champion_version_id == upgraded.version_id
+    assert selection.challenger_version_id == base.version_id
+
+    selection_event = model_registry_service.get_latest_audit_event(
+        "select_champion_challenger",
+        selection.selection_id,
+    )
+    assert selection_event is not None
+    assert selection_event.audit.requested_by == "ops"
