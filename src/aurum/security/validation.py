@@ -7,11 +7,10 @@ from typing import Any, Dict, Optional
 from urllib.parse import urlparse
 
 from pydantic import BaseModel, Field, validator
-from pydantic.types import ConstrainedFloat, ConstrainedInt, ConstrainedStr
 
 
 # Custom constrained types for strict validation
-class SafeString(ConstrainedStr):
+class SafeString(str):
     """String type that disallows potentially dangerous characters."""
     min_length = 0
     max_length = 10000
@@ -19,93 +18,96 @@ class SafeString(ConstrainedStr):
 
     @classmethod
     def __get_validators__(cls):
-        yield cls.validate
-
-    @classmethod
-    def validate(cls, v):
-        if not isinstance(v, str):
-            raise TypeError('string required')
-        if len(v) < cls.min_length or len(v) > cls.max_length:
-            raise ValueError(f'String length must be between {cls.min_length} and {cls.max_length}')
-        if not cls.regex.match(v):
-            raise ValueError('String contains unsafe characters')
-        return cls(v)
+        def _validate(v):
+            if not isinstance(v, str):
+                raise TypeError('string required')
+            if len(v) > 10000:
+                raise ValueError('String too long')
+            if not cls.regex.match(v):
+                raise ValueError('String contains unsafe characters')
+            return v
+        yield _validate
 
 
-class SafeIdentifier(ConstrainedStr):
+class SafeIdentifier(str):
     """Safe identifier type for API paths and resource names."""
     min_length = 1
     max_length = 100
     regex = re.compile(r'^[a-zA-Z0-9\-_]+$')
 
     @classmethod
-    def validate(cls, v):
-        if not isinstance(v, str):
-            raise TypeError('string required')
-        if len(v) < cls.min_length or len(v) > cls.max_length:
-            raise ValueError(f'Identifier length must be between {cls.min_length} and {cls.max_length}')
-        if not cls.regex.match(v):
-            raise ValueError('Identifier contains invalid characters')
-        return cls(v)
+    def __get_validators__(cls):
+        def _validate(v):
+            if not isinstance(v, str):
+                raise TypeError('string required')
+            if len(v) < 1 or len(v) > 100:
+                raise ValueError('Identifier length must be between 1 and 100')
+            if not cls.regex.match(v):
+                raise ValueError('Identifier contains invalid characters')
+            return v
+        yield _validate
 
 
-class SafePath(ConstrainedStr):
+class SafePath(str):
     """Safe path type for file paths and API paths."""
     min_length = 1
     max_length = 1000
     regex = re.compile(r'^[a-zA-Z0-9\s\-_/\.\(\)\[\]{}:;,@#$%&*!+=\[\]\'"\\|`~]*$')
 
     @classmethod
-    def validate(cls, v):
-        if not isinstance(v, str):
-            raise TypeError('string required')
-        if len(v) < cls.min_length or len(v) > cls.max_length:
-            raise ValueError(f'Path length must be between {cls.min_length} and {cls.max_length}')
-        if not cls.regex.match(v):
-            raise ValueError('Path contains unsafe characters')
-        # Prevent directory traversal
-        if '..' in v or v.startswith('/') and len(v) > 1:
-            raise ValueError('Path contains directory traversal')
-        return cls(v)
+    def __get_validators__(cls):
+        def _validate(v):
+            if not isinstance(v, str):
+                raise TypeError('string required')
+            if len(v) < 1 or len(v) > 1000:
+                raise ValueError('Path length must be between 1 and 1000')
+            if not cls.regex.match(v):
+                raise ValueError('Path contains unsafe characters')
+            if '..' in v or (v.startswith('/') and len(v) > 1):
+                raise ValueError('Path contains directory traversal')
+            return v
+        yield _validate
 
 
-class SafeURL(ConstrainedStr):
+class SafeURL(str):
     """Safe URL type that validates URL structure."""
     max_length = 2000
 
     @classmethod
-    def validate(cls, v):
-        if not isinstance(v, str):
-            raise TypeError('string required')
-        if len(v) > cls.max_length:
-            raise ValueError(f'URL too long (max {cls.max_length} characters)')
-        try:
-            parsed = urlparse(v)
-            if not parsed.scheme or not parsed.netloc:
+    def __get_validators__(cls):
+        def _validate(v):
+            if not isinstance(v, str):
+                raise TypeError('string required')
+            if len(v) > 2000:
+                raise ValueError('URL too long (max 2000 characters)')
+            try:
+                parsed = urlparse(v)
+                if not parsed.scheme or not parsed.netloc:
+                    raise ValueError('Invalid URL format')
+                if parsed.scheme not in ['http', 'https']:
+                    raise ValueError('Only HTTP/HTTPS URLs allowed')
+            except Exception:
                 raise ValueError('Invalid URL format')
-            if parsed.scheme not in ['http', 'https']:
-                raise ValueError('Only HTTP/HTTPS URLs allowed')
-        except Exception:
-            raise ValueError('Invalid URL format')
-        return cls(v)
+            return v
+        yield _validate
 
 
-class PositiveInt(ConstrainedInt):
+class PositiveInt(int):
     """Positive integer type."""
     ge = 1
 
 
-class NonNegativeInt(ConstrainedInt):
+class NonNegativeInt(int):
     """Non-negative integer type."""
     ge = 0
 
 
-class PositiveFloat(ConstrainedFloat):
+class PositiveFloat(float):
     """Positive float type."""
     gt = 0.0
 
 
-class PercentageFloat(ConstrainedFloat):
+class PercentageFloat(float):
     """Percentage float type (0-100)."""
     ge = 0.0
     le = 100.0
@@ -283,8 +285,8 @@ class RateLimitRequest(BaseRequestModel):
     """Rate limit configuration request."""
     tenant_id: SafeIdentifier = Field(..., description="Tenant identifier")
     endpoint_pattern: SafeString = Field(..., description="Endpoint pattern to rate limit")
-    requests_per_minute: PositiveInt = Field(..., description="Requests per minute limit")
-    burst_limit: PositiveInt = Field(..., description="Burst request limit")
+    requests_per_minute: int = Field(..., ge=1, description="Requests per minute limit")
+    burst_limit: int = Field(..., ge=1, description="Burst request limit")
 
 
 class SecurityAuditEvent(BaseRequestModel):

@@ -20,6 +20,14 @@ import logging
 import os
 import re
 import gzip
+import asyncio
+import inspect
+from typing import Any, Callable, Dict, Mapping, Optional, Tuple, Union
+
+try:
+    import redis
+except Exception:  # pragma: no cover - optional dependency
+    redis = None  # type: ignore[assignment]
 
 from fastapi import Depends, FastAPI, HTTPException, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
@@ -94,6 +102,12 @@ if os.getenv("PYTEST_CURRENT_TEST") or os.getenv("AURUM_ENABLE_TEST_GZIP_PATCH",
 from aurum.core import AurumSettings
 from aurum.core.settings import get_flag_env
 from aurum.telemetry import configure_telemetry
+from aurum.security.token_service import (
+    TokenService,
+    TokenServiceConfig,
+    RefreshTokenStore,
+    RedisRefreshTokenStore,
+)
 from aurum.api.models.common import (
     QueueServiceUnavailableError,
     RequestTimeoutError,
@@ -404,7 +418,7 @@ def log_api_migration_status():
     logger.info(f"API Migration Metrics: Legacy calls: {ApiMigrationMetrics.legacy_calls}, "
                 f"Simplified calls: {ApiMigrationMetrics.simplified_calls}")
 
-from typing import Any, Callable, Dict, Mapping, Optional, Tuple, Union
+# (imports already moved to the top for early availability)
 
 
 def _build_offload_predicate(
@@ -613,6 +627,55 @@ def _register_versioned_routers(app: FastAPI, settings: AurumSettings, logger: l
     return bool(included_specs)
 
 
+def _initialize_token_service(app: FastAPI, settings: AurumSettings) -> Optional["TokenService"]:
+    if not getattr(settings.auth, "token_issuer_enabled", False):
+        return None
+
+    issuer = getattr(settings.auth, "oidc_issuer", None)
+    if not issuer:
+        service_name = getattr(getattr(settings, "telemetry", None), "service_name", "aurum-api")
+        issuer = f"urn:aurum:issuer:{service_name}"
+
+    raw_audiences = tuple(getattr(settings.auth, "audiences", ()) or ())
+    if raw_audiences:
+        audiences = raw_audiences
+    else:
+        fallback = getattr(settings.auth, "oidc_audience", None)
+        audiences = tuple(value for value in (fallback, issuer) if value)
+
+    config = TokenServiceConfig(
+        issuer=issuer,
+        audiences=audiences or (issuer,),
+        access_token_ttl=getattr(settings.auth, "access_token_ttl_seconds", 900),
+        refresh_token_ttl=getattr(settings.auth, "refresh_token_ttl_seconds", 60 * 60 * 24 * 14),
+    )
+
+    store = _build_refresh_token_store(settings)
+
+    token_service = TokenService(config=config, store=store)
+    app.state.token_service = token_service
+    return token_service
+
+
+def _build_refresh_token_store(settings: AurumSettings) -> Optional[RefreshTokenStore]:
+    store_cfg = getattr(settings.auth, "refresh_store", None)
+    if store_cfg is None:
+        return None
+
+    redis_url = getattr(store_cfg, "redis_url", None)
+    if not redis_url or redis is None:
+        return None
+
+    logger = logging.getLogger(__name__)
+    try:
+        client = redis.Redis.from_url(redis_url, decode_responses=True)
+        namespace = getattr(store_cfg, "namespace", "aurum:auth:refresh_tokens")
+        return RedisRefreshTokenStore(client, namespace=namespace)
+    except Exception:  # pragma: no cover - best effort
+        logger.warning("Failed to initialize Redis refresh token store", exc_info=True)
+        return None
+
+
 class ApplicationFactory:
     """Factory for creating FastAPI applications with proper configuration."""
 
@@ -660,6 +723,37 @@ class ApplicationFactory:
         app.state.container = container
         tenant_manager, tenant_context_options = _initialize_tenant_manager(settings, container)
         app.state.tenant_manager = tenant_manager
+        token_service = _initialize_token_service(app, settings)
+
+        # Initialize feature flag manager
+        try:
+            from aurum.api.features import initialize_feature_flags
+            from aurum.cache.cache import get_cache_manager
+
+            # Get cache manager from container if available
+            cache_manager = get_cache_manager()
+            if cache_manager is None:
+                cache_manager = container.get("cache_manager") if "cache_manager" in container else None
+
+            # Get scenario store from container if available
+            scenario_store = container.get("scenario_store") if "scenario_store" in container else None
+
+            # Initialize feature flag manager
+            init_result = initialize_feature_flags(
+                redis_url=getattr(settings, "redis_url", None),
+                cache_manager=cache_manager,
+                scenario_store=scenario_store
+            )
+            feature_manager = (
+                asyncio.run(init_result)
+                if inspect.isawaitable(init_result)
+                else init_result
+            )
+            app.state.feature_manager = feature_manager
+            logger.info("Feature flag manager initialized successfully")
+        except Exception as e:
+            logger.warning(f"Failed to initialize feature flag manager: {e}")
+            # Continue without feature flag manager - will fall back to env-based checks
         app.add_exception_handler(Exception, _api_exception_handler)
         configure_routes(settings)
         # Avoid module-level/global configuration side effects
@@ -669,7 +763,12 @@ class ApplicationFactory:
 
         # Compose middleware via manager with ordering and config
         manager = MiddlewareManager()
-        manager.add_defaults(settings, tenant_manager=tenant_manager, tenant_context_options=tenant_context_options)
+        manager.add_defaults(
+            settings,
+            tenant_manager=tenant_manager,
+            tenant_context_options=tenant_context_options,
+            token_service=token_service,
+        )
         app_with_basic_middleware = manager.apply(app, settings)
 
         # Register lifecycle-managed resources and metrics endpoint
@@ -687,6 +786,13 @@ class ApplicationFactory:
             app.include_router(health_router)
         except Exception as e:
             logger.warning(f"Failed to load health router: {e}")
+
+        if token_service is not None:
+            try:
+                from aurum.api.auth_endpoints import router as auth_router
+                app.include_router(auth_router)
+            except Exception as exc:
+                logger.warning("Failed to load auth router", exc_info=exc)
 
         # Scenarios router - now handled by router registry
         # Legacy scenarios router removed in favor of v1/v2 registry-driven mounting
@@ -730,6 +836,36 @@ class ApplicationFactory:
         app.state.container = container
         tenant_manager, tenant_context_options = _initialize_tenant_manager(settings, container)
         app.state.tenant_manager = tenant_manager
+
+        # Initialize feature flag manager
+        try:
+            from aurum.api.features import initialize_feature_flags
+            from aurum.cache.cache import get_cache_manager
+
+            # Get cache manager from container if available
+            cache_manager = get_cache_manager()
+            if cache_manager is None:
+                cache_manager = container.get("cache_manager") if "cache_manager" in container else None
+
+            # Get scenario store from container if available
+            scenario_store = container.get("scenario_store") if "scenario_store" in container else None
+
+            # Initialize feature flag manager
+            init_result = initialize_feature_flags(
+                redis_url=getattr(settings, "redis_url", None),
+                cache_manager=cache_manager,
+                scenario_store=scenario_store
+            )
+            feature_manager = (
+                asyncio.run(init_result)
+                if inspect.isawaitable(init_result)
+                else init_result
+            )
+            app.state.feature_manager = feature_manager
+            logger.info("Feature flag manager initialized successfully")
+        except Exception as e:
+            logger.warning(f"Failed to initialize feature flag manager: {e}")
+            # Continue without feature flag manager - will fall back to env-based checks
         app.add_exception_handler(Exception, _api_exception_handler)
         configure_routes(settings)
         # Avoid module-level/global configuration side effects
@@ -739,7 +875,12 @@ class ApplicationFactory:
 
         # Compose middleware via manager with ordering and config
         manager = MiddlewareManager()
-        manager.add_defaults(settings, tenant_manager=tenant_manager, tenant_context_options=tenant_context_options)
+        manager.add_defaults(
+            settings,
+            tenant_manager=tenant_manager,
+            tenant_context_options=tenant_context_options,
+            token_service=token_service,
+        )
         app_with_middleware = manager.apply(app, settings)
 
         # Register lifecycle-managed resources and metrics endpoint
@@ -757,6 +898,13 @@ class ApplicationFactory:
             app.include_router(health_router)
         except Exception as e:
             logger.warning(f"Failed to load health router: {e}")
+
+        if token_service is not None:
+            try:
+                from aurum.api.auth_endpoints import router as auth_router
+                app.include_router(auth_router)
+            except Exception as exc:
+                logger.warning("Failed to load auth router", exc_info=exc)
 
         # Scenarios router - now handled by router registry
         # Legacy scenarios router removed in favor of v1/v2 registry-driven mounting

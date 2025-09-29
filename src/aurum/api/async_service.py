@@ -107,6 +107,10 @@ class AsyncService:
 
 async_service = AsyncService()
 
+# Backwards-compatible aliases expected by some tests/modules
+AsyncScenarioService = AsyncService  # type: ignore
+AsyncCurveService = AsyncService  # type: ignore
+
 
 @asynccontextmanager
 async def lifecycle() -> Awaitable[AsyncService]:

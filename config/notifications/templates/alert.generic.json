@@ -1,0 +1,15 @@
+{
+  "template_id": "alert.generic",
+  "channels": {
+    "email": {
+      "subject": "${title}",
+      "body": "${message}\n\nSeverity: ${severity}\nTimestamp: ${timestamp}"
+    },
+    "slack": {
+      "text": "*:rotating_light: ${severity}* ${title} - ${message}"
+    },
+    "sms": {
+      "text": "${severity}: ${title}"
+    }
+  }
+}

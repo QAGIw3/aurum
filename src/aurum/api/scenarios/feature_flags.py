@@ -23,6 +23,9 @@ class ScenarioOutputFeature(str, Enum):
 def is_feature_enabled(feature: str, context: Dict[str, Any] = None) -> bool:
     """Check if a feature is enabled.
 
+    This now delegates to the centralized FeatureFlagManager when available,
+    falling back to environment variables for backward compatibility.
+
     Args:
         feature: Feature name to check
         context: Optional context for feature evaluation
@@ -30,13 +33,24 @@ def is_feature_enabled(feature: str, context: Dict[str, Any] = None) -> bool:
     Returns:
         True if feature is enabled, False otherwise
     """
-    # This is a placeholder implementation
-    # In a real implementation, this would check feature flags
-    # from a configuration store or environment variables
-    import os
+    try:
+        # Try to use the centralized feature flag manager
+        from ..features import get_feature_manager
+        manager = get_feature_manager()
 
-    env_var = f"AURUM_FEATURE_{feature.upper()}"
-    return os.getenv(env_var, "false").lower() in ("true", "1", "yes")
+        # Use provided context or empty context
+        user_context = context or {}
+        return manager.is_enabled(feature, user_context, {})  # type: ignore
+
+    except Exception:
+        # Fallback to environment variables for backward compatibility
+        import logging
+        import os
+        logger = logging.getLogger(__name__)
+        logger.debug(f"Feature flag manager not available, falling back to env for {feature}")
+
+        env_var = f"AURUM_FEATURE_{feature.upper()}"
+        return os.getenv(env_var, "false").lower() in ("true", "1", "yes")
 
 
 def get_feature_context() -> Dict[str, Any]:

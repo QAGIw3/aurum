@@ -1,0 +1,15 @@
+{
+  "default_priority": "normal",
+  "quiet_hours": {
+    "start": "22:00",
+    "end": "07:00",
+    "timezone": "UTC"
+  },
+  "default_channels": ["email", "slack"],
+  "escalation": {
+    "critical": ["email", "sms", "teams"],
+    "high": ["email", "slack"],
+    "medium": ["email"],
+    "low": ["email"]
+  }
+}

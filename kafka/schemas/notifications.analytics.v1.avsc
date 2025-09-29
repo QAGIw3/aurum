@@ -1,0 +1,17 @@
+{
+  "type": "record",
+  "name": "NotificationAnalytics",
+  "namespace": "aurum.notifications",
+  "doc": "Derived analytics events for notification engagement and lifecycle.",
+  "fields": [
+    {"name": "id", "type": "string", "doc": "Analytics event identifier."},
+    {"name": "dispatch_id", "type": "string"},
+    {"name": "tenant_id", "type": "string"},
+    {"name": "recipient_id", "type": "string"},
+    {"name": "channel", "type": "string"},
+    {"name": "event_type", "type": {"type": "enum", "name": "AnalyticsEventType", "symbols": ["delivered", "opened", "clicked", "acknowledged", "failed", "suppressed"]}},
+    {"name": "event_at", "type": {"type": "long", "logicalType": "timestamp-micros"}},
+    {"name": "attributes", "type": {"type": "map", "values": "string"}, "default": {}},
+    {"name": "latency_ms", "type": ["null", "int"], "default": null}
+  ]
+}

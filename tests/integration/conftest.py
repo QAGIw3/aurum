@@ -1,124 +1,93 @@
-"""Configuration for integration tests."""
+"""Configuration for integration tests with containers."""
 
-import asyncio
 import pytest
 import httpx
-from typing import AsyncGenerator, Dict, Any
-from pathlib import Path
+from typing import Dict, Any, List
+from fastapi import FastAPI
 
-from aurum.telemetry.context import correlation_context
-
-
-@pytest.fixture(scope="session")
-async def event_loop():
-    """Create an instance of the default event loop for the test session."""
-    loop = asyncio.get_event_loop_policy().new_event_loop()
-    yield loop
-    loop.close()
-
-
-@pytest.fixture(scope="session")
-async def api_client() -> AsyncGenerator[httpx.AsyncClient, None]:
-    """Create an authenticated API client for testing."""
-    async with httpx.AsyncClient(
-        base_url="http://localhost:8000",
-        timeout=30.0
-    ) as client:
-        # Wait for API to be ready
-        for i in range(60):
-            try:
-                response = await client.get("/health")
-                if response.status_code == 200:
-                    break
-            except Exception:
-                pass
-            await asyncio.sleep(2)
-        else:
-            pytest.fail("API service did not become ready")
-
-        yield client
+from tests.common import create_test_app, TestAppConfig
+from tests.integration.containers import (
+    postgres_dsn,
+    timescale_dsn,
+    kafka_bootstrap_servers,
+    clickhouse_dsn,
+    trino_dsn,
+    database_urls,
+)
 
 
-@pytest.fixture(scope="session")
-async def kafka_client() -> AsyncGenerator[Dict[str, Any], None]:
-    """Create Kafka client for testing."""
-    # For integration tests, we might use a test Kafka client
-    # or mock the Kafka interactions
-    yield {
-        "type": "test_client",
-        "bootstrap_servers": "localhost:9092"
-    }
+@pytest.fixture(scope="function")
+def integration_app_settings(database_urls: Dict[str, str]) -> TestAppConfig:
+    """App settings configured for integration testing with containers."""
+    settings = TestAppConfig()
+
+    # Configure database connections
+    if "postgres" in database_urls:
+        # Parse postgres URL and configure settings
+        pg_url = database_urls["postgres"]
+        # In real implementation, parse the URL to extract host, port, etc.
+        settings.backend_type = "postgres"
+
+    if "kafka" in database_urls:
+        settings.kafka_bootstrap_servers = [database_urls["kafka"]]
+        settings.kafka_enabled = True
+
+    return settings
 
 
-@pytest.fixture(scope="session")
-async def trino_client() -> AsyncGenerator[Dict[str, Any], None]:
-    """Create Trino client for testing."""
-    yield {
-        "type": "test_client",
-        "host": "localhost",
-        "port": 8080
-    }
+@pytest.fixture(scope="function")
+def integration_api_app(integration_app_settings: TestAppConfig) -> FastAPI:
+    """FastAPI app configured for integration testing."""
+    return create_test_app(integration_app_settings)
 
 
-@pytest.fixture(scope="session")
-async def postgres_client() -> AsyncGenerator[Dict[str, Any], None]:
-    """Create PostgreSQL client for testing."""
-    yield {
-        "type": "test_client",
-        "host": "localhost",
-        "port": 15432,
-        "database": "aurum_test",
-        "user": "aurum_test",
-        "password": "aurum_test"
-    }
+@pytest.fixture(scope="function")
+def integration_api_client(integration_api_app: FastAPI) -> httpx.AsyncClient:
+    """HTTP client for integration testing."""
+    return httpx.AsyncClient(app=integration_api_app, base_url="http://test")
 
 
-@pytest.fixture(scope="session")
-async def test_tenant_context():
-    """Provide test tenant context for multi-tenant testing."""
-    tenants = [
+@pytest.fixture(scope="function")
+def authenticated_integration_client(integration_api_client: httpx.AsyncClient) -> httpx.AsyncClient:
+    """Authenticated HTTP client for integration testing."""
+    # Add authentication headers
+    integration_api_client.headers.update({
+        "X-Aurum-Tenant": "test-tenant-integration",
+        "X-User-ID": "test-user-integration",
+        "X-Correlation-ID": "test-correlation-integration"
+    })
+
+    return integration_api_client
+
+
+@pytest.fixture(scope="function")
+def test_tenants() -> List[Dict[str, Any]]:
+    """Test tenant configurations for multi-tenant testing."""
+    return [
         {
             "id": "test-tenant-001",
             "name": "Test Tenant 1",
-            "users": ["user-001", "user-002"]
+            "users": ["user-001", "user-002"],
+            "settings": {"feature_flags": ["advanced_analytics"]}
         },
         {
             "id": "test-tenant-002",
             "name": "Test Tenant 2",
-            "users": ["user-003", "user-004"]
+            "users": ["user-003", "user-004"],
+            "settings": {"feature_flags": ["basic_analytics"]}
         },
         {
             "id": "test-tenant-003",
             "name": "Test Tenant 3",
-            "users": ["user-005", "user-006"]
+            "users": ["user-005", "user-006"],
+            "settings": {"feature_flags": ["experimental_features"]}
         }
     ]
 
-    for tenant in tenants:
-        yield tenant
-
 
 @pytest.fixture(scope="function")
-async def authenticated_api_client(api_client: httpx.AsyncClient, test_tenant_context):
-    """Create an authenticated API client with tenant context."""
-    tenant = test_tenant_context
-
-    # Set up authentication headers
-    auth_headers = {
-        "X-Aurum-Tenant": tenant["id"],
-        "X-User-ID": tenant["users"][0],
-        "X-Correlation-ID": f"test-{tenant['id']}-{asyncio.current_task().get_name()}"
-    }
-
-    # Update client with auth headers
-    api_client.headers.update(auth_headers)
-
-    yield api_client
-
-
-@pytest.fixture(scope="function")
-async def scenario_test_data():
-    """Provide test data for scenario testing."""
+def test_scenarios() -> Dict[str, Any]:
+    """Test scenario data for integration testing."""
     return {
         "scenarios": [
             {
@@ -167,30 +136,38 @@ async def scenario_test_data():
     }
 
 
-@pytest.fixture(scope="session")
-async def test_database_setup():
-    """Set up test database with required fixtures."""
-    fixtures_dir = Path(__file__).parent / "fixtures"
+@pytest.fixture(scope="function")
+def database_setup(database_urls: Dict[str, str]) -> None:
+    """Set up test databases with required fixtures."""
+    # This would execute SQL fixtures against the containerized databases
+    # For now, this is a placeholder that would be implemented based on
+    # the actual database schema and fixtures needed
 
-    # Load and execute test fixtures
-    for fixture_file in fixtures_dir.glob("*.sql"):
-        # Execute SQL fixture files
-        pass
-
-    yield
-
-    # Cleanup after tests
-    # Drop test data, reset sequences, etc.
+    # Example: Create tables, insert test data, etc.
+    pass
 
 
 @pytest.fixture(scope="function")
-async def clean_scenario_state(api_client: httpx.AsyncClient):
-    """Clean up scenario state after each test."""
-    yield
+def clean_database_state(database_urls: Dict[str, str]) -> None:
+    """Clean up database state after each test."""
+    # This would clean up test data from the containerized databases
+    # For now, this is a placeholder
+    pass
 
-    # Clean up scenarios and runs created during test
-    try:
-        # This would clean up test data
-        pass
-    except Exception:
-        pass
+
+# Integration test marker and configuration
+
+def pytest_configure(config):
+    """Configure pytest for integration tests."""
+    config.addinivalue_line(
+        "markers", "integration: mark test as integration test requiring containers"
+    )
+
+
+def pytest_collection_modifyitems(config, items):
+    """Skip integration tests by default unless explicitly requested."""
+    skip_integration = pytest.mark.skip(reason="integration tests require --integration flag")
+
+    for item in items:
+        if "integration" in item.keywords:
+            item.add_marker(skip_integration)

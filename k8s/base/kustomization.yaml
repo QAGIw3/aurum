@@ -22,6 +22,7 @@ resources:
   - postgres.yaml
   - timescale.yaml
   - redis.yaml
+  - elasticsearch.yaml
   - kafka.yaml
   - schema-registry-runner-configmap.yaml
   - schema-registry.yaml

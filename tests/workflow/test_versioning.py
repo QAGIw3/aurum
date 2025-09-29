@@ -83,4 +83,3 @@ def test_cli_promote_versions_and_rollback(tmp_path: Path, registry_path: Path, 
         ]
     )
     assert exit_code == 0
-*** End Patch

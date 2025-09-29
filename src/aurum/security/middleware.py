@@ -6,7 +6,6 @@ import time
 from typing import Any, List, Optional
 
 from fastapi import HTTPException, Request, Response
-from fastapi.security import HTTPAuthorizationCredentials
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.types import ASGIApp
 
@@ -26,12 +25,16 @@ class SecurityMiddleware(BaseHTTPMiddleware):
         exclude_paths: Optional[List[str]] = None,
         security_headers: bool = True,
         audit_suspicious_activity: bool = True,
+        csp_policy: Optional[str] = None,
+        hsts_policy: Optional[str] = None,
     ):
         super().__init__(app)
         self.auth_manager = auth_manager or get_auth_manager()
         self.exclude_paths = exclude_paths or ["/health", "/ready", "/metrics", "/docs", "/openapi.json"]
         self.security_headers_enabled = security_headers
         self.audit_suspicious_enabled = audit_suspicious_activity
+        self._csp_policy = csp_policy or "default-src 'self'; script-src 'self'; connect-src 'self' https:; img-src 'self' data:; style-src 'self' 'unsafe-inline'"
+        self._hsts_policy = hsts_policy or "max-age=31536000; includeSubDomains"
 
     async def dispatch(self, request: Request, call_next):
         """Process request with security checks."""
@@ -50,23 +53,14 @@ class SecurityMiddleware(BaseHTTPMiddleware):
 
         with request_id_context(request_id):
             try:
-                # Security headers validation
                 if self.security_headers_enabled:
                     await self._validate_security_headers(request)
 
-                # Query parameter sanitization
                 await self._sanitize_query_params(request)
 
-                # Authentication
-                user_context = await self._authenticate_request(request)
-
-                # Authorization
-                await self._authorize_request(request, user_context)
-
-                # Set security context for downstream processing
-                if user_context:
-                    # This would set the user context in the request state
-                    request.state.user_context = user_context
+                principal = getattr(request.state, "principal", None)
+                if self.auth_manager is not None:
+                    self.auth_manager.authorize_request(request, principal)
 
                 # Process request
                 response = await call_next(request)
@@ -74,7 +68,7 @@ class SecurityMiddleware(BaseHTTPMiddleware):
                 # Audit successful request
                 await self._audit_request(
                     request=request,
-                    user_context=user_context,
+                    user_context=principal,
                     response=response,
                     duration=time.perf_counter() - start_time,
                     status_code=response.status_code,
@@ -88,13 +82,22 @@ class SecurityMiddleware(BaseHTTPMiddleware):
                 return response
 
             except HTTPException:
-                # Re-raise HTTP exceptions (they're handled by FastAPI)
+                principal = getattr(request.state, "principal", None)
+                await self._audit_request(
+                    request=request,
+                    user_context=principal,
+                    response=None,
+                    duration=time.perf_counter() - start_time,
+                    status_code=403,
+                    success=False,
+                    error="authorization_failed",
+                )
                 raise
             except Exception as e:
                 # Audit failed request
                 await self._audit_request(
                     request=request,
-                    user_context=None,
+                    user_context=getattr(request.state, "principal", None),
                     response=None,
                     duration=time.perf_counter() - start_time,
                     status_code=500,
@@ -103,26 +106,6 @@ class SecurityMiddleware(BaseHTTPMiddleware):
                 )
                 # Re-raise the exception
                 raise
-
-    async def _authenticate_request(self, request: Request) -> Optional[Any]:
-        """Authenticate request using the authorization manager."""
-        # Extract authorization header
-        auth_header = request.headers.get("authorization")
-        credentials = None
-
-        if auth_header and auth_header.startswith("Bearer "):
-            credentials = HTTPAuthorizationCredentials(scheme="Bearer", credentials=auth_header[7:])
-
-        # Use auth manager to authenticate
-        return await self.auth_manager.authenticate_request(request, credentials)
-
-    async def _authorize_request(self, request: Request, user_context: Optional[Any]) -> None:
-        """Authorize request using the authorization manager."""
-        path = request.url.path
-        method = request.method
-
-        # Use auth manager to authorize
-        self.auth_manager.authorize_request(user_context, path, method)
 
     async def _validate_security_headers(self, request: Request) -> None:
         """Validate security-related headers."""
@@ -179,8 +162,7 @@ class SecurityMiddleware(BaseHTTPMiddleware):
                 details={"error": str(e), "params": dict(request.query_params)},
                 severity="error"
             )
-            # For now, we don't block, just audit
-            pass
+            raise HTTPException(status.HTTP_400_BAD_REQUEST, detail="invalid_query_parameters") from e
 
     async def _audit_request(
         self,
@@ -216,13 +198,13 @@ class SecurityMiddleware(BaseHTTPMiddleware):
             details["error"] = error
 
         if user_context:
-            details["user_id"] = user_context.user_id
-            details["tenant_id"] = user_context.tenant_id
+            details["user_id"] = getattr(user_context, "subject", None) or getattr(user_context, "user_id", None)
+            details["tenant_id"] = getattr(user_context, "tenant_id", None)
 
         log_security_event(
             event_type=event_type,
-            user_id=user_context.user_id if user_context else None,
-            tenant_id=user_context.tenant_id if user_context else None,
+            user_id=details.get("user_id"),
+            tenant_id=details.get("tenant_id"),
             resource=request.url.path,
             action=request.method,
             ip_address=self._get_client_ip(request),
@@ -271,11 +253,14 @@ class SecurityMiddleware(BaseHTTPMiddleware):
         security_headers = {
             "X-Content-Type-Options": "nosniff",
             "X-Frame-Options": "DENY",
-            "X-XSS-Protection": "1; mode=block",
-            "Strict-Transport-Security": "max-age=31536000; includeSubDomains",
             "Referrer-Policy": "strict-origin-when-cross-origin",
             "Permissions-Policy": "geolocation=(), microphone=(), camera=()",
         }
+
+        if self._hsts_policy:
+            security_headers["Strict-Transport-Security"] = self._hsts_policy
+        if self._csp_policy:
+            security_headers["Content-Security-Policy"] = self._csp_policy
 
         for header, value in security_headers.items():
             if header not in response.headers:

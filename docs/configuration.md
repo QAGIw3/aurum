@@ -1,35 +1,297 @@
-### Aurum Configuration
+# Aurum Advanced Configuration Management System
 
-This project centralizes configuration via `AurumSettings` and a `SettingsManager`.
+This project provides a comprehensive, dynamic configuration management system with advanced features for enterprise deployments.
 
-- Single source: `aurum.core.settings.SettingsManager.get()` returns the active `AurumSettings`.
-- Validation: core sanity checks run on reload; failures are logged and ignored if a previous good config exists.
-- Environment overlays: optional `config/base.(yaml|json)` + `config/<ENV>.(yaml|json)` are merged over environment variables.
-- Hot-reload: enabled by default in development; toggle with `AURUM_SETTINGS_HOT_RELOAD_ENABLED`.
+## Overview
 
-Environment variables remain the first-class inputs. Overlays are intended for operational defaults and environment-specific adjustments.
+The system provides:
 
-Hot-reload monitors overlay files and reapplies changes at runtime without restarts. Use for safe TTL and feature toggles; avoid secrets.
+- **Dynamic Configuration**: Hot-reloadable configuration with layered sources
+- **Environment Inheritance**: Environment-specific configuration overlays
+- **Schema Validation**: Strong typing and validation with JSON Schema export
+- **Change Tracking**: Full audit trail with versioning and diffing
+- **Backup & Recovery**: Point-in-time recovery with disaster recovery support
+- **Feature Flag Integration**: Dynamic feature flags tied to configuration
+- **Security & Governance**: RBAC permissions, audit trails, and compliance features
 
-Schema export for docs:
+## Architecture
 
-```bash
-python -c "from aurum.core.settings import get_settings_manager; get_settings_manager().export_schema('docs/config.schema.json') and print('ok')"
-```
+The configuration system consists of several key components:
 
-Key env vars:
+### Configuration Sources (Layered Precedence)
 
-- `AURUM_ENV`: environment name (development|staging|production)
-- `AURUM_CONFIG_PATH`: path to `config/` directory (defaults to repo `config/`)
-- `AURUM_SETTINGS_HOT_RELOAD_ENABLED`: enable file watcher (true/false)
+Configuration is loaded from multiple sources with the following precedence (highest to lowest):
 
-Programmatic access:
+1. **Environment Variables** (`AURUM_*`): Runtime overrides, highest priority
+2. **Ephemeral Overrides**: API/CLI overrides with TTL
+3. **Environment Overlays**: `config/<ENV>.(yaml|json)` files
+4. **Base Overlays**: `config/base.(yaml|json)` files
+5. **Code Defaults**: Built-in configuration defaults
+
+### Core Components
+
+- **DynamicConfigService**: Main service managing configuration lifecycle
+- **SchemaRegistry**: Schema definitions and validation
+- **ChangeTracker**: Audit trail, versioning, and backup
+- **SettingsManager**: Integration layer with existing AurumSettings
+
+## Quick Start
+
+### Basic Usage
 
 ```python
+from aurum.config.dynamic_config import DynamicConfigService
 from aurum.core.settings import get_settings_manager
 
-settings = get_settings_manager().get()
-print(settings.api.title, settings.redis.url)
+# Get dynamic configuration service
+config_service = DynamicConfigService(environment="production")
+config = config_service.get()
+
+# Or use the integrated settings manager
+settings_manager = get_settings_manager(use_dynamic_config=True)
+settings = settings_manager.get()
+```
+
+### Environment Variables
+
+Primary configuration method using `AURUM_` prefixed variables:
+
+```bash
+export AURUM_API_TITLE="Aurum API"
+export AURUM_DATABASE_URL="postgresql://user:pass@localhost/aurum"
+export AURUM_REDIS_URL="redis://localhost:6379"
+```
+
+### Configuration Files
+
+Environment-specific configuration in YAML/JSON format:
+
+```yaml
+# config/base.yaml - Common defaults
+api:
+  title: "Aurum API"
+  version: "1.0.0"
+  debug: false
+
+database:
+  host: "localhost"
+  port: 5432
+  pool:
+    min_size: 1
+    max_size: 10
+
+redis:
+  host: "localhost"
+  port: 6379
+  db: 0
+```
+
+```yaml
+# config/production.yaml - Production overrides
+api:
+  debug: false
+  host: "0.0.0.0"
+  port: 8000
+
+database:
+  host: "prod-db.example.com"
+  ssl: true
+
+redis:
+  host: "prod-redis.example.com"
+  password: "secret"
+```
+
+### Feature Flags
+
+Enable the dynamic configuration system:
+
+```bash
+export AURUM_USE_DYNAMIC_CONFIG=true
+```
+
+## CLI Tools
+
+### Configuration Diffing
+
+```bash
+# Show effective configuration
+python scripts/config/diff.py show-effective --env=production
+
+# Compare versions
+python scripts/config/diff.py diff --from=1 --to=5
+
+# List configuration versions
+python scripts/config/diff.py versions --limit=10
+
+# Show change history
+python scripts/config/diff.py changes --actor=admin --limit=20
+```
+
+### Backup and Restore
+
+```bash
+# Backup current configuration
+python scripts/config/backup_restore.py backup --reason="Pre-deployment backup"
+
+# List available backups
+python scripts/config/backup_restore.py list-backups
+
+# Restore to specific version
+python scripts/config/backup_restore.py restore --version=3 --actor=admin --reason="Rollback due to issues"
+```
+
+### Schema Export
+
+```bash
+# Export all schemas
+python scripts/config/diff.py export-schema --output=docs/schemas
+```
+
+## API Endpoints
+
+All admin configuration endpoints require `CONFIG_MANAGE` permission.
+
+### Get Effective Configuration
+
+```http
+GET /v2/admin/config/effective?environment=production
+```
+
+### Configuration Versions
+
+```http
+GET /v2/admin/config/versions
+GET /v2/admin/config/versions/{version}
+```
+
+### Configuration Changes
+
+```http
+GET /v2/admin/config/changes?namespace=api&limit=50
+```
+
+### Configuration Diffing
+
+```http
+GET /v2/admin/config/diff?from_version=1&to_version=5
+```
+
+### Backup and Restore
+
+```http
+POST /v2/admin/config/backup?reason=Pre-deployment
+POST /v2/admin/config/restore?version=3&reason=Rollback
+```
+
+### Schema Export
+
+```http
+GET /v2/admin/config/schemas
+```
+
+### Ephemeral Overrides
+
+```http
+POST /v2/admin/config/overrides?key=feature_flags&value={"new_feature":true}&ttl_seconds=3600
+DELETE /v2/admin/config/overrides/{key}
+```
+
+## Advanced Features
+
+### Schema Validation
+
+The system validates configuration against predefined schemas for each namespace:
+
+- **api**: API server configuration
+- **redis**: Redis connection settings
+- **database**: Database connection settings
+- **security**: Security and authentication settings
+- **feature_flags**: Feature flag configuration
+
+### Change Tracking
+
+Every configuration change is tracked with:
+
+- Unique change ID
+- Timestamp and actor
+- Before/after configuration snapshots
+- Structured diffs
+- Correlation IDs for tracing
+
+### Hot Reloading
+
+Configuration files are monitored for changes:
+
+- Automatic reload in development environments
+- Manual reload in production
+- Graceful handling of invalid configurations
+- Rollback to previous valid configuration
+
+### Backup and Recovery
+
+- Point-in-time snapshots
+- Compressed storage for efficiency
+- Metadata tracking (reason, actor, timestamp)
+- Disaster recovery capabilities
+
+### Security and Governance
+
+- RBAC permissions for configuration management
+- Audit trails for compliance
+- Secret management (external secret stores recommended)
+- Change approval workflows
+
+## Migration Guide
+
+### From Legacy Settings
+
+1. Enable feature flag: `AURUM_USE_DYNAMIC_CONFIG=true`
+2. Add configuration files to `config/` directory
+3. Gradually migrate environment variables to files
+4. Use CLI tools for validation and testing
+
+### Best Practices
+
+1. **Environment Separation**: Use separate config files per environment
+2. **Validation**: Always validate configuration before deployment
+3. **Backups**: Regular automated backups before changes
+4. **Testing**: Test configuration changes in staging first
+5. **Secrets**: Never store secrets in configuration files
+6. **Documentation**: Document configuration changes with reasons
+
+## Troubleshooting
+
+### Common Issues
+
+1. **Configuration not loading**: Check file permissions and YAML/JSON syntax
+2. **Validation errors**: Review schema requirements and data types
+3. **Hot reload not working**: Ensure file watcher permissions and check logs
+4. **Permission denied**: Verify RBAC permissions for admin operations
+
+### Debug Mode
+
+Enable debug logging:
+
+```bash
+export AURUM_DEBUG=true
+export AURUM_LOG_LEVEL=DEBUG
+```
+
+Check configuration status:
+
+```bash
+python -c "
+from aurum.config.dynamic_config import DynamicConfigService
+from aurum.core.settings import get_settings_manager
+import json
+
+service = DynamicConfigService()
+config = service.get()
+print('Configuration loaded successfully')
+print(f'Version: {service.get_snapshot().version}')
+print(f'Sources: {[s.name for s in service._sources]}')
+"
 ```
 
 # Configuration Reference

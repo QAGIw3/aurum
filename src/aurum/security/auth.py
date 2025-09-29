@@ -1,486 +1,190 @@
-"""Enhanced authentication and authorization with explicit policy checks."""
+"""Request authorization policies shared by security middleware."""
 
 from __future__ import annotations
 
 import re
 from dataclasses import dataclass
-from enum import Enum
-from typing import Any, Dict, List, Optional, Set
+from typing import Callable, Iterable, List, Optional, Sequence, Set
 
-import jwt
-from fastapi import HTTPException, Request
-from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
-from pydantic import BaseModel, Field
+from fastapi import HTTPException, Request, status
 
-from ..telemetry.context import get_tenant_id, log_structured
-from .audit import log_access_denied, log_auth_failure, log_auth_success
-from .validation import SafeIdentifier
+from aurum.security.rbac import Permission, Principal, Role
+from aurum.telemetry.context import get_tenant_id, log_structured
 
-
-class Permission(str, Enum):
-    """Permission levels for authorization."""
-    READ = "read"
-    WRITE = "write"
-    DELETE = "delete"
-    ADMIN = "admin"
-    AUDIT = "audit"
-
-
-class ResourceType(str, Enum):
-    """Resource types for authorization."""
-    SCENARIO = "scenario"
-    DATA_SOURCE = "data_source"
-    USER = "user"
-    TENANT = "tenant"
-    SYSTEM = "system"
-    CONFIGURATION = "configuration"
+from .audit import log_access_denied
 
 
 @dataclass(frozen=True)
 class AuthPolicy:
-    """Authorization policy for resource access."""
-    resource_type: ResourceType
+    """Declarative policy describing who may access a resource."""
+
+    resource: str
     permissions: Set[Permission]
+    methods: Set[str]
     tenant_scoped: bool = True
-    user_scoped: bool = False
     requires_admin: bool = False
-    path_pattern: str = ""
-    methods: Set[str] = frozenset()
+    predicate: Optional[Callable[[Principal, Request], bool]] = None
 
-    def allows(self, permission: Permission, tenant_id: Optional[str] = None, user_id: Optional[str] = None) -> bool:
-        """Check if policy allows the given permission."""
-        return permission in self.permissions
+    def matches(self, path: str, method: str) -> bool:
+        normalized_path = re.sub(r"/{[^}]+}", "/{id}", path)
+        pattern = self.resource.replace("{id}", r"[^/]+")
+        pattern = pattern.replace("*", r".*")
+        regex = f"^{pattern}$"
+        if not re.match(regex, normalized_path):
+            return False
+        if "*" in self.methods:
+            return True
+        return method.upper() in self.methods
 
-
-class AuthError(Exception):
-    """Base exception for authentication/authorization errors."""
-    pass
-
-
-class InvalidTokenError(AuthError):
-    """Raised when JWT token is invalid."""
-    pass
-
-
-class InsufficientPermissionsError(AuthError):
-    """Raised when user lacks required permissions."""
-    pass
-
-
-class ResourceNotFoundError(AuthError):
-    """Raised when resource is not found (for 404 vs 403 distinction)."""
-    pass
-
-
-class SecurityConfig(BaseModel):
-    """Security configuration model."""
-    jwt_secret: str = Field(..., description="JWT secret key")
-    jwt_algorithm: str = Field("HS256", description="JWT algorithm")
-    token_expiration_hours: int = Field(24, description="Token expiration time")
-    required_permissions: Dict[str, List[Permission]] = Field(default_factory=dict)
-    admin_users: List[str] = Field(default_factory=list)
-    audit_enabled: bool = Field(True, description="Enable audit logging")
-
-
-class UserContext(BaseModel):
-    """User context from JWT token."""
-    user_id: SafeIdentifier = Field(..., description="User identifier")
-    tenant_id: SafeIdentifier = Field(..., description="Tenant identifier")
-    permissions: List[Permission] = Field(default_factory=list, description="User permissions")
-    roles: List[str] = Field(default_factory=list, description="User roles")
-    is_admin: bool = Field(False, description="Whether user has admin privileges")
-    token_data: Dict[str, Any] = Field(default_factory=dict, description="Additional token data")
-
-    class Config:
-        validate_assignment = True
+    def allows(self, principal: Principal, permission: Permission, request: Request) -> bool:
+        if self.requires_admin and not _is_admin(principal):
+            return False
+        if permission not in self.permissions:
+            return False
+        if self.predicate and not self.predicate(principal, request):
+            return False
+        if not self.tenant_scoped:
+            return principal.has_permission(permission, None)
+        tenant_context = getattr(request.state, "tenant", None) or get_tenant_id() or principal.tenant_id
+        return principal.has_permission(permission, tenant_context)
 
 
 class AuthorizationManager:
-    """Manages authentication and authorization policies."""
+    """Policy engine that validates principals against request metadata."""
 
-    def __init__(self, config: SecurityConfig):
-        self.config = config
-        self.security = HTTPBearer(auto_error=False)
-        self._policies = self._default_policies()
+    def __init__(self, policies: Optional[Sequence[AuthPolicy]] = None):
+        self._policies: List[AuthPolicy] = list(policies or self._default_policies())
 
-    def _default_policies(self) -> List[AuthPolicy]:
-        """Default authorization policies keyed by path pattern and HTTP methods."""
-        def policy(path: str, methods: List[str], permissions: Set[Permission], **kwargs) -> AuthPolicy:
+    def _default_policies(self) -> Sequence[AuthPolicy]:
+        def policy(path: str, methods: Iterable[str], permissions: Iterable[Permission], **kwargs) -> AuthPolicy:
             return AuthPolicy(
-                resource_type=kwargs.get("resource_type", ResourceType.SYSTEM),
-                permissions=permissions,
+                resource=path,
+                methods={method.upper() for method in methods},
+                permissions=set(permissions),
                 tenant_scoped=kwargs.get("tenant_scoped", True),
-                user_scoped=kwargs.get("user_scoped", False),
                 requires_admin=kwargs.get("requires_admin", False),
-                path_pattern=path,
-                methods=set(methods),
+                predicate=kwargs.get("predicate"),
             )
 
-        return [
+        return (
             policy("/health", ["GET"], {Permission.READ}, tenant_scoped=False),
             policy("/ready", ["GET"], {Permission.READ}, tenant_scoped=False),
             policy("/metrics", ["GET"], {Permission.READ}, tenant_scoped=False),
             policy("/docs", ["GET"], {Permission.READ}, tenant_scoped=False),
             policy("/openapi.json", ["GET"], {Permission.READ}, tenant_scoped=False),
-            policy("/v2/scenarios", ["GET"], {Permission.READ}, resource_type=ResourceType.SCENARIO),
-            policy("/v2/scenarios/{scenario_id}", ["GET"], {Permission.READ}, resource_type=ResourceType.SCENARIO),
-            policy("/v2/scenarios", ["POST", "PUT", "PATCH"], {Permission.WRITE}, resource_type=ResourceType.SCENARIO, requires_admin=True),
-            policy("/v2/scenarios/{scenario_id}", ["DELETE"], {Permission.DELETE}, resource_type=ResourceType.SCENARIO, requires_admin=True),
+            policy("/v2/scenarios", ["GET"], {Permission.SCENARIOS_READ}),
+            policy("/v2/scenarios/{id}", ["GET"], {Permission.SCENARIOS_READ}),
+            policy(
+                "/v2/scenarios",
+                ["POST", "PUT", "PATCH"],
+                {Permission.SCENARIOS_WRITE},
+                requires_admin=True,
+            ),
+            policy(
+                "/v2/scenarios/{id}",
+                ["DELETE"],
+                {Permission.SCENARIOS_DELETE},
+                requires_admin=True,
+            ),
             policy("/v2/admin/*", ["*"], {Permission.ADMIN}, requires_admin=True),
-        ]
-
-    def get_policy(self, path: str, method: str) -> Optional[AuthPolicy]:
-        """Get authorization policy for a path and method."""
-        normalized_path = re.sub(r'/{[^}]+}', '/{id}', path)
-
-        for policy in self._policies:
-            if not self._matches_pattern(policy.path_pattern, normalized_path):
-                continue
-            if "*" not in policy.methods and method.upper() not in policy.methods:
-                continue
-            return policy
-
-        return None
-
-    def _matches_pattern(self, pattern: str, path: str) -> bool:
-        """Check if path matches pattern (simple implementation)."""
-        regex_pattern = pattern.replace('{scenario_id}', r'[^/]+').replace('{id}', r'[^/]+').replace('*', r'.*')
-        regex_pattern = f'^{regex_pattern}$'
-        return bool(re.match(regex_pattern, path))
-
-    async def authenticate_request(
-        self,
-        request: Request,
-        credentials: Optional[HTTPAuthorizationCredentials] = None
-    ) -> Optional[UserContext]:
-        """Authenticate request and return user context."""
-        # Extract client info
-        client_ip = self._get_client_ip(request)
-        user_agent = request.headers.get("user-agent")
-
-        try:
-            # If no credentials provided, check for optional auth endpoints
-            if not credentials:
-                # Some endpoints might not require authentication
-                return None
-
-            # Validate token format
-            token = credentials.credentials
-            if not token:
-                await self._log_auth_failure("missing_token", None, None, client_ip, user_agent)
-                return None
-
-            # Decode and validate JWT
-            user_context = self._decode_jwt(token)
-
-            # Log successful authentication
-            await self._log_auth_success(user_context, client_ip, user_agent)
-
-            return user_context
-
-        except InvalidTokenError as e:
-            await self._log_auth_failure(str(e), None, None, client_ip, user_agent)
-            return None
-        except Exception as e:
-            await self._log_auth_failure(f"auth_error: {str(e)}", None, None, client_ip, user_agent)
-            return None
-
-    def _decode_jwt(self, token: str) -> UserContext:
-        """Decode and validate JWT token."""
-        try:
-            payload = jwt.decode(
-                token,
-                self.config.jwt_secret,
-                algorithms=[self.config.jwt_algorithm]
-            )
-
-            # Extract required fields
-            user_id = payload.get("user_id")
-            tenant_id = payload.get("tenant_id")
-            permissions = payload.get("permissions", [])
-            roles = payload.get("roles", [])
-            is_admin = payload.get("is_admin", False)
-
-            if not user_id or not tenant_id:
-                raise InvalidTokenError("Missing required fields in token")
-
-            # Validate user_id and tenant_id format
-            user_id = SafeIdentifier.validate(user_id)
-            tenant_id = SafeIdentifier.validate(tenant_id)
-
-            # Convert permissions to enum values
-            permissions = self._normalise_permissions(permissions, payload)
-            is_admin = is_admin or Permission.ADMIN in permissions
-
-            return UserContext(
-                user_id=user_id,
-                tenant_id=tenant_id,
-                permissions=permissions,
-                roles=roles,
-                is_admin=is_admin,
-                token_data=payload
-            )
-
-        except jwt.ExpiredSignatureError:
-            raise InvalidTokenError("Token has expired")
-        except jwt.InvalidTokenError:
-            raise InvalidTokenError("Invalid token")
-        except Exception as e:
-            raise InvalidTokenError(f"Token validation failed: {str(e)}")
-
-    def _normalise_permissions(self, permissions_claim: List[str], payload: Dict[str, Any]) -> List[Permission]:
-        """Convert permissions claim and OAuth scopes into Permission enums."""
-        resolved: Set[Permission] = set()
-
-        for entry in permissions_claim or []:
-            try:
-                resolved.add(Permission(entry))
-            except ValueError:
-                continue
-
-        scope_values: Set[str] = set()
-        scope_claim = payload.get("scope") or payload.get("scopes")
-        if isinstance(scope_claim, str):
-            scope_values.update(token.strip().lower() for token in scope_claim.split() if token.strip())
-        elif isinstance(scope_claim, (list, tuple)):
-            scope_values.update(str(token).lower() for token in scope_claim if token)
-
-        scope_permission_map = {
-            "curves:read": Permission.READ,
-            "curves:write": Permission.WRITE,
-            "curves:delete": Permission.DELETE,
-            "scenarios:read": Permission.READ,
-            "scenarios:write": Permission.WRITE,
-            "scenarios:delete": Permission.DELETE,
-            "admin": Permission.ADMIN,
-            "admin:read": Permission.ADMIN,
-            "admin:write": Permission.ADMIN,
-            "audit:read": Permission.AUDIT,
-        }
-
-        for scope in scope_values:
-            mapped = scope_permission_map.get(scope)
-            if mapped:
-                resolved.add(mapped)
-
-        return list(resolved)
+        )
 
     def authorize_request(
         self,
-        user_context: Optional[UserContext],
-        path: str,
-        method: str,
-        resource_id: Optional[str] = None
+        request: Request,
+        principal: Optional[Principal],
+        *,
+        path: Optional[str] = None,
+        method: Optional[str] = None,
     ) -> None:
-        """Authorize request based on user context and policy."""
-        client_ip = self._get_client_ip_from_request()  # Would need to be passed in
+        """Raise if the principal is not allowed to execute the request."""
 
-        policy = self.get_policy(path, method)
+        resolved_path = path or request.url.path
+        resolved_method = method or request.method
 
-        if not policy:
-            # No policy defined - allow by default but audit
+        policy = self.get_policy(resolved_path, resolved_method)
+        if policy is None:
             log_structured(
                 "warning",
                 "no_policy_defined",
-                path=path,
-                method=method,
-                user_id=user_context.user_id if user_context else None,
-                tenant_id=user_context.tenant_id if user_context else None,
+                path=resolved_path,
+                method=resolved_method,
             )
             return
 
-        # Check authentication requirement
-        if user_context is None:
-            # Endpoint requires authentication
+        if principal is None:
+            raise HTTPException(status.HTTP_401_UNAUTHORIZED, detail="authentication_required")
+
+        permission = _permission_for_method(resolved_method)
+        if not policy.allows(principal, permission, request):
+            tenant_context = getattr(request.state, "tenant", None) or principal.tenant_id
             log_access_denied(
-                user_id=None,
-                tenant_id=None,
-                resource=path,
-                action=method,
-                ip_address=client_ip,
-                reason="authentication_required"
+                user_id=principal.subject,
+                tenant_id=tenant_context,
+                resource=resolved_path,
+                action=resolved_method,
+                ip_address=_client_ip(request),
+                reason=f"missing_permission:{permission.value}",
             )
             raise HTTPException(
-                status_code=401,
-                detail="Authentication required"
+                status.HTTP_403_FORBIDDEN,
+                detail={
+                    "error": "access_denied",
+                    "required_permission": permission.value,
+                    "tenant": tenant_context,
+                    "subject": principal.subject,
+                },
             )
 
-        # Check tenant scope
-        if policy.tenant_scoped:
-            context_tenant_id = get_tenant_id()
-            if context_tenant_id and context_tenant_id != user_context.tenant_id:
-                log_access_denied(
-                    user_id=user_context.user_id,
-                    tenant_id=user_context.tenant_id,
-                    resource=path,
-                    action=method,
-                    ip_address=client_ip,
-                    reason="tenant_mismatch"
-                )
-                raise HTTPException(
-                    status_code=403,
-                    detail="Access denied: tenant mismatch"
-                )
+    def get_policy(self, path: str, method: str) -> Optional[AuthPolicy]:
+        for policy in self._policies:
+            if policy.matches(path, method):
+                return policy
+        return None
 
-        # Check permissions
-        required_permission = self._get_required_permission(method)
-        if not policy.allows(required_permission, user_context.tenant_id, user_context.user_id):
-            log_access_denied(
-                user_id=user_context.user_id,
-                tenant_id=user_context.tenant_id,
-                resource=path,
-                action=method,
-                ip_address=client_ip,
-                reason=f"insufficient_permissions: {required_permission}"
-            )
-            raise HTTPException(
-                status_code=403,
-                detail=f"Access denied: insufficient permissions ({required_permission})"
-            )
-
-        # Check admin requirement
-        if policy.requires_admin and not user_context.is_admin:
-            log_access_denied(
-                user_id=user_context.user_id,
-                tenant_id=user_context.tenant_id,
-                resource=path,
-                action=method,
-                ip_address=client_ip,
-                reason="admin_access_required"
-            )
-            raise HTTPException(
-                status_code=403,
-                detail="Access denied: admin access required"
-            )
-
-    def _get_required_permission(self, method: str) -> Permission:
-        """Get required permission for HTTP method."""
-        method_permissions = {
-            "GET": Permission.READ,
-            "HEAD": Permission.READ,
-            "POST": Permission.WRITE,
-            "PUT": Permission.WRITE,
-            "PATCH": Permission.WRITE,
-            "DELETE": Permission.DELETE,
-        }
-        return method_permissions.get(method, Permission.READ)
-
-    def _get_client_ip(self, request: Request) -> str:
-        """Extract client IP address from request."""
-        # Check X-Forwarded-For header first (for proxies)
-        forwarded_for = request.headers.get("x-forwarded-for")
-        if forwarded_for:
-            return forwarded_for.split(",")[0].strip()
-
-        # Check X-Real-IP header
-        real_ip = request.headers.get("x-real-ip")
-        if real_ip:
-            return real_ip
-
-        # Fall back to client host
-        return request.client.host if request.client else "unknown"
-
-    def _get_client_ip_from_request(self) -> str:
-        """Get client IP - would need to be implemented based on how it's called."""
-        # This would typically be extracted from the request context
-        return "unknown"
-
-    async def _log_auth_success(
-        self,
-        user_context: UserContext,
-        ip_address: str,
-        user_agent: Optional[str]
-    ) -> None:
-        """Log successful authentication."""
-        if self.config.audit_enabled:
-            log_auth_success(
-                user_id=user_context.user_id,
-                tenant_id=user_context.tenant_id,
-                ip_address=ip_address,
-                user_agent=user_agent,
-                auth_method="jwt"
-            )
-
-    async def _log_auth_failure(
-        self,
-        reason: str,
-        user_id: Optional[str],
-        tenant_id: Optional[str],
-        ip_address: str,
-        user_agent: Optional[str]
-    ) -> None:
-        """Log authentication failure."""
-        if self.config.audit_enabled:
-            log_auth_failure(
-                reason=reason,
-                user_id=user_id,
-                tenant_id=tenant_id,
-                ip_address=ip_address,
-                user_agent=user_agent,
-                auth_method="jwt"
-            )
+    def register_policy(self, policy: AuthPolicy) -> None:
+        self._policies.append(policy)
 
 
-# Global auth manager instance
+def _permission_for_method(method: str) -> Permission:
+    mapping = {
+        "GET": Permission.READ,
+        "HEAD": Permission.READ,
+        "POST": Permission.WRITE,
+        "PUT": Permission.WRITE,
+        "PATCH": Permission.WRITE,
+        "DELETE": Permission.DELETE,
+    }
+    return mapping.get(method.upper(), Permission.READ)
+
+
+def _is_admin(principal: Principal) -> bool:
+    return principal.has_role(Role.ADMIN) or principal.has_role(Role.SUPER_ADMIN)
+
+
+def _client_ip(request: Request) -> Optional[str]:
+    forwarded_for = request.headers.get("x-forwarded-for")
+    if forwarded_for:
+        return forwarded_for.split(",")[0].strip()
+    if request.headers.get("x-real-ip"):
+        return request.headers.get("x-real-ip")
+    if request.client:
+        return request.client.host
+    return None
+
+
 _auth_manager: Optional[AuthorizationManager] = None
 
 
 def get_auth_manager() -> AuthorizationManager:
-    """Get the global authorization manager."""
     global _auth_manager
     if _auth_manager is None:
-        # This would need to be configured with actual security config
-        config = SecurityConfig(jwt_secret="default-secret-key")
-        _auth_manager = AuthorizationManager(config)
+        _auth_manager = AuthorizationManager()
     return _auth_manager
 
 
-def require_auth(permissions: List[Permission] = None, resource_type: ResourceType = None):
-    """Decorator to require authentication and authorization."""
-    def decorator(func):
-        async def wrapper(*args, **kwargs):
-            # This would be integrated into the FastAPI dependency system
-            # For now, this is a placeholder
-            return await func(*args, **kwargs)
-        return wrapper
-    return decorator
-
-
-# Utility functions for consistent error handling
-def create_403_response(detail: str, request_id: Optional[str] = None) -> HTTPException:
-    """Create a 403 Forbidden response with consistent format."""
-    return HTTPException(
-        status_code=403,
-        detail={
-            "error": "AccessDenied",
-            "message": detail,
-            "request_id": request_id,
-            "timestamp": "2023-12-01T00:00:00Z"  # Would be dynamic
-        }
-    )
-
-
-def create_404_response(resource_type: str, resource_id: str, request_id: Optional[str] = None) -> HTTPException:
-    """Create a 404 Not Found response with consistent format."""
-    return HTTPException(
-        status_code=404,
-        detail={
-            "error": "NotFound",
-            "message": f"{resource_type} with ID '{resource_id}' not found",
-            "request_id": request_id,
-            "timestamp": "2023-12-01T00:00:00Z"  # Would be dynamic
-        }
-    )
-
-
-def create_401_response(detail: str, request_id: Optional[str] = None) -> HTTPException:
-    """Create a 401 Unauthorized response with consistent format."""
-    return HTTPException(
-        status_code=401,
-        detail={
-            "error": "AuthenticationRequired",
-            "message": detail,
-            "request_id": request_id,
-            "timestamp": "2023-12-01T00:00:00Z"  # Would be dynamic
-        }
-    )
+__all__ = [
+    "AuthPolicy",
+    "AuthorizationManager",
+    "get_auth_manager",
+]

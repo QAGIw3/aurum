@@ -446,3 +446,69 @@ security_audit = EnterpriseSecurityAudit()
 
 # Legacy alias
 SecurityAudit = EnterpriseSecurityAudit
+
+
+def log_access_denied(*, user_id: Optional[str], tenant_id: Optional[str], resource: str, action: str, ip_address: Optional[str] = None, reason: Optional[str] = None) -> None:
+    security_audit.log_audit_event(
+        event_type=AuditEventType.ACCESS_DENIED,
+        severity=AuditSeverity.MEDIUM,
+        user_id=user_id or "unknown",
+        tenant_id=tenant_id,
+        resource=resource,
+        action=action,
+        outcome="failure",
+        ip_address=ip_address,
+        details={"reason": reason or "unspecified"},
+    )
+
+
+def log_access_granted(*, user_id: Optional[str], tenant_id: Optional[str], resource: str, action: str, ip_address: Optional[str] = None) -> None:
+    security_audit.log_audit_event(
+        event_type=AuditEventType.ACCESS_GRANTED,
+        severity=AuditSeverity.LOW,
+        user_id=user_id or "unknown",
+        tenant_id=tenant_id,
+        resource=resource,
+        action=action,
+        outcome="success",
+        ip_address=ip_address,
+    )
+
+
+def log_security_event(
+    *,
+    event_type: str,
+    user_id: Optional[str] = None,
+    tenant_id: Optional[str] = None,
+    resource: Optional[str] = None,
+    action: Optional[str] = None,
+    ip_address: Optional[str] = None,
+    user_agent: Optional[str] = None,
+    details: Optional[Dict[str, Any]] = None,
+    severity: str = "info",
+) -> None:
+    try:
+        security_audit.log_security_event(
+            event_type=event_type,
+            user_id=user_id,
+            tenant_id=tenant_id,
+            resource=resource or "",
+            action=action or "",
+            ip_address=ip_address,
+            user_agent=user_agent,
+            details=details,
+            severity=severity,
+        )
+    except Exception:
+        pass
+
+__all__ = [
+    "EnterpriseSecurityAudit",
+    "security_audit",
+    "AuditEvent",
+    "AuditEventType",
+    "AuditSeverity",
+    "log_access_denied",
+    "log_access_granted",
+    "log_security_event",
+]

@@ -1,3 +1,13 @@
+# Ignore Python virtual environments (any depth)
+.venv/
+**/.venv/
+venv/
+**/venv/
+env/
+**/env/
+ENV/
+**/ENV/
+
 __pycache__/
 *.pyc
 .env
@@ -31,3 +41,7 @@ docs/api/api-docs.html
 docs/api/index.html
 docs/api/openapi.json
 docs/api/openapi.generated.yaml
+venv311/
+**/venv311/
+.venv311/
+**/.venv311/

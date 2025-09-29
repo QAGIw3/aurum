@@ -24,10 +24,11 @@ except ImportError:
     ResilienceConfig = None  # type: ignore[assignment]
 
 try:  # Optional instrumentation
-    from prometheus_client import Counter, Histogram  # type: ignore
+    from prometheus_client import Counter, Histogram, REGISTRY  # type: ignore
 except Exception:  # pragma: no cover - metrics optional
     Counter = None  # type: ignore[assignment]
     Histogram = None  # type: ignore[assignment]
+    REGISTRY = None  # type: ignore[assignment]
 
 try:  # Optional fastavro encoder
     from fastavro import schemaless_writer  # type: ignore
@@ -41,35 +42,65 @@ except Exception:  # pragma: no cover - dependency optional
 
 logger = logging.getLogger(__name__)
 
-if Counter:  # pragma: no cover - simple wrappers around Prometheus
-    HTTP_REQUESTS_TOTAL = Counter(
-        "aurum_external_http_requests_total",
-        "HTTP requests executed by external collectors",
-        labelnames=["provider", "method", "status"],
-    )
-    HTTP_REQUEST_LATENCY = Histogram(
-        "aurum_external_http_request_seconds",
-        "HTTP request latency",
-        labelnames=["provider", "method"],
-        buckets=(0.05, 0.1, 0.25, 0.5, 1.0, 2.0, 5.0, 10.0),
-    )
-    RATE_LIMIT_WAIT = Histogram(
-        "aurum_external_rate_limit_wait_seconds",
-        "Seconds spent waiting for rate limiting",
-        labelnames=["provider"],
-        buckets=(0.01, 0.1, 0.25, 0.5, 1.0, 2.0, 5.0),
-    )
-    RETRY_BACKOFF = Histogram(
-        "aurum_external_retry_backoff_seconds",
-        "Backoff delay applied before retrying",
-        labelnames=["provider", "attempt"],
-        buckets=(0.1, 0.25, 0.5, 1.0, 2.0, 5.0, 10.0, 30.0),
-    )
-    KAFKA_RECORDS_TOTAL = Counter(
-        "aurum_external_kafka_records_total",
-        "Records emitted to Kafka",
-        labelnames=["provider", "topic"],
-    )
+if Counter and REGISTRY:  # pragma: no cover - simple wrappers around Prometheus
+    def _existing_collector(name: str):
+        try:
+            return getattr(REGISTRY, "_names_to_collectors", {}).get(name)  # type: ignore[attr-defined]
+        except Exception:
+            return None
+
+    existing = _existing_collector("aurum_external_http_requests_total")
+    if existing is not None:
+        HTTP_REQUESTS_TOTAL = existing  # type: ignore[assignment]
+    else:
+        HTTP_REQUESTS_TOTAL = Counter(
+            "aurum_external_http_requests_total",
+            "HTTP requests executed by external collectors",
+            labelnames=["provider", "method", "status"],
+        )
+
+    existing = _existing_collector("aurum_external_http_request_seconds")
+    if existing is not None:
+        HTTP_REQUEST_LATENCY = existing  # type: ignore[assignment]
+    else:
+        HTTP_REQUEST_LATENCY = Histogram(
+            "aurum_external_http_request_seconds",
+            "HTTP request latency",
+            labelnames=["provider", "method"],
+            buckets=(0.05, 0.1, 0.25, 0.5, 1.0, 2.0, 5.0, 10.0),
+        )
+
+    existing = _existing_collector("aurum_external_rate_limit_wait_seconds")
+    if existing is not None:
+        RATE_LIMIT_WAIT = existing  # type: ignore[assignment]
+    else:
+        RATE_LIMIT_WAIT = Histogram(
+            "aurum_external_rate_limit_wait_seconds",
+            "Seconds spent waiting for rate limiting",
+            labelnames=["provider"],
+            buckets=(0.01, 0.1, 0.25, 0.5, 1.0, 2.0, 5.0),
+        )
+
+    existing = _existing_collector("aurum_external_retry_backoff_seconds")
+    if existing is not None:
+        RETRY_BACKOFF = existing  # type: ignore[assignment]
+    else:
+        RETRY_BACKOFF = Histogram(
+            "aurum_external_retry_backoff_seconds",
+            "Backoff delay applied before retrying",
+            labelnames=["provider", "attempt"],
+            buckets=(0.1, 0.25, 0.5, 1.0, 2.0, 5.0, 10.0, 30.0),
+        )
+
+    existing = _existing_collector("aurum_external_kafka_records_total")
+    if existing is not None:
+        KAFKA_RECORDS_TOTAL = existing  # type: ignore[assignment]
+    else:
+        KAFKA_RECORDS_TOTAL = Counter(
+            "aurum_external_kafka_records_total",
+            "Records emitted to Kafka",
+            labelnames=["provider", "topic"],
+        )
 else:  # pragma: no cover - no metrics backend
     HTTP_REQUESTS_TOTAL = None  # type: ignore[assignment]
     HTTP_REQUEST_LATENCY = None  # type: ignore[assignment]

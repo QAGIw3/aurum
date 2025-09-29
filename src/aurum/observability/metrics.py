@@ -24,9 +24,25 @@ try:  # pragma: no cover - optional dependency
         generate_latest as _prom_generate_latest,
     )
 except ImportError:  # pragma: no cover - Prometheus not installed
-    Counter = None  # type: ignore[assignment]
-    Gauge = None  # type: ignore[assignment]
-    Histogram = None  # type: ignore[assignment]
+    class _NoopMetric:  # Lightweight shim so calls are no-ops when lib missing
+        def __init__(self, *args, **kwargs) -> None:
+            pass
+
+        def labels(self, *args, **kwargs):
+            return self
+
+        def inc(self, *args, **kwargs) -> None:
+            pass
+
+        def observe(self, *args, **kwargs) -> None:
+            pass
+
+        def set(self, *args, **kwargs) -> None:
+            pass
+
+    Counter = _NoopMetric  # type: ignore[assignment]
+    Gauge = _NoopMetric  # type: ignore[assignment]
+    Histogram = _NoopMetric  # type: ignore[assignment]
     REGISTRY = None  # type: ignore[assignment]
     _PROM_CONTENT_TYPE = "text/plain; version=0.0.4; charset=utf-8"
     _prom_generate_latest = None  # type: ignore[assignment]
@@ -94,101 +110,177 @@ if PROMETHEUS_AVAILABLE:  # pragma: no branch - simplify instrumentation when av
             "API request duration in seconds (basic labels)",
             ["method", "path"],
         )
-    TILE_CACHE_COUNTER = Counter(
-        "aurum_drought_tile_cache_total",
-        "Drought tile cache lookup results",
-        ["endpoint", "result"],
-    )
-    TILE_FETCH_LATENCY = Histogram(
-        "aurum_drought_tile_fetch_seconds",
-        "Downstream drought tile/info fetch latency in seconds",
-        ["endpoint", "status"],
-    )
-    CACHE_HIT_COUNTER = Counter(
-        "aurum_cache_hits_total",
-        "Cache hit counter",
-        ["type"],
-    )
-    CACHE_MISS_COUNTER = Counter(
-        "aurum_cache_misses_total",
-        "Cache miss counter",
-        ["type"],
-    )
-    RESOURCE_LEAKS_CLEANED = Counter(
-        "aurum_resource_leaks_cleaned_total",
-        "Count of resources auto-cleaned by middleware",
-        ["component"],
-    )
-    DB_QUERY_DURATION = Histogram(
-        "aurum_db_query_duration_seconds",
-        "Database query duration",
-        ["type"],
-    )
-    QUEUE_SIZE_GAUGE = Gauge(
-        "aurum_queue_size",
-        "Queue backlog size",
-        ["queue"],
-    )
-    ACTIVE_CONNECTIONS_GAUGE = Gauge(
-        "aurum_active_connections",
-        "Active API connections",
-    )
+    existing = _existing_collector("aurum_drought_tile_cache_total")
+    if existing is not None:
+        TILE_CACHE_COUNTER = existing  # type: ignore[assignment]
+    else:
+        TILE_CACHE_COUNTER = Counter(
+            "aurum_drought_tile_cache_total",
+            "Drought tile cache lookup results",
+            ["endpoint", "result"],
+        )
+    existing = _existing_collector("aurum_drought_tile_fetch_seconds")
+    if existing is not None:
+        TILE_FETCH_LATENCY = existing  # type: ignore[assignment]
+    else:
+        TILE_FETCH_LATENCY = Histogram(
+            "aurum_drought_tile_fetch_seconds",
+            "Downstream drought tile/info fetch latency in seconds",
+            ["endpoint", "status"],
+        )
+    existing = _existing_collector("aurum_cache_hits_total")
+    if existing is not None:
+        CACHE_HIT_COUNTER = existing  # type: ignore[assignment]
+    else:
+        CACHE_HIT_COUNTER = Counter(
+            "aurum_cache_hits_total",
+            "Cache hit counter",
+            ["type"],
+        )
+    existing = _existing_collector("aurum_cache_misses_total")
+    if existing is not None:
+        CACHE_MISS_COUNTER = existing  # type: ignore[assignment]
+    else:
+        CACHE_MISS_COUNTER = Counter(
+            "aurum_cache_misses_total",
+            "Cache miss counter",
+            ["type"],
+        )
+    existing = _existing_collector("aurum_resource_leaks_cleaned_total")
+    if existing is not None:
+        RESOURCE_LEAKS_CLEANED = existing  # type: ignore[assignment]
+    else:
+        RESOURCE_LEAKS_CLEANED = Counter(
+            "aurum_resource_leaks_cleaned_total",
+            "Count of resources auto-cleaned by middleware",
+            ["component"],
+        )
+    existing = _existing_collector("aurum_db_query_duration_seconds")
+    if existing is not None:
+        DB_QUERY_DURATION = existing  # type: ignore[assignment]
+    else:
+        DB_QUERY_DURATION = Histogram(
+            "aurum_db_query_duration_seconds",
+            "Database query duration",
+            ["type"],
+        )
+    existing = _existing_collector("aurum_queue_size")
+    if existing is not None:
+        QUEUE_SIZE_GAUGE = existing  # type: ignore[assignment]
+    else:
+        QUEUE_SIZE_GAUGE = Gauge(
+            "aurum_queue_size",
+            "Queue backlog size",
+            ["queue"],
+        )
+    existing = _existing_collector("aurum_active_connections")
+    if existing is not None:
+        ACTIVE_CONNECTIONS_GAUGE = existing  # type: ignore[assignment]
+    else:
+        ACTIVE_CONNECTIONS_GAUGE = Gauge(
+            "aurum_active_connections",
+            "Active API connections",
+        )
     # External API metrics
-    EXTERNAL_API_REQUEST_COUNTER = Counter(
-        "aurum_external_api_requests_total",
-        "External API request counter",
-        ["endpoint", "status"],
-    )
-    EXTERNAL_API_LATENCY = Histogram(
-        "aurum_external_api_request_duration_seconds",
-        "External API request duration in seconds",
-        ["endpoint"],
-    )
-    EXTERNAL_CACHE_HIT_COUNTER = Counter(
-        "aurum_external_cache_hits_total",
-        "External API cache hit counter",
-        ["endpoint"],
-    )
-    EXTERNAL_CACHE_MISS_COUNTER = Counter(
-        "aurum_external_cache_misses_total",
-        "External API cache miss counter",
-        ["endpoint"],
-    )
-    EXTERNAL_DAO_QUERY_COUNTER = Counter(
-        "aurum_external_dao_queries_total",
-        "External DAO query counter",
-        ["operation", "status"],
-    )
-    EXTERNAL_DAO_LATENCY = Histogram(
-        "aurum_external_dao_query_duration_seconds",
-        "External DAO query duration in seconds",
-        ["operation"],
-    )
-    EXTERNAL_CURVE_MAPPING_COUNTER = Counter(
-        "aurum_external_curve_mappings_total",
-        "External to curve mapping counter",
-        ["mapping_type"],
-    )
-    EXTERNAL_PIPELINE_HEALTH = Gauge(
-        "aurum_external_pipeline_health_score",
-        "Health score for external pipeline components",
-        ["component"],
-    )
-    EXTERNAL_PIPELINE_SLA_VIOLATIONS = Counter(
-        "aurum_external_pipeline_sla_violations_total",
-        "External pipeline SLA violations",
-        ["rule", "target"],
-    )
-    EXTERNAL_DATA_FRESHNESS = Gauge(
-        "aurum_external_data_freshness_hours",
-        "External data freshness in hours",
-        ["provider", "dataset"],
-    )
-    EXTERNAL_DATA_QUALITY_SCORE = Gauge(
-        "aurum_external_data_quality_score",
-        "External data quality score",
-        ["provider", "dataset", "metric"],
-    )
+    existing = _existing_collector("aurum_external_api_requests_total")
+    if existing is not None:
+        EXTERNAL_API_REQUEST_COUNTER = existing  # type: ignore[assignment]
+    else:
+        EXTERNAL_API_REQUEST_COUNTER = Counter(
+            "aurum_external_api_requests_total",
+            "External API request counter",
+            ["endpoint", "status"],
+        )
+    existing = _existing_collector("aurum_external_api_request_duration_seconds")
+    if existing is not None:
+        EXTERNAL_API_LATENCY = existing  # type: ignore[assignment]
+    else:
+        EXTERNAL_API_LATENCY = Histogram(
+            "aurum_external_api_request_duration_seconds",
+            "External API request duration in seconds",
+            ["endpoint"],
+        )
+    existing = _existing_collector("aurum_external_cache_hits_total")
+    if existing is not None:
+        EXTERNAL_CACHE_HIT_COUNTER = existing  # type: ignore[assignment]
+    else:
+        EXTERNAL_CACHE_HIT_COUNTER = Counter(
+            "aurum_external_cache_hits_total",
+            "External API cache hit counter",
+            ["endpoint"],
+        )
+    existing = _existing_collector("aurum_external_cache_misses_total")
+    if existing is not None:
+        EXTERNAL_CACHE_MISS_COUNTER = existing  # type: ignore[assignment]
+    else:
+        EXTERNAL_CACHE_MISS_COUNTER = Counter(
+            "aurum_external_cache_misses_total",
+            "External API cache miss counter",
+            ["endpoint"],
+        )
+    existing = _existing_collector("aurum_external_dao_queries_total")
+    if existing is not None:
+        EXTERNAL_DAO_QUERY_COUNTER = existing  # type: ignore[assignment]
+    else:
+        EXTERNAL_DAO_QUERY_COUNTER = Counter(
+            "aurum_external_dao_queries_total",
+            "External DAO query counter",
+            ["operation", "status"],
+        )
+    existing = _existing_collector("aurum_external_dao_query_duration_seconds")
+    if existing is not None:
+        EXTERNAL_DAO_LATENCY = existing  # type: ignore[assignment]
+    else:
+        EXTERNAL_DAO_LATENCY = Histogram(
+            "aurum_external_dao_query_duration_seconds",
+            "External DAO query duration in seconds",
+            ["operation"],
+        )
+    existing = _existing_collector("aurum_external_curve_mappings_total")
+    if existing is not None:
+        EXTERNAL_CURVE_MAPPING_COUNTER = existing  # type: ignore[assignment]
+    else:
+        EXTERNAL_CURVE_MAPPING_COUNTER = Counter(
+            "aurum_external_curve_mappings_total",
+            "External to curve mapping counter",
+            ["mapping_type"],
+        )
+    existing = _existing_collector("aurum_external_pipeline_health_score")
+    if existing is not None:
+        EXTERNAL_PIPELINE_HEALTH = existing  # type: ignore[assignment]
+    else:
+        EXTERNAL_PIPELINE_HEALTH = Gauge(
+            "aurum_external_pipeline_health_score",
+            "Health score for external pipeline components",
+            ["component"],
+        )
+    existing = _existing_collector("aurum_external_pipeline_sla_violations_total")
+    if existing is not None:
+        EXTERNAL_PIPELINE_SLA_VIOLATIONS = existing  # type: ignore[assignment]
+    else:
+        EXTERNAL_PIPELINE_SLA_VIOLATIONS = Counter(
+            "aurum_external_pipeline_sla_violations_total",
+            "External pipeline SLA violations",
+            ["rule", "target"],
+        )
+    existing = _existing_collector("aurum_external_data_freshness_hours")
+    if existing is not None:
+        EXTERNAL_DATA_FRESHNESS = existing  # type: ignore[assignment]
+    else:
+        EXTERNAL_DATA_FRESHNESS = Gauge(
+            "aurum_external_data_freshness_hours",
+            "External data freshness in hours",
+            ["provider", "dataset"],
+        )
+    existing = _existing_collector("aurum_external_data_quality_score")
+    if existing is not None:
+        EXTERNAL_DATA_QUALITY_SCORE = existing  # type: ignore[assignment]
+    else:
+        EXTERNAL_DATA_QUALITY_SCORE = Gauge(
+            "aurum_external_data_quality_score",
+            "External data quality score",
+            ["provider", "dataset", "metric"],
+        )
 else:  # pragma: no cover - Prometheus not installed
     REQUEST_COUNTER = REQUEST_LATENCY = None  # type: ignore[assignment]
     TILE_CACHE_COUNTER = TILE_FETCH_LATENCY = None  # type: ignore[assignment]
@@ -715,7 +807,7 @@ else:  # pragma: no cover - Prometheus not installed
                 pass
 
     METRICS_MIDDLEWARE = _metrics_middleware
-else:  # pragma: no cover - Prometheus not present
+if not PROMETHEUS_AVAILABLE:  # pragma: no cover - Prometheus not present
     REQUEST_COUNTER = REQUEST_LATENCY = None
     TILE_CACHE_COUNTER = TILE_FETCH_LATENCY = None
     CACHE_HIT_COUNTER = CACHE_MISS_COUNTER = None

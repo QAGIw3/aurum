@@ -718,8 +718,7 @@ class StressTestCLI:
         impact = await self.engine.run_stress_test(template_id, config)
 
         if impact:
-            print("
-Results:")
+            print("\nResults:")
             print(f"Scenario ID: {impact.scenario_id}")
             print(f"Portfolio Impact: {impact.portfolio_impact}")
             print(f"Affected Curves: {len(impact.affected_curves)}")
@@ -756,8 +755,7 @@ Results:")
 
         # Generate report
         report = await self.engine.generate_stress_test_report(results)
-        print("
-Summary:")
+        print("\nSummary:")
         print(f"Total Portfolio Impact: {report['total_portfolio_impact']}")
         print(f"VaR 95%: {report['aggregated_risk_metrics']['var_95']}")
         print(f"Most Affected Curve: {report['most_affected_curves'][0][0] if report['most_affected_curves'] else 'None'}")
@@ -773,18 +771,15 @@ Summary:")
 
         report = await self.engine.generate_stress_test_report(results)
 
-        print("
-=== STRESS TEST REPORT ===")
+        print("\n=== STRESS TEST REPORT ===")
         print(f"Report Date: {report['report_date']}")
         print(f"Scenarios Analyzed: {report['scenarios_analyzed']}")
         print(f"Total Portfolio Impact: {report['total_portfolio_impact']}")
-        print("
-Risk Metrics:")
+        print("\nRisk Metrics:")
         print(f"  VaR 95%: {report['aggregated_risk_metrics']['var_95']}")
         print(f"  VaR 99%: {report['aggregated_risk_metrics']['var_99']}")
         print(f"  Max Drawdown: {report['aggregated_risk_metrics']['max_drawdown']}")
-        print("
-Most Affected Curves:")
+        print("\nMost Affected Curves:")
         for curve, count in report['most_affected_curves']:
             print(f"  {curve}: {count} scenarios")
 

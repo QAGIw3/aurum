@@ -225,7 +225,7 @@ def test_single_assertion(assertion: SchemaAssertion, test_data: List[dict]) -> 
     print(f"   Total assertions: {result['total_assertions']}")
     print(f"   Passed: {result['passed_assertions']}")
     print(f"   Failed: {result['failed_assertions']}")
-    print(f"   Quality score: {result['quality_score']".2%"}")
+    print(f"   Quality score: {result['quality_score']:.2%}")
     print(f"   Overall result: {'✅ PASSED' if result['passed'] else '❌ FAILED'}")
 
     if not result['passed']:
@@ -270,7 +270,7 @@ def test_data_quality_checker(test_data: List[dict]) -> dict:
             assertion_name = assertion_result.get('assertion_name', 'Unknown')
             passed = assertion_result.get('passed', False)
             quality_score = assertion_result.get('quality_score', 0)
-            print(f"   - {assertion_name}: {'✅' if passed else '❌'} ({quality_score".2%"})")
+            print(f"   - {assertion_name}: {'✅' if passed else '❌'} ({quality_score:.2%})")
 
     return result
 
@@ -290,7 +290,7 @@ def generate_test_report(results: List[dict]) -> str:
         "",
         "## Summary",
         f"- Assertions tested: {len(results)}",
-        f"- Overall pass rate: {sum(1 for r in results if r['passed']) / len(results) * 100".1f"}%",
+        f"- Overall pass rate: {sum(1 for r in results if r['passed']) / len(results) * 100:.1f}%",
         ""
     ]
 
@@ -309,7 +309,7 @@ def generate_test_report(results: List[dict]) -> str:
         issues = len(result.get('messages', []))
 
         report_lines.append(
-            f"| {assertion_name} | {'✅' if passed else '❌'} | {quality_score".2%"} | {issues} |"
+            f"| {assertion_name} | {'✅' if passed else '❌'} | {quality_score:.2%} | {issues} |"
         )
 
     report_lines.append("")

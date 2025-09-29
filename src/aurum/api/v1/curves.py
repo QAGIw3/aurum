@@ -406,16 +406,14 @@ async def list_curves_diff(
             )
 
     diff_query = CurvesDiffQuery(
-            asof_a=asof_a,
-            asof_b=asof_b,
-            curve_key=curve_key,
-            asset_class=asset_class,
-            iso=iso,
-            location=location,
-            market=market,
-            product=product,
-            block=block,
-            tenor_type=tenor_type,
+        asof_a=asof_a,
+        asof_b=asof_b,
+        curve_key=curve_key,
+        asset_class=asset_class,
+        iso=iso,
+        location=location,
+        market=market,
+        product=product,
         block=block,
         tenor_type=tenor_type,
     )

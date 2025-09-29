@@ -1,0 +1,32 @@
+{
+  "type": "record",
+  "name": "NotificationDispatch",
+  "namespace": "aurum.notifications",
+  "doc": "Notification dispatch event produced when a notification is ready for routing and delivery.",
+  "fields": [
+    {"name": "id", "type": "string", "doc": "Unique identifier for the dispatch event."},
+    {"name": "tenant_id", "type": "string", "doc": "Tenant identifier."},
+    {"name": "fingerprint", "type": ["null", "string"], "default": null, "doc": "Deduplication key or alert fingerprint."},
+    {"name": "priority", "type": {"type": "enum", "name": "NotificationPriority", "symbols": ["low", "normal", "high", "critical"]}, "doc": "Notification priority used for routing."},
+    {"name": "recipients", "type": {"type": "array", "items": {
+      "name": "Recipient",
+      "type": "record",
+      "fields": [
+        {"name": "id", "type": "string", "doc": "Recipient identifier."},
+        {"name": "type", "type": {"type": "enum", "name": "RecipientType", "symbols": ["user", "group", "channel"]}, "doc": "Recipient classification."},
+        {"name": "address", "type": ["null", "string"], "default": null, "doc": "Direct address override (email, phone, etc.)."},
+        {"name": "channels", "type": {"type": "array", "items": "string"}, "doc": "Preferred channels for this recipient."}
+      ]
+    }}},
+    {"name": "template_id", "type": "string", "doc": "Template identifier to use for rendering."},
+    {"name": "template_locale", "type": ["null", "string"], "default": null, "doc": "Locale for template rendering."},
+    {"name": "data", "type": {"type": "map", "values": "string"}, "doc": "Templating data payload."},
+    {"name": "channels", "type": {"type": "array", "items": "string"}, "doc": "Channels requested by producer."},
+    {"name": "schedule_at", "type": ["null", {
+      "type": "long",
+      "logicalType": "timestamp-micros"
+    }], "default": null, "doc": "Optional future schedule timestamp."},
+    {"name": "batch_window_seconds", "type": ["null", "int"], "default": null, "doc": "Optional batching window size."},
+    {"name": "metadata", "type": {"type": "map", "values": "string"}, "default": {}, "doc": "Additional metadata for routing."}
+  ]
+}

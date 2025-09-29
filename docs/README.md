@@ -88,6 +88,7 @@ New to Aurum? Start here:
 ### Security
 - **[Tenant Isolation & RLS](security/tenant-rls.md)** - Multi-tenant security model
 - **[OIDC Forward Auth](auth/oidc-forward-auth.md)** - Authentication setup
+- **[Internal Token Issuer](security/token-issuer.md)** - Service account authentication
 - **[Secrets Management](security/secrets-policy.md)** - Secret handling policies
 - **[Platform Security & Reliability](platform-reliability-security-cost-optimization.md)** - Comprehensive security features and cost optimization
 - **[Vault Rotation](vault-rotation.md)** - Key rotation procedures

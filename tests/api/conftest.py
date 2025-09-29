@@ -1,43 +1,57 @@
 from __future__ import annotations
 
-import importlib
-import sys
-from types import ModuleType
-from typing import Dict
+"""API tests configuration shim.
+
+Provides a local `pytest_plugins` hook to avoid missing module errors when
+plugins are referenced as `api.conftest` in legacy tests.
+"""
+
+pytest_plugins = []
 
 import pytest
+import httpx
+from typing import Dict, Any, Optional
+from fastapi import FastAPI
+
+from tests.common import create_test_app, TestAppConfig
 
 
-@pytest.fixture()
-def reload_api_app(monkeypatch: pytest.MonkeyPatch):
-    """Reload `aurum.api.app` with a clean environment for each invocation."""
+@pytest.fixture(scope="function")
+def app_settings() -> TestAppConfig:
+    """Base settings for API tests."""
+    return TestAppConfig()
 
-    keys = [
-        "AURUM_API_ADMIN_GROUP",
-        "AURUM_API_AUTH_DISABLED",
-        "AURUM_API_CORS_ORIGINS",
-        "AURUM_API_GZIP_MIN_BYTES",
-        "AURUM_API_INMEMORY_TTL",
-        "AURUM_API_OIDC_ISSUER",
-        "AURUM_API_OIDC_JWKS_URL",
-        "AURUM_API_OIDC_AUDIENCE",
-        "AURUM_API_FORWARD_AUTH_HEADER",
-        "AURUM_API_FORWARD_AUTH_CLAIMS_HEADER",
-    ]
 
-    def _reload(env: Dict[str, str] | None = None) -> ModuleType:
-        for key in keys:
-            monkeypatch.delenv(key, raising=False)
-        if env:
-            for key, value in env.items():
-                monkeypatch.setenv(key, value)
-        if "aurum.api.app" in sys.modules:
-            return importlib.reload(sys.modules["aurum.api.app"])
-        return importlib.import_module("aurum.api.app")
+@pytest.fixture(scope="function")
+def api_app(app_settings: TestAppConfig) -> FastAPI:
+    """Create a FastAPI app for API testing."""
+    return create_test_app(app_settings)
 
-    yield _reload
 
-    for key in keys:
-        monkeypatch.delenv(key, raising=False)
-    if "aurum.api.app" in sys.modules:
-        importlib.reload(sys.modules["aurum.api.app"])
+@pytest.fixture(scope="function")
+def api_client(api_app: FastAPI):
+    """Create an HTTP client for testing the API app."""
+    from fastapi.testclient import TestClient
+    return TestClient(api_app)
+
+
+@pytest.fixture(scope="function")
+def api_client_with_auth(api_app: FastAPI, settings_override):
+    """Create an authenticated HTTP client for testing."""
+    # Set up authentication environment
+    settings_override["set"]("AURUM_API_AUTH_DISABLED", "0")
+
+    from fastapi.testclient import TestClient
+    client = TestClient(api_app)
+
+    # Add authentication headers
+    client.headers.update({
+        "X-Aurum-Tenant": "test-tenant",
+        "X-User-ID": "test-user",
+        "X-Correlation-ID": "test-correlation-id"
+    })
+
+    yield client
+
+    # Cleanup
+    settings_override["del"]("AURUM_API_AUTH_DISABLED")

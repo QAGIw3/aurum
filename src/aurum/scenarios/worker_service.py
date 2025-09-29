@@ -15,6 +15,7 @@ import signal
 from typing import Any, Dict, Optional
 
 from ..telemetry.context import log_structured
+from .event_pipeline import ScenarioEventPipeline, ScenarioEventPipelineConfig
 from .kafka_client import create_kafka_producer, create_kafka_consumer
 from .queue_manager import ScenarioQueueManager, RetryPolicy
 
@@ -28,11 +29,13 @@ class ScenarioWorkerService:
         kafka_consumer,
         worker_id: str = None,
         max_concurrent_requests: int = 10,
+        event_pipeline: ScenarioEventPipeline | None = None,
     ):
         self.worker_id = worker_id or f"worker-{id(self)}"
         self.kafka_producer = kafka_producer
         self.kafka_consumer = kafka_consumer
         self.max_concurrent_requests = max_concurrent_requests
+        self.event_pipeline = event_pipeline
 
         self.queue_manager = ScenarioQueueManager(
             kafka_producer=kafka_producer,
@@ -52,6 +55,7 @@ class ScenarioWorkerService:
             "scenario_worker_starting",
             worker_id=self.worker_id,
             max_concurrent_requests=self.max_concurrent_requests,
+            event_pipeline_enabled=bool(self.event_pipeline),
         )
 
         # Set up signal handlers
@@ -137,16 +141,52 @@ async def run_worker_service(
         max_poll_records=100,
     )
 
+    event_pipeline_cfg = kafka_config.get("event_pipeline")
+    event_pipeline: ScenarioEventPipeline | None = None
+    if event_pipeline_cfg:
+        pipeline_config = ScenarioEventPipelineConfig(
+            lifecycle_topic=event_pipeline_cfg.get("lifecycle_topic", "aurum.scenario.output.v1"),
+            default_schema_subject=event_pipeline_cfg.get("schema_subject", "aurum.scenario.output.v1-value"),
+            consumer_group=event_pipeline_cfg.get(
+                "consumer_group",
+                f"{consumer_group}-pilot",
+            ),
+            batch_size=int(event_pipeline_cfg.get("batch_size", 100)),
+            poll_interval=float(event_pipeline_cfg.get("poll_interval", 1.0)),
+            bootstrap_servers=None if event_pipeline_cfg.get("in_memory", False) else bootstrap_servers,
+            in_memory=bool(event_pipeline_cfg.get("in_memory", False)),
+            dlq_topic=event_pipeline_cfg.get("dlq_topic"),
+        )
+        event_pipeline = ScenarioEventPipeline(config=pipeline_config)
+
+        async def _log_lifecycle_event(message: Any) -> None:
+            try:
+                payload = message.value if hasattr(message, "value") else message
+            except Exception:
+                payload = None
+            log_structured(
+                "info",
+                "scenario_event_consumed",
+                worker_id=worker_id or "scenario-worker",
+                topic=getattr(message, "topic", pipeline_config.lifecycle_topic),
+                payload=payload,
+            )
+
+        event_pipeline.register_lifecycle_handler(_log_lifecycle_event)
+
     worker = ScenarioWorkerService(
         kafka_producer=kafka_producer,
         kafka_consumer=kafka_consumer,
         worker_id=worker_id,
         max_concurrent_requests=max_concurrent_requests,
+        event_pipeline=event_pipeline,
     )
 
     try:
         await kafka_producer.start()
         await kafka_consumer.start()
+        if event_pipeline is not None:
+            await event_pipeline.start()
         await worker.start()
     except KeyboardInterrupt:
         log_structured("info", "worker_service_interrupted")
@@ -154,5 +194,7 @@ async def run_worker_service(
         log_structured("error", "worker_service_crashed", error=str(exc))
     finally:
         await worker.stop()
+        if event_pipeline is not None:
+            await event_pipeline.stop()
         await kafka_producer.stop()
         await kafka_consumer.stop()

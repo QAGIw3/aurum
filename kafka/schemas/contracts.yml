@@ -243,6 +243,18 @@ subjects:
   schema: noaa.weather.v1.avsc
   topic: aurum.ref.noaa.weather.v1
   compatibility: BACKWARD
+- subject: aurum.notifications.dispatch.v1-value
+  schema: notifications.dispatch.v1.avsc
+  topic: aurum.notifications.dispatch.v1
+  compatibility: BACKWARD
+- subject: aurum.notifications.delivery.v1-value
+  schema: notifications.delivery.v1.avsc
+  topic: aurum.notifications.delivery.v1
+  compatibility: BACKWARD
+- subject: aurum.notifications.analytics.v1-value
+  schema: notifications.analytics.v1.avsc
+  topic: aurum.notifications.analytics.v1
+  compatibility: BACKWARD
 - subject: aurum.scenario.output.v1-value
   schema: scenario.output.v1.avsc
   topic: aurum.scenario.output.v1

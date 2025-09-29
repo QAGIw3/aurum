@@ -20,10 +20,11 @@ import time
 from typing import List, Optional
 from uuid import uuid4
 
-from fastapi import APIRouter, HTTPException, Query, Request, Response
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response
 from pydantic import BaseModel, Field
 
 from ..http import respond_with_etag
+from ..auth import Permission, require_permissions
 from .pagination import (
     resolve_pagination,
     build_next_cursor,
@@ -31,7 +32,11 @@ from .pagination import (
 )
 from ...telemetry.context import get_request_id
 
-router = APIRouter(prefix="/v2", tags=["admin"])
+router = APIRouter(
+    prefix="/v2",
+    tags=["admin"],
+    dependencies=[Depends(require_permissions(Permission.ADMIN, tenant_scoped=False))],
+)
 
 
 class CachePurgeResponse(BaseModel):

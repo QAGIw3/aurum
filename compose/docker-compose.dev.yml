@@ -120,6 +120,35 @@ services:
       timeout: 5s
       retries: 5
 
+  elasticsearch:
+    image: elasticsearch:8.15.0
+    profiles: [core]
+    environment:
+      - discovery.type=single-node
+      - xpack.security.enabled=false
+      - "ES_JAVA_OPTS=-Xms512m -Xmx512m"
+      - cluster.name=aurum-dev
+      - node.name=aurum-node-1
+      - bootstrap.memory_lock=true
+    ports:
+      - "9200:9200"
+      - "9300:9300"
+    volumes:
+      - elasticsearch_data:/usr/share/elasticsearch/data
+    ulimits:
+      memlock:
+        soft: -1
+        hard: -1
+      nofile:
+        soft: 65536
+        hard: 65536
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:9200/_cluster/health || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 60s
+
   minio:
     image: minio/minio:RELEASE.2024-01-18T18-02-05Z
     profiles: [core]
@@ -156,6 +185,8 @@ services:
         condition: service_healthy
       trino:
         condition: service_started
+      elasticsearch:
+        condition: service_healthy
     ports:
       - "8095:8080"  # Map container 8080 to host 8095 as documented
     environment:
@@ -173,6 +204,7 @@ services:
       AURUM_TRINO_PORT: 8080
       AURUM_ENVIRONMENT: dev
       AURUM_LOG_LEVEL: INFO
+      AURUM_SEARCH_HOSTS: http://elasticsearch:9200
     volumes:
       - ../config:/app/config:ro
       - ../openapi:/app/openapi:ro
@@ -259,6 +291,7 @@ volumes:
   redis_data:
   kafka_data:
   minio_data:
+  elasticsearch_data:
 
 networks:
   default:

@@ -22,13 +22,20 @@ from .config import CacheConfig, TrinoConfig
 from .http import respond_with_etag as http_respond_with_etag
 from aurum.core.settings import get_settings as _core_get_settings
 from aurum.observability import metrics as observability_metrics
-from aurum.observability.metrics import (
-    METRICS_MIDDLEWARE,
-    METRICS_PATH,
-    PROMETHEUS_AVAILABLE,
-    TILE_CACHE_COUNTER,
-    TILE_FETCH_LATENCY,
-)
+try:
+    from aurum.observability.metrics import (
+        METRICS_MIDDLEWARE,
+        METRICS_PATH,
+        PROMETHEUS_AVAILABLE,
+        TILE_CACHE_COUNTER,
+        TILE_FETCH_LATENCY,
+    )
+except Exception:  # pragma: no cover - optional metrics symbols
+    METRICS_MIDDLEWARE = None  # type: ignore[assignment]
+    METRICS_PATH = "/metrics"  # type: ignore[assignment]
+    PROMETHEUS_AVAILABLE = False  # type: ignore[assignment]
+    TILE_CACHE_COUNTER = None  # type: ignore[assignment]
+    TILE_FETCH_LATENCY = None  # type: ignore[assignment]
 
 try:  # pragma: no cover - optional dependency
     from aurum.drought.catalog import load_catalog, DroughtCatalog

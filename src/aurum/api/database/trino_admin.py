@@ -9,18 +9,15 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
 
 from aurum.telemetry.context import get_request_id
-from ..routes import _get_principal, _require_admin
+from ..auth import Permission, require_permissions
 from .trino_client import get_trino_client
 from ...core.settings import get_settings as _core_get_settings
 from .config import TrinoCatalogType, TrinoAccessLevel
 
 
-router = APIRouter()
-
-
-def _admin_guard(principal=Depends(_get_principal)) -> None:
-    """Require administrator access for Trino admin endpoints."""
-    _require_admin(principal)
+router = APIRouter(
+    dependencies=[Depends(require_permissions(Permission.TRINO_ADMIN, tenant_scoped=False))]
+)
 
 
 class TrinoPoolMetrics(BaseModel):
@@ -60,7 +57,7 @@ class TrinoHealthStatus(BaseModel):
     avg_response_time_seconds: float
 
 
-@router.get("/health", dependencies=[Depends(_admin_guard)])
+@router.get("/health")
 async def trino_health(
     detailed: bool = Query(False, description="Include detailed metrics")
 ) -> Dict:
@@ -137,7 +134,7 @@ async def trino_health(
         )
 
 
-@router.get("/pool", dependencies=[Depends(_admin_guard)])
+@router.get("/pool")
 async def trino_pool_status(
     detailed: bool = Query(False, description="Include detailed pool statistics")
 ) -> Dict:
@@ -199,7 +196,7 @@ async def trino_pool_status(
         )
 
 
-@router.get("/stats", dependencies=[Depends(_admin_guard)])
+@router.get("/stats")
 async def trino_query_stats(
     time_range: str = Query("15m", description="Time range for statistics (15m, 1h, 24h)"),
     include_errors: bool = Query(True, description="Include error statistics")
@@ -236,7 +233,7 @@ async def trino_query_stats(
         )
 
 
-@router.post("/reset", dependencies=[Depends(_admin_guard)])
+@router.post("/reset")
 async def trino_reset_circuit_breaker() -> Dict:
     """Reset Trino circuit breaker to recover from failures."""
     start_time = time.perf_counter()
@@ -268,7 +265,7 @@ async def trino_reset_circuit_breaker() -> Dict:
         )
 
 
-@router.get("/config", dependencies=[Depends(_admin_guard)])
+@router.get("/config")
 async def trino_config_status() -> Dict:
     """Get Trino client configuration and runtime settings."""
     start_time = time.perf_counter()
@@ -314,7 +311,7 @@ async def trino_config_status() -> Dict:
         )
 
 
-@router.get("/catalogs", dependencies=[Depends(_admin_guard)])
+@router.get("/catalogs")
 async def trino_catalog_status() -> Dict:
     """Get status of all configured Trino catalogs."""
     start_time = time.perf_counter()
@@ -364,7 +361,7 @@ async def trino_catalog_status() -> Dict:
         )
 
 
-@router.get("/catalogs/{catalog_type}", dependencies=[Depends(_admin_guard)])
+@router.get("/catalogs/{catalog_type}")
 async def trino_catalog_info(
     catalog_type: str,
     include_access_control: bool = Query(False, description="Include access control details")
@@ -429,7 +426,7 @@ async def trino_catalog_info(
         )
 
 
-@router.post("/catalogs/{catalog_type}/validate-access", dependencies=[Depends(_admin_guard)])
+@router.post("/catalogs/{catalog_type}/validate-access")
 async def validate_catalog_access(
     catalog_type: str,
     operation: str = Query("read", description="Operation to validate (read, write)")

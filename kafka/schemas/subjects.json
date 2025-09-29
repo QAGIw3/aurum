@@ -57,6 +57,9 @@
   "aurum.ref.fuel.natural_gas.v1-value": "fuel.curve.v1.avsc",
   "aurum.ref.fx.rate.v1-value": "fx.rate.v1.avsc",
   "aurum.ref.noaa.weather.v1-value": "noaa.weather.v1.avsc",
+  "aurum.notifications.dispatch.v1-value": "notifications.dispatch.v1.avsc",
+  "aurum.notifications.delivery.v1-value": "notifications.delivery.v1.avsc",
+  "aurum.notifications.analytics.v1-value": "notifications.analytics.v1.avsc",
   "aurum.scenario.output.v1-value": "scenario.output.v1.avsc",
   "aurum.scenario.request.v1-value": "scenario.request.v1.avsc"
 }

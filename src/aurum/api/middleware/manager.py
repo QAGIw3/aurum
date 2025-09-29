@@ -30,6 +30,7 @@ from ..http.middleware.access import access_log_middleware
 from ..http.middleware.headers import create_response_headers_middleware
 from .admin_guard import AdminRouteGuard
 from ..auth import AuthMiddleware, OIDCConfig
+from aurum.security.middleware import SecurityMiddleware
 from .tenant_context import TenantContextMiddleware, TenantContextOptions
 from .resource_cleanup import resource_cleanup_middleware
 
@@ -144,6 +145,7 @@ class MiddlewareManager:
         *,
         tenant_manager: Any | None = None,
         tenant_context_options: TenantContextOptions | None = None,
+        token_service: Any | None = None,
         enable_access_log: bool = True,
     ) -> None:
         """Register the default middleware set with sensible ordering.
@@ -182,14 +184,21 @@ class MiddlewareManager:
         def _apply_cors(fastapi_app: FastAPI, app_chain: ASGIApp, _s: AurumSettings) -> ASGIApp:
             from fastapi.middleware.cors import CORSMiddleware
 
-            cors_origins = getattr(getattr(settings, "api", None), "cors_origins", []) or []
-            allow_origins = cors_origins if cors_origins else ["*"]
+            cors_cfg = getattr(getattr(settings, "api", None), "cors", None)
+            strict_mode = bool(getattr(cors_cfg, "strict", not settings.is_development()))
+            allowlist = list(getattr(cors_cfg, "allowlist", []) or [])
+            allow_origins = allowlist if strict_mode else (allowlist or ["*"])
+            allow_credentials = bool(getattr(cors_cfg, "allow_credentials", True))
+            allowed_headers = list(getattr(cors_cfg, "allowed_headers", []) or ["Authorization", "Content-Type", "Accept", "X-Requested-With"])
+            max_age = int(getattr(cors_cfg, "max_age", 600))
+
             fastapi_app.add_middleware(
                 CORSMiddleware,
                 allow_origins=allow_origins,
-                allow_credentials=True,
+                allow_credentials=allow_credentials,
                 allow_methods=["*"],
-                allow_headers=["*"],
+                allow_headers=allowed_headers,
+                max_age=max_age,
             )
             return app_chain
 
@@ -212,7 +221,24 @@ class MiddlewareManager:
 
         # 1450: Auth middleware
         oidc_config = OIDCConfig.from_settings(settings)
-        self.register_class(name="auth", priority=1450, enabled=True, cls=AuthMiddleware, kwargs={"config": oidc_config})
+        auth_kwargs = {"config": oidc_config}
+        if token_service is not None:
+            auth_kwargs["token_service"] = token_service
+        self.register_class(name="auth", priority=1450, enabled=True, cls=AuthMiddleware, kwargs=auth_kwargs)
+
+        security_cfg = getattr(getattr(settings, "api", None), "security_headers", None)
+        security_enabled = bool(getattr(security_cfg, "enabled", True))
+        self.register_class(
+            name="security",
+            priority=1440,
+            enabled=security_enabled,
+            cls=SecurityMiddleware,
+            kwargs={
+                "security_headers": security_enabled,
+                "csp_policy": getattr(security_cfg, "csp", None) if security_cfg else None,
+                "hsts_policy": getattr(security_cfg, "hsts", None) if security_cfg else None,
+            },
+        )
 
         # 1400: Tenant context (optional)
         if tenant_manager is not None and tenant_context_options is not None:
@@ -350,5 +376,3 @@ class MiddlewareManager:
 
 
 __all__ = ["MiddlewareManager", "RegisteredMiddleware"]
-
-

@@ -145,6 +145,7 @@ def get_v1_router_specs(_settings: AurumSettings) -> list[RouterSpec]:
         "aurum.api.v1.metadata",
         "aurum.api.v1.ppa",
         "aurum.api.v1.model_registry",
+        "aurum.api.v1.notifications",
     )
 
     specs.extend(_build_specs(mandatory_modules, seen=seen))
@@ -252,6 +253,7 @@ def get_v2_router_specs(_settings: AurumSettings) -> list[RouterSpec]:
         "aurum.api.v2.performance_monitoring",
         "aurum.api.v2.dbt_management",
         "aurum.api.v2.market_streaming",
+        "aurum.api.v2.search",
     )
     specs = _build_specs(module_paths)
     for spec in specs:

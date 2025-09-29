@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import os
 from collections.abc import Awaitable
 from datetime import datetime, timedelta
 from enum import Enum
@@ -16,6 +17,9 @@ from .metrics import (
     increment_alerts_suppressed,
     observe_alert_processing_duration,
 )
+
+from aurum.notifications.multi_channel import NotificationChannel, NotificationPriority
+from aurum.notifications.service import get_notification_service
 
 logger = logging.getLogger(__name__)
 
@@ -223,6 +227,12 @@ class AlertManager:
                         "status": "sent"
                     })
 
+            # Trigger advanced notification pipeline
+            try:
+                await advanced_notification_handler(alert)
+            except Exception as exc:  # pragma: no cover - defensive safety
+                logger.warning("Advanced notification handler failed", exc_info=exc)
+
             logger.info(
                 "Alert fired",
                 extra={
@@ -323,6 +333,49 @@ class AlertManager:
 
 # Global alert manager instance
 _alert_manager: Optional[AlertManager] = None
+
+
+def _extract_recipients(alert: Alert) -> list[dict[str, Any]]:
+    recipients: list[dict[str, Any]] = []
+    email = alert.context.get("email") or alert.context.get("recipient_email")
+    if email:
+        recipients.append(
+            {
+                "id": alert.context.get("user_id", alert.rule.name),
+                "address": email,
+                "channels": [NotificationChannel.EMAIL.value],
+                "metadata": {"source": "alert"},
+            }
+        )
+    slack_channel = alert.context.get("slack_channel")
+    if slack_channel:
+        recipients.append(
+            {
+                "id": slack_channel,
+                "channels": [NotificationChannel.SLACK.value],
+                "metadata": {"channel": slack_channel},
+            }
+        )
+    phone = alert.context.get("phone")
+    if phone:
+        recipients.append(
+            {
+                "id": phone,
+                "address": phone,
+                "channels": [NotificationChannel.SMS.value],
+            }
+        )
+    return recipients
+
+
+def _priority_from_severity(severity: AlertSeverity) -> NotificationPriority:
+    mapping = {
+        AlertSeverity.CRITICAL: NotificationPriority.CRITICAL,
+        AlertSeverity.HIGH: NotificationPriority.HIGH,
+        AlertSeverity.MEDIUM: NotificationPriority.NORMAL,
+        AlertSeverity.LOW: NotificationPriority.LOW,
+    }
+    return mapping.get(severity, NotificationPriority.NORMAL)
 
 
 def get_alert_manager() -> AlertManager:
@@ -560,4 +613,31 @@ async def log_notification_handler(alert: Alert) -> None:
             "context": alert.context,
             "channels": [c.value for c in alert.rule.channels]
         }
+    )
+
+
+async def advanced_notification_handler(alert: Alert) -> None:
+    """Forward alert through the advanced notification pipeline."""
+    if os.getenv("AURUM_NOTIFICATIONS_ENABLED", "false").lower() not in {"1", "true", "yes"}:
+        return
+
+    recipients = _extract_recipients(alert)
+    if not recipients:
+        return
+
+    service = await get_notification_service()
+    data = {
+        "title": alert.title,
+        "message": alert.message,
+        "severity": alert.rule.severity.value,
+        "timestamp": alert.timestamp,
+    }
+    await service.enqueue(
+        tenant_id=str(alert.context.get("tenant_id", "default")),
+        template_id="alert.generic",
+        recipients=recipients,
+        data=data,
+        priority=_priority_from_severity(alert.rule.severity),
+        channels=[recipient_channel for recipient in recipients for recipient_channel in recipient.get("channels", [])],
+        metadata=alert.context,
     )

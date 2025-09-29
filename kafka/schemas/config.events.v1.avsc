@@ -1,0 +1,208 @@
+{
+  "type": "record",
+  "name": "ConfigEvent",
+  "namespace": "aurum.config.events.v1",
+  "doc": "Configuration change event for audit and observability",
+  "fields": [
+    {
+      "name": "event_type",
+      "type": "string",
+      "doc": "Type of event (config_change, config_backup, config_restore, etc.)"
+    },
+    {
+      "name": "event_id",
+      "type": "string",
+      "doc": "Unique identifier for this event"
+    },
+    {
+      "name": "timestamp",
+      "type": "double",
+      "doc": "Unix timestamp when the event occurred"
+    },
+    {
+      "name": "change_id",
+      "type": ["null", "string"],
+      "default": null,
+      "doc": "ID of the configuration change that triggered this event"
+    },
+    {
+      "name": "change_type",
+      "type": ["null", {
+        "type": "enum",
+        "name": "ChangeType",
+        "symbols": ["created", "updated", "deleted", "restored"]
+      }],
+      "default": null,
+      "doc": "Type of configuration change"
+    },
+    {
+      "name": "source",
+      "type": ["null", {
+        "type": "enum",
+        "name": "ChangeSource",
+        "symbols": ["api", "cli", "ci_cd", "file_watcher", "system"]
+      }],
+      "default": null,
+      "doc": "Source of the configuration change"
+    },
+    {
+      "name": "actor",
+      "type": ["null", "string"],
+      "default": null,
+      "doc": "Actor (user, service, system) that made the change"
+    },
+    {
+      "name": "namespace",
+      "type": ["null", "string"],
+      "default": null,
+      "doc": "Configuration namespace that was changed"
+    },
+    {
+      "name": "reason",
+      "type": ["null", "string"],
+      "default": null,
+      "doc": "Human-readable reason for the change"
+    },
+    {
+      "name": "correlation_id",
+      "type": ["null", "string"],
+      "default": null,
+      "doc": "Correlation ID for tracking related changes"
+    },
+    {
+      "name": "environment",
+      "type": ["null", "string"],
+      "default": null,
+      "doc": "Environment where the change occurred"
+    },
+    {
+      "name": "diff",
+      "type": ["null", {
+        "type": "record",
+        "name": "ConfigDiff",
+        "fields": [
+          {
+            "name": "type_changes",
+            "type": ["null", {
+              "type": "array",
+              "items": {
+                "type": "record",
+                "name": "TypeChange",
+                "fields": [
+                  {"name": "path", "type": "string"},
+                  {"name": "old_type", "type": "string"},
+                  {"name": "new_type", "type": "string"}
+                ]
+              }
+            }],
+            "default": null
+          },
+          {
+            "name": "values_changed",
+            "type": ["null", {
+              "type": "array",
+              "items": {
+                "type": "record",
+                "name": "ValueChange",
+                "fields": [
+                  {"name": "path", "type": "string"},
+                  {"name": "old_value", "type": "string"},
+                  {"name": "new_value", "type": "string"}
+                ]
+              }
+            }],
+            "default": null
+          },
+          {
+            "name": "dictionary_item_added",
+            "type": ["null", {
+              "type": "array",
+              "items": {
+                "type": "record",
+                "name": "DictionaryItemAdded",
+                "fields": [
+                  {"name": "path", "type": "string"},
+                  {"name": "key", "type": "string"},
+                  {"name": "value", "type": "string"}
+                ]
+              }
+            }],
+            "default": null
+          },
+          {
+            "name": "dictionary_item_removed",
+            "type": ["null", {
+              "type": "array",
+              "items": {
+                "type": "record",
+                "name": "DictionaryItemRemoved",
+                "fields": [
+                  {"name": "path", "type": "string"},
+                  {"name": "key", "type": "string"}
+                ]
+              }
+            }],
+            "default": null
+          },
+          {
+            "name": "iterable_item_added",
+            "type": ["null", {
+              "type": "array",
+              "items": {
+                "type": "record",
+                "name": "IterableItemAdded",
+                "fields": [
+                  {"name": "path", "type": "string"},
+                  {"name": "value", "type": "string"},
+                  {"name": "index", "type": ["null", "int"], "default": null}
+                ]
+              }
+            }],
+            "default": null
+          },
+          {
+            "name": "iterable_item_removed",
+            "type": ["null", {
+              "type": "array",
+              "items": {
+                "type": "record",
+                "name": "IterableItemRemoved",
+                "fields": [
+                  {"name": "path", "type": "string"},
+                  {"name": "value", "type": "string"},
+                  {"name": "index", "type": ["null", "int"], "default": null}
+                ]
+              }
+            }],
+            "default": null
+          }
+        ]
+      }],
+      "default": null,
+      "doc": "Detailed diff of what changed in the configuration"
+    },
+    {
+      "name": "metadata",
+      "type": {
+        "type": "map",
+        "values": "string"
+      },
+      "default": {},
+      "doc": "Additional metadata about the change"
+    },
+    {
+      "name": "version_info",
+      "type": ["null", {
+        "type": "record",
+        "name": "VersionInfo",
+        "fields": [
+          {"name": "version", "type": "int"},
+          {"name": "content_hash", "type": "string"},
+          {"name": "compressed_size", "type": "int"}
+        ]
+      }],
+      "default": null,
+      "doc": "Version information if this event relates to a versioned configuration"
+    }
+  ]
+}

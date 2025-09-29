@@ -4,12 +4,17 @@ from __future__ import annotations
 
 import asyncio
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 
 from aurum.api.async_exec import fetch_job_result
+from aurum.api.auth import Permission, require_permissions
 
 
-offload_router = APIRouter(prefix="/v1/admin/offload", tags=["Offload"])
+offload_router = APIRouter(
+    prefix="/v1/admin/offload",
+    tags=["Offload"],
+    dependencies=[Depends(require_permissions(Permission.ADMIN, tenant_scoped=False))],
+)
 
 
 @offload_router.get("/{task_id}", summary="Fetch status for an offloaded job")

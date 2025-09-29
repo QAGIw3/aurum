@@ -52,9 +52,16 @@ from ...observability.metrics import (
     increment_trino_hot_cache_hits,
     increment_trino_hot_cache_misses,
     set_trino_prepared_cache_entries,
-    TRINO_PREPARED_CACHE_ENTRIES,
-    TRINO_PREPARED_CACHE_EVICTIONS,
 )
+
+# Tolerant access to optional metric constants to avoid import-time failures
+try:  # pragma: no cover - import-time resilience
+    from ...observability import metrics as _obs_metrics
+    TRINO_PREPARED_CACHE_ENTRIES = getattr(_obs_metrics, "TRINO_PREPARED_CACHE_ENTRIES", None)
+    TRINO_PREPARED_CACHE_EVICTIONS = getattr(_obs_metrics, "TRINO_PREPARED_CACHE_EVICTIONS", None)
+except Exception:  # pragma: no cover - defensive
+    TRINO_PREPARED_CACHE_ENTRIES = None
+    TRINO_PREPARED_CACHE_EVICTIONS = None
 from ...observability.enhanced_tracing import get_current_trace_context
 from ..middleware.resource_cleanup import get_current_resource_tracker
 

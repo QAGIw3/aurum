@@ -1,0 +1,256 @@
+{
+  "type": "record",
+  "name": "SearchAnalyticsEvent",
+  "namespace": "aurum.search.v1",
+  "doc": "Search analytics event for tracking user behavior and search performance",
+  "fields": [
+    {
+      "name": "event_id",
+      "type": "string",
+      "doc": "Unique identifier for this analytics event"
+    },
+    {
+      "name": "timestamp",
+      "type": "long",
+      "doc": "Unix timestamp when event occurred"
+    },
+    {
+      "name": "event_type",
+      "type": {
+        "type": "enum",
+        "name": "SearchEventType",
+        "symbols": [
+          "SEARCH_PERFORMED",
+          "RESULT_CLICKED",
+          "FACET_APPLIED",
+          "SUGGESTION_USED",
+          "QUERY_REFORMULATED",
+          "ZERO_RESULTS",
+          "SLOW_QUERY",
+          "ERROR_OCCURRED"
+        ]
+      },
+      "doc": "Type of search analytics event"
+    },
+    {
+      "name": "session_id",
+      "type": "string",
+      "doc": "User session identifier"
+    },
+    {
+      "name": "user_id",
+      "type": ["null", "string"],
+      "default": null,
+      "doc": "Authenticated user ID (null for anonymous users)"
+    },
+    {
+      "name": "tenant_id",
+      "type": ["null", "string"],
+      "default": null,
+      "doc": "Tenant ID for multi-tenant isolation"
+    },
+    {
+      "name": "query_hash",
+      "type": "string",
+      "doc": "Hash of the search query for deduplication"
+    },
+    {
+      "name": "query_text",
+      "type": "string",
+      "doc": "Original search query text"
+    },
+    {
+      "name": "query_normalized",
+      "type": ["null", "string"],
+      "default": null,
+      "doc": "Normalized query after processing"
+    },
+    {
+      "name": "query_intent",
+      "type": ["null", "string"],
+      "default": null,
+      "doc": "Detected query intent (documentation, data, analysis, etc.)"
+    },
+    {
+      "name": "query_enhanced",
+      "type": "boolean",
+      "default": false,
+      "doc": "Whether query was enhanced with synonyms/fuzzy matching"
+    },
+    {
+      "name": "filters_applied",
+      "type": {
+        "type": "array",
+        "items": {
+          "type": "record",
+          "name": "AppliedFilter",
+          "fields": [
+            {
+              "name": "field",
+              "type": "string"
+            },
+            {
+              "name": "value",
+              "type": "string"
+            },
+            {
+              "name": "filter_type",
+              "type": "string"
+            }
+          ]
+        }
+      },
+      "default": [],
+      "doc": "List of filters applied to the search"
+    },
+    {
+      "name": "facets_used",
+      "type": {
+        "type": "array",
+        "items": "string"
+      },
+      "default": [],
+      "doc": "List of facet fields used in the search"
+    },
+    {
+      "name": "semantic_search_enabled",
+      "type": "boolean",
+      "default": false,
+      "doc": "Whether semantic search was enabled"
+    },
+    {
+      "name": "semantic_weight",
+      "type": ["null", "float"],
+      "default": null,
+      "doc": "Weight applied to semantic search component"
+    },
+    {
+      "name": "result_count",
+      "type": "int",
+      "doc": "Number of results returned"
+    },
+    {
+      "name": "total_results",
+      "type": "int",
+      "doc": "Total number of matching documents"
+    },
+    {
+      "name": "response_time_ms",
+      "type": "int",
+      "doc": "Time taken to process the search (milliseconds)"
+    },
+    {
+      "name": "clicked_result_id",
+      "type": ["null", "string"],
+      "default": null,
+      "doc": "ID of clicked result (for RESULT_CLICKED events)"
+    },
+    {
+      "name": "clicked_result_rank",
+      "type": ["null", "int"],
+      "default": null,
+      "doc": "Rank of clicked result (1-based)"
+    },
+    {
+      "name": "facet_applied",
+      "type": ["null", {
+        "type": "record",
+        "name": "AppliedFacet",
+        "fields": [
+          {
+            "name": "field",
+            "type": "string"
+          },
+          {
+            "name": "value",
+            "type": "string"
+          }
+        ]
+      }],
+      "default": null,
+      "doc": "Facet that was applied (for FACET_APPLIED events)"
+    },
+    {
+      "name": "suggestion_used",
+      "type": ["null", "string"],
+      "default": null,
+      "doc": "Suggestion that was used (for SUGGESTION_USED events)"
+    },
+    {
+      "name": "error_type",
+      "type": ["null", "string"],
+      "default": null,
+      "doc": "Type of error that occurred (for ERROR_OCCURRED events)"
+    },
+    {
+      "name": "error_message",
+      "type": ["null", "string"],
+      "default": null,
+      "doc": "Error message (for ERROR_OCCURRED events)"
+    },
+    {
+      "name": "user_agent",
+      "type": ["null", "string"],
+      "default": null,
+      "doc": "User agent string"
+    },
+    {
+      "name": "ip_address",
+      "type": ["null", "string"],
+      "default": null,
+      "doc": "IP address (for analytics, not stored permanently)"
+    },
+    {
+      "name": "request_id",
+      "type": ["null", "string"],
+      "default": null,
+      "doc": "Request ID for correlation with logs"
+    },
+    {
+      "name": "search_source",
+      "type": {
+        "type": "enum",
+        "name": "SearchSource",
+        "symbols": [
+          "WEB_UI",
+          "API",
+          "MOBILE_APP",
+          "INTEGRATION",
+          "BATCH"
+        ]
+      },
+      "default": "API",
+      "doc": "Source of the search request"
+    },
+    {
+      "name": "performance_metrics",
+      "type": ["null", {
+        "type": "record",
+        "name": "PerformanceMetrics",
+        "fields": [
+          {
+            "name": "query_time_ms",
+            "type": "int"
+          },
+          {
+            "name": "embedding_time_ms",
+            "type": ["null", "int"],
+            "default": null
+          },
+          {
+            "name": "facet_time_ms",
+            "type": ["null", "int"],
+            "default": null
+          },
+          {
+            "name": "ranking_time_ms",
+            "type": ["null", "int"],
+            "default": null
+          }
+        ]
+      }],
+      "default": null,
+      "doc": "Detailed performance metrics"
+    }
+  ]
+}

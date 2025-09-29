@@ -15,8 +15,12 @@ from aurum.api.telemetry.context import (
     normalize_tenant_id,
 )
 
-from aurum.api.cache.cache import CacheManager
-from aurum.api.cache.unified_cache_manager import UnifiedCacheManager, get_unified_cache_manager
+from typing import TYPE_CHECKING
+if TYPE_CHECKING:  # pragma: no cover - type-only to avoid circular imports
+    from aurum.api.cache.cache import CacheManager
+from typing import TYPE_CHECKING
+if TYPE_CHECKING:  # pragma: no cover - type-only to avoid circular imports
+    from aurum.api.cache.unified_cache_manager import UnifiedCacheManager
 from aurum.core import AurumSettings
 from aurum.core.settings import get_settings as _core_get_settings
 
@@ -36,14 +40,14 @@ def get_settings(request: Request) -> AurumSettings:
     return _core_get_settings()
 
 
-def get_cache_manager(request: Request) -> Optional[CacheManager]:
+def get_cache_manager(request: Request) -> Optional["CacheManager"]:
     """Return the active CacheManager from app state, if present."""
     return getattr(getattr(request, "app", None), "state", None) and getattr(  # type: ignore[return-value]
         request.app.state, "cache_manager", None
     )
 
 
-def get_unified_cache_manager_dep(request: Request) -> Optional[UnifiedCacheManager]:
+def get_unified_cache_manager_dep(request: Request) -> Optional["UnifiedCacheManager"]:
     """Return the active UnifiedCacheManager from app state or global instance."""
     # First try to get from app state
     app_state = getattr(getattr(request, "app", None), "state", None)
@@ -52,7 +56,11 @@ def get_unified_cache_manager_dep(request: Request) -> Optional[UnifiedCacheMana
         if unified_manager:
             return unified_manager
     
-    # Fall back to global instance
+    # Fall back to global instance (import lazily to avoid circular imports)
+    try:
+        from aurum.api.cache.unified_cache_manager import get_unified_cache_manager
+    except Exception:  # pragma: no cover - defensive import
+        return None
     return get_unified_cache_manager()
 
 

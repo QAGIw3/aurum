@@ -1,29 +1,60 @@
-"""Database functionality for the Aurum API."""
+"""Database functionality for the Aurum API.
 
-from .performance import router as performance_router
-from .query_analysis import router as query_analysis_router
-from .optimization import router as optimization_router
-from .connections import router as connections_router
-from .health import router as health_router
-from .trino_admin import router as trino_admin_router
-from .trino_client import (
-    get_trino_client,
-    get_trino_client_by_catalog,
-    get_trino_catalog_config,
-    configure_trino_catalogs,
-    TrinoClientManager,
-)
-from .config import TrinoCatalogType, TrinoAccessLevel, TrinoCatalogConfig
-from .auto_reforecast import (
-    get_auto_reforecast_repository,
-    get_auto_reforecast_job_repository,
-    AutoReforecastRepository,
-    AutoReforecastJobRepository,
-)
-from .auto_reforecast_scheduler import (
-    AutoReforecastScheduler,
-    get_auto_reforecast_scheduler,
-)
+This package lazily exposes routers and helpers to avoid circular imports
+during test collection. Modules are imported only on attribute access.
+"""
+
+from __future__ import annotations
+
+import importlib
+from typing import Any
+
+_LAZY_ATTRS = {
+    # Routers
+    "performance_router": (".performance", "router"),
+    "query_analysis_router": (".query_analysis", "router"),
+    "optimization_router": (".optimization", "router"),
+    "connections_router": (".connections", "router"),
+    "health_router": (".health", "router"),
+    "trino_admin_router": (".trino_admin", "router"),
+    # Trino client
+    "get_trino_client": (".trino_client", "get_trino_client"),
+    "get_trino_client_by_catalog": (".trino_client", "get_trino_client_by_catalog"),
+    "get_trino_catalog_config": (".trino_client", "get_trino_catalog_config"),
+    "configure_trino_catalogs": (".trino_client", "configure_trino_catalogs"),
+    "TrinoClientManager": (".trino_client", "TrinoClientManager"),
+    # Config
+    "TrinoCatalogType": (".config", "TrinoCatalogType"),
+    "TrinoAccessLevel": (".config", "TrinoAccessLevel"),
+    "TrinoCatalogConfig": (".config", "TrinoCatalogConfig"),
+    # Auto reforecast
+    "get_auto_reforecast_repository": (".auto_reforecast", "get_auto_reforecast_repository"),
+    "get_auto_reforecast_job_repository": (".auto_reforecast", "get_auto_reforecast_job_repository"),
+    "AutoReforecastRepository": (".auto_reforecast", "AutoReforecastRepository"),
+    "AutoReforecastJobRepository": (".auto_reforecast", "AutoReforecastJobRepository"),
+    "AutoReforecastScheduler": (".auto_reforecast_scheduler", "AutoReforecastScheduler"),
+    "get_auto_reforecast_scheduler": (".auto_reforecast_scheduler", "get_auto_reforecast_scheduler"),
+    # Database monitor
+    "get_database_monitor": (".database_monitor", "get_database_monitor"),
+    "initialize_database_monitoring": (".database_monitor", "initialize_database_monitoring"),
+    "DatabaseMonitor": (".database_monitor", "DatabaseMonitor"),
+    "QueryMetrics": (".database_monitor", "QueryMetrics"),
+    "QueryPattern": (".database_monitor", "QueryPattern"),
+    "OptimizationSuggestion": (".database_monitor", "OptimizationSuggestion"),
+    "QueryPerformanceLevel": (".database_monitor", "QueryPerformanceLevel"),
+    "OptimizationType": (".database_monitor", "OptimizationType"),
+}
+
+
+def __getattr__(name: str) -> Any:  # pragma: no cover - import indirection
+    spec = _LAZY_ATTRS.get(name)
+    if not spec:
+        raise AttributeError(name)
+    module_name, attr = spec
+    module = importlib.import_module(module_name, package=__name__)
+    value = getattr(module, attr)
+    globals()[name] = value
+    return value
 
 
 def initialize_trino_catalogs(settings) -> None:
@@ -44,6 +75,7 @@ def initialize_trino_catalogs(settings) -> None:
     )
 
     # Configure the client manager with both catalogs
+    from .trino_client import configure_trino_catalogs
     configure_trino_catalogs([raw_catalog_config, market_catalog_config])
 
     # Log the configuration
@@ -56,16 +88,7 @@ def initialize_trino_catalogs(settings) -> None:
         raw_access_level=raw_catalog_config.access_level.value,
         market_access_level=market_catalog_config.access_level.value,
     )
-from .database_monitor import (
-    get_database_monitor,
-    initialize_database_monitoring,
-    DatabaseMonitor,
-    QueryMetrics,
-    QueryPattern,
-    OptimizationSuggestion,
-    QueryPerformanceLevel,
-    OptimizationType,
-)
+ # database_monitor is exposed lazily via __getattr__
 
 __all__ = [
     "performance_router",

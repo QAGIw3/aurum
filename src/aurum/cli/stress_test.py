@@ -167,11 +167,11 @@ async def handle_run_test(args: argparse.Namespace, engine) -> None:
         print()
         print("Price Impacts:")
         for curve_key, multiplier in impact.price_impact.items():
-            print(f"  {curve_key}: {multiplier".2%"}")
+            print(f"  {curve_key}: {multiplier:.2%}")
         print()
         print("Volume Impacts:")
         for curve_key, multiplier in impact.volume_impact.items():
-            print(f"  {curve_key}: {multiplier".2%"}")
+            print(f"  {curve_key}: {multiplier:.2%}")
     else:
         print("Stress test failed")
 
@@ -200,13 +200,11 @@ async def handle_batch_tests(args: argparse.Namespace, engine) -> None:
 
     if successful > 0:
         report = await engine.generate_stress_test_report(results)
-        print("
-Summary:")
+        print("\nSummary:")
         print(f"Total Portfolio Impact: {report['total_portfolio_impact']}")
         print(f"VaR 95%: {report['aggregated_risk_metrics']['var_95']}")
         print(f"VaR 99%: {report['aggregated_risk_metrics']['var_99']}")
-        print("
-Most Affected Curves:")
+        print("\nMost Affected Curves:")
         for curve, count in report['most_affected_curves'][:3]:
             print(f"  {curve}: affected by {count} scenarios")
 

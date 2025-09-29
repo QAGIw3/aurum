@@ -13,7 +13,7 @@ from fastapi import HTTPException
 from starlette.requests import Request
 from starlette.types import ASGIApp, Receive, Scope, Send
 
-from aurum.api.auth import Permission, has_permission
+from aurum.api.auth import Permission, require_permission
 
 
 class AdminRouteGuard:
@@ -34,7 +34,9 @@ class AdminRouteGuard:
 
         request = Request(scope)
         principal: Optional[dict[str, Any]] = getattr(request.state, "principal", None)
-        if not has_permission(principal or {}, Permission.ADMIN_READ):
+        try:
+            require_permission(principal or {}, Permission.ADMIN_READ)
+        except Exception:
             # Mirror legacy behavior: return 403 with a header indicating requirement
             raise HTTPException(
                 status_code=403,

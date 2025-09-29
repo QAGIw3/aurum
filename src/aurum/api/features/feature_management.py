@@ -4,20 +4,23 @@ from __future__ import annotations
 
 import hashlib
 import time
-from typing import Dict, List, Optional
+from typing import Any, Dict, List, Optional
 
 from fastapi import APIRouter, HTTPException, Query, Request, Body, Depends
 from pydantic import BaseModel, Field
 
 from ..telemetry.context import get_request_id
+from ..auth import Permission, require_permissions
 from .. import routes as _routes
-from .feature_flags import (
+from . import (
     get_feature_manager,
     FeatureFlagStatus,
     UserSegment,
     ABTestConfiguration,
     FeatureFlagRule,
-    FeatureFlag
+    FeatureFlag,
+    RolloutPlan,
+    RolloutStrategy,
 )
 
 
@@ -51,6 +54,55 @@ class FeatureFlagListResponse(BaseModel):
     """Response model for feature flag list."""
     meta: Dict[str, Any]
     data: List[FeatureFlagResponse]
+
+
+# Rollout Plan Models
+class RolloutPlanCreateRequest(BaseModel):
+    """Request model for creating a rollout plan."""
+    strategy: str = Field(..., description="Rollout strategy (percentage, gradual, targeted, scheduled, dependent)")
+    name: str = Field("", description="Rollout plan name")
+    description: str = Field("", description="Rollout plan description")
+
+    # For percentage-based rollouts
+    percentage: float = Field(100.0, description="Percentage of users to rollout to (0-100)")
+
+    # For gradual rollouts
+    start_percentage: float = Field(0.0, description="Starting percentage for gradual rollout")
+    end_percentage: float = Field(100.0, description="Target percentage for gradual rollout")
+    step_percentage: float = Field(10.0, description="Step size for each interval")
+    step_interval_hours: int = Field(24, description="Hours between steps")
+
+    # For scheduled rollouts
+    start_time: Optional[str] = Field(None, description="ISO datetime when rollout starts")
+    end_time: Optional[str] = Field(None, description="ISO datetime when rollout ends")
+
+    # For targeted rollouts
+    user_segments: List[str] = Field([], description="User segments to target")
+    required_flags: List[str] = Field([], description="Flags that must be enabled")
+    excluded_flags: List[str] = Field([], description="Flags that must be disabled")
+
+
+class RolloutPlanResponse(BaseModel):
+    """Response model for rollout plan data."""
+    flag_key: str
+    strategy: str
+    name: str
+    description: str
+    percentage: float
+    start_percentage: float
+    end_percentage: float
+    step_percentage: float
+    step_interval_hours: int
+    start_time: Optional[str]
+    end_time: Optional[str]
+    user_segments: List[str]
+    required_flags: List[str]
+    excluded_flags: List[str]
+    created_at: str
+    updated_at: str
+    created_by: str
+    effective_percentage: float
+    is_active: bool
 
 
 class FeatureFlagDetailResponse(BaseModel):
@@ -118,7 +170,9 @@ class FeatureUsageResponse(BaseModel):
     data: Dict[str, Any]
 
 
-router = APIRouter()
+router = APIRouter(
+    dependencies=[Depends(require_permissions(Permission.FEATURE_FLAGS_MANAGE, tenant_scoped=False))]
+)
 
 
 @router.post("/v1/admin/features", response_model=FeatureFlagDetailResponse)
@@ -775,4 +829,372 @@ async def get_feature_usage(
         raise HTTPException(
             status_code=500,
             detail=f"Failed to get feature usage: {str(exc)}"
+        ) from exc
+
+
+# Rollout Plan Endpoints
+@router.post("/v1/admin/features/{flag_key}/rollout", response_model=Dict[str, Any])
+async def create_rollout_plan(
+    flag_key: str,
+    rollout_plan: RolloutPlanCreateRequest,
+    request: Request,
+    principal=Depends(_routes._get_principal),
+) -> Dict[str, Any]:
+    """Create a rollout plan for a feature flag."""
+    start_time = time.perf_counter()
+
+    try:
+        _routes._require_admin(principal)
+        manager = get_feature_manager()
+
+        # Validate strategy
+        try:
+            strategy = RolloutStrategy(rollout_plan.strategy)
+        except ValueError:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Invalid rollout strategy: {rollout_plan.strategy}"
+            )
+
+        # Validate user segments
+        user_segments = []
+        for segment_str in rollout_plan.user_segments:
+            try:
+                user_segments.append(UserSegment(segment_str))
+            except ValueError:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"Invalid user segment: {segment_str}"
+                )
+
+        # Parse datetime strings
+        start_time_dt = None
+        end_time_dt = None
+        if rollout_plan.start_time:
+            try:
+                start_time_dt = datetime.fromisoformat(rollout_plan.start_time.replace('Z', '+00:00'))
+            except ValueError:
+                raise HTTPException(
+                    status_code=400,
+                    detail="Invalid start_time format. Use ISO datetime format."
+                )
+
+        if rollout_plan.end_time:
+            try:
+                end_time_dt = datetime.fromisoformat(rollout_plan.end_time.replace('Z', '+00:00'))
+            except ValueError:
+                raise HTTPException(
+                    status_code=400,
+                    detail="Invalid end_time format. Use ISO datetime format."
+                )
+
+        # Create rollout plan
+        success = await manager.create_rollout_plan(
+            flag_key=flag_key,
+            strategy=strategy.value,
+            name=rollout_plan.name,
+            description=rollout_plan.description,
+            percentage=rollout_plan.percentage,
+            start_percentage=rollout_plan.start_percentage,
+            end_percentage=rollout_plan.end_percentage,
+            step_percentage=rollout_plan.step_percentage,
+            step_interval_hours=rollout_plan.step_interval_hours,
+            start_time=start_time_dt,
+            end_time=end_time_dt,
+            user_segments=user_segments,
+            required_flags=rollout_plan.required_flags,
+            excluded_flags=rollout_plan.excluded_flags,
+            created_by=principal.user_id or "admin"
+        )
+
+        if not success:
+            raise HTTPException(
+                status_code=500,
+                detail="Failed to create rollout plan"
+            )
+
+        query_time_ms = (time.perf_counter() - start_time) * 1000
+
+        return {
+            "meta": {
+                "request_id": get_request_id(),
+                "query_time_ms": round(query_time_ms, 2),
+            },
+            "data": {
+                "flag_key": flag_key,
+                "rollout_plan_created": True,
+                "strategy": rollout_plan.strategy,
+            }
+        }
+
+    except HTTPException:
+        raise
+    except Exception as exc:
+        query_time_ms = (time.perf_counter() - start_time) * 1000
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to create rollout plan: {str(exc)}"
+        ) from exc
+
+
+@router.get("/v1/admin/features/{flag_key}/rollout", response_model=Dict[str, Any])
+async def get_rollout_plan(
+    flag_key: str,
+    request: Request,
+    principal=Depends(_routes._get_principal),
+) -> Dict[str, Any]:
+    """Get the rollout plan for a feature flag."""
+    start_time = time.perf_counter()
+
+    try:
+        _routes._require_admin(principal)
+        manager = get_feature_manager()
+
+        plan_data = await manager.get_rollout_plan(flag_key)
+        if not plan_data:
+            raise HTTPException(
+                status_code=404,
+                detail=f"No rollout plan found for flag: {flag_key}"
+            )
+
+        query_time_ms = (time.perf_counter() - start_time) * 1000
+
+        return {
+            "meta": {
+                "request_id": get_request_id(),
+                "query_time_ms": round(query_time_ms, 2),
+            },
+            "data": plan_data
+        }
+
+    except HTTPException:
+        raise
+    except Exception as exc:
+        query_time_ms = (time.perf_counter() - start_time) * 1000
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to get rollout plan: {str(exc)}"
+        ) from exc
+
+
+@router.put("/v1/admin/features/{flag_key}/rollout", response_model=Dict[str, Any])
+async def update_rollout_plan(
+    flag_key: str,
+    updates: Dict[str, Any],
+    request: Request,
+    principal=Depends(_routes._get_principal),
+) -> Dict[str, Any]:
+    """Update a rollout plan for a feature flag."""
+    start_time = time.perf_counter()
+
+    try:
+        _routes._require_admin(principal)
+        manager = get_feature_manager()
+
+        # Validate user segments if provided
+        if "user_segments" in updates:
+            user_segments = []
+            for segment_str in updates["user_segments"]:
+                try:
+                    user_segments.append(UserSegment(segment_str))
+                except ValueError:
+                    raise HTTPException(
+                        status_code=400,
+                        detail=f"Invalid user segment: {segment_str}"
+                    )
+            updates["user_segments"] = user_segments
+
+        # Validate datetime strings if provided
+        if "start_time" in updates and updates["start_time"]:
+            try:
+                updates["start_time"] = datetime.fromisoformat(updates["start_time"].replace('Z', '+00:00'))
+            except ValueError:
+                raise HTTPException(
+                    status_code=400,
+                    detail="Invalid start_time format. Use ISO datetime format."
+                )
+
+        if "end_time" in updates and updates["end_time"]:
+            try:
+                updates["end_time"] = datetime.fromisoformat(updates["end_time"].replace('Z', '+00:00'))
+            except ValueError:
+                raise HTTPException(
+                    status_code=400,
+                    detail="Invalid end_time format. Use ISO datetime format."
+                )
+
+        success = await manager.update_rollout_plan(flag_key, **updates)
+
+        if not success:
+            raise HTTPException(
+                status_code=404,
+                detail=f"No rollout plan found for flag: {flag_key}"
+            )
+
+        query_time_ms = (time.perf_counter() - start_time) * 1000
+
+        return {
+            "meta": {
+                "request_id": get_request_id(),
+                "query_time_ms": round(query_time_ms, 2),
+            },
+            "data": {
+                "flag_key": flag_key,
+                "rollout_plan_updated": True,
+            }
+        }
+
+    except HTTPException:
+        raise
+    except Exception as exc:
+        query_time_ms = (time.perf_counter() - start_time) * 1000
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to update rollout plan: {str(exc)}"
+        ) from exc
+
+
+@router.delete("/v1/admin/features/{flag_key}/rollout", response_model=Dict[str, Any])
+async def delete_rollout_plan(
+    flag_key: str,
+    request: Request,
+    principal=Depends(_routes._get_principal),
+) -> Dict[str, Any]:
+    """Delete the rollout plan for a feature flag."""
+    start_time = time.perf_counter()
+
+    try:
+        _routes._require_admin(principal)
+        manager = get_feature_manager()
+
+        success = await manager.delete_rollout_plan(flag_key)
+
+        if not success:
+            raise HTTPException(
+                status_code=404,
+                detail=f"No rollout plan found for flag: {flag_key}"
+            )
+
+        query_time_ms = (time.perf_counter() - start_time) * 1000
+
+        return {
+            "meta": {
+                "request_id": get_request_id(),
+                "query_time_ms": round(query_time_ms, 2),
+            },
+            "data": {
+                "flag_key": flag_key,
+                "rollout_plan_deleted": True,
+            }
+        }
+
+    except HTTPException:
+        raise
+    except Exception as exc:
+        query_time_ms = (time.perf_counter() - start_time) * 1000
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to delete rollout plan: {str(exc)}"
+        ) from exc
+
+
+# Analytics Endpoints
+@router.get("/v1/admin/features/analytics", response_model=Dict[str, Any])
+async def get_all_flags_analytics(
+    request: Request,
+    principal=Depends(_routes._get_principal),
+    hours: int = Query(24, description="Time range in hours", ge=1, le=168),
+) -> Dict[str, Any]:
+    """Get analytics for all feature flags."""
+    start_time = time.perf_counter()
+
+    try:
+        _routes._require_admin(principal)
+        manager = get_feature_manager()
+
+        analytics_data = await manager.get_all_flags_analytics(hours)
+
+        query_time_ms = (time.perf_counter() - start_time) * 1000
+
+        return {
+            "meta": {
+                "request_id": get_request_id(),
+                "query_time_ms": round(query_time_ms, 2),
+            },
+            "data": analytics_data
+        }
+
+    except Exception as exc:
+        query_time_ms = (time.perf_counter() - start_time) * 1000
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to get feature analytics: {str(exc)}"
+        ) from exc
+
+
+@router.get("/v1/admin/features/{flag_key}/analytics", response_model=Dict[str, Any])
+async def get_flag_analytics(
+    flag_key: str,
+    request: Request,
+    principal=Depends(_routes._get_principal),
+    hours: int = Query(24, description="Time range in hours", ge=1, le=168),
+) -> Dict[str, Any]:
+    """Get analytics for a specific feature flag."""
+    start_time = time.perf_counter()
+
+    try:
+        _routes._require_admin(principal)
+        manager = get_feature_manager()
+
+        analytics_data = await manager.get_flag_analytics(flag_key, hours)
+
+        query_time_ms = (time.perf_counter() - start_time) * 1000
+
+        return {
+            "meta": {
+                "request_id": get_request_id(),
+                "query_time_ms": round(query_time_ms, 2),
+            },
+            "data": analytics_data
+        }
+
+    except Exception as exc:
+        query_time_ms = (time.perf_counter() - start_time) * 1000
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to get flag analytics: {str(exc)}"
+        ) from exc
+
+
+@router.get("/v1/admin/features/{flag_key}/ab-analytics", response_model=Dict[str, Any])
+async def get_ab_test_analytics(
+    flag_key: str,
+    request: Request,
+    principal=Depends(_routes._get_principal),
+    hours: int = Query(24, description="Time range in hours", ge=1, le=168),
+) -> Dict[str, Any]:
+    """Get A/B test analytics for a specific feature flag."""
+    start_time = time.perf_counter()
+
+    try:
+        _routes._require_admin(principal)
+        manager = get_feature_manager()
+
+        analytics_data = await manager.get_ab_test_analytics(flag_key, hours)
+
+        query_time_ms = (time.perf_counter() - start_time) * 1000
+
+        return {
+            "meta": {
+                "request_id": get_request_id(),
+                "query_time_ms": round(query_time_ms, 2),
+            },
+            "data": analytics_data
+        }
+
+    except Exception as exc:
+        query_time_ms = (time.perf_counter() - start_time) * 1000
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to get A/B test analytics: {str(exc)}"
         ) from exc

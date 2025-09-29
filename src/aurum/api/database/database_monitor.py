@@ -12,7 +12,10 @@ from enum import Enum
 from collections import defaultdict, deque
 
 from ..telemetry.context import get_request_id
-from ..cache.cache import AsyncCache, CacheManager
+# Type-only import to avoid circular import during module load
+from typing import TYPE_CHECKING
+if TYPE_CHECKING:  # pragma: no cover
+    from ..cache.cache import AsyncCache, CacheManager
 
 
 class QueryPerformanceLevel(Enum):
@@ -153,7 +156,7 @@ class DatabaseMonitor:
         self,
         slow_query_threshold: float = 2.0,
         very_slow_query_threshold: float = 10.0,
-        cache_manager: Optional[CacheManager] = None
+        cache_manager: Optional["CacheManager"] = None
     ):
         self.slow_query_threshold = slow_query_threshold
         self.very_slow_query_threshold = very_slow_query_threshold

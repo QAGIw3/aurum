@@ -1,0 +1,26 @@
+{
+  "email": {
+    "enabled": true,
+    "provider": "smtp",
+    "from_address": "alerts@example.com"
+  },
+  "slack": {
+    "enabled": true,
+    "webhook_url": null
+  },
+  "teams": {
+    "enabled": false,
+    "webhook_url": null
+  },
+  "sms": {
+    "enabled": false,
+    "provider": "twilio",
+    "from_number": null
+  },
+  "push_web": {
+    "enabled": false
+  },
+  "push_mobile": {
+    "enabled": false
+  }
+}

@@ -38,6 +38,13 @@ FEATURE_FLAGS = {
     "USE_SIMPLIFIED_SETTINGS": "AURUM_USE_SIMPLIFIED_SETTINGS",
     "ENABLE_MIGRATION_MONITORING": "AURUM_ENABLE_MIGRATION_MONITORING",
     "SETTINGS_MIGRATION_PHASE": "AURUM_SETTINGS_MIGRATION_PHASE",  # "legacy", "hybrid", "simplified"
+    "USE_DYNAMIC_CONFIG": "AURUM_USE_DYNAMIC_CONFIG",
+
+    # Search feature flags
+    "SEARCH_ENABLED": "AURUM_SEARCH_ENABLED",
+    "SEARCH_SEMANTIC_ENABLED": "AURUM_SEARCH_SEMANTIC_ENABLED",
+    "SEARCH_SUGGESTIONS_ENABLED": "AURUM_SEARCH_SUGGESTIONS_ENABLED",
+    "SEARCH_ANALYTICS_ENABLED": "AURUM_SEARCH_ANALYTICS_ENABLED",
 }
 
 
@@ -228,12 +235,30 @@ def _init_migration_metrics():
 def is_feature_enabled(flag: str) -> bool:
     """Check if a feature flag is enabled.
 
+    This now delegates to the centralized FeatureFlagManager when available,
+    falling back to environment variables for backward compatibility.
+
     Defaults to enabled for the simplified settings flag to complete migration.
     """
-    # Prefer default enabled for simplified settings roll-out
-    default_value = "true" if flag == FEATURE_FLAGS.get("USE_SIMPLIFIED_SETTINGS") else "false"
-    value = get_flag_env(flag, default=default_value).lower()
-    return value in ("true", "1", "yes")
+    try:
+        # Try to use the centralized feature flag manager
+        from ..api.features import get_feature_manager
+        manager = get_feature_manager()
+
+        # Use empty context since settings don't have user context
+        # This will return the default value for flags without rules
+        return manager.is_enabled(flag, {}, {})  # type: ignore
+
+    except Exception:
+        # Fallback to environment variables for backward compatibility
+        import logging
+        logger = logging.getLogger(__name__)
+        logger.debug(f"Feature flag manager not available, falling back to env for {flag}")
+
+        # Prefer default enabled for simplified settings roll-out
+        default_value = "true" if flag == FEATURE_FLAGS.get("USE_SIMPLIFIED_SETTINGS") else "false"
+        value = get_flag_env(flag, default=default_value).lower()
+        return value in ("true", "1", "yes")
 
 
 def get_migration_phase(component: str = "settings") -> str:
@@ -407,6 +432,23 @@ class SimplifiedSettings:
         self.api_title = env.get(f"{self.env_prefix}API_TITLE", "Aurum API")
         self.api_version = env.get(f"{self.env_prefix}API_VERSION", "1.0.0")
         self.api_request_timeout_seconds = int(env.get(f"{self.env_prefix}API_REQUEST_TIMEOUT_SECONDS", "30"))
+
+        # Search settings
+        self.search_enabled = self._get_bool_from_env(env, [f"{self.env_prefix}SEARCH_ENABLED"], True)
+        self.search_hosts = self._split_env_list(env.get(f"{self.env_prefix}SEARCH_HOSTS", "localhost:9200"))
+        self.search_username = env.get(f"{self.env_prefix}SEARCH_USERNAME", "")
+        self.search_password = env.get(f"{self.env_prefix}SEARCH_PASSWORD", "")
+        self.search_api_key = env.get(f"{self.env_prefix}SEARCH_API_KEY", "")
+        self.search_index_prefix = env.get(f"{self.env_prefix}SEARCH_INDEX_PREFIX", "aurum")
+        self.search_suggest_enabled = self._get_bool_from_env(env, [f"{self.env_prefix}SEARCH_SUGGEST_ENABLED"], True)
+        self.search_semantic_enabled = self._get_bool_from_env(env, [f"{self.env_prefix}SEARCH_SEMANTIC_ENABLED"], False)
+        self.search_embedding_model = env.get(f"{self.env_prefix}SEARCH_EMBEDDING_MODEL", "sentence-transformers/all-MiniLM-L6-v2")
+        self.search_knn_k = self._get_int_from_env(env, [f"{self.env_prefix}SEARCH_KNN_K"], 100)
+        self.search_semantic_weight = self._get_float_from_env(env, [f"{self.env_prefix}SEARCH_SEMANTIC_WEIGHT"], 0.3)
+        self.search_query_timeout_ms = self._get_int_from_env(env, [f"{self.env_prefix}SEARCH_QUERY_TIMEOUT_MS"], 30000)
+        self.search_max_result_window = self._get_int_from_env(env, [f"{self.env_prefix}SEARCH_MAX_RESULT_WINDOW"], 10000)
+        self.search_cursor_page_size_default = self._get_int_from_env(env, [f"{self.env_prefix}SEARCH_CURSOR_PAGE_SIZE_DEFAULT"], 20)
+        self.search_analytics_enabled = self._get_bool_from_env(env, [f"{self.env_prefix}SEARCH_ANALYTICS_ENABLED"], True)
         # GZip settings (compat: allow unprefixed var used in tests)
         try:
             self.gzip_min_bytes = int(env.get("API_GZIP_MIN_BYTES", env.get(f"{self.env_prefix}API_GZIP_MIN_BYTES", "500")))
@@ -810,6 +852,46 @@ class SimplifiedSettings:
         self.service_name = env.get(f"{self.env_prefix}OTEL_SERVICE_NAME", "aurum")
 
         # Structured API settings for simplified mode
+        security_headers_enabled = self._get_bool_from_env(
+            env,
+            [f"{self.env_prefix}API_SECURITY_HEADERS_ENABLED"],
+            True,
+        )
+        security_headers_csp = (
+            env.get(f"{self.env_prefix}API_SECURITY_HEADERS_CSP")
+            or "default-src 'self'; script-src 'self'; connect-src 'self' https:; img-src 'self' data:; style-src 'self' 'unsafe-inline'"
+        )
+        security_headers_hsts = (
+            env.get(f"{self.env_prefix}API_SECURITY_HEADERS_HSTS")
+            or "max-age=31536000; includeSubDomains"
+        )
+
+        cors_allowlist_cfg = self._split_env_list(
+            env.get(f"{self.env_prefix}API_CORS_ALLOWLIST", "")
+        )
+        cors_allowlist = cors_allowlist_cfg or self.api_cors_origins
+        cors_strict = self._get_bool_from_env(
+            env,
+            [f"{self.env_prefix}API_CORS_STRICT"],
+            not self.is_development(),
+        )
+        cors_allow_credentials = self._get_bool_from_env(
+            env,
+            [f"{self.env_prefix}API_CORS_ALLOW_CREDENTIALS"],
+            True,
+        )
+        cors_allowed_headers = self._split_env_list(
+            env.get(
+                f"{self.env_prefix}API_CORS_ALLOWED_HEADERS",
+                "Authorization,Content-Type,X-Requested-With",
+            )
+        )
+        cors_max_age = self._get_int_from_env(
+            env,
+            [f"{self.env_prefix}API_CORS_MAX_AGE"],
+            600,
+        )
+
         self.api = SimpleNamespace(
             api_title=self.api_title,
             title=self.api_title,
@@ -823,6 +905,18 @@ class SimplifiedSettings:
             metrics=SimpleNamespace(enabled=api_metrics_enabled, path=api_metrics_path),
             concurrency=concurrency_namespace,
             rate_limit=SimpleNamespace(enabled=False, tenant_overrides={}),
+            security_headers=SimpleNamespace(
+                enabled=security_headers_enabled,
+                csp=security_headers_csp,
+                hsts=security_headers_hsts,
+            ),
+            cors=SimpleNamespace(
+                strict=cors_strict,
+                allowlist=cors_allowlist,
+                allow_credentials=cors_allow_credentials,
+                allowed_headers=cors_allowed_headers,
+                max_age=cors_max_age,
+            ),
             admin_guard_enabled=self._get_bool_from_env(
                 env,
                 [f"{self.env_prefix}API_ADMIN_GUARD_ENABLED"],
@@ -1135,9 +1229,111 @@ class SimplifiedSettings:
             if group.strip()
         }
 
+        token_issuer_enabled = self._get_bool_from_env(
+            env,
+            [f"{self.env_prefix}API_TOKEN_ISSUER_ENABLED"],
+            False,
+        )
+        access_token_ttl_seconds = self._get_int_from_env(
+            env,
+            [f"{self.env_prefix}API_ACCESS_TOKEN_TTL_SECONDS"],
+            900,
+        )
+        refresh_token_ttl_seconds = self._get_int_from_env(
+            env,
+            [f"{self.env_prefix}API_REFRESH_TOKEN_TTL_SECONDS"],
+            60 * 60 * 24 * 14,
+        )
+        auth_audiences = self._split_env_list(
+            env.get(f"{self.env_prefix}API_AUTH_AUDIENCES", "")
+        )
+        if not auth_audiences and oidc_audience:
+            auth_audiences = [oidc_audience]
+        required_scopes = self._split_env_list(
+            env.get(f"{self.env_prefix}API_AUTH_REQUIRED_SCOPES", "")
+        )
+        cookie_name = env.get(
+            f"{self.env_prefix}API_AUTH_COOKIE_NAME",
+            "aurum_access_token",
+        )
+        cookie_enabled = self._get_bool_from_env(
+            env,
+            [f"{self.env_prefix}API_AUTH_COOKIE_ENABLED"],
+            token_issuer_enabled,
+        )
+        cookie_secure = self._get_bool_from_env(
+            env,
+            [f"{self.env_prefix}API_AUTH_COOKIE_SECURE"],
+            not self.is_development(),
+        )
+        cookie_http_only = self._get_bool_from_env(
+            env,
+            [f"{self.env_prefix}API_AUTH_COOKIE_HTTP_ONLY"],
+            True,
+        )
+        cookie_same_site = (
+            env.get(f"{self.env_prefix}API_AUTH_COOKIE_SAMESITE", "lax")
+            or "lax"
+        ).lower()
+        if cookie_same_site not in {"lax", "strict", "none"}:
+            cookie_same_site = "lax"
+        cookie_domain = env.get(f"{self.env_prefix}API_AUTH_COOKIE_DOMAIN")
+        cookie_path = env.get(f"{self.env_prefix}API_AUTH_COOKIE_PATH", "/")
+
+        refresh_store_redis_url = env.get(
+            f"{self.env_prefix}API_REFRESH_TOKEN_STORE_REDIS_URL",
+            self.redis_url,
+        )
+        refresh_store_namespace = env.get(
+            f"{self.env_prefix}API_REFRESH_TOKEN_STORE_NAMESPACE",
+            f"{self.redis_namespace}:auth:refresh_tokens",
+        )
+
+        oidc_configured = bool(oidc_issuer and oidc_jwks_url)
+        auth_disabled_flag = auth_disabled
+
+        clients_raw = env.get(f"{self.env_prefix}API_AUTH_CLIENTS") or env.get(f"{self.env_prefix}AUTH_CLIENTS")
+        clients: Dict[str, Dict[str, Any]] = {}
+        if clients_raw:
+            try:
+                payload = json.loads(clients_raw)
+            except json.JSONDecodeError:
+                payload = []
+
+            if isinstance(payload, dict):
+                iterator = payload.items()
+            elif isinstance(payload, list):
+                iterator = (
+                    (entry.get("client_id"), entry)
+                    for entry in payload
+                    if isinstance(entry, dict)
+                )
+            else:
+                iterator = []
+
+            for client_id, spec in iterator:
+                if not client_id:
+                    continue
+                client_secret = str(spec.get("client_secret", ""))
+                scopes = spec.get("scopes") or []
+                if isinstance(scopes, str):
+                    scopes = [token.strip() for token in scopes.split(" ") if token.strip()]
+                elif isinstance(scopes, (list, tuple)):
+                    scopes = [str(token).strip() for token in scopes if token]
+                else:
+                    scopes = []
+                clients[str(client_id)] = {
+                    "client_secret": client_secret,
+                    "scopes": tuple(scopes),
+                    "tenant": spec.get("tenant") or spec.get("tenant_id"),
+                    "claims": spec.get("claims") or {},
+                }
+
         self.auth = SimpleNamespace(
-            disabled=auth_disabled or not oidc_issuer or not oidc_jwks_url,
-            enabled=not (auth_disabled or not oidc_issuer or not oidc_jwks_url),
+            disabled=auth_disabled_flag or (not oidc_configured and not token_issuer_enabled),
+            enabled=not (
+                auth_disabled_flag or (not oidc_configured and not token_issuer_enabled)
+            ),
             oidc_issuer=oidc_issuer,
             oidc_audience=oidc_audience,
             oidc_jwks_url=oidc_jwks_url,
@@ -1145,6 +1341,25 @@ class SimplifiedSettings:
             forward_auth_header=forward_auth_header,
             forward_auth_claims_header=forward_auth_claims_header,
             admin_groups=frozenset(admin_groups),
+            token_issuer_enabled=token_issuer_enabled,
+            access_token_ttl_seconds=access_token_ttl_seconds,
+            refresh_token_ttl_seconds=refresh_token_ttl_seconds,
+            audiences=tuple(auth_audiences),
+            required_scopes=tuple(required_scopes),
+            cookie=SimpleNamespace(
+                enabled=cookie_enabled,
+                name=cookie_name,
+                secure=cookie_secure,
+                http_only=cookie_http_only,
+                same_site=cookie_same_site,
+                domain=cookie_domain,
+                path=cookie_path,
+            ),
+            clients=clients,
+            refresh_store=SimpleNamespace(
+                redis_url=refresh_store_redis_url,
+                namespace=refresh_store_namespace,
+            ),
         )
         self.pagination = SimpleNamespace(default_page_size=100, max_page_size=1000)
         self.messaging = SimpleNamespace(enabled=False)
@@ -1670,6 +1885,7 @@ class SettingsManager:
         hot_reload_enabled: Optional[bool] = None,
         reload_interval_seconds: float = 2.0,
         on_change: Optional[Callable[["AurumSettings"], None]] = None,
+        use_dynamic_config: Optional[bool] = None,
     ) -> None:
         self.env_prefix = env_prefix
         self.environment = (environment or os.getenv(f"{env_prefix}ENV", "development")).strip() or "development"
@@ -1698,16 +1914,45 @@ class SettingsManager:
         self._thread: Optional[threading.Thread] = None
         self._on_change = on_change
 
+        # Dynamic config integration
+        if use_dynamic_config is None:
+            # Check feature flag for dynamic config
+            self.use_dynamic_config = is_feature_enabled("USE_DYNAMIC_CONFIG")
+        else:
+            self.use_dynamic_config = use_dynamic_config
+
+        self._dynamic_config_service = None
         self._current_settings: Optional[AurumSettings] = None
         self._last_overlay_hash: str = ""
         self._last_snapshot_hash: str = ""
         self._last_overlay_mtimes: Dict[str, float] = {}
 
+        # Initialize dynamic config service if enabled
+        if self.use_dynamic_config:
+            try:
+                from aurum.config.dynamic_config import DynamicConfigService
+                from aurum.config.validation import get_config_validator
+
+                self._dynamic_config_service = DynamicConfigService(
+                    environment=self.environment,
+                    config_base_path=self.config_base_path,
+                    hot_reload_enabled=self.hot_reload_enabled,
+                    reload_interval_seconds=self.reload_interval_seconds
+                )
+
+                # Subscribe to config changes
+                self._dynamic_config_service.subscribe(self._on_dynamic_config_change)
+
+                logger.info("Dynamic configuration system initialized")
+            except Exception as e:
+                logger.warning(f"Failed to initialize dynamic config system, falling back to legacy: {e}")
+                self.use_dynamic_config = False
+
         # Initial build
         self.reload()
 
-        # Start watch loop if enabled
-        if self.hot_reload_enabled:
+        # Start watch loop if enabled and not using dynamic config
+        if self.hot_reload_enabled and not self.use_dynamic_config:
             self._start_thread()
 
     # ---------------------- Public API ----------------------
@@ -1718,6 +1963,51 @@ class SettingsManager:
 
     def reload(self) -> None:
         """Rebuild settings from environment and overlays, validate, and activate."""
+        if self.use_dynamic_config and self._dynamic_config_service:
+            # Use dynamic config system
+            self._reload_from_dynamic_config()
+        else:
+            # Use legacy system
+            self._reload_from_legacy()
+
+    def _reload_from_dynamic_config(self) -> None:
+        """Reload using the dynamic configuration system."""
+        try:
+            # Get configuration from dynamic service
+            config = self._dynamic_config_service.get()
+
+            # Validate and coerce types
+            from aurum.config.validation import validate_and_coerce_config
+            config = validate_and_coerce_config(config)
+
+            # Create new settings from validated config
+            new_settings = AurumSettings()
+
+            # Apply configuration to settings object
+            self._apply_config_to_settings(new_settings, config)
+
+            # Basic validation
+            self._validate(new_settings)
+
+            # Update current settings
+            self._current_settings = new_settings
+            configure_settings(new_settings)
+
+            # Notify change callback
+            if self._on_change:
+                try:
+                    self._on_change(new_settings)
+                except Exception as e:
+                    logger.error(f"Error in settings change callback: {e}")
+
+        except Exception as exc:
+            logger.warning("Dynamic config reload failed during reload: %s", exc)
+            if self._current_settings is None:
+                # No previous configuration; propagate
+                raise
+
+    def _reload_from_legacy(self) -> None:
+        """Reload using the legacy configuration system."""
         overlays = _load_overlay_files(self.config_base_path, self.environment)
         overlay_hash = hashlib.sha1(json.dumps(overlays, sort_keys=True, default=str).encode("utf-8")).hexdigest()
 
@@ -1751,11 +2041,59 @@ class SettingsManager:
 
         self._current_settings = new_settings
         configure_settings(new_settings)
-        self._last_overlay_hash = overlay_hash
-        self._last_snapshot_hash = snapshot_hash
-        self._update_overlay_mtimes()
 
-        if callable(self._on_change):
+    def _apply_config_to_settings(self, settings: "AurumSettings", config: Dict[str, Any]) -> None:
+        """Apply configuration dictionary to settings object."""
+        # Apply nested overrides to well-known namespaces
+        for key in ("api", "redis", "database", "trino", "auth", "telemetry", "pagination", "async_offload"):
+            if key in config and hasattr(settings, key):
+                _apply_overrides_to_object(getattr(settings, key), config[key])
+
+        # Also allow top-level fields like environment/debug
+        for key in ("environment", "debug"):
+            if key in config:
+                try:
+                    setattr(settings, key, config[key])
+                except Exception:
+                    pass
+
+    def _on_dynamic_config_change(self, snapshot) -> None:
+        """Callback when dynamic configuration changes."""
+        try:
+            # Record the change for audit
+            from aurum.config.change_tracking import record_config_change, ChangeType, ChangeSource
+            from aurum.config.change_tracking import create_config_version
+
+            import asyncio
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+
+            try:
+                # Record change
+                change_id = loop.run_until_complete(record_config_change(
+                    change_type=ChangeType.UPDATED,
+                    source=ChangeSource.FILE_WATCHER,
+                    actor="system",
+                    namespace=None,
+                    reason="Dynamic configuration file change detected",
+                    old_config=self._current_settings.__dict__ if self._current_settings else None,
+                    new_config=snapshot.config
+                ))
+
+                # Create version
+                loop.run_until_complete(create_config_version(
+                    config=snapshot.config,
+                    change_id=change_id,
+                    metadata={"source": "file_watcher", "environment": self.environment}
+                ))
+            finally:
+                loop.close()
+
+            # Reload settings
+            self.reload()
+
+        except Exception as e:
+            logger.error(f"Error handling dynamic config change: {e}")
             try:
                 self._on_change(new_settings)
             except Exception:  # pragma: no cover - user callback errors should not disrupt

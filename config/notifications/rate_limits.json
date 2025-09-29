@@ -1,0 +1,24 @@
+{
+  "global": {
+    "per_minute": 200,
+    "burst": 50
+  },
+  "channel_limits": {
+    "email": {
+      "per_minute": 120,
+      "burst": 30
+    },
+    "slack": {
+      "per_minute": 80,
+      "burst": 20
+    },
+    "sms": {
+      "per_minute": 20,
+      "burst": 5
+    },
+    "teams": {
+      "per_minute": 40,
+      "burst": 10
+    }
+  }
+}

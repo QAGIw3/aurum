@@ -13,9 +13,10 @@ from datetime import datetime
 from typing import Dict, List, Optional
 from uuid import uuid4
 
-from fastapi import APIRouter, HTTPException, Query, Request, Depends
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from pydantic import BaseModel, Field
 
+from ..auth import Permission, require_permissions
 from ..telemetry.context import get_request_id
 from .consolidated_policy_engine import (
     ConsolidatedRateLimiter,
@@ -26,8 +27,11 @@ from .consolidated_policy_engine import (
     RateLimitScope
 )
 
-
-router = APIRouter(prefix="/v1/admin/rate-limiting", tags=["rate-limiting-admin"])
+router = APIRouter(
+    prefix="/v1/admin/rate-limiting",
+    tags=["rate-limiting-admin"],
+    dependencies=[Depends(require_permissions(Permission.ADMIN, tenant_scoped=False))],
+)
 
 
 class CreateRuleRequest(BaseModel):
@@ -439,4 +443,3 @@ async def get_scopes() -> Dict[str, List[str]]:
         scope.value: rule_names
         for scope, rule_names in rate_limiter.scope_rules.items()
     }
-

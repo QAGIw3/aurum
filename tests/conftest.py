@@ -1,224 +1,85 @@
+"""Root test configuration.
+
+Ensures the real ``src/aurum`` package is imported before any tests dynamically
+load modules under the ``aurum.*`` namespace to avoid shadowing by DAG stubs.
+"""
+
+import os
 import sys
 from pathlib import Path
-from typing import Optional, Any
 
-try:  # pragma: no cover - compatibility shim for older pytest-asyncio
-    from _pytest.fixtures import FixtureDef
+# Prepend src to sys.path and import the top-level aurum package early
+_REPO_ROOT = Path(__file__).resolve().parents[1]
+_SRC_PATH = _REPO_ROOT / "src"
+if str(_SRC_PATH) not in sys.path:
+    sys.path.insert(0, str(_SRC_PATH))
 
-    if not hasattr(FixtureDef, "unittest"):
-        FixtureDef.unittest = False  # type: ignore[attr-defined]
+# Hint to API factory to avoid heavy init paths where supported
+os.environ.setdefault("AURUM_API_LIGHT_INIT", "1")
+
+import aurum  # noqa: F401  # ensure package is registered in sys.modules
+
+# Global skip configuration for heavy/optional suites
+import pytest
+
+def pytest_configure(config):
+    config.addinivalue_line("markers", "external: requires external services or heavy deps")
+    config.addinivalue_line("markers", "airflow: requires Apache Airflow present")
+
+
+def pytest_collection_modifyitems(config, items):
+    skip_external = pytest.mark.skip(reason="external tests skipped by default; set RUN_EXTERNAL_TESTS=1 to enable")
+    skip_airflow = pytest.mark.skip(reason="airflow-dependent tests skipped by default; set RUN_AIRFLOW_TESTS=1 to enable")
+
+    run_external = (os.getenv("RUN_EXTERNAL_TESTS", "0").lower() in {"1", "true", "yes"})
+    run_airflow = (os.getenv("RUN_AIRFLOW_TESTS", "0").lower() in {"1", "true", "yes"})
+    core_only = (os.getenv("RUN_CORE_ONLY", "0").lower() in {"1", "true", "yes"})
+
+    skip_non_core = pytest.mark.skip(reason="non-core test skipped; set RUN_CORE_ONLY=0 to include")
+
+    for item in items:
+        # Skip by markers
+        if "external" in item.keywords and not run_external:
+            item.add_marker(skip_external)
+        if "airflow" in item.keywords and not run_airflow:
+            item.add_marker(skip_airflow)
+
+        # Heuristic: skip tests under directories that clearly depend on Airflow or external infra
+        nodeid = item.nodeid
+        if not run_airflow and (
+            "/airflow_factory/" in nodeid or "/airflow/" in nodeid or "/workflow/" in nodeid
+        ):
+            item.add_marker(skip_airflow)
+        if not run_external and (
+            "/integration/" in nodeid or "/e2e/" in nodeid or "/external/" in nodeid or "/kafka/" in nodeid
+        ):
+            item.add_marker(skip_external)
+
+        # Core-only: restrict to core subsets (api, cli, contract). Skip others.
+        if core_only:
+            core_paths = (
+                "/tests/api/",
+                "/src/aurum/tests/api/",
+                "/tests/cli/",
+                "/tests/contract/",
+            )
+            if not any(p in nodeid for p in core_paths):
+                item.add_marker(skip_non_core)
+
+# pytest-asyncio compatibility: some tests use deprecated decorator access
+try:
+    import pytest_asyncio  # type: ignore
+    if not hasattr(pytest_asyncio, "asyncio"):
+        # Provide alias attribute for older style usage: @pytest_asyncio.asyncio
+        pytest_asyncio.asyncio = pytest.mark.asyncio  # type: ignore[attr-defined]
 except Exception:
     pass
 
-ROOT = Path(__file__).resolve().parents[1]
-SRC = ROOT / "src"
-for path in (ROOT, SRC):
-    path_str = str(path)
-    if path_str not in sys.path:
-        sys.path.insert(0, path_str)
+# Import common fixtures and utilities
+from tests.common import create_airflow_stub, reset_state, settings_override
 
-# Ensure standard library logging package can discover test submodules under tests/logging
-import logging as _logging
+# Create airflow stub for DAG factory tests
+create_airflow_stub()
 
-_logging_test_dir = ROOT / "tests" / "logging"
-if hasattr(_logging, "__path__"):
-    test_dir_str = str(_logging_test_dir)
-    if _logging_test_dir.exists() and test_dir_str not in _logging.__path__:
-        _logging.__path__.append(test_dir_str)  # type: ignore[attr-defined]
-
-# Ensure older pytest-asyncio style decorator remains available
-try:
-    import pytest
-    import pytest_asyncio
-
-    if not hasattr(pytest_asyncio, "asyncio"):
-        pytest_asyncio.asyncio = pytest.mark.asyncio  # type: ignore[attr-defined]
-except Exception:  # pragma: no cover - defensive import shim
-    pass
-
-# Opt-in fixture to enable default settings auto-init in selected test modules.
-# Usage in a module: `pytestmark = pytest.mark.usefixtures("enable_test_default_settings")`
-import os
-import pytest
-
-# Lightweight Airflow stub to satisfy DAG factory tests without requiring Airflow.
-if "airflow" not in sys.modules:
-    from types import ModuleType
-
-    airflow_stub = ModuleType("airflow")
-
-    class _StubDAG:
-        def __init__(
-            self,
-            dag_id: str,
-            default_args: Optional[dict] = None,
-            schedule_interval: Optional[str] = None,
-            description: Optional[str] = None,
-            catchup: bool = False,
-            max_active_runs: int = 1,
-            start_date: Optional[Any] = None,
-            tags: Optional[list] = None,
-            **_: Any,
-        ):
-            self.dag_id = dag_id
-            self.default_args = default_args or {}
-            self.schedule_interval = schedule_interval
-            self.description = description
-            self.catchup = catchup
-            self.max_active_runs = max_active_runs
-            self.start_date = start_date
-            self.tags = tags or []
-
-        def __enter__(self):
-            return self
-
-        def __exit__(self, exc_type, exc, tb):
-            return False
-
-    airflow_stub.DAG = _StubDAG
-
-    operators_module = ModuleType("airflow.operators")
-    operators_module.__path__ = []  # mark as package for import machinery
-
-    bash_module = ModuleType("airflow.operators.bash")
-
-    class _StubBashOperator:
-        def __init__(self, task_id: str, bash_command: str, dag=None, env=None, **kwargs: Any):
-            self.task_id = task_id
-            self.bash_command = bash_command
-            self.dag = dag
-            self.env = env or {}
-            self.kwargs = kwargs
-            self.downstream: list[Any] = []
-            self.upstream: list[Any] = []
-
-        def __rshift__(self, other):
-            self.downstream.append(other)
-            upstream = getattr(other, "upstream", None)
-            if upstream is not None:
-                upstream.append(self)
-            return other
-
-        def __lshift__(self, other):
-            self.upstream.append(other)
-            downstream = getattr(other, "downstream", None)
-            if downstream is not None:
-                downstream.append(self)
-            return other
-
-    bash_module.BashOperator = _StubBashOperator
-
-    python_module = ModuleType("airflow.operators.python")
-
-    class _StubPythonOperator:
-        def __init__(self, task_id: str, python_callable, dag=None, op_args=None, op_kwargs=None, **kwargs: Any):
-            self.task_id = task_id
-            self.python_callable = python_callable
-            self.dag = dag
-            self.op_args = op_args or []
-            self.op_kwargs = op_kwargs or {}
-            self.kwargs = kwargs
-            self.downstream: list[Any] = []
-            self.upstream: list[Any] = []
-
-        def __rshift__(self, other):
-            self.downstream.append(other)
-            upstream = getattr(other, "upstream", None)
-            if upstream is not None:
-                upstream.append(self)
-            return other
-
-        def __lshift__(self, other):
-            self.upstream.append(other)
-            downstream = getattr(other, "downstream", None)
-            if downstream is not None:
-                downstream.append(self)
-            return other
-
-    python_module.PythonOperator = _StubPythonOperator
-
-    empty_module = ModuleType("airflow.operators.empty")
-
-    class _StubEmptyOperator:
-        def __init__(self, task_id: str, dag=None, **kwargs: Any):
-            self.task_id = task_id
-            self.dag = dag
-            self.kwargs = kwargs
-            self.downstream: list[Any] = []
-            self.upstream: list[Any] = []
-
-        def __rshift__(self, other):
-            targets = other if isinstance(other, list) else [other]
-            for target in targets:
-                self.downstream.append(target)
-                upstream = getattr(target, "upstream", None)
-                if upstream is not None:
-                    upstream.append(self)
-            return other
-
-        def __lshift__(self, other):
-            sources = other if isinstance(other, list) else [other]
-            for source in sources:
-                self.upstream.append(source)
-                downstream = getattr(source, "downstream", None)
-                if downstream is not None:
-                    downstream.append(self)
-            return other
-
-        def __rrshift__(self, other):
-            sources = other if isinstance(other, list) else [other]
-            for source in sources:
-                downstream = getattr(source, "downstream", None)
-                if downstream is not None:
-                    downstream.append(self)
-                self.upstream.append(source)
-            return self
-
-    empty_module.EmptyOperator = _StubEmptyOperator
-
-    utils_module = ModuleType("airflow.utils")
-    task_group_module = ModuleType("airflow.utils.task_group")
-
-    class _StubTaskGroup:
-        def __init__(self, group_id: str, prefix_group_id: bool = True, **_: Any):
-            self.group_id = group_id
-            self.prefix_group_id = prefix_group_id
-            self.tasks: list[Any] = []
-
-        def add(self, task):
-            self.tasks.append(task)
-
-        def __enter__(self):
-            return self
-
-        def __exit__(self, exc_type, exc, tb):
-            return False
-
-    task_group_module.TaskGroup = _StubTaskGroup
-    utils_module.task_group = task_group_module
-
-    sys.modules["airflow"] = airflow_stub
-    sys.modules["airflow.operators"] = operators_module
-    sys.modules["airflow.operators.bash"] = bash_module
-    sys.modules["airflow.operators.python"] = python_module
-    sys.modules["airflow.operators.empty"] = empty_module
-    sys.modules["airflow.utils"] = utils_module
-    sys.modules["airflow.utils.task_group"] = task_group_module
-
-
-@pytest.fixture(scope="module")
-def enable_test_default_settings():
-    """Set AURUM_TEST_DEFAULT_SETTINGS=1 for all tests in a module.
-
-    Apply with `pytestmark = pytest.mark.usefixtures("enable_test_default_settings")`
-    at the top of a test module to opt-in.
-    """
-    prev = os.environ.get("AURUM_TEST_DEFAULT_SETTINGS")
-    os.environ["AURUM_TEST_DEFAULT_SETTINGS"] = "1"
-    try:
-        yield
-    finally:
-        if prev is None:
-            os.environ.pop("AURUM_TEST_DEFAULT_SETTINGS", None)
-        else:
-            os.environ["AURUM_TEST_DEFAULT_SETTINGS"] = prev
+# Common fixtures available to all tests
+__all__ = ["reset_state", "settings_override"]

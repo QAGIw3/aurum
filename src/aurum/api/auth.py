@@ -1,25 +1,32 @@
 from __future__ import annotations
 
-"""Optional OIDC/JWT auth middleware for the Aurum API.
-
-Enables Bearer token verification against a JWKS endpoint when configured.
-Controlled via AURUM_API_AUTH_DISABLED (default: 0 / enabled when OIDC config present).
-"""
+"""OIDC and internal token authentication middleware for the Aurum API."""
 
 import json
 import os
 import time
 from dataclasses import dataclass
-from enum import Enum
 from threading import Lock
-from typing import Any, Dict, List, Optional, Set
+from typing import Any, Dict, Iterable, Mapping, Optional, Sequence, Tuple
 
-from aurum.core import AurumSettings
-from aurum.telemetry.context import TenantIdValidationError, normalize_tenant_id
-from fastapi import HTTPException
+from fastapi import HTTPException, status
 from starlette.requests import Request
 from starlette.responses import JSONResponse
 from starlette.types import ASGIApp, Receive, Scope, Send
+
+from aurum.core import AurumSettings
+from aurum.security.audit import security_audit
+from aurum.security.rbac import (
+    Permission,
+    Principal,
+    Role,
+    current_principal,
+    merge_permissions,
+    require_permissions,
+    require_role,
+)
+from aurum.security.token_service import TokenService
+from aurum.telemetry.context import TenantIdValidationError, get_request_id, normalize_tenant_id
 
 try:  # pragma: no cover - import guard for optional dependency
     from jose import jwt  # type: ignore[import]
@@ -32,198 +39,76 @@ else:
 from .http.clients import request as http_request
 
 
-class Permission(str, Enum):
-    """Authorization permissions."""
-    # Data access
-    CURVES_READ = "curves:read"
-    CURVES_WRITE = "curves:write"
-
-    # Scenario management
-    SCENARIOS_READ = "scenarios:read"
-    SCENARIOS_WRITE = "scenarios:write"
-    SCENARIOS_RUN = "scenarios:run"
-    SCENARIOS_DELETE = "scenarios:delete"
-
-    # Administration
-    ADMIN_READ = "admin:read"
-    ADMIN_WRITE = "admin:write"
-
-    # Specific admin features
-    FEATURE_FLAGS_MANAGE = "admin:feature_flags"
-    RATE_LIMIT_MANAGE = "admin:rate_limits"
-    TRINO_ADMIN = "admin:trino"
-
-    # Developer workspace
-    DEVELOPER_WORKSPACE_READ = "developer_workspace:read"
-    DEVELOPER_WORKSPACE_WRITE = "developer_workspace:write"
-
-    # Tenant management
-    TENANT_MANAGE = "tenant:manage"
-
-    # Model registry
-    MODEL_REGISTRY_READ = "model_registry:read"
-    MODEL_REGISTRY_WRITE = "model_registry:write"
-
-
-class Role(str, Enum):
-    """User roles with associated permissions."""
-    USER = "user"  # Basic user access
-    ANALYST = "analyst"  # Data analysis access
-    TRADER = "trader"  # Trading operations
-    ADMIN = "admin"  # Full administrative access
-    SUPER_ADMIN = "super_admin"  # System administration
-
-
 @dataclass(frozen=True)
-class AuthorizationConfig:
-    """Authorization configuration."""
-    role_permissions: Dict[Role, Set[Permission]]
-    default_role: Role = Role.USER
-    admin_groups: Set[str] = frozenset()
+class CookieConfig:
+    """Cookie-based token transport configuration."""
 
-    @classmethod
-    def default(cls) -> "AuthorizationConfig":
-        """Default authorization configuration."""
-        return cls(
-            role_permissions={
-                Role.USER: {
-                    Permission.CURVES_READ,
-                    Permission.SCENARIOS_READ,
-                    Permission.DEVELOPER_WORKSPACE_READ,
-                    Permission.MODEL_REGISTRY_READ,
-                },
-                Role.ANALYST: {
-                    Permission.CURVES_READ,
-                    Permission.SCENARIOS_READ,
-                    Permission.SCENARIOS_RUN,
-                    Permission.DEVELOPER_WORKSPACE_READ,
-                    Permission.MODEL_REGISTRY_READ,
-                },
-                Role.TRADER: {
-                    Permission.CURVES_READ,
-                    Permission.CURVES_WRITE,
-                    Permission.SCENARIOS_READ,
-                    Permission.SCENARIOS_WRITE,
-                    Permission.SCENARIOS_RUN,
-                    Permission.SCENARIOS_DELETE,
-                    Permission.DEVELOPER_WORKSPACE_READ,
-                    Permission.DEVELOPER_WORKSPACE_WRITE,
-                    Permission.MODEL_REGISTRY_READ,
-                },
-                Role.ADMIN: {
-                    Permission.CURVES_READ,
-                    Permission.CURVES_WRITE,
-                    Permission.SCENARIOS_READ,
-                    Permission.SCENARIOS_WRITE,
-                    Permission.SCENARIOS_RUN,
-                    Permission.SCENARIOS_DELETE,
-                    Permission.ADMIN_READ,
-                    Permission.FEATURE_FLAGS_MANAGE,
-                    Permission.RATE_LIMIT_MANAGE,
-                    Permission.TRINO_ADMIN,
-                    Permission.DEVELOPER_WORKSPACE_READ,
-                    Permission.DEVELOPER_WORKSPACE_WRITE,
-                    Permission.MODEL_REGISTRY_READ,
-                    Permission.MODEL_REGISTRY_WRITE,
-                },
-                Role.SUPER_ADMIN: {
-                    Permission.CURVES_READ,
-                    Permission.CURVES_WRITE,
-                    Permission.SCENARIOS_READ,
-                    Permission.SCENARIOS_WRITE,
-                    Permission.SCENARIOS_RUN,
-                    Permission.SCENARIOS_DELETE,
-                    Permission.ADMIN_READ,
-                    Permission.ADMIN_WRITE,
-                    Permission.FEATURE_FLAGS_MANAGE,
-                    Permission.RATE_LIMIT_MANAGE,
-                    Permission.TRINO_ADMIN,
-                    Permission.TENANT_MANAGE,
-                    Permission.DEVELOPER_WORKSPACE_READ,
-                    Permission.DEVELOPER_WORKSPACE_WRITE,
-                    Permission.MODEL_REGISTRY_READ,
-                    Permission.MODEL_REGISTRY_WRITE,
-                },
-            },
-            admin_groups={"admin", "administrator", "superuser"},
-        )
-
-
-def get_user_role(principal: Dict[str, Any]) -> Role:
-    """Determine user role from principal information."""
-    if not principal:
-        return Role.USER
-
-    # Check groups for role indicators
-    groups = principal.get("groups", [])
-    if isinstance(groups, list):
-        groups_lower = [str(g).lower() for g in groups]
-
-        if any("super" in g and "admin" in g for g in groups_lower):
-            return Role.SUPER_ADMIN
-        elif any("admin" in g for g in groups_lower):
-            return Role.ADMIN
-        elif any("trader" in g for g in groups_lower):
-            return Role.TRADER
-        elif any("analyst" in g for g in groups_lower):
-            return Role.ANALYST
-
-    # Check email domain for role hints
-    email = principal.get("email", "")
-    if "@" in email:
-        domain = email.split("@")[1].lower()
-        if "admin" in domain or "ops" in domain:
-            return Role.ADMIN
-
-    return Role.USER
-
-
-def has_permission(principal: Dict[str, Any], permission: Permission, tenant_id: Optional[str] = None) -> bool:
-    """Check if user has permission for tenant."""
-    if not principal:
-        return False
-
-    user_role = get_user_role(principal)
-    config = AuthorizationConfig.default()
-
-    # Get permissions for role
-    role_permissions = config.role_permissions.get(user_role, set())
-
-    # Check if user has the required permission
-    if permission not in role_permissions:
-        return False
-
-    # For tenant-specific operations, ensure user belongs to tenant
-    if tenant_id:
-        user_tenant = principal.get("tenant")
-        if user_tenant and user_tenant != tenant_id:
-            return False
-
-    return True
-
-
-def require_permission(principal: Dict[str, Any], permission: Permission, tenant_id: Optional[str] = None) -> None:
-    """Require permission, raising exception if not authorized."""
-    if not has_permission(principal, permission, tenant_id):
-        raise HTTPException(
-            status_code=403,
-            detail=f"Permission denied: {permission.value}",
-            headers={"X-Required-Permission": permission.value}
-        )
+    enabled: bool
+    name: str
+    secure: bool
+    http_only: bool
+    same_site: str
+    domain: str | None
+    path: str
 
 
 @dataclass(frozen=True)
 class OIDCConfig:
+    """OIDC verification configuration."""
+
     issuer: str | None
     audience: str | None
+    audiences: Tuple[str, ...]
     jwks_url: str | None
     disabled: bool
     leeway: int
     forward_auth_header: str | None
     forward_auth_claims_header: str | None
+    required_scopes: Tuple[str, ...]
+    admin_groups: Tuple[str, ...]
+    cookie: CookieConfig
 
     @classmethod
-    def from_env(cls) -> "OIDCConfig":
+    def from_settings(cls, settings: AurumSettings) -> "OIDCConfig":
+        auth_cfg = settings.auth
+        cookie_cfg = getattr(auth_cfg, "cookie", None)
+        cookie = CookieConfig(
+            enabled=bool(getattr(cookie_cfg, "enabled", False)),
+            name=getattr(cookie_cfg, "name", "aurum_access_token"),
+            secure=bool(getattr(cookie_cfg, "secure", True)),
+            http_only=bool(getattr(cookie_cfg, "http_only", True)),
+            same_site=str(getattr(cookie_cfg, "same_site", "lax") or "lax").lower(),
+            domain=getattr(cookie_cfg, "domain", None),
+            path=getattr(cookie_cfg, "path", "/"),
+        )
+
+        audiences: Tuple[str, ...]
+        raw_audiences = tuple(getattr(auth_cfg, "audiences", ()) or ())
+        if raw_audiences:
+            audiences = tuple(str(value) for value in raw_audiences if value)
+        elif getattr(auth_cfg, "oidc_audience", None):
+            audiences = (str(auth_cfg.oidc_audience),)
+        else:
+            audiences = tuple()
+
+        required_scopes = tuple(getattr(auth_cfg, "required_scopes", ()) or ())
+
+        return cls(
+            issuer=getattr(auth_cfg, "oidc_issuer", None),
+            audience=getattr(auth_cfg, "oidc_audience", None),
+            audiences=audiences,
+            jwks_url=getattr(auth_cfg, "oidc_jwks_url", None),
+            disabled=bool(getattr(auth_cfg, "disabled", False)),
+            leeway=int(getattr(auth_cfg, "jwt_leeway_seconds", 60)),
+            forward_auth_header=getattr(auth_cfg, "forward_auth_header", None),
+            forward_auth_claims_header=getattr(auth_cfg, "forward_auth_claims_header", None),
+            required_scopes=required_scopes,
+            admin_groups=tuple(getattr(auth_cfg, "admin_groups", ()) or ()),
+            cookie=cookie,
+        )
+
+    @classmethod
+    def from_env(cls) -> "OIDCConfig":  # pragma: no cover - legacy convenience
         issuer = os.getenv("AURUM_API_OIDC_ISSUER")
         audience = os.getenv("AURUM_API_OIDC_AUDIENCE")
         jwks_url = os.getenv("AURUM_API_OIDC_JWKS_URL")
@@ -233,44 +118,53 @@ class OIDCConfig:
             disabled = True
         leeway = int(os.getenv("AURUM_API_JWT_LEEWAY", "60") or 60)
 
-        # Traefik forward-auth support
         forward_auth_header = os.getenv("AURUM_API_FORWARD_AUTH_HEADER")
         forward_auth_claims_header = os.getenv("AURUM_API_FORWARD_AUTH_CLAIMS_HEADER")
-
-        return cls(
-            issuer=issuer,
-            audience=audience,
-            jwks_url=jwks_url,
-            disabled=disabled,
-            leeway=leeway,
-            forward_auth_header=forward_auth_header,
-            forward_auth_claims_header=forward_auth_claims_header,
+        required_scopes = tuple(
+            scope.strip()
+            for scope in os.getenv("AURUM_API_AUTH_REQUIRED_SCOPES", "").split(",")
+            if scope.strip()
+        )
+        admin_groups = tuple(
+            group.strip().lower()
+            for group in os.getenv("AURUM_API_ADMIN_GROUP", "").split(",")
+            if group.strip()
+        )
+        cookie = CookieConfig(
+            enabled=os.getenv("AURUM_API_AUTH_COOKIE_ENABLED", "0").lower() in {"1", "true", "yes"},
+            name=os.getenv("AURUM_API_AUTH_COOKIE_NAME", "aurum_access_token"),
+            secure=os.getenv("AURUM_API_AUTH_COOKIE_SECURE", "1").lower() in {"1", "true", "yes"},
+            http_only=os.getenv("AURUM_API_AUTH_COOKIE_HTTP_ONLY", "1").lower() in {"1", "true", "yes"},
+            same_site=(os.getenv("AURUM_API_AUTH_COOKIE_SAMESITE", "lax") or "lax").lower(),
+            domain=os.getenv("AURUM_API_AUTH_COOKIE_DOMAIN"),
+            path=os.getenv("AURUM_API_AUTH_COOKIE_PATH", "/"),
         )
 
-    @classmethod
-    def from_settings(cls, settings: AurumSettings) -> "OIDCConfig":
-        issuer = settings.auth.oidc_issuer
-        audience = settings.auth.oidc_audience
-        jwks_url = settings.auth.oidc_jwks_url
-        disabled = settings.auth.disabled or not issuer or not jwks_url
-        leeway = settings.auth.jwt_leeway_seconds
-
-        # Traefik forward-auth support
-        forward_auth_header = getattr(settings.auth, 'forward_auth_header', None)
-        forward_auth_claims_header = getattr(settings.auth, 'forward_auth_claims_header', None)
+        audiences_env = tuple(
+            value.strip()
+            for value in os.getenv("AURUM_API_AUTH_AUDIENCES", "").split(",")
+            if value.strip()
+        )
+        audiences = audiences_env or ((audience,) if audience else tuple())
 
         return cls(
             issuer=issuer,
             audience=audience,
+            audiences=audiences,
             jwks_url=jwks_url,
             disabled=disabled,
             leeway=leeway,
             forward_auth_header=forward_auth_header,
             forward_auth_claims_header=forward_auth_claims_header,
+            required_scopes=required_scopes,
+            admin_groups=admin_groups,
+            cookie=cookie,
         )
 
 
 class JWKSCache:
+    """Thread-safe JWKS cache with automatic refresh."""
+
     def __init__(self, url: str, ttl_seconds: int = 300) -> None:
         self._url = url
         self._ttl = ttl_seconds
@@ -291,13 +185,6 @@ class JWKSCache:
                 self._cache_by_kid[kid] = entry
         self._expires_at = time.time() + self._ttl
 
-    def get(self) -> dict[str, Any]:
-        with self._lock:
-            now = time.time()
-            if self._cached is None or now >= self._expires_at:
-                self._refresh_locked()
-            return self._cached or {"keys": []}
-
     def get_key(self, kid: str) -> Optional[dict[str, Any]]:
         with self._lock:
             now = time.time()
@@ -306,257 +193,502 @@ class JWKSCache:
             key = self._cache_by_kid.get(kid)
             if key is not None:
                 return key
-            # force single refresh in case of rotation
             self._refresh_locked()
             return self._cache_by_kid.get(kid)
 
 
-def _unauthorized(detail: str) -> JSONResponse:
-    return JSONResponse({"error": "unauthorized", "message": detail}, status_code=401)
-
-
 class AuthMiddleware:
-    def __init__(self, app: ASGIApp, config: OIDCConfig) -> None:
+    """ASGI middleware that validates Bearer tokens and attaches principals."""
+
+    def __init__(self, app: ASGIApp, config: OIDCConfig, token_service: TokenService | None = None) -> None:
         self.app = app
         self.config = config
         self._jwks = JWKSCache(config.jwks_url, ttl_seconds=300) if config.jwks_url else None
-        self._exempt = {"/health", "/metrics", "/docs", "/openapi.json", "/ready"}
+        self._exempt_paths = {"/health", "/metrics", "/docs", "/openapi.json", "/ready"}
+        self._token_service = token_service
 
     async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
-        if scope["type"] != "http":
+        if scope.get("type") != "http":
             await self.app(scope, receive, send)
             return
+
         path = scope.get("path", "")
-        if self.config.disabled or path in self._exempt:
-            # Set default principal for disabled auth or exempt paths
-            scope.setdefault("state", {})
-            scope["state"]["principal"] = {
-                "sub": "anonymous",
-                "email": None,
-                "groups": [],
-                "tenant": None,
-                "claims": {},
-            }
+        scope.setdefault("state", {})
+
+        if self.config.disabled or path in self._exempt_paths:
+            scope["state"].setdefault("principal", _anonymous_principal())
             await self.app(scope, receive, send)
             return
 
-        request = Request(scope)
-
-        # Try Traefik forward-auth first
-        if self.config.forward_auth_header:
-            principal = self._extract_forward_auth_principal(request)
-            if principal:
-                # Attach principal to request.state for downstream use
-                scope.setdefault("state", {})
-                scope["state"]["principal"] = principal
-
-                # Also set tenant_id in request state for easy access
-                if principal.get("tenant"):
-                    scope["state"]["tenant"] = principal["tenant"]
-
-                await self.app(scope, receive, send)
-                return
-            else:
-                # Forward-auth was configured but failed, return 401 immediately
-                response = _unauthorized("Forward-auth failed")
-                await response(scope, receive, send)
-                return
-
-        # Fall back to OIDC JWT verification
-        auth_header = request.headers.get("authorization")
-        if not auth_header or not auth_header.lower().startswith("bearer "):
-            response = _unauthorized("Missing bearer token")
-            await response(scope, receive, send)
-            return
-        token = auth_header.split(" ", 1)[1]
+        request = Request(scope, receive)
 
         try:
-            claims = self._verify_jwt(token)
+            principal = await self._authenticate_request(request, self._resolve_token_service(request))
         except HTTPException as exc:
-            response = _unauthorized(exc.detail)
+            subject = None
+            tenant = None
+            detail = exc.detail
+            reason = "unauthorized"
+            if isinstance(detail, dict):
+                subject = detail.get("subject")
+                tenant = detail.get("tenant")
+                reason = detail.get("error", reason)
+                if detail.get("message"):
+                    reason = f"{reason}:{detail['message']}"
+                missing = detail.get("missing")
+                if missing:
+                    reason = f"missing_scope:{','.join(missing)}"
+            elif isinstance(detail, str):
+                reason = detail
+            self._audit_failure(request, reason=reason, subject=subject, tenant=tenant)
+            response = _error_response(exc.status_code, detail)
             await response(scope, receive, send)
             return
-        # Extract tenant from claims
-        tenant = claims.get("tenant") or claims.get("org") or None
 
-        # If no direct tenant claim, try to extract from email domain
-        if not tenant:
-            email = claims.get("email") or claims.get("preferred_username")
-            if email and "@" in email:
-                domain = email.split("@")[1]
-                if "." in domain:
-                    tenant = domain.split(".")[0]
+        scope["state"]["principal"] = principal
+        scope["state"]["claims"] = principal.claims
+        if principal.tenant_id:
+            scope["state"]["tenant"] = principal.tenant_id
 
-        tenant = self._normalize_tenant_candidate(tenant)
-
-        # Attach principal to request.state for downstream use
-        scope.setdefault("state", {})
-        groups_claim = []
-        raw_groups = claims.get("groups")
-        raw_roles = claims.get("roles")
-        if isinstance(raw_groups, list):
-            groups_claim.extend(str(item) for item in raw_groups if item)
-        elif isinstance(raw_groups, str):
-            groups_claim.append(raw_groups)
-
-        if isinstance(raw_roles, list):
-            groups_claim.extend(str(item) for item in raw_roles if item)
-        elif isinstance(raw_roles, str):
-            groups_claim.append(raw_roles)
-
-        normalized_groups = [group.lower() for group in groups_claim]
-
-        scope["state"]["principal"] = {
-            "sub": claims.get("sub"),
-            "email": claims.get("email") or claims.get("preferred_username"),
-            "groups": normalized_groups,
-            "tenant": tenant,
-            "claims": claims,
-        }
-
-        # Also set tenant_id in request state for easy access
-        if tenant:
-            scope["state"]["tenant"] = tenant
         await self.app(scope, receive, send)
 
-    def _extract_forward_auth_principal(self, request: Request) -> Dict[str, Any] | None:
-        """Extract principal from Traefik forward-auth headers with tenant_id verification."""
+    async def _authenticate_request(self, request: Request, token_service: Optional[TokenService]) -> Principal:
+        forward_principal = self._extract_forward_auth_principal(request)
+        if forward_principal is not None:
+            self._audit_success(forward_principal, request, method="forward-auth")
+            return forward_principal
+
+        token, location = self._extract_token(request)
+        if not token:
+            self._audit_failure(request, reason="authorization_header_missing")
+            raise HTTPException(status.HTTP_401_UNAUTHORIZED, detail="authorization_header_missing")
+
+        claims = self._verify_jwt(token)
+        principal = build_principal_from_claims(claims, self.config.admin_groups)
+
+        missing_scopes = self._missing_scopes(principal, claims)
+        if missing_scopes:
+            raise HTTPException(
+                status.HTTP_403_FORBIDDEN,
+                detail={
+                    "error": "missing_scope",
+                    "missing": missing_scopes,
+                    "subject": principal.subject,
+                    "tenant": principal.tenant_id,
+                },
+            )
+
+        if token_service and claims.get("iss") == token_service.config.issuer:
+            if token_service.is_session_revoked(claims.get("sid")):
+                self._audit_failure(request, reason="session_revoked", subject=principal.subject, tenant=principal.tenant_id)
+                raise HTTPException(status.HTTP_401_UNAUTHORIZED, detail="session_revoked")
+
+        self._audit_success(principal, request, method=location or "bearer")
+        return principal
+
+    def _extract_token(self, request: Request) -> Tuple[Optional[str], Optional[str]]:
+        auth_header = request.headers.get("authorization")
+        if auth_header and auth_header.lower().startswith("bearer "):
+            token = auth_header.split(" ", 1)[1].strip()
+            if token:
+                return token, "header"
+
+        if self.config.cookie.enabled:
+            cookie_value = request.cookies.get(self.config.cookie.name)
+            if cookie_value:
+                return cookie_value.strip(), "cookie"
+
+        return None, None
+
+    def _extract_forward_auth_principal(self, request: Request) -> Optional[Principal]:
         if not self.config.forward_auth_header:
             return None
 
-        # Check for user identity header
         user_header = request.headers.get(self.config.forward_auth_header)
         if not user_header:
             return None
 
-        principal = {
-            "sub": user_header,
-            "email": None,
-            "groups": [],
-            "tenant": None,
-            "claims": {},
-        }
+        claims: Dict[str, Any] = {"sub": user_header, "claims_source": "forward_auth"}
 
-        # Extract additional claims if configured
         if self.config.forward_auth_claims_header:
             claims_json = request.headers.get(self.config.forward_auth_claims_header)
-            if claims_json:
-                try:
-                    claims = json.loads(claims_json)
-
-                    # Map common claim names
-                    principal["email"] = claims.get("email") or claims.get("preferred_username")
-
-                    raw_groups = []
-                    groups_claim = claims.get("groups") or []
-                    if isinstance(groups_claim, str):
-                        raw_groups.append(groups_claim)
-                    elif isinstance(groups_claim, list):
-                        raw_groups.extend(str(item) for item in groups_claim if item)
-
-                    roles_claim = claims.get("roles") or []
-                    if isinstance(roles_claim, str):
-                        raw_groups.append(roles_claim)
-                    elif isinstance(roles_claim, list):
-                        raw_groups.extend(str(item) for item in roles_claim if item)
-
-                    principal["groups"] = [group.lower() for group in raw_groups]
-                    principal["claims"] = claims
-
-                    # Extract tenant from various possible sources
-                    # Priority: direct tenant claim -> org -> organization -> domain extraction -> groups
-                    tenant_candidate = (
-                        claims.get("tenant") or
-                        claims.get("org") or
-                        claims.get("organization")
-                    )
-
-                    # If no direct tenant claim, try to extract from domain/email
-                    if not tenant_candidate:
-                        if principal["email"] and "@" in principal["email"]:
-                            domain = principal["email"].split("@")[1]
-                            if "." in domain:
-                                tenant_candidate = domain.split(".")[0]
-
-                    # If still no tenant, try to extract from groups
-                    if not tenant_candidate:
-                        if principal["groups"]:
-                            for group in principal["groups"]:
-                                group_str = str(group).lower()
-                                if "tenant:" in group_str:
-                                    tenant_part = group_str.split("tenant:")[-1].strip()
-                                    if tenant_part:
-                                        tenant_candidate = tenant_part
-                                        break
-                                elif "org:" in group_str:
-                                    org_part = group_str.split("org:")[-1].strip()
-                                    if org_part:
-                                        tenant_candidate = org_part
-                                        break
-
-                    # Validate tenant_id is present and not empty
-                    principal["tenant"] = self._normalize_tenant_candidate(tenant_candidate)
-                    if not principal["tenant"]:
-                        raise HTTPException(
-                            status_code=401,
-                            detail="Missing tenant_id claim in forward-auth headers"
-                        )
-
-                except (json.JSONDecodeError, KeyError, HTTPException):
-                    # If claims parsing fails or tenant validation fails, return None to trigger 401
-                    return None
-            else:
-                # If forward auth claims header is configured but not present, fail
+            if not claims_json:
                 return None
+            try:
+                claims_payload = json.loads(claims_json)
+            except json.JSONDecodeError:
+                return None
+            claims.update(claims_payload)
 
-        return principal
+        email = claims.get("email") or claims.get("preferred_username")
+        if email:
+            claims["email"] = email
+
+        return build_principal_from_claims(claims, self.config.admin_groups)
 
     def _verify_jwt(self, token: str) -> dict[str, Any]:
         if not (self.config.issuer and self.config.jwks_url):
-            raise HTTPException(status_code=401, detail="OIDC not configured")
+            raise HTTPException(status.HTTP_401_UNAUTHORIZED, detail="oidc_not_configured")
+
         if jwt is None:
             detail = "JWT verification backend unavailable"
             if _JWT_IMPORT_ERROR is not None:
-                detail = f"{detail}: {_JWT_IMPORT_ERROR}"  # include root cause for visibility
-            raise HTTPException(status_code=500, detail=detail)
+                detail = f"{detail}: {_JWT_IMPORT_ERROR}"
+            raise HTTPException(status.HTTP_500_INTERNAL_SERVER_ERROR, detail=detail)
+
         try:
             unverified = jwt.get_unverified_header(token)
         except Exception:
-            raise HTTPException(status_code=401, detail="Invalid token header")
+            raise HTTPException(status.HTTP_401_UNAUTHORIZED, detail="invalid_token_header")
+
         kid = unverified.get("kid")
         if not kid:
-            raise HTTPException(status_code=401, detail="Missing key id")
+            raise HTTPException(status.HTTP_401_UNAUTHORIZED, detail="missing_key_id")
+
         try:
             public_key = self._jwks.get_key(kid) if self._jwks else None
         except Exception as exc:  # pragma: no cover - network failure path
-            raise HTTPException(status_code=503, detail="Unable to fetch JWKS") from exc
+            raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, detail="jwks_fetch_failed") from exc
+
         if public_key is None:
-            raise HTTPException(status_code=401, detail="Signing key not found")
+            raise HTTPException(status.HTTP_401_UNAUTHORIZED, detail="signing_key_not_found")
+
+        algorithms = [public_key.get("alg") or "RS256", "RS256", "ES256"]
+        audience = _build_audience_param(self.config)
 
         try:
             claims = jwt.decode(
                 token,
                 public_key,
-                algorithms=[public_key.get("alg") or "RS256", "RS256", "ES256"],
-                audience=self.config.audience,
+                algorithms=algorithms,
+                audience=audience,
                 issuer=self.config.issuer,
                 options={"leeway": self.config.leeway},
             )
         except Exception:
-            raise HTTPException(status_code=401, detail="Token verification failed")
+            raise HTTPException(status.HTTP_401_UNAUTHORIZED, detail="token_validation_failed")
+
         return claims
 
-    @staticmethod
-    def _normalize_tenant_candidate(candidate: Optional[str]) -> Optional[str]:
-        if candidate is None:
-            return None
-        value = str(candidate).strip()
-        if not value:
-            return None
+    def _missing_scopes(self, principal: Principal, claims: Mapping[str, Any]) -> Tuple[str, ...]:
+        if not self.config.required_scopes:
+            return tuple()
+        available = set(_collect_scope_tokens(claims))
+        missing = tuple(scope for scope in self.config.required_scopes if scope not in available)
+        if missing:
+            return missing
+        return tuple()
+
+    def _audit_success(self, principal: Principal, request: Request, *, method: str) -> None:
         try:
-            return normalize_tenant_id(value)
-        except TenantIdValidationError as exc:
-            raise HTTPException(status_code=400, detail="invalid_tenant_id") from exc
+            security_audit.log_auth_success(
+                user_id=principal.subject,
+                tenant_id=principal.tenant_id,
+                ip_address=_client_ip(request),
+                user_agent=request.headers.get("user-agent"),
+                session_id=principal.token_id,
+                auth_method=method,
+            )
+        except Exception:  # pragma: no cover - audit failures must not break auth
+            pass
+
+    def _audit_failure(
+        self,
+        request: Request,
+        *,
+        reason: str,
+        subject: Optional[str] = None,
+        tenant: Optional[str] = None,
+    ) -> None:
+        try:
+            security_audit.log_auth_failure(
+                user_id=subject or "anonymous",
+                tenant_id=tenant,
+                ip_address=_client_ip(request),
+                user_agent=request.headers.get("user-agent"),
+                reason=reason,
+            )
+        except Exception:  # pragma: no cover - audit failures must not break auth
+            pass
+
+    def _resolve_token_service(self, request: Request) -> Optional[TokenService]:
+        if self._token_service is not None:
+            return self._token_service
+        app_state = getattr(request.app, "state", None)
+        if app_state is None:
+            return None
+        return getattr(app_state, "token_service", None)
 
 
-__all__ = ["AuthMiddleware", "OIDCConfig"]
+def build_principal_from_claims(
+    claims: Mapping[str, Any],
+    admin_groups: Sequence[str],
+) -> Principal:
+    """Create a Principal from raw token claims."""
+
+    subject = str(claims.get("sub") or claims.get("client_id") or "anonymous")
+    email = claims.get("email") or claims.get("preferred_username")
+    groups = _collect_group_tokens(claims)
+    roles = _derive_roles(claims, groups, admin_groups)
+    permissions = _derive_permissions(claims, roles)
+    scopes = tuple(_collect_scope_tokens(claims))
+    tenant_candidate = _resolve_tenant(claims, email=email, groups=groups)
+    tenant = _normalize_tenant(tenant_candidate)
+
+    enriched_claims: Dict[str, Any] = dict(claims)
+    enriched_claims.setdefault("groups", groups)
+    enriched_claims.setdefault("roles", [role.value for role in roles])
+    enriched_claims.setdefault("permissions", [permission.value for permission in permissions])
+    if tenant:
+        enriched_claims["tenant"] = tenant
+
+    return Principal(
+        subject=subject,
+        tenant_id=tenant,
+        email=email,
+        roles=roles,
+        permissions=permissions,
+        scopes=scopes,
+        claims=enriched_claims,
+        token_id=claims.get("jti"),
+        issued_at=claims.get("iat"),
+        expires_at=claims.get("exp"),
+        not_before=claims.get("nbf"),
+    )
+
+
+def require_permission(
+    principal: Mapping[str, Any] | Principal | None,
+    permission: Permission,
+    tenant_id: Optional[str] = None,
+) -> None:
+    """Backwards compatible imperative permission check."""
+
+    if not principal:
+        raise HTTPException(status.HTTP_401_UNAUTHORIZED, detail="authentication_required")
+
+    principal_obj = principal if isinstance(principal, Principal) else Principal.from_mapping(principal)
+    tenant_context = tenant_id or principal_obj.tenant_id
+
+    if not principal_obj.has_permission(permission, tenant_context):
+        raise HTTPException(
+            status.HTTP_403_FORBIDDEN,
+            detail={
+                "error": "access_denied",
+                "required_permission": permission.value,
+                "tenant": tenant_context,
+                "subject": principal_obj.subject,
+            },
+            headers={"X-Required-Permission": permission.value},
+        )
+
+
+def _build_audience_param(config: OIDCConfig) -> Optional[Sequence[str] | str]:
+    if config.audiences:
+        return list(config.audiences)
+    return config.audience
+
+
+def _collect_group_tokens(claims: Mapping[str, Any]) -> Tuple[str, ...]:
+    groups_claim = claims.get("groups")
+    roles_claim = claims.get("roles")
+    tokens: list[str] = []
+    for value in _to_iterable(groups_claim) + _to_iterable(roles_claim):
+        lowered = str(value).strip().lower()
+        if lowered:
+            tokens.append(lowered)
+    return tuple(dict.fromkeys(tokens))
+
+
+def _collect_scope_tokens(claims: Mapping[str, Any]) -> Tuple[str, ...]:
+    candidates = []
+    for key in ("scope", "scopes", "scp"):
+        value = claims.get(key)
+        candidates.extend(_to_iterable(value))
+    tokens: list[str] = []
+    for candidate in candidates:
+        if isinstance(candidate, str):
+            parts = [part.strip() for part in candidate.replace(",", " ").split(" ") if part.strip()]
+            tokens.extend(parts)
+        elif candidate:
+            tokens.append(str(candidate))
+    return tuple(dict.fromkeys(token.lower() for token in tokens))
+
+
+def _derive_roles(
+    claims: Mapping[str, Any],
+    groups: Sequence[str],
+    admin_groups: Sequence[str],
+) -> Tuple[Role, ...]:
+    detected: list[Role] = []
+    admin_group_set = {group.lower() for group in admin_groups}
+
+    for token in groups:
+        role = _match_role_token(token)
+        if role:
+            detected.append(role)
+        elif token in admin_group_set:
+            detected.append(Role.ADMIN)
+        elif "super" in token and "admin" in token:
+            detected.append(Role.SUPER_ADMIN)
+        elif "admin" in token:
+            detected.append(Role.ADMIN)
+        elif "trader" in token:
+            detected.append(Role.TRADER)
+        elif "analyst" in token:
+            detected.append(Role.ANALYST)
+
+    if claims.get("is_admin") or claims.get("admin"):
+        detected.append(Role.ADMIN)
+
+    if not detected:
+        detected.append(Role.USER)
+
+    return tuple(dict.fromkeys(detected))
+
+
+def _derive_permissions(claims: Mapping[str, Any], _roles: Sequence[Role]) -> Tuple[Permission, ...]:
+    explicit_permissions = [_match_permission_token(value) for value in _to_iterable(claims.get("permissions"))]
+    explicit_permissions = [permission for permission in explicit_permissions if permission]
+
+    scope_permissions = [_SCOPE_PERMISSION_MAP[token] for token in _collect_scope_tokens(claims) if token in _SCOPE_PERMISSION_MAP]
+
+    if claims.get("is_admin") or claims.get("admin"):
+        scope_permissions.append(Permission.ADMIN)
+
+    merged = merge_permissions(explicit_permissions, scope_permissions)
+    return merged
+
+
+def _resolve_tenant(
+    claims: Mapping[str, Any],
+    *,
+    email: Optional[str],
+    groups: Sequence[str],
+) -> Optional[str]:
+    candidate = (
+        claims.get("tenant")
+        or claims.get("tenant_id")
+        or claims.get("org")
+        or claims.get("organization")
+        or claims.get("aurum_tenant")
+    )
+
+    if not candidate and email and "@" in email:
+        domain = email.split("@", 1)[1]
+        if "." in domain:
+            candidate = domain.split(".")[0]
+
+    if not candidate:
+        for group in groups:
+            if ":" not in group:
+                continue
+            prefix, value = group.split(":", 1)
+            if prefix in {"tenant", "org", "organization"} and value:
+                candidate = value
+                break
+
+    return candidate
+
+
+def _normalize_tenant(candidate: Optional[str]) -> Optional[str]:
+    if candidate is None:
+        return None
+    try:
+        return normalize_tenant_id(str(candidate))
+    except TenantIdValidationError as exc:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, detail="invalid_tenant_id") from exc
+
+
+def _match_role_token(token: str) -> Optional[Role]:
+    slug = token.replace("-", "_")
+    try:
+        return Role(slug)
+    except ValueError:
+        return None
+
+
+def _match_permission_token(token: Any) -> Optional[Permission]:
+    try:
+        return Permission(str(token))
+    except ValueError:
+        return None
+
+
+_SCOPE_PERMISSION_MAP: Dict[str, Permission] = {
+    "curves:read": Permission.CURVES_READ,
+    "curves:write": Permission.CURVES_WRITE,
+    "curves:delete": Permission.DELETE,
+    "scenarios:read": Permission.SCENARIOS_READ,
+    "scenarios:write": Permission.SCENARIOS_WRITE,
+    "scenarios:delete": Permission.SCENARIOS_DELETE,
+    "admin": Permission.ADMIN,
+    "admin:read": Permission.ADMIN_READ,
+    "admin:write": Permission.ADMIN_WRITE,
+    "audit:read": Permission.AUDIT,
+}
+
+
+def _to_iterable(value: Any) -> Tuple[Any, ...]:
+    if value is None:
+        return tuple()
+    if isinstance(value, (list, tuple, set)):
+        return tuple(value)
+    return (value,)
+
+
+def _client_ip(request: Request) -> Optional[str]:
+    forwarded_for = request.headers.get("x-forwarded-for")
+    if forwarded_for:
+        return forwarded_for.split(",")[0].strip()
+    real_ip = request.headers.get("x-real-ip")
+    if real_ip:
+        return real_ip
+    if request.client:
+        return request.client.host
+    return None
+
+
+def _anonymous_principal() -> Principal:
+    return Principal.from_mapping(
+        {
+            "sub": "anonymous",
+            "tenant": None,
+            "email": None,
+            "roles": [Role.USER.value],
+            "permissions": [],
+            "claims": {},
+        }
+    )
+
+
+def _error_response(status_code: int, detail: Any) -> JSONResponse:
+    if isinstance(detail, dict):
+        payload = dict(detail)
+        payload.setdefault("error", "unauthorized" if status_code == 401 else "forbidden")
+    else:
+        payload = {
+            "error": "unauthorized" if status_code == 401 else "forbidden",
+            "message": str(detail),
+        }
+    request_id = get_request_id()
+    if request_id:
+        payload.setdefault("request_id", request_id)
+    return JSONResponse(payload, status_code=status_code)
+
+
+__all__ = [
+    "AuthMiddleware",
+    "OIDCConfig",
+    "Permission",
+    "Role",
+    "Principal",
+    "current_principal",
+    "get_principal",
+    "require_permission",
+    "require_permissions",
+    "require_role",
+]
+
+
+get_principal = current_principal

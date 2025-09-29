@@ -14,7 +14,10 @@ except ImportError:
     trino = None
 
 from ..telemetry.context import get_request_id
-from .config import TrinoConfig
+try:
+    from .config import TrinoConfig
+except Exception:  # pragma: no cover - compatibility for legacy imports
+    from ..config import TrinoConfig  # type: ignore
 from .models import CurvePoint, CurveDiffPoint, Meta
 from .scenario_models import ScenarioRunData, ScenarioRunStatus
 from ..scenarios.storage import get_scenario_store

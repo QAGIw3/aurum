@@ -1,35 +1,506 @@
 # Feature Flags System
 
-This document describes the feature flags system in Aurum, which provides gradual rollouts, A/B testing, and feature targeting capabilities.
+This document describes the comprehensive feature flags system in Aurum, which provides gradual rollouts, A/B testing, feature targeting, analytics, and monitoring capabilities.
 
 ## Overview
 
 The feature flags system allows you to:
-- Gradually roll out new features to users
-- Run A/B tests with different variants
-- Target specific user segments or conditions
-- Enable/disable features dynamically without deployments
-- Monitor feature usage and performance
+- **Gradual Rollouts**: Deploy features incrementally using percentage-based or time-based strategies
+- **A/B Testing**: Run experiments with different variants and measure their impact
+- **User Targeting**: Target specific user segments, roles, or custom conditions
+- **Runtime Updates**: Update flag configurations without deployments via Redis Pub/Sub
+- **Analytics & Monitoring**: Track usage patterns, performance, and rollout progress
+- **Testing Utilities**: Comprehensive test helpers for deterministic testing
 
 ## Architecture
 
-### Components
+### Core Components
 
-- **FeatureFlag**: Core model representing a feature flag
-- **FeatureFlagRule**: Rules for conditional feature activation
-- **FeatureFlagManager**: Main interface for managing feature flags
+- **FeatureFlag**: Core model representing a feature flag with rules, A/B config, and metadata
+- **FeatureFlagRule**: Rules for conditional feature activation with conditions and targeting
+- **FeatureFlagManager**: Main interface for managing and evaluating feature flags
 - **FeatureFlagStore**: Storage abstraction (Redis, In-Memory, or unified adapter)
+- **RolloutPlan**: Advanced rollout strategies with scheduling and targeting
+- **RolloutEvaluator**: Evaluates rollout plans and integrates with flag evaluation
+- **FeatureAnalyticsCollector**: Collects and aggregates usage analytics
 - **ScenarioFeatureFlagAdapter**: Bridges scenario-specific flags with the generic system
 
 ### Storage Options
 
 1. **InMemoryFeatureFlagStore**: For development and testing
-2. **RedisFeatureFlagStore**: For production with Redis backend
+2. **RedisFeatureFlagStore**: For production with Redis backend and Pub/Sub
 3. **ScenarioFeatureFlagAdapter**: Unified store that handles both generic and scenario-specific flags
+
+### Evaluation Flow
+
+```
+User Request → FeatureFlagManager → RolloutPlan (if exists) → FeatureFlagRules → Default Value
+                                ↓
+                         FeatureAnalyticsCollector (records event)
+                                ↓
+                         Cache (user_flags:*, flag_cache)
+                                ↓
+                         Store (Redis/InMemory)
+```
+
+### Runtime Updates
+
+```
+Flag Update → Redis Store → Redis Pub/Sub → All Managers → Cache Invalidation → Consistent State
+```
 
 ## Basic Usage
 
-### Creating a Feature Flag
+### Public API (Recommended)
+
+```python
+from aurum.api.features import is_enabled, get_variant, evaluate_flag
+
+# Check if feature is enabled
+user_context = {
+    "user_id": "user123",
+    "user_segment": "premium_users",
+    "user": {"role": "admin"}
+}
+
+enabled = await is_enabled("new_dashboard_widget", user_context)
+if enabled:
+    show_dashboard_widget()
+
+# Get A/B test variant
+variant = await get_variant("button_color", user_context)
+if variant == "blue":
+    show_blue_button()
+elif variant == "green":
+    show_green_button()
+
+# Raw evaluation (returns bool or variant string)
+result = await evaluate_flag("feature_with_ab_test", user_context)
+```
+
+### Manager API (Advanced)
+
+```python
+from aurum.api.features import get_feature_manager, FeatureFlagStatus
+
+manager = get_feature_manager()
+
+# Create a feature flag
+flag = await manager.create_flag(
+    name="New Dashboard Widget",
+    key="dashboard_widget",
+    description="Shows a new widget on the dashboard",
+    default_value=False,
+    status=FeatureFlagStatus.ENABLED,
+    created_by="user@example.com"
+)
+
+# Evaluate with context
+is_enabled = await manager.is_enabled(
+    "dashboard_widget",
+    user_context,
+    {}
+)
+```
+
+## Advanced Features
+
+### Rollout Plans
+
+Rollout plans provide sophisticated deployment strategies beyond simple percentage rollouts.
+
+#### Percentage-Based Rollout
+
+```python
+from aurum.api.features import RolloutPlan, RolloutStrategy
+
+# 25% rollout to all users
+plan = RolloutPlan(
+    strategy=RolloutStrategy.PERCENTAGE,
+    percentage=25.0,
+    name="Gradual Feature Rollout"
+)
+
+await manager.create_rollout_plan("new_feature", plan.strategy.value, **plan.to_dict())
+```
+
+#### Gradual Rollout (Time-Based)
+
+```python
+from datetime import datetime, timedelta
+
+# Start at 10%, increase by 20% every 24 hours, up to 100%
+plan = RolloutPlan(
+    strategy=RolloutStrategy.GRADUAL,
+    start_percentage=10.0,
+    end_percentage=100.0,
+    step_percentage=20.0,
+    step_interval_hours=24,
+    start_time=datetime.utcnow(),
+    name="Gradual Rollout"
+)
+```
+
+#### Scheduled Rollout
+
+```python
+# Roll out during business hours only
+plan = RolloutPlan(
+    strategy=RolloutStrategy.SCHEDULED,
+    start_time=datetime(2024, 1, 1, 9, 0),  # 9 AM
+    end_time=datetime(2024, 1, 1, 17, 0),   # 5 PM
+    name="Business Hours Rollout"
+)
+```
+
+#### Targeted Rollout
+
+```python
+from aurum.api.features import UserSegment
+
+# Only premium users
+plan = RolloutPlan(
+    strategy=RolloutStrategy.TARGETED,
+    user_segments=[UserSegment.PREMIUM_USERS],
+    required_flags=["payment_enabled"],
+    name="Premium Feature Rollout"
+)
+```
+
+### Rules and Conditions
+
+Rules provide sophisticated targeting based on user context, tenant information, and custom conditions.
+
+```python
+from aurum.api.features import FeatureFlagRule
+
+# Create a rule with complex conditions
+rule = FeatureFlagRule(
+    name="Premium Users with Enterprise Plan",
+    conditions={
+        "user.role": {"op": "eq", "value": "premium"},
+        "tenant.plan": {"op": "in", "value": ["enterprise", "premium_plus"]},
+        "user.created_at": {"op": "gte", "value": "2023-01-01"},
+        "request.feature_context.beta_tester": {"op": "eq", "value": True}
+    },
+    rollout_percentage=50.0,  # 50% of matching users
+    user_segments=[UserSegment.PREMIUM_USERS],
+    required_flags=["core_functionality"],
+    excluded_flags=["legacy_mode"]
+)
+
+await manager.add_rule("advanced_feature", rule)
+```
+
+#### Available Operators
+
+- `eq`: Equal
+- `neq`: Not equal
+- `gt`: Greater than
+- `gte`: Greater than or equal
+- `lt`: Less than
+- `lte`: Less than or equal
+- `in`: In list
+- `nin`: Not in list
+- `contains`: String contains
+- `startswith`: String starts with
+- `endswith`: String ends with
+- `regex`: Regular expression match
+
+### A/B Testing
+
+```python
+from aurum.api.features import ABTestConfiguration
+
+# Configure A/B test with multiple variants
+ab_config = ABTestConfiguration(
+    variants={"control": 50.0, "variant_a": 25.0, "variant_b": 25.0},
+    control_variant="control",
+    track_events=["button_click", "page_view", "conversion"],
+    end_date=datetime(2024, 6, 1)  # Optional end date
+)
+
+await manager.set_ab_test("button_design", ab_config)
+
+# Check variant for user
+variant = await manager.get_variant("button_design", user_context)
+```
+
+## Analytics and Monitoring
+
+### Viewing Analytics
+
+```python
+# Get analytics for a specific flag
+analytics = await manager.get_flag_analytics("new_feature", hours=24)
+print(f"Total evaluations: {analytics['total_evaluations']}")
+print(f"Enable rate: {analytics['enable_rate']:.2%}")
+print(f"Average decision time: {analytics['avg_decision_time_ms']:.2f}ms")
+
+# Get A/B test analytics
+ab_analytics = await manager.get_ab_test_analytics("button_design", hours=24)
+print(f"Variant distribution: {ab_analytics['variant_distribution']}")
+
+# Get all flags analytics
+all_analytics = await manager.get_all_flags_analytics(hours=24)
+```
+
+### Admin Endpoints
+
+#### Rollout Management
+```bash
+# Create rollout plan
+POST /v1/admin/features/{flag_key}/rollout
+{
+  "strategy": "gradual",
+  "name": "Gradual Feature Rollout",
+  "start_percentage": 10.0,
+  "end_percentage": 100.0,
+  "step_percentage": 20.0,
+  "step_interval_hours": 24
+}
+
+# Get rollout plan
+GET /v1/admin/features/{flag_key}/rollout
+
+# Update rollout plan
+PUT /v1/admin/features/{flag_key}/rollout
+{
+  "percentage": 75.0
+}
+
+# Delete rollout plan
+DELETE /v1/admin/features/{flag_key}/rollout
+```
+
+#### Analytics Endpoints
+```bash
+# Get all flags analytics
+GET /v1/admin/features/analytics?hours=24
+
+# Get specific flag analytics
+GET /v1/admin/features/{flag_key}/analytics?hours=24
+
+# Get A/B test analytics
+GET /v1/admin/features/{flag_key}/ab-analytics?hours=24
+```
+
+## Testing
+
+### Test Utilities
+
+```python
+import pytest
+from tests.common.feature_flags import (
+    FlagOverride,
+    feature_flag_override,
+    create_test_flag,
+    create_test_rollout_plan,
+    setup_test_feature_flags
+)
+
+class TestMyFeature:
+    @pytest.mark.asyncio
+    async def test_feature_enabled(self):
+        # Override flag for test
+        async with FlagOverride("my_feature", True):
+            result = await is_enabled("my_feature")
+            assert result is True
+
+    @pytest.mark.asyncio
+    async def test_feature_disabled(self):
+        async with feature_flag_override("my_feature", False):
+            result = await is_enabled("my_feature")
+            assert result is False
+
+    @pytest.mark.asyncio
+    async def test_ab_test_variant(self):
+        async with FlagOverride("ab_feature", "variant_a"):
+            variant = await get_variant("ab_feature")
+            assert variant == "variant_a"
+
+    @pytest.mark.asyncio
+    async def test_rollout_plan(self):
+        # Create test rollout plan
+        plan = create_test_rollout_plan(
+            "test_flag",
+            strategy=RolloutStrategy.PERCENTAGE,
+            percentage=50.0
+        )
+
+        # Set up test flags
+        manager = await setup_test_feature_flags(
+            flags=[create_test_flag("test_flag")],
+            rollout_plans={"test_flag": plan}
+        )
+
+        # Test evaluation respects rollout
+        user_context = {"user_id": "user123"}
+        result = await manager.evaluate_flag("test_flag", user_context, {})
+        # Result depends on deterministic hashing
+```
+
+### Deterministic Testing
+
+```python
+# Test that the same user always gets the same variant
+@pytest.mark.asyncio
+async def test_deterministic_ab_test():
+    user_context = {"user_id": "user123"}
+
+    # Same user should always get same variant
+    variant1 = await get_variant("ab_feature", user_context)
+    variant2 = await get_variant("ab_feature", user_context)
+    assert variant1 == variant2
+
+    # Different user should get different variant
+    user_context2 = {"user_id": "user456"}
+    variant3 = await get_variant("ab_feature", user_context2)
+    # May or may not be same as variant1 depending on hash distribution
+```
+
+## Configuration
+
+### Environment Variables
+
+```bash
+# Redis configuration for production
+AURUM_REDIS_URL=redis://localhost:6379/0
+
+# Feature flag namespace (optional)
+AURUM_FEATURE_FLAG_NAMESPACE=feature_flags
+
+# Cache configuration
+AURUM_CACHE_TTL=300
+```
+
+### Initialization
+
+```python
+from aurum.api.features import initialize_feature_flags
+
+# Initialize with Redis for production
+manager = await initialize_feature_flags(
+    redis_url="redis://localhost:6379/0",
+    cache_manager=cache_manager,
+    scenario_store=scenario_store
+)
+
+# Or use in-memory for development/testing
+manager = await initialize_feature_flags()
+```
+
+## Best Practices
+
+### Flag Naming
+- Use kebab-case: `new-dashboard-widget`
+- Prefix tenant-scoped flags: `tenant:tenant-id:feature-name`
+- Keep names descriptive and stable
+
+### Rollout Strategy
+1. Start with percentage-based rollouts (10-25%)
+2. Use gradual rollouts for high-risk features
+3. Target specific segments for controlled releases
+4. Monitor analytics during rollout
+5. Have rollback plans ready
+
+### A/B Testing
+1. Define clear success metrics
+2. Use appropriate sample sizes
+3. Run tests for sufficient duration
+4. Consider statistical significance
+5. Document test results
+
+### Monitoring
+1. Monitor enable/disable rates
+2. Track performance impact
+3. Watch for dependency issues
+4. Alert on rollout anomalies
+5. Review analytics regularly
+
+## Troubleshooting
+
+### Common Issues
+
+**Flag not evaluating correctly**
+- Check flag status (ENABLED/CONDITIONAL/DISABLED)
+- Verify user context matches rules
+- Check rollout plan constraints
+- Review dependency requirements
+
+**Performance issues**
+- Enable caching for high-traffic flags
+- Use Redis store for production
+- Monitor decision time metrics
+- Consider flag complexity
+
+**Cache consistency**
+- Redis Pub/Sub handles cross-process updates
+- Local cache invalidation on updates
+- Monitor cache hit rates
+
+### Debug Mode
+
+```python
+import logging
+
+# Enable debug logging
+logging.getLogger('aurum.api.features').setLevel(logging.DEBUG)
+
+# Check flag evaluation details
+user_context = {"user_id": "debug_user", "user_segment": "debug"}
+result = await evaluate_flag("problematic_flag", user_context)
+```
+
+## Migration Guide
+
+### From Environment Variables
+
+```python
+# Old way
+import os
+if os.getenv("MY_FEATURE_ENABLED", "false").lower() == "true":
+    enable_feature()
+
+# New way
+from aurum.api.features import is_enabled
+enabled = await is_enabled("my_feature", {"user_id": "user123"})
+if enabled:
+    enable_feature()
+```
+
+### From Direct Manager Usage
+
+```python
+# Old way
+manager = get_feature_manager()
+enabled = await manager.is_enabled("feature", user_context, {})
+
+# New way (recommended)
+enabled = await is_enabled("feature", user_context)
+```
+
+## Operational Guide
+
+### Runtime Updates
+- Changes propagate via Redis Pub/Sub
+- Cache invalidation happens automatically
+- Updates are visible within seconds
+- Monitor for subscription health
+
+### Monitoring Alerts
+- High dependency block rates
+- Unusual enable/disable patterns
+- Performance degradation
+- Cache miss rates
+- Rollout anomalies
+
+### Backup and Recovery
+- Flags stored in Redis (persistent)
+- In-memory fallback available
+- Export configurations for backup
+- Test restore procedures
+
 
 ```python
 from aurum.api.features.feature_flags import FeatureFlagManager, FeatureFlagStatus
