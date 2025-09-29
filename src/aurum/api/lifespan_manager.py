@@ -167,10 +167,10 @@ class DatabaseLifecycleHook(LifecycleHook):
             # Initialize Redis connections
             if hasattr(self.settings, 'redis') and self.settings.redis:
                 try:
-                    import redis.asyncio as redis
-                    redis_client = redis.from_url(self.settings.redis.url)
-                    await redis_client.ping()
-                    self._connections["redis"] = redis_client
+                    from .database.redis_client import get_redis_manager
+                    manager = get_redis_manager()
+                    await manager.initialize(self.settings.redis.url)
+                    self._connections["redis"] = manager
                     self.logger.info("Redis connections initialized")
                 except Exception as e:
                     self.logger.warning("Failed to initialize Redis", error=str(e))
@@ -185,7 +185,25 @@ class DatabaseLifecycleHook(LifecycleHook):
 
         for name, connection in self._connections.items():
             try:
-                if hasattr(connection, 'close'):
+                # Prefer close_all when present (e.g., HybridTrinoClientManager)
+                if hasattr(connection, 'close_all'):
+                    close_all = getattr(connection, 'close_all')
+                    if asyncio.iscoroutinefunction(close_all):
+                        await close_all()
+                    else:
+                        maybe_task = close_all()
+                        if asyncio.iscoroutine(maybe_task):
+                            await maybe_task
+                # Prefer Redis manager shutdown if stored
+                elif name == "redis" and hasattr(connection, 'close_all'):
+                    close_all = getattr(connection, 'close_all')
+                    if asyncio.iscoroutinefunction(close_all):
+                        await close_all()
+                    else:
+                        res = close_all()
+                        if asyncio.iscoroutine(res):
+                            await res
+                elif hasattr(connection, 'close'):
                     if asyncio.iscoroutinefunction(connection.close):
                         await connection.close()
                     else:

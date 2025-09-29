@@ -1,0 +1,48 @@
+groups:
+  - name: aurum-governance
+    interval: 1m
+    rules:
+      - alert: OpenLineageIngestionStalled
+        expr: rate(aurum_openlineage_events_total[10m]) < 1
+        for: 15m
+        labels:
+          severity: critical
+          team: governance
+        annotations:
+          summary: "OpenLineage ingestion has stalled"
+          description: |
+            No OpenLineage events have been received for the past 15 minutes.
+            Check Airflow emitters, Marquez connectivity, and pipeline health.
+      - alert: MetadataIngestionFailures
+        expr: increase(aurum_openmetadata_ingestion_failures_total[30m]) > 10
+        for: 10m
+        labels:
+          severity: warning
+          team: data-platform
+        annotations:
+          summary: "OpenMetadata ingestion experiencing sustained failures"
+          description: |
+            OpenMetadata reported more than 10 ingestion failures in the last 30 minutes.
+            Inspect ingestion pipelines and Airflow jobs for errors.
+      - alert: DataQualityScoreDrop
+        expr: avg_over_time(aurum_data_quality_score[1h]) < 75
+        for: 10m
+        labels:
+          severity: warning
+          team: data-stewards
+        annotations:
+          summary: "Average data quality score dropped below threshold"
+          description: |
+            The average data quality score over the past hour is below 75.
+            Review failing tests in OpenMetadata and recent pipeline changes.
+      - alert: FreshnessSLABreach
+        expr: increase(aurum_data_freshness_breaches_total[30m]) > 0
+        for: 5m
+        labels:
+          severity: critical
+          team: data-stewards
+        annotations:
+          summary: "Freshness SLA breached for governed datasets"
+          description: |
+            Freshness monitors detected SLA breaches in the past 30 minutes.
+            Check upstream data sources and pipeline runtimes.

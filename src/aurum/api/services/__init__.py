@@ -180,6 +180,12 @@ _EXPORTS: Tuple[Tuple[str, Tuple[str, ...]], ...] = (
         "get_portfolio_esg_dashboard",
         "calculate_esg_adjusted_risk",
     )),
+    (".governance_service", (
+        "GovernanceService",
+        "GovernanceConfig",
+        "get_governance_service",
+        "initialise_governance_service",
+    )),
 )
 
 

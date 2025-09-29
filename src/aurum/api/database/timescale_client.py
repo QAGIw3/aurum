@@ -24,6 +24,7 @@ except Exception:  # pragma: no cover - allow import in docs/tests
 from .database_monitor import get_database_monitor, QueryMetrics
 from ..exceptions import ServiceUnavailableException
 from ...core.settings import get_settings
+from ..middleware.resource_cleanup import get_current_resource_tracker
 
 
 LOGGER = logging.getLogger(__name__)
@@ -122,6 +123,28 @@ class AsyncTimescaleClient:
             try:
                 self._active_connections += 1
                 async with self._pool.connection() as conn:  # type: ignore[attr-defined]
+                    # Register with per-request ResourceTracker
+                    tracker = None
+                    try:
+                        tracker = get_current_resource_tracker()
+                    except Exception:
+                        tracker = None
+                    if tracker is not None:
+                        key = f"timescale:{id(conn)}"
+                        async def _cleanup() -> None:
+                            try:
+                                # psycopg pool context auto-releases; ensure close in worst-case
+                                close = getattr(conn, "close", None)
+                                if close is not None:
+                                    res = close()
+                                    if asyncio.iscoroutine(res):
+                                        await res
+                            except Exception:
+                                pass
+                        try:
+                            await tracker.register(key, _cleanup)
+                        except Exception:
+                            pass
                     async with conn.cursor(row_factory=dict_row) as cur:  # type: ignore[arg-type]
                         if q_timeout:
                             rows = await asyncio.wait_for(cur.execute(sql, params or {}), timeout=q_timeout)

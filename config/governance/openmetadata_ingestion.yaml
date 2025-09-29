@@ -1,0 +1,103 @@
+# OpenMetadata ingestion workflows for Aurum governance rollout.
+workflowConfig:
+  loggerLevel: INFO
+  openMetadataServerConfig:
+    hostPort: http://openmetadata-server:8585/api
+    authProvider: no-auth
+  sink:
+    type: metadata-rest
+    config: {}
+
+workflows:
+  - name: airflow_lineage_ingestion
+    source:
+      type: airflow
+      serviceName: aurum-airflow
+      serviceConnection:
+        config:
+          hostPort: http://airflow-webserver:8080
+          username: admin
+          password: admin
+          verifySSL: false
+    processor:
+      type: lineage
+      config:
+        includeLineage: true
+    runConfig:
+      type: manual
+
+  - name: postgres_metadata_ingestion
+    source:
+      type: postgres
+      serviceName: aurum-postgres
+      serviceConnection:
+        config:
+          hostPort: postgres:5432
+          username: aurum
+          password: aurum
+          database: aurum
+          sslMode:
+            mode: disable
+    processor:
+      type: database
+      config:
+        markDeletedTables: true
+        includeViews: true
+    runConfig:
+      type: manual
+
+  - name: trino_usage_ingestion
+    source:
+      type: trinoUsage
+      serviceName: aurum-trino
+      serviceConnection:
+        config:
+          hostPort: http://trino:8080
+          username: governance_bot
+          catalogName: hive
+          databaseName: market
+    processor:
+      type: usage
+      config:
+        queryLogDuration: 1
+        resultLimit: 5000
+    runConfig:
+      type: manual
+
+  - name: dbt_lineage_ingestion
+    source:
+      type: dbtCloud
+      serviceName: aurum-dbt
+      sourceConfig:
+        config:
+          manifestPath: /opt/dbt/target/manifest.json
+          catalogPath: /opt/dbt/target/catalog.json
+          runResultsPath: /opt/dbt/target/run_results.json
+      serviceConnection:
+        config:
+          hostPort: https://cloud.getdbt.com
+          token: ${DBT_CLOUD_TOKEN}
+          accountId: ${DBT_CLOUD_ACCOUNT_ID}
+    processor:
+      type: dbt
+      config:
+        includeTags: true
+        parseMacros: true
+    runConfig:
+      type: manual
+
+  - name: marquez_bridge_ingestion
+    source:
+      type: marquez
+      serviceName: aurum-marquez
+      serviceConnection:
+        config:
+          hostPort: http://marquez:5000
+          apiVersion: v1
+    processor:
+      type: lineage
+      config:
+        includeLineage: true
+        includeColumnLineage: true
+    runConfig:
+      type: manual

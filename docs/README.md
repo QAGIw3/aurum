@@ -80,6 +80,7 @@ New to Aurum? Start here:
 - **[External Data Operations](runbooks/external-data.md)** - Data pipeline operations
 - **[Multi-region Failover](runbooks/multi-region-failover-runbook.md)** - Disaster recovery
 - **[API Concurrency Issues](runbooks/api_concurrency_runbook.md)** - API troubleshooting
+- **[Advanced Workflow Orchestration](workflows/advanced_orchestration.md)** - Dynamic DAG promotion, monitoring, and recovery
 - **[All Runbooks →](runbooks/)** - Complete operational guides
 
 ## 🔒 Security & Configuration

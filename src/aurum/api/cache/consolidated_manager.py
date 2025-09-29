@@ -11,20 +11,23 @@ This module provides a single, comprehensive cache management interface that:
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import hashlib
 import json
+import os
 import time
 from collections import defaultdict
 from dataclasses import dataclass, field
-from typing import Any, Dict, List, Optional, Set, Union, Callable, Awaitable
-from enum import Enum
 from datetime import datetime, timedelta
+from enum import Enum
+from typing import Any, Awaitable, Callable, Dict, List, Optional, Union
 
 from pydantic import BaseModel
 
+from ..async_exec.supervisor import BackgroundTaskSupervisor
 from ..observability.metrics import get_metrics_client
 from ..logging.structured_logger import get_logger
-from .cache import AsyncCache, CacheBackend, CacheEntry
+from .cache import AsyncCache, CacheBackend
 from .cache_governance import (
     CacheGovernanceManager,
     TTLPolicy,
@@ -38,6 +41,15 @@ from .enhanced_cache_manager import (
     StaleWhileRevalidateConfig
 )
 from ..config import CacheConfig
+from ...cache.analytics import AnalyticsConfig, CacheAnalyticsEngine, CacheOptimizationAdvice
+from ...cache.multi_tier import (
+    EvictionPolicy,
+    MultiTierCache,
+    MultiTierCacheConfig,
+    TierConfig,
+    TierType,
+)
+from ...cache.predictive_warming import PredictiveWarmingEngine, PredictiveWindowConfig
 
 
 class CacheStrategy(Enum):
@@ -60,6 +72,8 @@ class CacheAnalytics:
     total_requests: int = 0
     hit_rate: float = 0.0
     avg_response_time: float = 0.0
+    optimization_advice: Optional[CacheOptimizationAdvice] = None
+    tier_stats: Dict[str, Any] = field(default_factory=dict)
 
     def __post_init__(self):
         if self.total_requests > 0:
@@ -104,7 +118,12 @@ class UnifiedCacheManager:
         governance_manager: Optional[CacheGovernanceManager] = None,
         default_strategy: CacheStrategy = CacheStrategy.LRU,
         enable_metrics: bool = True,
-        enable_health_checks: bool = True
+        enable_health_checks: bool = True,
+        multi_tier_config: Optional[MultiTierCacheConfig] = None,
+        predictive_engine: Optional[PredictiveWarmingEngine] = None,
+        analytics_engine: Optional[CacheAnalyticsEngine] = None,
+        predictive_config: Optional[PredictiveWindowConfig] = None,
+        analytics_config: Optional[AnalyticsConfig] = None,
     ):
         """Initialize unified cache manager.
 
@@ -119,6 +138,7 @@ class UnifiedCacheManager:
         self.default_strategy = default_strategy
         self.enable_metrics = enable_metrics
         self.enable_health_checks = enable_health_checks
+        self.logger = get_logger(__name__)
 
         # Initialize governance manager
         self.governance = governance_manager or CacheGovernanceManager()
@@ -138,18 +158,28 @@ class UnifiedCacheManager:
         # Invalidation tracking
         self.invalidation_events: List[CacheInvalidationEvent] = []
 
-        # Background tasks
-        self._background_tasks: Set[asyncio.Task] = set()
+        # Background tasks managed via supervisor
         self._shutdown_event = asyncio.Event()
+        self._supervisor: BackgroundTaskSupervisor | None = None
+
+        # Advanced capabilities
+        self.multi_tier_config = multi_tier_config
+        self.predictive_engine = predictive_engine or (PredictiveWarmingEngine(predictive_config) if predictive_config else None)
+        self.analytics_engine = analytics_engine or CacheAnalyticsEngine(analytics_config)
+        self.multi_tier_cache: Optional[MultiTierCache] = None
 
         # Start background tasks
         if enable_health_checks:
             self._start_background_tasks()
 
-        logger = get_logger(__name__)
-        logger.info("Unified cache manager initialized",
-                   backends=list(self.backends.keys()),
-                   strategy=default_strategy.value)
+        self._initialize_multi_tier()
+
+        self.logger.info(
+            "Unified cache manager initialized",
+            backends=list(self.backends.keys()),
+            strategy=default_strategy.value,
+            multi_tier_enabled=bool(self.multi_tier_cache),
+        )
 
     def _initialize_backends(self) -> None:
         """Initialize cache backends based on configuration."""
@@ -172,6 +202,108 @@ class UnifiedCacheManager:
 
         # Set default backend
         self.default_backend = self.backends.get("redis") or self.backends.get("memory")
+
+    def _initialize_multi_tier(self) -> None:
+        """Initialize multi-tier cache if configuration permits."""
+        try:
+            config = self.multi_tier_config or self._build_default_multi_tier_config()
+        except Exception as exc:  # pragma: no cover - defensive
+            self.logger.warning("multi_tier_config_resolution_failed", error=str(exc))
+            config = None
+
+        if not config:
+            self.logger.info("Multi-tier cache disabled", reason="missing configuration")
+            return
+
+        predictive = self.predictive_engine or PredictiveWarmingEngine(PredictiveWindowConfig())
+        analytics = self.analytics_engine or CacheAnalyticsEngine()
+
+        try:
+            self.multi_tier_cache = MultiTierCache(
+                config=config,
+                cache_config=self.config,
+                predictive_engine=predictive,
+                analytics_engine=analytics,
+            )
+        except Exception as exc:  # pragma: no cover - defensive
+            self.logger.warning("multi_tier_initialization_failed", error=str(exc))
+            self.multi_tier_cache = None
+            return
+
+        self.predictive_engine = predictive
+        self.analytics_engine = analytics
+
+        if self.warming_config.warmup_fetcher and self.predictive_engine:
+            async def _batch_loader(keys: List[str]) -> Dict[str, Any]:
+                results: Dict[str, Any] = {}
+                for key in keys:
+                    value = await self.warming_config.warmup_fetcher(key)
+                    if value is not None:
+                        results[key] = value
+                return results
+
+            default_ns = CacheNamespace.GENERAL.value
+            self.predictive_engine.register_loader(default_ns, _batch_loader)
+
+        self.logger.info(
+            "Multi-tier cache ready",
+            tiers=list(config.tiers.keys()),
+            quorum=config.quorum_threshold if config.ensure_quorum else None,
+        )
+
+    def _build_default_multi_tier_config(self) -> Optional[MultiTierCacheConfig]:
+        bucket = os.getenv("AURUM_CACHE_S3_BUCKET")
+        vault = os.getenv("AURUM_CACHE_GLACIER_VAULT")
+        if not bucket or not vault:
+            return None
+
+        def _get_int(name: str, default: int) -> int:
+            try:
+                return int(os.getenv(name, str(default)))
+            except ValueError:
+                return default
+
+        l1_max_items = _get_int("AURUM_CACHE_L1_MAX_ITEMS", 75_000)
+        l1_ttl = _get_int("AURUM_CACHE_L1_TTL", self.config.ttl_seconds)
+        l2_ttl = _get_int("AURUM_CACHE_L2_TTL", self.config.ttl_seconds * 4)
+        l3_ttl = _get_int("AURUM_CACHE_L3_TTL", max(self.config.ttl_seconds * 24, self.config.ttl_seconds))
+        quorum = os.getenv("AURUM_CACHE_TIER_QUORUM", "0.51")
+        try:
+            quorum_threshold = float(quorum)
+        except ValueError:
+            quorum_threshold = 0.51
+
+        tiers: Dict[TierType, TierConfig] = {
+            TierType.L1: TierConfig(
+                type=TierType.L1,
+                max_items=l1_max_items,
+                ttl_seconds=l1_ttl,
+                eviction_policy=EvictionPolicy.ADAPTIVE,
+            ),
+            TierType.L2: TierConfig(
+                type=TierType.L2,
+                ttl_seconds=l2_ttl,
+                params={
+                    "bucket": bucket,
+                    "prefix": os.getenv("AURUM_CACHE_S3_PREFIX", f"cache/{self.config.namespace}"),
+                },
+            ),
+            TierType.L3: TierConfig(
+                type=TierType.L3,
+                ttl_seconds=l3_ttl,
+                params={
+                    "vault_name": vault,
+                },
+            ),
+        }
+
+        return MultiTierCacheConfig(
+            tiers=tiers,
+            default_ttl_seconds=self.config.ttl_seconds,
+            namespace=self.config.namespace,
+            ensure_quorum=True,
+            quorum_threshold=quorum_threshold,
+        )
 
     def _start_background_tasks(self) -> None:
         """Start background maintenance tasks."""
@@ -348,13 +480,18 @@ class UnifiedCacheManager:
                 logger = get_logger(__name__)
                 logger.warning("Invalid cache key pattern", key=key, namespace=namespace.value)
 
-            # Get from backend
-            value = await self.default_backend.get(key, default=default)
+            # Get from multi-tier cache when available
+            cached_value: Any | None
+            if self.multi_tier_cache:
+                cached_value = await self.multi_tier_cache.get(key, namespace=namespace)
+            else:
+                cached_value = await self.default_backend.get(key)
 
-            # Track metrics
-            if value is not None:
+            if cached_value is not None:
+                value = cached_value
                 self.analytics.hits += 1
             else:
+                value = default
                 self.analytics.misses += 1
 
             duration = time.time() - start_time
@@ -368,8 +505,17 @@ class UnifiedCacheManager:
 
             if self.enable_metrics:
                 metrics = get_metrics_client()
-                metrics.counter("aurum_cache_requests_total",
-                              labels={"result": "hit" if value is not None else "miss"})
+                if metrics:
+                    metrics.counter(
+                        "aurum_cache_requests_total",
+                        labels={
+                            "result": "hit" if cached_value is not None else "miss",
+                            "namespace": namespace.value,
+                        },
+                    )
+
+            if self.analytics_engine:
+                self.analytics.optimization_advice = self.analytics_engine.latest_recommendation()
 
             return value
 
@@ -410,14 +556,28 @@ class UnifiedCacheManager:
                 ttl_config = TTLConfiguration.get_default_policies()[ttl_policy]
                 ttl_seconds = ttl_config.seconds
 
-            # Set in backend
-            await self.default_backend.set(key, value, ttl_seconds)
+            if self.multi_tier_cache:
+                await self.multi_tier_cache.set(
+                    key,
+                    value,
+                    namespace=namespace,
+                    ttl_seconds=ttl_seconds,
+                )
+            else:
+                await self.default_backend.set(key, value, ttl_seconds)
 
             self.analytics.sets += 1
 
             if self.enable_metrics:
                 metrics = get_metrics_client()
-                metrics.counter("aurum_cache_sets_total")
+                if metrics:
+                    metrics.counter(
+                        "aurum_cache_sets_total",
+                        labels={"namespace": namespace.value},
+                    )
+
+            if self.analytics_engine:
+                self.analytics.optimization_advice = self.analytics_engine.latest_recommendation()
 
             return True
 
@@ -438,12 +598,23 @@ class UnifiedCacheManager:
             True if deleted
         """
         try:
-            result = await self.default_backend.delete(key)
+            if self.multi_tier_cache:
+                await self.multi_tier_cache.delete(key, namespace=namespace)
+                result = True
+            else:
+                result = await self.default_backend.delete(key)
             self.analytics.deletes += 1
 
             if result and self.enable_metrics:
                 metrics = get_metrics_client()
-                metrics.counter("aurum_cache_deletes_total")
+                if metrics:
+                    metrics.counter(
+                        "aurum_cache_deletes_total",
+                        labels={"namespace": namespace.value},
+                    )
+
+            if self.analytics_engine:
+                self.analytics.optimization_advice = self.analytics_engine.latest_recommendation()
 
             return result
 
@@ -479,6 +650,9 @@ class UnifiedCacheManager:
                 if hasattr(backend, 'invalidate_pattern'):
                     count += await backend.invalidate_pattern(pattern)
 
+            if self.multi_tier_cache:
+                count += await self.multi_tier_cache.invalidate_pattern(pattern, namespace=namespace)
+
             # Record invalidation event
             event = CacheInvalidationEvent(
                 key_pattern=pattern,
@@ -494,7 +668,8 @@ class UnifiedCacheManager:
 
             if self.enable_metrics:
                 metrics = get_metrics_client()
-                metrics.counter("aurum_cache_invalidations_total", labels={"count": str(count)})
+                if metrics:
+                    metrics.counter("aurum_cache_invalidations_total", labels={"count": str(count)})
 
             logger = get_logger(__name__)
             logger.info("Cache pattern invalidated",
@@ -527,6 +702,18 @@ class UnifiedCacheManager:
         Returns:
             Cached or fetched value
         """
+        if ttl_seconds is None and ttl_policy:
+            ttl_config = TTLConfiguration.get_default_policies()[ttl_policy]
+            ttl_seconds = ttl_config.seconds
+
+        if self.multi_tier_cache:
+            return await self.multi_tier_cache.cache_aside(
+                key,
+                namespace=namespace,
+                loader=fetcher,
+                ttl_seconds=ttl_seconds,
+            )
+
         value = await self.get(key, namespace, default=None)
 
         if value is None:
@@ -587,6 +774,34 @@ class UnifiedCacheManager:
         """
         self.warming_config = config
 
+        if not self.predictive_engine:
+            return
+
+        if config.warmup_fetcher:
+            async def _loader(keys: List[str]) -> Dict[str, Any]:
+                results: Dict[str, Any] = {}
+                for key in keys:
+                    value = await config.warmup_fetcher(key)
+                    if value is not None:
+                        results[key] = value
+                return results
+
+            self.predictive_engine.register_loader(CacheNamespace.GENERAL.value, _loader)
+        else:
+            self.predictive_engine.deregister_loader(CacheNamespace.GENERAL.value)
+
+    def register_predictive_loader(
+        self,
+        namespace: Union[str, CacheNamespace],
+        loader: Callable[[List[str]], Awaitable[Dict[str, Any]]],
+    ) -> None:
+        """Expose predictive warming loader registration for callers."""
+        if not self.predictive_engine:
+            raise RuntimeError("Predictive engine not initialized")
+
+        ns = namespace.value if isinstance(namespace, CacheNamespace) else namespace
+        self.predictive_engine.register_loader(ns, loader)
+
     async def get_analytics(self) -> CacheAnalytics:
         """Get cache analytics.
 
@@ -598,7 +813,36 @@ class UnifiedCacheManager:
         if total > 0:
             self.analytics.hit_rate = self.analytics.hits / total
 
+        if self.multi_tier_cache:
+            self.analytics.tier_stats = self.multi_tier_cache.snapshot_stats()
+
+        if self.analytics_engine:
+            advice = self.analytics_engine.latest_recommendation()
+            if advice:
+                self.analytics.optimization_advice = advice
+
         return self.analytics
+
+    async def get_performance_snapshot(self) -> Dict[str, Any]:
+        """Return detailed analytics and tier metrics for monitoring."""
+        analytics = await self.get_analytics()
+        data: Dict[str, Any] = {
+            "hits": analytics.hits,
+            "misses": analytics.misses,
+            "hit_rate": analytics.hit_rate,
+            "avg_response_time": analytics.avg_response_time,
+            "tier_stats": analytics.tier_stats,
+        }
+        if analytics.optimization_advice:
+            data["optimization_advice"] = {
+                "summary": analytics.optimization_advice.summary,
+                "suggested_actions": analytics.optimization_advice.suggested_actions,
+                "tier_pressure": analytics.optimization_advice.tier_pressure,
+                "alerts": analytics.optimization_advice.alerts,
+            }
+        if self.analytics_engine:
+            data["metrics_snapshot"] = self.analytics_engine.metrics_snapshot()
+        return data
 
     async def get_health(self) -> CacheHealth:
         """Get cache health status.
@@ -640,6 +884,10 @@ class UnifiedCacheManager:
         if self._background_tasks:
             await asyncio.gather(*self._background_tasks, return_exceptions=True)
 
+        if self.predictive_engine:
+            with contextlib.suppress(Exception):
+                await self.predictive_engine.stop()
+
         # Close backends
         for backend in self.backends.values():
             if hasattr(backend, 'close'):
@@ -660,7 +908,13 @@ class LegacyUnifiedCacheManager(UnifiedCacheManager):
 
 def get_unified_cache_manager(
     config: Optional[CacheConfig] = None,
-    governance_manager: Optional[CacheGovernanceManager] = None
+    governance_manager: Optional[CacheGovernanceManager] = None,
+    *,
+    multi_tier_config: Optional[MultiTierCacheConfig] = None,
+    predictive_engine: Optional[PredictiveWarmingEngine] = None,
+    analytics_engine: Optional[CacheAnalyticsEngine] = None,
+    predictive_config: Optional[PredictiveWindowConfig] = None,
+    analytics_config: Optional[AnalyticsConfig] = None,
 ) -> UnifiedCacheManager:
     """Get the global unified cache manager instance.
 
@@ -682,7 +936,12 @@ def get_unified_cache_manager(
 
         _unified_cache_manager = UnifiedCacheManager(
             config=config,
-            governance_manager=governance_manager
+            governance_manager=governance_manager,
+            multi_tier_config=multi_tier_config,
+            predictive_engine=predictive_engine,
+            analytics_engine=analytics_engine,
+            predictive_config=predictive_config,
+            analytics_config=analytics_config,
         )
 
     return _unified_cache_manager

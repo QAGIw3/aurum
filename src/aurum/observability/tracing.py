@@ -7,6 +7,7 @@ import time
 import uuid
 from collections import defaultdict
 from contextlib import asynccontextmanager
+import random
 from contextvars import ContextVar, Token
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional
@@ -243,6 +244,10 @@ class TraceCollector:
         async with self._lock:
             return self._spans.get(span_id)
 
+    def get_span_sync(self, span_id: str) -> Optional[Span]:
+        """Non-async helper for contexts where awaiting is not viable."""
+        return self._spans.get(span_id)
+
     async def get_trace_summary(self, trace_id: str) -> Optional[Dict[str, Any]]:
         """Get a summary of a trace."""
         spans = await self.get_trace(trace_id)
@@ -468,3 +473,31 @@ async def get_trace_report(trace_id: str) -> Optional[Dict[str, Any]]:
         ),
         "status": "error" if any(span.status == "error" for span in spans) else "ok"
     }
+
+
+def random_jitter(min_value: float, max_value: float) -> float:
+    """Return a random jitter value within bounds."""
+    return random.uniform(min_value, max_value)
+
+
+def sleep(duration: float) -> None:
+    """Proxy around time.sleep for test seam."""
+    time.sleep(duration)
+
+
+def record_event(namespace: str, event: str, attributes: Dict[str, Any]) -> None:
+    """Record an event on the current span if present."""
+    try:
+        payload = dict(attributes)
+    except Exception:
+        payload = {"value": str(attributes)}
+
+    span_id = get_current_span_id()
+    if not span_id:
+        return
+
+    span = _trace_collector.get_span_sync(span_id)
+    if span is None:
+        return
+
+    span.add_event(f"{namespace}:{event}", payload)

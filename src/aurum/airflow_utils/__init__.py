@@ -10,6 +10,12 @@ from . import metrics
 from .variables import load_variable_mapping, validate_variable_mapping
 from .idempotency import IdempotentExecution, idempotent_run, get_idempotent_marker
 from .lineage import LineageDataset, LineageEventPayload, emit_lineage_event
+from .openlineage_adapter import (
+    AirflowOpenLineageAdapter,
+    OpenLineageConfig,
+    airflow_callback_factory,
+    load_default_adapter,
+)
 from .great_expectations import ExpectationSuiteConfig, validate_dataframe
 
 try:  # pragma: no cover - optional dependency on Airflow
@@ -202,6 +208,10 @@ __all__ = [
     "LineageDataset",
     "LineageEventPayload",
     "emit_lineage_event",
+    "AirflowOpenLineageAdapter",
+    "OpenLineageConfig",
+    "airflow_callback_factory",
+    "load_default_adapter",
     "ExpectationSuiteConfig",
     "validate_dataframe",
 ]

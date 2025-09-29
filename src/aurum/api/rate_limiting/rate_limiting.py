@@ -14,6 +14,11 @@ from collections import defaultdict, deque
 from ..telemetry.context import get_request_id
 from .sliding_window import RateLimitMiddleware, ratelimit_admin_router
 from ..cache.cache import AsyncCache, CacheManager
+from ...observability.metrics import (
+    set_redis_connection_pool_active,
+    set_redis_connection_pool_idle,
+    set_redis_connection_pool_total,
+)
 
 
 class RateLimitAlgorithm(Enum):
@@ -226,8 +231,27 @@ class RedisRateLimitStorage(RateLimitStorage):
         if self._redis_client is None:
             try:
                 import redis.asyncio as redis
-                self._redis_client = redis.from_url(self.redis_url, decode_responses=True)
+                try:
+                    from ..database.redis_client import get_redis_manager
+                    manager = get_redis_manager()
+                    self._redis_client = await manager.get_client(self.redis_url, decode_responses=True)
+                except Exception:
+                    # Fallback to direct client
+                    self._redis_client = redis.from_url(self.redis_url, decode_responses=True)
                 await self._redis_client.ping()
+                # Update Redis pool metrics (best-effort)
+                try:
+                    pool = getattr(self._redis_client, "connection_pool", None)
+                    if pool is not None:
+                        active = int(getattr(pool, "_in_use_connections", 0) or 0)
+                        total = int(getattr(pool, "_created_connections", 0) or 0)
+                        max_conn = int(getattr(pool, "max_connections", 0) or 0)
+                        idle = max(0, total - active)
+                        await set_redis_connection_pool_active(active)
+                        await set_redis_connection_pool_idle(idle)
+                        await set_redis_connection_pool_total(total or max_conn)
+                except Exception:
+                    pass
             except ImportError:
                 raise RuntimeError("redis package not available")
             except Exception as e:

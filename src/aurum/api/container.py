@@ -8,6 +8,7 @@ from __future__ import annotations
 import asyncio
 import inspect
 from abc import ABC, abstractmethod
+import os
 from typing import Any, Callable, Dict, List, Optional, Type, TypeVar, Union
 
 # FastAPI deps are optional at import time to avoid hard dependency when running non-API code paths
@@ -164,12 +165,27 @@ class DependencyInjectionContainer:
             from .services.eia_service import EiaService
             from .services.iso_service import IsoService
             from .cache.consolidated_manager import get_unified_cache_manager, UnifiedCacheManager
+            from .client import ExternalAPIClient, ClientConfig, RetryConfig
 
             container.register(CurvesService, lambda: CurvesService(), ServiceLifetime.SINGLETON)
             container.register(MetadataService, lambda: MetadataService(), ServiceLifetime.SINGLETON)
             container.register(EiaService, lambda: EiaService(), ServiceLifetime.SINGLETON)
             container.register(IsoService, lambda: IsoService(), ServiceLifetime.SINGLETON)
             container.register(UnifiedCacheManager, lambda: get_unified_cache_manager(), ServiceLifetime.SINGLETON)
+
+            def _external_client_factory() -> ExternalAPIClient:
+                base_url = os.getenv("AURUM_EXTERNAL_BASE_URL", os.getenv("AURUM_API_BASE_URL", "http://localhost:8001"))
+                max_attempts = int(os.getenv("AURUM_EXTERNAL_RETRIES", "3") or 3)
+                backoff_base = float(os.getenv("AURUM_EXTERNAL_BACKOFF_BASE", "0.3") or 0.3)
+                backoff_max = float(os.getenv("AURUM_EXTERNAL_BACKOFF_MAX", "3.0") or 3.0)
+                bearer = os.getenv("AURUM_EXTERNAL_BEARER")
+                headers: dict[str, str] = {}
+                if bearer:
+                    headers["Authorization"] = f"Bearer {bearer}"
+                retry = RetryConfig(max_attempts=max_attempts, base_delay_seconds=backoff_base, max_delay_seconds=backoff_max)
+                return ExternalAPIClient(ClientConfig(base_url=base_url, retry=retry, headers=headers))
+
+            container.register(ExternalAPIClient, _external_client_factory, ServiceLifetime.SINGLETON)
         except Exception:  # pragma: no cover - best effort registration
             pass
         return container

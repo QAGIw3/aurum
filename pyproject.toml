@@ -46,10 +46,13 @@ dependencies = [
     # HTTP client
     "httpx==0.28.1",
     "aiohttp==3.10.10",
+    "cachetools==5.5.0",
 
     # Data processing
     "pandas==2.2.3",
     "numpy>=1.21.6,<2.0.0",
+    "scipy==1.11.4",
+    "scikit-learn==1.5.2",
 
     # Configuration
     "dynaconf==3.2.6",
@@ -154,6 +157,7 @@ networking = [
     "urllib3>=1.25.4,<3",
     "httpx==0.28.1",
     "aiohttp==3.10.10",
+    "cachetools==5.5.0",
 ]
 cloud = [
     # Cloud services

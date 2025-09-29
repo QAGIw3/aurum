@@ -496,6 +496,130 @@
         "to": "now"
       },
       "refresh": "1m"
+    },
+    {
+      "title": "Aurum Governance Overview",
+      "uid": "aurum-governance",
+      "tags": ["aurum", "governance", "lineage"],
+      "timezone": "UTC",
+      "schemaVersion": 36,
+      "version": 1,
+      "panels": [
+        {
+          "type": "stat",
+          "title": "Lineage Events (5m)",
+          "gridPos": { "h": 6, "w": 6, "x": 0, "y": 0 },
+          "targets": [
+            {
+              "expr": "sum(rate(aurum_openlineage_events_total[5m]))",
+              "refId": "A",
+              "instant": true,
+              "datasource": "prometheus"
+            }
+          ],
+          "fieldConfig": {
+            "defaults": {
+              "color": { "mode": "thresholds" },
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  { "color": "red", "value": null },
+                  { "color": "yellow", "value": 10 },
+                  { "color": "green", "value": 50 }
+                ]
+              }
+            }
+          }
+        },
+        {
+          "type": "stat",
+          "title": "Metadata Ingestion Failures",
+          "gridPos": { "h": 6, "w": 6, "x": 6, "y": 0 },
+          "targets": [
+            {
+              "expr": "sum(increase(aurum_openmetadata_ingestion_failures_total[15m]))",
+              "refId": "A",
+              "instant": true,
+              "datasource": "prometheus"
+            }
+          ],
+          "fieldConfig": {
+            "defaults": {
+              "color": { "mode": "thresholds" },
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  { "color": "green", "value": null },
+                  { "color": "yellow", "value": 1 },
+                  { "color": "red", "value": 5 }
+                ]
+              }
+            }
+          }
+        },
+        {
+          "type": "gauge",
+          "title": "Average Data Quality Score",
+          "gridPos": { "h": 6, "w": 6, "x": 12, "y": 0 },
+          "options": {
+            "reduceOptions": { "calcs": ["mean"], "values": false },
+            "showThresholdLabels": false,
+            "showThresholdMarkers": true
+          },
+          "targets": [
+            {
+              "expr": "avg(aurum_data_quality_score)",
+              "refId": "A",
+              "datasource": "prometheus"
+            }
+          ],
+          "fieldConfig": {
+            "defaults": {
+              "min": 0,
+              "max": 100,
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  { "color": "red", "value": null },
+                  { "color": "yellow", "value": 70 },
+                  { "color": "green", "value": 90 }
+                ]
+              }
+            }
+          }
+        },
+        {
+          "type": "table",
+          "title": "Top Impacted Assets",
+          "gridPos": { "h": 8, "w": 12, "x": 0, "y": 6 },
+          "targets": [
+            {
+              "expr": "aurum_governance_impacted_assets",
+              "format": "table",
+              "refId": "A",
+              "datasource": "prometheus"
+            }
+          ]
+        },
+        {
+          "type": "timeSeries",
+          "title": "Freshness SLA Breaches",
+          "gridPos": { "h": 8, "w": 12, "x": 12, "y": 6 },
+          "targets": [
+            {
+              "expr": "increase(aurum_data_freshness_breaches_total[1h])",
+              "refId": "A",
+              "datasource": "prometheus"
+            }
+          ],
+          "fieldConfig": {
+            "defaults": {
+              "color": { "mode": "continuous" },
+              "unit": "short"
+            }
+          }
+        }
+      ]
     }
   ]
 }

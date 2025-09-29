@@ -10,11 +10,12 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import timedelta
+import asyncio
 from typing import Any, Callable, Dict, List, Optional
 
 from airflow.operators.bash import BashOperator
 from airflow.operators.empty import EmptyOperator
-from airflow.operators.python import PythonOperator
+from airflow.operators.python import PythonOperator, ShortCircuitOperator
 from airflow.operators.branch import BranchPythonOperator
 from airflow.operators.trigger_dagrun import TriggerDagRunOperator
 from airflow.sensors.external_task import ExternalTaskSensor
@@ -169,6 +170,70 @@ def template_external_sensor(task_id: str, external_dag_id: str, external_task_i
     return ExternalTaskSensor(task_id=task_id, external_dag_id=external_dag_id, external_task_id=external_task_id, mode=mode, **kwargs)
 
 
+def template_short_circuit(task_id: str, condition: Any, **kwargs: Any) -> ShortCircuitOperator:
+    """Short-circuit downstream tasks when the evaluated condition is falsy."""
+
+    def _evaluate(**context: Any) -> bool:
+        value = context.get("params", {}).get("condition", condition)
+        if isinstance(value, bool):
+            return value
+        stringified = str(value).strip().lower()
+        return stringified not in {"", "0", "false", "none"}
+
+    params = dict(kwargs.get("params", {}))
+    params.setdefault("condition", condition)
+    kwargs["params"] = params
+    return ShortCircuitOperator(task_id=task_id, python_callable=_evaluate, **kwargs)
+
+
+def template_integration_event(task_id: str, event_type: str, payload: Optional[Dict[str, Any]] = None, **kwargs: Any) -> PythonOperator:
+    """Trigger an integration event using the integration manager."""
+
+    from aurum.workflow.integrations import integration_manager
+
+    def _fire(**context: Any) -> None:
+        event_payload = dict(payload or {})
+        rendered = context.get("params", {}).get("payload")
+        if isinstance(rendered, dict):
+            event_payload.update(rendered)
+        asyncio.run(integration_manager.trigger_integration_event(event_type, event_payload))
+
+    params = dict(kwargs.get("params", {}))
+    params.setdefault("payload", payload or {})
+    kwargs["params"] = params
+    return PythonOperator(task_id=task_id, python_callable=_fire, **kwargs)
+
+
+def template_sql(
+    task_id: str,
+    sql: Any,
+    conn_id: str = "postgres_default",
+    *,
+    mapping: Optional[Dict[str, Any]] = None,
+    **kwargs: Any,
+) -> BaseOperator:
+    """Execute SQL using the common SQL provider when available."""
+
+    try:
+        from airflow.providers.common.sql.operators.sql import SQLExecuteQueryOperator  # type: ignore
+
+        op_kwargs = dict(kwargs)
+        op_kwargs.update({"task_id": task_id, "sql": sql, "conn_id": conn_id})
+        if mapping:
+            partial = SQLExecuteQueryOperator.partial(**op_kwargs)
+            if "kwargs" in mapping:
+                return partial.expand_kwargs(kwargs=mapping["kwargs"])
+            if "expand" in mapping:
+                return partial.expand(**mapping["expand"])
+            if mapping.get("param") and mapping.get("items") is not None:
+                return partial.expand(**{mapping["param"]: mapping["items"]})
+        return SQLExecuteQueryOperator(**op_kwargs)
+    except Exception:
+        # Fallback to bash echo so DAG still parses in environments without the provider installed
+        command = f"echo 'SQL provider unavailable; skipped execution of {task_id}'"
+        return template_bash(task_id, command, **kwargs)
+
+
 def _common_operator_kwargs(spec: TaskSpec, base_kwargs: Dict[str, Any]) -> Dict[str, Any]:
     """Translate TaskSpec common fields into BaseOperator constructor kwargs."""
     kwargs: Dict[str, Any] = dict(base_kwargs)
@@ -270,6 +335,20 @@ def build_task_from_spec(spec: TaskSpec, context: Dict[str, Any]) -> Any:
         task = template_trigger_dag(spec.task_id, spec.params.get("dag_id"), spec.params.get("conf"), **base_kwargs)
     elif ttype == "external_sensor":
         task = template_external_sensor(spec.task_id, spec.params.get("external_dag_id"), spec.params.get("external_task_id"), spec.params.get("mode", "reschedule"), **base_kwargs)
+    elif ttype == "short_circuit":
+        condition_value = spec.condition or spec.params.get("condition")
+        task = template_short_circuit(spec.task_id, condition_value, **base_kwargs)
+    elif ttype == "integration_event":
+        event_type = spec.params.get("event_type") or spec.params.get("event")
+        if not event_type:
+            raise ValueError("integration_event tasks require 'event_type'")
+        event_payload = spec.params.get("payload") or {}
+        task = template_integration_event(spec.task_id, event_type, event_payload, **base_kwargs)
+    elif ttype == "sql":
+        op_kwargs = _common_operator_kwargs(spec, dict(base_kwargs))
+        sql_statement = spec.params.get("sql") or spec.params.get("query") or "SELECT 1"
+        conn_id = spec.params.get("conn_id", "postgres_default")
+        task = template_sql(spec.task_id, sql_statement, conn_id, mapping=mapping, **op_kwargs)
     elif ttype == "http":
         # Optional provider: airflow.providers.http
         try:
@@ -375,3 +454,6 @@ registry.register("python", template_python)
 registry.register("branch", template_branch)
 registry.register("trigger_dag", template_trigger_dag)
 registry.register("external_sensor", template_external_sensor)
+registry.register("short_circuit", template_short_circuit)
+registry.register("integration_event", template_integration_event)
+registry.register("sql", template_sql)

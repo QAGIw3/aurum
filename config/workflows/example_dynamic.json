@@ -56,7 +56,9 @@
       "type": "bash",
       "params": { "command": "echo 'Transforming data'" },
       "depends_on": ["maybe_transform"],
-      "on_failure": { "fallback": { "command": "echo 'Running fallback transformation'", "trigger_rule": "one_failed" } }
+      "wait_for_datasets": ["dataset://aurum/examples/extract_done"],
+      "on_failure": { "fallback": { "command": "echo 'Running fallback transformation'", "trigger_rule": "one_failed" } },
+      "outlets": ["dataset://aurum/examples/transform_done"]
     },
 
     {
@@ -64,6 +66,7 @@
       "type": "bash",
       "params": { "command": "echo 'Loading data'" },
       "depends_on": ["transform_data", "skip_transform"],
+      "wait_for_datasets": ["dataset://aurum/examples/transform_done"],
       "pool": "db_writes",
       "outlets": ["dataset://aurum/examples/load_done"]
     },
@@ -75,7 +78,17 @@
       "depends_on": ["load_data"]
     },
 
-    { "id": "mapped_echo", "type": "bash", "params": { "command": "echo {{ params.item }}", "map": { "kwargs": [ {"bash_command": "echo 1"}, {"bash_command": "echo 2"}, {"bash_command": "echo 3"} ] } }, "depends_on": ["load_data"] },
+    {
+      "id": "notify_external",
+      "type": "integration_event",
+      "params": {
+        "event_type": "workflow_completed",
+        "payload": {"source": "example_dynamic", "severity": "info"}
+      },
+      "depends_on": ["notify_downstream"]
+    },
+
+    { "id": "mapped_echo", "type": "bash", "params": { "command": "echo {{ params.item }}", "map": { "kwargs": [ {"bash_command": "echo 1"}, {"bash_command": "echo 2"}, {"bash_command": "echo 3"} ] } }, "depends_on": ["load_data", "notify_external"] },
 
     { "id": "end", "type": "empty", "params": {}, "depends_on": ["mapped_echo", "notify_downstream"] }
   ]

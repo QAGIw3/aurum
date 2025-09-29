@@ -56,6 +56,7 @@ from ...observability.metrics import (
     TRINO_PREPARED_CACHE_EVICTIONS,
 )
 from ...observability.enhanced_tracing import get_current_trace_context
+from ..middleware.resource_cleanup import get_current_resource_tracker
 
 from .config import TrinoConfig, TrinoCatalogConfig, TrinoCatalogType, TrinoAccessLevel
 from ...core.settings import AurumSettings, get_settings
@@ -525,6 +526,24 @@ class SimpleTrinoClient:
         tenant_label: str,
     ) -> List[Dict[str, Any]]:
         conn = await self._acquire_connection()
+        # Register with per-request ResourceTracker for leak-proof cleanup
+        try:
+            tracker = get_current_resource_tracker()
+        except Exception:
+            tracker = None
+        if tracker is not None:
+            key = f"trino:{id(conn)}"
+
+            async def _cleanup() -> None:
+                try:
+                    await self._release_connection(conn)
+                except Exception:
+                    pass
+
+            try:
+                await tracker.register(key, _cleanup)
+            except Exception:
+                pass
         try:
             try:
                 if query_timeout:
@@ -548,6 +567,12 @@ class SimpleTrinoClient:
                 )
                 raise ServiceUnavailableException("trino", detail="Query timed out") from exc
         finally:
+            # Mark as released if we had registered tracking
+            try:
+                if tracker is not None:
+                    await tracker.mark_released(f"trino:{id(conn)}")
+            except Exception:
+                pass
             await self._release_connection(conn)
 
     async def _run_query(
@@ -1269,6 +1294,48 @@ class HybridTrinoClientManager:
         _db_migration_metrics.record_db_call(client_type, duration_ms)
 
         return client
+
+    async def initialize(self) -> None:
+        """Initialize and pre-warm client pools for faster first-use and metrics.
+
+        Best-effort: failures are logged at debug level by callers. This method is
+        idempotent and safe to call multiple times.
+        """
+
+        # Ensure default client exists
+        try:
+            default_client = self.get_client(None)
+        except Exception:
+            # If settings are incomplete, skip pre-warm
+            return
+
+        # Pre-warm all known clients' pools by acquiring/releasing one connection
+        clients: list[SimpleTrinoClient] = []
+        with self._manager_lock:
+            clients = list(self._simple_clients.values())
+            if default_client not in clients:
+                clients.append(default_client)
+
+        async def _warm(client: SimpleTrinoClient) -> None:
+            try:
+                conn = await client._pool.get_connection()
+            except Exception:
+                return
+            else:
+                try:
+                    await client._pool.return_connection(conn)
+                    # Record initial pool metrics
+                    await client._record_pool_metrics()
+                except Exception:
+                    pass
+
+        if clients:
+            await asyncio.gather(*(_warm(c) for c in clients), return_exceptions=True)
+
+    def get_clients(self) -> list[SimpleTrinoClient]:
+        """Return a snapshot list of managed simplified clients."""
+        with self._manager_lock:
+            return list(self._simple_clients.values())
 
     async def close_all(self) -> None:
         """Close all managed clients asynchronously."""

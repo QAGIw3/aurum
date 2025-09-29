@@ -15,6 +15,8 @@ from aurum.api.rate_limiting.concurrency_middleware import (
     create_concurrency_controller,
     create_timeout_controller,
 )
+from aurum import observability as _obs
+from aurum.observability.metrics import record_external_api_request
 
 
 @pytest.fixture(autouse=True)
@@ -59,6 +61,13 @@ def test_metric_cache_reset_creates_new_collectors():
     )
 
     assert counter_one is not counter_two
+
+
+def test_record_external_api_request_noop_when_metrics_disabled(monkeypatch):
+    """External API recorder should not raise when metrics are disabled."""
+    monkeypatch.setattr(_obs.metrics, "EXTERNAL_API_REQUEST_COUNTER", None, raising=False)
+    monkeypatch.setattr(_obs.metrics, "EXTERNAL_API_LATENCY", None, raising=False)
+    record_external_api_request("/v1/example", "200", 0.01)
 
 
 @pytest.mark.asyncio

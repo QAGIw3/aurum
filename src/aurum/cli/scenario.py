@@ -14,6 +14,7 @@ import sys
 from typing import Any, Iterable
 
 import requests
+from aurum.api.client import ClientConfig, ExternalAPIClient, RetryConfig
 
 DEFAULT_BASE_URL = "http://localhost:8095"
 TENANT_HEADER = "X-Aurum-Tenant"
@@ -45,6 +46,19 @@ def _request(
     headers: dict[str, str] = {}
     if tenant:
         headers[TENANT_HEADER] = tenant
+    if os.getenv("AURUM_CLI_USE_RESILIENT_HTTP", "0").lower() in {"1", "true", "yes"}:
+        client = ExternalAPIClient(
+            ClientConfig(
+                base_url=base_url,
+                retry=RetryConfig(max_attempts=3, base_delay_seconds=0.3, max_delay_seconds=3.0),
+                headers=headers,
+            )
+        )
+        resp = client.request(method=method.upper(), path=path, params=params, json=json_body, timeout=30.0)
+        if resp.status_code >= 400:
+            message = resp.text or resp.reason_phrase
+            raise ScenarioCLIError(f"{method} {url} failed: {resp.status_code} {message}")
+        return resp.json() if resp.content else {}
     resp = session.request(method, url, headers=headers, params=params, json=json_body, timeout=30)
     if resp.status_code >= 400:
         message = resp.text or resp.reason

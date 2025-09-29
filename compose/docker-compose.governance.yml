@@ -1,0 +1,133 @@
+version: '3.8'
+
+services:
+  marquez:
+    image: marquezproject/marquez:0.46.1
+    container_name: marquez
+    environment:
+      MARQUEZ_URL: http://0.0.0.0:5000
+      MARQUEZ_PORT: 5000
+      MARQUEZ_ADMIN_PORT: 5001
+      MARQUEZ_DB_HOST: marquez-db
+      MARQUEZ_DB_PORT: 5432
+      MARQUEZ_DB_USER: marquez
+      MARQUEZ_DB_PASSWORD: marquez
+      MARQUEZ_DB_NAME: marquez
+      MARQUEZ_NAMESPACE: aurum-dev
+      MARQUEZ_OPENLINEAGE_URL: http://0.0.0.0:5000
+    ports:
+      - "5000:5000"
+      - "5001:5001"
+    depends_on:
+      marquez-db:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:5000/api/v1/namespaces || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
+  marquez-db:
+    image: postgres:15-alpine
+    container_name: marquez-db
+    environment:
+      POSTGRES_USER: marquez
+      POSTGRES_PASSWORD: marquez
+      POSTGRES_DB: marquez
+    volumes:
+      - marquez_db_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U marquez -d marquez"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
+  openmetadata-server:
+    image: openmetadata/server:1.5.5
+    container_name: openmetadata-server
+    environment:
+      OPENMETADATA_CLUSTER_NAME: aurum-dev
+      OPENMETADATA_SERVER_HOST: 0.0.0.0
+      OPENMETADATA_SERVER_PORT: 8585
+      OPENMETADATA_DB_HOST: openmetadata-mysql
+      OPENMETADATA_DB_PORT: 3306
+      OPENMETADATA_DB_USER: openmetadata_user
+      OPENMETADATA_DB_PASSWORD: openmetadata_password
+      OPENMETADATA_DB_SCHEMA: openmetadata_db
+      ELASTICSEARCH_HOST: openmetadata-elasticsearch
+      ELASTICSEARCH_PORT: 9200
+      AUTHENTICATION_PROVIDER: no-auth
+      SERVER_HOST_API_URL: http://openmetadata-server:8585/api
+      INGESTION_PIPELINE_SERVICE_CLIENT_CLASS: "org.openmetadata.service.clients.pipeline.AirflowClient"  
+      PIPELINE_SERVICE_CLIENT_ENDPOINT: http://openmetadata-airflow:8080
+    ports:
+      - "8585:8585"
+    depends_on:
+      openmetadata-mysql:
+        condition: service_healthy
+      openmetadata-elasticsearch:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:8585/api/v1/system/config || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 6
+    restart: unless-stopped
+
+  openmetadata-ingestion:
+    image: openmetadata/ingestion-base:1.5.5
+    container_name: openmetadata-ingestion
+    environment:
+      AIRFLOW_HOME: /opt/airflow
+      OPENMETADATA_SERVER_URL: http://openmetadata-server:8585/api
+    command: ["/bin/bash", "-c", "sleep infinity"]
+    depends_on:
+      openmetadata-server:
+        condition: service_healthy
+    volumes:
+      - openmetadata_ingestion:/opt/airflow
+    restart: unless-stopped
+
+  openmetadata-mysql:
+    image: mysql:8.0
+    container_name: openmetadata-mysql
+    environment:
+      MYSQL_ROOT_PASSWORD: openmetadata_root_password
+      MYSQL_USER: openmetadata_user
+      MYSQL_PASSWORD: openmetadata_password
+      MYSQL_DATABASE: openmetadata_db
+    command: ["mysqld", "--lower_case_table_names=1", "--default-authentication-plugin=caching_sha2_password"]
+    volumes:
+      - openmetadata_mysql_data:/var/lib/mysql
+    healthcheck:
+      test: ["CMD-SHELL", "mysqladmin ping -u root -popenmetadata_root_password"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
+  openmetadata-elasticsearch:
+    image: docker.elastic.co/elasticsearch/elasticsearch:7.17.13
+    container_name: openmetadata-elasticsearch
+    environment:
+      discovery.type: single-node
+      ES_JAVA_OPTS: "-Xms1g -Xmx1g"
+      xpack.security.enabled: "false"
+    ports:
+      - "9200:9200"
+    volumes:
+      - openmetadata_es_data:/usr/share/elasticsearch/data
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:9200/_cluster/health || exit 1"]
+      interval: 15s
+      timeout: 10s
+      retries: 3
+    restart: unless-stopped
+
+volumes:
+  marquez_db_data:
+  openmetadata_mysql_data:
+  openmetadata_es_data:
+  openmetadata_ingestion:

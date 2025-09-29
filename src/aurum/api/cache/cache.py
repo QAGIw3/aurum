@@ -17,6 +17,12 @@ except ImportError:
 
 from ..telemetry.context import get_request_id
 from .config import CacheConfig
+from ..database.redis_client import get_redis_manager
+from ...observability.metrics import (
+    set_redis_connection_pool_active,
+    set_redis_connection_pool_idle,
+    set_redis_connection_pool_total,
+)
 
 
 class CacheBackend(Enum):
@@ -60,19 +66,37 @@ class AsyncCache:
         if self._redis_client is None and redis is not None:
             try:
                 if self.config.redis_url:
-                    self._redis_client = redis.from_url(
-                        self.config.redis_url,
-                        db=self.config.db,
-                        decode_responses=True
-                    )
+                    try:
+                        manager = get_redis_manager()
+                        self._redis_client = await manager.get_client(self.config.redis_url)
+                    except Exception:
+                        # Fallback to direct client
+                        self._redis_client = redis.from_url(
+                            self.config.redis_url,
+                            db=self.config.db,
+                            decode_responses=True
+                        )
                 elif self.config.mode == "cluster" and self.config.cluster_nodes:
-                    # Simplified cluster setup
+                    # Simplified cluster setup (no manager for custom clustering here)
                     self._redis_client = redis.Redis(
                         host=self.config.cluster_nodes[0].split(":")[0],
                         port=int(self.config.cluster_nodes[0].split(":")[1] or "6379"),
                         decode_responses=True
                     )
                 await self._redis_client.ping()
+                # Update Redis pool metrics (best-effort)
+                try:
+                    pool = getattr(self._redis_client, "connection_pool", None)
+                    if pool is not None:
+                        active = int(getattr(pool, "_in_use_connections", 0) or 0)
+                        total = int(getattr(pool, "_created_connections", 0) or 0)
+                        max_conn = int(getattr(pool, "max_connections", 0) or 0)
+                        idle = max(0, total - active)
+                        await set_redis_connection_pool_active(active)
+                        await set_redis_connection_pool_idle(idle)
+                        await set_redis_connection_pool_total(total or max_conn)
+                except Exception:
+                    pass
             except Exception:
                 self._redis_client = None
         return self._redis_client

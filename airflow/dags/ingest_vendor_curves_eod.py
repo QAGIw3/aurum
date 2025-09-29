@@ -29,6 +29,8 @@ DEFAULT_ARGS: dict[str, Any] = {
     "max_retry_delay": timedelta(minutes=30),
 }
 
+OPENLINEAGE_ADAPTER = load_default_adapter()
+
 
 def create_lakefs_branch(**context: Any) -> None:
     """Placeholder for lakeFS branch creation logic."""
@@ -128,7 +130,13 @@ def parse_vendor_workbook(vendor: str, **context: Any) -> None:
         if src_path and src_path not in sys.path:
             sys.path.insert(0, src_path)
         from aurum.parsers.enrichment import build_dlq_records, enrich_units_currency, partition_quarantine  # type: ignore
-from aurum.airflow_utils import ExpectationSuiteConfig, validate_dataframe, idempotent_run, LineageDataset, emit_lineage_event  # type: ignore
+from aurum.airflow_utils import (
+    ExpectationSuiteConfig,
+    LineageDataset,
+    idempotent_run,
+    load_default_adapter,
+    validate_dataframe,
+)  # type: ignore
 
         enriched_df = enrich_units_currency(df)
         clean_df, quarantine_df = partition_quarantine(enriched_df)
@@ -353,13 +361,11 @@ def validate_scenario_outputs(**context: Any) -> None:
 
 
 def emit_openlineage_events(**context: Any) -> None:
-    endpoint = os.getenv("OPENLINEAGE_ENDPOINT")
-    if not endpoint:
-        print("OPENLINEAGE_ENDPOINT not set; skipping OpenLineage emission")
+    adapter = OPENLINEAGE_ADAPTER
+    if not adapter.enabled:
+        print("OpenLineage adapter disabled; skipping emission")
         return
 
-    namespace = os.getenv("OPENLINEAGE_NAMESPACE", "aurum")
-    job_name = os.getenv("OPENLINEAGE_JOB_NAME", "airflow.ingest_vendor_curves_eod")
     run_id = context.get("run_id") or os.getenv("OPENLINEAGE_RUN_ID", "unknown")
     ds = context.get("ds")
     tenant = os.getenv("OPENLINEAGE_TENANT", os.getenv("AURUM_DEFAULT_TENANT", "aurum"))
@@ -430,16 +436,16 @@ def emit_openlineage_events(**context: Any) -> None:
         }
     }
 
-    outputs = [
+    outputs = (
         LineageDataset("nessie", "iceberg.raw.curve_landing", raw_facets),
         LineageDataset("nessie", "iceberg.market.curve_observation", canonical_facets),
-    ]
+    )
 
-    payload = emit_lineage_event(
-        endpoint=endpoint,
-        namespace=namespace,
-        job_name=job_name,
+    payload = adapter.emit_from_context(
+        dag_id=context["dag"].dag_id,
+        task_id=context["task"].task_id,
         run_id=run_id,
+        event_type="COMPLETE",
         inputs=lineage_inputs,
         outputs=outputs,
         extra_run_facets=run_facets,
@@ -448,7 +454,10 @@ def emit_openlineage_events(**context: Any) -> None:
     if payload and ti:
         ti.xcom_push(key="openlineage_status", value="sent")
     if payload:
-        print(f"OpenLineage event sent to {endpoint}")
+        print(
+            "OpenLineage event sent to",
+            adapter.config.endpoint,
+        )
 
 
 def preview_nessie_diff(**context: Any) -> None:

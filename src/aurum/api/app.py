@@ -112,7 +112,7 @@ from aurum.api.routes import configure_routes
 from .lifespan_manager import setup_lifespan
 from .container import DependencyInjectionContainer, register_core_services
 from .app_offload import build_offload_predicate as _build_offload_predicate
-from .middleware.registry import apply_middleware_stack
+from .middleware.manager import MiddlewareManager
 from .middleware.logging_context import logging_context_middleware
 from .middleware.admin_guard import AdminRouteGuard
 from .middleware.tenant_context import TenantContextMiddleware, TenantContextOptions
@@ -667,29 +667,19 @@ class ApplicationFactory:
         # Essential telemetry
         configure_telemetry(settings.telemetry.service_name, fastapi_app=app, enable_psycopg=True)
 
-        # Apply basic middleware (Logging context, CORS, GZip, RFC7807 exceptions)
-        app_with_basic_middleware = apply_middleware_stack(app, settings)
+        # Compose middleware via manager with ordering and config
+        manager = MiddlewareManager()
+        manager.add_defaults(settings, tenant_manager=tenant_manager, tenant_context_options=tenant_context_options)
+        app_with_basic_middleware = manager.apply(app, settings)
 
         # Register lifecycle-managed resources and metrics endpoint
         _register_trino_lifecycle(app)
         _register_metrics_endpoint(app, settings)
 
-        # Enforce admin access and authentication as the outermost middlewares
-        admin_guard_enabled = bool(getattr(getattr(settings, "api", None), "admin_guard_enabled", False))
-        app.add_middleware(AdminRouteGuard, enabled=admin_guard_enabled)
+        # Admin/auth/tenant are handled by manager.add_defaults
 
-        oidc_config = OIDCConfig.from_settings(settings)
-        app.add_middleware(AuthMiddleware, config=oidc_config)
-        if tenant_manager and tenant_context_options:
-            app.add_middleware(
-                TenantContextMiddleware,
-                manager=tenant_manager,
-                options=tenant_context_options,
-            )
-
-        # Apply concurrency and rate limiting separately to avoid circular imports
-        app_with_concurrency = _install_concurrency_middleware(app_with_basic_middleware, settings)
-        wrapped_app = _install_rate_limit_middleware(app_with_concurrency, settings)
+        # Concurrency and rate limiting applied by manager; chain is returned above
+        wrapped_app = app_with_basic_middleware
 
         # Core health endpoints
         try:
@@ -711,36 +701,7 @@ class ApplicationFactory:
             if not _register_versioned_routers(app, settings, logger):
                 _include_fallback_routes(app, logger)
 
-        # Normalize Accept-Encoding so "*" implies gzip support for middleware
-        @app.middleware("http")
-        async def ensure_gzip_wildcard(request, call_next):  # type: ignore[no-redef]
-            accept_encoding = request.headers.get("accept-encoding")
-            if accept_encoding:
-                values = {value.strip().lower() for value in accept_encoding.split(",") if value.strip()}
-                if "*" in values and "gzip" not in values:
-                    headers = MutableHeaders(scope=request.scope)
-                    headers["accept-encoding"] = "gzip, " + accept_encoding
-            return await call_next(request)
-
-        # Access logging
-        from aurum.api.http.middleware import access_log_middleware
-        app.middleware("http")(access_log_middleware)
-
-        # Always set Vary headers for content negotiation and compression
-        from aurum.api.http.middleware.headers import create_response_headers_middleware
-
-        @app.middleware("http")
-        async def vary_headers(request, call_next):  # type: ignore[no-redef]
-            response = await call_next(request)
-            # Ensure Vary includes Accept and Accept-Encoding
-            vary = response.headers.get("Vary", "")
-            parts = {p.strip() for p in vary.split(",") if p.strip()}
-            parts.update({"Accept", "Accept-Encoding"})
-            response.headers["Vary"] = ", ".join(sorted(parts))
-            return response
-
-        # Inject standard response headers (request id, api version)
-        app.middleware("http")(create_response_headers_middleware(settings))
+        # Per-request response header utilities and access log installed by manager
 
         return wrapped_app
 
@@ -776,29 +737,19 @@ class ApplicationFactory:
         # Full telemetry setup
         configure_telemetry(settings.telemetry.service_name, fastapi_app=app, enable_psycopg=True)
 
-        # Apply complete middleware stack (Logging context, CORS, GZip, RFC7807)
-        app_with_middleware = apply_middleware_stack(app, settings)
+        # Compose middleware via manager with ordering and config
+        manager = MiddlewareManager()
+        manager.add_defaults(settings, tenant_manager=tenant_manager, tenant_context_options=tenant_context_options)
+        app_with_middleware = manager.apply(app, settings)
 
         # Register lifecycle-managed resources and metrics endpoint
         _register_trino_lifecycle(app)
         _register_metrics_endpoint(app, settings)
 
-        # Enforce admin access and authentication as the outermost middlewares
-        admin_guard_enabled = bool(getattr(getattr(settings, "api", None), "admin_guard_enabled", False))
-        app.add_middleware(AdminRouteGuard, enabled=admin_guard_enabled)
+        # Admin/auth/tenant are handled by manager.add_defaults
 
-        oidc_config = OIDCConfig.from_settings(settings)
-        app.add_middleware(AuthMiddleware, config=oidc_config)
-        if tenant_manager and tenant_context_options:
-            app.add_middleware(
-                TenantContextMiddleware,
-                manager=tenant_manager,
-                options=tenant_context_options,
-            )
-
-        # Apply concurrency and rate limiting separately to avoid circular imports
-        app_with_concurrency = _install_concurrency_middleware(app_with_middleware, settings)
-        wrapped_app = _install_rate_limit_middleware(app_with_concurrency, settings)
+        # Concurrency and rate limiting applied by manager; chain is returned above
+        wrapped_app = app_with_middleware
 
         # Core health endpoints
         try:
@@ -820,36 +771,7 @@ class ApplicationFactory:
             if not _register_versioned_routers(app, settings, logger):
                 _include_fallback_routes(app, logger)
 
-        # Normalize Accept-Encoding so "*" implies gzip support for middleware
-        @app.middleware("http")
-        async def ensure_gzip_wildcard(request, call_next):  # type: ignore[no-redef]
-            accept_encoding = request.headers.get("accept-encoding")
-            if accept_encoding:
-                values = {value.strip().lower() for value in accept_encoding.split(",") if value.strip()}
-                if "*" in values and "gzip" not in values:
-                    headers = MutableHeaders(scope=request.scope)
-                    headers["accept-encoding"] = "gzip, " + accept_encoding
-            return await call_next(request)
-
-        # Access logging
-        from aurum.api.http.middleware import access_log_middleware
-        app.middleware("http")(access_log_middleware)
-
-        # Always set Vary headers for content negotiation and compression
-        from aurum.api.http.middleware.headers import create_response_headers_middleware
-
-        @app.middleware("http")
-        async def vary_headers(request, call_next):  # type: ignore[no-redef]
-            response = await call_next(request)
-            # Ensure Vary includes Accept and Accept-Encoding
-            vary = response.headers.get("Vary", "")
-            parts = {p.strip() for p in vary.split(",") if p.strip()}
-            parts.update({"Accept", "Accept-Encoding"})
-            response.headers["Vary"] = ", ".join(sorted(parts))
-            return response
-
-        # Inject standard response headers (request id, api version)
-        app.middleware("http")(create_response_headers_middleware(settings))
+        # Per-request response header utilities and access log installed by manager
 
         return wrapped_app
 

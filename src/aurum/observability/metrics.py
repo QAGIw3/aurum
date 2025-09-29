@@ -114,6 +114,11 @@ if PROMETHEUS_AVAILABLE:  # pragma: no branch - simplify instrumentation when av
         "Cache miss counter",
         ["type"],
     )
+    RESOURCE_LEAKS_CLEANED = Counter(
+        "aurum_resource_leaks_cleaned_total",
+        "Count of resources auto-cleaned by middleware",
+        ["component"],
+    )
     DB_QUERY_DURATION = Histogram(
         "aurum_db_query_duration_seconds",
         "Database query duration",
@@ -184,6 +189,14 @@ if PROMETHEUS_AVAILABLE:  # pragma: no branch - simplify instrumentation when av
         "External data quality score",
         ["provider", "dataset", "metric"],
     )
+else:  # pragma: no cover - Prometheus not installed
+    REQUEST_COUNTER = REQUEST_LATENCY = None  # type: ignore[assignment]
+    TILE_CACHE_COUNTER = TILE_FETCH_LATENCY = None  # type: ignore[assignment]
+    CACHE_HIT_COUNTER = CACHE_MISS_COUNTER = None  # type: ignore[assignment]
+    RESOURCE_LEAKS_CLEANED = None  # type: ignore[assignment]
+    DB_QUERY_DURATION = None  # type: ignore[assignment]
+    QUEUE_SIZE_GAUGE = ACTIVE_CONNECTIONS_GAUGE = None  # type: ignore[assignment]
+    EXTERNAL_API_REQUEST_COUNTER = EXTERNAL_API_LATENCY = None  # type: ignore[assignment]
 
     # Great Expectations metrics
     GE_VALIDATION_RUNS = GE_VALIDATION_DURATION = GE_VALIDATION_EXPECTATIONS = GE_VALIDATION_QUALITY_SCORE = None
@@ -501,6 +514,20 @@ if PROMETHEUS_AVAILABLE:  # pragma: no branch - simplify instrumentation when av
         "aurum_trino_hot_cache_misses_total",
         "Hot query cache misses by tenant",
         ["tenant"],
+    )
+
+    # Redis-Specific Metrics
+    REDIS_CONNECTION_POOL_ACTIVE = Gauge(
+        "aurum_redis_connection_pool_active",
+        "Active Redis connections",
+    )
+    REDIS_CONNECTION_POOL_IDLE = Gauge(
+        "aurum_redis_connection_pool_idle",
+        "Idle Redis connections",
+    )
+    REDIS_CONNECTION_POOL_TOTAL = Gauge(
+        "aurum_redis_connection_pool_total",
+        "Total Redis connections",
     )
 
     # Cache Performance Metrics (Enhanced)
@@ -901,6 +928,18 @@ async def increment_rate_limit_requests(endpoint: str, limit_type: str = "user")
         return
     try:
         RATE_LIMIT_REQUESTS.labels(endpoint=endpoint, limit_type=limit_type).inc()
+    except Exception:
+        pass
+
+
+# Resource management helper
+async def increment_resource_leaks_cleaned(component: str, amount: int = 1) -> None:
+    """Increment count of auto-cleaned resources by component."""
+    if not PROMETHEUS_AVAILABLE:
+        return
+    try:
+        counter = RESOURCE_LEAKS_CLEANED.labels(component=component)  # type: ignore[name-defined]
+        counter.inc(amount)
     except Exception:
         pass
 
@@ -1717,6 +1756,37 @@ async def set_trino_request_queue_depth(depth: int) -> None:
         pass
 
 
+# Redis pool helper functions
+async def set_redis_connection_pool_active(count: int) -> None:
+    """Set active Redis connections."""
+    if not PROMETHEUS_AVAILABLE:
+        return
+    try:
+        REDIS_CONNECTION_POOL_ACTIVE.set(count)  # type: ignore[name-defined]
+    except Exception:
+        pass
+
+
+async def set_redis_connection_pool_idle(count: int) -> None:
+    """Set idle Redis connections."""
+    if not PROMETHEUS_AVAILABLE:
+        return
+    try:
+        REDIS_CONNECTION_POOL_IDLE.set(count)  # type: ignore[name-defined]
+    except Exception:
+        pass
+
+
+async def set_redis_connection_pool_total(count: int) -> None:
+    """Set total Redis connections."""
+    if not PROMETHEUS_AVAILABLE:
+        return
+    try:
+        REDIS_CONNECTION_POOL_TOTAL.set(count)  # type: ignore[name-defined]
+    except Exception:
+        pass
+
+
 async def increment_trino_queue_rejections(reason: str) -> None:
     """Increment Trino queue rejection counter."""
     if TRINO_QUEUE_REJECTIONS is None:
@@ -1791,6 +1861,7 @@ __all__ = [
     "generate_latest",
     "get_metrics_collector",
     "get_metrics_client",
+    "record_external_api_request",
     "increment_api_requests",
     "observe_api_latency",
     "set_active_connections",
@@ -1992,6 +2063,8 @@ __all__ = [
     "increment_trino_prepared_cache_evictions",
     "increment_trino_hot_cache_hits",
     "increment_trino_hot_cache_misses",
+    # Resource management helpers
+    "increment_resource_leaks_cleaned",
 ]
 
 
@@ -2125,3 +2198,16 @@ class _PrometheusMetricsClient:
                 self._registry = registry
         except Exception:  # pragma: no cover - optional dependency
             pass
+
+def record_external_api_request(endpoint: str, status: str, duration_seconds: float) -> None:
+    """Record external API request metrics if Prometheus is available.
+
+    Best-effort: safe to call even when metrics are disabled.
+    """
+    try:
+        if EXTERNAL_API_REQUEST_COUNTER is not None:
+            EXTERNAL_API_REQUEST_COUNTER.labels(endpoint=endpoint, status=status).inc()
+        if EXTERNAL_API_LATENCY is not None:
+            EXTERNAL_API_LATENCY.labels(endpoint=endpoint).observe(duration_seconds)
+    except Exception:
+        pass

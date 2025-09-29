@@ -149,129 +149,32 @@ curl -H "Authorization: Bearer YOUR_TOKEN_HERE" \
 
 ## Error Handling
 
-### Rate Limiting (429)
+The External Data API emits structured RFC 7807 problem responses. Integrations should rely on the shared `ExternalAPIClient` located at `src/aurum/api/client.py` to benefit from standardized retry, circuit breaker, authentication, and caching behaviour. The client automatically records telemetry spans and events using `aurum.observability.tracing` and updates the Prometheus counters/histograms exported from `aurum.observability.metrics` (`aurum_external_api_requests_total`, `aurum_external_api_request_duration_seconds`).
 
-```json
-{
-  "error": "Rate limit exceeded",
-  "message": "Too many requests",
-  "retry_after": 60,
-  "code": "RATE_LIMIT_EXCEEDED",
-  "context": {
-    "retry_after_seconds": 60
-  },
-  "request_id": "req-12347"
-}
+### Consuming External APIs from services
+
+All outbound calls from Aurum services should go through `ExternalAPIClient` to guarantee:
+
+- Retries with exponential backoff and jitter for transient failures (e.g., 5xx, 429, 408)
+- Circuit breaker protection to avoid cascading outages (`aurum.common.circuit_breaker`)
+- Shared authentication helpers for API keys, bearer tokens, and pluggable OAuth token providers
+- Optional TTL caching for idempotent GET requests via `cachetools.TTLCache`
+- Structured errors (`ExternalAPIResponseError`, `ExternalAPIAuthError`, etc.) so callers can branch on failure types
+- Observability integration: `tracing.start_span("external.http.request")`, `tracing.record_event`, and Prometheus metrics (`aurum_external_api_requests_total`, `aurum_external_api_request_duration_seconds`)
+
+```python
+from aurum.api.client import CacheConfig, ClientConfig, ExternalAPIClient, RetryConfig
+
+client = ExternalAPIClient(
+    ClientConfig(
+        base_url="https://provider.example/v1",
+        retry=RetryConfig(max_attempts=4, base_delay_seconds=0.5, max_delay_seconds=8.0),
+        cache=CacheConfig(enabled=True, ttl_seconds=120),
+    )
+)
+
+response = client.get("/series", params={"provider": "fred", "limit": 100})
+payload = response.json()
 ```
 
-### Validation Error (400)
-
-```json
-{
-  "error": "Validation Error",
-  "message": "Invalid request parameters",
-  "field_errors": [
-    {
-      "field": "frequency",
-      "message": "Frequency must be one of: daily, weekly, monthly, quarterly, yearly",
-      "value": "invalid"
-    }
-  ],
-  "code": "VALIDATION_ERROR",
-  "request_id": "req-12348"
-}
-```
-
-### Not Found (404)
-
-```json
-{
-  "error": "Not Found",
-  "message": "Series not found",
-  "code": "SERIES_NOT_FOUND",
-  "context": {
-    "series_id": "INVALID:SERIES"
-  },
-  "request_id": "req-12349"
-}
-```
-
-### Authentication Error (401)
-
-```json
-{
-  "error": "Authentication required",
-  "message": "Valid Bearer token required",
-  "code": "AUTH_MISSING_TOKEN",
-  "field": "authorization",
-  "context": {
-    "header_name": "Authorization"
-  },
-  "request_id": "req-12350"
-}
-```
-
-### Internal Server Error (500)
-
-```json
-{
-  "error": "Internal Server Error",
-  "message": "Failed to retrieve external providers",
-  "code": "EXTERNAL_PROVIDERS_ERROR",
-  "context": {
-    "error_type": "ConnectionError"
-  },
-  "request_id": "req-12351"
-}
-```
-
-## Performance Features
-
-- **Redis Caching**: Automatic caching with configurable TTL
-- **Rate Limiting**: Per-route limits with distinct buckets for heavy endpoints
-- **Circuit Breaker**: Automatic failure detection and recovery
-- **Connection Pooling**: Efficient Trino connection management
-- **Pagination**: Cursor-based pagination for stable iteration
-- **Compression**: Automatic response compression
-- **Metrics**: Comprehensive Prometheus metrics and OpenTelemetry tracing
-
-## Curve Mapping Passthrough
-
-Series with curve mappings automatically proxy to the internal curves API, providing unified access to both external and internal data sources.
-
-## Rate Limits
-
-- **Providers**: 100 requests/minute
-- **Series**: 200 requests/minute
-- **Observations**: 50 requests/minute (higher cost endpoint)
-- **Metadata**: 100 requests/minute
-
-All limits include burst capacity and are enforced per user/tenant.
-
-## Response Headers
-
-```bash
-X-RateLimit-Limit: 100
-X-RateLimit-Remaining: 95
-X-RateLimit-Reset: 60
-X-RateLimit-Tier: premium
-ETag: "abc123"
-Content-Type: application/json
-```
-
-## OpenAPI Specification
-
-The complete API specification is available at:
-`/docs` (Swagger UI) or download the OpenAPI spec from `/openapi.json`
-
-## Postman Collection
-
-Download the Postman collection with pre-configured requests:
-[external-api-collection.json](external-api-collection.json)
-
-## SDK Support
-
-The External API is supported by:
-- Python SDK: `pip install aurum-client`
-- JavaScript SDK: `npm install @aurum/external-api`
-- Go SDK: `go get github.com/aurum/external-api`
+Services inheriting legacy `

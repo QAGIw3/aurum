@@ -7,7 +7,6 @@ import requests
 from datetime import datetime, timedelta
 from typing import Dict, Any
 
-from aurum.api.client import AurumAPIClient
 from aurum.external.client import ExternalDataClient
 
 
@@ -15,16 +14,11 @@ class TestAurumSmokeTests:
     """Smoke tests to verify basic functionality."""
 
     @pytest.fixture(scope="class")
-    def api_client(self):
-        """API client for testing."""
-        return AurumAPIClient(base_url="http://localhost:8000")
-
-    @pytest.fixture(scope="class")
     def external_client(self):
         """External data client for testing."""
         return ExternalDataClient(base_url="http://localhost:8001")
 
-    def test_api_health_check(self, api_client):
+    def test_api_health_check(self):
         """Test API health endpoint."""
         response = requests.get("http://localhost:8000/health/ready")
         assert response.status_code == 200
@@ -38,14 +32,14 @@ class TestAurumSmokeTests:
         data = response.json()
         assert data["status"] == "healthy"
 
-    def test_database_connectivity(self, api_client):
+    def test_database_connectivity(self):
         """Test database connectivity through API."""
         # This test assumes we have some basic data seeded
         # In a real scenario, you'd check actual database operations
         response = requests.get("http://localhost:8000/v1/curves")
         assert response.status_code in [200, 401]  # 401 if auth required, 200 if public
 
-    def test_redis_connectivity(self, api_client):
+    def test_redis_connectivity(self):
         """Test Redis connectivity through cache operations."""
         # Test would verify cache operations work
         # This is a placeholder for actual cache testing
@@ -57,7 +51,7 @@ class TestAurumSmokeTests:
         # This is a placeholder for actual Kafka testing
         assert True
 
-    def test_api_response_times(self, api_client):
+    def test_api_response_times(self):
         """Test API response times are reasonable."""
         start_time = datetime.now()
 
@@ -79,13 +73,13 @@ class TestAurumSmokeTests:
 
         assert duration < 2.0  # Allow more time for external service
 
-    def test_cors_headers(self, api_client):
+    def test_cors_headers(self):
         """Test CORS headers are properly set."""
         response = requests.options("http://localhost:8000/health/ready")
         assert "Access-Control-Allow-Origin" in response.headers
         assert "Access-Control-Allow-Methods" in response.headers
 
-    def test_security_headers(self, api_client):
+    def test_security_headers(self):
         """Test security headers are properly set."""
         response = requests.get("http://localhost:8000/health/ready")
 
@@ -100,12 +94,12 @@ class TestAurumSmokeTests:
         for header in security_headers:
             assert header in response.headers, f"Missing security header: {header}"
 
-    def test_api_version_header(self, api_client):
+    def test_api_version_header(self):
         """Test API version header is set."""
         response = requests.get("http://localhost:8000/health/ready")
         assert "X-API-Version" in response.headers
 
-    def test_metrics_endpoint(self, api_client):
+    def test_metrics_endpoint(self):
         """Test Prometheus metrics endpoint."""
         response = requests.get("http://localhost:8000/metrics")
         assert response.status_code == 200

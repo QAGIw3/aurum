@@ -15,7 +15,7 @@ import logging
 from dataclasses import asdict
 from datetime import datetime, timedelta, timezone
 from enum import Enum
-from typing import Any, AsyncGenerator, Dict, Iterable, List, Optional, Tuple
+from typing import Any, AsyncGenerator, Dict, List, Optional, Tuple
 
 import strawberry
 from strawberry.types import Info
@@ -63,11 +63,16 @@ from .resolvers import (
     create_compliance_schedule as create_compliance_schedule_resolver,
     delete_compliance_schedule as delete_compliance_schedule_resolver,
     get_gateway,
+    get_governance,
     resolve_compliance_schedules,
     resolve_energy_market_series,
     resolve_reports_for_portfolio,
     run_compliance_report as run_compliance_report_resolver,
     enforce_complexity_limits,
+)
+from .subscriptions import (
+    compliance_report_stream,
+    energy_market_update_stream,
 )
 
 
@@ -200,6 +205,62 @@ class ForecastResultType:
 
 
 @strawberry.type
+class GovernanceLineageNodeType:
+    urn: str
+    type: str
+    attributes: strawberry.scalars.JSON
+
+
+@strawberry.type
+class GovernanceLineageEdgeType:
+    source: str
+    target: str
+    type: str
+
+
+@strawberry.type
+class GovernanceLineageGraphType:
+    nodes: List[GovernanceLineageNodeType]
+    edges: List[GovernanceLineageEdgeType]
+
+
+@strawberry.type
+class GovernanceQualityScoreType:
+    dataset: str
+    score: Optional[float]
+    properties: strawberry.scalars.JSON
+
+
+@strawberry.type
+class GovernanceClassificationType:
+    column: str
+    tag: str
+    confidence: float
+    reason: str
+
+
+@strawberry.type
+class GovernancePrivacyOverviewType:
+    dataset: str
+    restricted_columns: List[str] = strawberry.field(name="restrictedColumns")
+    masked_preview: strawberry.scalars.JSON = strawberry.field(name="maskedPreview")
+
+
+@strawberry.type
+class GovernanceLineageGapType:
+    subject: str
+    missing_metadata: List[str] = strawberry.field(name="missingMetadata")
+    edge_count: int = strawberry.field(name="edgeCount")
+
+
+@strawberry.enum
+class GovernanceLineageDirection(Enum):
+    UPSTREAM = "UPSTREAM"
+    DOWNSTREAM = "DOWNSTREAM"
+    BOTH = "BOTH"
+
+
+@strawberry.type
 class ValidationResultType:
     """Payload returned by the scenario validation utility."""
 
@@ -264,6 +325,14 @@ class EnergyMarketSeriesType:
     filter: EnergyMarketFilterDescriptor
     query_time_ms: int
     points: List[EnergyMarketPointType]
+
+
+@strawberry.type
+class EnergyMarketRealtimeUpdateType:
+    """Single ISO LMP update emitted over a subscription."""
+
+    filter: EnergyMarketFilterDescriptor
+    point: EnergyMarketPointType
 
 
 @federation_type(keys=["iso_code", "location_id"])
@@ -814,6 +883,121 @@ class Query:
     """GraphQL Query root."""
 
     @strawberry.field
+    async def governance_lineage(
+        self,
+        info: Info,
+        dataset_fqn: str,
+        depth: Optional[int] = None,
+        direction: GovernanceLineageDirection = GovernanceLineageDirection.BOTH,
+    ) -> GovernanceLineageGraphType:
+        await enforce_complexity_limits(info, base_cost=15)
+        service = get_governance()
+        payload = await service.get_lineage(
+            dataset_fqn=dataset_fqn,
+            depth=depth,
+            direction=direction.value,
+        )
+        nodes = [
+            GovernanceLineageNodeType(
+                urn=node.get("urn"),
+                type=node.get("type"),
+                attributes=node.get("attributes", {}),
+            )
+            for node in payload.get("nodes", [])
+        ]
+        edges = [
+            GovernanceLineageEdgeType(
+                source=edge.get("source"),
+                target=edge.get("target"),
+                type=edge.get("type", "unknown"),
+            )
+            for edge in payload.get("edges", [])
+        ]
+        return GovernanceLineageGraphType(nodes=nodes, edges=edges)
+
+    @strawberry.field
+    async def governance_quality(
+        self,
+        info: Info,
+        dataset_fqn: str,
+    ) -> GovernanceQualityScoreType:
+        await enforce_complexity_limits(info, base_cost=5)
+        service = get_governance()
+        payload = await service.get_quality_score(dataset_fqn=dataset_fqn)
+        return GovernanceQualityScoreType(
+            dataset=payload.get("dataset", dataset_fqn),
+            score=payload.get("score"),
+            properties=payload.get("properties", {}),
+        )
+
+    @strawberry.field
+    async def governance_classifications(
+        self,
+        info: Info,
+        dataset_fqn: str,
+    ) -> List[GovernanceClassificationType]:
+        await enforce_complexity_limits(info, base_cost=10)
+        service = get_governance()
+        results = await service.classify_dataset(dataset_fqn=dataset_fqn)
+        return [
+            GovernanceClassificationType(
+                column=result.column,
+                tag=result.tag,
+                confidence=result.confidence,
+                reason=result.reason,
+            )
+            for result in results
+        ]
+
+    @strawberry.field
+    async def governance_privacy(
+        self,
+        info: Info,
+        dataset_fqn: str,
+    ) -> GovernancePrivacyOverviewType:
+        await enforce_complexity_limits(info, base_cost=8)
+        service = get_governance()
+        payload = await service.privacy_overview(dataset_fqn=dataset_fqn)
+        return GovernancePrivacyOverviewType(
+            dataset=payload.get("dataset", dataset_fqn),
+            restricted_columns=payload.get("restrictedColumns", []),
+            masked_preview=payload.get("maskedPreview", []),
+        )
+
+    @strawberry.field
+    async def governance_lineage_gaps(
+        self,
+        info: Info,
+        dataset_fqn: str,
+        depth: Optional[int] = None,
+    ) -> GovernanceLineageGapType:
+        await enforce_complexity_limits(info, base_cost=5)
+        service = get_governance()
+        payload = await service.lineage_gaps(dataset_fqn=dataset_fqn, depth=depth)
+        return GovernanceLineageGapType(
+            subject=payload.get("subject", dataset_fqn),
+            missing_metadata=payload.get("missingMetadata", []),
+            edge_count=int(payload.get("edgeCount", 0)),
+        )
+
+    @strawberry.field
+    async def governance_dataset_health(
+        self,
+        info: Info,
+        dataset_fqn: str,
+        freshness_column: Optional[str] = None,
+        completeness_columns: Optional[List[str]] = None,
+    ) -> strawberry.scalars.JSON:
+        await enforce_complexity_limits(info, base_cost=5)
+        service = get_governance()
+        metrics = await service.monitor_dataset(
+            dataset_fqn=dataset_fqn,
+            freshness_column=freshness_column,
+            completeness_columns=completeness_columns or [],
+        )
+        return metrics
+
+    @strawberry.field
     async def scenario(self, info: Info, id: str, tenant_id: Optional[str] = None) -> Optional[ScenarioType]:
         """Fetch a scenario by identifier."""
 
@@ -1121,6 +1305,53 @@ class Query:
         return [_energy_series_from_raw(payload) for payload in raw_series]
 
     @strawberry.field
+    async def energy_locations(
+        self,
+        info: Info,
+        iso_code: str,
+        market: Optional[str] = None,
+        limit: int = 25,
+    ) -> List[EnergyLocationType]:
+        """Return federated energy locations for downstream microservices."""
+
+        _resolve_tenant(info, None)
+        await enforce_complexity_limits(info, base_cost=2)
+
+        key = EnergyMarketKey(
+            iso_code=iso_code,
+            market=market,
+            location_id=None,
+            granularity=EnergyGranularity.LAST_24H.value,
+            limit=max(1, min(limit, 500)),
+            start=None,
+            end=None,
+        )
+        payloads = await resolve_energy_market_series(info, [key])
+
+        locations: Dict[Tuple[Optional[str], Optional[str]], EnergyLocationType] = {}
+        for payload in payloads:
+            for row in payload.get("points", []):
+                location_id = row.get("location_id")
+                iso = row.get("iso_code")
+                key_tuple = (iso, location_id)
+                if key_tuple in locations:
+                    continue
+                locations[key_tuple] = EnergyLocationType(
+                    iso_code=iso or iso_code,
+                    location_id=str(location_id) if location_id is not None else "unknown",
+                    market=row.get("market") or market,
+                    location_name=row.get("location_name"),
+                    location_type=row.get("location_type"),
+                    metadata=_ensure_metadata(row.get("metadata")),
+                )
+                if len(locations) >= limit:
+                    break
+            if len(locations) >= limit:
+                break
+
+        return list(locations.values())
+
+    @strawberry.field
     async def compliance_schedules(
         self,
         info: Info,
@@ -1413,22 +1644,100 @@ class Subscription:
             )
 
     @strawberry.subscription
-    async def market_data_feed(self, symbols: List[str]) -> AsyncGenerator[strawberry.scalars.JSON, None]:
-        """Subscribe to real-time market data."""
+    async def energy_market_stream(
+        self,
+        info: Info,
+        filters: Optional[List[EnergyMarketFilterInput]] = None,
+        poll_interval: float = 5.0,
+    ) -> AsyncGenerator[EnergyMarketRealtimeUpdateType, None]:
+        """Stream latest ISO market data points."""
 
-        await log_structured("graphql_market_data_subscription", symbols=symbols)
-        import random
+        tenant = _resolve_tenant(info, None)
+        effective_filters = filters or []
+        if not effective_filters:
+            raise ValueError("At least one filter is required for energy_market_stream")
 
-        while True:
-            await asyncio.sleep(2)
+        keys: List[EnergyMarketKey] = []
+        for item in effective_filters:
+            keys.append(
+                EnergyMarketKey(
+                    iso_code=item.iso_code,
+                    market=item.market,
+                    location_id=item.location_id,
+                    granularity=item.granularity.value,
+                    limit=max(1, min(item.limit, 500)),
+                    start=_stringify(item.start),
+                    end=_stringify(item.end),
+                )
+            )
+
+        await enforce_complexity_limits(info, base_cost=len(keys) * 2)
+        await log_structured(
+            "graphql_energy_market_subscription",
+            tenant_id=tenant,
+            filter_count=len(keys),
+            poll_seconds=poll_interval,
+        )
+
+        async for payload in energy_market_update_stream(
+            info,
+            keys,
+            poll_interval=poll_interval,
+        ):
+            descriptor = EnergyMarketFilterDescriptor(
+                iso_code=payload["filter"].get("iso_code"),
+                market=payload["filter"].get("market"),
+                location_id=payload["filter"].get("location_id"),
+                granularity=_safe_granularity(payload["filter"].get("granularity")),
+                limit=int(payload["filter"].get("limit", 0) or 0),
+                start=_stringify(payload["filter"].get("start")),
+                end=_stringify(payload["filter"].get("end")),
+            )
+            point = _energy_point_from_row(payload.get("point", {}))
+            yield EnergyMarketRealtimeUpdateType(filter=descriptor, point=point)
+
+    @strawberry.subscription(deprecation_reason="Use energy_market_stream")
+    async def market_data_feed(
+        self,
+        info: Info,
+        symbols: List[str],
+        poll_interval: float = 5.0,
+    ) -> AsyncGenerator[strawberry.scalars.JSON, None]:
+        """Backward-compatible market data feed returning structured JSON."""
+
+        filters: List[EnergyMarketFilterInput] = []
+        for symbol in symbols:
+            iso_code, _, location = symbol.partition("::")
+            filters.append(
+                EnergyMarketFilterInput(
+                    iso_code=iso_code or None,
+                    location_id=location or None,
+                    limit=1,
+                )
+            )
+
+        if not filters:
+            raise ValueError("At least one symbol is required for market_data_feed")
+
+        async for update in self.energy_market_stream(
+            info,
+            filters=filters,
+            poll_interval=poll_interval,
+        ):
             yield {
-                "timestamp": datetime.utcnow().isoformat(),
-                "data": {
-                    symbol: {
-                        "price": round(random.uniform(90, 110), 2),
-                        "volume": random.randint(1_000, 10_000),
-                    }
-                    for symbol in symbols
+                "filter": {
+                    "iso_code": update.filter.iso_code,
+                    "market": update.filter.market,
+                    "location_id": update.filter.location_id,
+                    "granularity": update.filter.granularity.value,
+                },
+                "point": {
+                    "iso_code": update.point.iso_code,
+                    "interval_start": update.point.interval_start.isoformat(),
+                    "price_total": update.point.price_total,
+                    "price_energy": update.point.price_energy,
+                    "price_congestion": update.point.price_congestion,
+                    "price_loss": update.point.price_loss,
                 },
             }
 
@@ -1466,6 +1775,30 @@ class Subscription:
                     "affected_assets": random.sample(["load", "price", "renewable"], k=random.randint(1, 3)),
                 },
             }
+
+    @strawberry.subscription
+    async def compliance_report_notifications(
+        self,
+        info: Info,
+        portfolio_ids: List[str],
+        poll_interval: float = 15.0,
+    ) -> AsyncGenerator[ComplianceReportArtifactType, None]:
+        """Stream notifications when compliance reports are generated."""
+
+        _resolve_tenant(info, None)
+        await log_structured(
+            "graphql_compliance_report_subscription",
+            portfolio_ids=portfolio_ids,
+            poll_seconds=poll_interval,
+        )
+
+        await enforce_complexity_limits(info, base_cost=max(1, len(portfolio_ids)))
+
+        async for artifact in compliance_report_stream(
+            portfolio_ids,
+            poll_interval=poll_interval,
+        ):
+            yield _report_artifact_from_raw(artifact)
 
 
 # ---------------------------------------------------------------------------

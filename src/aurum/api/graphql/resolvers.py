@@ -14,10 +14,12 @@ focus on type definitions. The helpers here cover:
 
 import asyncio
 import json
+import logging
 import os
 import time
 from collections import defaultdict, deque
 from dataclasses import dataclass
+from threading import Lock
 from typing import Any, Deque, Dict, Iterable, List, Optional, Tuple
 
 try:  # Strawberry ships graphql-core so this should normally exist
@@ -34,6 +36,19 @@ from ..services.risk_compliance_service import (
     ComplianceReportConfig,
     get_risk_compliance_service,
 )
+from ..services.governance_service import (
+    GovernanceConfig,
+    get_governance_service,
+    initialise_governance_service,
+)
+from ...governance.catalog import CatalogService
+from ...governance.classification import ColumnClassifier
+from ...governance.impact_analysis import ImpactAnalyzer
+from ...governance.lineage_tracker import LineageTracker
+from ...governance.monitors import FreshnessCompletenessMonitor
+from ...governance.privacy import PrivacyPolicyManager, PrivacyRule
+from ...governance.quality_engine import DataQualityEngine
+from ...governance.schema_tracker import SchemaEvolutionTracker
 from ...telemetry.context import log_structured
 
 try:  # httpx is optional in some minimal environments
@@ -41,6 +56,11 @@ try:  # httpx is optional in some minimal environments
 except Exception:  # pragma: no cover - keep type checking happy
     httpx = None  # type: ignore
 
+import pandas as pd
+
+
+LOGGER = logging.getLogger(__name__)
+_GOVERNANCE_INIT_LOCK = Lock()
 
 # ---------------------------------------------------------------------------
 # Environment tuned defaults for complexity and rate limiting
@@ -183,6 +203,63 @@ class GraphQLRateLimiter:
 
 
 _RATE_LIMITER = GraphQLRateLimiter(_RATE_BUDGET, _RATE_WINDOW_SECONDS)
+
+
+def _default_governance_loader(dataset_fqn: str) -> pd.DataFrame:
+    LOGGER.warning("Governance data loader not configured; returning empty frame for %%s", dataset_fqn)
+    return pd.DataFrame()
+
+
+def _initialise_governance_service() -> "GovernanceService":
+    with _GOVERNANCE_INIT_LOCK:
+        try:
+            return get_governance_service()
+        except RuntimeError:
+            openlineage_url = os.getenv("OPENLINEAGE_URL", "http://marquez:5000")
+            namespace = os.getenv("OPENLINEAGE_NAMESPACE", "aurum")
+            marquez_url = os.getenv("MARQUEZ_URL") or os.getenv("OPENLINEAGE_MARQUEZ_URL") or openlineage_url
+            openmetadata_server = os.getenv("OPENMETADATA_SERVER", "http://openmetadata-server:8585/api")
+            openmetadata_token = os.getenv("OPENMETADATA_TOKEN")
+
+            lineage_tracker = LineageTracker(
+                openlineage_url=openlineage_url,
+                namespace=namespace,
+                marquez_url=marquez_url,
+            )
+            catalog_service = CatalogService(server_url=openmetadata_server, auth_token=openmetadata_token)
+            quality_engine = DataQualityEngine()
+            monitor = FreshnessCompletenessMonitor(quality_engine, _default_governance_loader)
+            schema_tracker = SchemaEvolutionTracker(catalog_service)
+            impact_analyzer = ImpactAnalyzer(catalog_service, lineage_tracker)
+            classifier = ColumnClassifier(catalog=catalog_service)
+            privacy_manager = PrivacyPolicyManager(
+                catalog_service,
+                [
+                    PrivacyRule(tag="pii.ssn", action="restrict"),
+                    PrivacyRule(tag="pii.email", action="mask"),
+                    PrivacyRule(tag="pii.phone", action="mask"),
+                ],
+            )
+
+            return initialise_governance_service(
+                lineage_tracker=lineage_tracker,
+                catalog_service=catalog_service,
+                quality_engine=quality_engine,
+                schema_tracker=schema_tracker,
+                impact_analyzer=impact_analyzer,
+                monitor=monitor,
+                classifier=classifier,
+                privacy_manager=privacy_manager,
+                dataframe_loader=_default_governance_loader,
+                config=GovernanceConfig(),
+            )
+
+
+def get_governance() -> "GovernanceService":
+    try:
+        return get_governance_service()
+    except RuntimeError:
+        return _initialise_governance_service()
 
 
 async def enforce_complexity_limits(info: Info, *, base_cost: int = 1) -> ComplexityMetrics:
