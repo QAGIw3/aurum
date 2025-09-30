@@ -24,8 +24,8 @@ from fastapi import APIRouter, HTTPException, Query, Request, Response, Depends,
 from pydantic import BaseModel, Field, validator
 
 from ..http import respond_with_etag
-from ..container import provide_service
 from ..deps import get_settings, get_cache_manager
+from libs.services.search_service import SearchService
 from ..features import is_feature_enabled, require_feature
 from aurum.core import AurumSettings
 from ..cache.consolidated_manager import get_unified_cache_manager
@@ -113,22 +113,10 @@ class ExplainResponse(BaseModel):
 router = APIRouter(prefix="/search", tags=["search"])
 
 
-async def get_search_engine() -> ElasticsearchEngine:
-    """Provide ElasticsearchEngine via dependency injection."""
+async def get_search_engine() -> Any:
+    """Provide search engine via SearchService."""
     settings = get_settings()
-    engine = ElasticsearchEngine(settings)
-    await engine.initialize()
-
-    # Initialize advanced search service
-    await initialize_advanced_search(engine, settings)
-
-    # Initialize ANN search service
-    await initialize_ann_search(engine, settings)
-
-    # Initialize search index manager
-    await initialize_search_index_manager(engine, settings)
-
-    return engine
+    return await SearchService().get_engine(settings)
 
 
 async def get_search_service() -> ElasticsearchEngine:
@@ -185,24 +173,22 @@ async def search(
         if not tenant_id:
             tenant_id = getattr(request.state, "tenant_id", None)
 
-        # Get search engine
-        engine = await get_search_engine()
-
         # Determine if semantic search should be used
         use_semantic = semantic and is_semantic_search_enabled(settings)
 
         # Parse query for additional insights
         parsed_query = parse_query(q, settings)
 
-        # Perform search
-        search_response = await engine.search(
-            query=q,
+        # Perform search via service facade
+        search_response = await SearchService().search(
+            settings=settings,
+            q=q,
             filters=parsed_filters,
             facets=facet_fields,
             size=limit,
             search_after=json.loads(cursor) if cursor else None,
             semantic_weight=semantic_weight if use_semantic else 0.0,
-            tenant_id=tenant_id
+            tenant_id=tenant_id,
         )
 
         # Enhance with semantic search if enabled
@@ -394,8 +380,7 @@ async def suggest(
     start_time = time.perf_counter()
 
     try:
-        engine = await get_search_engine()
-        suggestions = await engine.suggest(q, limit)
+        suggestions = await SearchService().suggest(settings=settings, q=q, limit=limit)
 
         return SuggestResponse(
             suggestions=suggestions,
@@ -502,15 +487,13 @@ async def get_facet_options(
             tenant_id = getattr(request.state, "tenant_id", None)
 
         # Get search engine
-        engine = await get_search_engine()
-
-        # Get facet options
-        options = await engine.get_facet_options(
+        options = await SearchService().facet_options(
+            settings=settings,
             field=field,
-            query=q,
+            q=q,
             filters=parsed_filters,
             size=size,
-            tenant_id=tenant_id
+            tenant_id=tenant_id,
         )
 
         return {
@@ -562,16 +545,12 @@ async def suggest_filters(
         if not tenant_id:
             tenant_id = getattr(request.state, "tenant_id", None)
 
-        # Get advanced search service
-        engine = await get_search_engine()
-        advanced_service = get_advanced_search_service(engine, settings)
-
-        # Get filter suggestions
-        suggestions = await advanced_service.get_filter_suggestions(
+        suggestions = await SearchService().suggest_filters(
+            settings=settings,
             query=q,
             current_filters=parsed_filters,
             tenant_id=tenant_id,
-            limit=limit
+            limit=limit,
         )
 
         return {
@@ -631,16 +610,12 @@ async def get_hierarchical_facets(
         if not tenant_id:
             tenant_id = getattr(request.state, "tenant_id", None)
 
-        # Get advanced search service
-        engine = await get_search_engine()
-        advanced_service = get_advanced_search_service(engine, settings)
-
-        # Get hierarchical facets
-        facets = await advanced_service.get_hierarchical_facets(
+        facets = await SearchService().hierarchical_facets(
+            settings=settings,
             query=q or "",
             filters=parsed_filters,
             hierarchy_config=hierarchy_config,
-            tenant_id=tenant_id
+            tenant_id=tenant_id,
         )
 
         return {
@@ -817,12 +792,7 @@ async def tune_ann_parameters(
         )
 
     try:
-        # Get ANN search service
-        engine = await get_search_engine()
-        ann_service = get_ann_search_service(engine, settings)
-
-        # Tune parameters
-        optimized_config = await ann_service.tune_ann_parameters(test_queries, ground_truth)
+        optimized_config = await SearchService().ann_tune_parameters(settings=settings, test_queries=test_queries, ground_truth=ground_truth)
 
         return {
             "message": "ANN parameters tuned successfully",
@@ -875,18 +845,14 @@ async def ann_search(
         )
 
     try:
-        # Get ANN search service
-        engine = await get_search_engine()
-        ann_service = get_ann_search_service(engine, settings)
-
-        # Perform optimized hybrid search
-        result = await ann_service.hybrid_search_optimized(
+        result = await SearchService().ann_hybrid_search(
+            settings=settings,
             query=query,
             query_embedding=query_embedding,
             text_weight=text_weight,
             semantic_weight=semantic_weight,
             k=k,
-            tenant_id=tenant_id
+            tenant_id=tenant_id,
         )
 
         return {
@@ -932,8 +898,7 @@ async def get_search_analytics(
         )
 
     try:
-        analytics_service = get_search_analytics_service(settings)
-        summary = analytics_service.get_analytics_summary()
+        summary = await SearchService().analytics_summary(settings=settings)
 
         return {
             "analytics_enabled": True,
@@ -978,12 +943,12 @@ async def record_result_click(
         request_id = get_request_id() or "unknown"
 
         # Record click event
-        analytics_service = get_search_analytics_service(settings)
-        analytics_service.record_result_clicked(
+        SearchService().record_result_click(
+            settings=settings,
             query=query,
             session_id=request_id,
             result_id=result_id,
-            result_rank=result_rank
+            result_rank=result_rank,
         )
 
         return {"message": "Click recorded successfully"}
@@ -1025,12 +990,12 @@ async def record_facet_applied(
         request_id = get_request_id() or "unknown"
 
         # Record facet applied event
-        analytics_service = get_search_analytics_service(settings)
-        analytics_service.record_facet_applied(
+        SearchService().record_facet_applied(
+            settings=settings,
             query=query,
             session_id=request_id,
             facet_field=facet_field,
-            facet_value=facet_value
+            facet_value=facet_value,
         )
 
         return {"message": "Facet application recorded successfully"}
@@ -1063,8 +1028,7 @@ async def export_analytics(
         )
 
     try:
-        analytics_service = get_search_analytics_service(settings)
-        data = analytics_service.export_analytics_data(format)
+        data = SearchService().export_analytics(settings=settings, fmt=format)
 
         if format.lower() == "json":
             return Response(
@@ -1105,12 +1069,7 @@ async def perform_index_maintenance(
         )
 
     try:
-        # Get search index manager
-        engine = await get_search_engine()
-        index_manager = get_search_index_manager(engine, settings)
-
-        # Perform maintenance
-        results = await index_manager.perform_maintenance()
+        results = await SearchService().index_maintenance(settings=settings)
 
         return {
             "message": "Index maintenance completed",
@@ -1148,12 +1107,7 @@ async def create_index_backup(
         )
 
     try:
-        # Get search index manager
-        engine = await get_search_engine()
-        index_manager = get_search_index_manager(engine, settings)
-
-        # Create backup
-        success = await index_manager.create_backup(backup_name)
+        success = await SearchService().create_backup(settings=settings, backup_name=backup_name)
 
         if success:
             return {
@@ -1190,29 +1144,15 @@ async def get_search_health(
         )
 
     try:
-        # Get search engine
-        engine = await get_search_engine()
-
-        # Get basic health
-        elasticsearch_healthy = await engine.health_check()
-
-        # Get index health
-        index_manager = get_search_index_manager(engine, settings)
-        index_health = await index_manager.get_index_health()
-
-        # Get circuit breaker status
-        from ...search.circuit_breaker import get_search_resilience_manager
-        resilience_manager = get_search_resilience_manager(settings)
-        circuit_breaker_status = resilience_manager.get_health_status()
-
+        summary = await SearchService().health_summary(settings=settings)
         return {
-            "status": "healthy" if elasticsearch_healthy else "unhealthy",
+            "status": "healthy" if summary["elasticsearch_healthy"] else "unhealthy",
             "elasticsearch": {
-                "healthy": elasticsearch_healthy,
-                "index_name": engine._index_name
+                "healthy": summary["elasticsearch_healthy"],
+                "index_name": summary.get("index_name"),
             },
-            "indices": index_health,
-            "circuit_breakers": circuit_breaker_status,
+            "indices": summary["index_health"],
+            "circuit_breakers": summary["circuit_breakers"],
             "timestamp": int(time.time() * 1000)
         }
 

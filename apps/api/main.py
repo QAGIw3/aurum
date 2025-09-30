@@ -9,10 +9,10 @@ from fastapi import FastAPI, Depends
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.gzip import GZipMiddleware
 
-from libs.common.config import AurumSettings
-from aurum.core.settings import get_settings_manager
+from libs.common.config import AurumSettings, get_settings
 from libs.common.cache import CacheManager
-from libs.common.observability import configure_observability, get_observability
+from libs.observability.api import configure_observability, get_observability
+from libs.observability.middleware import RequestContextMiddleware
 from libs.storage import TimescaleSeriesRepo, PostgresMetaRepo, TrinoAnalyticRepo
 
 # Import routers (these will be created)
@@ -65,7 +65,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     """FastAPI lifespan context manager for startup/shutdown."""
     global _container
     
-    settings = get_settings_manager().get()
+    settings = get_settings()
     
     # Startup
     logger.info(f"Starting Aurum API v{settings.api.version}")
@@ -82,7 +82,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
 def create_app(settings: AurumSettings | None = None) -> FastAPI:
     """Create FastAPI application with clean dependency injection."""
     if settings is None:
-        settings = get_settings_manager().get()
+        settings = get_settings()
     
     app = FastAPI(
         title=settings.api.title,
@@ -105,22 +105,24 @@ def create_app(settings: AurumSettings | None = None) -> FastAPI:
         GZipMiddleware,
         minimum_size=settings.api.gzip_min_bytes,
     )
+
+    # Request context propagation and standard span tags
+    app.add_middleware(RequestContextMiddleware)
     
-    # Routers - v2 only for clean API surface
-    if settings.enable_v2_only:
-        # Import routers dynamically to avoid circular imports
-        from .routers import series, scenarios, catalog, admin
-        app.include_router(series.router, prefix="/v2/series", tags=["series"])
-        app.include_router(scenarios.router, prefix="/v2/scenarios", tags=["scenarios"])
-        app.include_router(catalog.router, prefix="/v2/catalog", tags=["catalog"])
-        app.include_router(admin.router, prefix="/v2/admin", tags=["admin"])
-    else:
-        # Include both v1 and v2 during migration
-        from .routers import series, scenarios, catalog, admin
-        app.include_router(series.router, prefix="/v2/series", tags=["series-v2"])
-        app.include_router(scenarios.router, prefix="/v2/scenarios", tags=["scenarios-v2"])
-        app.include_router(catalog.router, prefix="/v2/catalog", tags=["catalog-v2"])
-        app.include_router(admin.router, prefix="/v2/admin", tags=["admin-v2"])
+    # Routers - v2 only for clean API surface (v2-only default is true)
+    from . import routers as r
+    # Routers already include their own "/v2" prefixes; avoid double-prefixing
+    app.include_router(r.curves)
+    app.include_router(r.scenarios)
+    app.include_router(r.catalog)
+    app.include_router(r.market)
+    app.include_router(r.admin)
+    # Internal (non-production) utilities
+    try:
+        from .routers import internal as internal_routers
+        app.include_router(internal_routers.router)
+    except Exception:
+        pass
     
     # Instrument with OpenTelemetry
     observability = get_observability()

@@ -183,7 +183,7 @@ def test_emit_records_uses_encoder_and_flushes() -> None:
 
     emitted = collector.emit_records(
         records,
-        key_fn=lambda record: {"id": record["id"]},
+        key_fn=lambda record: f"test|{record['id']}",
         headers_fn=lambda record: [("record-id", str(record["id"]))],
     )
 
@@ -191,6 +191,7 @@ def test_emit_records_uses_encoder_and_flushes() -> None:
     assert producer.flush_calls == 1
     assert len(producer.calls) == 2
     assert producer.calls[0]["value"] == b"encoded-1"
+    assert producer.calls[0]["key"] == "test|1"
     assert producer.calls[0]["headers"] == [("record-id", b"1")]
     snapshot = metrics.snapshot()
     assert snapshot["records_emitted_total"] == 2

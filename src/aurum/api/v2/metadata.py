@@ -32,7 +32,7 @@ from .pagination import (
 from ...telemetry.context import get_request_id
 from ...scenarios.series_curve_mapping import get_database_mapper
 from ..deps import get_settings, get_cache_manager, get_unified_cache_manager_dep
-from ..services import MetadataService
+from libs.services.metadata_service import MetadataService
 from aurum.core import AurumSettings
 # use dependency wrapper to avoid FastAPI analyzing internal types
 from ..cache.enhanced_cache_manager import CacheNamespace
@@ -174,13 +174,15 @@ async def list_dimensions_v2(
             filters={"asof": asof},
         )
 
-        service = await provide_service(MetadataService)()
+        service = MetadataService()
         paginated_data, total_count = await service.list_dimensions(asof=asof, offset=offset, limit=effective_limit)
 
+        # total_count may be None when unknown; treat has_more by count
+        has_more = len(paginated_data) == effective_limit
         next_cursor = build_next_cursor(
             offset=offset,
             limit=effective_limit,
-            has_more=end_idx < total_count,
+            has_more=has_more,
             filters={"asof": asof},
         )
         meta_page, links = build_pagination_envelope(
@@ -266,13 +268,14 @@ async def list_locations_v2(
             filters={"iso": iso},
         )
 
-        service = await provide_service(MetadataService)()
+        service = MetadataService()
         paginated_data, total_count = await service.list_locations(iso=iso, offset=offset, limit=effective_limit)
 
+        has_more = len(paginated_data) == effective_limit
         next_cursor = build_next_cursor(
             offset=offset,
             limit=effective_limit,
-            has_more=end_idx < total_count,
+            has_more=has_more,
             filters={"iso": iso},
         )
         from .pagination import build_prev_cursor
@@ -363,13 +366,14 @@ async def list_units_v2(
             filters=None,
         )
 
-        service = await provide_service(MetadataService)()
+        service = MetadataService()
         paginated_data, total_count = await service.list_units(offset=offset, limit=effective_limit)
 
+        has_more = len(paginated_data) == effective_limit
         next_cursor = build_next_cursor(
             offset=offset,
             limit=effective_limit,
-            has_more=end_idx < total_count,
+            has_more=has_more,
             filters=None,
         )
         prev_cursor = build_prev_cursor(offset=offset, limit=effective_limit, filters=None)
@@ -438,13 +442,14 @@ async def list_calendars_v2(
             filters=None,
         )
 
-        service = await provide_service(MetadataService)()
+        service = MetadataService()
         paginated_data, total_count = await service.list_calendars(offset=offset, limit=effective_limit)
 
+        has_more = len(paginated_data) == effective_limit
         next_cursor = build_next_cursor(
             offset=offset,
             limit=effective_limit,
-            has_more=end_idx < total_count,
+            has_more=has_more,
             filters=None,
         )
         from .pagination import build_prev_cursor

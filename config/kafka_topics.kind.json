@@ -557,6 +557,165 @@
           ]
         }
       ]
+    },
+    {
+      "name": "aurum.ext.timeseries.obs.incremental.v1",
+      "partitions": 4,
+      "replication_factor": 1,
+      "config": {
+        "retention.ms": "604800000"
+      },
+      "acls": [
+        {
+          "principal": "User:aurum-ingest",
+          "operations": [
+            "WRITE",
+            "DESCRIBE",
+            "DESCRIBE_CONFIGS"
+          ]
+        },
+        {
+          "principal": "User:aurum-worker",
+          "operations": [
+            "READ",
+            "DESCRIBE"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "aurum.ext.series_catalog.upsert.incremental.v1",
+      "partitions": 3,
+      "replication_factor": 1,
+      "config": {
+        "cleanup.policy": "compact",
+        "segment.ms": "43200000"
+      },
+      "acls": [
+        {
+          "principal": "User:aurum-ingest",
+          "operations": [
+            "WRITE",
+            "DESCRIBE",
+            "DESCRIBE_CONFIGS"
+          ]
+        },
+        {
+          "principal": "User:aurum-worker",
+          "operations": [
+            "READ",
+            "DESCRIBE"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "aurum.ext.timeseries.obs.backfill.v1",
+      "partitions": 4,
+      "replication_factor": 1,
+      "config": {
+        "retention.ms": "7776000000"
+      },
+      "acls": [
+        {
+          "principal": "User:aurum-ingest",
+          "operations": [
+            "WRITE",
+            "DESCRIBE",
+            "DESCRIBE_CONFIGS"
+          ]
+        },
+        {
+          "principal": "User:aurum-worker",
+          "operations": [
+            "READ",
+            "DESCRIBE"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "aurum.ext.series_catalog.upsert.backfill.v1",
+      "partitions": 3,
+      "replication_factor": 1,
+      "config": {
+        "cleanup.policy": "compact",
+        "segment.ms": "86400000"
+      },
+      "acls": [
+        {
+          "principal": "User:aurum-ingest",
+          "operations": [
+            "WRITE",
+            "DESCRIBE",
+            "DESCRIBE_CONFIGS"
+          ]
+        },
+        {
+          "principal": "User:aurum-worker",
+          "operations": [
+            "READ",
+            "DESCRIBE"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "aurum.ext.series_catalog.upsert.dlq.v1",
+      "partitions": 1,
+      "replication_factor": 1,
+      "config": {
+        "retention.ms": "2592000000"
+      },
+      "acls": [
+        {
+          "principal": "User:aurum-ingest",
+          "operations": [
+            "WRITE",
+            "DESCRIBE",
+            "DESCRIBE_CONFIGS"
+          ]
+        },
+        {
+          "principal": "User:aurum-ops",
+          "operations": [
+            "READ",
+            "DESCRIBE"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "aurum.ext.timeseries.obs.dlq.v1",
+      "partitions": 2,
+      "replication_factor": 1,
+      "config": {
+        "retention.ms": "7776000000"
+      },
+      "acls": [
+        {
+          "principal": "User:aurum-ingest",
+          "operations": [
+            "WRITE",
+            "DESCRIBE",
+            "DESCRIBE_CONFIGS"
+          ]
+        },
+        {
+          "principal": "User:aurum-ops",
+          "operations": [
+            "READ",
+            "DESCRIBE"
+          ]
+        },
+        {
+          "principal": "User:aurum-worker",
+          "operations": [
+            "READ",
+            "DESCRIBE"
+          ]
+        }
+      ]
     }
   ]
 }

@@ -43,6 +43,25 @@ DEFAULT_LOCAL_ENV = {
     "AURUM_EXECUTE_SEATUNNEL": "0",
 }
 
+ENV_TEMPLATE_PATH = Path(".env.example")
+
+
+def load_env_template(path: Path) -> Dict[str, str]:
+    """Load baseline environment values from .env-style file."""
+    if not path.exists():
+        return {}
+
+    env: Dict[str, str] = {}
+    for raw_line in path.read_text(encoding="utf-8").splitlines():
+        line = raw_line.strip()
+        if not line or line.startswith("#"):
+            continue
+        if "=" not in line:
+            continue
+        key, value = line.split("=", 1)
+        env[key.strip()] = value
+    return env
+
 
 def pull_all_secrets(vault_addr: str, vault_token: str) -> Dict[str, str]:
     """Pull secrets from all configured Vault paths."""
@@ -180,7 +199,9 @@ def main() -> int:
         # Pull secrets from Vault
         env_vars = pull_all_secrets(args.vault_addr, args.vault_token)
 
-        # Add default local environment configuration
+        # Merge baseline template (authoritative defaults) then local overrides
+        baseline_env = load_env_template(ENV_TEMPLATE_PATH)
+        env_vars = {**baseline_env, **env_vars}
         env_vars.update(DEFAULT_LOCAL_ENV)
 
         if args.dry_run:

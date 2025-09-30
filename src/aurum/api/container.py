@@ -254,6 +254,41 @@ class ApplicationContext:
         self.metadata_fallback_cache = {}
         self._lock = asyncio.Lock()
 
+    async def get_cache_manager(self):
+        if self.cache_manager is None:
+            try:
+                from .cache.unified_cache_manager import get_unified_cache_manager
+                self.cache_manager = get_unified_cache_manager()
+            except Exception:
+                self.cache_manager = None
+        return self.cache_manager
+
+    def get_admin_groups(self):
+        if not self.admin_groups and self.settings:
+            auth_cfg = getattr(self.settings, "auth", None)
+            if auth_cfg and not getattr(auth_cfg, "disabled", False):
+                raw_groups = getattr(auth_cfg, "admin_groups", None)
+                if raw_groups:
+                    self.admin_groups = {str(item).strip().lower() for item in raw_groups if str(item).strip()}
+        return self.admin_groups
+
+
+# Global fallback application context for use outside of request scope
+_GLOBAL_APP_CONTEXT: ApplicationContext | None = None
+
+
+def get_app_context() -> ApplicationContext:
+    """Return a process-wide application context.
+
+    This provides a simple fallback for modules that need an app context during
+    application initialization (when no Request object exists yet). For request
+    handlers, prefer using `get_app_context_dependency` to attach context to the
+    FastAPI app state.
+    """
+    global _GLOBAL_APP_CONTEXT
+    if _GLOBAL_APP_CONTEXT is None:
+        _GLOBAL_APP_CONTEXT = ApplicationContext()
+    return _GLOBAL_APP_CONTEXT
 
 # --------------------------
 # Legacy shim helpers
@@ -333,5 +368,6 @@ __all__ = [
     "ICacheProvider",
     "register_core_services",
     "ApplicationContext",
+    "get_app_context",
     "get_app_context_dependency",
 ]

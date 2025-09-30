@@ -92,7 +92,7 @@ def _build_http_collector(provider: str, base_url: str, *, headers: Dict[str, st
         base_url=base_url,
         kafka_topic=f"{provider}.noop",
         default_headers=headers or {},
-        retry=RetryConfig(max_attempts=5, backoff_factor=0.5, max_backoff_seconds=30.0),
+        retry=RetryConfig(max_retries=5, backoff_factor=0.5, max_backoff_seconds=30.0),
         resilience_config=ResilienceConfig(
             timeout=30.0,
             max_retries=3,
@@ -105,17 +105,13 @@ def _build_http_collector(provider: str, base_url: str, *, headers: Dict[str, st
 
 
 async def _build_checkpoint_store() -> Any:
-    """Build checkpoint store using watermark store for consistency."""
-    try:
-        from aurum.external.collect.checkpoints import WatermarkCheckpointStore
-        from aurum.data_ingestion.watermark_store import WatermarkStore
-        watermark_store = WatermarkStore()
-        return WatermarkCheckpointStore(watermark_store)
-    except ImportError:
-        # Fallback to Postgres checkpoint store
-        from aurum.external.collect.checkpoints import PostgresCheckpointStore
-        dsn = os.getenv("AURUM_COLLECTOR_CHECKPOINT_DSN", os.getenv("AURUM_APP_DB_DSN", "postgresql://aurum:aurum@postgres:5432/aurum"))
-        return PostgresCheckpointStore(dsn=dsn)
+    """Build checkpoint store using configured Postgres DSN."""
+    dsn = os.getenv("AURUM_COLLECTOR_CHECKPOINT_DSN") or os.getenv("AURUM_APP_DB_DSN")
+    if not dsn:
+        raise RuntimeError(
+            "Checkpoint store DSN not configured; set AURUM_COLLECTOR_CHECKPOINT_DSN or AURUM_APP_DB_DSN"
+        )
+    return PostgresCheckpointStore(dsn=dsn)
 
 
 async def _configure_dataset_quotas() -> None:
@@ -331,10 +327,14 @@ RUNNERS = {
 
 def parse_args(argv: Iterable[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Run external data collectors")
+    default_provider_str = os.getenv("AURUM_COLLECTORS_PROVIDERS") or ",".join(DEFAULT_PROVIDERS)
     parser.add_argument(
         "--providers",
-        default=",".join(DEFAULT_PROVIDERS),
-        help="Comma-separated list of providers to run (default: eia,fred,noaa,worldbank)",
+        default=default_provider_str,
+        help=(
+            "Comma-separated list of providers to run. "
+            "Defaults to AURUM_COLLECTORS_PROVIDERS or 'eia,fred,noaa,worldbank'."
+        ),
     )
     parser.add_argument(
         "--loop",
@@ -399,6 +399,11 @@ async def main(argv: Iterable[str] | None = None) -> int:
     return 0
 
 
-if __name__ == "__main__":
+def cli() -> None:
+    """Synchronous CLI entrypoint for console_scripts."""
     import asyncio
     sys.exit(asyncio.run(main()))
+
+
+if __name__ == "__main__":
+    cli()

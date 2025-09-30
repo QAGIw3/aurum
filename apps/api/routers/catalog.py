@@ -5,52 +5,63 @@ from typing import Dict, List, Optional, Any
 
 from fastapi import APIRouter, Depends, HTTPException, Request, Response
 
-from libs.storage import TrinoAnalyticRepo
-from ..main import get_trino_repo
+from libs.services.catalog_service import CatalogService
 
 router = APIRouter()
 
 
-@router.get("/tables")
-async def list_tables(
+@router.get("/series")
+async def list_catalog_series(
     request: Request,
     response: Response,
-    catalog: Optional[str] = None,
-    schema: Optional[str] = None,
-    repo: TrinoAnalyticRepo = Depends(get_trino_repo),
+    tenant_id: str,
+    provider: Optional[str] = None,
+    dataset_code: Optional[str] = None,
+    status: Optional[str] = None,
+    iso_code: Optional[str] = None,
+    iso_market: Optional[str] = None,
+    iso_product: Optional[str] = None,
+    iso_location_type: Optional[str] = None,
+    iso_location_name: Optional[str] = None,
+    iso_location_id: Optional[str] = None,
+    canonical_region_id: Optional[str] = None,
+    geography_type: Optional[str] = None,
+    category: Optional[str] = None,
+    tags: Optional[List[str]] = None,
+    limit: int = 50,
+    cursor: Optional[str] = None,
 ) -> dict:
-    """List available tables in the data catalog."""
-    
-    try:
-        # Build query to list tables
-        catalog_filter = f"table_catalog = '{catalog}'" if catalog else "1=1"
-        schema_filter = f"table_schema = '{schema}'" if schema else "1=1"
-        
-        query = f"""
-        SELECT 
-            table_catalog,
-            table_schema,
-            table_name,
-            table_type
-        FROM information_schema.tables 
-        WHERE {catalog_filter} AND {schema_filter}
-        ORDER BY table_catalog, table_schema, table_name
-        """
-        
-        tables = await repo.execute_query(query)
-        
-        result = {
-            "tables": tables,
-            "count": len(tables),
-        }
-        
-        # Cache for 1 hour
-        response.headers["Cache-Control"] = "max-age=3600"
-        
-        return result
-        
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Failed to list tables: {str(e)}")
+    svc = CatalogService()
+    filters: Dict[str, Any] = {
+        "provider": provider,
+        "dataset_code": dataset_code,
+        "status": status,
+        "iso_code": iso_code,
+        "iso_market": iso_market,
+        "iso_product": iso_product,
+        "iso_location_type": iso_location_type,
+        "iso_location_name": iso_location_name,
+        "iso_location_id": iso_location_id,
+        "canonical_region_id": canonical_region_id,
+        "geography_type": geography_type,
+        "category": category,
+        "tags": tags,
+    }
+    offset = 0
+    items, has_more = await svc.list_series(
+        tenant_id=tenant_id, filters=filters, limit=limit, offset=offset
+    )
+    return {
+        "data": items,
+        "meta": {
+            "tenant_id": tenant_id,
+            "returned_count": len(items),
+            "has_more": has_more,
+        },
+        "links": {
+            "self": str(request.url),
+        },
+    }
 
 
 @router.get("/tables/{table_name}/stats")
@@ -60,16 +71,14 @@ async def get_table_stats(
     response: Response,
     catalog: Optional[str] = None,
     schema: Optional[str] = None,
-    repo: TrinoAnalyticRepo = Depends(get_trino_repo),
 ) -> dict:
     """Get detailed statistics for a table."""
     
     try:
-        stats = await repo.get_table_stats(
-            table_name=table_name,
-            catalog=catalog,
-            schema=schema,
-        )
+        from libs.storage.trino import TrinoAnalyticRepo
+        from libs.common.config import get_settings
+        repo = TrinoAnalyticRepo(get_settings().database)
+        stats = await repo.get_table_stats(table_name=table_name, catalog=catalog, schema=schema)
         
         # Generate ETag for caching
         import hashlib
@@ -93,7 +102,6 @@ async def get_dimensions(
     request: Request,
     response: Response,
     table: Optional[str] = "iso_lmp_unified",
-    repo: TrinoAnalyticRepo = Depends(get_trino_repo),
 ) -> dict:
     """Get available dimensions for filtering."""
     
@@ -130,6 +138,9 @@ async def get_dimensions(
         ORDER BY dimension, count DESC
         """
         
+        from libs.storage.trino import TrinoAnalyticRepo
+        from libs.common.config import get_settings
+        repo = TrinoAnalyticRepo(get_settings().database)
         results = await repo.execute_query(query)
         
         # Group by dimension
@@ -161,7 +172,6 @@ async def get_dimensions(
 async def execute_analytical_query(
     request: Request,
     query_request: dict,
-    repo: TrinoAnalyticRepo = Depends(get_trino_repo),
 ) -> dict:
     """Execute analytical query with safety checks."""
     
@@ -183,7 +193,10 @@ async def execute_analytical_query(
             raise HTTPException(status_code=400, detail=f"Keyword '{keyword}' is not allowed")
     
     try:
-        results = await repo.execute_query(query, parameters)
+        from libs.storage.trino import TrinoAnalyticRepo
+        from libs.common.config import get_settings
+        repo = TrinoAnalyticRepo(get_settings().database)
+        results = await repo.execute_query(query)
         
         return {
             "results": results,

@@ -9,6 +9,12 @@ import os
 from enum import Enum
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Union
+import json
+
+try:
+    import yaml  # type: ignore
+except Exception:  # noqa: BLE001
+    yaml = None
 
 from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -291,7 +297,7 @@ class AurumSettings(BaseSettings):
     pagination_max_size: int = Field(default=1000, description="Max pagination size")
     
     # Feature flags
-    enable_v2_only: bool = Field(default=False, description="Enable v2 API only")
+    enable_v2_only: bool = Field(default=True, description="Enable v2 API only")
     enable_timescale_caggs: bool = Field(default=True, description="Enable continuous aggregates")
     enable_iceberg_time_travel: bool = Field(default=False, description="Enable Iceberg time travel")
 
@@ -300,11 +306,99 @@ class AurumSettings(BaseSettings):
 _settings: Optional[AurumSettings] = None
 
 
+def _deep_merge_dicts(base: Dict[str, Any], override: Dict[str, Any]) -> Dict[str, Any]:
+    """Deep-merge two dicts, with override taking precedence.
+
+    - Recursively merges nested dicts
+    - Lists and scalars are replaced by override
+    """
+    result: Dict[str, Any] = dict(base)
+    for key, override_value in override.items():
+        base_value = result.get(key)
+        if isinstance(base_value, dict) and isinstance(override_value, dict):
+            result[key] = _deep_merge_dicts(base_value, override_value)
+        else:
+            result[key] = override_value
+    return result
+
+
+def _load_overlays(config_base_path: Path, environment: str) -> Dict[str, Any]:
+    """Load configuration overlays from config/<base|environment>.{yaml|yml|json} and config/<env>/*.{yaml|yml|json}."""
+    overlays: List[Dict[str, Any]] = []
+
+    def _load_file(file_path: Path) -> Optional[Dict[str, Any]]:
+        if not file_path.exists():
+            return None
+        try:
+            if file_path.suffix in (".yaml", ".yml"):
+                if yaml is None:
+                    return None
+                with file_path.open("r", encoding="utf-8") as fh:
+                    data = yaml.safe_load(fh) or {}
+            elif file_path.suffix == ".json":
+                with file_path.open("r", encoding="utf-8") as fh:
+                    data = json.load(fh) or {}
+            else:
+                return None
+            return data if isinstance(data, dict) else None
+        except Exception:
+            return None
+
+    # base overlay
+    for name in ("base", environment):
+        for ext in (".yaml", ".yml", ".json"):
+            loaded = _load_file(config_base_path / f"{name}{ext}")
+            if loaded:
+                overlays.append(loaded)
+
+    # environment-specific directory overlays
+    env_dir = config_base_path / environment
+    if env_dir.exists() and env_dir.is_dir():
+        for child in sorted(env_dir.iterdir()):
+            if child.suffix.lower() in (".yaml", ".yml", ".json"):
+                loaded = _load_file(child)
+                if loaded:
+                    overlays.append(loaded)
+
+    merged: Dict[str, Any] = {}
+    for piece in overlays:
+        merged = _deep_merge_dicts(merged, piece)
+    return merged
+
+
 def get_settings() -> AurumSettings:
-    """Get the global settings instance."""
+    """Get the global settings instance with overlays (env > overlays > defaults).
+
+    Implementation: Build overlay settings from config/, then deep-merge with env-loaded
+    settings so that env takes precedence.
+    """
     global _settings
-    if _settings is None:
-        _settings = AurumSettings()
+    if _settings is not None:
+        return _settings
+
+    # Determine config base and environment
+    environment = os.getenv("AURUM_ENV", "development").strip() or "development"
+    base_from_env = os.getenv("AURUM_CONFIG_PATH") or os.getenv("AURUM_SETTINGS_PATH")
+    if base_from_env:
+        config_base_path = Path(base_from_env)
+    else:
+        try:
+            # repo_root/config relative to this file
+            config_base_path = Path(__file__).resolve().parents[3] / "config"
+        except Exception:
+            config_base_path = Path.cwd() / "config"
+
+    # Load env settings and overlays separately
+    env_settings = AurumSettings()
+    overlays: Dict[str, Any] = _load_overlays(config_base_path, environment) if config_base_path.exists() else {}
+
+    if overlays:
+        overlay_settings = AurumSettings(**overlays)
+        merged = _deep_merge_dicts(overlay_settings.model_dump(), env_settings.model_dump())
+        _settings = AurumSettings(**merged)
+    else:
+        _settings = env_settings
+
     return _settings
 
 

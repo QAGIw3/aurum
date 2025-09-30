@@ -3,7 +3,7 @@ with ranked as (
     select
         *,
         row_number() over (
-            partition by curve_key, tenor_label, asof_date
+            partition by tenant_id, curve_key, tenor_label, asof_date
             order by _ingest_ts desc
         ) as rn
     from {{ ref('stg_curve_observation') }}
@@ -11,6 +11,7 @@ with ranked as (
 )
 select
     asof_date,
+    tenant_id,
     curve_key,
     tenor_label,
     tenor_type,

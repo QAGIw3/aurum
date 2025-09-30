@@ -4,7 +4,7 @@
 [![FastAPI](https://img.shields.io/badge/FastAPI-0.110+-green.svg)](https://fastapi.tiangolo.com)
 [![OpenAPI](https://img.shields.io/badge/OpenAPI-3.1.0-yellow.svg)](https://swagger.io/specification/)
 
-> ⚠️ **v1 Deprecation:** All `/v1/*` endpoints now emit `Deprecation` and `Sunset` headers and will be removed after **31 December 2025**. Migrate to the `/v2/*` surface as soon as possible—see [migration-guide.md](../migration-guide.md) for step-by-step guidance.
+> ⚠️ **v1 Deprecation:** All `/v1/*` endpoints now emit `Deprecation` and `Sunset` headers and will be removed after **30 October 2025**. Migrate to the `/v2/*` surface—see [Migration Guide: v1 → v2](migration-v1-to-v2.md).
 
 ## Overview
 

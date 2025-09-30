@@ -6,10 +6,14 @@ models:
   tests:
   - unique_combination:
       combination_of_columns:
+      - tenant_id
       - curve_key
       - tenor_label
       - asof_date
   columns:
+  - name: tenant_id
+    tests:
+    - not_null
   - name: curve_key
     tests:
     - relationships:

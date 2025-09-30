@@ -181,4 +181,3 @@ def test_ingest_observations_maps_values_and_updates_checkpoint() -> None:
     updated_checkpoint = store.get("FRED", "TEST")
     assert updated_checkpoint is not None
     assert updated_checkpoint.last_timestamp == datetime(2024, 1, 2, tzinfo=timezone.utc)
-

@@ -4,6 +4,7 @@ CREATE SCHEMA IF NOT EXISTS iceberg.fact;
 
 CREATE TABLE IF NOT EXISTS iceberg.raw.curve_landing (
     asof_date DATE,
+    tenant_id VARCHAR,
     source_file VARCHAR,
     sheet_name VARCHAR,
     asset_class VARCHAR,
@@ -39,11 +40,13 @@ WITH (
     optimize_rewrite_delete_file_threshold = 250,
     vacuum_min_snapshots_to_keep = 4,
     vacuum_max_snapshot_age_retention = '7d',
-    partitioning = ARRAY['days(asof_date)']
+    partitioning = ARRAY['tenant_id', 'days(asof_date)'],
+    write_sort_order = ARRAY['tenant_id', 'asof_date', 'asset_class', 'iso', 'tenor_label']
 );
 
 CREATE TABLE IF NOT EXISTS iceberg.market.curve_observation (
     asof_date DATE,
+    tenant_id VARCHAR,
     source_file VARCHAR,
     sheet_name VARCHAR,
     asset_class VARCHAR,
@@ -79,8 +82,8 @@ WITH (
     optimize_rewrite_delete_file_threshold = 250,
     vacuum_min_snapshots_to_keep = 4,
     vacuum_max_snapshot_age_retention = '7d',
-    partitioning = ARRAY['days(asof_date)'],
-    write_sort_order = ARRAY['asof_date', 'asset_class', 'iso', 'tenor_label']
+    partitioning = ARRAY['tenant_id', 'days(asof_date)'],
+    write_sort_order = ARRAY['tenant_id', 'asof_date', 'asset_class', 'iso', 'tenor_label']
 );
 
 CREATE TABLE IF NOT EXISTS iceberg.fact.fct_curve_observation (
@@ -150,6 +153,7 @@ WITH (
 
 CREATE TABLE IF NOT EXISTS iceberg.market.curve_observation_quarantine (
     asof_date DATE,
+    tenant_id VARCHAR,
     source_file VARCHAR,
     sheet_name VARCHAR,
     asset_class VARCHAR,
@@ -185,8 +189,8 @@ WITH (
     optimize_rewrite_delete_file_threshold = 250,
     vacuum_min_snapshots_to_keep = 4,
     vacuum_max_snapshot_age_retention = '7d',
-    partitioning = ARRAY['days(asof_date)'],
-    write_sort_order = ARRAY['asof_date', 'asset_class', 'iso', 'tenor_label']
+    partitioning = ARRAY['tenant_id', 'days(asof_date)'],
+    write_sort_order = ARRAY['tenant_id', 'asof_date', 'asset_class', 'iso', 'tenor_label']
 );
 
 CREATE TABLE IF NOT EXISTS iceberg.market.scenario_output (
@@ -273,6 +277,7 @@ WITH (
 CREATE OR REPLACE VIEW iceberg.market.curve_observation_latest AS
 WITH ranked AS (
     SELECT
+        tenant_id,
         asof_date,
         source_file,
         sheet_name,
@@ -299,12 +304,13 @@ WITH ranked AS (
         version_hash,
         _ingest_ts,
         ROW_NUMBER() OVER (
-            PARTITION BY curve_key, tenor_label
+            PARTITION BY tenant_id, curve_key, tenor_label
             ORDER BY asof_date DESC, _ingest_ts DESC
         ) AS rn
     FROM iceberg.market.curve_observation
 )
 SELECT
+    tenant_id,
     asof_date,
     source_file,
     sheet_name,

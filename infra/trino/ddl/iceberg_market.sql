@@ -3,6 +3,7 @@ CREATE SCHEMA IF NOT EXISTS iceberg.raw;
 CREATE SCHEMA IF NOT EXISTS iceberg.fact;
 
 CREATE TABLE IF NOT EXISTS iceberg.raw.curve_landing (
+    tenant_id VARCHAR,
     asof_date DATE,
     source_file VARCHAR,
     sheet_name VARCHAR,
@@ -43,6 +44,7 @@ WITH (
 );
 
 CREATE TABLE IF NOT EXISTS iceberg.market.curve_observation (
+    tenant_id VARCHAR,
     asof_date DATE,
     source_file VARCHAR,
     sheet_name VARCHAR,
@@ -273,6 +275,7 @@ WITH (
 CREATE OR REPLACE VIEW iceberg.market.curve_observation_latest AS
 WITH ranked AS (
     SELECT
+        tenant_id,
         asof_date,
         source_file,
         sheet_name,
@@ -299,12 +302,13 @@ WITH ranked AS (
         version_hash,
         _ingest_ts,
         ROW_NUMBER() OVER (
-            PARTITION BY curve_key, tenor_label
+            PARTITION BY tenant_id, curve_key, tenor_label
             ORDER BY asof_date DESC, _ingest_ts DESC
         ) AS rn
     FROM iceberg.market.curve_observation
 )
 SELECT
+    tenant_id,
     asof_date,
     source_file,
     sheet_name,

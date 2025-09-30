@@ -30,11 +30,11 @@ back to an in-memory stub that preserves the public API (`run_job_async`,
 
 | Variable | Description | Default |
 | --- | --- | --- |
-| `AURUM_API_OFFLOAD_ENABLED` | Toggle async offloading. When `false` the stub implementation is used even if Celery is installed. | `false` |
-| `AURUM_API_OFFLOAD_USE_STUB` | Force the stub implementation regardless of other settings. Handy for local development. | `true` in dev environments, otherwise `false`. |
-| `AURUM_API_OFFLOAD_CELERY_BROKER_URL` | Celery broker connection string. | `redis://localhost:6379/0` (falls back to `AURUM_CELERY_BROKER_URL` if present). |
-| `AURUM_API_OFFLOAD_CELERY_RESULT_BACKEND` | Celery result backend. | `redis://localhost:6379/1` (falls back to `AURUM_CELERY_RESULT_BACKEND`). |
-| `AURUM_API_OFFLOAD_DEFAULT_QUEUE` | Default Celery queue for offloaded work. | `default` (falls back to `AURUM_CELERY_TASK_DEFAULT_QUEUE`). |
+| `AURUM_CELERY_ENABLED` | Toggle async offloading. When `false` the stub implementation is used even if Celery is installed. | `true` |
+| `AURUM_CELERY_USE_STUB` | Force the stub implementation regardless of other settings (local dev). | `false` |
+| `AURUM_CELERY_BROKER_URL` | Celery broker connection string. | `redis://localhost:6379/0` |
+| `AURUM_CELERY_RESULT_BACKEND` | Celery result backend. | `redis://localhost:6379/1` |
+| `AURUM_CELERY_TASK_DEFAULT_QUEUE` | Default Celery queue for offloaded work. | `default` |
 
 > **Tip:** When using Helm or Kubernetes, set these values in the API
 > ConfigMap so workers and the API share a consistent broker configuration.
@@ -55,7 +55,7 @@ if cfg.enabled and not cfg.use_stub:
    on `PYTHONPATH`).
 3. Start a worker:
    ```bash
-   celery      -A aurum.api.async_exec.celery_app      worker      --loglevel=info
+   celery -A apps.workers.main:app worker --loglevel=info
    ```
 4. (Optional) Run an additional beat process if your jobs schedule periodic
    tasks.
@@ -108,11 +108,13 @@ broker. Enable the real pipeline by setting the following environment
 variables:
 
 ```bash
-export AURUM_API_OFFLOAD_ENABLED=true
-export AURUM_API_OFFLOAD_USE_STUB=false
-export AURUM_API_OFFLOAD_CELERY_BROKER_URL=redis://localhost:6379/0
-export AURUM_API_OFFLOAD_CELERY_RESULT_BACKEND=redis://localhost:6379/1
+export AURUM_CELERY_ENABLED=true
+export AURUM_CELERY_USE_STUB=false
+export AURUM_CELERY_BROKER_URL=redis://localhost:6379/0
+export AURUM_CELERY_RESULT_BACKEND=redis://localhost:6379/1
 ```
+
+> Deprecation: The previous `AURUM_API_OFFLOAD_*` variables are supported for a short window and will be removed. Use `AURUM_CELERY_*` instead.
 
 Developers can also toggle the stub at runtime by setting
 `AURUM_API_OFFLOAD_USE_STUB=true`, which leaves the rest of the configuration

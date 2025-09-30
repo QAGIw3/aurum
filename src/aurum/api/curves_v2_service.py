@@ -6,13 +6,16 @@ Thin orchestration over the DAO: resolves pagination inputs, calls the DAO, and
 returns Pydantic models suitable for the v2 router.
 """
 
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Sequence, Tuple
 from pydantic import BaseModel, Field
 
-from .curves_v2_dao import list_curves as dao_list_curves
-from .query import build_curve_diff_query
-from .database.trino_client import get_trino_client
 from datetime import date, datetime
+
+from aurum.data import QueryResult as BackendQueryResult
+
+from .curves_v2_dao import list_curves as dao_list_curves
+from .database.trino_client import get_trino_client
+from .query import build_curve_diff_query
 
 
 class CurveItem(BaseModel):
@@ -27,11 +30,37 @@ class CurvesV2Service:
     async def list_curves(
         self,
         *,
+        tenant_id: str,
         offset: int,
         limit: int,
         name_filter: Optional[str] = None,
-    ) -> List[CurveItem]:
-        rows = await dao_list_curves(offset=offset, limit=limit, name_filter=name_filter)
+        include_debug: bool = False,
+    ) -> Tuple[List[CurveItem], Optional[Dict[str, Any]]]:
+        """List curves with optional debug metadata from the data backend."""
+
+        result = await dao_list_curves(
+            tenant_id=tenant_id,
+            offset=offset,
+            limit=limit,
+            name_filter=name_filter,
+        )
+
+        rows: Sequence[Dict[str, Any]]
+        debug_meta: Dict[str, Any] = {}
+
+        if isinstance(result, BackendQueryResult):
+            columns = result.columns or []
+            debug_meta = dict(result.metadata or {})
+            rows = []
+            for row in result.rows:
+                if columns:
+                    row_dict = {col: row[idx] for idx, col in enumerate(columns) if idx < len(row)}
+                else:
+                    row_dict = {str(idx): value for idx, value in enumerate(row)}
+                rows.append(row_dict)
+        else:
+            rows = result  # type: ignore[assignment]
+
         items: List[CurveItem] = []
         for row in rows:
             items.append(
@@ -43,7 +72,8 @@ class CurvesV2Service:
                     created_at=str(row.get("created_at")) if row.get("created_at") is not None else None,
                 )
             )
-        return items
+
+        return items, (debug_meta if include_debug else None)
 
     async def get_curve_diff(
         self,

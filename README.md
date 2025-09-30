@@ -39,6 +39,7 @@ aurum/
 │   ├── api/          # FastAPI web service
 │   ├── scenarios/    # Scenario modeling engine
 │   ├── parsers/      # Vendor data parsers
+│   ├── external_contracts/ # Canonical external ingestion helpers
 │   └── external/     # External data collectors
 ├── trino/ddl/        # Iceberg table definitions
 ├── k8s/              # Kubernetes manifests
@@ -47,7 +48,7 @@ aurum/
 
 ## Key Features
 
-- **🔄 Data Ingestion**: Automated pipelines for EIA, NOAA, FRED, and ISO data
+- **🔄 Data Ingestion**: Canonical external contracts for EIA, FRED, NOAA, and WorldBank (Kafka → Iceberg via Trino merges)
 - **📊 Curve Analytics**: Market curve analysis and forecasting
 - **🎯 Scenario Modeling**: What-if analysis and scenario planning
 - **🔌 REST API**: Comprehensive API for data access and management
@@ -101,7 +102,8 @@ make lint
   - Examples:
     - Triggers: `dataset://aurum/triggers/pjm_da_window_ready`
     - Ingested: `dataset://aurum/ingest/iso/miso/lmp`
-    - Warehouse: `dataset://aurum/ingest/eia_series_timescale`
+    - External contracts: `dataset://aurum/triggers/external/eia/incremental_ready`
+    - Warehouse: `dataset://aurum/warehouse/external/eia/timeseries_observation`
 - Utilities: `src/aurum/airflow_utils/datasets.py` centralizes helpers and constants.
   - Import helpers:
     - `from aurum.airflow_utils.datasets import dataset_uri, iso_trigger, iso_ingest, noaa_trigger, noaa_ingest, URIS`

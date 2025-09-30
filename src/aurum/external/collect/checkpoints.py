@@ -5,7 +5,7 @@ from __future__ import annotations
 
 import json
 import os
-from contextlib import asynccontextmanager, contextmanager
+from contextlib import contextmanager
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Any, Callable, Dict, Optional
@@ -217,16 +217,16 @@ class PostgresCheckpointStore(CheckpointStore):
         if ensure_schema:
             self._ensure_table()
 
-    async def get(self, provider: str, series_id: str) -> Optional[Checkpoint]:
+    def get(self, provider: str, series_id: str) -> Optional[Checkpoint]:
         query = f"""
             SELECT last_timestamp, last_page, metadata
             FROM {self.TABLE_NAME}
             WHERE provider = %s AND series_id = %s
         """
-        async with self._connection() as conn:
-            async with conn.cursor() as cur:
-                await cur.execute(query, (provider, series_id))
-                row = await cur.fetchone()
+        with self._connection() as conn:
+            with conn.cursor() as cur:
+                cur.execute(query, (provider, series_id))
+                row = cur.fetchone()
         if not row:
             return None
         last_timestamp, last_page, metadata = row
@@ -244,7 +244,7 @@ class PostgresCheckpointStore(CheckpointStore):
             metadata=metadata_dict,
         )
 
-    async def set(self, checkpoint: Checkpoint) -> None:
+    def set(self, checkpoint: Checkpoint) -> None:
         query = f"""
             INSERT INTO {self.TABLE_NAME} (provider, series_id, last_timestamp, last_page, metadata, updated_at)
             VALUES (%s, %s, %s, %s, %s::jsonb, now())
@@ -256,9 +256,9 @@ class PostgresCheckpointStore(CheckpointStore):
                 updated_at = now()
         """
         metadata_json = json.dumps(checkpoint.metadata or {})
-        async with self._connection() as conn:
-            async with conn.cursor() as cur:
-                await cur.execute(
+        with self._connection() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
                     query,
                     (
                         checkpoint.provider,
@@ -269,17 +269,17 @@ class PostgresCheckpointStore(CheckpointStore):
                     ),
                 )
             if hasattr(conn, "commit"):
-                await conn.commit()
+                conn.commit()
 
-    async def delete(self, provider: str, series_id: str) -> None:
+    def delete(self, provider: str, series_id: str) -> None:
         query = f"DELETE FROM {self.TABLE_NAME} WHERE provider = %s AND series_id = %s"
-        async with self._connection() as conn:
-            async with conn.cursor() as cur:
-                await cur.execute(query, (provider, series_id))
+        with self._connection() as conn:
+            with conn.cursor() as cur:
+                cur.execute(query, (provider, series_id))
             if hasattr(conn, "commit"):
-                await conn.commit()
+                conn.commit()
 
-    async def _ensure_table(self) -> None:
+    def _ensure_table(self) -> None:
         ddl = f"""
             CREATE TABLE IF NOT EXISTS {self.TABLE_NAME} (
                 provider TEXT NOT NULL,
@@ -291,20 +291,20 @@ class PostgresCheckpointStore(CheckpointStore):
                 PRIMARY KEY (provider, series_id)
             )
         """
-        async with self._connection() as conn:
-            async with conn.cursor() as cur:
-                await cur.execute(ddl)
+        with self._connection() as conn:
+            with conn.cursor() as cur:
+                cur.execute(ddl)
             if hasattr(conn, "commit"):
-                await conn.commit()
+                conn.commit()
 
-    @asynccontextmanager
-    async def _connection(self):
+    @contextmanager
+    def _connection(self):
         conn = self._connection_factory()
         try:
             yield conn
         finally:
             if self._manage_close and hasattr(conn, "close"):
-                await conn.close()
+                conn.close()
 
     @staticmethod
     def _default_dsn() -> str:

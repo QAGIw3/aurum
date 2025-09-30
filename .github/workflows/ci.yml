@@ -37,10 +37,8 @@ jobs:
         run: ruff check .
       - name: Mypy
         run: mypy src
-      - name: Pytest
-        env:
-          PYTHONPATH: src
-        run: pytest
+      - name: Make CI test (includes docs links)
+        run: make ci-test
       - name: Seatunnel template linter
         env:
           PYTHONPATH: src

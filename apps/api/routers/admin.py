@@ -5,7 +5,8 @@ from typing import Dict, List, Optional, Any
 
 from fastapi import APIRouter, Depends, HTTPException, Request, Response
 
-from libs.storage import TimescaleSeriesRepo, PostgresMetaRepo, TrinoAnalyticRepo
+from libs.storage import TimescaleSeriesRepo, PostgresMetaRepo, TrinoAnalyticRepo, RedisCacheRepo
+from libs.common.config import get_settings
 from ..main import get_timescale_repo, get_postgres_repo, get_trino_repo
 
 router = APIRouter()
@@ -87,16 +88,40 @@ async def get_system_stats(
 
 @router.post("/cache/clear")
 async def clear_cache(
-    cache_type: Optional[str] = "all",
+    tenant_id: Optional[str] = None,
+    scope: Optional[str] = "all",
 ) -> dict:
-    """Clear application caches."""
-    
-    # This would integrate with Redis cache clearing
-    # For now, just return a success message
-    
+    """Clear application caches.
+
+    - scope: one of [all, market, catalog, metadata]
+    - tenant_id: if provided, clears only keys matching that tenant
+    """
+    settings = get_settings()
+    cache = RedisCacheRepo(settings.redis)
+
+    patterns = []
+    if scope in (None, "all"):
+        patterns.append("aurum:*")
+    elif scope == "market":
+        patterns.append("aurum:*market:*")
+    elif scope == "catalog":
+        patterns.append("aurum:*catalog:*")
+    elif scope == "metadata":
+        patterns.append("aurum:*metadata:*")
+    else:
+        patterns.append(f"aurum:*{scope}*")
+
+    total = 0
+    for pat in patterns:
+        if tenant_id:
+            pat = pat.replace("*", f"*{tenant_id}*")
+        total += await cache.invalidate(pat)
+
     return {
-        "message": f"Cache cleared: {cache_type}",
-        "timestamp": "2024-01-01T00:00:00Z"  # Would be actual timestamp
+        "message": "Cache clear executed",
+        "scope": scope,
+        "tenant_id": tenant_id,
+        "invalidated": total,
     }
 
 

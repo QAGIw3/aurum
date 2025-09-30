@@ -1,5 +1,6 @@
 select
     asof_date,
+    tenant_id,
     source_file,
     sheet_name,
     asset_class,

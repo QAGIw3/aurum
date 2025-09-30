@@ -1352,12 +1352,14 @@ def run_worker():  # pragma: no cover - integration entrypoint
             correlation_values = carrier.get("x-correlation-id", [])
             correlation_id = correlation_values[0] if correlation_values else request_id
             tenant_values = carrier.get("x-aurum-tenant", [])
-            tenant_id = tenant_values[0] if tenant_values else scenario_req.tenant_id
+            tenant_id = tenant_values[0] if tenant_values else None
             user_values = carrier.get("x-user-id", [])
             user_id = user_values[0] if user_values else None
 
             try:
                 scenario_req = ScenarioRequest.from_message(payload)
+                if tenant_id is None:
+                    tenant_id = scenario_req.tenant_id
             except Exception as exc:
                 # Log error but continue processing
                 log_structured(

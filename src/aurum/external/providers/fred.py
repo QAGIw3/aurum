@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass
+import time
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Dict, Iterator, List, Mapping, Optional
@@ -13,6 +14,7 @@ from ..collect import (
     CheckpointStore,
     ExternalCollector,
     HttpRequest,
+    provider_series_key,
 )
 
 DEFAULT_CONFIG_PATH = Path(__file__).resolve().parents[3] / "config" / "fred_ingest_datasets.json"
@@ -299,7 +301,11 @@ class FredCollector:
         if not series:
             return 0
         record = self._map_catalog(series)
-        return self.catalog_collector.emit_records([record]) if record else 0
+        return (
+            self.catalog_collector.emit_records([record], key_fn=provider_series_key)
+            if record
+            else 0
+        )
 
     def ingest_observations(
         self,
@@ -338,7 +344,7 @@ class FredCollector:
                 batch.append(mapped)
                 max_timestamp = ts_dt if max_timestamp is None or ts_dt > max_timestamp else max_timestamp
             if batch:
-                emitted += self.observation_collector.emit_records(batch)
+                emitted += self.observation_collector.emit_records(batch, key_fn=provider_series_key)
                 batch.clear()
 
         if max_timestamp:

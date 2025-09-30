@@ -17,8 +17,10 @@ def _load_spec():
 def test_scenario_outputs_documented():
     spec = _load_spec()
     paths = spec.get("paths", {})
-    assert "/v1/scenarios/{id}/outputs" in paths
-    outputs = paths["/v1/scenarios/{id}/outputs"].get("get", {})
+    # v1 endpoints are deprecated/removed in v2-only mode
+    # Ensure v2 outputs endpoint exists
+    assert "/v2/scenarios/{id}/outputs" in paths
+    outputs = paths["/v2/scenarios/{id}/outputs"].get("get", {})
     responses = outputs.get("responses", {})
     assert "200" in responses
     schema = responses["200"].get("content", {}).get("application/json", {}).get("schema", {})
@@ -83,8 +85,7 @@ def test_openapi_includes_fastapi_routes():
     missing = {(path, method) for path, method in _iter_api_routes() if (path, method) not in documented}
     allowed_missing = {
         ("/health", "get"),
-        ("/v1/admin/cache/scenario/{}/invalidate", "post"),
-        ("/v1/admin/cache/curves/invalidate", "post"),
+        ("/v2/admin/cache/clear", "post"),
     }
     # allowlist explicitly documented differences while enforcing no new gaps
     assert missing.issubset(allowed_missing), f"OpenAPI spec missing operations: {sorted(missing)}"

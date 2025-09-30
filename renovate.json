@@ -15,10 +15,19 @@
       "enabled": true
     }
   },
+  "poetry": {
+    "enabled": false
+  },
+  "pep621": {
+    "enabled": true,
+    "fileMatch": [
+      "(^|/)pyproject\\.toml$"
+    ]
+  },
   "packageRules": [
     {
       "description": "Group Python dependency updates",
-      "matchManagers": ["pip_requirements"],
+      "matchManagers": ["pip_requirements", "pep621"],
       "groupName": "python dependencies"
     },
     {

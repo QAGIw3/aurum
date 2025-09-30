@@ -16,7 +16,11 @@ from aurum.api.rate_limiting.concurrency_middleware import (
     create_timeout_controller,
 )
 from aurum import observability as _obs
-from aurum.observability.metrics import record_external_api_request
+from aurum.observability.metrics import (
+    record_external_api_request,
+    record_external_contract_merge,
+    record_external_contract_publish,
+)
 
 
 @pytest.fixture(autouse=True)
@@ -68,6 +72,16 @@ def test_record_external_api_request_noop_when_metrics_disabled(monkeypatch):
     monkeypatch.setattr(_obs.metrics, "EXTERNAL_API_REQUEST_COUNTER", None, raising=False)
     monkeypatch.setattr(_obs.metrics, "EXTERNAL_API_LATENCY", None, raising=False)
     record_external_api_request("/v1/example", "200", 0.01)
+
+
+def test_record_external_contract_publish_handles_disabled(monkeypatch):
+    monkeypatch.setattr(_obs.metrics, "EXTERNAL_CONTRACT_PUBLISH", None, raising=False)
+    record_external_contract_publish("eia", "success")
+
+
+def test_record_external_contract_merge_handles_disabled(monkeypatch):
+    monkeypatch.setattr(_obs.metrics, "EXTERNAL_CONTRACT_MERGE", None, raising=False)
+    record_external_contract_merge("fred", "timeseries_observation", 5)
 
 
 @pytest.mark.asyncio

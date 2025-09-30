@@ -13,6 +13,7 @@ from ..collect import (
     CheckpointStore,
     ExternalCollector,
     HttpRequest,
+    provider_series_key,
 )
 
 DEFAULT_BASE_URL = "https://www.ncdc.noaa.gov/cdo-web/api/v2"
@@ -415,7 +416,7 @@ class NoaaCollector:
                 )
         if not records:
             return 0
-        return self.catalog_collector.emit_records(records)
+        return self.catalog_collector.emit_records(records, key_fn=provider_series_key)
 
     def ingest_observations(self, *, start: Optional[datetime] = None, end: Optional[datetime] = None) -> int:
         stations = self.discover_stations()
@@ -454,7 +455,7 @@ class NoaaCollector:
                         if max_ts is None or ts_dt > max_ts:
                             max_ts = ts_dt
                     if batch:
-                        emitted += self.observation_collector.emit_records(batch)
+                        emitted += self.observation_collector.emit_records(batch, key_fn=provider_series_key)
                         batch.clear()
                 if max_ts:
                     self.checkpoint_store.set(

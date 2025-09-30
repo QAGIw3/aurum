@@ -14,13 +14,8 @@ Incremental processing for external data providers (EIA, FRED, NOAA, WorldBank) 
 
 - `IncrementalConfig`: runtime knobs (window size, batch size, frequency)
 - `IncrementalProcessor`: entry point that builds collectors and delegates to provider-specific processors
-- Provider hooks (to implement):
-  - `_create_eia_processor(...)`
-  - `_create_fred_processor(...)`
-  - `_create_noaa_processor(...)`
-  - `_create_worldbank_processor(...)`
-
-All provider hooks currently raise `NotImplementedError`. Implement these to wire provider clients, checkpointing, and record emission.
+- Provider processors reuse the rich collectors in `src/aurum/external/providers` to fetch, normalize, and emit records for each source.
+- `ExternalContractsPublisher` (``src/aurum/external_contracts/publisher.py``) wraps the incremental processor with a simple API that Airflow and CLIs can call.
 
 ## Collectors and Checkpointing
 
@@ -47,25 +42,26 @@ async def main():
 asyncio.run(main())
 ```
 
-Airflow/DAG notes:
-- Use an async-compatible operator or wrap via `asyncio.run`
-- Configure rate limiting per provider (e.g., serial pools) to respect upstream quotas
+## Airflow / Dataset Integration
+
+- The `external_contracts_ingestion` DAG orchestrates the publisher and merge jobs.
+- Schedule and lineage rely on dataset URIs built via `dataset://aurum/triggers/external/<provider>/incremental_ready` and `dataset://aurum/warehouse/external/<provider>/timeseries_observation` (see `aurum.airflow_utils.datasets`).
+- Each provider run records per-source metrics (`aurum_external_contract_publish_total`, `aurum_external_contract_merge_records_total`) and advances Postgres watermarks via `aurum.db.watermark.update_ingest_watermark`.
+- Freshness gauges (`aurum_external_data_freshness_hours`) are updated using the DAG execution timestamp to provide dashboard visibility.
 
 ## Implementation Tips
 
-- Start with EIA or FRED: re-use dataset configs (`config/eia_ingest_datasets.json`) for series selection
-- Build a provider abstraction with:
-  - `list_series_to_update(window_start, window_end, checkpoint)`
-  - `fetch_observations(series, window_start, window_end)`
-  - `emit_catalog(series)` and `emit_observation(obs)` via the collectors
-- Commit checkpoint after successful batch per series/provider
-- Backoff and retry on 429/5xx; respect DailyQuota/NoaaRateLimiter where applicable
+- Provider dataset manifests (`config/eia_ingest_datasets.json`, `config/external_incremental_config.json`) control series filters and rate limits; CI validates the manifests via the "External Contracts" workflow.
+- Checkpointing is automatic via `PostgresCheckpointStore`; ensure `AURUM_COLLECTOR_CHECKPOINT_DSN` (or `AURUM_APP_DB_DSN`) is configured in the Airflow environment.
+- Collectors automatically encode Kafka keys as `provider|series_id`, enabling per-series partitioning and idempotent merges.
+- Respect upstream rate limits by configuring the incremental settings or the provider-specific rate limiter classes (`NoaaRateLimiter`, `DailyQuota`).
 
 ## Validation
 
 - Avro schemas: `kafka/schemas/ExtSeriesCatalogUpsertV1.avsc`, `ExtTimeseriesObsV1.avsc`
 - Great Expectations suites: see `ge/expectations/external_*`
-- Downstream dbt models expect tenant scoping if multi-tenant flows are used; otherwise default tenant is used by the pipelines
+- The `TrinoExternalContractsConsumer` materializes Kafka payloads via `sql/merge/catalog_merge.sql` and `sql/merge/obs_merge.sql`; fixtures in `scripts/test_fixtures/load_external_fixtures.py` exercise the same code paths.
+- Downstream dbt models expect tenant scoping if multi-tenant flows are used; otherwise the canonical pipelines populate the default tenant.
 
 ## Related Docs
 

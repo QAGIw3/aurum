@@ -96,16 +96,8 @@ jobs:
         pip install -r requirements-dev.txt
         pip install pytest pytest-cov pytest-asyncio pytest-mock
 
-    - name: Run unit tests with coverage
-      run: |
-        pytest tests/ src/aurum/tests/ \
-          --cov=src/ \
-          --cov-report=html \
-          --cov-report=xml \
-          --cov-report=term-missing \
-          --junitxml=junit.xml \
-          -v
-        echo "✅ Unit tests completed"
+    - name: Run CI test suite
+      run: make ci-test
 
     - name: Upload coverage to Codecov
       uses: codecov/codecov-action@v3
@@ -162,10 +154,7 @@ jobs:
     - name: Run integration tests
       env:
         AURUM_APP_DB_DSN: postgresql://aurum:aurum@localhost:5432/aurum_integration
-      run: |
-        # Run the integration tests we created
-        python -m pytest tests/integration/ -v
-        echo "✅ Integration tests completed"
+      run: make integration-test
 
   performance-tests:
     runs-on: ubuntu-latest

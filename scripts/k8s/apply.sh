@@ -24,7 +24,37 @@ kubectl -n aurum-dev delete statefulset kafka --ignore-not-found >/dev/null
 kubectl -n aurum-dev delete service kafka --ignore-not-found >/dev/null
 kubectl -n aurum-dev delete service kafka-headless --ignore-not-found >/dev/null
 
-kubectl apply -k "${ROOT_DIR}/k8s/dev"
+# Resolve kustomize with --enable-helm support, downloading v5 if needed
+KUSTOMIZE_BIN=""
+if command -v kustomize >/dev/null 2>&1; then
+  KUSTOMIZE_BIN="$(command -v kustomize)"
+else
+  KUSTOMIZE_BIN="${ROOT_DIR}/.bin/kustomize"
+  if [[ ! -x "${KUSTOMIZE_BIN}" ]]; then
+    mkdir -p "${ROOT_DIR}/.bin"
+    echo "kustomize not found; downloading v5 binary locally..."
+    OS="$(uname -s | tr '[:upper:]' '[:lower:]')"
+    ARCH_RAW="$(uname -m)"
+    case "${ARCH_RAW}" in
+      x86_64) ARCH=amd64 ;;
+      arm64|aarch64) ARCH=arm64 ;;
+      *) echo "Unsupported arch: ${ARCH_RAW}" >&2; exit 1 ;;
+    esac
+    VERSION="v5.4.2"
+    TARBALL="kustomize_${VERSION}_${OS}_${ARCH}.tar.gz"
+    URL="https://github.com/kubernetes-sigs/kustomize/releases/download/kustomize%2F${VERSION}/${TARBALL}"
+    TMPDIR="$(mktemp -d)"
+    trap 'rm -rf "${TMPDIR}"' EXIT
+    if ! curl -fsSL "${URL}" -o "${TMPDIR}/${TARBALL}"; then
+      echo "Failed to download kustomize from ${URL}" >&2
+      exit 1
+    fi
+    tar -xzf "${TMPDIR}/${TARBALL}" -C "${TMPDIR}" kustomize
+    install -m 0755 "${TMPDIR}/kustomize" "${KUSTOMIZE_BIN}"
+  fi
+fi
+
+"${KUSTOMIZE_BIN}" build --enable-helm --load-restrictor=LoadRestrictionsNone "${ROOT_DIR}/k8s/dev" | kubectl apply -f -
 
 kubectl -n aurum-dev wait --for=condition=available --timeout=180s deployment/minio deployment/redis deployment/schema-registry deployment/nessie deployment/lakefs deployment/trino deployment/airflow-webserver deployment/airflow-scheduler deployment/traefik deployment/vault deployment/vault-agent-injector
 kubectl -n aurum-dev wait --for=condition=ready --timeout=240s pod -l app=postgres

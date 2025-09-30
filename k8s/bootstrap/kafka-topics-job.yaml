@@ -1,0 +1,46 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: kafka-topics-config
+  namespace: aurum-dev
+data:
+  kafka_topics.kind.json: |
+    {{KAFKA_TOPICS_JSON}}
+  manage_topics.py: |
+{{MANAGE_TOPICS_PY}}
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: kafka-topics-apply
+  namespace: aurum-dev
+spec:
+  backoffLimit: 0
+  template:
+    spec:
+      restartPolicy: Never
+      containers:
+        - name: topics
+          image: python:3.11-slim
+          env:
+            - name: PYTHONDONTWRITEBYTECODE
+              value: "1"
+          command: ["/bin/sh", "-c"]
+          args:
+            - |
+              set -e
+              pip install --no-cache-dir confluent-kafka[avro]==2.11.1 fastavro || pip install --no-cache-dir confluent-kafka fastavro;
+              python /work/manage_topics.py --bootstrap-servers kafka:9092 --config /work/kafka_topics.kind.json --timeout 20 --skip-acls || true
+          volumeMounts:
+            - name: work
+              mountPath: /work
+      volumes:
+        - name: work
+          configMap:
+            name: kafka-topics-config
+            items:
+              - key: kafka_topics.kind.json
+                path: kafka_topics.kind.json
+              - key: manage_topics.py
+                path: manage_topics.py
+

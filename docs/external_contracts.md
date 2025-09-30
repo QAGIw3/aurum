@@ -32,9 +32,17 @@ Two Kafka topics back the contracts:
 | `aurum.ext.timeseries.obs.v1` | 12 (6 in kind) | 60 days | delete | `kafka/schemas/ExtTimeseriesObsV1.avsc` |
 | `aurum.ext.series_catalog.upsert.v1` | 6 (3 in kind) | compact | compact | `kafka/schemas/ExtSeriesCatalogUpsertV1.avsc` |
 
+Additional streams follow the same Avro contracts:
+
+- Incremental replay: `aurum.ext.series_catalog.upsert.incremental.v1`, `aurum.ext.timeseries.obs.incremental.v1`
+- Historical backfill: `aurum.ext.series_catalog.upsert.backfill.v1`, `aurum.ext.timeseries.obs.backfill.v1`
+- DLQ mirroring (`ingest.error.v1.avsc` envelope): `aurum.ext.series_catalog.upsert.dlq.v1`, `aurum.ext.timeseries.obs.dlq.v1`
+
 The schemas are registered in `kafka/schemas/subjects.json` and covered by tests in `tests/kafka/test_schemas.py`, including snapshot-based backward compatibility guards and round-trip validation via `fastavro`.
 
 Messages on both topics should use a compound Kafka key of `provider|series_id` to guarantee stable partitioning and idempotent upserts. Observations include `ts` and `asof_date` in the value payload; the Iceberg merge logic enforces uniqueness on those columns.
+
+`src/aurum/external_contracts/publisher.py` exposes a small `ExternalContractsPublisher` helper that wraps the incremental collectors and emits to the canonical topics. Consumers materialize the payloads via `TrinoExternalContractsConsumer` (`src/aurum/external_contracts/merge.py`), which renders the merge SQL and executes it against the Iceberg catalog.
 
 ### Trino catalog defaults
 
@@ -63,6 +71,13 @@ Re-apply the DDLs after updating the Airflow charts to ensure hypertables pick u
 ```
 
 The script reads the merge templates, injects fixture payloads, and prints confirmation queries.
+
+## Orchestration & observability
+
+- The `external_contracts_ingestion` Airflow DAG publishes Kafka payloads per provider, runs the Trino merge jobs, and updates Postgres watermarks.
+- Lineage is declared via dataset URIs such as `dataset://aurum/triggers/external/eia/incremental_ready` and `dataset://aurum/warehouse/external/eia/timeseries_observation` using helpers from `aurum.airflow_utils.datasets`.
+- Metrics emitted during each run include `aurum_external_contract_publish_total` (status per provider) and `aurum_external_contract_merge_records_total` (records merged per table).
+- Watermark updates feed observability dashboards via `aurum_external_data_freshness_hours` and the `aurum.db.watermark` helpers.
 
 ## CI & automation
 

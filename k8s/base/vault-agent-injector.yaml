@@ -124,11 +124,9 @@ spec:
             - -listen=:8443
             - -tls-cert-file=/tls/tls.crt
             - -tls-key-file=/tls/tls.key
-            - -tls-ca-cert-file=/tls/ca.crt
-            - -vault-addr=http://vault.aurum-dev.svc.cluster.local:8200
+            - -vault-address=http://vault.aurum-dev.svc.cluster.local:8200
             - -config=/config/config.hcl
-            - -namespace=aurum-dev
-            - -default-to-host-network=false
+            # Removed deprecated/unsupported flags for this version
           ports:
             - containerPort: 8443
               name: https

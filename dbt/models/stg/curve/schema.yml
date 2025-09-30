@@ -5,10 +5,14 @@ models:
   tests:
   - unique_combination:
       combination_of_columns:
+      - tenant_id
       - curve_key
       - tenor_label
       - _ingest_ts
   columns:
+  - name: tenant_id
+    tests:
+    - not_null
   - name: asset_class
     description: Asset class emitted by the upstream ingestion feed.
     tests:
@@ -76,10 +80,14 @@ models:
   tests:
   - unique_combination:
       combination_of_columns:
+      - tenant_id
       - curve_key
       - tenor_label
       - _ingest_ts
   columns:
+  - name: tenant_id
+    tests:
+    - not_null
   - name: curve_key
     tests:
     - not_null
@@ -95,10 +103,14 @@ models:
   tests:
   - unique_combination:
       combination_of_columns:
+      - tenant_id
       - curve_key
       - tenor_label
       - asof_date
   columns:
+  - name: tenant_id
+    tests:
+    - not_null
   - name: curve_key
     tests:
     - not_null

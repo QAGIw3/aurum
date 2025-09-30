@@ -33,6 +33,7 @@ New to Aurum? Start here:
 - **[Generated API Docs](api/api-docs.md)** - Auto-generated API reference
 - **[API Authentication](auth/api-auth.md)** - Authentication and authorization setup
 - **[Pagination Guide](pagination.md)** - Working with paginated APIs
+- **[Migration Guide: v1 → v2](api/migration-v1-to-v2.md)** - Steps to migrate from v1
 
 ### External Data Integration
 - **[External Data Architecture](external-data.md)** - Economic data ingestion system design
@@ -72,6 +73,7 @@ New to Aurum? Start here:
 - **[SRE Index](sre/README.md)** - Paging policy, on-call, chaos drills
 - **[Paging Policy](sre/paging-policy.md)** - When/what/how we page
 - **[API On-call](runbooks/api-oncall-runbook.md)** - API incident response
+- **[API Cache Management](runbooks/api-cache-management.md)** - Clear caches by tenant/scope
 - **[Airflow On-call](runbooks/airflow-oncall-runbook.md)** - Scheduler/workers incidents
 - **[Kafka On-call](runbooks/kafka-oncall-runbook.md)** - Broker/consumer/lag incidents
 - **[Trino On-call](runbooks/trino-oncall-runbook.md)** - Query pool/worker incidents

@@ -22,12 +22,13 @@ _LIGHTWEIGHT_ROUTER_CACHE: dict[str, APIRouter] = {}
 
 _V1_DEPRECATION_HEADERS: Mapping[str, str] = {
     "Deprecation": "true",
-    "Sunset": "Wed, 31 Dec 2025 23:59:59 GMT",
-    "Link": '<https://docs.aurum.dev/api/migration-guide#v2>; rel="deprecation"; type="text/html"',
-    "Warning": '299 aurum "API v1 is deprecated; migrate to /v2 before 2025-12-31"',
+    # Sunset in ~30 days from ADR acceptance (2025-09-30 → 2025-10-30)
+    "Sunset": "Thu, 30 Oct 2025 23:59:59 GMT",
+    "Link": '<https://docs.aurum.dev/api/migration-v1-to-v2>; rel="deprecation"; type="text/html"',
+    "Warning": '299 aurum "API v1 is deprecated; migrate to /v2 before 2025-10-30"',
     "X-API-Version": "v1",
     "X-API-Lifecycle": "deprecated",
-    "X-API-Migration-Guide": "https://docs.aurum.dev/api/migration-guide",
+    "X-API-Migration-Guide": "https://docs.aurum.dev/api/migration-v1-to-v2",
 }
 
 
@@ -134,6 +135,12 @@ def _ensure_v1_deprecation(router: APIRouter) -> APIRouter:
 
 def get_v1_router_specs(_settings: AurumSettings) -> list[RouterSpec]:
     """Return the list of v1 routers to include for the given settings."""
+    # Short-circuit when v2-only is enabled
+    try:
+        if getattr(_settings, "enable_v2_only", False):
+            return []
+    except Exception:
+        pass
     seen: set[str] = set()
     specs: list[RouterSpec] = []
 
@@ -141,8 +148,10 @@ def get_v1_router_specs(_settings: AurumSettings) -> list[RouterSpec]:
     specs.extend(_build_specs((curves_module,), seen=seen))
 
     mandatory_modules = (
+        "aurum.api.v1.catalog",
         "aurum.api.v1.scenarios",
         "aurum.api.v1.metadata",
+        "aurum.api.v1.search",
         "aurum.api.v1.ppa",
         "aurum.api.v1.model_registry",
         "aurum.api.v1.notifications",

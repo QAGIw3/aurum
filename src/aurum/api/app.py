@@ -723,6 +723,14 @@ class ApplicationFactory:
         app.state.container = container
         tenant_manager, tenant_context_options = _initialize_tenant_manager(settings, container)
         app.state.tenant_manager = tenant_manager
+
+        token_service = _initialize_token_service(app, settings)
+
+        # Initialize token service before middleware setup
+        token_service = _initialize_token_service(app, settings)
+        # Initialize token service for legacy app path (used by middleware manager)
+        token_service = _initialize_token_service(app, settings)
+        token_service = _initialize_token_service(app, settings)
         token_service = _initialize_token_service(app, settings)
 
         # Initialize feature flag manager
@@ -836,7 +844,11 @@ class ApplicationFactory:
         app.state.container = container
         tenant_manager, tenant_context_options = _initialize_tenant_manager(settings, container)
         app.state.tenant_manager = tenant_manager
-
+        try:
+            token_service = _initialize_token_service(app, settings)
+        except Exception as exc:  # pragma: no cover - ensure API still boots in dev
+            logger.warning("Failed to initialize token service", exc_info=exc)
+            token_service = None
         # Initialize feature flag manager
         try:
             from aurum.api.features import initialize_feature_flags

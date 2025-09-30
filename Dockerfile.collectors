@@ -14,12 +14,24 @@ FROM base AS builder
 
 ENV VIRTUAL_ENV=/opt/venv
 
+# --- Added geospatial build deps for rasterio/pyproj ---
 RUN apt-get update \
-    && apt-get install --no-install-recommends -y build-essential curl \
+    && apt-get install --no-install-recommends -y \
+       build-essential \
+       curl \
+       gdal-bin \
+       libgdal-dev \
+       libproj-dev \
+       proj-bin \
+       libspatialindex-dev \
     && rm -rf /var/lib/apt/lists/*
 
 RUN python -m venv "$VIRTUAL_ENV"
 ENV PATH="$VIRTUAL_ENV/bin:$PATH"
+
+# Ensure GDAL env for wheels that need it
+ENV GDAL_CONFIG=/usr/bin/gdal-config \
+    GDAL_VERSION=3.10.3
 
 WORKDIR /build
 COPY pyproject.toml README.md ./
@@ -27,7 +39,7 @@ COPY src ./src
 
 RUN --mount=type=cache,target=/root/.cache/pip \
     pip install --upgrade pip setuptools wheel \
-    && pip install .[ingest,api]
+    && pip install .
 
 FROM base AS runtime
 
@@ -38,8 +50,15 @@ ENV PATH="/opt/venv/bin:$PATH" \
     PYTHONPATH=/app/src \
     AURUM_SCHEMA_DIR=/app/kafka/schemas
 
+# --- Runtime geospatial libs ---
 RUN apt-get update \
-    && apt-get install --no-install-recommends -y curl \
+    && apt-get install --no-install-recommends -y \
+       curl \
+       gdal-bin \
+       libgdal-dev \
+       libproj-dev \
+       proj-bin \
+       libspatialindex-dev \
     && rm -rf /var/lib/apt/lists/*
 
 RUN groupadd --system aurum \

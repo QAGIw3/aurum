@@ -503,4 +503,3 @@ def _build_checkpoint_store() -> PostgresCheckpointStore:
         os.getenv("AURUM_APP_DB_DSN", "postgresql://aurum:aurum@postgres:5432/aurum"),
     )
     return PostgresCheckpointStore(dsn=dsn)
-

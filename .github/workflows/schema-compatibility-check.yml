@@ -75,7 +75,7 @@ jobs:
     - name: Install dependencies
       run: |
         python -m pip install --upgrade pip
-        pip install confluent-kafka avro-python3 requests pydantic
+        pip install confluent-kafka avro-python3 requests pydantic pyyaml
 
     - name: Get changed schema files
       id: changed-files
@@ -97,10 +97,13 @@ jobs:
           "
         done
 
-    - name: Check schema compatibility
+    - name: Validate schema contracts
       run: |
-        echo "Checking schema compatibility..."
-        python scripts/ci/validate_schema_compatibility.py
+        echo "Validating schema catalogue against contracts.yml..."
+        python scripts/kafka/register_schemas.py \
+          --contracts-file kafka/schemas/contracts.yml \
+          --subjects-file kafka/schemas/subjects.json \
+          --validate-only
 
     - name: Test schema registration
       run: |

@@ -35,6 +35,30 @@ subjects:
   schema: ExtTimeseriesObsV1.avsc
   topic: aurum.ext.timeseries.obs.v1
   compatibility: BACKWARD
+- subject: aurum.ext.series_catalog.upsert.incremental.v1-value
+  schema: ExtSeriesCatalogUpsertV1.avsc
+  topic: aurum.ext.series_catalog.upsert.incremental.v1
+  compatibility: BACKWARD
+- subject: aurum.ext.timeseries.obs.incremental.v1-value
+  schema: ExtTimeseriesObsV1.avsc
+  topic: aurum.ext.timeseries.obs.incremental.v1
+  compatibility: BACKWARD
+- subject: aurum.ext.series_catalog.upsert.backfill.v1-value
+  schema: ExtSeriesCatalogUpsertV1.avsc
+  topic: aurum.ext.series_catalog.upsert.backfill.v1
+  compatibility: BACKWARD
+- subject: aurum.ext.timeseries.obs.backfill.v1-value
+  schema: ExtTimeseriesObsV1.avsc
+  topic: aurum.ext.timeseries.obs.backfill.v1
+  compatibility: BACKWARD
+- subject: aurum.ext.series_catalog.upsert.dlq.v1-value
+  schema: ingest.error.v1.avsc
+  topic: aurum.ext.series_catalog.upsert.dlq.v1
+  compatibility: BACKWARD
+- subject: aurum.ext.timeseries.obs.dlq.v1-value
+  schema: ingest.error.v1.avsc
+  topic: aurum.ext.timeseries.obs.dlq.v1
+  compatibility: BACKWARD
 - subject: aurum.ingest.error.v1
   schema: ingest.error.v1.avsc
   topic: aurum.ingest.error.v1

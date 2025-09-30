@@ -18,18 +18,15 @@ import time
 from typing import Any, AsyncIterator, Dict, List, Optional
 from uuid import uuid4
 
-from fastapi import APIRouter, HTTPException, Query, Request, Response, Depends
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
-from ..deps import get_settings, get_unified_cache_manager_dep
-from ..container import provide_service
-from ..contracts import CacheDirective, CurvesQuery, ServiceCallContext, Pagination
+from ..deps import get_settings
+from libs.services.curves_service import CurvesService
+from ..http import respond_with_etag, deprecation_warning_headers, csv_response
 from ..services import CurvesService
 from aurum.core import AurumSettings
-from ..cache.consolidated_manager import get_unified_cache_manager
-from ..cache.enhanced_cache_manager import CacheNamespace
-from ..http import respond_with_etag, deprecation_warning_headers, csv_response
 from .pagination import (
     resolve_pagination,
     build_next_cursor,
@@ -65,23 +62,13 @@ async def get_curves_v2(
     cursor: Optional[str] = Query(None, description="Cursor for pagination"),
     limit: int = Query(10, ge=1, le=100, description="Maximum number of items to return"),
     name_filter: Optional[str] = Query(None, description="Filter by curve name"),
+    debug: bool = Query(False, description="Include backend debug metadata"),
     settings: AurumSettings = Depends(get_settings),
-    cache_manager = Depends(get_unified_cache_manager_dep),
 ) -> CurveListResponse:
     """List curves with enhanced pagination and error handling."""
     start_time = time.perf_counter()
 
     try:
-        # Touch DI (ensures wiring is valid; no behavior change)
-        if cache_manager is not None:
-            pass
-        if settings:
-            pass
-
-        service = await provide_service(CurvesService)()  # resolve via DI
-        if service is None:
-            raise HTTPException(status_code=503, detail="CurvesService unavailable")
-
         query_filters = {"name_filter": name_filter}
         offset, effective_limit = resolve_pagination(
             cursor=cursor,
@@ -90,12 +77,14 @@ async def get_curves_v2(
             filters=query_filters,
         )
 
-        result = await service.query_data(
-            filters={"name_filter": name_filter},
-            pagination=Pagination(limit=effective_limit, offset=offset),
-            context=ServiceCallContext(cache_directive=CacheDirective(namespace="curves", ttl_seconds=settings.api.cache.curve_ttl if settings.api.cache else 120)),
+        service = CurvesService()
+        curves, debug_meta = await service.list_curves(
+            tenant_id=tenant_id,
+            offset=offset,
+            limit=effective_limit,
+            name_filter=name_filter,
+            include_debug=debug,
         )
-        curves = result.data
 
         # Compute pagination cursors and envelope
         has_more = len(curves) == effective_limit
@@ -142,7 +131,17 @@ async def get_curves_v2(
             "request_id": get_request_id(),
             "returned_count": len(curves),
             "processing_time_ms": round(duration_ms, 2),
+            "tenant_id": tenant_id,
         })
+
+        if debug and debug_meta:
+            debug_payload = {
+                key: debug_meta.get(key)
+                for key in ("backend", "query_id", "pool_metrics", "pool_size")
+                if key in debug_meta
+            }
+            if debug_payload:
+                meta_out["debug"] = debug_payload
 
         result = CurveListResponse(
             data=curve_responses,

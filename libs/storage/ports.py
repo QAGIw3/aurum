@@ -135,6 +135,29 @@ class ReadOnlyRepository(ABC):
     ) -> List[Dict[str, Any]]:
         """Execute raw query and return results."""
         pass
+
+
+class CacheRepository(ABC):
+    """Abstract repository for cache operations (e.g., Redis).
+
+    Provides a minimal, storage-agnostic interface so services can cache results
+    without coupling to a specific client library or key strategy.
+    """
+
+    @abstractmethod
+    async def get(self, key: str) -> Optional[Any]:
+        """Get value by key, or None if missing."""
+        pass
+
+    @abstractmethod
+    async def set(self, key: str, value: Any, *, ttl_seconds: Optional[int] = None) -> bool:
+        """Set value by key with optional TTL in seconds."""
+        pass
+
+    @abstractmethod
+    async def invalidate(self, key_or_pattern: str) -> int:
+        """Invalidate a single key or keys matching a pattern. Returns number invalidated."""
+        pass
     
     @abstractmethod
     async def get_time_series(

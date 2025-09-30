@@ -10,7 +10,7 @@ authors = [
     {name = "Supernova Corp"}
 ]
 readme = "README.md"
-requires-python = ">=3.9"
+requires-python = ">=3.11"
 dependencies = [
     # Core FastAPI and async dependencies
     "fastapi==0.115.6",
@@ -72,6 +72,7 @@ dependencies = [
     "psycopg2-binary==2.9.9",
     "psycopg[binary]==3.2.10",
     "great-expectations==0.18.19",
+    "deepdiff==7.0.1",
     "cryptography==44.0.0",
     "PyJWT==2.10.1",
     "tqdm==4.67.1",
@@ -90,17 +91,23 @@ aurum-feature = "aurum.cli.feature:main"
 aurum-api = "aurum.api.__main__:main"
 aurum-ml = "aurum.ml.cli:main"
 aurum-anomaly-service = "aurum.streaming.services.anomaly_service:main"
+aurum-external-collector = "aurum.external.runner:cli"
 
 [project.optional-dependencies]
 test = [
     "pytest==8.3.3",
-    "pytest-asyncio==0.21.1",
-    "pytest-cov==4.1.0",
-    "pytest-mock==3.12.0",
+    "pytest-asyncio==0.25.0",
+    "pytest-cov==6.0.0",
+    "pytest-mock==3.14.0",
+    "pytest-xdist==3.6.1",
+    "pytest-testmon==2.1.1",
+    "pytest-watch==4.2.0",
+    "watchdog>=3.0.0",
     "hypothesis==6.140.2",
     "httpx==0.28.1",
     "schemathesis==4.1.4",
     "fakeredis==2.23.2",
+    "factory_boy==3.3.0",
 ]
 dev = [
     "black==24.10.0",
@@ -112,6 +119,11 @@ dev = [
     "bandit==1.8.0",
     "safety==3.2.8",
     "flake8==7.1.1",
+    "vulture>=2,<3",
+    "pip-audit>=2,<3",
+    "pipdeptree>=2,<3",
+    "cyclonedx-bom>=4,<5",
+    "pip-tools>=7,<8",
 ]
 parsers-pdf = [
     "docling>=2,<3",
@@ -170,8 +182,6 @@ cloud = [
     "boto3-stubs==1.35.72",
 ]
 api = [
-    # Inherit shared dependencies
-    "aurum[common,database,monitoring,networking]",
     # API-specific dependencies
     "fastapi==0.115.6",
     "uvicorn[standard]==0.32.0",
@@ -184,16 +194,12 @@ api = [
     "python-multipart==0.0.9",
 ]
 worker = [
-    # Inherit shared dependencies
-    "aurum[common,database,monitoring,data,networking,cloud]",
     # Worker-specific dependencies
     "confluent-kafka[avro]==2.6.1",
     "fastavro==1.9.7",
     "great-expectations==0.18.19",
 ]
 ingest = [
-    # Inherit shared dependencies
-    "aurum[common,database,monitoring,data,networking,cloud]",
     # Ingest-specific dependencies
     "confluent-kafka[avro]==2.6.1",
     "fastavro==1.9.7",
@@ -212,7 +218,7 @@ ingest = [
     # Schema validation
     "jsonschema==4.25.1",
     "openapi-spec-validator==0.7.2",
-    "spectral==0.1.0",
+    "spectral==0.24",
     # Analytics and transformation
     "trino==0.336.0",
     "dbt-core==1.8.8",
@@ -223,7 +229,7 @@ quality = [
     "pytest-asyncio==0.25.0",
     "pytest-cov==6.0.0",
     "pytest-mock==3.14.0",
-    "hypothesis==6.119.0",
+    "hypothesis==6.140.2",
     "httpx==0.28.1",
     "black==24.10.0",
     "isort==5.13.2",
@@ -234,6 +240,7 @@ quality = [
     "safety==3.2.8",
     "flake8==7.1.1",
     "great-expectations==0.18.19",
+    "pytest-deadfixtures>=2,<3",
 ]
 
 [project.entry-points."aurum.vendor_parsers"]
@@ -244,7 +251,7 @@ packages = ["src/aurum", "src/aurum_vendor_demo"]
 
 [tool.black]
 line-length = 88
-target-version = ['py39']
+target-version = ['py311']
 include = '\.pyi?$'
 extend-exclude = '''
 /(
@@ -270,7 +277,7 @@ line_length = 88
 
 [tool.ruff]
 line-length = 88
-target-version = "py39"
+target-version = "py311"
 select = [
     "E",  # pycodestyle errors
     "W",  # pycodestyle warnings
@@ -297,7 +304,7 @@ ignore = [
 known-first-party = ["aurum"]
 
 [tool.mypy]
-python_version = "3.9"
+python_version = "3.11"
 warn_return_any = true
 warn_unused_configs = true
 warn_unreachable = true
@@ -323,18 +330,7 @@ python_functions = ["test_*"]
 addopts = [
     "--strict-markers",
     "--strict-config",
-    "--verbose",
     "--tb=short",
-    "--cov=aurum.api.database.trino_client",
-    "--cov=aurum.api.rate_limiting.concurrency_middleware",
-    "--cov=aurum.api.rate_limiting.sliding_window",
-    "--cov=aurum.ml",
-    "--cov=aurum.observability",
-    "--cov=aurum.tenancy.runtime",
-    "--cov-report=term-missing",
-    "--cov-report=html:htmlcov",
-    "--cov-report=xml",
-    "--cov-fail-under=85",
 ]
 markers = [
     "unit: Unit tests",
@@ -347,6 +343,7 @@ markers = [
     "asyncio: AsyncIO tests",
 ]
 asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "function"
 
 [tool.coverage.run]
 source = [

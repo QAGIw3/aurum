@@ -281,6 +281,24 @@ if PROMETHEUS_AVAILABLE:  # pragma: no branch - simplify instrumentation when av
             "External data quality score",
             ["provider", "dataset", "metric"],
         )
+    existing = _existing_collector("aurum_external_contract_publish_total")
+    if existing is not None:
+        EXTERNAL_CONTRACT_PUBLISH = existing  # type: ignore[assignment]
+    else:
+        EXTERNAL_CONTRACT_PUBLISH = Counter(
+            "aurum_external_contract_publish_total",
+            "External contract publish attempts by provider",
+            ["provider", "status"],
+        )
+    existing = _existing_collector("aurum_external_contract_merge_records_total")
+    if existing is not None:
+        EXTERNAL_CONTRACT_MERGE = existing  # type: ignore[assignment]
+    else:
+        EXTERNAL_CONTRACT_MERGE = Counter(
+            "aurum_external_contract_merge_records_total",
+            "External contract records merged into Iceberg",
+            ["provider", "target"],
+        )
 else:  # pragma: no cover - Prometheus not installed
     REQUEST_COUNTER = REQUEST_LATENCY = None  # type: ignore[assignment]
     TILE_CACHE_COUNTER = TILE_FETCH_LATENCY = None  # type: ignore[assignment]
@@ -319,6 +337,8 @@ else:  # pragma: no cover - Prometheus not installed
         "Number of active worker tasks",
         ["worker_type", "task_type"],
     )
+    EXTERNAL_CONTRACT_PUBLISH = None  # type: ignore[assignment]
+    EXTERNAL_CONTRACT_MERGE = None  # type: ignore[assignment]
     WORKER_TASK_DURATION = Histogram(
         "aurum_worker_task_duration_seconds",
         "Worker task duration",
@@ -1966,6 +1986,8 @@ __all__ = [
     "EXTERNAL_PIPELINE_SLA_VIOLATIONS",
     "EXTERNAL_DATA_FRESHNESS",
     "EXTERNAL_DATA_QUALITY_SCORE",
+    "record_external_contract_publish",
+    "record_external_contract_merge",
     # Rate limiting metrics
     "RATE_LIMIT_REQUESTS",
     "RATE_LIMIT_REJECTED",
@@ -2302,4 +2324,24 @@ def record_external_api_request(endpoint: str, status: str, duration_seconds: fl
         if EXTERNAL_API_LATENCY is not None:
             EXTERNAL_API_LATENCY.labels(endpoint=endpoint).observe(duration_seconds)
     except Exception:
+        pass
+
+
+def record_external_contract_publish(provider: str, status: str) -> None:
+    """Increment the external contract publish counter for ``provider``."""
+
+    try:
+        if EXTERNAL_CONTRACT_PUBLISH is not None:
+            EXTERNAL_CONTRACT_PUBLISH.labels(provider=provider, status=status).inc()
+    except Exception:  # pragma: no cover - metrics optional
+        pass
+
+
+def record_external_contract_merge(provider: str, target: str, records: int) -> None:
+    """Record the number of records merged for ``provider`` into ``target``."""
+
+    try:
+        if EXTERNAL_CONTRACT_MERGE is not None:
+            EXTERNAL_CONTRACT_MERGE.labels(provider=provider, target=target).inc(records)
+    except Exception:  # pragma: no cover - metrics optional
         pass

@@ -2,6 +2,7 @@
 
 CREATE OR REPLACE VIEW iceberg.market.curves_latest AS
 SELECT
+    tenant_id,
     curve_key,
     tenor_label,
     tenor_type,

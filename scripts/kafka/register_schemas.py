@@ -41,6 +41,24 @@ ALLOWED_COMPATIBILITY_LEVELS = {
 }
 
 
+@dataclass(frozen=True)
+class ContractSubject:
+    """Definition of a subject as described in contracts.yml."""
+
+    schema: str
+    topic: str
+    compatibility: str | None = None
+
+
+@dataclass(frozen=True)
+class ContractCatalogue:
+    """Loaded contract catalogue with defaults and per-subject metadata."""
+
+    subjects: dict[str, ContractSubject]
+    default_compatibility: str
+    subject_pattern: re.Pattern[str]
+
+
 class SchemaRegistryError(RuntimeError):
     """Raised when a schema registry operation fails."""
 
@@ -114,6 +132,8 @@ class ValidatedSubject:
     schema_path: Path
     schema: dict
     contract: SchemaContract
+    topic: str
+    compatibility: str
 
 
 SCHEMA_CONTRACTS: tuple[SchemaContract, ...] = (
@@ -179,6 +199,8 @@ SCHEMA_CONTRACTS: tuple[SchemaContract, ...] = (
         subject_patterns=(
             re.compile(r"^aurum\.ingest\.error\.v\d+(?:-(?:key|value))?$"),
             re.compile(r"^aurum\.ref\.eia\.series\.dlq\.v\d+(?:-(?:key|value))?$"),
+            re.compile(r"^aurum\.ext\.series_catalog\.upsert\.dlq\.v\d+(?:-(?:key|value))?$"),
+            re.compile(r"^aurum\.ext\.timeseries\.obs\.dlq\.v\d+(?:-(?:key|value))?$"),
         ),
         required_fields=frozenset({"source", "error_message", "severity", "ingest_ts"}),
     ),
@@ -290,9 +312,13 @@ __all__ = [
     "SchemaRegistryError",
     "SchemaContract",
     "ValidatedSubject",
+    "ContractSubject",
+    "ContractCatalogue",
     "SCHEMA_CONTRACTS",
     "normalize_compatibility",
     "validate_subject_name",
+    "infer_topic_from_subject",
+    "subject_matches_topic",
     "find_contract_for_schema",
     "enforce_contract",
     "validate_contracts",
@@ -317,7 +343,7 @@ def load_subject_mapping(path: Path) -> dict[str, str]:
     return {str(subject): str(schema) for subject, schema in mapping.items()}
 
 
-def load_contract_subjects(path: Path) -> dict[str, str]:
+def load_contract_subjects(path: Path) -> ContractCatalogue:
     try:
         import yaml
     except ImportError as exc:  # pragma: no cover - only hit if PyYAML missing at runtime
@@ -333,25 +359,63 @@ def load_contract_subjects(path: Path) -> dict[str, str]:
     if not isinstance(raw, dict):
         raise SchemaRegistryError(f"Contracts file must be a mapping, got {type(raw).__name__}")
 
+    defaults = raw.get("defaults") or {}
+    if not isinstance(defaults, dict):
+        raise SchemaRegistryError("'defaults' section in contracts file must be a mapping")
+
+    default_compatibility = normalize_compatibility(
+        str(defaults.get("compatibility", "BACKWARD"))
+    )
+
+    naming = defaults.get("naming") or {}
+    if naming and not isinstance(naming, dict):
+        raise SchemaRegistryError("'naming' defaults must be a mapping")
+    pattern = naming.get("pattern") if isinstance(naming, dict) else None
+    if isinstance(pattern, str) and pattern:
+        try:
+            subject_pattern = re.compile(pattern)
+        except re.error as exc:
+            raise SchemaRegistryError(f"Invalid naming pattern in contracts file: {exc}") from exc
+    else:
+        subject_pattern = SUBJECT_NAME_RE
+
     subjects = raw.get("subjects")
     if not isinstance(subjects, list):
         raise SchemaRegistryError("Contracts file missing 'subjects' list")
 
-    mapping: dict[str, str] = {}
+    mapping: dict[str, ContractSubject] = {}
     for entry in subjects:
         if not isinstance(entry, dict):
             raise SchemaRegistryError("Contract entry must be a mapping")
         subject = entry.get("subject")
         schema = entry.get("schema")
-        if not subject or not schema:
+        topic = entry.get("topic")
+        if not subject or not schema or not topic:
             raise SchemaRegistryError(f"Invalid contract entry: {entry}")
         subject = str(subject)
         schema = str(schema)
+        topic = str(topic)
         if subject in mapping:
             raise SchemaRegistryError(f"Duplicate subject '{subject}' in contracts file")
-        mapping[subject] = schema
 
-    return mapping
+        raw_compat = entry.get("compatibility")
+        compatibility = (
+            normalize_compatibility(str(raw_compat))
+            if raw_compat is not None
+            else None
+        )
+
+        mapping[subject] = ContractSubject(
+            schema=schema,
+            topic=topic,
+            compatibility=compatibility,
+        )
+
+    return ContractCatalogue(
+        subjects=mapping,
+        default_compatibility=default_compatibility,
+        subject_pattern=subject_pattern,
+    )
 
 
 def load_schema(schema_root: Path, relative_path: str) -> dict:
@@ -397,6 +461,16 @@ def validate_subject_name(subject: str) -> None:
         raise SchemaRegistryError(
             f"Subject '{subject}' does not match required pattern {SUBJECT_NAME_RE.pattern}"
         )
+
+
+def infer_topic_from_subject(subject: str) -> str:
+    if subject.endswith("-value") or subject.endswith("-key"):
+        return subject.rsplit("-", 1)[0]
+    return subject
+
+
+def subject_matches_topic(subject: str, topic: str) -> bool:
+    return infer_topic_from_subject(subject) == topic
 
 
 def _schema_name_from_path(schema_path: Path) -> str:
@@ -455,23 +529,42 @@ def enforce_contract(
 
 
 def validate_contracts(
-    subjects: Mapping[str, str],
+    subjects: Mapping[str, ContractSubject],
     schema_root: Path,
-    compatibility: str,
+    default_compatibility: str,
+    *,
+    subject_pattern: re.Pattern[str] | None = None,
 ) -> dict[str, ValidatedSubject]:
     errors: list[str] = []
     validated: dict[str, ValidatedSubject] = {}
 
-    for subject, schema_file in sorted(subjects.items()):
+    normalized_default = normalize_compatibility(default_compatibility)
+
+    for subject, definition in sorted(subjects.items()):
         try:
-            validate_subject_name(subject)
+            if subject_pattern is not None:
+                if not subject_pattern.fullmatch(subject):
+                    raise SchemaRegistryError(
+                        f"Subject '{subject}' does not match required pattern {subject_pattern.pattern}"
+                    )
+            else:
+                validate_subject_name(subject)
         except SchemaRegistryError as exc:
             errors.append(f"{subject}: {exc}")
             continue
 
-        schema_path = (schema_root / schema_file).resolve()
+        if not definition.topic:
+            errors.append(f"{subject}: Contract topic missing")
+            continue
+        if not subject_matches_topic(subject, definition.topic):
+            errors.append(
+                f"{subject}: Subject does not align with topic '{definition.topic}'"
+            )
+            continue
+
+        schema_path = (schema_root / definition.schema).resolve()
         try:
-            schema = load_schema(schema_root, schema_file)
+            schema = load_schema(schema_root, definition.schema)
         except SchemaRegistryError as exc:
             errors.append(f"{subject}: {exc}")
             continue
@@ -482,8 +575,10 @@ def validate_contracts(
             errors.append(f"{subject}: {exc}")
             continue
 
+        subject_compatibility = definition.compatibility or normalized_default
+
         try:
-            enforce_contract(subject, schema_path, schema, contract, compatibility)
+            enforce_contract(subject, schema_path, schema, contract, subject_compatibility)
         except SchemaRegistryError as exc:
             errors.append(f"{subject}: {exc}")
             continue
@@ -493,6 +588,8 @@ def validate_contracts(
             schema_path=schema_path,
             schema=schema,
             contract=contract,
+            topic=definition.topic,
+            compatibility=subject_compatibility,
         )
 
     if errors:
@@ -536,9 +633,12 @@ def register_schema(registry_url: str, subject: str, schema: dict, *, session: r
     return int(data.get("id") or data.get("version", -1))
 
 
-def iter_subjects(selected: Iterable[str] | None, available: dict[str, str]) -> dict[str, str]:
+def iter_subjects(
+    selected: Iterable[str] | None,
+    available: Mapping[str, ContractSubject],
+) -> dict[str, ContractSubject]:
     if not selected:
-        return available
+        return dict(available)
     missing = sorted(set(selected) - available.keys())
     if missing:
         raise SchemaRegistryError(f"Unknown subjects requested: {', '.join(missing)}")
@@ -613,28 +713,61 @@ def parse_args(argv: Iterable[str] | None = None) -> argparse.Namespace:
 def main(argv: Iterable[str] | None = None) -> int:
     args = parse_args(argv)
 
-    compatibility = normalize_compatibility(args.compatibility)
+    cli_compatibility = normalize_compatibility(args.compatibility)
 
-    subjects = load_subject_mapping(args.subjects_file)
-    if args.contracts_file:
-        contracts_subjects = load_contract_subjects(args.contracts_file)
-        # Allow JSON mapping to override specific subjects if necessary while surfacing mismatches later.
-        subjects = {**contracts_subjects, **subjects}
+    catalogue = load_contract_subjects(args.contracts_file)
+    if cli_compatibility != catalogue.default_compatibility:
+        raise SchemaRegistryError(
+            "--compatibility flag does not match contracts.yml default compatibility"
+        )
+
+    subjects = dict(catalogue.subjects)
+
+    subject_mapping = load_subject_mapping(args.subjects_file)
+    missing_in_json = sorted(set(subjects) - set(subject_mapping))
+    extra_in_json = sorted(set(subject_mapping) - set(subjects))
+    if missing_in_json or extra_in_json:
+        raise SchemaRegistryError(
+            "subjects.json must match contracts.yml subjects. "
+            f"Missing in JSON: {missing_in_json or '[]'}, extra entries: {extra_in_json or '[]'}"
+        )
+    for subject, schema_file in subject_mapping.items():
+        definition = subjects[subject]
+        if definition.schema != schema_file:
+            raise SchemaRegistryError(
+                f"Subject '{subject}' schema mismatch between subjects.json ({schema_file}) "
+                f"and contracts.yml ({definition.schema})"
+            )
+
     if args.include_eia:
-        subjects.update(load_eia_subjects(args.eia_config))
+        for subject, schema_file in load_eia_subjects(args.eia_config).items():
+            subjects[subject] = ContractSubject(
+                schema=schema_file,
+                topic=infer_topic_from_subject(subject),
+                compatibility=catalogue.default_compatibility,
+            )
+
     selected_subjects = iter_subjects(args.subject, subjects)
 
-    validated = validate_contracts(selected_subjects, args.schema_root, compatibility)
+    validated = validate_contracts(
+        selected_subjects,
+        args.schema_root,
+        catalogue.default_compatibility,
+        subject_pattern=catalogue.subject_pattern,
+    )
 
     if args.validate_only:
-        print(f"Validated {len(validated)} schema contract(s) (compatibility={compatibility})")
+        print(
+            f"Validated {len(validated)} schema contract(s) "
+            f"(default={catalogue.default_compatibility})"
+        )
         return 0
 
     if args.dry_run:
         for subject, details in validated.items():
             print(
-                f"[dry-run] subject={subject} contract={details.contract.name} "
-                f"compatibility={compatibility}"
+                f"[dry-run] subject={subject} topic={details.topic} "
+                f"contract={details.contract.name} compatibility={details.compatibility}"
             )
             print(
                 f"[dry-run] would register {details.schema_path.name} -> {subject}"
@@ -647,7 +780,7 @@ def main(argv: Iterable[str] | None = None) -> int:
         put_compatibility(
             args.schema_registry_url,
             subject,
-            compatibility,
+            details.compatibility,
             session=session,
         )
         version = register_schema(

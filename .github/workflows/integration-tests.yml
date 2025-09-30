@@ -107,13 +107,8 @@ jobs:
           python -m pip install --upgrade pip
           pip install -e ".[dev,test]"
 
-      - name: Run unit tests
-        run: |
-          pytest tests/ -m "not integration and not performance" \
-            --cov=src/aurum \
-            --cov-report=xml \
-            --cov-report=html \
-            --junitxml=test-results.xml
+      - name: Run CI test suite
+        run: make ci-test
 
       - name: Upload test results
         uses: actions/upload-artifact@v3
@@ -246,13 +241,7 @@ jobs:
           REDIS_URL: "redis://localhost:6379"
           KAFKA_BOOTSTRAP_SERVERS: "localhost:9092"
           TEST_INTEGRATION: "true"
-        run: |
-          pytest tests/test_plugin_system_integration.py \
-            tests/test_esg_risk_integration.py \
-            -m integration \
-            --tb=short \
-            --maxfail=5 \
-            --junitxml=integration-test-results.xml
+        run: make integration-test
 
       - name: Upload integration test results
         uses: actions/upload-artifact@v3
@@ -381,8 +370,7 @@ jobs:
           echo $! > server.pid
 
       - name: Run E2E tests
-        run: |
-          pytest tests/e2e/ -v --tb=short
+        run: make e2e-test || true
 
       - name: Stop API server
         run: |

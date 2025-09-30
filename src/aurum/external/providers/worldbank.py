@@ -13,6 +13,7 @@ from ..collect import (
     CheckpointStore,
     ExternalCollector,
     HttpRequest,
+    provider_series_key,
 )
 
 DEFAULT_BASE_URL = "https://api.worldbank.org/v2"
@@ -188,7 +189,7 @@ class WorldBankCollector:
             )
         if not records:
             return 0
-        return self.catalog_collector.emit_records(records)
+        return self.catalog_collector.emit_records(records, key_fn=provider_series_key)
 
     def ingest_observations(self) -> int:
         checkpoints: Dict[str, Optional[Checkpoint]] = {}
@@ -229,7 +230,7 @@ class WorldBankCollector:
                 if current_max is None or ts_dt > current_max:
                     max_timestamps[series_id] = ts_dt
             for records in per_series_records.values():
-                emitted += self.observation_collector.emit_records(records)
+                emitted += self.observation_collector.emit_records(records, key_fn=provider_series_key)
         for series_id, ts in max_timestamps.items():
             self.checkpoint_store.set(
                 Checkpoint(

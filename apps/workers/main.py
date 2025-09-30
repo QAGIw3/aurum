@@ -28,6 +28,14 @@ celery_app.conf.update(
     worker_disable_rate_limits=True,
 )
 
+# Expose module-level 'app' for Celery CLI discovery
+app = celery_app
+
+
+def get_celery_app() -> Celery:
+    """Return the configured Celery application instance."""
+    return celery_app
+
 
 @celery_app.task(bind=True, name="process_scenario")
 def process_scenario_task(self, scenario_id: str, parameters: Dict[str, Any]) -> Dict[str, Any]:

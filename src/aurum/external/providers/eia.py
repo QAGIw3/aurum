@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass, field
+import time
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Callable, Dict, Iterable, Iterator, List, Mapping, Optional, Sequence
@@ -14,6 +15,7 @@ from ..collect import (
     ExternalCollector,
     HttpRequest,
     HttpResponse,
+    provider_series_key,
 )
 
 PROJECT_ROOT = Path(__file__).resolve().parents[4]
@@ -317,7 +319,7 @@ class EiaCollector:
                     records.append(mapped)
         if not records:
             return 0
-        emitted = self.catalog_collector.emit_records(records)
+        emitted = self.catalog_collector.emit_records(records, key_fn=provider_series_key)
         return emitted
 
     def ingest_observations(
@@ -361,7 +363,7 @@ class EiaCollector:
                 batch.append(mapped)
                 per_series_max[series_id] = max(per_series_max.get(series_id, datetime.min.replace(tzinfo=timezone.utc)), ts_dt)
             if batch:
-                emitted += self.observation_collector.emit_records(batch)
+                emitted += self.observation_collector.emit_records(batch, key_fn=provider_series_key)
 
         for series_id, max_ts in per_series_max.items():
             self.checkpoint_store.set(

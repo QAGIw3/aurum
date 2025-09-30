@@ -3,12 +3,13 @@ with ordered as (
     select
         *,
         row_number() over (
-            partition by curve_key, tenor_label
+            partition by tenant_id, curve_key, tenor_label
             order by asof_date desc, _ingest_ts desc
         ) as rn
     from {{ ref('int_curve_monthly') }}
 )
 select
+    tenant_id,
     curve_key,
     tenor_label,
     tenor_type,

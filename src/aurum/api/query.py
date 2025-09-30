@@ -3,7 +3,7 @@ from __future__ import annotations
 """SQL query builders for Aurum data services."""
 
 from datetime import date, datetime, timezone
-from typing import Any, Dict, Iterable, Optional, Union, Tuple, List
+from typing import Any, Dict, Iterable, Optional, Union, Tuple, List, Mapping, Sequence
 import hashlib
 import json
 
@@ -647,6 +647,24 @@ def _literal_for_column(column: str, value: Any) -> str:
     return f"'{safe_val}'"
 
 
+def _escape_like_pattern(value: str) -> str:
+    """Escape user supplied text for safe LIKE pattern usage."""
+
+    return value.replace("\\", "\\\\").replace("%", "%%").replace("_", "__")
+
+
+def _timestamp_literal(value: Any) -> str:
+    """Serialise a Python value into a Trino timestamp literal."""
+
+    if isinstance(value, datetime):
+        iso = value.isoformat(sep=" ", timespec="microseconds")
+    elif isinstance(value, date):
+        iso = datetime(value.year, value.month, value.day).isoformat(sep=" ")
+    else:
+        iso = str(value)
+    return f"TIMESTAMP '{_safe_literal(iso)}'"
+
+
 def build_keyset_clause(
     cursor: Optional[Dict[str, Any]],
     *,
@@ -700,7 +718,8 @@ def build_curve_query(
     descending: bool = False,
 ) -> str:
     limit = max(1, min(limit, MAX_PAGE_SIZE))
-    base = "iceberg.market.curve_observation"
+    base_latest = "iceberg.market.curves_latest"
+    base_asof = "iceberg.market.curves_asof"
     filters: Dict[str, Optional[str]] = {
         "curve_key": curve_key,
         "asset_class": asset_class,
@@ -739,26 +758,21 @@ def build_curve_query(
         if comparison_cursor:
             effective_offset = 0
         return (
-            f"SELECT {select_cols} FROM {base}{where_final}{order_clause} "
+            f"SELECT {select_cols} FROM {base_asof}{where_final}{order_clause} "
             f"LIMIT {limit} OFFSET {effective_offset}"
         )
 
-    inner = (
-        f"SELECT {select_cols}, "
-        "row_number() OVER (PARTITION BY curve_key, tenor_label ORDER BY asof_date DESC, _ingest_ts DESC) rn "
-        f"FROM {base}{where}"
-    )
     keyset_clause = build_keyset_clause(
         comparison_cursor,
-        alias="t",
+        alias="",
         order_columns=ORDER_COLUMNS,
         comparison=comparison,
     )
     if comparison_cursor:
         effective_offset = 0
     return (
-        "SELECT curve_key, tenor_label, tenor_type, contract_month, asof_date, mid, bid, ask, price_type "
-        f"FROM ({inner}) t WHERE rn = 1{keyset_clause}{order_clause} "
+        f"SELECT curve_key, tenor_label, tenor_type, contract_month, asof_date, mid, bid, ask, price_type "
+        f"FROM {base_latest}{where}{keyset_clause}{order_clause} "
         f"LIMIT {limit} OFFSET {effective_offset}"
     )
 
@@ -863,3 +877,305 @@ def build_curve_diff_query(
         "ORDER BY a.curve_key, a.tenor_label, a.contract_month "
         f"LIMIT {limit} OFFSET {effective_offset}"
     )
+
+
+_CATALOG_SELECT_COLUMNS: tuple[str, ...] = (
+    "tenant_id",
+    "provider",
+    "series_id",
+    "dataset_code",
+    "title",
+    "description",
+    "unit_code",
+    "frequency_code",
+    "provider_geo_code",
+    "canonical_region_id",
+    "canonical_region_name",
+    "geography_type",
+    "mapping_status",
+    "status",
+    "category",
+    "source_url",
+    "notes",
+    "start_ts",
+    "end_ts",
+    "last_observation_ts",
+    "asof_date",
+    "tags",
+    "iso_code",
+    "iso_market",
+    "iso_product",
+    "iso_location_type",
+    "iso_location_name",
+    "iso_location_id",
+    "iso_timezone",
+    "iso_interval_minutes",
+    "iso_unit",
+    "iso_subject",
+    "iso_curve_role",
+)
+
+_CATALOG_EQUAL_FILTERS: dict[str, str] = {
+    "provider": "provider",
+    "dataset_code": "dataset_code",
+    "status": "status",
+    "iso_code": "iso_code",
+    "iso_market": "iso_market",
+    "iso_product": "iso_product",
+    "iso_location_type": "iso_location_type",
+    "iso_location_id": "iso_location_id",
+    "canonical_region_id": "canonical_region_id",
+    "geography_type": "geography_type",
+    "category": "category",
+}
+
+_CATALOG_ILIKE_FILTERS: dict[str, str] = {
+    "title": "title",
+    "description": "description",
+    "iso_location_name": "iso_location_name",
+}
+
+_CATALOG_TIME_FILTERS: dict[str, tuple[str, str]] = {
+    "start_ts_from": ("start_ts", ">="),
+    "start_ts_to": ("start_ts", "<="),
+    "end_ts_from": ("end_ts", ">="),
+    "end_ts_to": ("end_ts", "<="),
+    "last_obs_from": ("last_observation_ts", ">="),
+    "last_obs_to": ("last_observation_ts", "<="),
+}
+
+
+def build_series_catalog_query(
+    *,
+    tenant_id: str,
+    filters: Mapping[str, Any] | None,
+    limit: int,
+    offset: int,
+    order_by: Sequence[str] | None = None,
+) -> str:
+    """Build a paginated query against the external series catalog view."""
+
+    limit = max(1, min(int(limit), 200))
+    offset = max(0, int(offset))
+    safe_tenant = _safe_literal(tenant_id)
+    clauses = [f"tenant_id = '{safe_tenant}'"]
+    filters = filters or {}
+
+    for key, column in _CATALOG_EQUAL_FILTERS.items():
+        value = filters.get(key)
+        if value is None:
+            continue
+        clauses.append(f"{column} = '{_safe_literal(str(value))}'")
+
+    for key, column in _CATALOG_ILIKE_FILTERS.items():
+        value = filters.get(key)
+        if not value:
+            continue
+        pattern = _escape_like_pattern(str(value))
+        clauses.append(f"lower({column}) LIKE lower('%{pattern}%')")
+
+    tags = filters.get("tags")
+    if tags:
+        for raw_tag in tags:
+            if not raw_tag:
+                continue
+            clauses.append(f"contains(tags, '{_safe_literal(str(raw_tag))}')")
+
+    for key, (column, operator) in _CATALOG_TIME_FILTERS.items():
+        value = filters.get(key)
+        if value is None:
+            continue
+        clauses.append(f"{column} {operator} {_timestamp_literal(value)}")
+
+    where_clause = " WHERE " + " AND ".join(clauses)
+    order_columns = list(order_by) if order_by else ["provider", "series_id"]
+    select_list = ", ".join(_CATALOG_SELECT_COLUMNS)
+    order_clause = ", ".join(order_columns)
+
+    return (
+        f"SELECT {select_list} "
+        "FROM iceberg.market.external_series_catalog "
+        f"{where_clause} "
+        f"ORDER BY {order_clause} "
+        f"LIMIT {limit} OFFSET {offset}"
+    )
+
+
+_SEARCH_ALLOWED_FACETS: set[str] = {
+    "doc_type",
+    "provider",
+    "iso_code",
+    "iso_market",
+    "iso_product",
+    "category",
+    "status",
+}
+
+_SEARCH_EQUAL_FILTERS: dict[str, str] = {
+    "provider": "provider",
+    "iso_code": "iso_code",
+    "iso_market": "iso_market",
+    "iso_product": "iso_product",
+    "category": "category",
+    "status": "status",
+}
+
+
+def _build_search_where_clauses(
+    *,
+    tenant_id: str,
+    tokens: Sequence[str],
+    filters: Mapping[str, Any] | None,
+) -> tuple[list[str], list[str]]:
+    clauses = [f"tenant_id = '{_safe_literal(tenant_id)}'"]
+    filters = filters or {}
+
+    doc_type_filter = filters.get("doc_type")
+    doc_type_clauses: list[str] = []
+    if doc_type_filter:
+        values = doc_type_filter if isinstance(doc_type_filter, (list, tuple, set)) else [doc_type_filter]
+        sanitized = [v for v in values if str(v).lower() in {"series", "curve"}]
+        if sanitized:
+            joined = ", ".join(f"'{_safe_literal(str(v).lower())}'" for v in sanitized)
+            doc_type_clauses.append(f"doc_type IN ({joined})")
+
+    for key, column in _SEARCH_EQUAL_FILTERS.items():
+        value = filters.get(key)
+        if value is None:
+            continue
+        if isinstance(value, (list, tuple, set)):
+            cleaned = [val for val in value if val is not None]
+            if not cleaned:
+                continue
+            joined = ", ".join(f"'{_safe_literal(str(val))}'" for val in cleaned)
+            clauses.append(f"{column} IN ({joined})")
+        else:
+            clauses.append(f"{column} = '{_safe_literal(str(value))}'")
+
+    if doc_type_clauses:
+        clauses.extend(doc_type_clauses)
+
+    search_columns = (
+        "coalesce(title, '')",
+        "coalesce(description, '')",
+        "coalesce(name, '')",
+        "coalesce(id, '')",
+        "coalesce(dataset_code, '')",
+        "coalesce(iso_code, '')",
+        "coalesce(iso_market, '')",
+        "coalesce(iso_product, '')",
+        "coalesce(provider, '')",
+    )
+    token_clauses: list[str] = []
+    for token in tokens:
+        if not token:
+            continue
+        pattern = _escape_like_pattern(token)
+        or_parts = [f"lower({col}) LIKE lower('%{pattern}%')" for col in search_columns]
+        token_clauses.append("(" + " OR ".join(or_parts) + ")")
+
+    if token_clauses:
+        clauses.extend(token_clauses)
+
+    return clauses, token_clauses
+
+
+def build_search_union_queries(
+    *,
+    tenant_id: str,
+    tokens: Sequence[str],
+    filters: Mapping[str, Any] | None,
+    limit: int,
+    offset: int,
+    facets: Sequence[str] | None = None,
+    facet_bucket_limit: int = 10,
+) -> tuple[str, dict[str, str], str]:
+    """Build SQL for coarse search results and optional facet aggregations."""
+
+    limit = max(1, min(int(limit), 100))
+    offset = max(0, int(offset))
+    clauses, token_clauses = _build_search_where_clauses(
+        tenant_id=tenant_id,
+        tokens=tokens,
+        filters=filters,
+    )
+    where_clause = " WHERE " + " AND ".join(clauses)
+
+    scoring_terms = []
+    for token in token_clauses:
+        scoring_terms.append(f"(CASE WHEN {token} THEN 1 ELSE 0 END)")
+    score_expression = " + ".join(scoring_terms) if scoring_terms else "0"
+
+    select_columns = (
+        "tenant_id",
+        "doc_type",
+        "id",
+        "title",
+        "name",
+        "description",
+        "tags",
+        "provider",
+        "dataset_code",
+        "iso_code",
+        "iso_market",
+        "iso_product",
+        "category",
+        "status",
+    )
+    select_list = ", ".join(select_columns)
+    base_cte = (
+        "WITH series_docs AS ("
+        " SELECT tenant_id, series_id AS id, 'series' AS doc_type, title, title AS name,"
+        " description, tags, provider, dataset_code, iso_code, iso_market, iso_product,"
+        " category, status"
+        " FROM iceberg.market.external_series_catalog"
+        f" WHERE tenant_id = '{_safe_literal(tenant_id)}'"
+        ")"
+        ", curve_docs AS ("
+        " SELECT tenant_id, curve_key AS id, 'curve' AS doc_type, curve_key AS title,"
+        " max(tenor_label) AS name, CAST(NULL AS varchar) AS description,"
+        " CAST(ARRAY[] AS array(varchar)) AS tags, NULL AS provider, NULL AS dataset_code,"
+        " NULL AS iso_code, NULL AS iso_market, NULL AS iso_product, NULL AS category, NULL AS status"
+        " FROM iceberg.market.curves_latest"
+        f" WHERE tenant_id = '{_safe_literal(tenant_id)}'"
+        " GROUP BY tenant_id, curve_key"
+        ")"
+        ", combined AS ("
+        " SELECT * FROM series_docs"
+        " UNION ALL"
+        " SELECT * FROM curve_docs"
+        ")"
+        ", filtered AS ("
+        " SELECT *, "
+        f" {score_expression} AS score"
+        " FROM combined"
+        f"{where_clause}"
+        ")"
+    )
+
+    main_query = (
+        f"{base_cte} "
+        f"SELECT {select_list}, score FROM filtered "
+        "ORDER BY score DESC, doc_type, id "
+        f"LIMIT {limit} OFFSET {offset}"
+    )
+
+    facet_queries: dict[str, str] = {}
+    if facets:
+        for facet_name in facets:
+            if facet_name not in _SEARCH_ALLOWED_FACETS:
+                continue
+            facet_sql = (
+                f"{base_cte} "
+                "SELECT {facet} AS value, COUNT(*) AS count "
+                "FROM filtered "
+                "WHERE {facet} IS NOT NULL "
+                "GROUP BY {facet} "
+                "ORDER BY count DESC, value "
+                f"LIMIT {facet_bucket_limit}"
+            ).format(facet=facet_name)
+            facet_queries[facet_name] = facet_sql
+
+    count_query = f"{base_cte} SELECT COUNT(*) AS total FROM filtered"
+
+    return main_query, facet_queries, count_query

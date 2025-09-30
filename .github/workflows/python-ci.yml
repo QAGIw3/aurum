@@ -42,11 +42,8 @@ jobs:
           black --version
           black --check .
 
-      - name: Run unit tests (fast subset)
-        env:
-          PYTHONWARNINGS: default
-        run: |
-          pytest -m "unit" -q
+      - name: Run CI test suite
+        run: make ci-test
 
       - name: Upload coverage to Codecov
         uses: codecov/codecov-action@v4

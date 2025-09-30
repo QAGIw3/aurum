@@ -1,4 +1,10 @@
-"""Aurum API package."""
+"""Aurum API package.
+
+Deprecated: Importing from `src.aurum.api` is being phased out in favor of
+`apps.api` (application) and `libs.services` (domain services). Please migrate
+your imports. This module emits a DeprecationWarning when imported in non-test
+contexts.
+"""
 
 from __future__ import annotations
 
@@ -125,6 +131,16 @@ else:
     }
 
     __all__ = sorted(_EXPORTS)
+
+    # Emit deprecation warning outside of tests
+    if not _os.getenv("PYTEST_CURRENT_TEST"):
+        import warnings as _warnings
+
+        _warnings.warn(
+            "Importing from 'aurum.api' is deprecated; use 'apps.api' and 'libs.services' instead.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
 
     def __getattr__(name: str) -> Any:
         try:

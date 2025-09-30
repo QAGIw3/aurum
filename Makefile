@@ -31,11 +31,48 @@ test: ## Run tests
 unit-test: ## Run unit test subset
 	pytest -m "unit" -q
 
+# Fast developer feedback targets
+dev: ## Set up local dev env (uses uv to ensure Python 3.11)
+	@echo "🚧 Setting up development environment..."
+	@if command -v uv >/dev/null 2>&1; then \
+		UV_BIN=uv; \
+	else \
+		echo "uv not found; installing via script"; \
+		curl -LsSf https://astral.sh/uv/install.sh | sh >/dev/null 2>&1 || true; \
+		if [ -x "$${HOME}/.local/bin/uv" ]; then \
+			UV_BIN="$${HOME}/.local/bin/uv"; \
+		elif [ -x "$${HOME}/.cargo/bin/uv" ]; then \
+			UV_BIN="$${HOME}/.cargo/bin/uv"; \
+		else \
+			echo "❌ uv installation failed"; exit 1; \
+		fi; \
+	fi; \
+	rm -rf .venv; \
+	$$UV_BIN python install 3.11 >/dev/null 2>&1 || true; \
+	$$UV_BIN venv --python 3.11; \
+	. .venv/bin/activate; \
+	$$UV_BIN pip install -U pip; \
+	$$UV_BIN pip install -e ".[quality,test]"; \
+	pre-commit install; \
+	printf "✅ Development environment ready\n"
+
+unit-fast: ## Run fast unit tests (no coverage)
+	. .venv/bin/activate && pytest tests -m "unit and not slow and not integration" -q -n auto --maxfail=1 --durations=10 \
+		-k "not v2 and not dao and not iso and not drought and not eia and not admin and not ppa and not observability and not metrics and not logging and not workflow and not external and not perf and not contract and not secrets" \
+		--ignore=tests/contract --ignore=tests/integration --ignore=tests/e2e --ignore=tests/external --ignore=tests/logging --ignore=tests/perf --ignore=tests/secrets --ignore=tests/workflow \
+		--ignore=tests/test_factories_usage.py --ignore=tests/api/test_auth_enforcement.py
+
+unit-watch: ## Watch and rerun unit tests on change
+	. .venv/bin/activate && ptw tests -- -m "unit and not slow and not integration" -q -n auto --maxfail=1
+
+unit-changed: ## Run only tests affected by recent changes
+	. .venv/bin/activate && pytest tests -m "unit and not slow and not integration" --testmon -q
+
 test-services: ## Run service layer tests
-	pytest tests/api/test_services_*.py -v
+	. .venv/bin/activate && pytest tests/api/test_services_*.py -v
 
 test-services-coverage: ## Run service layer tests with coverage
-	pytest tests/api/test_services_*.py --cov=src/aurum/api/services --cov-report=term-missing --cov-report=html -v
+	. .venv/bin/activate && pytest tests/api/test_services_*.py --cov=src/aurum/api/services --cov-report=term-missing --cov-report=html -v
 
 # Phase 1.4 Development Experience Enhancement
 dev-health-check: ## Run Phase 1 development health checks
@@ -217,6 +254,37 @@ ci-test: ## Run full test suite locally
 	$(MAKE) test
 	$(MAKE) security-scan
 	$(MAKE) docs-openapi-check-drift
+	$(MAKE) docs-links-check
+
+# --- Maintenance & Dependencies ---
+constraints-compile: ## Rebuild constraints/dev.txt from pyproject (Python 3.11)
+	@echo "Rebuilding constraints/dev.txt from pyproject.toml..."
+	@if command -v pip-compile >/dev/null 2>&1; then \
+		pip-compile --extra=api --extra=ingest --extra=quality --extra=test --extra=dev --output-file=constraints/dev.txt pyproject.toml; \
+	else \
+		echo "pip-compile not installed. Install with 'pip install pip-tools'" && exit 1; \
+	fi
+
+maintenance-cleanup: ## Run dead code and unused import cleanup (ruff/isort/black, vulture, dead fixtures)
+	python3 scripts/maintenance/cleanup.py
+
+maintenance-update-deps: ## Update deps, run audits, and generate SBOM
+	python3 scripts/maintenance/update_deps.py
+
+maintenance-report: ## Print summary of maintenance outputs
+	python3 scripts/maintenance/report.py
+
+dead-code-scan: ## Run vulture dead code scan (report at reports/vulture.txt)
+	@mkdir -p reports
+	@vulture src/ --min-confidence 80 --sort-by-size > reports/vulture.txt || true
+
+dead-fixtures: ## Report dead pytest fixtures
+	pytest -q --dead-fixtures --maxfail=1 || true
+
+sbom: ## Generate CycloneDX SBOM (reports/sbom.json)
+	@mkdir -p reports
+	@which cyclonedx-py >/dev/null 2>&1 || (echo "cyclonedx-py CLI not found. Install 'cyclonedx-bom' package." && exit 1)
+	cyclonedx-py --format json --output reports/sbom.json || true
 
 ci-unit: ## Run unit tests + lint locally
 	$(MAKE) lint
@@ -231,23 +299,23 @@ ci-trino-smoke: ## Run Trino query smoke tests with latency thresholds
 		--plan config/trino_query_harness.json
 
 cache-warm: ## Run cache warmer locally using configured modes
-	python - <<'PY'
-import json
-import subprocess
-import sys
-from pathlib import Path
+	python - <<-'PY'
+	import json
+	import subprocess
+	import sys
+	from pathlib import Path
 
-config = json.loads(Path("config/trino_query_harness.json").read_text(encoding="utf-8"))
-cache_cfg = config.get("cache_warming", {})
-modes = cache_cfg.get("modes", ["warm", "refresh"])
-host = cache_cfg.get("host", "$(TRINO_SERVER_HOST)")
-port = cache_cfg.get("port", $(TRINO_SERVER_PORT))
-script = cache_cfg.get("script", "scripts/trino/cache_warmer.py")
+	config = json.loads(Path("config/trino_query_harness.json").read_text(encoding="utf-8"))
+	cache_cfg = config.get("cache_warming", {})
+	modes = cache_cfg.get("modes", ["warm", "refresh"])
+	host = cache_cfg.get("host", "$(TRINO_SERVER_HOST)")
+	port = cache_cfg.get("port", $(TRINO_SERVER_PORT))
+	script = cache_cfg.get("script", "scripts/trino/cache_warmer.py")
 
-for mode in modes:
-    cmd = [sys.executable, script, "--host", str(host), "--port", str(port), "--mode", mode, "--verbose"]
-    subprocess.check_call(cmd)
-PY
+	for mode in modes:
+	    cmd = [sys.executable, script, "--host", str(host), "--port", str(port), "--mode", mode, "--verbose"]
+	    subprocess.check_call(cmd)
+	PY
 
 ci-deploy: ## Run deployment pipeline locally
 	$(MAKE) build
@@ -299,11 +367,8 @@ git-commit-check: ## Check last commit message for Conventional Commits complian
 docs-serve: ## Serve documentation locally
 	@echo "Documentation available at http://localhost:8000"
 
-docs-build: ## Build API docs markdown + JSON (fallback reads docs/api/openapi-spec.yaml)
-	python3 scripts/docs/build_docs.py
+ 
 
-docs-redoc: ## Generate Redoc HTML/JSON from docs/api/openapi-spec.yaml
-	python3 scripts/generate_redoc.py
 
 # OpenAPI generation and validation
 docs-openapi: ## Generate OpenAPI spec from FastAPI routes
@@ -320,8 +385,8 @@ docs-openapi-spectral: ## Validate OpenAPI spec with Spectral (requires spectral
 docs-openapi-check-drift: ## Fail if OpenAPI spec differs from generated output
 	python3 scripts/docs/generate_openapi.py --check-drift
 
-docs-redoc: ## Generate Redoc HTML documentation
-	python3 scripts/docs/generate_openapi.py
+docs-redoc: ## Generate Redoc HTML/JSON from docs/api/openapi-spec.yaml
+	python3 scripts/generate_redoc.py
 
 docs-build: ## Build documentation
 	@echo "Building documentation..."
@@ -370,3 +435,23 @@ e2e-test: ## Run E2E tests
 
 e2e-down: ## Stop E2E stack and remove volumes
 	docker compose -f docker-compose.e2e.yml down -v
+
+# Integration test helpers
+integration-up: ## Start integration stack
+	docker compose -f docker-compose.integration.yml up -d postgres redis kafka schema-registry
+	docker compose -f docker-compose.integration.yml up -d aurum-api
+	@echo "Waiting for services..."; \
+	for i in $$(seq 1 60); do \
+		(if curl -fsS http://localhost:8000/health/ready >/dev/null; then echo "✅ Services ready"; exit 0; else echo "..."; sleep 5; fi); \
+	done; \
+	echo "⚠️ Services did not become ready in time" && exit 1
+
+integration-test: ## Run integration tests
+	pytest -m "integration" -v
+
+integration-down: ## Stop integration stack and remove volumes
+	docker compose -f docker-compose.integration.yml down -v
+
+# Documentation link check
+docs-links-check: ## Validate relative links in docs and README
+	pytest -q tests/architecture/test_docs_links.py || (echo "❌ Broken docs links detected" && exit 1)

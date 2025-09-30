@@ -14,6 +14,10 @@ _SRC_PATH = _REPO_ROOT / "src"
 if str(_SRC_PATH) not in sys.path:
     sys.path.insert(0, str(_SRC_PATH))
 
+# Ensure repository root is on sys.path so "tests" imports resolve as a package
+if str(_REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(_REPO_ROOT))
+
 # Hint to API factory to avoid heavy init paths where supported
 os.environ.setdefault("AURUM_API_LIGHT_INIT", "1")
 
@@ -65,6 +69,16 @@ def pytest_collection_modifyitems(config, items):
             )
             if not any(p in nodeid for p in core_paths):
                 item.add_marker(skip_non_core)
+
+        # If v2-only is enabled, skip any tests that explicitly target v1 endpoints or modules
+        try:
+            from libs.common.config import get_settings  # local import to avoid early settings init
+            if getattr(get_settings(), "enable_v2_only", False):
+                if "/v1/" in nodeid or "aurum.api.v1" in nodeid:
+                    item.add_marker(pytest.mark.skip(reason="v2-only mode: v1 tests are skipped"))
+        except Exception:
+            # If settings import fails in this phase, do nothing
+            pass
 
 # pytest-asyncio compatibility: some tests use deprecated decorator access
 try:

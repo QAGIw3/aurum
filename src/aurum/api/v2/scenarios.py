@@ -21,8 +21,7 @@ from fastapi import APIRouter, HTTPException, Query, Request, Response, Depends
 from pydantic import BaseModel, Field
 
 from ..http import respond_with_etag
-from ..container import provide_service
-from ..async_service import AsyncScenarioService
+from libs.services.scenarios_service import ScenariosService
 from ..deps import get_settings, get_cache_manager, get_unified_cache_manager_dep
 from aurum.core import AurumSettings
 from ..cache.consolidated_manager import get_unified_cache_manager
@@ -44,9 +43,9 @@ from .pagination import (
 )
 
 
-async def get_scenario_service() -> AsyncScenarioService:
-    """Provide AsyncScenarioService compatible with existing awaited usage via DI."""
-    return await provide_service(AsyncScenarioService)()
+async def get_scenario_service() -> ScenariosService:
+    """Provide ScenariosService facade (internally delegates to legacy async service)."""
+    return ScenariosService()
 
 router = APIRouter(prefix="/v2", tags=["scenarios"])
 # NOTE: the prefix keeps paths aligned with the app wiring so tests can mount
@@ -97,7 +96,7 @@ async def list_scenarios_v2(
             },
         )
 
-        service = get_service(AsyncScenarioService)
+        service = await get_scenario_service()
         scenarios, total, _meta = await service.list_scenarios(
             tenant_id=tenant_id,
             limit=effective_limit,

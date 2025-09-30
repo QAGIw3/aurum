@@ -17,9 +17,11 @@ See also:
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from typing import Any, Dict, List, Optional, Tuple
-from datetime import date, datetime
 from dataclasses import dataclass
+from datetime import date, datetime
+import time
+import uuid
+from typing import Any, Dict, List, Optional, Tuple
 
 from aurum.performance.connection_pool import ConnectionPool, PoolConfig, PoolMetrics
 
@@ -218,20 +220,26 @@ class ClickHouseBackend(DataBackend):
 
         connection = await self._pool.acquire()
         try:
+            query_id = f"ch-{uuid.uuid4().hex}"
             if params:
-                result = connection.execute(query, params)
+                result = connection.execute(query, params, with_column_types=True, query_id=query_id)
             else:
-                result = connection.execute(query)
+                result = connection.execute(query, with_column_types=True, query_id=query_id)
 
-            # ClickHouse returns tuples, convert to list of tuples
-            rows = list(result) if result else []
-            columns = []  # ClickHouse doesn't provide column names in same way
+            columns: List[str] = []
+            if isinstance(result, tuple) and len(result) == 2:
+                raw_rows, column_info = result
+                rows = list(raw_rows) if raw_rows else []
+                columns = [col[0] for col in column_info or []]
+            else:
+                rows = list(result) if result else []
 
             return QueryResult(
                 columns=columns,
                 rows=rows,
                 metadata={
                     'backend': 'clickhouse',
+                    'query_id': query_id,
                     'rows_affected': len(rows),
                     'pool_size': len(self._pool._in_use) + self._pool._pool.qsize(),
                     'pool_metrics': self._pool_metrics.__dict__
@@ -307,11 +315,19 @@ class TimescaleBackend(DataBackend):
             rows = [tuple(record.values()) for record in result]
             columns = list(result[0].keys()) if result else []
 
+            pid = None
+            try:
+                pid = connection.get_server_pid()
+            except Exception:
+                pid = None
+            query_id = f"ts-{pid or 'unknown'}-{int(time.time() * 1000)}-{uuid.uuid4().hex[:8]}"
+
             return QueryResult(
                 columns=columns,
                 rows=rows,
                 metadata={
                     'backend': 'timescale',
+                    'query_id': query_id,
                     'rows_affected': len(rows),
                     'pool_size': len(self._pool._in_use) + self._pool._pool.qsize(),
                     'pool_metrics': self._pool_metrics.__dict__

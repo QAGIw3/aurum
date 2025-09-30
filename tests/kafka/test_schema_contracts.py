@@ -13,28 +13,46 @@ EIA_CONFIG = Path("config/eia_ingest_datasets.json")
 
 
 def test_subject_contracts_match_mapping():
-    mapping = schemas.load_contract_subjects(CONTRACT_FILE)
-    compatibility = schemas.normalize_compatibility("backward")
-    validated = schemas.validate_contracts(mapping, SCHEMA_ROOT, compatibility)
+    catalogue = schemas.load_contract_subjects(CONTRACT_FILE)
+    validated = schemas.validate_contracts(
+        catalogue.subjects,
+        SCHEMA_ROOT,
+        catalogue.default_compatibility,
+        subject_pattern=catalogue.subject_pattern,
+    )
 
     assert validated, "expected at least one validated subject"
-    assert set(validated) == set(mapping)
+    assert set(validated) == set(catalogue.subjects)
 
 
 def test_subject_contracts_include_eia_config():
-    mapping = schemas.load_contract_subjects(CONTRACT_FILE)
-    mapping.update(schemas.load_eia_subjects(EIA_CONFIG))
-    compatibility = schemas.normalize_compatibility("BACKWARD")
+    catalogue = schemas.load_contract_subjects(CONTRACT_FILE)
+    subjects = dict(catalogue.subjects)
+    for subject, schema_file in schemas.load_eia_subjects(EIA_CONFIG).items():
+        subjects[subject] = schemas.ContractSubject(
+            schema=schema_file,
+            topic=schemas.infer_topic_from_subject(subject),
+            compatibility=catalogue.default_compatibility,
+        )
 
-    validated = schemas.validate_contracts(mapping, SCHEMA_ROOT, compatibility)
-    assert set(mapping) == set(validated)
+    validated = schemas.validate_contracts(
+        subjects,
+        SCHEMA_ROOT,
+        catalogue.default_compatibility,
+        subject_pattern=catalogue.subject_pattern,
+    )
+    assert set(subjects) == set(validated)
 
 
 def test_subject_mapping_json_aligns_with_contracts():
     json_mapping = schemas.load_subject_mapping(SUBJECT_FILE)
-    contract_mapping = schemas.load_contract_subjects(CONTRACT_FILE)
+    catalogue = schemas.load_contract_subjects(CONTRACT_FILE)
 
-    assert json_mapping == contract_mapping
+    assert set(json_mapping) == set(catalogue.subjects)
+    for subject, schema_file in json_mapping.items():
+        contract_entry = catalogue.subjects[subject]
+        assert contract_entry.schema == schema_file
+        assert schemas.subject_matches_topic(subject, contract_entry.topic)
 
 
 def test_all_schemas_have_contracts_and_required_fields():
@@ -52,8 +70,8 @@ def test_all_schemas_have_contracts_and_required_fields():
 
 
 def test_subject_names_conform_to_pattern():
-    mapping = schemas.load_contract_subjects(CONTRACT_FILE)
-    for subject in mapping:
+    catalogue = schemas.load_contract_subjects(CONTRACT_FILE)
+    for subject in catalogue.subjects:
         schemas.validate_subject_name(subject)
 
 

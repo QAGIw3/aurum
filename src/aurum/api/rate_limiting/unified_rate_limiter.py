@@ -10,6 +10,7 @@ This module provides a single entry point for rate limiting with:
 from __future__ import annotations
 
 import asyncio
+import os
 import time
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
@@ -259,7 +260,39 @@ class UnifiedRateLimiter:
             "policies_applied": 0,
             "algorithms_used": {},
         }
-    
+
+    def _read_env_int(self, env_var: str, default: int) -> int:
+        raw = os.getenv(env_var)
+        if raw is None:
+            return default
+        try:
+            value = int(raw)
+            return value if value > 0 else default
+        except ValueError:
+            self.logger.warning("Invalid rate limit env var; using default", env_var=env_var, value=raw)
+            return default
+
+    def _build_env_policy(
+        self,
+        *,
+        name: str,
+        endpoint: str,
+        env_prefix: str,
+        default_rps: int,
+        default_burst: int,
+        priority: int,
+    ) -> RateLimitPolicy:
+        rps = self._read_env_int(f"AURUM_RL_{env_prefix}_RPS", default_rps)
+        burst = self._read_env_int(f"AURUM_RL_{env_prefix}_BURST", default_burst)
+        return RateLimitPolicy(
+            name=name,
+            scope=RateLimitScope.TENANT,
+            requests_per_second=rps,
+            burst_size=burst,
+            endpoint_patterns=[endpoint],
+            priority=priority,
+        )
+
     async def initialize(self):
         """Initialize the unified rate limiter."""
         await self._load_policies()
@@ -286,8 +319,24 @@ class UnifiedRateLimiter:
                 # Sort by priority (higher first)
                 self.policies.sort(key=lambda p: p.priority, reverse=True)
             else:
-                # Use default policy
-                self.policies = [self.default_policy]
+                catalog_policy = self._build_env_policy(
+                    name="catalog_v1_series",
+                    endpoint="/v1/catalog/series",
+                    env_prefix="CATALOG",
+                    default_rps=20,
+                    default_burst=40,
+                    priority=300,
+                )
+                search_policy = self._build_env_policy(
+                    name="search_v1",
+                    endpoint="/v1/search",
+                    env_prefix="SEARCH",
+                    default_rps=10,
+                    default_burst=20,
+                    priority=310,
+                )
+                self.policies = [search_policy, catalog_policy, self.default_policy]
+                self.policies.sort(key=lambda p: p.priority, reverse=True)
                 
         except Exception as e:
             self.logger.warning("Failed to load rate limit policies", error=str(e))

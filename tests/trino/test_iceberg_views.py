@@ -21,8 +21,8 @@ def test_curve_observation_properties() -> None:
     props = match.group(1)
     assert "format_version = '2'" in props
     assert "write_compression = 'ZSTD'" in props
-    assert "partitioning = ARRAY['days(asof_date)']" in props
-    assert "write_sort_order = ARRAY['asof_date', 'asset_class', 'iso', 'tenor_label']" in props
+    assert "partitioning = ARRAY['tenant_id', 'days(asof_date)']" in props
+    assert "write_sort_order = ARRAY['tenant_id', 'asof_date', 'asset_class', 'iso', 'tenor_label']" in props
     assert "vacuum_max_snapshot_age_retention = '7d'" in props
     assert "optimize_rewrite_delete_file_threshold = 250" in props
 
@@ -32,7 +32,7 @@ def test_curve_observation_quarantine_partitioning() -> None:
     match = re.search(r"CREATE TABLE IF NOT EXISTS iceberg\.market\.curve_observation_quarantine \((?:.|\n)*?WITH \((.*?)\);", sql, re.DOTALL)
     assert match, 'curve_observation_quarantine table definition missing'
     props = match.group(1)
-    assert "partitioning = ARRAY['days(asof_date)']" in props
+    assert "partitioning = ARRAY['tenant_id', 'days(asof_date)']" in props
     assert "format_version = '2'" in props
 
 
@@ -44,6 +44,7 @@ def test_curve_observation_columns() -> None:
     columns = [line.split()[0] for line in column_block]
     assert columns == [
         'asof_date',
+        'tenant_id',
         'source_file',
         'sheet_name',
         'asset_class',

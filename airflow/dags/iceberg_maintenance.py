@@ -14,14 +14,18 @@ from aurum.airflow_utils import build_failure_callback, emit_alert, metrics
 from aurum.iceberg import maintenance
 
 RETENTION_DAYS = int(os.getenv("AURUM_ICEBERG_RETENTION_DAYS", "14"))
-TARGET_FILE_MB = int(os.getenv("AURUM_ICEBERG_TARGET_FILE_MB", "128"))
-SCHEDULE = os.getenv("AURUM_ICEBERG_MAINTENANCE_SCHEDULE", "0 4 * * *")
+TARGET_FILE_MB = int(os.getenv("AURUM_ICEBERG_TARGET_FILE_MB", "512"))
+# Default cadence runs shortly after the weekday vendor curve ingestion (12:00 UTC)
+SCHEDULE = os.getenv("AURUM_ICEBERG_MAINTENANCE_SCHEDULE", "30 12 * * 1-5")
 TABLES_ENV = os.getenv("AURUM_ICEBERG_TABLES")
 DEFAULT_TABLES = [
     "iceberg.raw.curve_landing",
     "iceberg.market.curve_observation",
     "iceberg.market.curve_observation_quarantine",
+    "iceberg.market.curve_dead_letter",
     "iceberg.market.scenario_output",
+    "iceberg.market.ppa_valuation",
+    "iceberg.market.qa_checks",
 ]
 TABLES = [table.strip() for table in TABLES_ENV.split(",")] if TABLES_ENV else DEFAULT_TABLES
 ORPHAN_RETENTION_HOURS = int(os.getenv("AURUM_ICEBERG_ORPHAN_RETAIN_HOURS", "24") or 24)

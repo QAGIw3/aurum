@@ -159,4 +159,3 @@ def test_ingest_observations_updates_checkpoints() -> None:
     can_checkpoint = store.get("WorldBank", "TEST.IND:CAN")
     assert can_checkpoint is not None
     assert can_checkpoint.last_timestamp == datetime(2023, 12, 31, tzinfo=timezone.utc)
-

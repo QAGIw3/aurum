@@ -42,6 +42,15 @@ except Exception:  # pragma: no cover - dependency optional
 
 logger = logging.getLogger(__name__)
 
+
+def provider_series_key(record: Mapping[str, Any]) -> Optional[str]:
+    """Build the canonical Kafka key ``provider|series_id`` when fields are present."""
+    provider = record.get("provider")
+    series_id = record.get("series_id")
+    if not provider or not series_id:
+        return None
+    return f"{provider}|{series_id}"
+
 if Counter and REGISTRY:  # pragma: no cover - simple wrappers around Prometheus
     def _existing_collector(name: str):
         try:
@@ -451,7 +460,7 @@ class ExternalCollector:
         # Fallback to legacy retry logic for backward compatibility
         attempt = 0
         last_exc: Optional[Exception] = None
-        while attempt < self.retry_config.max_attempts:
+        while attempt < self.retry_config.max_retries:
             attempt += 1
             waited = self._apply_rate_limit()
             if waited and self.metrics:
@@ -470,7 +479,7 @@ class ExternalCollector:
                 duration = self._monotonic() - start
             except Timeout as exc:
                 last_exc = exc
-                if not self.retry_config.retry_on_timeout or attempt >= self.retry_config.max_attempts:
+                if not self.retry_config.retry_on_timeout or attempt >= self.retry_config.max_retries:
                     raise HttpRequestError(
                         f"HTTP request timed out after {attempt} attempts",
                         request=request,
@@ -495,7 +504,7 @@ class ExternalCollector:
                 duration,
             )
 
-            if self._should_retry(http_response.status_code) and attempt < self.retry_config.max_attempts:
+            if self._should_retry(http_response.status_code) and attempt < self.retry_config.max_retries:
                 delay = self.retry_config.compute_backoff(attempt)
                 self.metrics.record_backoff(attempt, delay)
                 self._sleep(delay)
@@ -521,7 +530,7 @@ class ExternalCollector:
         self,
         records: Iterable[Mapping[str, Any]],
         *,
-        key_fn: Optional[Callable[[Mapping[str, Any]], Optional[Mapping[str, Any]]]] = None,
+        key_fn: Optional[Callable[[Mapping[str, Any]], Optional[Any]]] = None,
         headers_fn: Optional[Callable[[Mapping[str, Any]], Optional[Sequence[Tuple[str, Union[str, bytes]]]]]] = None,
         value_transform: Optional[Callable[[Mapping[str, Any]], Mapping[str, Any]]] = None,
         flush: bool = True,
@@ -535,12 +544,13 @@ class ExternalCollector:
             value_payload = value_transform(record) if value_transform else record
             value = self._encode_value(value_payload)
             key_payload = key_fn(record) if key_fn else None
+            key = self._encode_key(key_payload)
             headers = self._encode_headers(headers_fn(record) if headers_fn else None)
             try:
                 producer.produce(
                     topic=self.config.kafka_topic,
                     value=value,
-                    key=key_payload,
+                    key=key,
                     headers=headers,
                 )
             except Exception as exc:  # pragma: no cover - passthrough for producer errors
@@ -590,6 +600,13 @@ class ExternalCollector:
             merged.update(headers)
         return merged
 
+    def _encode_key(self, key_payload: Any) -> Any:
+        if key_payload is None:
+            return None
+        if isinstance(key_payload, (bytes, bytearray)):
+            return bytes(key_payload)
+        return str(key_payload)
+
     def _encode_value(self, value: Mapping[str, Any]) -> Any:
         if self.encoder:
             return self.encoder.encode(value)
@@ -638,10 +655,18 @@ def create_avro_producer(config: CollectorConfig) -> Any:
         "schema.registry.url": config.schema_registry_url,
     }
     kafka_config.update(config.kafka_config)
+    # confluent_kafka expects schema objects; it also accepts JSON string schemas.
+    def _to_schema(value: Optional[Mapping[str, Any]]) -> Optional[str]:
+        if value is None:
+            return None
+        if isinstance(value, dict):
+            return json.dumps(value)
+        return str(value)
+
     return AvroProducer(
         kafka_config,
-        default_key_schema=config.key_schema,
-        default_value_schema=config.value_schema,
+        default_key_schema=_to_schema(config.key_schema),
+        default_value_schema=_to_schema(config.value_schema),
     )
 
 

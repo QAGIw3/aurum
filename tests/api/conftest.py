@@ -1,12 +1,6 @@
 from __future__ import annotations
 
-"""API tests configuration shim.
-
-Provides a local `pytest_plugins` hook to avoid missing module errors when
-plugins are referenced as `api.conftest` in legacy tests.
-"""
-
-pytest_plugins = []
+"""API tests configuration for fixtures."""
 
 import pytest
 import httpx

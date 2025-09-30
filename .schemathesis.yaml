@@ -13,6 +13,8 @@ test:
   include:
     - /v1/scenarios
     - /v1/curves
+    - /v1/catalog/series
+    - /v1/search
     - /v1/external/providers
     - /v1/admin/config/*
     - /v2/scenarios
@@ -118,6 +120,24 @@ test_cases:
         limit: [10, 100, 500]
         cursor: ["", "eyJ0ZXN0IjoidmFsdWUifQ=="]
       expected_status: [200, 400, 401, 403]
+
+  catalog:
+    - endpoint: /v1/catalog/series
+      method: GET
+      parameters:
+        tenant_id: "test-tenant-123"
+        limit: [1, 10, 50]
+        provider: ["ercot", "pjm"]
+      expected_status: [200, 400, 401, 403]
+
+  search:
+    - endpoint: /v1/search
+      method: GET
+      parameters:
+        tenant_id: "test-tenant-123"
+        q: ["power demand", "lmp"]
+        limit: [5, 20]
+      expected_status: [200, 400, 401, 403, 429]
 
     - endpoint: /v1/curves/diff
       method: GET
@@ -300,6 +320,8 @@ reporting:
     include:
       - /v1/scenarios
       - /v1/curves
+      - /v1/catalog/series
+      - /v1/search
       - /v1/external/*
       - /v2/scenarios
       - /v2/curves

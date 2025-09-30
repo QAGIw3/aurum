@@ -17,10 +17,5 @@ secretGenerator:
   - name: aurum-secrets
     namespace: aurum-dev
     behavior: merge
-    literals:
-      - POSTGRES_DB=aurum
-      - POSTGRES_USER=aurum
-      - POSTGRES_PASSWORD=aurum123
-      - REDIS_PASSWORD=aurum123
-      - MINIO_ROOT_USER=minioadmin
-      - MINIO_ROOT_PASSWORD=minioadmin
+    envs:
+      - ../../.env.example

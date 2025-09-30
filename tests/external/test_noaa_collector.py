@@ -151,4 +151,3 @@ def test_noaa_collector_ingests_and_updates_checkpoint() -> None:
     last = store.get("NOAA", "GHCND:GHCND:123:TMAX")
     assert last is not None
     assert last.last_timestamp == datetime(2024, 1, 10, tzinfo=timezone.utc)
-

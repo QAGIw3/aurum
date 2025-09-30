@@ -8,6 +8,7 @@ import pytest
 
 from scripts.kafka import register_schemas as register_module
 from scripts.kafka.register_schemas import (
+    ContractSubject,
     SchemaRegistryError,
     create_session,
     iter_subjects,
@@ -62,8 +63,13 @@ def test_load_contract_subjects(tmp_path: Path) -> None:
         encoding="utf-8",
     )
 
-    mapping = load_contract_subjects(contracts_path)
-    assert mapping == {"foo.bar.v1-value": "foo.bar.v1.avsc"}
+    catalogue = load_contract_subjects(contracts_path)
+    assert catalogue.default_compatibility == "BACKWARD"
+    assert "foo.bar.v1-value" in catalogue.subjects
+    subject = catalogue.subjects["foo.bar.v1-value"]
+    assert subject.schema == "foo.bar.v1.avsc"
+    assert subject.topic == "foo.bar.v1"
+    assert subject.compatibility is None
 
 
 def test_load_contract_subjects_duplicate_subject(tmp_path: Path) -> None:
@@ -74,8 +80,10 @@ def test_load_contract_subjects_duplicate_subject(tmp_path: Path) -> None:
             subjects:
               - subject: foo
                 schema: one.avsc
+                topic: foo
               - subject: foo
                 schema: two.avsc
+                topic: foo
             """
         ).strip()
         + "\n",
@@ -98,14 +106,17 @@ def test_load_eia_subjects(tmp_path: Path) -> None:
 
 
 def test_iter_subjects_filters() -> None:
-    mapping = {"a": "one.avsc", "b": "two.avsc"}
+    mapping = {
+        "a": ContractSubject(schema="one.avsc", topic="a", compatibility=None),
+        "b": ContractSubject(schema="two.avsc", topic="b", compatibility=None),
+    }
     filtered = iter_subjects(["b"], mapping)
-    assert filtered == {"b": "two.avsc"}
+    assert filtered == {"b": mapping["b"]}
 
 
 def test_iter_subjects_unknown_subject() -> None:
     with pytest.raises(SchemaRegistryError):
-        iter_subjects(["missing"], {"a": "file"})
+        iter_subjects(["missing"], {"a": ContractSubject(schema="file", topic="a", compatibility=None)})
 
 
 class DummyResponse:
