@@ -32,29 +32,7 @@ BIN_PATH = os.environ.get("AURUM_BIN_PATH", ".venv/bin:$PATH")
 PYTHONPATH_ENTRY = os.environ.get("AURUM_PYTHONPATH_ENTRY", "/opt/airflow/src")
 
 
-def _build_job_task(task_id: str, job_name: str, env_line: str) -> BashOperator:
-    mappings = [
-        "secret/data/aurum/timescale:user=TIMESCALE_USER",
-        "secret/data/aurum/timescale:password=TIMESCALE_PASSWORD",
-    ]
-    mapping_flags = " ".join(f"--mapping {mapping}" for mapping in mappings)
-    pull_cmd = (
-        f"eval \"$(VAULT_ADDR={VAULT_ADDR} VAULT_TOKEN={VAULT_TOKEN} "
-        f"PYTHONPATH=${{PYTHONPATH:-}}:{PYTHONPATH_ENTRY} "
-        f"{VENV_PYTHON} scripts/secrets/pull_vault_env.py {mapping_flags} --format shell)\" || true"
-    )
-
-    return BashOperator(
-        task_id=task_id,
-        bash_command=(
-            "set -euo pipefail\n"
-            "if [ \"${AURUM_DEBUG:-0}\" != \"0\" ]; then set -x; fi\n"
-            f"{pull_cmd}\n"
-            f"export PATH=\"{BIN_PATH}\"\n"
-            f"export PYTHONPATH=\"${{PYTHONPATH:-}}:{PYTHONPATH_ENTRY}\"\n"
-            f"{env_line} scripts/seatunnel/run_job.sh {job_name}"
-        ),
-    )
+from aurum.airflow_utils.timescale import build_timescale_task
 
 
 with DAG(
@@ -100,22 +78,36 @@ with DAG(
         f"AURUM_TIMESCALE_JDBC_URL='{jdbc_url}' "
     )
 
-    t_asm = _build_job_task(
+    t_asm = build_timescale_task(
         task_id="iso_asm_kafka_to_timescale",
         job_name="iso_asm_kafka_to_timescale",
-        env_line=(
-            f"{common_env} ISO_ASM_TOPIC_PATTERN='{asm_topic_pattern}' "
-            f"ISO_ASM_TABLE='{asm_table}'"
-        ),
+        env_entries=[
+            f"AURUM_KAFKA_BOOTSTRAP_SERVERS='{kafka_bootstrap}'",
+            f"AURUM_SCHEMA_REGISTRY_URL='{schema_registry}'",
+            f"AURUM_TIMESCALE_JDBC_URL='{jdbc_url}'",
+            f"ISO_ASM_TOPIC_PATTERN='{asm_topic_pattern}'",
+            f"ISO_ASM_TABLE='{asm_table}'",
+        ],
+        mappings=[
+            "secret/data/aurum/timescale:user=TIMESCALE_USER",
+            "secret/data/aurum/timescale:password=TIMESCALE_PASSWORD",
+        ],
     )
 
-    t_pnode = _build_job_task(
+    t_pnode = build_timescale_task(
         task_id="iso_pnode_kafka_to_timescale",
         job_name="iso_pnode_kafka_to_timescale",
-        env_line=(
-            f"{common_env} ISO_PNODE_TOPIC_PATTERN='{pnode_topic_pattern}' "
-            f"ISO_PNODE_TABLE='{pnode_table}'"
-        ),
+        env_entries=[
+            f"AURUM_KAFKA_BOOTSTRAP_SERVERS='{kafka_bootstrap}'",
+            f"AURUM_SCHEMA_REGISTRY_URL='{schema_registry}'",
+            f"AURUM_TIMESCALE_JDBC_URL='{jdbc_url}'",
+            f"ISO_PNODE_TOPIC_PATTERN='{pnode_topic_pattern}'",
+            f"ISO_PNODE_TABLE='{pnode_table}'",
+        ],
+        mappings=[
+            "secret/data/aurum/timescale:user=TIMESCALE_USER",
+            "secret/data/aurum/timescale:password=TIMESCALE_PASSWORD",
+        ],
     )
 
     end = EmptyOperator(task_id="end")
@@ -123,4 +115,3 @@ with DAG(
     start >> preflight >> [t_asm, t_pnode] >> end
 
     dag.on_failure_callback = build_failure_callback(source="aurum.airflow.ingest_iso_aux_timescale")
-

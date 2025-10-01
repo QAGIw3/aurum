@@ -9,8 +9,9 @@ from fastapi.responses import JSONResponse
 
 from libs.core import CurveKey, PriceObservation
 from libs.storage import TimescaleSeriesRepo
-from libs.common.cache import CacheManager
 from libs.common.observability import get_observability
+from aurum.api.http.responses import respond_with_etag
+from aurum.api.cache.cache import CacheManager
 from ..main import get_timescale_repo, get_cache_manager
 
 router = APIRouter()
@@ -43,26 +44,20 @@ async def get_observations(
         "limit": limit,
     }
     
-    # Check cache first
-    cached_result = await cache.get("series_observations", cache_params)
+    # Check cache first (using unified adapter interface)
+    cached_result = await cache.get("series_observations", cache_params)  # type: ignore[arg-type]
     if cached_result:
         obs = get_observability()
         if obs:
             obs.record_cache_operation("get", hit=True)
-        
-        # Generate ETag from cache
-        import hashlib
-        etag_content = f"{cached_result.get('cached_at', '')}-{len(cached_result.get('data', []))}"
-        etag = hashlib.md5(etag_content.encode()).hexdigest()
-        
-        if request.headers.get("if-none-match") == f'"{etag}"':
-            return Response(status_code=304)
-        
-        response.headers["ETag"] = f'"{etag}"'
-        response.headers["Cache-Control"] = "max-age=300"
-        response.headers["X-Cache"] = "HIT"
-        
-        return cached_result["data"]
+        # Standardize ETag handling using response helper on cached payload
+        payload = cached_result.get("data", [])
+        return respond_with_etag(
+            {"data": payload},
+            request,
+            response,
+            cache_seconds=300,
+        )["data"]
     
     # Cache miss - record metric
     obs = get_observability()
@@ -99,23 +94,15 @@ async def get_observations(
         result = [obs.model_dump() for obs in observations]
         
         # Cache the result
-        await cache.set("series_observations", result, cache_params)
-        
-        # Generate ETag for fresh data
-        import hashlib
-        etag_content = f"{curve.model_dump_json()}-{start_date}-{end_date}-{len(result)}"
-        etag = hashlib.md5(etag_content.encode()).hexdigest()
-        
-        # Check If-None-Match header for 304 response
-        if request.headers.get("if-none-match") == f'"{etag}"':
-            return Response(status_code=304)
-        
-        # Set headers
-        response.headers["ETag"] = f'"{etag}"'
-        response.headers["Cache-Control"] = "max-age=300"
+        await cache.set("series_observations", result, cache_params)  # type: ignore[arg-type]
+        # Standardize ETag handling for fresh data
         response.headers["X-Cache"] = "MISS"
-        
-        return result
+        return respond_with_etag(
+            {"data": result},
+            request,
+            response,
+            cache_seconds=300,
+        )["data"]
         
     except Exception as e:
         if obs:

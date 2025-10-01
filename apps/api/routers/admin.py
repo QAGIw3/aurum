@@ -6,7 +6,7 @@ from typing import Dict, List, Optional, Any
 from fastapi import APIRouter, Depends, HTTPException, Request, Response
 
 from libs.storage import TimescaleSeriesRepo, PostgresMetaRepo, TrinoAnalyticRepo, RedisCacheRepo
-from libs.common.config import get_settings
+from aurum.core import get_settings
 from ..main import get_timescale_repo, get_postgres_repo, get_trino_repo
 
 router = APIRouter()

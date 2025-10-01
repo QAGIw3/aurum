@@ -15,11 +15,10 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 try:
-	from libs.common.config import get_settings as _libs_get_settings, AurumSettings as _LibsAurumSettings
+	from aurum.core import get_settings as _core_get_settings  # unified re-export
 	_LIBS_AVAILABLE = True
-except Exception:  # pragma: no cover - libs may not be present in some envs
+except Exception:  # pragma: no cover - conservative fallback
 	_LIBS_AVAILABLE = False
-	_LibsAurumSettings = None  # type: ignore
 
 if TYPE_CHECKING:
 	from aurum.core.settings import AurumSettings as _CoreAurumSettings  # for type hints only
@@ -28,10 +27,10 @@ if TYPE_CHECKING:
 def get_settings():
 	"""Unified settings accessor for API codepaths.
 
-	Prefer libs.common.config.get_settings to eliminate duplicate env parsing.
-	Falls back to aurum.core.settings.get_settings if libs are unavailable.
+	Prefer aurum.core.get_settings to eliminate duplicate env parsing.
+	Falls back to aurum.core.settings.get_settings if re-export unavailable.
 	"""
 	if _LIBS_AVAILABLE:
-		return _libs_get_settings()
-	from aurum.core.settings import get_settings as _core_get_settings
-	return _core_get_settings()
+		return _core_get_settings()
+	from aurum.core.settings import get_settings as _direct_core_get_settings
+	return _direct_core_get_settings()

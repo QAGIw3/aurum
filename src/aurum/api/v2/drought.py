@@ -83,7 +83,10 @@ async def get_drought_indices_v2(
     cursor: Optional[str] = Query(None, description="Cursor for pagination"),
     limit: int = Query(10, ge=1, le=100, description="Maximum number of items to return"),
 ) -> DroughtIndexResponse:
-    """Get drought indices with enhanced pagination and error handling."""
+    """Get drought indices with enhanced pagination and error handling.
+
+    Maintainer note: ETag + Link headers applied via standardized builder.
+    """
     start_time = time.perf_counter()
 
     try:
@@ -246,7 +249,10 @@ async def get_drought_usdm_v2(
     cursor: Optional[str] = Query(None, description="Cursor for pagination"),
     limit: int = Query(10, ge=1, le=100, description="Maximum number of items to return"),
 ) -> DroughtUsdmResponse:
-    """Get USDM drought data with enhanced pagination and error handling."""
+    """Get USDM drought data with enhanced pagination and error handling.
+
+    Maintainer note: ETag + Link headers applied via standardized builder.
+    """
     start_time = time.perf_counter()
 
     try:

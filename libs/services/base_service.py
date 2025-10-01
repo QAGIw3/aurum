@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Optional
 
-from libs.common.config import get_settings
+from aurum.core import get_settings
 from libs.storage.trino import TrinoAnalyticRepo
 
 

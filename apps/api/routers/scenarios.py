@@ -4,6 +4,7 @@ from __future__ import annotations
 from typing import Dict, List, Optional, Any
 
 from fastapi import APIRouter, Depends, HTTPException, Request, Response
+from aurum.api.http.responses import respond_with_etag
 from pydantic import BaseModel
 
 from libs.storage import PostgresMetaRepo
@@ -78,18 +79,14 @@ async def get_scenario(
         if not scenario:
             raise HTTPException(status_code=404, detail="Scenario not found")
         
-        # Generate ETag for caching
-        import hashlib
-        etag_content = f"{scenario_id}-{scenario.get('version', 1)}"
-        etag = hashlib.md5(etag_content.encode()).hexdigest()
-        
-        if request.headers.get("if-none-match") == f'"{etag}"':
-            return Response(status_code=304)
-        
-        response.headers["ETag"] = f'"{etag}"'
-        response.headers["Cache-Control"] = "max-age=600"  # 10 minute cache
-        
-        return scenario
+        # Standardized ETag/Cache-Control handling
+        response_payload = {"data": scenario}
+        return respond_with_etag(
+            response_payload,
+            request,
+            response,
+            cache_seconds=600,
+        )["data"]
         
     except HTTPException:
         raise

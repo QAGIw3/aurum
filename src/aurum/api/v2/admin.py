@@ -26,8 +26,6 @@ from pydantic import BaseModel, Field
 from ..http import respond_with_etag
 from ..http.response_builders import etag_response_builder, etag_cursor_response_builder
 from ..auth import Permission, require_permissions
-from ..cache.consolidated_manager import get_unified_cache_manager
-from ..cache.enhanced_cache_manager import CacheNamespace
 from ...observability.metrics import (
     increment_cache_admin_invalidations,
     observe_cache_admin_invalidation_duration,
@@ -76,7 +74,10 @@ async def invalidate_scenario_cache_v2(
     scenario_id: str,
     tenant_id: str = Query(..., description="Tenant ID"),
 ) -> Response:
-    """Invalidate scenario cache with enhanced validation and error handling."""
+    """Invalidate scenario cache with enhanced validation and error handling.
+
+    Maintainer note: ETag/headers standardized via response builders where applicable.
+    """
     start_time = time.perf_counter()
 
     try:
@@ -128,11 +129,15 @@ async def invalidate_curves_cache_v2(
     response: Response,
     tenant_id: str = Query(..., description="Tenant ID"),
 ) -> CachePurgeResponse:
-    """Invalidate curves cache with enhanced validation and error handling."""
+    """Invalidate curves cache with enhanced validation and error handling.
+
+    Maintainer note: ETag applied via standardized builder.
+    """
     start_time = time.perf_counter()
 
     try:
         # Invalidate curve caches via unified cache manager
+        from ..cache.unified_cache_manager import get_unified_cache_manager
         manager = get_unified_cache_manager()
         keys_purged = 0
         keys_purged += await manager.invalidate_pattern("curves:*", namespace=CacheNamespace.CURVES)
@@ -185,9 +190,13 @@ async def invalidate_metadata_units_cache_v2(
     response: Response,
     tenant_id: str = Query(..., description="Tenant ID"),
 ) -> CachePurgeResponse:
-    """Invalidate metadata units cache (v2)."""
+    """Invalidate metadata units cache (v2).
+
+    Maintainer note: ETag applied via standardized builder.
+    """
     start_time = time.perf_counter()
     try:
+        from ..cache.unified_cache_manager import get_unified_cache_manager
         manager = get_unified_cache_manager()
         keys_purged = await manager.invalidate_pattern("units:*", namespace=CacheNamespace.METADATA)
         elapsed = time.perf_counter() - start_time
@@ -227,9 +236,13 @@ async def invalidate_metadata_dimensions_cache_v2(
     response: Response,
     tenant_id: str = Query(..., description="Tenant ID"),
 ) -> CachePurgeResponse:
-    """Invalidate metadata dimensions cache (v2)."""
+    """Invalidate metadata dimensions cache (v2).
+
+    Maintainer note: ETag applied via standardized builder.
+    """
     start_time = time.perf_counter()
     try:
+        from ..cache.unified_cache_manager import get_unified_cache_manager
         manager = get_unified_cache_manager()
         keys_purged = await manager.invalidate_pattern("dimensions:*", namespace=CacheNamespace.METADATA)
         duration_ms = (time.perf_counter() - start_time) * 1000
@@ -267,9 +280,13 @@ async def invalidate_metadata_locations_cache_v2(
     iso: str = Query(..., description="ISO code to invalidate locations for"),
     tenant_id: str = Query(..., description="Tenant ID"),
 ) -> CachePurgeResponse:
-    """Invalidate metadata locations cache for an ISO (v2)."""
+    """Invalidate metadata locations cache for an ISO (v2).
+
+    Maintainer note: ETag applied via standardized builder.
+    """
     start_time = time.perf_counter()
     try:
+        from ..cache.unified_cache_manager import get_unified_cache_manager
         manager = get_unified_cache_manager()
         keys_purged = 0
         keys_purged += await manager.invalidate_pattern(f"iso:locations:{iso}*", namespace=CacheNamespace.METADATA)
@@ -309,7 +326,10 @@ async def invalidate_eia_series_cache_v2(
     response: Response,
     tenant_id: str = Query(..., description="Tenant ID"),
 ) -> CachePurgeResponse:
-    """Invalidate EIA series caches (v2)."""
+    """Invalidate EIA series caches (v2).
+
+    Maintainer note: ETag applied via standardized builder.
+    """
     start_time = time.perf_counter()
     try:
         manager = get_unified_cache_manager()
@@ -354,7 +374,10 @@ async def list_mappings_v2(
     provider_filter: Optional[str] = Query(None, description="Filter by provider"),
     series_filter: Optional[str] = Query(None, description="Filter by series ID"),
 ) -> SeriesCurveMappingListResponse:
-    """List series-curve mappings with enhanced pagination and filtering."""
+    """List series-curve mappings with enhanced pagination and filtering.
+
+    Maintainer note: ETag + Link headers applied via standardized builder.
+    """
     start_time = time.perf_counter()
 
     try:

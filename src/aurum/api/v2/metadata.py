@@ -36,7 +36,6 @@ from ..deps import get_settings, get_cache_manager, get_unified_cache_manager_de
 from libs.services.metadata_service import MetadataService
 from aurum.core import AurumSettings
 # use dependency wrapper to avoid FastAPI analyzing internal types
-from ..cache.enhanced_cache_manager import CacheNamespace
 from ..container import provide_service
 
 router = APIRouter(prefix="/v2", tags=["metadata"])
@@ -158,7 +157,10 @@ async def list_dimensions_v2(
     settings: AurumSettings = Depends(get_settings),
     cache_manager = Depends(get_unified_cache_manager_dep),
 ) -> DimensionsResponse:
-    """List dimensions with enhanced pagination and error handling."""
+    """List dimensions with enhanced pagination and error handling.
+
+    Maintainer note: ETag + Link headers applied via standardized builder.
+    """
     start_time = time.perf_counter()
 
     try:
@@ -258,7 +260,10 @@ async def list_locations_v2(
     settings: AurumSettings = Depends(get_settings),
     cache_manager = Depends(get_unified_cache_manager_dep),
 ) -> IsoLocationsResponse:
-    """List ISO locations with enhanced pagination and error handling."""
+    """List ISO locations with enhanced pagination and error handling.
+
+    Maintainer note: ETag + Link headers applied via standardized builder.
+    """
     start_time = time.perf_counter()
 
     try:
@@ -361,7 +366,10 @@ async def list_units_v2(
     settings: AurumSettings = Depends(get_settings),
     cache_manager = Depends(get_unified_cache_manager_dep),
 ) -> UnitsCanonicalResponse:
-    """List canonical units with enhanced pagination and error handling."""
+    """List canonical units with enhanced pagination and error handling.
+
+    Maintainer note: ETag + Link headers applied via standardized builder.
+    """
     start_time = time.perf_counter()
 
     try:
@@ -448,7 +456,10 @@ async def list_calendars_v2(
     cursor: Optional[str] = Query(None, description="Cursor for pagination"),
     limit: int = Query(10, ge=1, le=100, description="Maximum number of items to return"),
 ) -> CalendarsResponse:
-    """List calendars with enhanced pagination and error handling."""
+    """List calendars with enhanced pagination and error handling.
+
+    Maintainer note: ETag + Link headers applied via standardized builder.
+    """
     start_time = time.perf_counter()
 
     try:
@@ -530,7 +541,10 @@ async def create_series_curve_mapping(
     response: Response,
     mapping: SeriesCurveMappingRequest,
 ) -> SeriesCurveMappingResponse:
-    """Create a new series-curve mapping."""
+    """Create a new series-curve mapping.
+
+    Maintainer note: ETag applied via standardized builder.
+    """
     start_time = time.perf_counter()
 
     try:
@@ -588,7 +602,10 @@ async def list_series_curve_mappings(
     limit: int = Query(100, ge=1, le=1000, description="Maximum number of results"),
     offset: int = Query(0, ge=0, description="Number of results to skip"),
 ) -> SeriesCurveMappingResponse:
-    """List series-curve mappings with optional filtering."""
+    """List series-curve mappings with optional filtering.
+
+    Maintainer note: ETag applied via standardized builder.
+    """
     start_time = time.perf_counter()
 
     try:
@@ -640,7 +657,10 @@ async def update_series_curve_mapping(
     mapping_id: str,
     mapping: SeriesCurveMappingRequest,
 ) -> SeriesCurveMappingResponse:
-    """Update an existing series-curve mapping."""
+    """Update an existing series-curve mapping.
+
+    Maintainer note: ETag applied via standardized builder.
+    """
     start_time = time.perf_counter()
 
     try:
@@ -809,7 +829,10 @@ async def get_staleness_status(
     limit: int = Query(100, ge=1, le=1000, description="Maximum number of results"),
     offset: int = Query(0, ge=0, description="Number of results to skip"),
 ) -> StalenessListResponse:
-    """Get staleness status for datasets."""
+    """Get staleness status for datasets.
+
+    Maintainer note: ETag applied via standardized builder.
+    """
     start_time = time.perf_counter()
 
     try:
@@ -865,7 +888,10 @@ async def get_staleness_alerts(
     limit: int = Query(100, ge=1, le=1000, description="Maximum number of results"),
     offset: int = Query(0, ge=0, description="Number of results to skip"),
 ) -> StalenessAlertsResponse:
-    """Get active staleness alerts."""
+    """Get active staleness alerts.
+
+    Maintainer note: ETag applied via standardized builder.
+    """
     start_time = time.perf_counter()
 
     try:
@@ -948,7 +974,10 @@ async def get_staleness_metrics(
     limit: int = Query(100, ge=1, le=1000, description="Maximum number of results"),
     offset: int = Query(0, ge=0, description="Number of results to skip"),
 ) -> StalenessListResponse:
-    """Get staleness metrics and performance indicators."""
+    """Get staleness metrics and performance indicators.
+
+    Maintainer note: ETag applied via standardized builder.
+    """
     start_time = time.perf_counter()
 
     try:

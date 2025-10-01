@@ -112,50 +112,7 @@ def emit_lakefs_lineage(dataset: str, **context: Any) -> None:
         print(f"LakeFS lineage commit failed: {exc}")
 
 
-def build_timescale_task(task_id: str) -> BashOperator:
-    mappings = [
-        "secret/data/aurum/timescale:user=TIMESCALE_USER",
-        "secret/data/aurum/timescale:password=TIMESCALE_PASSWORD",
-    ]
-    mapping_flags = " ".join(f"--mapping {m}" for m in mappings)
-    pull_cmd = (
-        f"eval \"$(VAULT_ADDR={VAULT_ADDR} VAULT_TOKEN={VAULT_TOKEN} "
-        f"PYTHONPATH=${{PYTHONPATH:-}}:{PYTHONPATH_ENTRY} "
-        f"{VENV_PYTHON} scripts/secrets/pull_vault_env.py {mapping_flags} --format shell)\" || true"
-    )
-
-    kafka_bootstrap = "{{ var.value.get('aurum_kafka_bootstrap', 'localhost:9092') }}"
-    schema_registry = "{{ var.value.get('aurum_schema_registry', 'http://localhost:8081') }}"
-    jdbc_url = "{{ var.value.get('aurum_timescale_jdbc', 'jdbc:postgresql://timescale:5432/timeseries') }}"
-    topic_pattern = "{{ var.value.get('aurum_fred_topic_pattern', 'aurum\\.ref\\.fred\\..*\\.v1') }}"
-    table_name = "{{ var.value.get('aurum_fred_series_table', 'fred_series_timeseries') }}"
-    dlq_topic = "{{ var.value.get('aurum_fred_dlq_topic', 'aurum.ref.fred.series.dlq.v1') }}"
-    backfill_flag = "{{ dag_run.conf.get('backfill', '0') }}"
-    backfill_start = "{{ dag_run.conf.get('backfill_start', '') }}"
-    backfill_end = "{{ dag_run.conf.get('backfill_end', '') }}"
-
-    env_line = (
-        f"KAFKA_BOOTSTRAP_SERVERS='{kafka_bootstrap}' "
-        f"SCHEMA_REGISTRY_URL='{schema_registry}' "
-        f"TIMESCALE_JDBC_URL='{jdbc_url}' "
-        f"FRED_TOPIC_PATTERN='{topic_pattern}' "
-        f"FRED_SERIES_TABLE='{table_name}' "
-        f"DLQ_TOPIC='{dlq_topic}' "
-        f"BACKFILL_ENABLED='{backfill_flag}' "
-        f"BACKFILL_START='{backfill_start}' "
-        f"BACKFILL_END='{backfill_end}'"
-    )
-
-    return BashOperator(
-        task_id=task_id,
-        bash_command=(
-            "set -euo pipefail\n"
-            f"{pull_cmd}\n"
-            f"export PATH=\"{BIN_PATH}\"\n"
-            f"export PYTHONPATH=\"${{PYTHONPATH:-}}:{PYTHONPATH_ENTRY}\"\n"
-            f"{env_line} scripts/seatunnel/run_job.sh fred_series_kafka_to_timescale"
-        ),
-    )
+from aurum.airflow_utils.timescale import build_timescale_task as _build_ts
 
 
 with DAG(
@@ -180,7 +137,26 @@ with DAG(
         ),
     )
     register_source = PythonOperator(task_id="register_fred_series_source", python_callable=register_stream_source)
-    load_timescale = build_timescale_task(task_id="fred_series_kafka_to_timescale")
+    load_timescale = _build_ts(
+        task_id="fred_series_kafka_to_timescale",
+        job_name="fred_series_kafka_to_timescale",
+        env_entries=[
+            "KAFKA_BOOTSTRAP_SERVERS='{{ var.value.get(\"aurum_kafka_bootstrap\", \"localhost:9092\") }}'",
+            "SCHEMA_REGISTRY_URL='{{ var.value.get(\"aurum_schema_registry\", \"http://localhost:8081\") }}'",
+            "TIMESCALE_JDBC_URL='{{ var.value.get(\"aurum_timescale_jdbc\", \"jdbc:postgresql://timescale:5432/timeseries\") }}'",
+            "FRED_TOPIC_PATTERN='{{ var.value.get(\"aurum_fred_topic_pattern\", \"aurum\\.ref\\.fred\\..*\\.v1\") }}'",
+            "FRED_SERIES_TABLE='{{ var.value.get(\"aurum_fred_series_table\", \"fred_series_timeseries\") }}'",
+            "DLQ_TOPIC='{{ var.value.get(\"aurum_fred_dlq_topic\", \"aurum.ref.fred.series.dlq.v1\") }}'",
+            "BACKFILL_ENABLED='{{ dag_run.conf.get(\"backfill\", \"0\") }}'",
+            "BACKFILL_START='{{ dag_run.conf.get(\"backfill_start\", \"\") }}'",
+            "BACKFILL_END='{{ dag_run.conf.get(\"backfill_end\", \"\") }}'",
+        ],
+        mappings=[
+            "secret/data/aurum/timescale:user=TIMESCALE_USER",
+            "secret/data/aurum/timescale:password=TIMESCALE_PASSWORD",
+        ],
+        pool="api_fred",
+    )
 
     def _update_watermark(**context: Any) -> None:
         logical_date: datetime = context["logical_date"]

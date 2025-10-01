@@ -72,7 +72,7 @@ def pytest_collection_modifyitems(config, items):
 
         # If v2-only is enabled, skip any tests that explicitly target v1 endpoints or modules
         try:
-            from libs.common.config import get_settings  # local import to avoid early settings init
+            from aurum.core import get_settings  # local import to avoid early settings init
             if getattr(get_settings(), "enable_v2_only", False):
                 if "/v1/" in nodeid or "aurum.api.v1" in nodeid:
                     item.add_marker(pytest.mark.skip(reason="v2-only mode: v1 tests are skipped"))

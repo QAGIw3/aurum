@@ -3,6 +3,10 @@
 These helpers return callables capturing `request`/`response` plus
 optional pagination and canonical URL parameters. They defer importing
 `respond_with_etag` until call time to keep import cost low in tools/tests.
+
+Maintainers: See docs for examples and guidance
+- docs/api_usage_guide.md#builder-usage-maintainers
+- Prefer these builders over inline `respond_with_etag` in new routes
 """
 
 from __future__ import annotations
@@ -72,4 +76,3 @@ __all__ = [
     "etag_response_builder",
     "etag_cursor_response_builder",
 ]
-

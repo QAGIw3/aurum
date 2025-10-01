@@ -39,6 +39,39 @@ curl -X GET "http://localhost:8000/v1/curves" \
 
 ## Core Endpoints
 
+## Builder Usage (Maintainers)
+
+To standardize ETag headers and pagination Link headers across routes, use the shared response builders instead of calling `respond_with_etag` inline.
+
+- Location: `src/aurum/api/http/response_builders.py`
+- Builders:
+  - `etag_response_builder(request, response, canonical_url=...)` for non-paginated responses
+  - `etag_cursor_response_builder(request, response, next_cursor=..., prev_cursor=..., canonical_url=...)` for paginated responses
+
+Examples:
+
+```python
+from aurum.api.http.response_builders import (
+    etag_response_builder,
+    etag_cursor_response_builder,
+)
+
+# Paginated example
+build = etag_cursor_response_builder(
+    request,
+    response,
+    next_cursor=next_cursor,
+    canonical_url=str(request.url.remove_query_params("cursor")),
+)
+return build(result)
+
+# Non-paginated example
+build = etag_response_builder(request, response, canonical_url=str(request.url))
+return build(result)
+```
+
+When creating new routes, prefer these builders for consistent cache headers and conditional requests.
+
 ## 1. Curves API
 
 ### Get Curve Data

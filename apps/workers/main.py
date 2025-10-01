@@ -6,7 +6,7 @@ from typing import Any, Dict
 
 from celery import Celery
 
-from libs.common.config import get_settings
+from aurum.core import get_settings
 from libs.storage import TimescaleSeriesRepo, PostgresMetaRepo
 
 logger = logging.getLogger(__name__)

@@ -68,7 +68,10 @@ async def get_curves_v2(
     debug: bool = Query(False, description="Include backend debug metadata"),
     settings: AurumSettings = Depends(get_settings),
 ) -> CurveListResponse:
-    """List curves with enhanced pagination and error handling."""
+    """List curves with enhanced pagination and error handling.
+
+    Maintainer note: ETag + Link headers applied via standardized builder.
+    """
     start_time = time.perf_counter()
 
     try:
@@ -243,7 +246,10 @@ async def get_curve_diff_v2(
     from_timestamp: str = Query(..., description="From timestamp"),
     to_timestamp: str = Query(..., description="To timestamp"),
 ) -> CurveResponse:
-    """Get curve diff with enhanced error handling."""
+    """Get curve diff with enhanced error handling.
+
+    Maintainer note: ETag applied via standardized builder.
+    """
     start_time = time.perf_counter()
 
     try:

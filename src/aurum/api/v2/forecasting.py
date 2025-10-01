@@ -26,10 +26,9 @@ from enum import Enum
 from ..deps import get_settings, get_cache_manager, get_unified_cache_manager_dep
 from ..telemetry.context import get_request_id, get_tenant_id
 from aurum.core import AurumSettings
-from ..cache.consolidated_manager import get_unified_cache_manager
-from ..cache.enhanced_cache_manager import CacheNamespace
 from ..services.feature_store_service import get_feature_store_service
 from ...observability.telemetry_facade import get_telemetry_facade, MetricCategory
+from ..http import respond_with_etag
 
 
 class ForecastType(str, Enum):
@@ -207,6 +206,7 @@ router = APIRouter(prefix="/v2", tags=["forecasting"])
 @router.post("/forecasts", response_model=ForecastResponse)
 async def generate_forecast(
     request: ForecastRequest,
+    http_request: Request,
     response: Response,
     settings: AurumSettings = Depends(get_settings),
     cache_manager = Depends(get_unified_cache_manager_dep)
@@ -281,18 +281,10 @@ async def generate_forecast(
             }
         )
 
-        # Add ETag for caching
-        forecast_data = forecast_response.dict()
-        etag = await _compute_forecast_etag(forecast_data)
-        response.headers["ETag"] = etag
-
         # Cache forecast
+        forecast_data = forecast_response.dict()
         cache_key = f"forecast:{forecast_response.forecast_id}"
-        await cache_manager.set(
-            cache_key,
-            forecast_data,
-            ttl_seconds=3600  # 1 hour cache
-        )
+        await cache_manager.set(cache_key, forecast_data, ttl_seconds=3600)
 
         duration = time.time() - start_time
 
@@ -313,7 +305,13 @@ async def generate_forecast(
             forecast_type=request.forecast_type.value
         )
 
-        return forecast_response
+        # Standardized ETag + Cache-Control
+        return respond_with_etag(
+            forecast_response,
+            http_request,
+            response,
+            cache_seconds=3600,
+        )
 
     except Exception as e:
         duration = time.time() - start_time
@@ -341,6 +339,7 @@ async def generate_forecast(
 @router.get("/forecasts/{forecast_id}", response_model=ForecastResponse)
 async def get_forecast(
     forecast_id: str,
+    request: Request,
     response: Response,
     settings: AurumSettings = Depends(get_settings),
     cache_manager = Depends(get_unified_cache_manager_dep)
@@ -364,12 +363,14 @@ async def get_forecast(
         cached_forecast = await cache_manager.get(cache_key)
 
         if cached_forecast:
-            # Add ETag for caching
-            etag = await _compute_forecast_etag(cached_forecast)
-            response.headers["ETag"] = etag
-
             telemetry.info("Forecast retrieved from cache", forecast_id=forecast_id)
-            return ForecastResponse(**cached_forecast)
+            model = ForecastResponse(**cached_forecast)
+            return respond_with_etag(
+                model,
+                request,
+                response,
+                cache_seconds=3600,
+            )
 
         raise HTTPException(status_code=404, detail="Forecast not found")
 
@@ -642,31 +643,7 @@ async def _generate_probabilistic_forecast(
     return forecast_points
 
 
-async def _compute_forecast_etag(forecast_data: Dict[str, Any]) -> str:
-    """Compute ETag for forecast response.
-
-    Args:
-        forecast_data: Forecast data dictionary
-
-    Returns:
-        ETag string
-    """
-    import hashlib
-    import json
-
-    # Create deterministic representation for ETag
-    etag_data = {
-        "forecast_id": forecast_data.get("forecast_id"),
-        "forecast_type": forecast_data.get("forecast_type"),
-        "target_variable": forecast_data.get("target_variable"),
-        "geography": forecast_data.get("geography"),
-        "model_version": forecast_data.get("model_version"),
-        "point_count": len(forecast_data.get("forecast_points", [])),
-        "generated_at": forecast_data.get("generated_at")
-    }
-
-    etag_string = json.dumps(etag_data, sort_keys=True)
-    return hashlib.md5(etag_string.encode()).hexdigest()
+    
 
 
 # Register router in v2 module

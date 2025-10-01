@@ -25,8 +25,6 @@ from ..http.response_builders import etag_response_builder, etag_cursor_response
 from libs.services.scenarios_service import ScenariosService
 from ..deps import get_settings, get_cache_manager, get_unified_cache_manager_dep
 from aurum.core import AurumSettings
-from ..cache.consolidated_manager import get_unified_cache_manager
-from ..cache.enhanced_cache_manager import CacheNamespace
 from ..scenario_models import (
     ScenarioCreateRequest,
     ScenarioData,
@@ -78,7 +76,10 @@ async def list_scenarios_v2(
     settings: AurumSettings = Depends(get_settings),
     cache_manager = Depends(get_unified_cache_manager_dep),
 ) -> ScenarioListResponse:
-    """List scenarios with enhanced pagination and error handling."""
+    """List scenarios with enhanced pagination and error handling.
+
+    Maintainer note: ETag + Link headers applied via standardized builder.
+    """
     start_time = time.perf_counter()
 
     try:
@@ -177,7 +178,10 @@ async def create_scenario_v2(
     settings: AurumSettings = Depends(get_settings),
     cache_manager = Depends(get_unified_cache_manager_dep),
 ) -> ScenarioResponse:
-    """Create a scenario with enhanced validation and error handling."""
+    """Create a scenario with enhanced validation and error handling.
+
+    Maintainer note: ETag applied via standardized builder.
+    """
     start_time = time.perf_counter()
 
     try:
@@ -235,7 +239,10 @@ async def get_scenario_v2(
     settings: AurumSettings = Depends(get_settings),
     cache_manager = Depends(get_unified_cache_manager_dep),
 ) -> ScenarioResponse:
-    """Get a scenario with enhanced error handling."""
+    """Get a scenario with enhanced error handling.
+
+    Maintainer note: ETag applied via standardized builder.
+    """
     start_time = time.perf_counter()
 
     try:
@@ -293,7 +300,10 @@ async def create_scenario_run_v2(
     settings: AurumSettings = Depends(get_settings),
     cache_manager = Depends(get_unified_cache_manager_dep),
 ) -> ScenarioRunResponse:
-    """Create a scenario run with enhanced validation and idempotency."""
+    """Create a scenario run with enhanced validation and idempotency.
+
+    Maintainer note: ETag applied via standardized builder.
+    """
     start_time = time.perf_counter()
 
     try:
@@ -354,7 +364,10 @@ async def list_scenario_runs_v2(
     settings: AurumSettings = Depends(get_settings),
     cache_manager = Depends(get_unified_cache_manager_dep),
 ) -> ScenarioRunListResponse:
-    """List scenario runs with enhanced pagination and filtering."""
+    """List scenario runs with enhanced pagination and filtering.
+
+    Maintainer note: ETag + Link headers applied via standardized builder.
+    """
     start_time = time.perf_counter()
 
     try:

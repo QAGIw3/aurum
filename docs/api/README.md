@@ -56,6 +56,7 @@ diffs = client.compare_curves(
 - Interactive Docs (server): https://api.aurum.local/docs
 - OpenAPI Spec (YAML): openapi-spec.yaml
 - Markdown Docs: api-docs.md
+- Response Builders: ../api_usage_guide.md#builder-usage-maintainers
 - Async Offload Runbook: offload.md
 - HTML (Redoc) Viewer: index.html
 - HTML (Swagger UI) Viewer: swagger.html

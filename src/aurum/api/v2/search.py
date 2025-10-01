@@ -28,8 +28,6 @@ from ..deps import get_settings, get_cache_manager
 from libs.services.search_service import SearchService
 from ..features import is_feature_enabled, require_feature
 from aurum.core import AurumSettings
-from ..cache.consolidated_manager import get_unified_cache_manager
-from ..cache.enhanced_cache_manager import CacheNamespace
 from ...telemetry.context import get_request_id
 from .pagination import (
     build_next_cursor,

@@ -137,7 +137,10 @@ async def list_ppa_contracts_v2(
     counterparty_filter: Optional[str] = Query(None, description="Filter by counterparty"),
     service: PpaV2Service = Depends(get_ppa_service),
 ) -> PpaContractListResponse:
-    """List PPA contracts with enhanced pagination and error handling."""
+    """List PPA contracts with enhanced pagination and error handling.
+
+    Maintainer note: ETag applied via standardized builder.
+    """
     start_time = time.perf_counter()
 
     try:
@@ -287,7 +290,10 @@ async def list_ppa_valuations_v2(
     end_date: Optional[str] = Query(None, description="End date filter"),
     service: PpaV2Service = Depends(get_ppa_service),
 ) -> PpaValuationListResponse:
-    """List PPA valuations with enhanced pagination and filtering."""
+    """List PPA valuations with enhanced pagination and filtering.
+
+    Maintainer note: ETag + Link headers applied via standardized builder.
+    """
     start_time = time.perf_counter()
 
     try:

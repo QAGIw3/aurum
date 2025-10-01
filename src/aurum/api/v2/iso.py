@@ -67,7 +67,10 @@ async def get_lmp_last_24h_v2(
     cursor: Optional[str] = Query(None, description="Cursor for pagination"),
     limit: int = Query(10, ge=1, le=100, description="Maximum number of items to return"),
 ) -> IsoLmpResponse:
-    """Get last 24h LMP data with enhanced pagination and error handling."""
+    """Get last 24h LMP data with enhanced pagination and error handling.
+
+    Maintainer note: ETag + Link headers applied via standardized builder.
+    """
     start_time = time.perf_counter()
 
     try:
@@ -168,7 +171,10 @@ async def get_lmp_hourly_v2(
     cursor: Optional[str] = Query(None, description="Cursor for pagination"),
     limit: int = Query(10, ge=1, le=100, description="Maximum number of items to return"),
 ) -> IsoLmpAggregateResponse:
-    """Get hourly LMP aggregate data with enhanced pagination and error handling."""
+    """Get hourly LMP aggregate data with enhanced pagination and error handling.
+
+    Maintainer note: ETag + Link headers applied via standardized builder.
+    """
     start_time = time.perf_counter()
 
     try:
@@ -255,7 +261,10 @@ async def get_lmp_daily_v2(
     cursor: Optional[str] = Query(None, description="Cursor for pagination"),
     limit: int = Query(10, ge=1, le=100, description="Maximum number of items to return"),
 ) -> IsoLmpAggregateResponse:
-    """Get daily LMP aggregate data with enhanced pagination and error handling."""
+    """Get daily LMP aggregate data with enhanced pagination and error handling.
+
+    Maintainer note: ETag + Link headers applied via standardized builder.
+    """
     start_time = time.perf_counter()
 
     try:

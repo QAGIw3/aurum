@@ -71,7 +71,7 @@ async def demo_storage_abstraction():
     print("🗄️  STORAGE ABSTRACTION LAYER")
     print("=" * 50)
     
-    from libs.common.config import get_settings
+from aurum.core import get_settings
     from libs.storage import TimescaleSeriesRepo, PostgresMetaRepo, TrinoAnalyticRepo
     from libs.core import CurveKey, IsoCode, IsoMarket
     

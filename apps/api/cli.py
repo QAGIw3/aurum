@@ -5,10 +5,10 @@ import asyncio
 import click
 from typing import Optional
 
-from libs.common.config import get_settings, AurumSettings
+from aurum.core import get_settings, AurumSettings
 from libs.storage import TimescaleSeriesRepo, PostgresMetaRepo
 from libs.storage.timescale_ops import TimescalePerformanceOps
-from libs.common.cache import CacheManager
+from aurum.api.cache.cache import CacheManager
 
 
 @click.group()
@@ -89,7 +89,7 @@ async def stats(ctx):
     settings: AurumSettings = ctx.obj['settings']
     
     try:
-        cache_manager = CacheManager(settings.redis, settings.cache)
+        cache_manager = CacheManager()
         
         stats = await cache_manager.get_cache_stats()
         
@@ -116,7 +116,7 @@ async def clear(ctx, pattern: Optional[str]):
     settings: AurumSettings = ctx.obj['settings']
     
     try:
-        cache_manager = CacheManager(settings.redis, settings.cache)
+        cache_manager = CacheManager()
         
         if pattern:
             count = await cache_manager.invalidate_pattern(pattern)

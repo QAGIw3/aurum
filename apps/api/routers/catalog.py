@@ -4,6 +4,7 @@ from __future__ import annotations
 from typing import Dict, List, Optional, Any
 
 from fastapi import APIRouter, Depends, HTTPException, Request, Response
+from aurum.api.http.responses import respond_with_etag
 
 from libs.services.catalog_service import CatalogService
 
@@ -76,22 +77,17 @@ async def get_table_stats(
     
     try:
         from libs.storage.trino import TrinoAnalyticRepo
-        from libs.common.config import get_settings
+        from aurum.core import get_settings
         repo = TrinoAnalyticRepo(get_settings().database)
         stats = await repo.get_table_stats(table_name=table_name, catalog=catalog, schema=schema)
         
-        # Generate ETag for caching
-        import hashlib
-        etag_content = f"{table_name}-{catalog}-{schema}-stats"
-        etag = hashlib.md5(etag_content.encode()).hexdigest()
-        
-        if request.headers.get("if-none-match") == f'"{etag}"':
-            return Response(status_code=304)
-        
-        response.headers["ETag"] = f'"{etag}"'
-        response.headers["Cache-Control"] = "max-age=7200"  # 2 hours
-        
-        return stats
+        # Standardized ETag/Cache-Control handling
+        return respond_with_etag(
+            {"data": stats},
+            request,
+            response,
+            cache_seconds=7200,
+        )["data"]
         
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to get table stats: {str(e)}")
@@ -159,10 +155,13 @@ async def get_dimensions(
             "table": table,
         }
         
-        # Cache for 4 hours
-        response.headers["Cache-Control"] = "max-age=14400"
-        
-        return result
+        # Standard Cache-Control via helper
+        return respond_with_etag(
+            result,
+            request,
+            response,
+            cache_seconds=14400,
+        )
         
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to get dimensions: {str(e)}")

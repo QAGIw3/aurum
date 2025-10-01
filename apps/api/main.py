@@ -9,8 +9,8 @@ from fastapi import FastAPI, Depends
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.gzip import GZipMiddleware
 
-from libs.common.config import AurumSettings, get_settings
-from libs.common.cache import CacheManager
+from aurum.core import AurumSettings, get_settings
+from aurum.api.cache.cache import CacheManager
 from libs.observability.api import configure_observability, get_observability
 from libs.observability.middleware import RequestContextMiddleware
 from libs.storage import TimescaleSeriesRepo, PostgresMetaRepo, TrinoAnalyticRepo
@@ -32,8 +32,8 @@ class DependencyContainer:
         self.postgres_repo = PostgresMetaRepo(settings.database)  
         self.trino_repo = TrinoAnalyticRepo(settings.database)
         
-        # Initialize cache manager
-        self.cache_manager = CacheManager(settings.redis, settings.cache)
+        # Initialize cache manager (unified)
+        self.cache_manager = CacheManager()
         
         # Initialize observability
         self.observability = configure_observability(settings.observability)
