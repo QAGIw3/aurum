@@ -19,6 +19,7 @@ if _SRC_PATH and _SRC_PATH not in sys.path:
 from aurum.airflow_utils import build_failure_callback, build_preflight_callable
 from aurum.airflow_utils import iso as iso_utils
 from aurum.airflow_utils.datasets import iso_trigger, iso_ingest
+from aurum.airflow_utils.vault import build_pull_env_command
 
 
 DEFAULT_ARGS: dict[str, Any] = {
@@ -73,13 +74,7 @@ def _build_job(
 ) -> Tuple[BashOperator, BashOperator, PythonOperator]:
     pre_lines: list[str] = []
     if vault_mappings:
-        mapping_flags = " " + " ".join(f"--mapping {m}" for m in vault_mappings)
-        pull_cmd = (
-            f"eval \"$(VAULT_ADDR={VAULT_ADDR} VAULT_TOKEN={VAULT_TOKEN} "
-            f"PYTHONPATH=${{PYTHONPATH:-}}:{PYTHONPATH_ENTRY} "
-            f"{VENV_PYTHON} scripts/secrets/pull_vault_env.py{mapping_flags} --format shell)\" || true"
-        )
-        pre_lines.append(pull_cmd)
+        pre_lines.append(build_pull_env_command(list(vault_mappings)))
 
     return iso_utils.create_seatunnel_ingest_chain(
         task_prefix,

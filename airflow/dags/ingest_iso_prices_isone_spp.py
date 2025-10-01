@@ -17,6 +17,7 @@ if _SRC_PATH and _SRC_PATH not in sys.path:
 
 from aurum.airflow_utils import build_failure_callback, build_preflight_callable
 from aurum.airflow_utils import iso as iso_utils
+from aurum.airflow_utils.vault import build_pull_env_command
 
 
 DEFAULT_ARGS: dict[str, Any] = {
@@ -54,17 +55,10 @@ SOURCES = (
 
 
 def _isone_chain():
-    mapping_flags = [
+    pull_cmd = build_pull_env_command([
         "secret/data/aurum/isone:username=ISONE_USERNAME",
         "secret/data/aurum/isone:password=ISONE_PASSWORD",
-    ]
-    pull_cmd = (
-        f"eval \"$(VAULT_ADDR={VAULT_ADDR} VAULT_TOKEN={VAULT_TOKEN} "
-        f"PYTHONPATH={PYTHONPATH_ENTRY}:${{PYTHONPATH:-}} "
-        f"{VENV_PYTHON} scripts/secrets/pull_vault_env.py "
-        + " ".join(f"--mapping {m}" for m in mapping_flags)
-        + " --format shell)\" || true"
-    )
+    ])
     return iso_utils.create_seatunnel_ingest_chain(
         "isone_lmp",
         job_name="isone_lmp_to_kafka",

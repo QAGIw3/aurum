@@ -17,6 +17,7 @@ if _SRC_PATH and _SRC_PATH not in sys.path:
 
 from aurum.airflow_utils import build_failure_callback, build_preflight_callable
 from aurum.airflow_utils import iso as iso_utils
+from aurum.airflow_utils.vault import build_pull_env_command
 
 
 DEFAULT_ARGS: dict[str, Any] = {
@@ -55,12 +56,7 @@ SOURCES = (
 
 
 def _build_job(task_prefix: str, job_name: str, source_name: str, *, env_entries: Iterable[str], pool: str | None = None):
-    mapping_flags = "--mapping secret/data/aurum/pjm:token=PJM_API_KEY"
-    pull_cmd = (
-        f"eval \"$(VAULT_ADDR={VAULT_ADDR} VAULT_TOKEN={VAULT_TOKEN} "
-        f"PYTHONPATH=${{PYTHONPATH:-}}:{PYTHONPATH_ENTRY} "
-        f"{VENV_PYTHON} scripts/secrets/pull_vault_env.py {mapping_flags} --format shell)\" || true"
-    )
+    pull_cmd = build_pull_env_command(["secret/data/aurum/pjm:token=PJM_API_KEY"])
     return iso_utils.create_seatunnel_ingest_chain(
         task_prefix,
         job_name=job_name,

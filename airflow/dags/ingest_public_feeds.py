@@ -22,6 +22,7 @@ from airflow.operators.empty import EmptyOperator
 from airflow.operators.python import PythonOperator
 
 from aurum.airflow_utils import build_failure_callback, build_preflight_callable, metrics
+from aurum.airflow_utils.vault import build_pull_env_command
 
 try:
     from aurum.reference.eia_catalog import get_dataset
@@ -295,16 +296,9 @@ def build_seatunnel_task(
     pool: str | None = None,
     task_id_override: str | None = None,
 ) -> BashOperator:
-    mapping_flags = ""
-    if mappings:
-        mapping_flags = " ".join(f"--mapping {mapping}" for mapping in mappings)
     pull_cmd = ""
-    if mapping_flags:
-        pull_cmd = (
-            f"eval \"$(VAULT_ADDR={VAULT_ADDR} VAULT_TOKEN={VAULT_TOKEN} "
-            f"PYTHONPATH={PYTHONPATH_ENTRY}:${{PYTHONPATH:-}} "
-        f"{VENV_PYTHON} scripts/secrets/pull_vault_env.py {mapping_flags} --format shell)\" || true\n"
-        )
+    if mappings:
+        pull_cmd = build_pull_env_command(mappings) + "\n"
 
     # Ensure KAFKA bootstrap is always present for render-only validation
     env_all = list(env_assignments) + [

@@ -11,6 +11,7 @@ from airflow.operators.empty import EmptyOperator
 from airflow.operators.python import PythonOperator
 
 from aurum.airflow_utils import build_failure_callback, build_preflight_callable, metrics
+from aurum.airflow_utils.vault import build_pull_env_command
 from aurum.airflow_utils.datasets import URIS
 
 try:  # Dataset scheduling (Airflow >= 2.4)
@@ -119,12 +120,7 @@ with DAG(
     )
 
     # Pull PJM API token from Vault if available
-    _mapping_flags = "--mapping secret/data/aurum/pjm:token=PJM_API_KEY"
-    pull_cmd = (
-        f"eval \"$(VAULT_ADDR={VAULT_ADDR} VAULT_TOKEN={VAULT_TOKEN} "
-        f"PYTHONPATH=${{PYTHONPATH:-}}:{PYTHONPATH_ENTRY} "
-        f"{VENV_PYTHON} scripts/secrets/pull_vault_env.py {_mapping_flags} --format shell)\" || true\n"
-    )
+    pull_cmd = build_pull_env_command(["secret/data/aurum/pjm:token=PJM_API_KEY"]) + "\n"
 
     pnodes_task = BashOperator(
         task_id="pjm_pnodes_to_kafka",

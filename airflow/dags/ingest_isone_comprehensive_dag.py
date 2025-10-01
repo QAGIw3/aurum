@@ -18,6 +18,7 @@ if _SRC_PATH and _SRC_PATH not in sys.path:
 
 from aurum.airflow_utils import build_failure_callback, build_preflight_callable
 from aurum.airflow_utils import iso as iso_utils
+from aurum.airflow_utils.vault import build_pull_env_command
 
 
 DEFAULT_ARGS: dict[str, Any] = {
@@ -82,13 +83,10 @@ ISONE_SOURCES = (
 
 def build_isone_task(source_name: str, data_type: str, market: str, *, extra_lines: list[str] | None = None):
     """Build standard render/execute/watermark chain for ISO-NE, with Vault preflight."""
-    pull_cmd = (
-        "eval \"$(VAULT_ADDR=${AURUM_VAULT_ADDR:-http://127.0.0.1:8200} "
-        "VAULT_TOKEN=${AURUM_VAULT_TOKEN:-aurum-dev-token} "
-        f"PYTHONPATH={PYTHONPATH_ENTRY}:${{PYTHONPATH:-}} "
-        + os.environ.get("AURUM_VENV_PYTHON", ".venv/bin/python") +
-        " scripts/secrets/pull_vault_env.py --mapping secret/data/aurum/isone:username=ISONE_USERNAME --mapping secret/data/aurum/isone:password=ISONE_PASSWORD --format shell)\" || true"
-    )
+    pull_cmd = build_pull_env_command([
+        "secret/data/aurum/isone:username=ISONE_USERNAME",
+        "secret/data/aurum/isone:password=ISONE_PASSWORD",
+    ])
     env_entries = [
         "ISONE_URL=\"{{ var.value.get('aurum_isone_endpoint') }}\"",
         "ISONE_START=\"{{ data_interval_start.in_timezone('UTC').isoformat() }}\"",

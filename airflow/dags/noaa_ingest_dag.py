@@ -30,6 +30,8 @@ from aurum.staleness.watermark_tracker import WatermarkTracker
 from aurum.telemetry.context import log_structured
 from aurum.airflow_utils.datasets import noaa_trigger, noaa_ingest
 from aurum.airflow_utils.timescale import build_timescale_task as _build_ts
+from aurum.airflow_utils import iso as iso_utils
+from aurum.airflow_utils.vault import build_pull_env_command
 
 
 def update_watermark(
@@ -295,8 +297,8 @@ def update_noaa_watermark(dataset_key: str, logical_date: str):
         )
         raise
 
-def build_noaa_ingest_task(dataset_key: str, dataset_config: Dict[str, Any]) -> Any:
-    """Build a SeaTunnel task for NOAA data ingestion."""
+def build_noaa_ingest_task(dataset_key: str, dataset_config: Dict[str, Any]):
+    """Build standard render/execute/watermark chain for NOAA data ingestion."""
 
     env_vars = [
         f"NOAA_GHCND_DATASET='{dataset_config['dataset']}'",
@@ -308,25 +310,27 @@ def build_noaa_ingest_task(dataset_key: str, dataset_config: Dict[str, Any]) -> 
         "NOAA_GHCND_LIMIT=1000",
         "NOAA_GHCND_OFFSET=1",
         f"NOAA_GHCND_STATION_LIMIT={NOAA_API_CONFIG['station_limit']}",
-        "SCHEMA_REGISTRY_URL='{{ var.value.get(\"aurum_schema_registry\", \"http://localhost:8081\") }}'"
+        "SCHEMA_REGISTRY_URL='{{ var.value.get(\"aurum_schema_registry\", \"http://localhost:8081\") }}'",
     ]
 
-    # Add station filter if specified
     if dataset_config.get("stations"):
         stations_str = ",".join(dataset_config["stations"])
         env_vars.append(f"NOAA_GHCND_STATION='{stations_str}'")
-
-    # Add data types filter if specified
     if dataset_config.get("datatypes"):
         datatypes_str = ",".join(dataset_config["datatypes"])
         env_vars.append(f"NOAA_GHCND_DATA_TYPES='{datatypes_str}'")
 
-    return build_seatunnel_task(
-        f"noaa_{dataset_key}_to_kafka",
-        env_vars,
-        mappings=["secret/data/aurum/noaa:token=NOAA_GHCND_TOKEN"],
-        pool=dataset_config["pool"],
-        task_id_override=f"noaa_{dataset_key}_ingest"
+    pull_cmd = build_pull_env_command(["secret/data/aurum/noaa:token=NOAA_GHCND_TOKEN"])
+    policy = "hour" if int(dataset_config.get("window_hours", 0) or 0) > 0 else "day"
+
+    return iso_utils.create_seatunnel_ingest_chain(
+        f"noaa_{dataset_key}",
+        job_name=f"noaa_{dataset_key}_to_kafka",
+        source_name=f"noaa_{dataset_key}",
+        env_entries=env_vars,
+        pre_lines=[pull_cmd],
+        pool=dataset_config.get("pool"),
+        watermark_policy=policy,
     )
 
 def build_noaa_to_timescale_task(dataset_key: str, dataset_config: Dict[str, Any]) -> Any:
@@ -389,8 +393,8 @@ with DAG(
     for dataset_key, dataset_config in NOAA_DATASETS.items():
         with TaskGroup(group_id=f"noaa_{dataset_key}", tooltip=dataset_config["description"]) as dataset_group:
 
-            # Ingest task
-            ingest_task = build_noaa_ingest_task(dataset_key, dataset_config)
+            # Ingest chain
+            ingest_render, ingest_exec, ingest_watermark = build_noaa_ingest_task(dataset_key, dataset_config)
 
             # Timescale loading task
             timescale_task = build_noaa_to_timescale_task(dataset_key, dataset_config)
@@ -418,7 +422,7 @@ with DAG(
             )
 
             # Set up task dependencies within the group
-            ingest_task >> timescale_task >> lineage_task >> [watermark_task, staleness_task]
+            ingest_render >> ingest_exec >> timescale_task >> lineage_task >> [ingest_watermark, staleness_task]
 
         dataset_tasks.append(dataset_group)
 
@@ -459,16 +463,7 @@ for dataset_key, dataset_config in NOAA_DATASETS.items():
             python_callable=validate_noaa_config,
         )
 
-        ingest = build_noaa_ingest_task(dataset_key, dataset_config)
-
-        # Watermark and staleness check tasks
-        watermark = PythonOperator(
-            task_id="watermark",
-            python_callable=update_watermark,
-            op_kwargs={
-                "dataset_name": f"noaa_{dataset_key}",
-            },
-        )
+        ingest_render, ingest_exec, ingest_watermark = build_noaa_ingest_task(dataset_key, dataset_config)
 
         staleness_check = PythonOperator(
             task_id="staleness_check",
@@ -484,15 +479,15 @@ for dataset_key, dataset_config in NOAA_DATASETS.items():
             timescale = build_noaa_to_timescale_task(dataset_key, dataset_config)
             lineage = build_noaa_lineage_task(dataset_key, dataset_config)
 
-            start_task >> validate_task >> ingest >> timescale >> lineage >> [watermark, staleness_check]
+            start_task >> validate_task >> ingest_render >> ingest_exec >> timescale >> lineage >> [ingest_watermark, staleness_check]
         else:
-            start_task >> validate_task >> ingest >> [watermark, staleness_check]
+            start_task >> validate_task >> ingest_render >> ingest_exec >> [ingest_watermark, staleness_check]
 
         # Attach dataset inlets/outlets where supported
         try:
             if Dataset is not None:
                 validate_task.inlets = [Dataset(noaa_trigger(dataset_key + "_window_ready"))]  # type: ignore[attr-defined]
-                watermark.outlets = [Dataset(noaa_ingest(dataset_key))]  # type: ignore[attr-defined]
+                ingest_watermark.outlets = [Dataset(noaa_ingest(dataset_key))]  # type: ignore[attr-defined]
         except Exception:
             pass
 
