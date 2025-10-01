@@ -17,6 +17,7 @@ if _SRC_PATH and _SRC_PATH not in sys.path:
 
 from aurum.airflow_utils import build_failure_callback, build_preflight_callable
 from aurum.airflow_utils import iso as iso_utils
+from aurum.airflow_utils.vault import build_pull_env_command
 
 
 DEFAULT_ARGS: dict[str, Any] = {
@@ -73,13 +74,7 @@ def build_pipeline(
     token_flag = _token_flag()
 
     # Optionally pull SPP token from Vault into SPP_TOKEN
-    pull_cmd = (
-        "eval \"$(VAULT_ADDR=${AURUM_VAULT_ADDR:-http://127.0.0.1:8200} "
-        "VAULT_TOKEN=${AURUM_VAULT_TOKEN:-aurum-dev-token} "
-        "PYTHONPATH=${PYTHONPATH:-}:" + PYTHONPATH_ENTRY + " "
-        + os.environ.get("AURUM_VENV_PYTHON", ".venv/bin/python") +
-        " scripts/secrets/pull_vault_env.py --mapping secret/data/aurum/spp:token=SPP_TOKEN --format shell)\" || true"
-    )
+    pull_cmd = build_pull_env_command(["secret/data/aurum/spp:token=SPP_TOKEN"])
 
     # Build the stage command carefully to preserve Jinja expressions (avoid f-strings around {{ }})
     stage_command = "\n".join([

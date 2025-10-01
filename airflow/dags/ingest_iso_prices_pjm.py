@@ -18,6 +18,7 @@ if _SRC_PATH and _SRC_PATH not in sys.path:
 from aurum.airflow_utils import build_failure_callback, build_preflight_callable
 from aurum.airflow_utils import iso as iso_utils
 from aurum.airflow_utils.datasets import URIS
+from aurum.airflow_utils.vault import build_pull_env_command
 
 
 DEFAULT_ARGS: dict[str, Any] = {
@@ -91,12 +92,7 @@ with DAG(
     )
 
     # Pull PJM API token from Vault into PJM_API_KEY (best effort)
-    mapping_flags = "--mapping secret/data/aurum/pjm:token=PJM_API_KEY"
-    pull_cmd = (
-        f"eval \"$(VAULT_ADDR={VAULT_ADDR} VAULT_TOKEN={VAULT_TOKEN} "
-        f"PYTHONPATH=${{PYTHONPATH:-}}:{PYTHONPATH_ENTRY} "
-        f"{VENV_PYTHON} scripts/secrets/pull_vault_env.py {mapping_flags} --format shell)\" || true"
-    )
+    pull_cmd = build_pull_env_command(["secret/data/aurum/pjm:token=PJM_API_KEY"])
 
     env_entries = [
         "PJM_TOPIC=\"{{ var.value.get('aurum_pjm_topic', 'aurum.iso.pjm.lmp.v1') }}\"",

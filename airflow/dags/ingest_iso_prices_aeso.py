@@ -18,6 +18,7 @@ if _SRC_PATH and _SRC_PATH not in sys.path:
 from aurum.airflow_utils import build_failure_callback, build_preflight_callable
 from aurum.airflow_utils import iso as iso_utils
 from aurum.airflow_utils.datasets import iso_trigger, iso_ingest
+from aurum.airflow_utils.vault import build_pull_env_command
 
 
 
@@ -53,12 +54,7 @@ def _register_sources() -> None:
 
 
 def build_seatunnel_task():
-    mapping_flags = " --mapping secret/data/aurum/aeso:token=AESO_API_KEY"
-    pull_cmd = (
-        f"eval \"$(VAULT_ADDR={VAULT_ADDR} VAULT_TOKEN={VAULT_TOKEN} "
-        f"PYTHONPATH={PYTHONPATH_ENTRY}:${{PYTHONPATH:-}} "
-        f"{VENV_PYTHON} scripts/secrets/pull_vault_env.py{mapping_flags} --format shell)\" || true\n"
-    ).rstrip()
+    pull_cmd = build_pull_env_command(["secret/data/aurum/aeso:token=AESO_API_KEY"]).rstrip()
 
     render, execute, watermark = iso_utils.create_seatunnel_ingest_chain(
         "aeso_lmp",
