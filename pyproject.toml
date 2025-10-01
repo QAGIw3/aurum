@@ -109,7 +109,6 @@ test = [
     "schemathesis==4.1.4",
     "fakeredis==2.23.2",
     "factory_boy==3.3.0",
-    "factory==2.0.0; python_version<'3.12'",
 ]
 dev = [
     "black==24.10.0",
