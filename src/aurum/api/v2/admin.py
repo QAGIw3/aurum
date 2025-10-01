@@ -327,7 +327,8 @@ async def invalidate_eia_series_cache_v2(
                 "version": "v2",
             },
         )
-        return respond_with_etag(result, request, response, canonical_url=str(request.url.remove_query_params("cursor")))
+        build = etag_response_builder(request, response, canonical_url=str(request.url.remove_query_params("cursor")))
+        return build(result)
     except Exception as exc:  # pragma: no cover
         duration_ms = (time.perf_counter() - start_time) * 1000
         raise HTTPException(

@@ -321,8 +321,9 @@ async def create_scenario_run_v2(
             }
         )
 
-        # Add ETag for caching with Link headers
-        return respond_with_etag(result, request, response, canonical_url=str(request.url))
+        # Add ETag via standardized builder
+        build = etag_response_builder(request, response, canonical_url=str(request.url))
+        return build(result)
 
     except HTTPException:
         raise

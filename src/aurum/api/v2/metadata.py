@@ -497,8 +497,14 @@ async def list_calendars_v2(
             links=links,
         )
 
-        # Add ETag for caching with Link headers
-        return respond_with_etag(result, request, response, next_cursor=next_cursor, canonical_url=str(request.url.remove_query_params("cursor")))
+        # Add ETag via standardized builder (with cursor)
+        build = etag_cursor_response_builder(
+            request,
+            response,
+            next_cursor=next_cursor,
+            canonical_url=str(request.url.remove_query_params("cursor")),
+        )
+        return build(result)
 
     except HTTPException:
         raise
@@ -745,7 +751,8 @@ async def get_series_mapping_suggestions(
             },
         )
 
-        return respond_with_etag(result, request, response)
+        build = etag_response_builder(request, response)
+        return build(result)
 
     except Exception as exc:
         query_time_ms = (time.perf_counter() - start_time) * 1000
@@ -838,7 +845,8 @@ async def get_staleness_status(
             },
         )
 
-        return respond_with_etag(result, request, response)
+        build = etag_response_builder(request, response)
+        return build(result)
 
     except Exception as exc:
         query_time_ms = (time.perf_counter() - start_time) * 1000
@@ -886,7 +894,8 @@ async def get_staleness_alerts(
             },
         )
 
-        return respond_with_etag(result, request, response)
+        build = etag_response_builder(request, response)
+        return build(result)
 
     except Exception as exc:
         query_time_ms = (time.perf_counter() - start_time) * 1000
@@ -968,7 +977,8 @@ async def get_staleness_metrics(
             },
         )
 
-        return respond_with_etag(result, request, response)
+        build = etag_response_builder(request, response)
+        return build(result)
 
     except Exception as exc:
         query_time_ms = (time.perf_counter() - start_time) * 1000
