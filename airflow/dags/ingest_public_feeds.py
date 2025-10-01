@@ -20,6 +20,7 @@ from airflow import DAG
 from airflow.operators.bash import BashOperator
 from airflow.operators.empty import EmptyOperator
 from airflow.operators.python import PythonOperator
+from airflow.operators.trigger_dagrun import TriggerDagRunOperator
 
 from aurum.airflow_utils import build_failure_callback, build_preflight_callable, metrics
 from aurum.airflow_utils.vault import build_pull_env_command
@@ -365,57 +366,18 @@ with DAG(
         python_callable=_register_sources,
     )
 
-    noaa_daily_task = build_seatunnel_task(
-        "noaa_ghcnd_daily_to_kafka",
-        [
-            "NOAA_GHCND_START_DATE='{{ data_interval_start | ds }}'",
-            "NOAA_GHCND_END_DATE='{{ data_interval_start | ds }}'",
-            "NOAA_GHCND_TOPIC='{{ var.value.get('aurum_noaa_daily_topic', 'aurum.ref.noaa.weather.daily.v1') }}'",
-            "NOAA_GHCND_SLIDING_HOURS=24",
-            "NOAA_GHCND_SLIDING_DAYS=1",
-            "SCHEMA_REGISTRY_URL='{{ var.value.get('aurum_schema_registry', 'http://localhost:8081') }}'"
-        ],
-        mappings=["secret/data/aurum/noaa:token=NOAA_GHCND_TOKEN"],
-        pool="api_noaa",
+    # NOAA ingestion moved to dedicated DAGs; trigger those instead of duplicating logic here
+    trigger_noaa_daily = TriggerDagRunOperator(
+        task_id="trigger_noaa_ghcnd_daily_ingest",
+        trigger_dag_id="noaa_ghcnd_daily_ingest",
+        reset_dag_run=True,
+        wait_for_completion=False,
     )
-
-    noaa_hourly_task = build_seatunnel_task(
-        "noaa_ghcnd_hourly_to_kafka",
-        [
-            "NOAA_GHCND_START_DATE='{{ data_interval_start | ds }}'",
-            "NOAA_GHCND_END_DATE='{{ data_interval_start | ds }}'",
-            "NOAA_GHCND_TOPIC='{{ var.value.get('aurum_noaa_hourly_topic', 'aurum.ref.noaa.weather.hourly.v1') }}'",
-            "NOAA_GHCND_SLIDING_HOURS=1",
-            "NOAA_GHCND_SLIDING_DAYS=0",
-            "SCHEMA_REGISTRY_URL='{{ var.value.get('aurum_schema_registry', 'http://localhost:8081') }}'"
-        ],
-        mappings=["secret/data/aurum/noaa:token=NOAA_GHCND_TOKEN"],
-        pool="api_noaa",
-    )
-
-    # Optional: load NOAA weather stream into Timescale after ingesting to Kafka
-    noaa_to_timescale = build_seatunnel_task(
-        "noaa_weather_kafka_to_timescale",
-        [
-            "SCHEMA_REGISTRY_URL='{{ var.value.get('aurum_schema_registry', 'http://localhost:8081') }}'",
-            "TIMESCALE_JDBC_URL='{{ var.value.get('aurum_timescale_jdbc', 'jdbc:postgresql://timescale:5432/timeseries') }}'",
-            "NOAA_TABLE='{{ var.value.get('aurum_noaa_timescale_table', 'noaa_weather_timeseries') }}'",
-            "DLQ_TOPIC='{{ var.value.get('aurum_noaa_dlq_topic', 'aurum.ref.noaa.weather.dlq.v1') }}'",
-            "BACKFILL_ENABLED='{{ dag_run.conf.get('backfill', '0') }}'",
-            "BACKFILL_START='{{ dag_run.conf.get('backfill_start', '') }}'",
-            "BACKFILL_END='{{ dag_run.conf.get('backfill_end', '') }}'",
-        ],
-        mappings=[
-            "secret/data/aurum/timescale:user=TIMESCALE_USER",
-            "secret/data/aurum/timescale:password=TIMESCALE_PASSWORD",
-        ],
-        task_id_override="seatunnel_noaa_weather_timescale",
-    )
-
-    noaa_lineage = PythonOperator(
-        task_id="lakefs_lineage_noaa_weather",
-        python_callable=emit_lakefs_lineage,
-        op_kwargs={"dataset": "timescale.public.noaa_weather_timeseries"},
+    trigger_noaa_hourly = TriggerDagRunOperator(
+        task_id="trigger_noaa_ghcnd_hourly_ingest",
+        trigger_dag_id="noaa_ghcnd_hourly_ingest",
+        reset_dag_run=True,
+        wait_for_completion=False,
     )
 
     eia_task = build_seatunnel_task(
@@ -664,16 +626,6 @@ with DAG(
             pool="api_pjm",
         )
 
-    noaa_daily_watermark = PythonOperator(
-        task_id="noaa_daily_watermark",
-        python_callable=lambda **ctx: _update_watermark("noaa_ghcnd_daily", ctx["logical_date"]),
-    )
-
-    noaa_hourly_watermark = PythonOperator(
-        task_id="noaa_hourly_watermark",
-        python_callable=lambda **ctx: _update_watermark("noaa_ghcnd_hourly", ctx["logical_date"]),
-    )
-
     eia_watermark = PythonOperator(
         task_id="eia_watermark",
         python_callable=lambda **ctx: _update_watermark("eia_series", ctx["logical_date"]),
@@ -718,8 +670,8 @@ with DAG(
     end = EmptyOperator(task_id="end")
 
     start >> preflight >> register_sources
-    register_sources >> noaa_daily_task >> noaa_to_timescale >> noaa_lineage >> noaa_daily_watermark
-    register_sources >> noaa_hourly_task >> noaa_hourly_watermark
+    register_sources >> trigger_noaa_daily
+    register_sources >> trigger_noaa_hourly
     register_sources >> eia_task >> eia_to_timescale >> eia_lineage >> eia_watermark
     dynamic_eia_watermarks: list[PythonOperator] = []
     for dataset_cfg, dynamic_task, dynamic_watermark in dynamic_eia_results:
@@ -735,8 +687,6 @@ with DAG(
         register_sources >> pjm_load_task >> pjm_load_watermark
         register_sources >> pjm_genmix_task >> pjm_genmix_watermark
     [
-        noaa_daily_watermark,
-        noaa_hourly_watermark,
         eia_watermark,
         *dynamic_eia_watermarks,
         fred_watermark,
