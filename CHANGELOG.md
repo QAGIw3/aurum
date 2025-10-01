@@ -1,5 +1,37 @@
 # CHANGELOG
 
+## v0.3.1 (2025-10-01)
+
+### Build
+
+* build(pyproject): add hvac and testing tools (pytest, pytest-asyncio, schemathesis, hypothesis, factory) to deps/extras ([`1acc527`](https://github.com/QAGIw3/aurum/commit/1acc5270d0db404f45e9a8f7b96ae92d487efbb4))
+
+### Chore
+
+* chore(vault): add build_pull_env_command helper and adopt in ISO ingestion DAGs (PJM, AESO, SPP)
+
+Introduce src/aurum/airflow_utils/vault.py to standardize Vault env pulls in BashOperator commands. Replace bespoke pull commands in three ISO price ingestion DAGs with the helper to reduce duplication and drift. ([`e2a5575`](https://github.com/QAGIw3/aurum/commit/e2a5575fc4fa7759158133dd65f91e5169b8c95e))
+
+### Fix
+
+* fix(pyproject): remove invalid factory package; keep factory_boy only ([`7b41783`](https://github.com/QAGIw3/aurum/commit/7b41783686d041c6413b215ad9de20c8746aabd5))
+
+### Refactor
+
+* refactor(ingest): centralize Vault env pulls via helper and migrate NOAA ingest to standard render/execute/watermark chain
+
+Adopt aurum.airflow_utils.vault.build_pull_env_command in remaining DAGs using pull_vault_env.py (metrics: PJM/MISO, comprehensive ISO-NE, ERCOT, ISONE+SPP, PJM PNODES, public feeds). Migrate NOAA Kafka ingestion to iso_utils.create_seatunnel_ingest_chain with dataset-specific watermark policy, and wire watermark after lineage where appropriate. Keep Timescale stage standardization. ([`3b6e89b`](https://github.com/QAGIw3/aurum/commit/3b6e89baca4e48cf29294a7069c23a0713f682f6))
+
+* refactor(noaa): use shared Timescale helper for NOAA Kafka→Timescale task and add DagBag test
+
+Replace custom build_seatunnel_task with build_timescale_task in noaa_ingest_dag for Timescale load. Add tests/airflow/test_noaa_dags_refactor.py to verify dataset-specific DAG contains expected Timescale task. ([`cb7f07b`](https://github.com/QAGIw3/aurum/commit/cb7f07b6eff615e5e12d0411e2f913ac6ce61b21))
+
+### Test
+
+* test(airflow): add DagBag import tests for ISO DAGs (metrics PJM/MISO, ERCOT, ISONE comprehensive); migrate public_feeds NOAA to trigger dedicated DAGs
+
+Add tests/airflow/test_iso_ingest_imports.py to guard imports and basic task presence. Replace public_feeds NOAA tasks with TriggerDagRun to dedicated NOAA dataset DAGs to remove duplication. ([`7a5dc52`](https://github.com/QAGIw3/aurum/commit/7a5dc52c8a0dd838b3e0d2ec519943a6b20893ec))
+
 ## v0.3.0 (2025-10-01)
 
 ### Chore
