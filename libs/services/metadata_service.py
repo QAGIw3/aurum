@@ -2,16 +2,15 @@ from __future__ import annotations
 
 from typing import Any, Dict, List, Optional, Tuple
 
-from libs.common.config import get_settings
 from libs.storage.trino import TrinoAnalyticRepo
+from libs.services.base_service import BaseTrinoService
 
 
-class MetadataService:
+class MetadataService(BaseTrinoService):
     """Domain service for read-oriented metadata surfaces (dimensions, locations, units, calendars)."""
 
     def __init__(self, trino: Optional[TrinoAnalyticRepo] = None):
-        self._settings = get_settings()
-        self._trino = trino or TrinoAnalyticRepo(self._settings.database)
+        super().__init__(trino=trino)
         self._catalog = self._settings.database.trino_catalog
         self._schema = self._settings.database.trino_schema
 
@@ -55,5 +54,4 @@ class MetadataService:
         query = f"SELECT * FROM {table} ORDER BY calendar_id LIMIT {limit} OFFSET {offset}"
         rows = await self._trino.execute_query(query)
         return rows, None
-
 

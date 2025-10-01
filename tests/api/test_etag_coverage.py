@@ -14,6 +14,13 @@ from aurum.api.routes import _respond_with_etag, _generate_etag
 from aurum.api.app import create_app
 from aurum.core import AurumSettings
 
+# These coverage tests exercise legacy v1 endpoints. Skip in v2-only.
+try:
+    if getattr(AurumSettings(), "enable_v2_only", False):
+        pytest.skip("v2-only mode: v1 ETag coverage tests are skipped", allow_module_level=True)
+except Exception:
+    pass
+
 
 class TestETagCoverage:
     """Test ETag functionality across all endpoints."""

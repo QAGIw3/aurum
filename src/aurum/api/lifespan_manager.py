@@ -30,7 +30,7 @@ from ..core.settings import AurumSettings
 from ..observability.metrics import get_metrics_client
 from ..logging.structured_logger import get_logger
 from .cache.consolidated_manager import get_unified_cache_manager
-from .rate_limiting.consolidated_policy_engine import get_unified_rate_limiter
+from .rate_limiting import get_unified_rate_limiter
 
 T = TypeVar('T')
 
@@ -762,8 +762,8 @@ def get_lifespan_manager(settings: Optional[AurumSettings] = None) -> LifespanMa
     global _lifespan_manager
     if _lifespan_manager is None:
         if settings is None:
-            from ..core.settings import get_settings as _core_get_settings
-            settings = _core_get_settings()
+            from .state import get_settings as _api_get_settings
+            settings = _api_get_settings()
         _lifespan_manager = LifespanManager(settings)
     return _lifespan_manager
 
@@ -809,9 +809,9 @@ def get_settings_dependency(request: Request) -> AurumSettings:
     if lifespan_manager:
         return lifespan_manager.settings
 
-    # Fallback to core settings
-    from ..core.settings import get_settings
-    return get_settings()
+    # Fallback to shared settings adapter
+    from .state import get_settings as _api_get_settings
+    return _api_get_settings()
 
 
 def get_cache_manager_dependency(request: Request):
@@ -904,8 +904,8 @@ def inject_test_dependencies(
         Test dependency injector
     """
     if settings is None:
-        from ..core.settings import get_settings
-        settings = get_settings()
+        from .state import get_settings as _api_get_settings
+        settings = _api_get_settings()
 
     lifespan_manager = LifespanManager(settings)
     return TestDependencyInjector(lifespan_manager)

@@ -119,7 +119,8 @@ from aurum.api.rate_limiting.concurrency_middleware import (
     OffloadInstruction,
     create_concurrency_middleware_from_settings,
 )
-from aurum.api.rate_limiting.consolidated_policy_engine import get_unified_rate_limiter
+# Canonical rate limiting entrypoint
+from aurum.api.rate_limiting import get_unified_rate_limiter
 from aurum.api.rate_limiting.config import CacheConfig
 from aurum.api.router_registry import RouterSpec, get_v1_router_specs, get_v2_router_specs
 from aurum.api.routes import configure_routes
@@ -728,10 +729,6 @@ class ApplicationFactory:
 
         # Initialize token service before middleware setup
         token_service = _initialize_token_service(app, settings)
-        # Initialize token service for legacy app path (used by middleware manager)
-        token_service = _initialize_token_service(app, settings)
-        token_service = _initialize_token_service(app, settings)
-        token_service = _initialize_token_service(app, settings)
 
         # Initialize feature flag manager
         try:
@@ -808,12 +805,22 @@ class ApplicationFactory:
         # Versioned routers (v1/v2) and supplemental admin routers are now
         # registered exclusively via the router registry.
 
-        # Basic route registration (honor light init flag)
+        # Basic route registration (honor light init flag) with v2-only guard
+        v2_only = False
+        try:
+            v2_only = bool(getattr(settings, "enable_v2_only", False))
+        except Exception:
+            v2_only = False
+
         if os.getenv("AURUM_API_LIGHT_INIT", "0") == "1":
-            _include_fallback_routes(app, logger)
+            # In light init, only include fallbacks if v2-only is NOT enabled
+            if not v2_only:
+                _include_fallback_routes(app, logger)
         else:
             if not _register_versioned_routers(app, settings, logger):
-                _include_fallback_routes(app, logger)
+                # Only fall back to legacy stubs if v2-only is NOT enabled
+                if not v2_only:
+                    _include_fallback_routes(app, logger)
 
         # Per-request response header utilities and access log installed by manager
 
@@ -924,12 +931,20 @@ class ApplicationFactory:
         # Versioned routers (v1/v2) and supplemental admin routers are now
         # registered exclusively via the router registry.
 
-        # Basic route registration (honor light init flag)
+        # Basic route registration (honor light init flag) with v2-only guard
+        v2_only = False
+        try:
+            v2_only = bool(getattr(settings, "enable_v2_only", False))
+        except Exception:
+            v2_only = False
+
         if os.getenv("AURUM_API_LIGHT_INIT", "0") == "1":
-            _include_fallback_routes(app, logger)
+            if not v2_only:
+                _include_fallback_routes(app, logger)
         else:
             if not _register_versioned_routers(app, settings, logger):
-                _include_fallback_routes(app, logger)
+                if not v2_only:
+                    _include_fallback_routes(app, logger)
 
         # Per-request response header utilities and access log installed by manager
 

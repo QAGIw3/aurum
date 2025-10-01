@@ -23,7 +23,7 @@ resources:
   - timescale.yaml
   - redis.yaml
   - elasticsearch.yaml
-  - kafka.yaml
+  # - kafka.yaml  # replaced by Strimzi-managed Kafka in cluster
   - schema-registry-runner-configmap.yaml
   - schema-registry.yaml
   - nessie.yaml
@@ -33,8 +33,6 @@ resources:
   - airflow-rbac.yaml
   - airflow-ingress.yaml
   - clickhouse.yaml
-  - vector.yaml
-  - vector-rbac.yaml
   - jaeger.yaml
 #  - prometheus-rules.yaml
   # API is deployed via Helm in environment overlays

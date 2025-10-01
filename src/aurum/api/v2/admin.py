@@ -24,7 +24,14 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response
 from pydantic import BaseModel, Field
 
 from ..http import respond_with_etag
+from ..http.response_builders import etag_response_builder, etag_cursor_response_builder
 from ..auth import Permission, require_permissions
+from ..cache.consolidated_manager import get_unified_cache_manager
+from ..cache.enhanced_cache_manager import CacheNamespace
+from ...observability.metrics import (
+    increment_cache_admin_invalidations,
+    observe_cache_admin_invalidation_duration,
+)
 from .pagination import (
     resolve_pagination,
     build_next_cursor,
@@ -75,7 +82,6 @@ async def invalidate_scenario_cache_v2(
     try:
         # Invalidate scenario caches via Redis indexes
         from ..config import CacheConfig
-        from ...core.settings import get_settings as _core_get_settings
         from ..service import invalidate_scenario_outputs_cache
 
         settings = get_settings()
@@ -83,7 +89,10 @@ async def invalidate_scenario_cache_v2(
         invalidate_scenario_outputs_cache(cache_cfg, tenant_id, scenario_id)
         keys_purged = 0
 
-        duration_ms = (time.perf_counter() - start_time) * 1000
+        elapsed = time.perf_counter() - start_time
+        duration_ms = elapsed * 1000
+        await increment_cache_admin_invalidations("curves", keys_purged)
+        await observe_cache_admin_invalidation_duration("curves", elapsed)
 
         # Create response with metadata
         response.headers["X-Request-Id"] = get_request_id()
@@ -96,7 +105,10 @@ async def invalidate_scenario_cache_v2(
     except HTTPException:
         raise
     except Exception as exc:
-        duration_ms = (time.perf_counter() - start_time) * 1000
+        elapsed = time.perf_counter() - start_time
+        duration_ms = elapsed * 1000
+        await increment_cache_admin_invalidations("metadata-units", keys_purged)
+        await observe_cache_admin_invalidation_duration("metadata-units", elapsed)
         raise HTTPException(
             status_code=500,
             detail={
@@ -120,12 +132,16 @@ async def invalidate_curves_cache_v2(
     start_time = time.perf_counter()
 
     try:
-        # Invalidate curve cache via CacheManager pattern delete
-        from ..service import invalidate_curve_cache
-        await invalidate_curve_cache()
+        # Invalidate curve caches via unified cache manager
+        manager = get_unified_cache_manager()
         keys_purged = 0
+        keys_purged += await manager.invalidate_pattern("curves:*", namespace=CacheNamespace.CURVES)
+        keys_purged += await manager.invalidate_pattern("curves-diff:*", namespace=CacheNamespace.CURVES)
 
-        duration_ms = (time.perf_counter() - start_time) * 1000
+        elapsed = time.perf_counter() - start_time
+        duration_ms = elapsed * 1000
+        await increment_cache_admin_invalidations("metadata-dimensions", keys_purged)
+        await observe_cache_admin_invalidation_duration("metadata-dimensions", elapsed)
 
         # Create response with metadata
         result = CachePurgeResponse(
@@ -139,13 +155,17 @@ async def invalidate_curves_cache_v2(
             }
         )
 
-        # Add ETag for caching with Link headers
-        return respond_with_etag(result, request, response, canonical_url=str(request.url.remove_query_params("cursor")))
+        # Add ETag via standardized builder
+        build = etag_response_builder(request, response, canonical_url=str(request.url.remove_query_params("cursor")))
+        return build(result)
 
     except HTTPException:
         raise
     except Exception as exc:
-        duration_ms = (time.perf_counter() - start_time) * 1000
+        elapsed = time.perf_counter() - start_time
+        duration_ms = elapsed * 1000
+        await increment_cache_admin_invalidations("metadata-locations", keys_purged)
+        await observe_cache_admin_invalidation_duration("metadata-locations", elapsed)
         raise HTTPException(
             status_code=500,
             detail={
@@ -156,6 +176,170 @@ async def invalidate_curves_cache_v2(
                 "request_id": get_request_id(),
                 "processing_time_ms": round(duration_ms, 2)
             }
+        )
+
+
+@router.post("/admin/cache/metadata/units/invalidate", response_model=CachePurgeResponse, status_code=200)
+async def invalidate_metadata_units_cache_v2(
+    request: Request,
+    response: Response,
+    tenant_id: str = Query(..., description="Tenant ID"),
+) -> CachePurgeResponse:
+    """Invalidate metadata units cache (v2)."""
+    start_time = time.perf_counter()
+    try:
+        manager = get_unified_cache_manager()
+        keys_purged = await manager.invalidate_pattern("units:*", namespace=CacheNamespace.METADATA)
+        elapsed = time.perf_counter() - start_time
+        duration_ms = elapsed * 1000
+        await increment_cache_admin_invalidations("eia-series", keys_purged)
+        await observe_cache_admin_invalidation_duration("eia-series", elapsed)
+        result = CachePurgeResponse(
+            cache_type="metadata-units",
+            keys_purged=keys_purged,
+            meta={
+                "request_id": get_request_id(),
+                "tenant_id": tenant_id,
+                "processing_time_ms": round(duration_ms, 2),
+                "version": "v2",
+            },
+        )
+        build = etag_response_builder(request, response, canonical_url=str(request.url.remove_query_params("cursor")))
+        return build(result)
+    except Exception as exc:  # pragma: no cover - defensive
+        duration_ms = (time.perf_counter() - start_time) * 1000
+        raise HTTPException(
+            status_code=500,
+            detail={
+                "type": "internal_error",
+                "title": "Internal server error",
+                "detail": f"Failed to invalidate metadata units cache: {str(exc)}",
+                "instance": "/v2/admin/cache/metadata/units/invalidate",
+                "request_id": get_request_id(),
+                "processing_time_ms": round(duration_ms, 2),
+            },
+        )
+
+
+@router.post("/admin/cache/metadata/dimensions/invalidate", response_model=CachePurgeResponse, status_code=200)
+async def invalidate_metadata_dimensions_cache_v2(
+    request: Request,
+    response: Response,
+    tenant_id: str = Query(..., description="Tenant ID"),
+) -> CachePurgeResponse:
+    """Invalidate metadata dimensions cache (v2)."""
+    start_time = time.perf_counter()
+    try:
+        manager = get_unified_cache_manager()
+        keys_purged = await manager.invalidate_pattern("dimensions:*", namespace=CacheNamespace.METADATA)
+        duration_ms = (time.perf_counter() - start_time) * 1000
+        result = CachePurgeResponse(
+            cache_type="metadata-dimensions",
+            keys_purged=keys_purged,
+            meta={
+                "request_id": get_request_id(),
+                "tenant_id": tenant_id,
+                "processing_time_ms": round(duration_ms, 2),
+                "version": "v2",
+            },
+        )
+        build = etag_response_builder(request, response, canonical_url=str(request.url.remove_query_params("cursor")))
+        return build(result)
+    except Exception as exc:  # pragma: no cover
+        duration_ms = (time.perf_counter() - start_time) * 1000
+        raise HTTPException(
+            status_code=500,
+            detail={
+                "type": "internal_error",
+                "title": "Internal server error",
+                "detail": f"Failed to invalidate metadata dimensions cache: {str(exc)}",
+                "instance": "/v2/admin/cache/metadata/dimensions/invalidate",
+                "request_id": get_request_id(),
+                "processing_time_ms": round(duration_ms, 2),
+            },
+        )
+
+
+@router.post("/admin/cache/metadata/locations/invalidate", response_model=CachePurgeResponse, status_code=200)
+async def invalidate_metadata_locations_cache_v2(
+    request: Request,
+    response: Response,
+    iso: str = Query(..., description="ISO code to invalidate locations for"),
+    tenant_id: str = Query(..., description="Tenant ID"),
+) -> CachePurgeResponse:
+    """Invalidate metadata locations cache for an ISO (v2)."""
+    start_time = time.perf_counter()
+    try:
+        manager = get_unified_cache_manager()
+        keys_purged = 0
+        keys_purged += await manager.invalidate_pattern(f"iso:locations:{iso}*", namespace=CacheNamespace.METADATA)
+        keys_purged += await manager.invalidate_pattern(f"iso:loc:{iso}:*", namespace=CacheNamespace.METADATA)
+        duration_ms = (time.perf_counter() - start_time) * 1000
+        result = CachePurgeResponse(
+            cache_type="metadata-locations",
+            keys_purged=keys_purged,
+            meta={
+                "request_id": get_request_id(),
+                "tenant_id": tenant_id,
+                "iso": iso,
+                "processing_time_ms": round(duration_ms, 2),
+                "version": "v2",
+            },
+        )
+        build = etag_response_builder(request, response, canonical_url=str(request.url.remove_query_params("cursor")))
+        return build(result)
+    except Exception as exc:  # pragma: no cover
+        duration_ms = (time.perf_counter() - start_time) * 1000
+        raise HTTPException(
+            status_code=500,
+            detail={
+                "type": "internal_error",
+                "title": "Internal server error",
+                "detail": f"Failed to invalidate metadata locations cache: {str(exc)}",
+                "instance": "/v2/admin/cache/metadata/locations/invalidate",
+                "request_id": get_request_id(),
+                "processing_time_ms": round(duration_ms, 2),
+            },
+        )
+
+
+@router.post("/admin/cache/eia/series/invalidate", response_model=CachePurgeResponse, status_code=200)
+async def invalidate_eia_series_cache_v2(
+    request: Request,
+    response: Response,
+    tenant_id: str = Query(..., description="Tenant ID"),
+) -> CachePurgeResponse:
+    """Invalidate EIA series caches (v2)."""
+    start_time = time.perf_counter()
+    try:
+        manager = get_unified_cache_manager()
+        keys_purged = 0
+        keys_purged += await manager.invalidate_pattern("eia-series:*", namespace=CacheNamespace.EIA_DATA)
+        keys_purged += await manager.invalidate_pattern("eia-series-dimensions:*", namespace=CacheNamespace.EIA_DATA)
+        duration_ms = (time.perf_counter() - start_time) * 1000
+        result = CachePurgeResponse(
+            cache_type="eia-series",
+            keys_purged=keys_purged,
+            meta={
+                "request_id": get_request_id(),
+                "tenant_id": tenant_id,
+                "processing_time_ms": round(duration_ms, 2),
+                "version": "v2",
+            },
+        )
+        return respond_with_etag(result, request, response, canonical_url=str(request.url.remove_query_params("cursor")))
+    except Exception as exc:  # pragma: no cover
+        duration_ms = (time.perf_counter() - start_time) * 1000
+        raise HTTPException(
+            status_code=500,
+            detail={
+                "type": "internal_error",
+                "title": "Internal server error",
+                "detail": f"Failed to invalidate EIA series cache: {str(exc)}",
+                "instance": "/v2/admin/cache/eia/series/invalidate",
+                "request_id": get_request_id(),
+                "processing_time_ms": round(duration_ms, 2),
+            },
         )
 
 
@@ -242,14 +426,14 @@ async def list_mappings_v2(
             links=links,
         )
 
-        # Add ETag for caching with Link headers
-        return respond_with_etag(
-            result,
+        # Add ETag via standardized builder (with cursor)
+        build = etag_cursor_response_builder(
             request,
             response,
             next_cursor=next_cursor,
-            canonical_url=str(request.url)
+            canonical_url=str(request.url),
         )
+        return build(result)
 
     except HTTPException:
         raise

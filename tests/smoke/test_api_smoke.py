@@ -240,14 +240,12 @@ class TestAPISmokeTests:
         settings.api.rate_limit.enabled = False
         settings.telemetry.service_name = "aurum-api-test"
 
-        # Mock the app creation to avoid full initialization
-        with patch("aurum.api.app.configure_state"):
-            with patch("aurum.api.app.configure_routes"):
-                with patch("aurum.api.app.configure_telemetry"):
-                    with patch("aurum.api.state.get_scenario_store", return_value=mock_scenario_store):
-                        with patch("aurum.api.state.get_trino_client", return_value=mock_trino_client):
-                            with patch("aurum.api.state.get_scenario_output_feature_manager"):
-                                app = create_app(settings)
+        # Ensure versioned routers mount by disabling light-init for this suite
+        import os as _os
+        _os.environ["AURUM_API_LIGHT_INIT"] = "0"
+
+        # Create app; rely on internal wiring (avoid patching router configuration)
+        app = create_app(settings)
 
         return app
 
@@ -281,47 +279,66 @@ class TestAPISmokeTests:
         assert "# TYPE" in response.text
 
     def test_curves_endpoint_basic(self, client):
-        """Test /v1/curves endpoint returns curve data."""
-        response = client.get("/v1/curves", params={
-            "iso": "PJM",
-            "market": "DAY_AHEAD",
-            "location": "WEST",
-            "asof": "2024-01-15"
-        })
+        """Test /v2/curves endpoint returns curve data (tenant-scoped)."""
+        from unittest.mock import AsyncMock, patch
+
+        class _StubCurve:
+            def __init__(self):
+                self._payload = {
+                    "id": "curve-1",
+                    "name": "Test Curve",
+                    "description": None,
+                    "data_points": 10,
+                    "created_at": "2024-01-15T00:00:00Z",
+                }
+
+            def model_dump(self):
+                return dict(self._payload)
+
+        async def _mock_list_curves(**kwargs):
+            return ([_StubCurve()], {"backend": "stub"})
+
+        with patch("libs.services.curves_service.CurvesService.list_curves", new=AsyncMock(side_effect=_mock_list_curves)):
+            response = client.get(
+                "/v2/curves",
+                params={"tenant_id": "tenant-test", "limit": 1},
+                headers={"X-Aurum-Tenant": "tenant-test"},
+            )
 
         assert response.status_code == 200
-        data = response.json()
+        payload = response.json()
 
         # Check response structure
-        assert "data" in data
-        assert "meta" in data
-        assert len(data["data"]) > 0
-
-        # Check curve data structure
-        curve_point = data["data"][0]
-        assert "iso" in curve_point
-        assert "market" in curve_point
-        assert "location" in curve_point
-        assert "asof" in curve_point
-        assert "price" in curve_point
-        assert "volume" in curve_point
-
-        # Check values
-        assert curve_point["iso"] == "PJM"
-        assert curve_point["market"] == "DAY_AHEAD"
-        assert curve_point["location"] == "WEST"
-        assert curve_point["asof"] == "2024-01-15"
+        assert "data" in payload and isinstance(payload["data"], list)
+        assert "meta" in payload and isinstance(payload["meta"], dict)
+        assert len(payload["data"]) == 1
 
     def test_curves_endpoint_with_pagination(self, client):
-        """Test /v1/curves endpoint with cursor-based pagination."""
-        # First request
-        response = client.get("/v1/curves", params={
-            "iso": "PJM",
-            "market": "DAY_AHEAD",
-            "location": "WEST",
-            "asof": "2024-01-15",
-            "limit": 1
-        })
+        """Test /v2/curves endpoint with cursor-based pagination (tenant-scoped)."""
+        from unittest.mock import AsyncMock, patch
+
+        class _StubCurve:
+            def __init__(self, idx: int):
+                self._payload = {
+                    "id": f"curve-{idx}",
+                    "name": f"Test Curve {idx}",
+                    "description": None,
+                    "data_points": 10,
+                    "created_at": "2024-01-15T00:00:00Z",
+                }
+
+            def model_dump(self):
+                return dict(self._payload)
+
+        async def _mock_list_curves(**kwargs):
+            return ([_StubCurve(1)], {})
+
+        with patch("libs.services.curves_service.CurvesService.list_curves", new=AsyncMock(side_effect=_mock_list_curves)):
+            response = client.get(
+                "/v2/curves",
+                params={"tenant_id": "tenant-test", "limit": 1},
+                headers={"X-Aurum-Tenant": "tenant-test"},
+            )
 
         assert response.status_code == 200
         data = response.json()
@@ -329,62 +346,70 @@ class TestAPISmokeTests:
         assert "meta" in data
         assert len(data["data"]) <= 1
 
-        # Check cursor information
-        if "prev_cursor" in data["meta"] or "next_cursor" in data["meta"]:
-            # Use cursor for next page
-            cursor = data["meta"].get("next_cursor")
-            if cursor:
-                response2 = client.get("/v1/curves", params={"cursor": cursor})
-                assert response2.status_code == 200
+        # Use cursor for next page if provided
+        cursor = data["meta"].get("next_cursor") if isinstance(data.get("meta"), dict) else None
+        if cursor:
+            with patch("libs.services.curves_service.CurvesService.list_curves", new=AsyncMock(side_effect=_mock_list_curves)):
+                response2 = client.get(
+                    "/v2/curves",
+                    params={"tenant_id": "tenant-test", "cursor": cursor},
+                    headers={"X-Aurum-Tenant": "tenant-test"},
+                )
+            assert response2.status_code == 200
 
     def test_curves_diff_endpoint(self, client):
-        """Test /v1/curves/diff endpoint for comparing curve data."""
-        response = client.get("/v1/curves/diff", params={
-            "iso": "PJM",
-            "market": "DAY_AHEAD",
-            "location": "WEST",
-            "asof_a": "2024-01-15",
-            "asof_b": "2024-01-14",
-            "dimension": "price"
-        })
+        """Test /v2/curves/{curve_id}/diff endpoint (tenant-scoped)."""
+        from unittest.mock import AsyncMock, patch
+
+        class _StubCurve:
+            def __init__(self):
+                self._payload = {
+                    "id": "curve-1",
+                    "name": "Test Curve",
+                    "description": None,
+                    "data_points": 2,
+                    "created_at": "2024-01-15T00:00:00Z",
+                }
+
+            def model_dump(self):
+                return dict(self._payload)
+
+        async def _mock_get_diff(**kwargs):
+            return _StubCurve()
+
+        with patch("libs.services.curves_service.CurvesService.get_curve_diff", new=AsyncMock(side_effect=_mock_get_diff)):
+            response = client.get(
+                "/v2/curves/curve-1/diff",
+                params={
+                    "tenant_id": "tenant-test",
+                    "from_timestamp": "2024-01-14T00:00:00Z",
+                    "to_timestamp": "2024-01-15T00:00:00Z",
+                },
+                headers={"X-Aurum-Tenant": "tenant-test"},
+            )
 
         assert response.status_code == 200
-        data = response.json()
-
-        # Check response structure
-        assert "data" in data
-        assert "meta" in data
-
-        # Check diff data structure
-        if data["data"]:
-            diff_point = data["data"][0]
-            assert "iso" in diff_point
-            assert "market" in diff_point
-            assert "location" in diff_point
-            assert "dimension" in diff_point
+        payload = response.json()
+        assert payload.get("data", {}).get("id") == "curve-1"
 
     def test_metadata_dimensions_endpoint(self, client):
-        """Test /v1/metadata/dimensions endpoint returns dimension metadata."""
-        response = client.get("/v1/metadata/dimensions")
+        """Test /v2/metadata/dimensions endpoint returns dimension metadata (tenant-scoped)."""
+        from unittest.mock import AsyncMock, patch
+
+        async def _mock_list_dimensions(**kwargs):
+            return ([{"dimension": "iso", "values": ["PJM"], "asof": "latest"}], None)
+
+        with patch("libs.services.metadata_service.MetadataService.list_dimensions", new=AsyncMock(side_effect=_mock_list_dimensions)):
+            response = client.get(
+                "/v2/metadata/dimensions",
+                params={"tenant_id": "tenant-test"},
+                headers={"X-Aurum-Tenant": "tenant-test"},
+            )
 
         assert response.status_code == 200
-        data = response.json()
-
-        # Check response structure
-        assert "data" in data
-        assert "meta" in data
-
-        # Check dimensions structure
-        dimensions = data["data"]
-        assert isinstance(dimensions, dict)
-
-        # Should have at least the basic dimensions
-        assert "iso" in dimensions
-        assert "market" in dimensions
-        assert "location" in dimensions
-
-        # Check dimension values
-        assert isinstance(dimensions["iso"], list)
+        payload = response.json()
+        assert "data" in payload and isinstance(payload["data"], list)
+        assert payload["data"][0]["dimension"] == "iso"
         assert len(dimensions["iso"]) > 0
 
     def test_metadata_dimensions_with_counts(self, client):
@@ -409,199 +434,233 @@ class TestAPISmokeTests:
                 assert "count" in count_item
 
     def test_scenario_list_endpoint(self, client):
-        """Test /v1/scenarios endpoint returns scenario list."""
-        response = client.get("/v1/scenarios")
+        """Test /v2/scenarios endpoint returns scenario list (tenant-scoped)."""
+        from unittest.mock import AsyncMock, patch
+        from datetime import datetime
+
+        async def _mock_list_scenarios(**kwargs):
+            scenario = {
+                "id": "test-scenario-123",
+                "tenant_id": "tenant-test",
+                "name": "Test Scenario",
+                "description": None,
+                "status": "active",
+                "unique_key": "u-123",
+                "assumptions": [],
+                "parameters": {},
+                "tags": [],
+                "created_at": datetime.utcnow().isoformat() + "Z",
+                "updated_at": None,
+                "created_by": None,
+                "version": 1,
+                "metadata": {},
+            }
+            return ([scenario], 1, {})
+
+        with patch("libs.services.scenarios_service.ScenariosService.list_scenarios", new=AsyncMock(side_effect=_mock_list_scenarios)):
+            response = client.get(
+                "/v2/scenarios",
+                params={"tenant_id": "tenant-test"},
+                headers={"X-Aurum-Tenant": "tenant-test"},
+            )
 
         assert response.status_code == 200
-        data = response.json()
+        payload = response.json()
+        assert isinstance(payload.get("data"), list)
+        assert payload["data"][0]["tenant_id"] == "tenant-test"
 
-        # Check response structure
-        assert "data" in data
-        assert "meta" in data
+    def test_scenario_runs_list_endpoint(self, client):
+        """Test /v2/scenarios/{scenario_id}/runs endpoint (tenant-scoped)."""
+        from unittest.mock import AsyncMock, patch
 
-        # Check scenarios structure
-        scenarios = data["data"]
-        assert isinstance(scenarios, list)
-
-        if scenarios:
-            scenario = scenarios[0]
-            assert "id" in scenario
-            assert "name" in scenario
-            assert "tenant_id" in scenario
-
-    def test_scenario_outputs_endpoint(self, client):
-        """Test /v1/scenarios/{scenario_id}/outputs endpoint returns scenario outputs."""
-        scenario_id = "test-scenario-123"
-
-        response = client.get(f"/v1/scenarios/{scenario_id}/outputs", params={
-            "limit": 10,
-            "start_time": "2024-01-15T00:00:00Z",
-            "end_time": "2024-01-15T23:59:59Z"
-        })
-
-        assert response.status_code == 200
-        data = response.json()
-
-        # Check response structure
-        assert "outputs" in data
-        assert "total" in data
-        assert "applied_filter" in data
-
-        # Check outputs structure
-        outputs = data["outputs"]
-        assert isinstance(outputs, list)
-
-        if outputs:
-            output = outputs[0]
-            assert "id" in output
-            assert "scenario_run_id" in output
-            assert "timestamp" in output
-            assert "metric_name" in output
-            assert "value" in output
-
-    def test_scenario_outputs_with_filters(self, client):
-        """Test /v1/scenarios/{scenario_id}/outputs with various filters."""
-        scenario_id = "test-scenario-123"
-
-        # Test with metric name filter
-        response = client.get(f"/v1/scenarios/{scenario_id}/outputs", params={
-            "metric_name": "power_output",
-            "limit": 5
-        })
-
-        assert response.status_code == 200
-        data = response.json()
-        assert "outputs" in data
-
-        # Test with value range filter
-        response = client.get(f"/v1/scenarios/{scenario_id}/outputs", params={
-            "min_value": 50,
-            "max_value": 200,
-            "limit": 5
-        })
-
-        assert response.status_code == 200
-
-    def test_scenario_outputs_pagination(self, client):
-        """Test /v1/scenarios/{scenario_id}/outputs with pagination."""
-        scenario_id = "test-scenario-123"
-
-        # First page
-        response = client.get(f"/v1/scenarios/{scenario_id}/outputs", params={
-            "limit": 1,
-            "offset": 0
-        })
-
-        assert response.status_code == 200
-        data = response.json()
-        assert "outputs" in data
-        assert len(data["outputs"]) <= 1
-
-    def test_bulk_scenario_runs_endpoint(self, client):
-        """Test /v1/scenarios/{scenario_id}/runs:bulk endpoint for bulk scenario runs."""
-        scenario_id = "test-scenario-123"
-
-        bulk_request = {
-            "runs": [
+        async def _mock_list_runs(**kwargs):
+            return [
                 {
-                    "idempotency_key": "bulk-test-1",
-                    "parameters": {"test": "value1"}
-                },
-                {
-                    "idempotency_key": "bulk-test-2",
-                    "parameters": {"test": "value2"}
+                    "id": "run-1",
+                    "scenario_id": "test-scenario-123",
+                    "status": "succeeded",
+                    "timestamp": "2024-01-15T10:00:00Z",
                 }
             ]
-        }
 
-        response = client.post(f"/v1/scenarios/{scenario_id}/runs:bulk", json=bulk_request)
+        with patch("libs.services.scenarios_service.ScenariosService.list_scenario_runs", new=AsyncMock(side_effect=_mock_list_runs)):
+            response = client.get(
+                "/v2/scenarios/test-scenario-123/runs",
+                params={"tenant_id": "tenant-test", "limit": 10},
+                headers={"X-Aurum-Tenant": "tenant-test"},
+            )
 
-        assert response.status_code == 202  # Accepted for async processing
-        data = response.json()
+        assert response.status_code == 200
+        payload = response.json()
+        assert isinstance(payload.get("data"), list)
+        assert payload["data"][0]["scenario_id"] == "test-scenario-123"
 
-        # Check response structure
-        assert "results" in data
-        assert "total" in data
-        assert data["total"] == 2
+    def test_scenario_runs_with_filters(self, client):
+        """Test /v2/scenarios/{scenario_id}/runs with filters (tenant-scoped)."""
+        from unittest.mock import AsyncMock, patch
+
+        async def _mock_list_runs(**kwargs):
+            return []  # Empty list is fine for filter smoke
+
+        with patch("libs.services.scenarios_service.ScenariosService.list_scenario_runs", new=AsyncMock(side_effect=_mock_list_runs)):
+            response = client.get(
+                "/v2/scenarios/test-scenario-123/runs",
+                params={"tenant_id": "tenant-test", "status_filter": "running", "limit": 5},
+                headers={"X-Aurum-Tenant": "tenant-test"},
+            )
+
+        assert response.status_code == 200
+
+    def test_scenario_runs_pagination(self, client):
+        """Test /v2/scenarios/{scenario_id}/runs with pagination."""
+        from unittest.mock import AsyncMock, patch
+
+        async def _mock_list_runs(**kwargs):
+            return [{"id": "run-1", "scenario_id": "test-scenario-123", "status": "succeeded"}]
+
+        with patch("libs.services.scenarios_service.ScenariosService.list_scenario_runs", new=AsyncMock(side_effect=_mock_list_runs)):
+            response = client.get(
+                "/v2/scenarios/test-scenario-123/runs",
+                params={"tenant_id": "tenant-test", "limit": 1},
+                headers={"X-Aurum-Tenant": "tenant-test"},
+            )
+
+        assert response.status_code == 200
+        payload = response.json()
+        assert isinstance(payload.get("data"), list)
+        assert len(payload["data"]) <= 1
+
+    def test_scenario_run_create_endpoint(self, client):
+        """Test POST /v2/scenarios/{scenario_id}/runs endpoint (tenant-scoped)."""
+        from unittest.mock import AsyncMock, patch
+        from datetime import datetime
+
+        class _StubRun:
+            def __init__(self):
+                self._payload = {
+                    "meta": {},
+                    "data": {
+                        "id": "run-1",
+                        "scenario_id": "test-scenario-123",
+                        "status": "queued",
+                        "created_at": datetime.utcnow().isoformat() + "Z",
+                    },
+                }
+
+            def model_dump(self):
+                return dict(self._payload)
+
+        async def _mock_create_run(*args, **kwargs):
+            return _StubRun()
+
+        with patch("libs.services.scenarios_service.ScenariosService.create_scenario_run", new=AsyncMock(side_effect=_mock_create_run)):
+            response = client.post(
+                "/v2/scenarios/test-scenario-123/runs",
+                params={"tenant_id": "tenant-test"},
+                json={"priority": "normal", "timeout_minutes": 10, "parameters": {"k": "v"}},
+                headers={"X-Aurum-Tenant": "tenant-test"},
+            )
+
+        assert response.status_code in (200, 201)
+        payload = response.json()
+        assert payload.get("data", {}).get("scenario_id") == "test-scenario-123"
 
     def test_api_error_handling(self, client):
-        """Test API error handling for invalid requests."""
-
-        # Test 400 for invalid parameters
-        response = client.get("/v1/curves", params={
-            "iso": "",  # Invalid empty value
-            "market": "INVALID_MARKET",
-            "location": "INVALID_LOCATION",
-            "asof": "invalid-date"
-        })
-
-        assert response.status_code == 400
-        data = response.json()
-        assert "error" in data
-        assert "validation_errors" in data
+        """Test v2 error handling for invalid parameters (422)."""
+        # Invalid 'limit' (must be >=1)
+        response = client.get(
+            "/v2/curves",
+            params={"tenant_id": "tenant-test", "limit": 0},
+            headers={"X-Aurum-Tenant": "tenant-test"},
+        )
+        assert response.status_code in (400, 422)
 
     def test_api_not_found_handling(self, client):
-        """Test API 404 handling for non-existent resources."""
+        """Test v2 404 handling for non-existent scenario."""
+        from fastapi import HTTPException
+        from unittest.mock import AsyncMock, patch
 
-        # Test 404 for non-existent scenario
-        response = client.get("/v1/scenarios/non-existent-scenario-123/outputs")
+        async def _mock_get_scenario(*args, **kwargs):
+            raise HTTPException(status_code=404, detail="Not Found")
 
+        with patch("libs.services.scenarios_service.ScenariosService.get_scenario", new=AsyncMock(side_effect=_mock_get_scenario)):
+            response = client.get(
+                "/v2/scenarios/non-existent",
+                params={"tenant_id": "tenant-test"},
+                headers={"X-Aurum-Tenant": "tenant-test"},
+            )
         assert response.status_code == 404
-        data = response.json()
-        assert "error" in data
-        assert data["error"]["type"] == "not_found"
 
     def test_api_forbidden_handling(self, client):
-        """Test API 403 handling for forbidden operations."""
-
-        # This would require setting up auth to test properly
-        # For now, just test that the endpoint structure is correct
-        response = client.get("/v1/scenarios/test-scenario/outputs", params={
-            "limit": 100
-        })
-
-        # Should be 200 if auth is disabled, 403 if auth is enabled
-        assert response.status_code in [200, 403]
+        """Test v2 scenarios list endpoint structure (auth may be disabled)."""
+        from unittest.mock import AsyncMock, patch
+        async def _mock_list_scenarios(**kwargs):
+            return ([], 0, {})
+        with patch("libs.services.scenarios_service.ScenariosService.list_scenarios", new=AsyncMock(side_effect=_mock_list_scenarios)):
+            response = client.get(
+                "/v2/scenarios",
+                params={"tenant_id": "tenant-test"},
+                headers={"X-Aurum-Tenant": "tenant-test"},
+            )
+        assert response.status_code in (200, 403)
 
     def test_api_headers_and_metadata(self, client):
-        """Test API response headers and metadata."""
+        """Test v2 response headers and metadata."""
+        from unittest.mock import AsyncMock, patch
 
-        response = client.get("/v1/curves", params={
-            "iso": "PJM",
-            "market": "DAY_AHEAD",
-            "location": "WEST",
-            "asof": "2024-01-15"
-        })
+        class _StubCurve:
+            def model_dump(self):
+                return {
+                    "id": "curve-1",
+                    "name": "Curve 1",
+                    "description": None,
+                    "data_points": 1,
+                    "created_at": "2024-01-15T00:00:00Z",
+                }
+
+        async def _mock_list_curves(**kwargs):
+            return ([_StubCurve()], {})
+
+        with patch("libs.services.curves_service.CurvesService.list_curves", new=AsyncMock(side_effect=_mock_list_curves)):
+            response = client.get(
+                "/v2/curves",
+                params={"tenant_id": "tenant-test", "limit": 1},
+                headers={"X-Aurum-Tenant": "tenant-test"},
+            )
 
         assert response.status_code == 200
 
         # Check response headers
         assert "content-type" in response.headers
-        assert response.headers["content-type"] == "application/json"
+        assert response.headers["content-type"].startswith("application/json")
 
         # Check response metadata
         data = response.json()
         assert "meta" in data
         assert "request_id" in data["meta"]
-        assert "timestamp" in data["meta"]
         assert "tenant_id" in data["meta"]
 
     def test_api_concurrent_requests(self, client):
-        """Test API handles concurrent requests properly."""
-
-        import asyncio
+        """Test API handles concurrent v2 metadata requests properly."""
+        from unittest.mock import AsyncMock, patch
         from concurrent.futures import ThreadPoolExecutor
 
-        def make_request():
-            response = client.get("/v1/metadata/dimensions")
-            return response.status_code
+        async def _mock_list_dimensions(**kwargs):
+            return ([{"dimension": "iso", "values": ["PJM"], "asof": "latest"}], None)
 
-        # Make multiple concurrent requests
-        with ThreadPoolExecutor(max_workers=5) as executor:
-            futures = [executor.submit(make_request) for _ in range(10)]
-            results = [f.result() for f in futures]
+        with patch("libs.services.metadata_service.MetadataService.list_dimensions", new=AsyncMock(side_effect=_mock_list_dimensions)):
+            def make_request():
+                resp = client.get(
+                    "/v2/metadata/dimensions",
+                    params={"tenant_id": "tenant-test"},
+                    headers={"X-Aurum-Tenant": "tenant-test"},
+                )
+                return resp.status_code
 
-        # All requests should succeed
+            with ThreadPoolExecutor(max_workers=5) as executor:
+                futures = [executor.submit(make_request) for _ in range(10)]
+                results = [f.result() for f in futures]
+
         assert all(status == 200 for status in results)
 
     def test_api_performance_basic(self, client):
@@ -621,34 +680,51 @@ class TestAPISmokeTests:
         assert response_time < 1.0  # Should respond in less than 1 second
 
     def test_api_data_integrity(self, client):
-        """Test API data integrity across endpoints."""
+        """Test v2 API integrity across endpoints using tenant context."""
+        from unittest.mock import AsyncMock, patch
 
-        # Get curve data
-        curves_response = client.get("/v1/curves", params={
-            "iso": "PJM",
-            "market": "DAY_AHEAD",
-            "location": "WEST",
-            "asof": "2024-01-15"
-        })
+        # Stub curves and metadata endpoints
+        class _StubCurve:
+            def __init__(self, i: int):
+                self._payload = {
+                    "id": f"curve-{i}",
+                    "name": f"Curve {i}",
+                    "description": None,
+                    "data_points": 5,
+                    "created_at": "2024-01-15T00:00:00Z",
+                }
+
+            def model_dump(self):
+                return dict(self._payload)
+
+        async def _mock_list_curves(**kwargs):
+            return ([_StubCurve(1), _StubCurve(2)], {})
+
+        async def _mock_list_dimensions(**kwargs):
+            return ([{"dimension": "iso", "values": ["PJM"], "asof": "latest"}], None)
+
+        with patch("libs.services.curves_service.CurvesService.list_curves", new=AsyncMock(side_effect=_mock_list_curves)), \
+             patch("libs.services.metadata_service.MetadataService.list_dimensions", new=AsyncMock(side_effect=_mock_list_dimensions)):
+            curves_response = client.get(
+                "/v2/curves",
+                params={"tenant_id": "tenant-test", "limit": 2},
+                headers={"X-Aurum-Tenant": "tenant-test"},
+            )
+            metadata_response = client.get(
+                "/v2/metadata/dimensions",
+                params={"tenant_id": "tenant-test"},
+                headers={"X-Aurum-Tenant": "tenant-test"},
+            )
 
         assert curves_response.status_code == 200
-        curves_data = curves_response.json()
-
-        # Get metadata dimensions
-        metadata_response = client.get("/v1/metadata/dimensions")
         assert metadata_response.status_code == 200
-        metadata_data = metadata_response.json()
+        curves_payload = curves_response.json()
+        metadata_payload = metadata_response.json()
 
-        # Verify consistency between endpoints
-        if curves_data["data"] and metadata_data["data"]:
-            curve_iso = curves_data["data"][0]["iso"]
-            assert curve_iso in metadata_data["data"]["iso"]
-
-            curve_market = curves_data["data"][0]["market"]
-            assert curve_market in metadata_data["data"]["market"]
-
-            curve_location = curves_data["data"][0]["location"]
-            assert curve_location in metadata_data["data"]["location"]
+        # Integrity check: meta.tenant_id should match header; returned_count should match data length
+        assert curves_payload["meta"]["tenant_id"] == "tenant-test"
+        assert curves_payload["meta"]["returned_count"] == len(curves_payload["data"])
+        assert isinstance(metadata_payload.get("data"), list)
 
     def test_api_cors_headers(self, client):
         """Test CORS headers are properly set."""
@@ -681,16 +757,38 @@ class TestAPISmokeTests:
             assert response.status_code == 200
 
     def test_api_tenant_isolation(self, client):
-        """Test tenant isolation in API responses."""
+        """Test tenant isolation in v2 responses."""
+        from unittest.mock import AsyncMock, patch
+        from datetime import datetime
 
-        response = client.get("/v1/scenarios")
-        assert response.status_code in [200, 403]  # 403 if auth required
+        async def _mock_list_scenarios(**kwargs):
+            return ([{
+                "id": "s-1",
+                "tenant_id": "tenant-test",
+                "name": "S1",
+                "description": None,
+                "status": "active",
+                "unique_key": "uk",
+                "assumptions": [],
+                "parameters": {},
+                "tags": [],
+                "created_at": datetime.utcnow().isoformat() + "Z",
+                "updated_at": None,
+                "created_by": None,
+                "version": 1,
+                "metadata": {},
+            }], 1, {})
 
-        if response.status_code == 200:
-            data = response.json()
-            # Check that tenant_id is included in responses
-            if "data" in data and data["data"]:
-                assert "tenant_id" in data["data"][0]
+        with patch("libs.services.scenarios_service.ScenariosService.list_scenarios", new=AsyncMock(side_effect=_mock_list_scenarios)):
+            response = client.get(
+                "/v2/scenarios",
+                params={"tenant_id": "tenant-test"},
+                headers={"X-Aurum-Tenant": "tenant-test"},
+            )
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data["data"][0]["tenant_id"] == "tenant-test"
 
     def test_api_request_tracing(self, client):
         """Test request tracing headers and correlation IDs."""
@@ -705,99 +803,109 @@ class TestAPISmokeTests:
             assert len(response.headers["x-correlation-id"]) > 0
 
     def test_api_structured_logging(self, client):
-        """Test that API responses include structured logging information."""
+        """Test that v2 responses include structured metadata and ETag headers."""
+        from unittest.mock import AsyncMock, patch
 
-        response = client.get("/v1/curves", params={
-            "iso": "PJM",
-            "market": "DAY_AHEAD",
-            "location": "WEST",
-            "asof": "2024-01-15"
-        })
+        class _StubCurve:
+            def model_dump(self):
+                return {
+                    "id": "curve-1",
+                    "name": "Curve 1",
+                    "description": None,
+                    "data_points": 1,
+                    "created_at": "2024-01-15T00:00:00Z",
+                }
+
+        async def _mock_list_curves(**kwargs):
+            return ([_StubCurve()], {})
+
+        with patch("libs.services.curves_service.CurvesService.list_curves", new=AsyncMock(side_effect=_mock_list_curves)):
+            response = client.get(
+                "/v2/curves",
+                params={"tenant_id": "tenant-test", "limit": 1},
+                headers={"X-Aurum-Tenant": "tenant-test"},
+            )
 
         assert response.status_code == 200
         data = response.json()
-
-        # Check structured metadata
+        # Meta fields present
         assert "meta" in data
         assert "request_id" in data["meta"]
-        assert "timestamp" in data["meta"]
         assert "tenant_id" in data["meta"]
-        assert "version" in data["meta"]
+        assert "processing_time_ms" in data["meta"]
+        # ETag header present
+        assert "etag" in {k.lower(): v for k, v in response.headers.items()}
 
     def test_api_cache_headers(self, client):
-        """Test cache control headers for appropriate endpoints."""
+        """Test cache control headers on v2 metadata endpoints."""
+        from unittest.mock import AsyncMock, patch
+        async def _mock_list_dimensions(**kwargs):
+            return ([{"dimension": "iso", "values": ["PJM"], "asof": "latest"}], None)
 
-        response = client.get("/v1/metadata/dimensions")
+        with patch("libs.services.metadata_service.MetadataService.list_dimensions", new=AsyncMock(side_effect=_mock_list_dimensions)):
+            response = client.get(
+                "/v2/metadata/dimensions",
+                params={"tenant_id": "tenant-test"},
+                headers={"X-Aurum-Tenant": "tenant-test"},
+            )
 
-        # Metadata should be cacheable
-        assert "cache-control" in response.headers
-
-        # Check cache control value
-        cache_control = response.headers["cache-control"]
-        assert "max-age" in cache_control or "no-cache" in cache_control
+        assert response.status_code == 200
+        assert "cache-control" in {k.lower(): v for k, v in response.headers.items()}
 
     def test_api_compression(self, client):
-        """Test API response compression."""
+        """Test API response with gzip Accept-Encoding (v2)."""
+        from unittest.mock import AsyncMock, patch
+        async def _mock_list_curves(**kwargs):
+            class _StubCurve:
+                def model_dump(self):
+                    return {
+                        "id": "curve-1",
+                        "name": "Curve 1",
+                        "description": None,
+                        "data_points": 100,
+                        "created_at": "2024-01-15T00:00:00Z",
+                    }
+            return ([_StubCurve() for _ in range(5)], {})
 
-        # Test with Accept-Encoding header
-        headers = {"Accept-Encoding": "gzip"}
-        response = client.get("/v1/curves", headers=headers, params={
-            "iso": "PJM",
-            "market": "DAY_AHEAD",
-            "location": "WEST",
-            "asof": "2024-01-15"
-        })
+        with patch("libs.services.curves_service.CurvesService.list_curves", new=AsyncMock(side_effect=_mock_list_curves)):
+            headers = {"Accept-Encoding": "gzip"}
+            response = client.get(
+                "/v2/curves",
+                params={"tenant_id": "tenant-test", "limit": 5},
+                headers={**headers, "X-Aurum-Tenant": "tenant-test"},
+            )
 
         assert response.status_code == 200
-
-        # Response should be compressed if large enough
-        # (In test environment, this may not be compressed due to small size)
 
     def test_api_schema_validation(self, client):
-        """Test API schema validation for request/response data."""
-
-        # Test with valid parameters
-        response = client.get("/v1/curves", params={
-            "iso": "PJM",
-            "market": "DAY_AHEAD",
-            "location": "WEST",
-            "asof": "2024-01-15"
-        })
-
-        assert response.status_code == 200
-
-        # Test with invalid parameters (should return 400)
-        response = client.get("/v1/curves", params={
-            "iso": "",  # Invalid empty string
-            "market": "INVALID",
-            "asof": "invalid-date"
-        })
-
-        assert response.status_code == 400
-
-        # Check error response structure
-        error_data = response.json()
-        assert "error" in error_data
-        assert "validation_errors" in error_data
-        assert len(error_data["validation_errors"]) > 0
+        """Test v2 schema validation for required parameters."""
+        # Missing tenant_id should cause validation error (422)
+        response = client.get("/v2/curves", params={"limit": 1})
+        assert response.status_code in (400, 422)
 
     def test_api_backward_compatibility(self, client):
-        """Test API backward compatibility with older parameters."""
-
-        # Test with older parameter names (if any)
-        response = client.get("/v1/curves", params={
-            "iso": "PJM",
-            "market": "DAY_AHEAD",
-            "location": "WEST",
-            "asof": "2024-01-15"
-        })
-
+        """Basic v2 response shape is consistent (data + meta)."""
+        from unittest.mock import AsyncMock, patch
+        class _StubCurve:
+            def model_dump(self):
+                return {
+                    "id": "curve-1",
+                    "name": "Curve 1",
+                    "description": None,
+                    "data_points": 1,
+                    "created_at": "2024-01-15T00:00:00Z",
+                }
+        async def _mock_list_curves(**kwargs):
+            return ([_StubCurve()], {})
+        with patch("libs.services.curves_service.CurvesService.list_curves", new=AsyncMock(side_effect=_mock_list_curves)):
+            response = client.get(
+                "/v2/curves",
+                params={"tenant_id": "tenant-test", "limit": 1},
+                headers={"X-Aurum-Tenant": "tenant-test"},
+            )
         assert response.status_code == 200
-
-        # Ensure response format is consistent
         data = response.json()
-        assert "data" in data
-        assert "meta" in data
+        assert "data" in data and "meta" in data
 
     def test_api_documentation_accessible(self, client):
         """Test that API documentation is accessible."""

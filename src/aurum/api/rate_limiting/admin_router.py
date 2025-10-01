@@ -111,7 +111,7 @@ def get_rate_limiter() -> ConsolidatedRateLimiter:
     """Get the global rate limiter instance."""
     global _rate_limiter
     if _rate_limiter is None:
-        from .consolidated_policy_engine import get_unified_rate_limiter
+        from . import get_unified_rate_limiter
         _rate_limiter = get_unified_rate_limiter()
     return _rate_limiter
 

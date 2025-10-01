@@ -12,7 +12,7 @@ Provides endpoints for:
 from datetime import datetime
 from typing import Any, Dict, List, Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Depends, HTTPException, Query, status, Body
 from pydantic import BaseModel, Field
 
 from aurum.config.change_tracking import get_change_tracker, ChangeType, ChangeSource
@@ -316,7 +316,7 @@ async def export_schemas(
 @router.post("/overrides")
 async def set_ephemeral_override(
     key: str = Query(..., description="Override key"),
-    value: Dict[str, Any] = Query(..., description="Override value"),
+    value: Dict[str, Any] = Body(..., description="Override value as JSON body"),
     ttl_seconds: Optional[int] = Query(None, description="TTL in seconds"),
     _permissions: None = Depends(require_permissions(Permission.CONFIG_MANAGE))
 ):

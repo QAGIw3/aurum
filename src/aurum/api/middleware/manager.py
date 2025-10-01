@@ -297,7 +297,7 @@ class MiddlewareManager:
         # 1050: Rate limiting wrapper (optional)
         def _wrap_rate_limit(app_chain: ASGIApp, _s: AurumSettings) -> ASGIApp:
             try:
-                from ..rate_limiting.unified_rate_limiter import get_unified_rate_limiter
+                from ..rate_limiting import get_unified_rate_limiter
                 from ..rate_limiting import RateLimitingMiddleware as UnifiedRateLimitingMiddleware
             except Exception:
                 return app_chain

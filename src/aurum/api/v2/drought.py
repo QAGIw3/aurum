@@ -23,6 +23,7 @@ from fastapi import APIRouter, HTTPException, Query, Request, Response
 from pydantic import BaseModel, Field
 
 from ..http import respond_with_etag
+from ..http.response_builders import etag_cursor_response_builder
 from .pagination import (
     resolve_pagination,
     build_next_cursor,
@@ -207,7 +208,13 @@ async def get_drought_indices_v2(
             links=links,
         )
 
-        return respond_with_etag(result, request, response, next_cursor=next_cursor, canonical_url=str(request.url.remove_query_params("cursor")))
+        build = etag_cursor_response_builder(
+            request,
+            response,
+            next_cursor=next_cursor,
+            canonical_url=str(request.url.remove_query_params("cursor")),
+        )
+        return build(result)
 
     except HTTPException:
         raise
@@ -325,7 +332,13 @@ async def get_drought_usdm_v2(
             links=links,
         )
 
-        return respond_with_etag(result, request, response, next_cursor=next_cursor, canonical_url=str(request.url.remove_query_params("cursor")))
+        build = etag_cursor_response_builder(
+            request,
+            response,
+            next_cursor=next_cursor,
+            canonical_url=str(request.url.remove_query_params("cursor")),
+        )
+        return build(result)
 
     except HTTPException:
         raise

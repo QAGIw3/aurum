@@ -7,8 +7,8 @@ import pytest
 
 
 @pytest.mark.parametrize("path,params", [
-    ("/v1/admin/ratelimit/status", {}),
     ("/v2/admin/mappings", {"tenant_id": "t1", "limit": 1}),
+    ("/v2/admin/config/versions", {}),
 ])
 def test_admin_guard_blocks_when_enabled(path, params, monkeypatch):
     pytest.importorskip("fastapi", reason="fastapi not installed")
@@ -25,4 +25,3 @@ def test_admin_guard_blocks_when_enabled(path, params, monkeypatch):
     client = TestClient(app)
     resp = client.get(path, params=params)
     assert resp.status_code == 403
-

@@ -97,3 +97,19 @@ create_airflow_stub()
 
 # Common fixtures available to all tests
 __all__ = ["reset_state", "settings_override"]
+
+# Helpers to control API init mode in tests that need full router mounting
+@pytest.fixture
+def full_init(monkeypatch):
+    """Disable LIGHT_INIT for the duration of a test to mount all routers.
+
+    Use by adding `full_init` to the test function signature.
+    """
+    monkeypatch.setenv("AURUM_API_LIGHT_INIT", "0")
+    yield
+    monkeypatch.delenv("AURUM_API_LIGHT_INIT", raising=False)
+
+
+def disable_light_init_env() -> None:
+    """Imperative helper to disable LIGHT_INIT when not using fixtures."""
+    os.environ["AURUM_API_LIGHT_INIT"] = "0"

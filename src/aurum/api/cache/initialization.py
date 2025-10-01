@@ -13,7 +13,8 @@ from ...logging.structured_logger import get_logger
 from .config import CacheConfig
 from .cache import AsyncCache, CacheBackend
 from .consolidated_manager import UnifiedCacheManager, set_unified_cache_manager
-from ...core.settings import get_settings
+# Prefer shared settings adapter when available
+from ..state import get_settings as _api_get_settings
 
 
 logger = get_logger(__name__)
@@ -40,7 +41,7 @@ async def initialize_unified_cache_system(
     try:
         # Create configuration if not provided
         if config is None:
-            settings = get_settings()
+            settings = _api_get_settings()
             config = CacheConfig.from_settings(settings)
             
         # Create AsyncCache instance
@@ -111,7 +112,7 @@ def create_cache_config_from_env() -> CacheConfig:
         Configured CacheConfig instance.
     """
     try:
-        settings = get_settings()
+        settings = _api_get_settings()
         return CacheConfig.from_settings(settings)
     except Exception as e:
         logger.warning(f"Failed to load settings, using default cache config: {e}")

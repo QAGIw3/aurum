@@ -12,13 +12,10 @@ from aurum.events.streaming import (
     EventEnvelope,
     EventBus,
     IdempotencyTracker,
-    KafkaEventBus,
-    KafkaEventConsumer,
-    OutboxDispatcher,
     OutboxMessage,
     OutboxRepository,
     SchemaValidator,
-    TimescaleOutboxRepository,
+    build_outbox_runtime,
 )
 from aurum.schema_registry import SubjectContracts
 from aurum.streaming.kafka_processor import KafkaMessage, KafkaProcessor, KafkaProcessorConfig
@@ -58,37 +55,33 @@ class ScenarioEventPipeline:
         schema_validator: SchemaValidator | None = None,
     ) -> None:
         self.config = config or ScenarioEventPipelineConfig()
-        self._repository = repository or TimescaleOutboxRepository()
-
         if schema_validator is None and event_bus is None:
             schema_validator = self._build_schema_validator()
 
-        self._event_bus = event_bus or KafkaEventBus(
-            schema_validator=schema_validator,
-        )
-        self._dlq_bus = dlq_bus or self._event_bus
-
-        self._processor_config = processor_config or KafkaProcessorConfig(
+        runtime = build_outbox_runtime(
+            topic=self.config.lifecycle_topic,
+            consumer_group=self.config.consumer_group,
             bootstrap_servers=self.config.bootstrap_servers,
-            group_id=self.config.consumer_group,
-            input_topics=(self.config.lifecycle_topic,),
-            in_memory=self.config.in_memory,
-        )
-        self._processor = processor or KafkaProcessor(self._processor_config)
-        self._idempotency = idempotency_tracker or IdempotencyTracker()
-
-        self.consumer = KafkaEventConsumer(
-            self._processor_config,
-            processor=self._processor,
-            idempotency_tracker=self._idempotency,
-            dlq_bus=self._dlq_bus,
-        )
-        self.dispatcher = OutboxDispatcher(
-            self._repository,
-            self._event_bus,
             batch_size=self.config.batch_size,
             poll_interval=self.config.poll_interval,
+            in_memory=self.config.in_memory,
+            repository=repository,
+            event_bus=event_bus,
+            dlq_bus=dlq_bus,
+            processor=processor,
+            processor_config=processor_config,
+            idempotency_tracker=idempotency_tracker,
+            schema_validator=schema_validator,
         )
+
+        self._repository = runtime.repository
+        self._event_bus = runtime.event_bus
+        self._dlq_bus = runtime.dlq_bus
+        self._processor_config = runtime.processor_config
+        self._processor = runtime.processor
+        self._idempotency = runtime.idempotency_tracker
+        self.consumer = runtime.consumer
+        self.dispatcher = runtime.dispatcher
 
     @staticmethod
     def _contracts_path() -> Path:

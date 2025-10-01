@@ -79,6 +79,17 @@ except Exception:  # pragma: no cover - optional dep
 _logger = logging.getLogger(__name__)
 _INITIALISED = False
 
+# Prefer shared observability implementation when available
+try:  # pragma: no cover - optional dependency path
+    from libs.observability.api import (
+        configure_observability as _libs_configure_observability,
+        get_observability as _libs_get_observability,
+    )
+    from libs.common.config import ObservabilitySettings as _LibsObsSettings
+    _LIBS_OBS_AVAILABLE = True
+except Exception:  # pragma: no cover - libs not present in some environments
+    _LIBS_OBS_AVAILABLE = False
+
 
 def _bool_env(name: str, default: bool = False) -> bool:
     raw = os.getenv(name)
@@ -105,8 +116,34 @@ def configure_telemetry(
     enable_psycopg: bool = False,
     enable_httpx: bool = True,
 ) -> None:
-    """Initialise tracing and logging exporters if configured via environment."""
+    """Initialise tracing/logging exporters.
+
+    Prefer the shared libs.observability pipeline when available to avoid
+    divergent implementations; otherwise fall back to the local setup.
+    """
     global _INITIALISED
+    # Delegate to shared observability if present
+    if _LIBS_OBS_AVAILABLE:
+        try:
+            resolved_service_name = os.getenv("AURUM_OTEL_SERVICE_NAME", service_name)
+            endpoint = os.getenv("AURUM_OTEL_EXPORTER_ENDPOINT")
+            settings = _LibsObsSettings(
+                service_name=resolved_service_name,
+                enable_tracing=True,
+                enable_metrics=True,
+                otel_endpoint=endpoint,
+            )
+            _libs_configure_observability(settings)
+            if fastapi_app is not None:
+                obs = _libs_get_observability()
+                if obs:
+                    obs.instrument_fastapi(fastapi_app)
+            _INITIALISED = True
+            return None
+        except Exception:
+            # Fall back to local implementation on any failure
+            pass
+
     if not OTEL_AVAILABLE:
         return None
     if not _INITIALISED:

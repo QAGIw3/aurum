@@ -1,12 +1,6 @@
-from __future__ import annotations
+"""Compatibility shim exposing reference dataset stubs."""
+
+from .eia_catalog import EIADatasetStub, get_dataset
 
 
-class EIADatasetStub:
-    def __init__(self, default_frequency: str = "OTHER"):
-        self.default_frequency = default_frequency
-
-
-def get_dataset(path: str) -> EIADatasetStub:  # pragma: no cover - stub
-    return EIADatasetStub()
-
-
+__all__ = ["EIADatasetStub", "get_dataset"]

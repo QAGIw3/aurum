@@ -24,7 +24,6 @@ _EXPORTS: Tuple[Tuple[str, Tuple[str, ...]], ...] = (
         "DimensionalServiceInterface",
         "ExportableServiceInterface",
     )),
-    (".curves_service", ("CurvesService",)),
     (".metadata_service", ("MetadataService",)),
     (".ppa_service", ("PpaService",)),
     (".drought_service", ("DroughtService",)),
@@ -212,6 +211,15 @@ __all__: list[str] = []
 
 for module_name, exports in _EXPORTS:
     _safe_import(module_name, exports)
+
+# Prefer the shared curves service implementation from libs when available
+try:  # pragma: no cover - optional dependency wiring
+    from libs.services.curves_service import CurvesService as _SharedCurvesService
+except Exception:  # pragma: no cover - defensive guard for minimal environments
+    _logger.debug("Shared CurvesService import failed; CurvesService unavailable", exc_info=True)
+else:
+    globals()["CurvesService"] = _SharedCurvesService
+    __all__.append("CurvesService")
 
 __all__ = sorted(set(__all__))
 

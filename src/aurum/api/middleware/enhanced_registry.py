@@ -26,7 +26,7 @@ from starlette.responses import JSONResponse
 from aurum.core import AurumSettings
 from ..observability.metrics import get_metrics_client
 from ..logging.structured_logger import get_logger
-from ..rate_limiting.unified_rate_limiter import get_unified_rate_limiter
+from ..rate_limiting import get_unified_rate_limiter
 from ..telemetry.context import extract_tenant_id_from_headers, get_request_id
 from .performance_monitor import MiddlewarePerformanceMonitor, MiddlewareStackOptimizer
 

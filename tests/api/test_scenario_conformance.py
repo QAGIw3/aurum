@@ -10,11 +10,18 @@ Tests cover:
 
 import json
 import pytest
+from aurum.core import AurumSettings
 from datetime import datetime, timezone
 from unittest.mock import AsyncMock, patch, MagicMock
 from fastapi.testclient import TestClient
 from fastapi import HTTPException
 from hypothesis import given, strategies as st, settings
+
+try:
+    if getattr(AurumSettings(), "enable_v2_only", False):
+        pytest.skip("v2-only mode: v1 scenario API conformance tests are skipped", allow_module_level=True)
+except Exception:
+    pass
 
 from aurum.api.scenarios import router
 from aurum.api.scenario_models import (

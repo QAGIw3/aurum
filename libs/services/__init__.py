@@ -5,6 +5,10 @@ and orchestrate repository access. Routers and CLIs should depend on these
 services rather than repositories or storage clients directly.
 """
 
-__all__: list[str] = []
+from .curves_service import CurvesService, Curve
 
+__all__: list[str] = [
+    "CurvesService",
+    "Curve",
+]
 

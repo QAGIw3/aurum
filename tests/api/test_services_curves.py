@@ -1,133 +1,215 @@
-"""Tests for Curves service layer implementation."""
+from __future__ import annotations
 
-import asyncio
-from types import SimpleNamespace
-from unittest.mock import AsyncMock, patch
+from dataclasses import dataclass
+from typing import Any, Dict, List, Optional, Tuple
 
 import pytest
 
-from aurum.api.cache.unified_cache_manager import UnifiedCacheManager
-from aurum.api.contracts import CacheDirective, CacheStatus, CurvesDiffQuery, Pagination, QueryResult, ServiceCallContext
-from aurum.api.dao.curves_dao import CurvesDao
-from aurum.api.services.curves_service import CurvesService
-from datetime import date
+from libs.services.cache_support import AsyncCacheProtocol
+from libs.services.contracts import CacheDirective, CacheStatus, ServiceExecutionResult
+from libs.services.curves_service import Curve, CurvesService
 
 
-class TestCurvesService:
-    """Unit tests for the Curves service contract implementation."""
+class InMemoryAsyncCache(AsyncCacheProtocol):
+    """Minimal in-memory cache used to exercise service caching behaviour."""
 
-    @pytest.fixture
-    def mock_dao(self, monkeypatch):
-        dao = AsyncMock(spec=CurvesDao)
-        monkeypatch.setattr("aurum.api.services.curves_service.CurvesDao", lambda: dao)
-        return dao
+    def __init__(self) -> None:
+        self._storage: Dict[Tuple[Optional[str], str], Any] = {}
 
-    @pytest.fixture
-    def curves_service(self):
-        return CurvesService()
+    async def get(self, key: str, *, namespace: Optional[str] = None) -> Optional[Any]:
+        return self._storage.get((namespace, key))
 
-    @pytest.mark.asyncio
-    async def test_query_data_cache_hit(self, curves_service, mock_dao, monkeypatch):
-        cached_payload = [{"iso": "CAISO", "value": 50.0}]
-        manager = AsyncMock(spec=UnifiedCacheManager)
-        manager.get = AsyncMock(return_value=cached_payload)
-        manager.config = SimpleNamespace(ttl_seconds=30)
-        monkeypatch.setattr("aurum.api.services.curves_service.get_unified_cache_manager", lambda: manager)
+    async def set(
+        self,
+        key: str,
+        value: Any,
+        *,
+        ttl_seconds: Optional[int] = None,
+        namespace: Optional[str] = None,
+    ) -> bool:
+        self._storage[(namespace, key)] = value
+        return True
 
-        result = await curves_service.query_data(
-            filters={"iso": "CAISO"},
-            context=ServiceCallContext(cache_directive=CacheDirective(namespace="curves", ttl_seconds=60)),
+    async def invalidate(self, key: str, *, namespace: Optional[str] = None) -> int:
+        return 1 if self._storage.pop((namespace, key), None) is not None else 0
+
+
+@dataclass
+class _DaoCall:
+    name: str
+    args: Tuple[Any, ...]
+    kwargs: Dict[str, Any]
+
+
+class StubCurvesDao:
+    """DAO stub that records calls and returns configured payloads."""
+
+    def __init__(self, *, rows: List[Dict[str, Any]], elapsed_ms: float = 12.5) -> None:
+        self._rows = rows
+        self._elapsed = elapsed_ms
+        self.calls: List[_DaoCall] = []
+
+    async def list_catalog_entries(
+        self,
+        *,
+        tenant_id: str,
+        offset: int,
+        limit: int,
+        name_filter: Optional[str] = None,
+    ) -> Tuple[List[Dict[str, Any]], float, Optional[str]]:
+        self.calls.append(
+            _DaoCall("list_catalog_entries", tuple(), dict(tenant_id=tenant_id, offset=offset, limit=limit, name_filter=name_filter))
         )
+        return self._rows, self._elapsed, "SELECT ..."
 
-        assert result.data == cached_payload
-        assert result.metadata.cache_status == CacheStatus.HIT
-        mock_dao.query_curves.assert_not_awaited()
-
-    @pytest.mark.asyncio
-    async def test_query_data_cache_miss_fetches_and_stores(self, curves_service, mock_dao, monkeypatch):
-        mock_rows = [{"iso": "CAISO", "value": 55.0}]
-        mock_dao.query_curves.return_value = QueryResult(data=mock_rows, elapsed_ms=12.5)
-        manager = AsyncMock(spec=UnifiedCacheManager)
-        manager.get = AsyncMock(return_value=None)
-        manager.set = AsyncMock()
-        manager.config = SimpleNamespace(ttl_seconds=45)
-        monkeypatch.setattr("aurum.api.services.curves_service.get_unified_cache_manager", lambda: manager)
-
-        result = await curves_service.query_data(
-            filters={"iso": "CAISO"},
-            pagination=Pagination(limit=10),
-            context=ServiceCallContext(cache_directive=CacheDirective(namespace="curves", ttl_seconds=30)),
+    async def get_curve_diff_details(
+        self,
+        *,
+        curve_id: str,
+        from_timestamp: str,
+        to_timestamp: str,
+    ) -> Tuple[Dict[str, Any], float, Optional[str]]:
+        self.calls.append(
+            _DaoCall(
+                "get_curve_diff_details",
+                tuple(),
+                dict(curve_id=curve_id, from_timestamp=from_timestamp, to_timestamp=to_timestamp),
+            )
         )
+        row = self._rows[0] if self._rows else {}
+        return row, self._elapsed, "SELECT diff ..."
 
-        mock_dao.query_curves.assert_awaited_once()
-        manager.set.assert_awaited()
-        assert result.data == mock_rows
-        assert result.metadata.cache_status == CacheStatus.MISS
-        assert result.metadata.row_count == len(mock_rows)
-
-    @pytest.mark.asyncio
-    async def test_query_diff_uses_cache(self, curves_service, mock_dao, monkeypatch):
-        diff_rows = [{"iso": "CAISO", "diff": 2.0}]
-        mock_dao.query_curves_diff.return_value = QueryResult(data=diff_rows, elapsed_ms=18.0)
-        manager = AsyncMock(spec=UnifiedCacheManager)
-        manager.get = AsyncMock(return_value=None)
-        manager.set = AsyncMock()
-        manager.config = SimpleNamespace(ttl_seconds=50)
-        monkeypatch.setattr("aurum.api.services.curves_service.get_unified_cache_manager", lambda: manager)
-
-        diff_query = CurvesDiffQuery(asof_a=date(2024, 1, 1), asof_b=date(2024, 1, 2), iso="CAISO")
-        result = await curves_service.query_diff(diff=diff_query)
-
-        mock_dao.query_curves_diff.assert_awaited_once()
-        manager.set.assert_awaited()
-        assert result.data == diff_rows
-        assert result.metadata.cache_status == CacheStatus.MISS
-
-    @pytest.mark.asyncio
-    async def test_export_data_streams_chunks(self, curves_service, mock_dao):
-        mock_chunks = [[{"iso": "CAISO"}], []]
-        mock_dao.query_curves.side_effect = [QueryResult(data=chunk, elapsed_ms=1.0) for chunk in mock_chunks]
-
-        results = []
-        async for row in curves_service.export_data(chunk_size=1):
-            results.append(row)
-
-        assert results == mock_chunks[0]
-        assert mock_dao.query_curves.await_count == 2
-
-    def test_legacy_query_curves_bridge(self, curves_service, mock_dao, monkeypatch):
-        mock_rows = [{"iso": "CAISO"}]
-        mock_dao.query_curves.return_value = QueryResult(data=mock_rows, elapsed_ms=5.0)
-        manager = AsyncMock(spec=UnifiedCacheManager)
-        manager.get = AsyncMock(return_value=None)
-        manager.set = AsyncMock()
-        manager.config = SimpleNamespace(ttl_seconds=120)
-        monkeypatch.setattr("aurum.api.services.curves_service.get_unified_cache_manager", lambda: manager)
-
-        rows, elapsed = curves_service.query_curves(
-            asof=None,
-            curve_key=None,
-            asset_class=None,
-            iso="CAISO",
-            location=None,
-            market=None,
-            product=None,
-            block=None,
-            tenor_type=None,
-            limit=10,
+    async def export_curves(
+        self,
+        *,
+        asof: Optional[str],
+        iso: Optional[str],
+        market: Optional[str],
+        location: Optional[str],
+        product: Optional[str],
+        block: Optional[str],
+    ) -> List[Dict[str, Any]]:
+        self.calls.append(
+            _DaoCall(
+                "export_curves",
+                tuple(),
+                dict(asof=asof, iso=iso, market=market, location=location, product=product, block=block),
+            )
         )
+        return self._rows
 
-        assert rows == mock_rows
-        assert elapsed == 5.0
-        mock_dao.query_curves.assert_awaited_once()
 
-    @pytest.mark.asyncio
-    async def test_invalidate_cache(self, curves_service, monkeypatch):
-        manager = AsyncMock(spec=UnifiedCacheManager)
-        manager.invalidate_pattern = AsyncMock(return_value=0)
-        monkeypatch.setattr("aurum.api.services.curves_service.get_unified_cache_manager", lambda: manager)
+@pytest.mark.asyncio
+async def test_list_curves_hits_cache() -> None:
+    cached_payload = {
+        "curves": [
+            {
+                "id": "c-1",
+                "name": "Cached",
+                "description": None,
+                "data_points": 1,
+                "created_at": "2024-01-01T00:00:00Z",
+            }
+        ],
+        "debug": {},
+        "metadata": {"elapsed_ms": 0.5, "backend": "redis"},
+    }
+    cache = InMemoryAsyncCache()
+    await cache.set(
+        "curves:list:tenant:0:5:None",
+        cached_payload,
+        namespace="curves",
+        ttl_seconds=30,
+    )
 
-        result = await curves_service.invalidate_cache()
+    dao = StubCurvesDao(rows=[])
+    svc = CurvesService(dao=dao, cache=cache)
+    directive = CacheDirective(namespace="curves", ttl_seconds=30)
 
-        manager.invalidate_pattern.assert_awaited_once_with("curves:*")
-        assert result == {"curves": 0}
+    result, debug = await svc.list_curves(
+        tenant_id="tenant",
+        offset=0,
+        limit=5,
+        name_filter=None,
+        include_debug=True,
+        cache_directive=directive,
+    )
+
+    assert isinstance(result, ServiceExecutionResult)
+    assert result.metadata.cache_status is CacheStatus.HIT
+    assert debug == {}
+    assert [curve.id for curve in result.data] == ["c-1"]
+    assert dao.calls == []
+
+
+@pytest.mark.asyncio
+async def test_list_curves_populates_cache() -> None:
+    rows = [
+        {"id": "c-2", "name": "Fresh", "description": "", "data_points": 3, "created_at": "2024-02-01T00:00:00Z"}
+    ]
+    cache = InMemoryAsyncCache()
+    dao = StubCurvesDao(rows=rows)
+    svc = CurvesService(dao=dao, cache=cache)
+    directive = CacheDirective(namespace="curves", ttl_seconds=45)
+
+    result, debug = await svc.list_curves(
+        tenant_id="tenant",
+        offset=0,
+        limit=10,
+        name_filter=None,
+        include_debug=True,
+        cache_directive=directive,
+    )
+
+    assert result.metadata.cache_status is CacheStatus.MISS
+    assert [curve.id for curve in result.data] == ["c-2"]
+    assert debug == {"raw_query": "SELECT ..."}
+    assert dao.calls and dao.calls[0].name == "list_catalog_entries"
+
+    # Confirm cache populated with serialised payload
+    cached = await cache.get("curves:list:tenant:0:10:None", namespace="curves")
+    assert cached is not None
+    assert cached["curves"][0]["id"] == "c-2"
+
+
+@pytest.mark.asyncio
+async def test_get_curve_diff_miss_then_store() -> None:
+    row = {"id": "c-3", "name": "Curve", "description": None, "data_points": 7, "created_at": "2024-03-01"}
+    dao = StubCurvesDao(rows=[row])
+    cache = InMemoryAsyncCache()
+    svc = CurvesService(dao=dao, cache=cache)
+    directive = CacheDirective(namespace="curves", ttl_seconds=20)
+
+    result = await svc.get_curve_diff(
+        curve_id="c-3",
+        from_timestamp="2024-01-01T00:00:00Z",
+        to_timestamp="2024-01-31T00:00:00Z",
+        cache_directive=directive,
+    )
+
+    assert isinstance(result, ServiceExecutionResult)
+    assert isinstance(result.data, Curve)
+    assert result.metadata.cache_status is CacheStatus.MISS
+
+    cached = await cache.get("curves:diff:c-3:2024-01-01T00:00:00Z:2024-01-31T00:00:00Z", namespace="curves")
+    assert cached and cached["curve"]["id"] == "c-3"
+
+
+def test_api_service_alias() -> None:
+    from aurum.api.services import CurvesService as ApiCurvesService
+
+    assert ApiCurvesService is CurvesService
+
+
+@pytest.mark.asyncio
+async def test_stream_curve_export_iterates_chunks() -> None:
+    rows = [{"curve_key": "c1"}, {"curve_key": "c2"}, {"curve_key": "c3"}]
+    dao = StubCurvesDao(rows=rows)
+    svc = CurvesService(dao=dao)
+
+    collected: List[Dict[str, Any]] = []
+    async for item in svc.stream_curve_export(chunk_size=2):
+        collected.append(item)
+
+    assert collected == rows
+*** End of File

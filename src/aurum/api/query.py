@@ -7,6 +7,8 @@ from typing import Any, Dict, Iterable, Optional, Union, Tuple, List, Mapping, S
 import hashlib
 import json
 
+from libs.services.query_builder import build_series_catalog_query as _shared_build_series_catalog_query
+
 from .http.pagination import MAX_PAGE_SIZE
 
 
@@ -879,126 +881,7 @@ def build_curve_diff_query(
     )
 
 
-_CATALOG_SELECT_COLUMNS: tuple[str, ...] = (
-    "tenant_id",
-    "provider",
-    "series_id",
-    "dataset_code",
-    "title",
-    "description",
-    "unit_code",
-    "frequency_code",
-    "provider_geo_code",
-    "canonical_region_id",
-    "canonical_region_name",
-    "geography_type",
-    "mapping_status",
-    "status",
-    "category",
-    "source_url",
-    "notes",
-    "start_ts",
-    "end_ts",
-    "last_observation_ts",
-    "asof_date",
-    "tags",
-    "iso_code",
-    "iso_market",
-    "iso_product",
-    "iso_location_type",
-    "iso_location_name",
-    "iso_location_id",
-    "iso_timezone",
-    "iso_interval_minutes",
-    "iso_unit",
-    "iso_subject",
-    "iso_curve_role",
-)
-
-_CATALOG_EQUAL_FILTERS: dict[str, str] = {
-    "provider": "provider",
-    "dataset_code": "dataset_code",
-    "status": "status",
-    "iso_code": "iso_code",
-    "iso_market": "iso_market",
-    "iso_product": "iso_product",
-    "iso_location_type": "iso_location_type",
-    "iso_location_id": "iso_location_id",
-    "canonical_region_id": "canonical_region_id",
-    "geography_type": "geography_type",
-    "category": "category",
-}
-
-_CATALOG_ILIKE_FILTERS: dict[str, str] = {
-    "title": "title",
-    "description": "description",
-    "iso_location_name": "iso_location_name",
-}
-
-_CATALOG_TIME_FILTERS: dict[str, tuple[str, str]] = {
-    "start_ts_from": ("start_ts", ">="),
-    "start_ts_to": ("start_ts", "<="),
-    "end_ts_from": ("end_ts", ">="),
-    "end_ts_to": ("end_ts", "<="),
-    "last_obs_from": ("last_observation_ts", ">="),
-    "last_obs_to": ("last_observation_ts", "<="),
-}
-
-
-def build_series_catalog_query(
-    *,
-    tenant_id: str,
-    filters: Mapping[str, Any] | None,
-    limit: int,
-    offset: int,
-    order_by: Sequence[str] | None = None,
-) -> str:
-    """Build a paginated query against the external series catalog view."""
-
-    limit = max(1, min(int(limit), 200))
-    offset = max(0, int(offset))
-    safe_tenant = _safe_literal(tenant_id)
-    clauses = [f"tenant_id = '{safe_tenant}'"]
-    filters = filters or {}
-
-    for key, column in _CATALOG_EQUAL_FILTERS.items():
-        value = filters.get(key)
-        if value is None:
-            continue
-        clauses.append(f"{column} = '{_safe_literal(str(value))}'")
-
-    for key, column in _CATALOG_ILIKE_FILTERS.items():
-        value = filters.get(key)
-        if not value:
-            continue
-        pattern = _escape_like_pattern(str(value))
-        clauses.append(f"lower({column}) LIKE lower('%{pattern}%')")
-
-    tags = filters.get("tags")
-    if tags:
-        for raw_tag in tags:
-            if not raw_tag:
-                continue
-            clauses.append(f"contains(tags, '{_safe_literal(str(raw_tag))}')")
-
-    for key, (column, operator) in _CATALOG_TIME_FILTERS.items():
-        value = filters.get(key)
-        if value is None:
-            continue
-        clauses.append(f"{column} {operator} {_timestamp_literal(value)}")
-
-    where_clause = " WHERE " + " AND ".join(clauses)
-    order_columns = list(order_by) if order_by else ["provider", "series_id"]
-    select_list = ", ".join(_CATALOG_SELECT_COLUMNS)
-    order_clause = ", ".join(order_columns)
-
-    return (
-        f"SELECT {select_list} "
-        "FROM iceberg.market.external_series_catalog "
-        f"{where_clause} "
-        f"ORDER BY {order_clause} "
-        f"LIMIT {limit} OFFSET {offset}"
-    )
+build_series_catalog_query = _shared_build_series_catalog_query
 
 
 _SEARCH_ALLOWED_FACETS: set[str] = {

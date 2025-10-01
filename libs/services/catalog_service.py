@@ -2,17 +2,16 @@ from __future__ import annotations
 
 from typing import Any, Dict, List, Optional, Tuple
 
-from libs.common.config import get_settings
 from libs.storage.trino import TrinoAnalyticRepo
-from aurum.api.query import build_series_catalog_query  # reuse existing builder
+from libs.services.base_service import BaseTrinoService
+from libs.services.query_builder import build_series_catalog_query
 
 
-class CatalogService:
+class CatalogService(BaseTrinoService):
     """Domain service for catalog series discovery queries."""
 
     def __init__(self, trino: Optional[TrinoAnalyticRepo] = None) -> None:
-        self._settings = get_settings()
-        self._trino = trino or TrinoAnalyticRepo(self._settings.database)
+        super().__init__(trino=trino)
 
     async def list_series(
         self,

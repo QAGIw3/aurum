@@ -156,6 +156,10 @@ class KafkaEventBus(EventBus):
         self._producer = producer or OptimizedKafkaProducer()
         self._validator = schema_validator or SchemaValidator(enforce=False)
 
+    def set_validator(self, validator: SchemaValidator) -> None:
+        """Update the schema validator used for publish operations."""
+        self._validator = validator
+
     async def publish(self, envelope: EventEnvelope) -> None:
         self._validator.validate(envelope)
         message_headers = self._prepare_headers(envelope.headers)
@@ -638,6 +642,86 @@ class OutboxDispatcher:
         return raw
 
 
+@dataclass(slots=True)
+class OutboxPipelineRuntime:
+    """Aggregated runtime components for an outbox-driven pipeline."""
+
+    repository: OutboxRepository
+    event_bus: EventBus
+    dlq_bus: EventBus
+    processor_config: KafkaProcessorConfig
+    processor: KafkaProcessor
+    idempotency_tracker: IdempotencyTracker
+    consumer: KafkaEventConsumer
+    dispatcher: OutboxDispatcher
+
+
+def build_outbox_runtime(
+    *,
+    topic: str,
+    consumer_group: str,
+    bootstrap_servers: str | None = None,
+    batch_size: int = 100,
+    poll_interval: float = 1.0,
+    in_memory: bool = False,
+    repository: OutboxRepository | None = None,
+    event_bus: EventBus | None = None,
+    dlq_bus: EventBus | None = None,
+    processor: KafkaProcessor | None = None,
+    processor_config: KafkaProcessorConfig | None = None,
+    idempotency_tracker: IdempotencyTracker | None = None,
+    schema_validator: SchemaValidator | None = None,
+) -> OutboxPipelineRuntime:
+    """Build a consistent set of streaming components for an outbox pipeline."""
+
+    resolved_repository = repository or TimescaleOutboxRepository()
+
+    if event_bus is None:
+        resolved_event_bus = KafkaEventBus(schema_validator=schema_validator)
+    else:
+        resolved_event_bus = event_bus
+        if schema_validator is not None and isinstance(resolved_event_bus, KafkaEventBus):
+            resolved_event_bus.set_validator(schema_validator)
+
+    resolved_dlq_bus = dlq_bus or resolved_event_bus
+
+    resolved_config = processor_config or KafkaProcessorConfig(
+        bootstrap_servers=bootstrap_servers,
+        group_id=consumer_group,
+        input_topics=(topic,),
+        in_memory=in_memory,
+        poll_interval=poll_interval,
+    )
+
+    resolved_processor = processor or KafkaProcessor(resolved_config)
+    resolved_idempotency = idempotency_tracker or IdempotencyTracker()
+
+    consumer = KafkaEventConsumer(
+        resolved_config,
+        processor=resolved_processor,
+        idempotency_tracker=resolved_idempotency,
+        dlq_bus=resolved_dlq_bus,
+    )
+
+    dispatcher = OutboxDispatcher(
+        resolved_repository,
+        resolved_event_bus,
+        batch_size=batch_size,
+        poll_interval=poll_interval,
+    )
+
+    return OutboxPipelineRuntime(
+        repository=resolved_repository,
+        event_bus=resolved_event_bus,
+        dlq_bus=resolved_dlq_bus,
+        processor_config=resolved_config,
+        processor=resolved_processor,
+        idempotency_tracker=resolved_idempotency,
+        consumer=consumer,
+        dispatcher=dispatcher,
+    )
+
+
 __all__ = [
     "EventEnvelope",
     "EventBus",
@@ -650,4 +734,6 @@ __all__ = [
     "SchemaValidationError",
     "SchemaValidator",
     "TimescaleOutboxRepository",
+    "OutboxPipelineRuntime",
+    "build_outbox_runtime",
 ]

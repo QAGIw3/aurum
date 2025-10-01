@@ -10,6 +10,15 @@ from fastapi.testclient import TestClient
 
 from aurum.api import app as api_app
 from aurum.core import AurumSettings
+import pytest
+
+# These tests target legacy v1 paths and admin logic. In v2-only mode,
+# skip the module to avoid hard dependency on v1 endpoints.
+try:
+    if getattr(AurumSettings(), "enable_v2_only", False):
+        pytest.skip("v2-only mode: v1 rate limit tests are skipped", allow_module_level=True)
+except Exception:
+    pass
 
 
 def test_tenant_rate_limit_headers():

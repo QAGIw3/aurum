@@ -19,7 +19,6 @@ import time
 from collections import defaultdict
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
-from enum import Enum
 from typing import Any, Awaitable, Callable, Dict, List, Optional, Union
 
 from pydantic import BaseModel
@@ -50,34 +49,33 @@ from ...cache.multi_tier import (
     TierType,
 )
 from ...cache.predictive_warming import PredictiveWarmingEngine, PredictiveWindowConfig
+from .advanced_cache import CacheStrategy as _AdvancedCacheStrategy, CacheAnalytics as _AdvancedCacheAnalytics
 
 
-class CacheStrategy(Enum):
-    """Cache strategies for different data types."""
-    LRU = "lru"              # Least Recently Used
-    LFU = "lfu"              # Least Frequently Used
-    TTL = "ttl"              # Time To Live based
-    ADAPTIVE = "adaptive"    # Adaptive based on access patterns
+# Reuse the canonical strategy enum from advanced_cache to avoid divergence
+CacheStrategy = _AdvancedCacheStrategy
 
 
 @dataclass
-class CacheAnalytics:
-    """Analytics data for cache performance."""
-    hits: int = 0
-    misses: int = 0
-    evictions: int = 0
+class CacheAnalytics(_AdvancedCacheAnalytics):
+    """Extended analytics structure building on the shared implementation."""
+
     sets: int = 0
     deletes: int = 0
     errors: int = 0
-    total_requests: int = 0
-    hit_rate: float = 0.0
-    avg_response_time: float = 0.0
     optimization_advice: Optional[CacheOptimizationAdvice] = None
     tier_stats: Dict[str, Any] = field(default_factory=dict)
 
-    def __post_init__(self):
-        if self.total_requests > 0:
-            self.hit_rate = self.hits / self.total_requests
+    def __post_init__(self) -> None:
+        self.update_hit_rate()
+
+    @property
+    def avg_response_time(self) -> float:
+        return getattr(self, "average_response_time", 0.0)
+
+    @avg_response_time.setter
+    def avg_response_time(self, value: float) -> None:
+        self.average_response_time = value
 
 
 @dataclass

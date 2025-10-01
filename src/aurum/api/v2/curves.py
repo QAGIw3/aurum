@@ -25,7 +25,10 @@ from pydantic import BaseModel, Field
 from ..deps import get_settings
 from libs.services.curves_service import CurvesService
 from ..http import respond_with_etag, deprecation_warning_headers, csv_response
-from ..services import CurvesService
+from ..http.response_builders import (
+    etag_response_builder,
+    etag_cursor_response_builder,
+)
 from aurum.core import AurumSettings
 from .pagination import (
     resolve_pagination,
@@ -149,8 +152,14 @@ async def get_curves_v2(
             links=links,
         )
 
-        # Add ETag for caching with Link headers
-        return respond_with_etag(result, request, response, next_cursor=next_cursor, canonical_url=str(request.url.remove_query_params("cursor")))
+        # Add ETag via standardized builder
+        build = etag_cursor_response_builder(
+            request,
+            response,
+            next_cursor=next_cursor,
+            canonical_url=str(request.url.remove_query_params("cursor")),
+        )
+        return build(result)
 
     except HTTPException:
         raise
@@ -260,8 +269,9 @@ async def get_curve_diff_v2(
             }
         )
 
-        # Add ETag for caching with Link headers
-        return respond_with_etag(result, request, response, canonical_url=str(request.url))
+        # Add ETag via standardized builder
+        build = etag_response_builder(request, response, canonical_url=str(request.url))
+        return build(result)
 
     except HTTPException:
         raise

@@ -21,6 +21,7 @@ from fastapi import APIRouter, HTTPException, Query, Request, Response, Depends
 from pydantic import BaseModel, Field
 
 from ..http import respond_with_etag
+from ..http.response_builders import etag_response_builder, etag_cursor_response_builder
 from libs.services.scenarios_service import ScenariosService
 from ..deps import get_settings, get_cache_manager, get_unified_cache_manager_dep
 from aurum.core import AurumSettings
@@ -141,8 +142,14 @@ async def list_scenarios_v2(
             links=links,
         )
 
-        # Add ETag for caching with Link headers
-        return respond_with_etag(result, request, response, next_cursor=next_cursor, canonical_url=str(request.url.remove_query_params("cursor")))
+        # Add ETag via standardized builder (with cursor)
+        build = etag_cursor_response_builder(
+            request,
+            response,
+            next_cursor=next_cursor,
+            canonical_url=str(request.url.remove_query_params("cursor")),
+        )
+        return build(result)
 
     except HTTPException:
         raise
@@ -198,8 +205,9 @@ async def create_scenario_v2(
             }
         )
 
-        # Add ETag for caching with Link headers
-        return respond_with_etag(result, request, response, canonical_url=str(request.url))
+        # Add ETag via standardized builder
+        build = etag_response_builder(request, response, canonical_url=str(request.url))
+        return build(result)
 
     except HTTPException:
         raise
@@ -254,8 +262,9 @@ async def get_scenario_v2(
             }
         )
 
-        # Add ETag for caching with Link headers
-        return respond_with_etag(result, request, response, canonical_url=str(request.url))
+        # Add ETag via standardized builder
+        build = etag_response_builder(request, response, canonical_url=str(request.url))
+        return build(result)
 
     except HTTPException:
         raise
@@ -403,14 +412,14 @@ async def list_scenario_runs_v2(
             links=links,
         )
 
-        # Add ETag for caching with Link headers
-        return respond_with_etag(
-            result,
+        # Add ETag via standardized builder (with cursor)
+        build = etag_cursor_response_builder(
             request,
             response,
             next_cursor=next_cursor,
-            canonical_url=str(request.url)
+            canonical_url=str(request.url),
         )
+        return build(result)
 
     except HTTPException:
         raise

@@ -4,6 +4,14 @@ import json
 from datetime import datetime, timedelta, timezone
 
 import pytest
+from aurum.core import AurumSettings
+
+# JWT middleware tests target v1 metadata endpoint; skip in v2-only.
+try:
+    if getattr(AurumSettings(), "enable_v2_only", False):
+        pytest.skip("v2-only mode: v1 auth middleware tests are skipped", allow_module_level=True)
+except Exception:
+    pass
 
 
 def _rsa_keypair():

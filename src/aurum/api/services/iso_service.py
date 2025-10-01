@@ -176,10 +176,9 @@ class IsoService(QueryableServiceInterface):
             if ISO_CACHE_MISSES:
                 ISO_CACHE_MISSES.inc()
 
-            from ..config import CacheConfig
-            from ...core.settings import get_settings as _core_get_settings
+            from aurum.api.state import get_settings as _api_get_settings
 
-            cache_cfg = CacheConfig.from_settings(_core_get_settings())
+            cache_cfg = CacheConfig.from_settings(_api_get_settings())
             where = ["1=1"]
             params: Dict[str, Any] = {"limit": min(limit, 2000)}
             if iso_code:
@@ -264,10 +263,9 @@ class IsoService(QueryableServiceInterface):
             if ISO_CACHE_MISSES:
                 ISO_CACHE_MISSES.inc()
 
-            from ..config import CacheConfig
-            from ...core.settings import get_settings as _core_get_settings
+            from aurum.api.state import get_settings as _api_get_settings
 
-            cache_cfg = CacheConfig.from_settings(_core_get_settings())
+            cache_cfg = CacheConfig.from_settings(_api_get_settings())
             where = ["1=1"]
             params: Dict[str, Any] = {"limit": min(limit, 2000)}
             if iso_code:
@@ -355,10 +353,9 @@ class IsoService(QueryableServiceInterface):
             if ISO_CACHE_MISSES:
                 ISO_CACHE_MISSES.inc()
 
-            from ..config import CacheConfig
-            from ...core.settings import get_settings as _core_get_settings
+            from aurum.api.state import get_settings as _api_get_settings
 
-            cache_cfg = CacheConfig.from_settings(_core_get_settings())
+            cache_cfg = CacheConfig.from_settings(_api_get_settings())
             where = ["1=1"]
             params: Dict[str, Any] = {"limit": min(limit, 1000)}
             if iso_code:

@@ -1,7 +1,15 @@
 import pytest
+from aurum.core import AurumSettings
 from typing import Optional
 
 pytest.importorskip("pydantic", reason="pydantic not installed")
+
+# Legacy scenarios tests target v1 endpoints; skip in v2-only mode.
+try:
+    if getattr(AurumSettings(), "enable_v2_only", False):
+        pytest.skip("v2-only mode: v1 scenarios API tests are skipped", allow_module_level=True)
+except Exception:
+    pass
 
 
 @pytest.fixture(autouse=True)

@@ -5,6 +5,14 @@ from datetime import datetime
 from typing import Any
 
 import pytest
+from aurum.core import AurumSettings
+
+# This suite targets legacy v1 curves/ppa routes. Skip under v2-only mode.
+try:
+    if getattr(AurumSettings(), "enable_v2_only", False):
+        pytest.skip("v2-only mode: v1 curves API tests are skipped", allow_module_level=True)
+except Exception:
+    pass
 
 os.environ.setdefault("AURUM_API_AUTH_DISABLED", "1")
 

@@ -135,9 +135,13 @@ def _ensure_v1_deprecation(router: APIRouter) -> APIRouter:
 
 def get_v1_router_specs(_settings: AurumSettings) -> list[RouterSpec]:
     """Return the list of v1 routers to include for the given settings."""
-    # Short-circuit when v2-only is enabled
+    # Short-circuit when v2-only is enabled. Optionally expose a 410 stub for /v1/*
     try:
         if getattr(_settings, "enable_v2_only", False):
+            if os.getenv("AURUM_API_V1_RETIRE_STUB", "0") == "1":
+                router = _try_import_router("aurum.api.v1_retired")
+                if router is not None:
+                    return [RouterSpec(router=router, name="aurum.api.v1_retired")]
             return []
     except Exception:
         pass

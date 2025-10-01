@@ -440,6 +440,19 @@ else:  # pragma: no cover - Prometheus not installed
         ["operation", "error_type"],
     )
 
+    # Admin cache invalidations (per-endpoint)
+    CACHE_ADMIN_INVALIDATIONS = Counter(
+        "aurum_cache_admin_invalidations_total",
+        "Admin-triggered cache invalidations (keys purged)",
+        ["cache_type"],
+    )
+    CACHE_ADMIN_INVALIDATION_DURATION = Histogram(
+        "aurum_cache_admin_invalidation_duration_seconds",
+        "Admin cache invalidation duration in seconds",
+        ["cache_type"],
+        buckets=(0.001, 0.005, 0.01, 0.025, 0.05, 0.075, 0.1, 0.25, 0.5, 1.0, 2.5, 5.0),
+    )
+
     # SLO Metrics
     SLO_COMPLIANCE = Counter(
         "aurum_slo_compliance_total",
@@ -859,6 +872,8 @@ if not PROMETHEUS_AVAILABLE:  # pragma: no cover - Prometheus not present
     RUNTIME_OVERRIDE_UPDATES = None
     # Business metrics
     BUSINESS_TRANSACTIONS = BUSINESS_VALUE = BUSINESS_ERRORS = None
+    CACHE_ADMIN_INVALIDATIONS = None
+    CACHE_ADMIN_INVALIDATION_DURATION = None
     # Great Expectations metrics (kept as sentinel None objects for import compatibility)
     GE_VALIDATION_RUNS = None
     GE_VALIDATION_DURATION = None
@@ -1052,6 +1067,25 @@ async def increment_resource_leaks_cleaned(component: str, amount: int = 1) -> N
     try:
         counter = RESOURCE_LEAKS_CLEANED.labels(component=component)  # type: ignore[name-defined]
         counter.inc(amount)
+    except Exception:
+        pass
+
+
+# Admin cache invalidations helpers
+async def increment_cache_admin_invalidations(cache_type: str, keys_purged: int) -> None:
+    """Increment admin cache invalidation counter by number of keys purged."""
+    try:
+        if CACHE_ADMIN_INVALIDATIONS is not None:
+            CACHE_ADMIN_INVALIDATIONS.labels(cache_type=cache_type).inc(keys_purged)  # type: ignore[attr-defined]
+    except Exception:
+        pass
+
+
+async def observe_cache_admin_invalidation_duration(cache_type: str, duration_seconds: float) -> None:
+    """Observe admin cache invalidation duration."""
+    try:
+        if CACHE_ADMIN_INVALIDATION_DURATION is not None:
+            CACHE_ADMIN_INVALIDATION_DURATION.labels(cache_type=cache_type).observe(duration_seconds)  # type: ignore[attr-defined]
     except Exception:
         pass
 

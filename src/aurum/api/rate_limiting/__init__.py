@@ -17,6 +17,7 @@ from .consolidated_policy_engine import (
     get_unified_rate_limiter,
     create_rate_limiting_middleware
 )
+from .unified_rate_limiter import RateLimitPolicy
 
 # Admin management interface
 from .admin_router import router as rate_limiting_admin_router
@@ -49,6 +50,7 @@ __all__ = [
     "RateLimitingMiddleware",
     "RateLimitRule",
     "RateLimitResult",
+    "RateLimitPolicy",
     "RateLimitStats",
     "RateLimitAlgorithm",
     "RateLimitAlgorithmType",

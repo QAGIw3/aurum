@@ -160,7 +160,7 @@ class DependencyInjectionContainer:
         # Register services that do not require async factories
         try:
             # Local imports to avoid heavy imports during module load
-            from .services.curves_service import CurvesService
+            from libs.services.curves_service import CurvesService
             from .services.metadata_service import MetadataService
             from .services.eia_service import EiaService
             from .services.iso_service import IsoService
@@ -305,7 +305,8 @@ def get_service(service_type: Type[T]) -> T:
         from aurum.core.settings import get_settings as _core_get_settings
 
         if service_type is AsyncScenarioService:  # type: ignore[name-defined]
-            return AsyncScenarioService(_core_get_settings())  # type: ignore[return-value]
+            from aurum.api.state import get_settings as _api_get_settings
+            return AsyncScenarioService(_api_get_settings())  # type: ignore[return-value]
     except Exception:
         pass
     raise NotImplementedError(f"get_service does not support: {service_type}")
@@ -344,7 +345,7 @@ def get_app_context_dependency(request: "Request") -> ApplicationContext:
 # Service registration
 def register_core_services(container: DependencyInjectionContainer) -> None:
     """Register core services with the provided container (no globals)."""
-    from .services.curves_service import CurvesService
+    from libs.services.curves_service import CurvesService
     from .services.metadata_service import MetadataService
     from .services.eia_service import EiaService
     from .services.iso_service import IsoService

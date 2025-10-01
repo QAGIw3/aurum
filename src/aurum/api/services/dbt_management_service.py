@@ -778,7 +778,8 @@ class DBTManagementService:
         try:
             settings = get_settings()
         except RuntimeError:
-            settings = AurumSettings()
+            from aurum.api.state import get_settings as _api_get_settings
+            settings = _api_get_settings()
 
         timescale_repo: Optional[TimescaleSeriesRepo] = None
         timescale_summary: Dict[str, Any]

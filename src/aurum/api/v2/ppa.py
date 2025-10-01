@@ -24,6 +24,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response
 from pydantic import BaseModel, Field
 
 from ..http import respond_with_etag
+from ..http.response_builders import etag_response_builder, etag_cursor_response_builder
 from ..ppa_v2_service import PpaV2Service, get_ppa_service
 from .pagination import (
     resolve_pagination,
@@ -229,9 +230,10 @@ async def list_ppa_contracts_v2(
             links=links,
         )
 
-        # Add ETag for caching with Link headers
+        # Add ETag via standardized builder
         canonical_url = str(request_url.remove_query_params("cursor"))
-        return respond_with_etag(result, request, response, canonical_url=canonical_url)
+        build = etag_response_builder(request, response, canonical_url=canonical_url)
+        return build(result)
 
     except HTTPException:
         raise
@@ -396,15 +398,15 @@ async def list_ppa_valuations_v2(
             links=links,
         )
 
-        # Add ETag for caching with Link headers
+        # Add ETag via standardized builder (with cursor)
         canonical_url = str(request_url.remove_query_params("cursor"))
-        return respond_with_etag(
-            result,
+        build = etag_cursor_response_builder(
             request,
             response,
             next_cursor=next_cursor,
-            canonical_url=canonical_url
+            canonical_url=canonical_url,
         )
+        return build(result)
 
     except HTTPException:
         raise

@@ -12,33 +12,26 @@ What to use instead:
 
 from __future__ import annotations
 
-import warnings
+from typing import TYPE_CHECKING
 
-from fastapi import Request
+try:
+	from libs.common.config import get_settings as _libs_get_settings, AurumSettings as _LibsAurumSettings
+	_LIBS_AVAILABLE = True
+except Exception:  # pragma: no cover - libs may not be present in some envs
+	_LIBS_AVAILABLE = False
+	_LibsAurumSettings = None  # type: ignore
 
-from aurum.core.settings import AurumSettings
-from aurum.api.deps import get_settings as request_settings  # FastAPI dependency
-
-
-def configure(_settings: AurumSettings) -> None:  # pragma: no cover - maintained for backward imports
-    """No-op placeholder retained for import-compatibility.
-
-    Use application factory to attach settings to `app.state.settings` instead.
-    """
-    return None
+if TYPE_CHECKING:
+	from aurum.core.settings import AurumSettings as _CoreAurumSettings  # for type hints only
 
 
-def get_settings() -> AurumSettings:
-    """Deprecated. Use `aurum.api.deps.get_settings` FastAPI dependency instead."""
-    raise RuntimeError(
-        "aurum.api.state.get_settings is removed. Inject settings via FastAPI dependency 'aurum.api.deps.get_settings'."
-    )
+def get_settings():
+	"""Unified settings accessor for API codepaths.
 
-
-def request_settings_dependency(request: Request) -> AurumSettings:
-    """Alias to the canonical FastAPI settings dependency for transitional imports."""
-    from aurum.api.deps import get_settings as _dep
-    return _dep(request)
-
-
-__all__ = ["configure", "get_settings", "request_settings_dependency"]
+	Prefer libs.common.config.get_settings to eliminate duplicate env parsing.
+	Falls back to aurum.core.settings.get_settings if libs are unavailable.
+	"""
+	if _LIBS_AVAILABLE:
+		return _libs_get_settings()
+	from aurum.core.settings import get_settings as _core_get_settings
+	return _core_get_settings()

@@ -122,40 +122,28 @@ spec:
             - agent-inject
             - -log-level=info
             - -listen=:8443
-            - -tls-cert-file=/tls/tls.crt
-            - -tls-key-file=/tls/tls.key
+            - -tls-auto=vault-agent-injector
+            - -tls-auto-hosts=vault-agent-injector,vault-agent-injector.aurum-dev.svc,vault-agent-injector.aurum-dev.svc.cluster.local
             - -vault-address=http://vault.aurum-dev.svc.cluster.local:8200
-            - -config=/config/config.hcl
-            # Removed deprecated/unsupported flags for this version
           ports:
             - containerPort: 8443
               name: https
             - containerPort: 8080
               name: metrics
           readinessProbe:
-            httpGet:
-              path: /healthz
-              port: metrics
-              scheme: HTTP
+            tcpSocket:
+              port: https
             initialDelaySeconds: 5
             periodSeconds: 10
           livenessProbe:
-            httpGet:
-              path: /healthz
-              port: metrics
-              scheme: HTTP
+            tcpSocket:
+              port: https
             initialDelaySeconds: 10
             periodSeconds: 20
           volumeMounts:
-            - name: tls
-              mountPath: /tls
-              readOnly: true
             - name: config
               mountPath: /config
       volumes:
-        - name: tls
-          secret:
-            secretName: vault-agent-injector-certs
         - name: config
           configMap:
             name: vault-agent-injector-config

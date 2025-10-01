@@ -4,82 +4,14 @@ Validation script for Phase 2.1 Cache Governance implementation.
 This validates the cache governance system works correctly.
 """
 
-import re
-from enum import Enum
-from dataclasses import dataclass
+from src.aurum.api.cache.cache_governance import (
+    CacheNamespace,
+    KeyNamingPattern,
+    TTLConfiguration,
+    TTLPolicy,
+)
 
-
-class TTLPolicy(str, Enum):
-    """Standardized TTL policies for different data types."""
-    ULTRA_SHORT = "ultra_short"    # 30 seconds - real-time data
-    SHORT = "short"                # 5 minutes - frequently changing data
-    MEDIUM = "medium"              # 30 minutes - semi-static data
-    LONG = "long"                  # 4 hours - stable data
-    EXTENDED = "extended"          # 24 hours - daily aggregates
-    PERSISTENT = "persistent"      # 7 days - configuration data
-
-
-@dataclass(frozen=True)
-class TTLConfiguration:
-    """TTL configuration with specific timeouts."""
-    policy: TTLPolicy
-    seconds: int
-    description: str
-    
-    @classmethod
-    def get_default_policies(cls):
-        """Get default TTL policy configurations."""
-        return {
-            TTLPolicy.ULTRA_SHORT: cls(TTLPolicy.ULTRA_SHORT, 30, "Real-time pricing data"),
-            TTLPolicy.SHORT: cls(TTLPolicy.SHORT, 300, "Frequently updated market data"),
-            TTLPolicy.MEDIUM: cls(TTLPolicy.MEDIUM, 1800, "Semi-static metadata"),
-            TTLPolicy.LONG: cls(TTLPolicy.LONG, 14400, "Stable reference data"),
-            TTLPolicy.EXTENDED: cls(TTLPolicy.EXTENDED, 86400, "Daily aggregates"),
-            TTLPolicy.PERSISTENT: cls(TTLPolicy.PERSISTENT, 604800, "Configuration data"),
-        }
-
-
-class CacheNamespace(str, Enum):
-    """Standardized cache namespaces for better organization."""
-    CURVES = "curves"
-    METADATA = "metadata"
-    SCENARIOS = "scenarios"
-    EIA_DATA = "eia"
-    EXTERNAL_DATA = "external"
-    USER_DATA = "users"
-    SYSTEM_CONFIG = "config"
-
-
-class KeyNamingPattern:
-    """Standardized key naming patterns and validation."""
-    
-    # Standard patterns for different data types
-    CURVE_PATTERN = re.compile(r"^curves:[a-z0-9_]+:[a-z0-9_]+:[a-z0-9_]+(?::\d{4}-\d{2}-\d{2})?$")
-    METADATA_PATTERN = re.compile(r"^metadata:[a-z0-9_]+(?::[a-z0-9_=]+)*$")
-    SCENARIO_PATTERN = re.compile(r"^scenarios:[a-z0-9_-]+:[a-z0-9_]+(?::[a-z0-9_]+)*$")
-    EIA_PATTERN = re.compile(r"^eia:[a-z0-9_]+:[a-z0-9_.-]+$")
-    EXTERNAL_PATTERN = re.compile(r"^external:[a-z0-9_]+:[a-z0-9_.-]+$")
-    USER_PATTERN = re.compile(r"^users:[a-z0-9_-]+:[a-z0-9_]+$")
-    CONFIG_PATTERN = re.compile(r"^config:[a-z0-9_]+(?::[a-z0-9_]+)*$")
-
-    @classmethod
-    def validate_key(cls, key: str, namespace: CacheNamespace) -> bool:
-        """Validate cache key against naming patterns."""
-        pattern_map = {
-            CacheNamespace.CURVES: cls.CURVE_PATTERN,
-            CacheNamespace.METADATA: cls.METADATA_PATTERN,
-            CacheNamespace.SCENARIOS: cls.SCENARIO_PATTERN,
-            CacheNamespace.EIA_DATA: cls.EIA_PATTERN,
-            CacheNamespace.EXTERNAL_DATA: cls.EXTERNAL_PATTERN,
-            CacheNamespace.USER_DATA: cls.USER_PATTERN,
-            CacheNamespace.SYSTEM_CONFIG: cls.CONFIG_PATTERN,
-        }
-        
-        pattern = pattern_map.get(namespace)
-        if not pattern:
-            return True  # Allow unknown namespaces for backward compatibility
-            
-        return bool(pattern.match(key))
+from validation_utils import assert_enum_values, print_summary
 
 
 def validate_cache_governance():
@@ -137,21 +69,23 @@ def validate_cache_governance():
     print("✅ Key naming patterns validated")
     
     # Test namespace mappings
-    namespaces = list(CacheNamespace)
-    assert len(namespaces) == 7, f"Expected 7 namespaces, got {len(namespaces)}"
-    expected_namespaces = {'curves', 'metadata', 'scenarios', 'eia', 'external', 'users', 'config'}
-    actual_namespaces = {ns.value for ns in namespaces}
-    assert actual_namespaces == expected_namespaces
-    print("✅ Cache namespaces configured correctly")
+    assert_enum_values(
+        CacheNamespace,
+        {"curves", "metadata", "scenarios", "eia", "external", "users", "config"},
+        label="Cache namespaces configured correctly",
+    )
     
     print("🎉 Cache Governance validation PASSED!")
     print()
-    print("📊 Summary:")
-    print("- ✅ Single cache governance manager implemented")
-    print("- ✅ TTL policies standardized (6 policies)")
-    print("- ✅ Key naming patterns enforced (7 namespaces)")
-    print("- ✅ Metrics and monitoring structure ready")
-    print("- ✅ Cache hit rate target >80% framework in place")
+    print_summary(
+        [
+            "✅ Single cache governance manager implemented",
+            "✅ TTL policies standardized (6 policies)",
+            "✅ Key naming patterns enforced (7 namespaces)",
+            "✅ Metrics and monitoring structure ready",
+            "✅ Cache hit rate target >80% framework in place",
+        ]
+    )
     
     return True
 

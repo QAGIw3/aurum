@@ -19,10 +19,11 @@ import json
 from collections.abc import AsyncIterable, AsyncIterator, Iterable, Mapping, Sequence
 from datetime import date, datetime
 from decimal import Decimal
-from typing import Any, Dict, Optional
+from typing import Any, Dict, Optional, Union
 
 from fastapi import HTTPException, Request, Response
 from fastapi.responses import StreamingResponse
+from aurum.api.models.common import Meta
 
 DEFAULT_CACHE_SECONDS = 60
 _MAX_STALE_IF_ERROR_SECONDS = 86_400
@@ -339,38 +340,56 @@ def csv_response(
 
 def create_error_response(
     status_code: int,
-    detail: str,
+    message: str,
     *,
     request_id: Optional[str] = None,
-    field_errors: Optional[Dict[str, str]] = None,
+    code: Optional[str] = None,
+    context: Optional[Dict[str, Any]] = None,
+    field_errors: Optional[Sequence[Mapping[str, Any]] | Dict[str, Any]] = None,
     retry_after: Optional[int] = None,
 ) -> Dict[str, Any]:
-    """Create a standardized error response.
+    """Create a standardized error response."""
 
-    Args:
-        status_code: HTTP status code
-        detail: Error description
-        request_id: Request identifier
-        field_errors: Field-specific validation errors
-        retry_after: Seconds to wait before retrying
-
-    Returns:
-        Error response dictionary
-    """
-    error_response = {
-        "error": {
-            "code": status_code,
-            "message": detail,
-        }
+    error_payload: Dict[str, Any] = {
+        "code": code or status_code,
+        "message": message,
     }
+
+    if context:
+        error_payload["context"] = context
+
+    if field_errors:
+        error_payload["field_errors"] = field_errors
+
+    if retry_after is not None:
+        error_payload["retry_after"] = retry_after
+
+    error_response: Dict[str, Any] = {"error": error_payload}
 
     if request_id:
         error_response["request_id"] = request_id
 
-    if field_errors:
-        error_response["error"]["field_errors"] = field_errors
-
-    if retry_after is not None:
-        error_response["error"]["retry_after"] = retry_after
-
     return error_response
+
+
+def create_meta(
+    request_id: str,
+    elapsed_ms: int,
+    *,
+    pagination: Optional[Mapping[str, Any]] = None,
+    extra: Optional[Dict[str, Any]] = None,
+) -> Meta:
+    """Construct a ``Meta`` envelope with consistent fields."""
+
+    meta_payload: Dict[str, Any] = {
+        "request_id": request_id,
+        "query_time_ms": max(0, int(elapsed_ms)),
+    }
+
+    if pagination:
+        meta_payload.update({k: v for k, v in pagination.items() if v is not None})
+
+    if extra:
+        meta_payload.update(extra)
+
+    return Meta(**meta_payload)

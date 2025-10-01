@@ -25,6 +25,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 import pandas as pd
 from opentelemetry import propagate
+from aurum.streaming.kafka_utils import decode_headers as _decode_headers, build_produce_headers as _build_produce_headers
 
 from aurum.api.config import CacheConfig
 from aurum.api.scenario_models import ScenarioRunPriority, ScenarioRunStatus
@@ -493,34 +494,13 @@ _HEADER_GETTER = _KafkaHeaderGetter()
 
 
 def _decode_headers(raw_headers) -> Dict[str, list[str]]:
-    carrier: Dict[str, list[str]] = {}
-    if not raw_headers:
-        return carrier
-    for key, value in raw_headers:
-        if isinstance(key, bytes):
-            key = key.decode("utf-8", errors="ignore")
-        key_lc = str(key).lower()
-        if value is None:
-            continue
-        if isinstance(value, bytes):
-            value_str = value.decode("utf-8", errors="ignore")
-        else:
-            value_str = str(value)
-        carrier.setdefault(key_lc, []).append(value_str)
-    return carrier
+    # Delegate to shared utility for consistent behavior
+    return _decode_headers(raw_headers)
 
 
 def _build_produce_headers(run_id: Optional[str], request_id: Optional[str]) -> list[tuple[str, bytes]]:
-    headers: list[tuple[str, bytes]] = []
-    if run_id:
-        headers.append(("run_id", run_id.encode("utf-8")))
-    if request_id:
-        headers.append(("x-request-id", request_id.encode("utf-8")))
-    carrier: Dict[str, str] = {}
-    propagate.inject(carrier)
-    for key, value in carrier.items():
-        headers.append((key, value.encode("utf-8")))
-    return headers
+    # Delegate to shared utility for consistent behavior
+    return _build_produce_headers(run_id, request_id)
 
 
 def _default_tenor_weights() -> dict[str, float]:

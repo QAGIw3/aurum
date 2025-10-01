@@ -28,7 +28,7 @@ from .query import (
     build_filter_clause,
     build_keyset_clause,
 )
-from aurum.core.settings import get_settings as _core_get_settings
+from aurum.api.state import get_settings as _api_get_settings
 
 LOGGER = logging.getLogger(__name__)
 
@@ -101,7 +101,7 @@ _SCENARIO_SINGLEFLIGHT = _Singleflight()
 
 def _settings() -> AurumSettings:
     try:
-        return _core_get_settings()
+        return _api_get_settings()
     except RuntimeError:
         return AurumSettings.from_env()
 
@@ -1597,7 +1597,7 @@ async def fetch_curve_data(
     # Over-fetch by 1 to detect if more pages exist
     fetch_limit = max(1, eff_limit + 1)
 
-    trino_cfg = TrinoConfig.from_settings(_core_get_settings())
+    trino_cfg = TrinoConfig.from_settings(_api_get_settings())
     service = AsyncCurveService(trino_cfg, cache_manager=get_unified_cache_manager())
     points, _raw_meta = await service.fetch_curve_data(
         asof=asof,
@@ -1677,7 +1677,7 @@ async def fetch_curve_diff_data(
     """Fetch curve diff data using AsyncCurveService."""
     from .async_service import AsyncCurveService
 
-    trino_cfg = TrinoConfig.from_settings(_core_get_settings())
+    trino_cfg = TrinoConfig.from_settings(_api_get_settings())
     service = AsyncCurveService(trino_cfg, cache_manager=get_unified_cache_manager())
     # Derive limit/offset from pagination
     eff_limit = int(getattr(pagination, "limit", 100)) if pagination is not None else 100
@@ -1737,7 +1737,7 @@ async def fetch_curve_strips_data(
     """Fetch curve strips data using AsyncCurveService."""
     from .async_service import AsyncCurveService
 
-    trino_cfg = TrinoConfig.from_settings(_core_get_settings())
+    trino_cfg = TrinoConfig.from_settings(_api_get_settings())
     service = AsyncCurveService(trino_cfg, cache_manager=get_unified_cache_manager())
     eff_limit = int(getattr(pagination, "limit", 100)) if pagination is not None else 100
     eff_offset = int(getattr(pagination, "offset", 0)) if pagination is not None else 0
@@ -1782,7 +1782,7 @@ async def fetch_metadata_dimensions(
 ) -> Tuple[Dict, Optional[Dict]]:
     """Fetch metadata dimensions using AsyncMetadataService."""
     from .async_service import AsyncMetadataService
-    trino_cfg = TrinoConfig.from_settings(_core_get_settings())
+    trino_cfg = TrinoConfig.from_settings(_api_get_settings())
     service = AsyncMetadataService(trino_cfg)
     dimensions, counts = await service.get_dimensions(asof=asof)
 

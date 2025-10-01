@@ -242,7 +242,8 @@ class KafkaProcessor:
             raise RuntimeError("Kafka producer is not available; enable in-memory mode or provide a factory")
 
         payload = self._serialise(value)
-        norm_headers = self._normalise_headers(headers or {})
+        from .kafka_utils import normalise_headers as _norm_headers
+        norm_headers = _norm_headers(headers or {})
         await producer.send_and_wait(topic, payload, key=key, headers=norm_headers)
 
     async def start(self) -> None:
@@ -673,21 +674,9 @@ class KafkaProcessor:
 
     @staticmethod
     def _normalise_headers(headers: Mapping[str, Any]) -> list[tuple[str, bytes | None]]:
-        norm: list[tuple[str, bytes | None]] = []
-        for k, v in (headers or {}).items():
-            if v is None:
-                norm.append((str(k), None))
-                continue
-            if isinstance(v, (bytes, bytearray)):
-                norm.append((str(k), bytes(v)))
-            elif isinstance(v, str):
-                norm.append((str(k), v.encode("utf-8")))
-            else:
-                try:
-                    norm.append((str(k), json.dumps(v).encode("utf-8")))
-                except Exception:
-                    norm.append((str(k), str(v).encode("utf-8")))
-        return norm
+        # Backward compatibility shim; delegate to shared utils
+        from .kafka_utils import normalise_headers as _norm_headers
+        return _norm_headers(headers)
 
     async def _maybe_commit_after_success(self) -> None:
         """Apply commit policy after a successfully handled message (Kafka only)."""

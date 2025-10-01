@@ -2,20 +2,16 @@ from __future__ import annotations
 
 """Service layer for v2 Curves endpoints.
 
-Thin orchestration over the DAO: resolves pagination inputs, calls the DAO, and
-returns Pydantic models suitable for the v2 router.
+Delegates to the shared ``libs.services.curves_service`` implementation and
+adapts dataclasses into Pydantic models expected by the router layer.
 """
 
-from typing import Any, Dict, List, Optional, Sequence, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 from pydantic import BaseModel, Field
 
-from datetime import date, datetime
-
-from aurum.data import QueryResult as BackendQueryResult
-
-from .curves_v2_dao import list_curves as dao_list_curves
-from .database.trino_client import get_trino_client
-from .query import build_curve_diff_query
+from libs.services.cache_support import AsyncCacheProtocol
+from libs.services.curves_service import Curve as SharedCurve
+from libs.services.curves_service import CurvesService as SharedCurvesService
 
 
 class CurveItem(BaseModel):
@@ -27,6 +23,9 @@ class CurveItem(BaseModel):
 
 
 class CurvesV2Service:
+    def __init__(self, service: Optional[SharedCurvesService] = None) -> None:
+        self._service = service or SharedCurvesService()
+
     async def list_curves(
         self,
         *,
@@ -38,41 +37,15 @@ class CurvesV2Service:
     ) -> Tuple[List[CurveItem], Optional[Dict[str, Any]]]:
         """List curves with optional debug metadata from the data backend."""
 
-        result = await dao_list_curves(
+        result, debug_meta = await self._service.list_curves(
             tenant_id=tenant_id,
             offset=offset,
             limit=limit,
             name_filter=name_filter,
+            include_debug=include_debug,
         )
 
-        rows: Sequence[Dict[str, Any]]
-        debug_meta: Dict[str, Any] = {}
-
-        if isinstance(result, BackendQueryResult):
-            columns = result.columns or []
-            debug_meta = dict(result.metadata or {})
-            rows = []
-            for row in result.rows:
-                if columns:
-                    row_dict = {col: row[idx] for idx, col in enumerate(columns) if idx < len(row)}
-                else:
-                    row_dict = {str(idx): value for idx, value in enumerate(row)}
-                rows.append(row_dict)
-        else:
-            rows = result  # type: ignore[assignment]
-
-        items: List[CurveItem] = []
-        for row in rows:
-            items.append(
-                CurveItem(
-                    id=str(row.get("id") or ""),
-                    name=str(row.get("name") or ""),
-                    description=None,
-                    data_points=int(row.get("data_points") or 0),
-                    created_at=str(row.get("created_at")) if row.get("created_at") is not None else None,
-                )
-            )
-
+        items = [self._to_curve_item(curve) for curve in result.data]
         return items, (debug_meta if include_debug else None)
 
     async def get_curve_diff(
@@ -82,47 +55,73 @@ class CurvesV2Service:
         from_timestamp: str,
         to_timestamp: str,
     ) -> CurveItem:
-        # Parse timestamps to dates; accept YYYY-MM-DD or full ISO datetimes
-        def _to_date(value: str) -> date:
-            try:
-                return date.fromisoformat(value)
-            except Exception:
-                dt = datetime.fromisoformat(value)
-                return dt.date()
-
-        asof_a = _to_date(from_timestamp)
-        asof_b = _to_date(to_timestamp)
-
-        # Build and execute a lightweight diff query
-        query = build_curve_diff_query(
-            asof_a=asof_a,
-            asof_b=asof_b,
-            curve_key=curve_id,
-            asset_class=None,
-            iso=None,
-            location=None,
-            market=None,
-            product=None,
-            block=None,
-            tenor_type=None,
-            limit=100,
-            offset=0,
-            cursor_after=None,
+        result = await self._service.get_curve_diff(
+            curve_id=curve_id,
+            from_timestamp=from_timestamp,
+            to_timestamp=to_timestamp,
         )
+        curve = result.data
+        fallback_description = f"Diff between {from_timestamp} and {to_timestamp}"
+        return self._to_curve_item(curve, description_override=curve.description or fallback_description)
 
-        client = get_trino_client()
-        rows = await client.execute_query(query)
-
-        # Summarize diff into an item; clients can inspect meta for time bounds
+    @staticmethod
+    def _to_curve_item(curve: SharedCurve, *, description_override: Optional[str] = None) -> CurveItem:
         return CurveItem(
-            id=curve_id,
-            name=curve_id,
-            description=f"Diff between {asof_a.isoformat()} and {asof_b.isoformat()}",
-            data_points=len(rows or []),
-            created_at=None,
+            id=curve.id,
+            name=curve.name,
+            description=description_override if description_override is not None else curve.description,
+            data_points=curve.data_points,
+            created_at=curve.created_at,
         )
 
 
 async def get_curve_service() -> CurvesV2Service:
     """Factory for the v2 Curves service."""
-    return CurvesV2Service()
+
+    from aurum.telemetry import get_tracer
+
+    from ..cache.unified_cache_manager import CacheNamespace, get_unified_cache_manager
+    from ..dao.curves_dao import CurvesDao
+
+    class UnifiedCacheAdapter(AsyncCacheProtocol):
+        def __init__(self, manager, namespace: CacheNamespace) -> None:
+            self._manager = manager
+            self._namespace = namespace
+
+        async def get(self, key: str, *, namespace: Optional[str] = None) -> Optional[Any]:
+            target = CacheNamespace(namespace) if namespace else self._namespace
+            return await self._manager.get(key, namespace=target)
+
+        async def set(
+            self,
+            key: str,
+            value: Any,
+            *,
+            ttl_seconds: Optional[int] = None,
+            namespace: Optional[str] = None,
+        ) -> bool:
+            target = CacheNamespace(namespace) if namespace else self._namespace
+            await self._manager.set(key, value, namespace=target, ttl_seconds=ttl_seconds)
+            return True
+
+        async def invalidate(self, key: str, *, namespace: Optional[str] = None) -> int:
+            target = CacheNamespace(namespace) if namespace else self._namespace
+            deleted = await self._manager.delete(key, namespace=target)
+            return 1 if deleted else 0
+
+    cache_adapter: Optional[AsyncCacheProtocol] = None
+    try:
+        cache_manager = get_unified_cache_manager()
+    except Exception:
+        cache_manager = None
+
+    if cache_manager is not None:
+        cache_adapter = UnifiedCacheAdapter(cache_manager, CacheNamespace.CURVES)
+
+    shared_service = SharedCurvesService(
+        dao=CurvesDao(),
+        cache=cache_adapter,
+        tracer=get_tracer("aurum.api.curves"),
+        cache_namespace=CacheNamespace.CURVES.value,
+    )
+    return CurvesV2Service(shared_service)

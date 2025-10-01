@@ -258,76 +258,132 @@ class AsyncCache:
             "request_id": get_request_id(),
         }
 
+    async def invalidate_pattern(self, pattern: str) -> int:
+        """Invalidate keys matching a glob-style pattern.
+
+        Args:
+            pattern: Pattern excluding namespace prefix (e.g., "units:*")
+
+        Returns:
+            Number of keys removed across memory and Redis backends.
+        """
+        # Namespaced pattern for backends
+        namespaced = self._make_key(pattern)
+        removed = 0
+
+        # Memory backend pruning
+        try:
+            async with self._lock:
+                to_delete = [k for k in list(self._memory_cache.keys()) if _fnmatch(k, namespaced)]
+                for k in to_delete:
+                    self._memory_cache.pop(k, None)
+                removed += len(to_delete)
+        except Exception:
+            pass
+
+        # Redis backend pruning
+        redis_client = await self._get_redis_client()
+        if redis_client:
+            try:
+                # Use KEYS for simplicity in admin path; for large keyspaces SCAN would be safer
+                keys = await redis_client.keys(namespaced)
+                if keys:
+                    await redis_client.delete(*keys)
+                    removed += len(keys)
+            except Exception:
+                pass
+
+        return removed
+
+
+def _fnmatch(value: str, pattern: str) -> bool:
+    try:
+        from fnmatch import fnmatch
+        return fnmatch(value, pattern)
+    except Exception:
+        return value == pattern
+
+
+from typing import Any, Optional, Dict
+from .consolidated_manager import get_unified_cache_manager
+
 
 class CacheManager:
-    """High-level cache manager with specialized methods."""
+    """Lightweight adapter over UnifiedCacheManager for API use-sites.
 
-    def __init__(self, cache_service: AsyncCache):
-        self._cache = cache_service
+    This replaces the previous re-export of libs.common.cache.CacheManager
+    and delegates operations to the shared UnifiedCacheManager to avoid
+    duplicate implementations.
+    """
 
-    async def get_curve_data(
+    def __init__(self, *args: Any, **kwargs: Any) -> None:
+        # Unified manager pulls configuration from core settings when not provided
+        self._manager = get_unified_cache_manager()
+
+    @staticmethod
+    def build_cache_key(
+        route: str,
+        query_params: Optional[Dict[str, Any]] = None,
+        *,
+        version: str = "v2",
+    ) -> str:
+        """Generate a stable cache key for a route/query combination.
+
+        Mirrors the semantics of the previous implementation to preserve keys.
+        """
+        import json as _json
+        import hashlib as _hashlib
+
+        if query_params:
+            query_str = _json.dumps(query_params, sort_keys=True)
+            query_hash = _hashlib.md5(query_str.encode()).hexdigest()[:12]
+        else:
+            query_hash = "none"
+        return f"aurum:{version}:{route}:{query_hash}"
+
+    async def get_cache_entry(self, key: str, *, namespace: Optional[str] = None) -> Optional[Any]:
+        # Namespace handling is governed by UnifiedCacheManager; keys are already namespaced
+        return await self._manager.get(key, default=None)
+
+    async def set_cache_entry(
         self,
-        iso: str,
-        market: str,
-        location: str,
-        asof: Optional[str] = None
-    ) -> Optional[Any]:
-        """Get cached curve data."""
-        key = f"curve:{iso}:{market}:{location}"
-        if asof:
-            key += f":{asof}"
+        key: str,
+        value: Any,
+        *,
+        ttl_seconds: Optional[int] = None,
+        namespace: Optional[str] = None,
+    ) -> bool:
+        try:
+            await self._manager.set(key, value, ttl_seconds=ttl_seconds)
+            return True
+        except Exception:
+            return False
 
-        return await self._cache.get(key)
-
-    async def cache_curve_data(
-        self,
-        data: Any,
-        iso: str,
-        market: str,
-        location: str,
-        asof: Optional[str] = None,
-        ttl: Optional[int] = None
-    ) -> None:
-        """Cache curve data."""
-        key = f"curve:{iso}:{market}:{location}"
-        if asof:
-            key += f":{asof}"
-
-        await self._cache.set(key, data, ttl)
-
-    async def get_metadata(self, metadata_type: str, **filters) -> Optional[Any]:
-        """Get cached metadata."""
-        filter_str = ":".join(f"{k}:{v}" for k, v in sorted(filters.items()))
-        key = f"metadata:{metadata_type}:{filter_str}"
-
-        return await self._cache.get(key)
-
-    async def cache_metadata(
-        self,
-        data: Any,
-        metadata_type: str,
-        ttl: Optional[int] = None,
-        **filters
-    ) -> None:
-        """Cache metadata."""
-        filter_str = ":".join(f"{k}:{v}" for k, v in sorted(filters.items()))
-        key = f"metadata:{metadata_type}:{filter_str}"
-
-        await self._cache.set(key, data, ttl)
-
-    async def invalidate_pattern(self, pattern: str) -> None:
-        """Invalidate cache entries matching a pattern."""
-        # For now, just clear all cache - in production would implement pattern matching
-        await self._cache.clear()
+    async def invalidate_pattern(self, pattern: str, *, namespace: Optional[str] = None) -> int:
+        return await self._manager.invalidate_pattern(pattern)
 
     async def get_cache_stats(self) -> Dict[str, Any]:
-        """Get cache performance statistics."""
-        return await self._cache.get_stats()
+        # Provide a compact stats view sourced from the unified manager
+        try:
+            snapshot = await self._manager.get_performance_snapshot()
+        except Exception:
+            snapshot = {}
+        try:
+            health = await self._manager.get_health()
+            snapshot.update({
+                "health": getattr(health, "is_healthy", False),
+                "memory_usage_mb": getattr(health, "memory_usage_mb", 0.0),
+                "error_rate": getattr(health, "error_rate", 0.0),
+            })
+        except Exception:
+            pass
+        return snapshot
 
-    async def get_cache_entry(self, key: str) -> Optional[Any]:
-        """Get cache entry (alias for get method)."""
-        return await self._cache.get(key)
+    async def close(self) -> None:
+        try:
+            await self._manager.shutdown()
+        except Exception:
+            pass
 
-    async def set_cache_entry(self, key: str, value: Any, ttl_seconds: Optional[int] = None) -> None:
-        """Set cache entry (alias for set method)."""
-        await self._cache.set(key, value, ttl_seconds)
+
+__all__ = ["CacheBackend", "CacheEntry", "AsyncCache", "CacheManager"]

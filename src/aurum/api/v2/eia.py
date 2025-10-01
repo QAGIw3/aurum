@@ -24,6 +24,7 @@ from fastapi import APIRouter, HTTPException, Query, Request, Response, Depends
 from pydantic import BaseModel, Field
 
 from ..http import respond_with_etag
+from ..http.response_builders import etag_response_builder, etag_cursor_response_builder
 from .pagination import (
     resolve_pagination,
     build_next_cursor,
@@ -155,8 +156,14 @@ async def list_eia_datasets_v2(
             links=links,
         )
 
-        # Add ETag for caching with Link headers
-        return respond_with_etag(result, request, response, next_cursor=next_cursor, canonical_url=str(request.url.remove_query_params("cursor")))
+        # Add ETag via standardized builder (with cursor)
+        build = etag_cursor_response_builder(
+            request,
+            response,
+            next_cursor=next_cursor,
+            canonical_url=str(request.url.remove_query_params("cursor")),
+        )
+        return build(result)
 
     except HTTPException:
         raise
@@ -269,8 +276,13 @@ async def get_eia_series_v2(
             links=links,
         )
 
-        # Add ETag for caching with Link headers
-        return respond_with_etag(result, request, response, next_cursor=next_cursor, canonical_url=str(request.url.remove_query_params("cursor")))
+        build = etag_cursor_response_builder(
+            request,
+            response,
+            next_cursor=next_cursor,
+            canonical_url=str(request.url.remove_query_params("cursor")),
+        )
+        return build(result)
 
     except HTTPException:
         raise
@@ -342,7 +354,8 @@ async def get_eia_series_dimensions_v2(
         )
         meta = Meta(request_id=get_request_id(), query_time_ms=int(round(duration_ms)))
         result = EiaSeriesDimensionsResponse(meta=meta, data=data)
-        return respond_with_etag(result, request, response, canonical_url=str(request.url))
+        build = etag_response_builder(request, response, canonical_url=str(request.url))
+        return build(result)
     except HTTPException:
         raise
     except Exception as exc:

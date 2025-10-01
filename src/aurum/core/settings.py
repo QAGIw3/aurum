@@ -12,6 +12,19 @@ import threading
 import hashlib
 from datetime import datetime
 
+try:  # Prefer consolidated configuration from libs/common/config when available
+    from libs.common.config import (  # type: ignore
+        AurumSettings as _UnifiedAurumSettings,
+        configure_settings as _unified_configure_settings,
+        get_settings as _unified_get_settings,
+        reset_settings as _unified_reset_settings,
+    )
+except Exception:  # pragma: no cover - fallback to legacy settings path
+    _UnifiedAurumSettings = None  # type: ignore[assignment]
+    _unified_get_settings = None  # type: ignore[assignment]
+    _unified_configure_settings = None  # type: ignore[assignment]
+    _unified_reset_settings = None  # type: ignore[assignment]
+
 print(f"DEBUG: Loading settings.py - AURUM_ENABLE_MIGRATION_MONITORING = {os.getenv('AURUM_ENABLE_MIGRATION_MONITORING', 'NOT_SET')}")
 
 # Setup logging
@@ -1561,8 +1574,8 @@ class AurumSettings(HybridAurumSettings):
 _settings_instance: AurumSettings | None = None
 
 
-def get_settings() -> AurumSettings:
-    """Return the configured settings instance, raising if unavailable."""
+def _legacy_get_settings() -> AurumSettings:
+    """Return the configured legacy settings instance, raising if unavailable."""
     global _settings_instance
     if _settings_instance is not None:
         return _settings_instance
@@ -1575,10 +1588,47 @@ def get_settings() -> AurumSettings:
     raise RuntimeError("AurumSettings have not been configured")
 
 
-def configure_settings(settings: AurumSettings) -> None:
-    """Configure the global settings instance."""
+def get_settings() -> Any:
+    """Return consolidated settings, preferring the shared libs implementation."""
+
+    if _unified_get_settings is not None:
+        return _unified_get_settings()
+
+    return _legacy_get_settings()
+
+
+def get_legacy_settings() -> AurumSettings:
+    """Explicit access to the legacy hybrid settings implementation."""
+
+    return _legacy_get_settings()
+
+
+def configure_settings(settings: Any) -> None:
+    """Configure the global settings instance.
+
+    When the unified libs configuration is available, forward configuration to
+    that module while maintaining legacy state for callers that still rely on
+    `_legacy_get_settings`.
+    """
+
     global _settings_instance
-    _settings_instance = settings
+    if isinstance(settings, AurumSettings):
+        _settings_instance = settings
+    else:
+        _settings_instance = None
+
+    if _unified_configure_settings is not None:
+        _unified_configure_settings(settings)  # type: ignore[arg-type]
+
+
+def reset_settings() -> None:
+    """Reset both legacy and unified settings caches."""
+
+    global _settings_instance
+    _settings_instance = None
+
+    if _unified_reset_settings is not None:
+        _unified_reset_settings()
 
 
 def get_migration_metrics() -> Optional[MigrationMetrics]:

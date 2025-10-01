@@ -1,25 +1,14 @@
-"""Aurum core domain models: Series, Curve, Scenario, Units."""
+"""Compatibility shim for legacy `libs.core` imports."""
 
-from .enums import CurrencyCode, IsoCode, IsoMarket, PriceBlock, UnitOfMeasure
-from .models import AurumBaseModel, CurveKey, PaginationMeta, PriceObservation, UnitNormalization, Watermark
-from .pagination import CursorPage, OffsetPage, Paginator
+from aurum.core import *  # noqa: F401,F403
+from aurum.core.models import Watermark
 
-__all__ = [
-    # Enums
-    "CurrencyCode",
-    "IsoCode", 
-    "IsoMarket",
-    "PriceBlock",
-    "UnitOfMeasure",
-    # Models
-    "AurumBaseModel",
-    "CurveKey",
-    "PaginationMeta", 
-    "PriceObservation",
-    "UnitNormalization",
-    "Watermark",
-    # Pagination
-    "CursorPage",
-    "OffsetPage", 
-    "Paginator",
-]
+
+try:
+    from aurum.core import __all__ as _core_all
+except ImportError:  # pragma: no cover - defensive
+    __all__ = [name for name in globals() if not name.startswith("_")]
+else:
+    __all__ = list(_core_all)
+    if "Watermark" not in __all__:
+        __all__.append("Watermark")

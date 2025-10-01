@@ -16,6 +16,13 @@ from aurum.api.router_registry import (
 )
 from fastapi import APIRouter
 from aurum.core import AurumSettings
+import pytest
+
+_V2_ONLY = False
+try:
+    _V2_ONLY = bool(getattr(AurumSettings(), "enable_v2_only", False))
+except Exception:
+    _V2_ONLY = False
 
 
 @pytest.fixture
@@ -37,6 +44,7 @@ def reset_split_flags(monkeypatch):
     monkeypatch.delenv("AURUM_API_LIGHT_INIT", raising=False)
 
 
+@pytest.mark.skipif(_V2_ONLY, reason="v2-only mode: v1 registry tests are skipped")
 def test_v1_router_specs_deduplicates_split_modules(monkeypatch, reset_split_flags):
     monkeypatch.setenv("AURUM_API_V1_SPLIT_PPA", "1")
     settings = AurumSettings()
@@ -47,6 +55,7 @@ def test_v1_router_specs_deduplicates_split_modules(monkeypatch, reset_split_fla
     assert len(ppa_specs) == 1
 
 
+@pytest.mark.skipif(_V2_ONLY, reason="v2-only mode: v1 registry tests are skipped")
 def test_v1_router_specs_curves_default(monkeypatch, reset_split_flags):
     settings = AurumSettings()
 
@@ -57,6 +66,7 @@ def test_v1_router_specs_curves_default(monkeypatch, reset_split_flags):
     assert "aurum.api.curves" not in names
 
 
+@pytest.mark.skipif(_V2_ONLY, reason="v2-only mode: v1 registry tests are skipped")
 def test_v1_router_specs_curves_flag_is_ignored(monkeypatch, reset_split_flags):
     monkeypatch.setenv("AURUM_API_V1_SPLIT_CURVES", "0")
     settings = AurumSettings()
@@ -68,6 +78,7 @@ def test_v1_router_specs_curves_flag_is_ignored(monkeypatch, reset_split_flags):
     assert "aurum.api.curves" not in names
 
 
+@pytest.mark.skipif(_V2_ONLY, reason="v2-only mode: v1 registry tests are skipped")
 def test_v1_router_specs_unique_when_all_flags_enabled(monkeypatch, reset_split_flags):
     for flag in [
         "AURUM_API_V1_SPLIT_CURVES",  # deprecated but tested for backward compatibility
@@ -88,6 +99,7 @@ def test_v1_router_specs_unique_when_all_flags_enabled(monkeypatch, reset_split_
     assert len(names) == len(set(names))
 
 
+@pytest.mark.skipif(_V2_ONLY, reason="v2-only mode: v1 registry tests are skipped")
 def test_v1_router_specs_routes_marked_deprecated(reset_split_flags):
     settings = AurumSettings()
     specs = get_v1_router_specs(settings)
@@ -129,6 +141,7 @@ def test_v2_routers_require_tenant_dependency(monkeypatch, reset_split_flags):
         assert len(deps) >= 1
 
 
+@pytest.mark.skipif(_V2_ONLY, reason="v2-only mode: v1 registry tests are skipped")
 def test_registry_includes_admin_and_offload_routes(monkeypatch, reset_split_flags):
     settings = AurumSettings()
     specs = get_v1_router_specs(settings)
@@ -141,6 +154,7 @@ def test_registry_includes_admin_and_offload_routes(monkeypatch, reset_split_fla
     assert "aurum.api.rate_limiting.admin_router" in names
 
 
+@pytest.mark.skipif(_V2_ONLY, reason="v2-only mode: v1 registry tests are skipped")
 def test_import_fallback_attr_names_exercised(monkeypatch):
     """Ensure _try_import_router falls back to non-default attribute names when needed.
 
@@ -163,6 +177,7 @@ def test_import_fallback_attr_names_exercised(monkeypatch):
     assert prefix == "/v1/admin/offload"
 
 
+@pytest.mark.skipif(_V2_ONLY, reason="v2-only mode: v1 registry tests are skipped")
 def test_build_specs_skips_duplicates(monkeypatch):
     monkeypatch.setenv("AURUM_API_LIGHT_INIT", "1")
     modules = ("aurum.api.v1.curves", "aurum.api.v1.curves")
@@ -188,6 +203,7 @@ def test_v2_tenant_dependency_idempotent():
     assert getattr(router, "_aurum_v2_tenant_dependency", False) is True
 
 
+@pytest.mark.skipif(_V2_ONLY, reason="v2-only mode: v1 registry tests are skipped")
 def test_get_v1_specs_seen_skip_paths(monkeypatch):
     monkeypatch.delenv("AURUM_API_LIGHT_INIT", raising=False)
     monkeypatch.setenv("AURUM_API_V1_SPLIT_EIA", "1")

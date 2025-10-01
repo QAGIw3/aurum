@@ -12,14 +12,10 @@ from aurum.events.streaming import (
     EventBus,
     IdempotencyTracker,
     KafkaEventBus,
-    KafkaEventConsumer,
-    KafkaProcessor,
-    KafkaProcessorConfig,
-    OutboxDispatcher,
     OutboxMessage,
     OutboxRepository,
     SchemaValidator,
-    TimescaleOutboxRepository,
+    build_outbox_runtime,
 )
 from aurum.logging import LogLevel, create_logger
 
@@ -74,14 +70,13 @@ class NotificationsEventPipeline:
     ) -> None:
         self.config = config or NotificationPipelineConfig()
         self._logger = create_logger("notifications.pipeline")
-        self._repository = repository or TimescaleOutboxRepository()
 
         if schema_validator is None and event_bus is None:
             schema_validator = SchemaValidator(enforce=False)
 
-        self._event_bus = event_bus or KafkaEventBus(schema_validator=schema_validator)
+        resolved_event_bus = event_bus or KafkaEventBus(schema_validator=schema_validator)
         self._dispatcher = dispatcher or MultiChannelDispatcher.from_config(
-            event_bus=self._event_bus,
+            event_bus=resolved_event_bus,
             config_dir="config/notifications",
         )
         self._routing_engine = routing_engine or RoutingEngine.from_config()
@@ -89,34 +84,35 @@ class NotificationsEventPipeline:
         if template_registry is None:
             self._template_registry.load_directory(self.config.template_dir)
         self._analytics = analytics or NotificationAnalyticsRecorder(
-            self._event_bus, analytics_topic=self.config.analytics_topic
+            resolved_event_bus, analytics_topic=self.config.analytics_topic
         )
         self._scheduler = scheduler or NotificationScheduler(self._schedule_notification)
 
-        self._processor_config = processor_config or KafkaProcessorConfig(
+        runtime = build_outbox_runtime(
+            topic=self.config.dispatch_topic,
+            consumer_group=self.config.consumer_group,
             bootstrap_servers=self.config.bootstrap_servers,
-            group_id=self.config.consumer_group,
-            input_topics=(self.config.dispatch_topic,),
-            poll_interval=self.config.poll_interval,
-            in_memory=self.config.in_memory,
-        )
-        self._processor = processor or KafkaProcessor(self._processor_config)
-        self._idempotency = idempotency_tracker or IdempotencyTracker()
-
-        self.consumer = KafkaEventConsumer(
-            self._processor_config,
-            processor=self._processor,
-            idempotency_tracker=self._idempotency,
-            dlq_bus=self._event_bus,
-        )
-        self.consumer.register_handler(self.config.dispatch_topic, self._handle_dispatch)
-
-        self.dispatcher = OutboxDispatcher(
-            self._repository,
-            self._event_bus,
             batch_size=self.config.batch_size,
             poll_interval=self.config.poll_interval,
+            in_memory=self.config.in_memory,
+            repository=repository,
+            event_bus=resolved_event_bus,
+            processor=processor,
+            processor_config=processor_config,
+            idempotency_tracker=idempotency_tracker,
+            schema_validator=schema_validator,
         )
+
+        self._event_bus = runtime.event_bus
+        self._repository = runtime.repository
+        self._processor_config = runtime.processor_config
+        self._processor = runtime.processor
+        self._idempotency = runtime.idempotency_tracker
+
+        self.consumer = runtime.consumer
+        self.consumer.register_handler(self.config.dispatch_topic, self._handle_dispatch)
+
+        self.dispatcher = runtime.dispatcher
 
     async def start(
         self,

@@ -17,8 +17,8 @@ data:
   POSTGRES_DB: aurum
   TIMESCALE_DB: timeseries
   SUPERSET_LOAD_EXAMPLES: "no"
-  KAFKA_INTERNAL_BOOTSTRAP: kafka.aurum-dev.svc.cluster.local:9092
-  KAFKA_EXTERNAL_BOOTSTRAP: kafka.aurum.localtest.me:31092
+  KAFKA_INTERNAL_BOOTSTRAP: aurum-kafka-kafka-bootstrap.aurum-dev.svc.cluster.local:9092
+  KAFKA_EXTERNAL_BOOTSTRAP: aurum-kafka-kafka-bootstrap.aurum.localtest.me:31092
   SCHEMA_REGISTRY_URL: http://schema-registry.aurum-dev.svc.cluster.local:8081
   SCHEMA_REGISTRY_EXTERNAL_URL: http://schema-registry.aurum.localtest.me
   TRINO_JAVA_TOOL_OPTIONS: -Xms512M -Xmx2G
@@ -61,5 +61,5 @@ data:
   AURUM_SCENARIO_REQUESTS_ENABLED: "1"
   AURUM_SCENARIO_REQUEST_TOPIC: aurum.scenario.request.v1
   AURUM_SCENARIO_OUTPUT_TOPIC: aurum.scenario.output.v1
-  KAFKA_BOOTSTRAP_SERVERS: kafka.aurum-dev.svc.cluster.local:9092
+  KAFKA_BOOTSTRAP_SERVERS: aurum-kafka-kafka-bootstrap.aurum-dev.svc.cluster.local:9092
   AURUM_VENV_PYTHON: python

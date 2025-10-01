@@ -22,7 +22,7 @@ from typing import TYPE_CHECKING
 if TYPE_CHECKING:  # pragma: no cover - type-only to avoid circular imports
     from aurum.api.cache.unified_cache_manager import UnifiedCacheManager
 from aurum.core import AurumSettings
-from aurum.core.settings import get_settings as _core_get_settings
+from .state import get_settings as _api_get_settings
 
 
 def get_settings(request: Request) -> AurumSettings:
@@ -37,7 +37,7 @@ def get_settings(request: Request) -> AurumSettings:
         maybe = getattr(settings_state, "settings", None)
         if isinstance(maybe, AurumSettings):
             return maybe
-    return _core_get_settings()
+    return _api_get_settings()
 
 
 def get_cache_manager(request: Request) -> Optional["CacheManager"]:

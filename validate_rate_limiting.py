@@ -4,86 +4,14 @@ Validation script for Phase 2.2 Rate Limiting & Middleware Consolidation impleme
 This validates the unified rate limiting and middleware registry works correctly.
 """
 
-from enum import Enum
-from dataclasses import dataclass, field
-from typing import Any, Dict, List, Optional
+from aurum.api.middleware.enhanced_registry import (
+    MiddlewareConfig,
+    MiddlewarePriority,
+    MiddlewareType,
+)
+from aurum.api.rate_limiting import RateLimitAlgorithmType, RateLimitPolicy, RateLimitScope
 
-
-class RateLimitAlgorithmType(str, Enum):
-    """Available rate limiting algorithms."""
-    TOKEN_BUCKET = "token_bucket"
-    SLIDING_WINDOW = "sliding_window" 
-    FIXED_WINDOW = "fixed_window"
-    ADAPTIVE = "adaptive"
-
-
-class RateLimitScope(str, Enum):  
-    """Rate limit enforcement scope."""
-    GLOBAL = "global"
-    TENANT = "tenant"
-    IP = "ip"
-    ENDPOINT = "endpoint"
-    USER = "user"
-
-
-@dataclass
-class RateLimitPolicy:
-    """Unified rate limit policy configuration."""
-    name: str
-    algorithm: RateLimitAlgorithmType = RateLimitAlgorithmType.TOKEN_BUCKET
-    scope: RateLimitScope = RateLimitScope.GLOBAL
-    requests_per_second: int = 10
-    burst_size: int = 20
-    window_seconds: int = 60
-    enabled: bool = True
-    
-    # Endpoint matching
-    endpoint_patterns: List[str] = field(default_factory=list)
-    exclude_patterns: List[str] = field(default_factory=list)
-    
-    # Priority and enforcement
-    priority: int = 100
-    strict_enforcement: bool = True
-
-
-class MiddlewareType(str, Enum):
-    """Types of middleware available."""
-    CORS = "cors"
-    GZIP = "gzip" 
-    RATE_LIMITING = "rate_limiting"
-    CONCURRENCY = "concurrency"
-    AUTHENTICATION = "authentication"
-    AUTHORIZATION = "authorization"
-    LOGGING = "logging"
-    METRICS = "metrics"
-    GOVERNANCE = "governance"
-    SECURITY = "security"
-
-
-class MiddlewarePriority(int, Enum):
-    """Middleware priority levels (higher = applied first)."""
-    SECURITY = 1000
-    LOGGING = 900
-    METRICS = 800
-    AUTH = 700
-    GOVERNANCE = 600
-    RATE_LIMITING = 500
-    CONCURRENCY = 400
-    COMPRESSION = 300
-    CUSTOM = 200
-    SYSTEM = 100
-
-
-@dataclass
-class MiddlewareConfig:
-    """Configuration for a middleware component."""
-    name: str
-    middleware_type: MiddlewareType
-    priority: int = MiddlewarePriority.CUSTOM
-    enabled: bool = True
-    options: Dict[str, Any] = field(default_factory=dict)
-    path_patterns: Optional[List[str]] = None
-    exclude_patterns: Optional[List[str]] = None
+from validation_utils import assert_enum_values, print_summary
 
 
 def validate_rate_limiting_consolidation():
@@ -91,20 +19,18 @@ def validate_rate_limiting_consolidation():
     print("🔍 Validating Rate Limiting & Middleware Consolidation...")
     
     # Test rate limiting algorithm types
-    algorithms = list(RateLimitAlgorithmType)
-    assert len(algorithms) == 4, f"Expected 4 algorithms, got {len(algorithms)}"
-    expected_algorithms = {"token_bucket", "sliding_window", "fixed_window", "adaptive"}
-    actual_algorithms = {alg.value for alg in algorithms}
-    assert actual_algorithms == expected_algorithms
-    print("✅ Rate limiting algorithms configured correctly")
+    assert_enum_values(
+        RateLimitAlgorithmType,
+        {"token_bucket", "sliding_window", "fixed_window", "adaptive"},
+        label="Rate limiting algorithms configured correctly",
+    )
     
     # Test rate limiting scopes
-    scopes = list(RateLimitScope)
-    assert len(scopes) == 5, f"Expected 5 scopes, got {len(scopes)}"
-    expected_scopes = {"global", "tenant", "ip", "endpoint", "user"}
-    actual_scopes = {scope.value for scope in scopes}
-    assert actual_scopes == expected_scopes
-    print("✅ Rate limiting scopes configured correctly")
+    assert_enum_values(
+        RateLimitScope,
+        {"global", "tenant", "ip", "endpoint", "user", "api_key"},
+        label="Rate limiting scopes configured correctly",
+    )
     
     # Test rate limit policy creation
     policy = RateLimitPolicy(
@@ -127,15 +53,22 @@ def validate_rate_limiting_consolidation():
     print("✅ Rate limit policy creation validated")
     
     # Test middleware types
-    middleware_types = list(MiddlewareType)
-    assert len(middleware_types) == 10, f"Expected 10 middleware types, got {len(middleware_types)}"
-    expected_types = {
-        "cors", "gzip", "rate_limiting", "concurrency", "authentication",
-        "authorization", "logging", "metrics", "governance", "security"
-    }
-    actual_types = {mtype.value for mtype in middleware_types}
-    assert actual_types == expected_types
-    print("✅ Middleware types configured correctly")
+    assert_enum_values(
+        MiddlewareType,
+        {
+            "cors",
+            "gzip",
+            "rate_limiting",
+            "concurrency",
+            "authentication",
+            "authorization",
+            "logging",
+            "metrics",
+            "governance",
+            "security",
+        },
+        label="Middleware types configured correctly",
+    )
     
     # Test middleware priorities
     priorities = [p.value for p in MiddlewarePriority]
@@ -196,13 +129,16 @@ def validate_rate_limiting_consolidation():
     
     print("🎉 Rate Limiting & Middleware Consolidation validation PASSED!")
     print()
-    print("📊 Summary:")
-    print("- ✅ Unified rate limiting system with 4 algorithms")
-    print("- ✅ 5 rate limiting scopes (global, tenant, IP, endpoint, user)")
-    print("- ✅ 10 middleware types with proper prioritization")
-    print("- ✅ Tenant-aware resource controls implemented")
-    print("- ✅ API governance controls framework ready")
-    print("- ✅ Middleware complexity reduced through unified registry")
+    print_summary(
+        [
+            "✅ Unified rate limiting system with 4 algorithms",
+            "✅ 6 rate limiting scopes (global, tenant, IP, endpoint, user, api_key)",
+            "✅ 10 middleware types with proper prioritization",
+            "✅ Tenant-aware resource controls implemented",
+            "✅ API governance controls framework ready",
+            "✅ Middleware complexity reduced through unified registry",
+        ]
+    )
     
     return True
 

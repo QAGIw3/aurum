@@ -5,7 +5,7 @@ from __future__ import annotations
 import logging
 import time
 from datetime import date
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, Iterable, List, Optional, Tuple
 
 from aurum.core import AurumSettings
 
@@ -35,8 +35,8 @@ class CurvesDao:
                 # When used inside a FastAPI request, services should pass settings explicitly.
                 # As a very last resort for backwards compatibility in non-request contexts,
                 # use core settings which must be pre-configured by startup.
-                from aurum.core.settings import get_settings as _core_get_settings
-                self._settings = _core_get_settings()
+                from aurum.api.state import get_settings as _api_get_settings
+                self._settings = _api_get_settings()
             except Exception:
                 from aurum.core.settings import AurumSettings as _AurumSettings
                 self._settings = _AurumSettings.from_env()
@@ -84,6 +84,28 @@ class CurvesDao:
         elapsed, rows = await self._execute(sql, params, context)
         return QueryResult(data=rows, elapsed_ms=elapsed, raw_query=sql)
 
+    async def list_catalog_entries(
+        self,
+        *,
+        tenant_id: str,
+        offset: int,
+        limit: int,
+        name_filter: Optional[str] = None,
+    ) -> Tuple[List[Dict[str, Any]], float, Optional[str]]:
+        sql_parts = [
+            "SELECT id, name, description, data_points, created_at",
+            "FROM iceberg.market.curves_catalog",
+            "WHERE tenant_id = :tenant_id",
+        ]
+        params: Dict[str, Any] = {"tenant_id": tenant_id, "offset": offset, "limit": limit}
+        if name_filter:
+            sql_parts.append("AND name ILIKE :name_filter")
+            params["name_filter"] = f"%{name_filter}%"
+        sql_parts.append("ORDER BY name OFFSET :offset LIMIT :limit")
+        query = "\n".join(sql_parts)
+        elapsed_ms, rows = await self._execute(query, params, None)
+        return rows, elapsed_ms, query
+
     async def query_curves_diff(
         self,
         *,
@@ -111,6 +133,22 @@ class CurvesDao:
         params = query.as_params()
         elapsed, rows = await self._execute(sql, params, context)
         return QueryResult(data=rows, elapsed_ms=elapsed, raw_query=sql)
+
+    async def get_curve_diff_details(
+        self,
+        *,
+        curve_id: str,
+        from_timestamp: str,
+        to_timestamp: str,
+    ) -> Tuple[Dict[str, Any], float, Optional[str]]:
+        sql = (
+            "SELECT id, name, description, data_points, created_at "
+            "FROM iceberg.market.curves_diff WHERE id = :curve_id "
+            "AND from_ts = :from_ts AND to_ts = :to_ts"
+        )
+        params = {"curve_id": curve_id, "from_ts": from_timestamp, "to_ts": to_timestamp}
+        elapsed_ms, rows = await self._execute(sql, params, None)
+        return (rows[0] if rows else {}), elapsed_ms, sql
 
     async def query_curve_strips(
         self,
@@ -141,6 +179,45 @@ class CurvesDao:
         )
         elapsed, rows = await self._execute(sql, filters, context)
         return QueryResult(data=rows, elapsed_ms=elapsed, raw_query=sql)
+
+    async def export_curves(
+        self,
+        *,
+        asof: Optional[str] = None,
+        iso: Optional[str] = None,
+        market: Optional[str] = None,
+        location: Optional[str] = None,
+        product: Optional[str] = None,
+        block: Optional[str] = None,
+    ) -> Iterable[Dict[str, Any]]:
+        where: List[str] = []
+        params: Dict[str, Any] = {}
+        if asof:
+            where.append("asof_date = DATE :asof")
+            params["asof"] = asof
+        if iso:
+            where.append("iso = :iso")
+            params["iso"] = iso
+        if market:
+            where.append("market = :market")
+            params["market"] = market
+        if location:
+            where.append("location = :location")
+            params["location"] = location
+        if product:
+            where.append("product = :product")
+            params["product"] = product
+        if block:
+            where.append("block = :block")
+            params["block"] = block
+
+        predicate = f"WHERE {' AND '.join(where)}" if where else ""
+        query = (
+            "SELECT curve_key, tenor_label, tenor_type, contract_month, asof_date, mid, bid, ask, price_type "
+            f"FROM iceberg.market.curves_export {predicate} ORDER BY curve_key, tenor_label, asof_date"
+        )
+        _, rows = await self._execute(query, params, None)
+        return rows
 
     async def invalidate_curve_cache(
         self,

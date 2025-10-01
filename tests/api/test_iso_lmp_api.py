@@ -2,10 +2,18 @@ import os
 from datetime import date, datetime
 
 import pytest
+from aurum.core import AurumSettings
 
 from aurum.tests.api.test_curves_api import _ensure_opentelemetry
 
 os.environ.setdefault("AURUM_API_AUTH_DISABLED", "1")
+
+# Legacy ISO LMP endpoints are v1; skip in v2-only mode.
+try:
+    if getattr(AurumSettings(), "enable_v2_only", False):
+        pytest.skip("v2-only mode: v1 ISO LMP API tests are skipped", allow_module_level=True)
+except Exception:
+    pass
 
 
 def _sample_lmp_row() -> dict:

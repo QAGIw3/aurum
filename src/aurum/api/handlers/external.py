@@ -3,10 +3,7 @@
 from __future__ import annotations
 
 import base64
-import hashlib
 import json
-import time
-from datetime import date, datetime
 from typing import Any, Dict, List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response
@@ -23,6 +20,7 @@ from ..exceptions import (
     DataProcessingException,
 )
 from ..http import respond_with_etag
+from ..http.responses import create_error_response
 from ..models import (
     ExternalProvider,
     ExternalSeries,
@@ -33,22 +31,30 @@ from ..models import (
     ExternalMetadataResponse,
     ExternalSeriesQueryParams,
     ExternalObservationsQueryParams,
-    Meta,
 )
 from ..auth import AuthMiddleware, OIDCConfig
 from ..container import provide_service
-from ..rate_limiting import RateLimitManager, QuotaTier
+from ..rate_limiting import RateLimitManager
+from .external_support import (
+    build_external_cache_key,
+    cached_endpoint_response,
+    prepare_external_context,
+    validation_error,
+    http_error,
+    validate_oidc_auth,
+    dao_call_with_metrics,
+    providers_response_builder,
+    series_response_builder,
+    observations_response_builder,
+    metadata_response_builder,
+    providers_cache_components,
+    series_cache_components,
+    observations_cache_components,
+    metadata_cache_components,
+)
 from ..trino_client import TrinoClient
 from ...data.external_dao import ExternalDAO
-from ...observability.metrics import (
-    EXTERNAL_API_REQUEST_COUNTER,
-    EXTERNAL_API_LATENCY,
-    EXTERNAL_CACHE_HIT_COUNTER,
-    EXTERNAL_CACHE_MISS_COUNTER,
-    EXTERNAL_DAO_QUERY_COUNTER,
-    EXTERNAL_DAO_LATENCY,
-    EXTERNAL_CURVE_MAPPING_COUNTER,
-)
+from ...observability.metrics import EXTERNAL_CURVE_MAPPING_COUNTER
 
 # Create router
 router = APIRouter()
@@ -59,23 +65,6 @@ EXTERNAL_OBSERVATIONS_CACHE_TTL = 600  # 10 minutes
 EXTERNAL_MAX_LIMIT = 10000
 EXTERNAL_SERIES_MAX_LIMIT = 1000
 EXTERNAL_METADATA_CACHE_TTL = 1800  # 30 minutes
-
-
-def create_cache_key(prefix: str, **components) -> str:
-    """Create a cache key with hash for the given components."""
-    # Sort components to ensure consistent hashing
-    sorted_components = sorted(components.items())
-
-    # Create hash from all components
-    key_parts = [f"{k}:{v}" for k, v in sorted_components if v is not None]
-    key_string = "|".join(key_parts)
-
-    # Create hash
-    hash_obj = hashlib.sha256(key_string.encode('utf-8'))
-    hash_digest = hash_obj.hexdigest()[:16]  # Use first 16 chars of hash
-
-    # Return formatted key
-    return f"{prefix}:{hash_digest}"
 
 
 async def get_external_dao() -> ExternalDAO:
@@ -247,54 +236,6 @@ async def _convert_curve_to_external_observations(
     return external_observations
 
 
-def validate_oidc_auth(request: Request) -> Dict[str, Any]:
-    """Validate OIDC authentication."""
-    # Check for Authorization header
-    auth_header = request.headers.get("authorization")
-    if not auth_header or not auth_header.startswith("Bearer "):
-        raise HTTPException(
-            status_code=401,
-            detail={
-                "error": "Authentication required",
-                "message": "Valid Bearer token required",
-                "code": "AUTH_MISSING_TOKEN",
-                "field": "authorization",
-                "context": {"header_name": "Authorization"},
-            }
-        )
-
-    # Extract token
-    token = auth_header.split(" ", 1)[1]
-
-    # Validate token (simplified - would use OIDC validation in production)
-    if not token:
-        raise HTTPException(
-            status_code=401,
-            detail={
-                "error": "Authentication failed",
-                "message": "Invalid or expired token",
-                "code": "AUTH_INVALID_TOKEN",
-                "field": "authorization",
-            }
-        )
-
-    # Return principal (simplified - would decode JWT in production)
-    return {"sub": "user123", "tier": "premium"}
-
-
-def create_external_meta(request_id: str, query_time_ms: int) -> Meta:
-    """Create metadata for external API responses."""
-    return Meta(
-        request_id=request_id,
-        query_time_ms=query_time_ms,
-        has_more=False,
-        count=0,
-        total=None,
-        offset=0,
-        limit=None,
-    )
-
-
 @router.get("/v1/external/providers", response_model=ExternalProvidersResponse)
 async def list_external_providers(
     request: Request,
@@ -315,112 +256,45 @@ async def list_external_providers(
 
     Returns a paginated list of external data providers with their metadata.
     """
-    request_id = str(request.headers.get("x-request-id", "unknown"))
-
-    # Rate limiting
-    rate_limit_result = await rate_limit_mgr.check_rate_limit(
-        identifier=f"external:providers:{principal.get('sub', 'anonymous')}",
-        tier=QuotaTier(principal.get('tier', 'free').lower()),
-        endpoint="/v1/external/providers"
+    endpoint = "/v1/external/providers"
+    context = await prepare_external_context(
+        request,
+        response=response,
+        principal=principal,
+        rate_limit_mgr=rate_limit_mgr,
+        endpoint=endpoint,
+        identifier_suffix="providers",
     )
-    if not rate_limit_result.allowed:
-        raise HTTPException(
-            status_code=429,
-            detail={
-                "error": "Rate limit exceeded",
-                "message": "Too many requests",
-                "retry_after": rate_limit_result.retry_after,
-                "code": "RATE_LIMIT_EXCEEDED",
-                "context": {"retry_after_seconds": rate_limit_result.retry_after},
-            }
+
+    async def _fetch_providers() -> List[Dict[str, Any]]:
+        return await dao_call_with_metrics(
+            "get_providers",
+            lambda: dao.get_providers(limit=limit, offset=offset, cursor=cursor),
         )
-
-    # Add rate limit headers
-    headers = rate_limit_result.to_headers()
-    for key, value in headers.items():
-        response.headers[key] = value
-
-    start_time = time.time()
-
-    # Record request metrics
-    if EXTERNAL_API_REQUEST_COUNTER and EXTERNAL_API_LATENCY:
-        EXTERNAL_API_REQUEST_COUNTER.labels(endpoint="/v1/external/providers", status="200").inc()
-        EXTERNAL_API_LATENCY.labels(endpoint="/v1/external/providers").observe(time.time() - start_time)
 
     try:
-        # Create cache key with hash
-        cache_key = create_cache_key(
-            "external:providers",
-            limit=limit,
-            offset=offset,
-            cursor=cursor or ''
+        cache_key = build_external_cache_key("providers", components=providers_cache_components(limit, offset, cursor))
+
+        return await cached_endpoint_response(
+            cache_mgr=cache_mgr,
+            cache_key=cache_key,
+            fetcher=_fetch_providers,
+            ttl_seconds=EXTERNAL_CACHE_TTL,
+            context=context,
+            on_cache_hit=context.cache_hit_hook,
+            on_cache_miss=context.cache_miss_hook,
+            response_builder=providers_response_builder(request, response),
         )
-
-        # Try cache first
-        cached_result = await cache_mgr.get(cache_key)
-        if cached_result is not None:
-            if EXTERNAL_CACHE_HIT_COUNTER:
-                EXTERNAL_CACHE_HIT_COUNTER.labels(endpoint="/v1/external/providers").inc()
-            query_time_ms = int((time.time() - start_time) * 1000)
-            meta = create_external_meta(request_id, query_time_ms)
-            model = ExternalProvidersResponse(data=cached_result, meta=meta)
-            return respond_with_etag(model, request, response)
-
-        if EXTERNAL_CACHE_MISS_COUNTER:
-            EXTERNAL_CACHE_MISS_COUNTER.labels(endpoint="/v1/external/providers").inc()
-
-        # Query providers with DAO metrics
-        dao_start = time.time()
-        if EXTERNAL_DAO_QUERY_COUNTER and EXTERNAL_DAO_LATENCY:
-            EXTERNAL_DAO_QUERY_COUNTER.labels(operation="get_providers", status="start").inc()
-
-        providers = await dao.get_providers(limit=limit, offset=offset, cursor=cursor)
-
-        if EXTERNAL_DAO_QUERY_COUNTER and EXTERNAL_DAO_LATENCY:
-            EXTERNAL_DAO_QUERY_COUNTER.labels(operation="get_providers", status="success").inc()
-            EXTERNAL_DAO_LATENCY.labels(operation="get_providers").observe(time.time() - dao_start)
-
-        # Cache result
-        await cache_mgr.set(
-            cache_key,
-            providers,
-            ttl=EXTERNAL_CACHE_TTL
-        )
-
-        query_time_ms = int((time.time() - start_time) * 1000)
-        meta = create_external_meta(request_id, query_time_ms)
-
-        model = ExternalProvidersResponse(data=providers, meta=meta)
-        return respond_with_etag(model, request, response)
 
     except ValidationError as exc:
-        raise HTTPException(
-            status_code=400,
-            detail={
-                "error": "Validation Error",
-                "message": "Invalid request parameters",
-                "field_errors": [
-                    {
-                        "field": error["loc"][0],
-                        "message": error["msg"],
-                        "value": error["input"],
-                    }
-                    for error in exc.errors()
-                ],
-                "code": "VALIDATION_ERROR",
-                "request_id": request_id,
-            }
-        )
+        raise validation_error(exc, request_id=context.request_id)
     except Exception as exc:
-        raise HTTPException(
-            status_code=500,
-            detail={
-                "error": "Internal Server Error",
-                "message": "Failed to retrieve external providers",
-                "code": "EXTERNAL_PROVIDERS_ERROR",
-                "context": {"error_type": exc.__class__.__name__},
-                "request_id": request_id,
-            }
+        raise http_error(
+            500,
+            "Failed to retrieve external providers",
+            request_id=context.request_id,
+            code="EXTERNAL_PROVIDERS_ERROR",
+            context={"error_type": exc.__class__.__name__},
         )
 
 
@@ -440,104 +314,52 @@ async def list_external_series(
 
     Returns a paginated list of external data series filtered by provider, frequency, and as-of date.
     """
-    request_id = str(request.headers.get("x-request-id", "unknown"))
-
-    # Rate limiting
-    rate_limit_result = await rate_limit_mgr.check_rate_limit(
-        identifier=f"external:series:{principal.get('sub', 'anonymous')}",
-        tier=QuotaTier(principal.get('tier', 'free').lower()),
-        endpoint="/v1/external/series"
+    endpoint = "/v1/external/series"
+    context = await prepare_external_context(
+        request,
+        response=response,
+        principal=principal,
+        rate_limit_mgr=rate_limit_mgr,
+        endpoint=endpoint,
+        identifier_suffix="series",
     )
-    if not rate_limit_result.allowed:
-        raise HTTPException(
-            status_code=429,
-            detail={
-                "error": "Rate limit exceeded",
-                "message": "Too many requests",
-                "retry_after": rate_limit_result.retry_after,
-                "code": "RATE_LIMIT_EXCEEDED",
-                "context": {"retry_after_seconds": rate_limit_result.retry_after},
-            }
+
+    async def _fetch_series() -> List[Dict[str, Any]]:
+        return await dao_call_with_metrics(
+            "get_series",
+            lambda: dao.get_series(
+                provider=params.provider,
+                frequency=params.frequency,
+                asof=params.asof,
+                limit=params.limit,
+                offset=params.offset,
+                cursor=params.cursor,
+            ),
         )
-
-    # Add rate limit headers
-    headers = rate_limit_result.to_headers()
-    for key, value in headers.items():
-        response.headers[key] = value
-
-    start_time = time.time()
 
     try:
-        # Create cache key with hash
-        cache_key = create_cache_key(
-            "external:series",
-            provider=params.provider,
-            frequency=params.frequency,
-            asof=params.asof,
-            limit=params.limit,
-            offset=params.offset,
-            cursor=params.cursor
+        cache_key = build_external_cache_key("series", components=series_cache_components(params))
+
+        return await cached_endpoint_response(
+            cache_mgr=cache_mgr,
+            cache_key=cache_key,
+            fetcher=_fetch_series,
+            ttl_seconds=EXTERNAL_CACHE_TTL,
+            context=context,
+            on_cache_hit=context.cache_hit_hook,
+            on_cache_miss=context.cache_miss_hook,
+            response_builder=series_response_builder(request, response),
         )
-
-        # Try cache first
-        cached_result = await cache_mgr.get(cache_key)
-        if cached_result is not None:
-            query_time_ms = int((time.time() - start_time) * 1000)
-            meta = create_external_meta(request_id, query_time_ms)
-            model = ExternalSeriesResponse(data=cached_result, meta=meta)
-            return respond_with_etag(model, request, response)
-
-        # Query series
-        series = await dao.get_series(
-            provider=params.provider,
-            frequency=params.frequency,
-            asof=params.asof,
-            limit=params.limit,
-            offset=params.offset,
-            cursor=params.cursor
-        )
-
-        # Cache result
-        await cache_mgr.set(
-            cache_key,
-            series,
-            ttl=EXTERNAL_CACHE_TTL
-        )
-
-        query_time_ms = int((time.time() - start_time) * 1000)
-        meta = create_external_meta(request_id, query_time_ms)
-
-        model = ExternalSeriesResponse(data=series, meta=meta)
-        return respond_with_etag(model, request, response)
 
     except ValidationError as exc:
-        raise HTTPException(
-            status_code=400,
-            detail={
-                "error": "Validation Error",
-                "message": "Invalid request parameters",
-                "field_errors": [
-                    {
-                        "field": error["loc"][0],
-                        "message": error["msg"],
-                        "value": error["input"],
-                    }
-                    for error in exc.errors()
-                ],
-                "code": "VALIDATION_ERROR",
-                "request_id": request_id,
-            }
-        )
+        raise validation_error(exc, request_id=context.request_id)
     except Exception as exc:
-        raise HTTPException(
-            status_code=500,
-            detail={
-                "error": "Internal Server Error",
-                "message": "Failed to retrieve external series",
-                "code": "EXTERNAL_SERIES_ERROR",
-                "context": {"error_type": exc.__class__.__name__},
-                "request_id": request_id,
-            }
+        raise http_error(
+            500,
+            "Failed to retrieve external series",
+            request_id=context.request_id,
+            code="EXTERNAL_SERIES_ERROR",
+            context={"error_type": exc.__class__.__name__},
         )
 
 
@@ -553,68 +375,26 @@ async def get_external_series_observations(
     cache_mgr: CacheManager = Depends(get_cache_manager),
     rate_limit_mgr: RateLimitManager = Depends(get_rate_limit_manager),
 ) -> ExternalObservationsResponse:
-    """
-    Get observations for a specific external series.
+    """Return observations for a specific external series."""
 
-    Returns observations for the specified series with optional date range filtering and frequency conversion.
-    """
-    request_id = str(request.headers.get("x-request-id", "unknown"))
-
-    # Rate limiting (higher limits for observations endpoint)
-    rate_limit_result = await rate_limit_mgr.check_rate_limit(
-        identifier=f"external:observations:{principal.get('sub', 'anonymous')}",
-        tier=QuotaTier(principal.get('tier', 'free').lower()),
-        endpoint="/v1/external/series/{series_id}/observations",
-        request_tokens=2  # Higher cost for observations
+    endpoint = "/v1/external/series/{series_id}/observations"
+    context = await prepare_external_context(
+        request,
+        response=response,
+        principal=principal,
+        rate_limit_mgr=rate_limit_mgr,
+        endpoint=endpoint,
+        identifier_suffix="observations",
+        request_tokens=2,
     )
-    if not rate_limit_result.allowed:
-        raise HTTPException(
-            status_code=429,
-            detail={
-                "error": "Rate limit exceeded",
-                "message": "Too many requests",
-                "retry_after": rate_limit_result.retry_after,
-                "code": "RATE_LIMIT_EXCEEDED",
-                "context": {"retry_after_seconds": rate_limit_result.retry_after},
-            }
-        )
 
-    # Add rate limit headers
-    headers = rate_limit_result.to_headers()
-    for key, value in headers.items():
-        response.headers[key] = value
-
-    start_time = time.time()
-
-    try:
-        # Create cache key with hash
-        cache_key = create_cache_key(
-            "external:observations",
-            series_id=series_id,
-            start_date=params.start_date,
-            end_date=params.end_date,
-            freq=params.frequency,
-            asof=params.asof,
-            limit=params.limit,
-            offset=params.offset
-        )
-
-        # Try cache first
-        cached_result = await cache_mgr.get(cache_key)
-        if cached_result is not None:
-            query_time_ms = int((time.time() - start_time) * 1000)
-            meta = create_external_meta(request_id, query_time_ms)
-            return ExternalObservationsResponse(data=cached_result, meta=meta)
-
-        # Check for curve mapping passthrough with metrics
-        mapping_start = time.time()
+    async def _fetch_observations() -> List[Dict[str, Any]]:
         has_curve_mapping = await _check_curve_mapping(series_id)
 
         if has_curve_mapping:
             if EXTERNAL_CURVE_MAPPING_COUNTER:
                 EXTERNAL_CURVE_MAPPING_COUNTER.labels(mapping_type="curve_proxy").inc()
 
-            # Proxy to curves endpoint
             curve_observations = await _proxy_to_curves_endpoint(
                 series_id=series_id,
                 start_date=params.start_date,
@@ -622,23 +402,22 @@ async def get_external_series_observations(
                 frequency=params.frequency,
                 asof=params.asof,
                 limit=params.limit,
-                offset=params.offset
+                offset=params.offset,
             )
-            # Convert curve observations to external observations format
-            observations = await _convert_curve_to_external_observations(curve_observations, series_id)
+
+            observations_result = await _convert_curve_to_external_observations(curve_observations, series_id)
 
             if EXTERNAL_CURVE_MAPPING_COUNTER:
                 EXTERNAL_CURVE_MAPPING_COUNTER.labels(mapping_type="curve_conversion").inc()
-        else:
-            if EXTERNAL_CURVE_MAPPING_COUNTER:
-                EXTERNAL_CURVE_MAPPING_COUNTER.labels(mapping_type="no_mapping").inc()
 
-            # Query observations from external DAO with DAO metrics
-            dao_start = time.time()
-            if EXTERNAL_DAO_QUERY_COUNTER and EXTERNAL_DAO_LATENCY:
-                EXTERNAL_DAO_QUERY_COUNTER.labels(operation="get_observations", status="start").inc()
+            return observations_result
 
-            observations = await dao.get_observations(
+        if EXTERNAL_CURVE_MAPPING_COUNTER:
+            EXTERNAL_CURVE_MAPPING_COUNTER.labels(mapping_type="no_mapping").inc()
+
+        return await dao_call_with_metrics(
+            "get_observations",
+            lambda: dao.get_observations(
                 series_id=series_id,
                 start_date=params.start_date,
                 end_date=params.end_date,
@@ -646,64 +425,41 @@ async def get_external_series_observations(
                 asof=params.asof,
                 limit=params.limit,
                 offset=params.offset,
-                cursor=params.cursor
-            )
-
-            if EXTERNAL_DAO_QUERY_COUNTER and EXTERNAL_DAO_LATENCY:
-                EXTERNAL_DAO_QUERY_COUNTER.labels(operation="get_observations", status="success").inc()
-                EXTERNAL_DAO_LATENCY.labels(operation="get_observations").observe(time.time() - dao_start)
-
-        # Cache result
-        await cache_mgr.set(
-            cache_key,
-            observations,
-            ttl=EXTERNAL_OBSERVATIONS_CACHE_TTL
+                cursor=params.cursor,
+            ),
         )
 
-        query_time_ms = int((time.time() - start_time) * 1000)
-        meta = create_external_meta(request_id, query_time_ms)
+    try:
+        cache_key = build_external_cache_key("observations", components=observations_cache_components(series_id, params))
 
-        return ExternalObservationsResponse(data=observations, meta=meta)
+        return await cached_endpoint_response(
+            cache_mgr=cache_mgr,
+            cache_key=cache_key,
+            fetcher=_fetch_observations,
+            ttl_seconds=EXTERNAL_OBSERVATIONS_CACHE_TTL,
+            context=context,
+            on_cache_hit=context.cache_hit_hook,
+            on_cache_miss=context.cache_miss_hook,
+            response_builder=observations_response_builder(),
+        )
 
     except ValidationError as exc:
-        raise HTTPException(
-            status_code=400,
-            detail={
-                "error": "Validation Error",
-                "message": "Invalid request parameters",
-                "field_errors": [
-                    {
-                        "field": error["loc"][0],
-                        "message": error["msg"],
-                        "value": error["input"],
-                    }
-                    for error in exc.errors()
-                ],
-                "code": "VALIDATION_ERROR",
-                "request_id": request_id,
-            }
-        )
+        raise validation_error(exc, request_id=context.request_id)
     except NotFoundException as exc:
-        raise HTTPException(
-            status_code=404,
-            detail={
-                "error": "Not Found",
-                "message": "Series not found",
-                "code": "SERIES_NOT_FOUND",
-                "context": {"series_id": series_id},
-                "request_id": request_id,
-            }
+        raise http_error(
+            404,
+            "Series not found",
+            request_id=context.request_id,
+            code="SERIES_NOT_FOUND",
+            context={"series_id": series_id},
         )
     except Exception as exc:
-        raise HTTPException(
-            status_code=500,
-            detail={
-                "error": "Internal Server Error",
-                "message": "Failed to retrieve series observations",
-                "code": "EXTERNAL_OBSERVATIONS_ERROR",
-                "context": {"error_type": exc.__class__.__name__, "series_id": series_id},
-                "request_id": request_id,
-            }
+        raise http_error(
+            500,
+            "Failed to retrieve series observations",
+            request_id=context.request_id,
+            code="EXTERNAL_OBSERVATIONS_ERROR",
+            context={"error_type": exc.__class__.__name__, "series_id": series_id},
         )
 
 
@@ -724,92 +480,46 @@ async def get_external_metadata(
 
     Returns metadata about external data providers and their series.
     """
-    request_id = str(request.headers.get("x-request-id", "unknown"))
-
-    # Rate limiting (metadata endpoint)
-    rate_limit_result = await rate_limit_mgr.check_rate_limit(
-        identifier=f"external:metadata:{principal.get('sub', 'anonymous')}",
-        tier=QuotaTier(principal.get('tier', 'free').lower()),
-        endpoint="/v1/metadata/external"
+    endpoint = "/v1/metadata/external"
+    context = await prepare_external_context(
+        request,
+        response=response,
+        principal=principal,
+        rate_limit_mgr=rate_limit_mgr,
+        endpoint=endpoint,
+        identifier_suffix="metadata",
     )
-    if not rate_limit_result.allowed:
-        raise HTTPException(
-            status_code=429,
-            detail={
-                "error": "Rate limit exceeded",
-                "message": "Too many requests",
-                "retry_after": rate_limit_result.retry_after,
-                "code": "RATE_LIMIT_EXCEEDED",
-                "context": {"retry_after_seconds": rate_limit_result.retry_after},
-            }
+
+    async def _fetch_metadata() -> Dict[str, Any]:
+        return await dao_call_with_metrics(
+            "get_metadata",
+            lambda: dao.get_metadata(
+                provider=provider,
+                include_counts=include_counts,
+            ),
         )
-
-    # Add rate limit headers
-    headers = rate_limit_result.to_headers()
-    for key, value in headers.items():
-        response.headers[key] = value
-
-    start_time = time.time()
 
     try:
-        # Create cache key with hash
-        cache_key = create_cache_key(
-            "external:metadata",
-            provider=provider,
-            include_counts=include_counts
+        cache_key = build_external_cache_key("metadata", components=metadata_cache_components(provider, include_counts))
+
+        return await cached_endpoint_response(
+            cache_mgr=cache_mgr,
+            cache_key=cache_key,
+            fetcher=_fetch_metadata,
+            ttl_seconds=EXTERNAL_METADATA_CACHE_TTL,
+            context=context,
+            on_cache_hit=context.cache_hit_hook,
+            on_cache_miss=context.cache_miss_hook,
+            response_builder=metadata_response_builder(),
         )
-
-        # Try cache first
-        cached_result = await cache_mgr.get(cache_key)
-        if cached_result is not None:
-            query_time_ms = int((time.time() - start_time) * 1000)
-            meta = create_external_meta(request_id, query_time_ms)
-            return ExternalMetadataResponse(**cached_result, meta=meta)
-
-        # Query metadata
-        metadata = await dao.get_metadata(
-            provider=provider,
-            include_counts=include_counts
-        )
-
-        # Cache result
-        await cache_mgr.set(
-            cache_key,
-            metadata,
-            ttl=EXTERNAL_METADATA_CACHE_TTL
-        )
-
-        query_time_ms = int((time.time() - start_time) * 1000)
-        meta = create_external_meta(request_id, query_time_ms)
-
-        return ExternalMetadataResponse(**metadata, meta=meta)
 
     except ValidationError as exc:
-        raise HTTPException(
-            status_code=400,
-            detail={
-                "error": "Validation Error",
-                "message": "Invalid request parameters",
-                "field_errors": [
-                    {
-                        "field": error["loc"][0],
-                        "message": error["msg"],
-                        "value": error["input"],
-                    }
-                    for error in exc.errors()
-                ],
-                "code": "VALIDATION_ERROR",
-                "request_id": request_id,
-            }
-        )
+        raise validation_error(exc, request_id=context.request_id)
     except Exception as exc:
-        raise HTTPException(
-            status_code=500,
-            detail={
-                "error": "Internal Server Error",
-                "message": "Failed to retrieve external metadata",
-                "code": "EXTERNAL_METADATA_ERROR",
-                "context": {"error_type": exc.__class__.__name__},
-                "request_id": request_id,
-            }
+        raise http_error(
+            500,
+            "Failed to retrieve external metadata",
+            request_id=context.request_id,
+            code="EXTERNAL_METADATA_ERROR",
+            context={"error_type": exc.__class__.__name__},
         )

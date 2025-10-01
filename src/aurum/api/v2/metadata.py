@@ -24,6 +24,7 @@ from fastapi import APIRouter, HTTPException, Query, Request, Response, Depends
 from pydantic import BaseModel, Field
 
 from ..http import respond_with_etag
+from ..http.response_builders import etag_response_builder, etag_cursor_response_builder
 from .pagination import (
     resolve_pagination,
     build_next_cursor,
@@ -220,8 +221,14 @@ async def list_dimensions_v2(
             links=links,
         )
 
-        # Add ETag for caching with Link headers
-        return respond_with_etag(result, request, response, next_cursor=next_cursor, canonical_url=str(request.url.remove_query_params("cursor")))
+        # Add ETag via standardized builder (with cursor)
+        build = etag_cursor_response_builder(
+            request,
+            response,
+            next_cursor=next_cursor,
+            canonical_url=str(request.url.remove_query_params("cursor")),
+        )
+        return build(result)
 
     except HTTPException:
         raise
@@ -319,8 +326,13 @@ async def list_locations_v2(
             links=links,
         )
 
-        # Add ETag for caching with Link headers
-        return respond_with_etag(result, request, response, next_cursor=next_cursor, canonical_url=str(request.url.remove_query_params("cursor")))
+        build = etag_cursor_response_builder(
+            request,
+            response,
+            next_cursor=next_cursor,
+            canonical_url=str(request.url.remove_query_params("cursor")),
+        )
+        return build(result)
 
     except HTTPException:
         raise
@@ -403,8 +415,13 @@ async def list_units_v2(
             links=links,
         )
 
-        # Add ETag for caching with Link headers
-        return respond_with_etag(result, request, response, next_cursor=next_cursor, canonical_url=str(request.url.remove_query_params("cursor")))
+        build = etag_cursor_response_builder(
+            request,
+            response,
+            next_cursor=next_cursor,
+            canonical_url=str(request.url.remove_query_params("cursor")),
+        )
+        return build(result)
 
     except HTTPException:
         raise
@@ -543,7 +560,8 @@ async def create_series_curve_mapping(
             },
         )
 
-        return respond_with_etag(result, request, response)
+        build = etag_response_builder(request, response)
+        return build(result)
 
     except Exception as exc:
         query_time_ms = (time.perf_counter() - start_time) * 1000
@@ -598,7 +616,8 @@ async def list_series_curve_mappings(
             },
         )
 
-        return respond_with_etag(result, request, response)
+        build = etag_response_builder(request, response)
+        return build(result)
 
     except Exception as exc:
         query_time_ms = (time.perf_counter() - start_time) * 1000
@@ -643,7 +662,8 @@ async def update_series_curve_mapping(
             },
         )
 
-        return respond_with_etag(result, request, response)
+        build = etag_response_builder(request, response)
+        return build(result)
 
     except Exception as exc:
         query_time_ms = (time.perf_counter() - start_time) * 1000

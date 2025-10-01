@@ -4,8 +4,8 @@ from __future__ import annotations
 import json
 import hashlib
 import logging
-from typing import Any, Dict, Optional, List, Union
-from datetime import datetime, timedelta
+from typing import Any, Dict, Optional, List
+from datetime import datetime
 
 import redis.asyncio as redis
 from redis.asyncio.client import Redis
@@ -22,6 +22,8 @@ class CacheManager:
         self.redis_settings = redis_settings
         self.cache_settings = cache_settings
         self._client: Optional[Redis] = None
+        self.namespace = "aurum"
+        self._default_entry_ttl = max(1, int(cache_settings.medium_frequency_ttl))
         
         # Golden query list - queries with longer TTL
         self.golden_queries = {
@@ -56,21 +58,29 @@ class CacheManager:
                 )
         return self._client
     
-    def _generate_cache_key(
-        self,
+    @staticmethod
+    def build_cache_key(
         route: str,
         query_params: Optional[Dict[str, Any]] = None,
+        *,
         version: str = "v2",
     ) -> str:
-        """Generate cache key from route and query parameters."""
-        # Create hash from query parameters for consistent keys
+        """Generate a stable cache key for a route/query combination."""
         if query_params:
             query_str = json.dumps(query_params, sort_keys=True)
             query_hash = hashlib.md5(query_str.encode()).hexdigest()[:12]
         else:
             query_hash = "none"
-        
+
         return f"aurum:{version}:{route}:{query_hash}"
+
+    def _namespaced(self, key: str, *, namespace: Optional[str] = None) -> str:
+        """Apply the manager namespace to a raw cache key."""
+
+        prefix = (namespace or self.namespace).rstrip(":")
+        if key.startswith(f"{prefix}:") or key.startswith("aurum:"):
+            return key
+        return f"{prefix}:{key}"
     
     def _get_ttl_for_key(self, cache_key: str) -> int:
         """Get TTL based on cache key and golden query rules."""
@@ -102,7 +112,7 @@ class CacheManager:
         version: str = "v2",
     ) -> Optional[Dict[str, Any]]:
         """Get cached data for route with query parameters."""
-        cache_key = self._generate_cache_key(route, query_params, version)
+        cache_key = self.build_cache_key(route, query_params, version=version)
         
         try:
             client = await self._get_client()
@@ -129,7 +139,7 @@ class CacheManager:
         ttl_override: Optional[int] = None,
     ) -> bool:
         """Set cached data with appropriate TTL."""
-        cache_key = self._generate_cache_key(route, query_params, version)
+        cache_key = self.build_cache_key(route, query_params, version=version)
         ttl = ttl_override or self._get_ttl_for_key(cache_key)
         
         try:
@@ -221,24 +231,126 @@ class CacheManager:
             logger.warning(f"Cache invalidate error for {cache_key}: {e}")
             return False
     
-    async def invalidate_pattern(self, pattern: str) -> int:
+    async def invalidate_pattern(self, pattern: str, namespace: Optional[str] = None) -> int:
         """Invalidate cache entries matching pattern."""
         try:
             client = await self._get_client()
-            
+
+            key_pattern = pattern
+            if "*" not in key_pattern:
+                key_pattern = f"{key_pattern}*"
+            key_pattern = self._namespaced(key_pattern, namespace=namespace)
+
             # Find keys matching pattern
-            keys = await client.keys(f"aurum:*{pattern}*")
+            keys = await client.keys(key_pattern)
             if keys:
                 await client.delete(*keys)
-                logger.info(f"Invalidated {len(keys)} cache entries matching pattern: {pattern}")
+                logger.info(
+                    "Invalidated %s cache entries matching pattern", len(keys),
+                    extra={"pattern": key_pattern},
+                )
                 return len(keys)
-            
+
             return 0
-            
+
         except Exception as e:
             logger.warning(f"Cache pattern invalidate error for {pattern}: {e}")
             return 0
-    
+
+    async def get_cache_entry(self, key: str, *, namespace: Optional[str] = None) -> Optional[Any]:
+        """Retrieve a raw cache entry using the unified naming convention."""
+
+        cache_key = self._namespaced(key, namespace=namespace)
+        try:
+            client = await self._get_client()
+            payload = await client.get(cache_key)
+        except Exception as exc:
+            logger.warning(f"Cache entry get error for {cache_key}: {exc}")
+            return None
+
+        if payload is None:
+            return None
+
+        try:
+            if isinstance(payload, bytes):
+                return json.loads(payload.decode("utf-8"))
+            return json.loads(payload)
+        except (json.JSONDecodeError, AttributeError, UnicodeDecodeError):
+            return payload
+
+    async def set_cache_entry(
+        self,
+        key: str,
+        value: Any,
+        ttl_seconds: Optional[int] = None,
+        *,
+        namespace: Optional[str] = None,
+    ) -> bool:
+        """Store a raw payload with optional TTL override."""
+
+        cache_key = self._namespaced(key, namespace=namespace)
+        ttl = ttl_seconds or self._default_entry_ttl
+
+        try:
+            serialized = json.dumps(value, default=str)
+        except (TypeError, ValueError):
+            serialized = json.dumps(str(value))
+
+        try:
+            client = await self._get_client()
+            await client.setex(cache_key, ttl, serialized)
+            logger.debug(f"Cache entry SET: {cache_key} (TTL: {ttl}s)")
+            return True
+        except Exception as exc:
+            logger.warning(f"Cache entry set error for {cache_key}: {exc}")
+            return False
+
+    async def get_curve_data(
+        self,
+        iso: str,
+        market: str,
+        location: str,
+        asof: Optional[str] = None,
+    ) -> Optional[Any]:
+        """Return cached curve payload matching the legacy key format."""
+
+        key_parts = [iso, market, location]
+        if asof:
+            key_parts.append(asof)
+        key = "curve:" + ":".join(str(part) for part in key_parts)
+        return await self.get_cache_entry(key)
+
+    async def cache_curve_data(
+        self,
+        data: Any,
+        iso: str,
+        market: str,
+        location: str,
+        asof: Optional[str] = None,
+        ttl: Optional[int] = None,
+    ) -> bool:
+        key_parts = [iso, market, location]
+        if asof:
+            key_parts.append(asof)
+        key = "curve:" + ":".join(str(part) for part in key_parts)
+        return await self.set_cache_entry(key, data, ttl_seconds=ttl or self.cache_settings.curve_data_ttl)
+
+    async def get_metadata(self, metadata_type: str, **filters: Any) -> Optional[Any]:
+        filter_str = ":".join(f"{k}:{filters[k]}" for k in sorted(filters)) if filters else ""
+        key = f"metadata:{metadata_type}:{filter_str}" if filter_str else f"metadata:{metadata_type}"
+        return await self.get_cache_entry(key)
+
+    async def cache_metadata(
+        self,
+        data: Any,
+        metadata_type: str,
+        ttl: Optional[int] = None,
+        **filters: Any,
+    ) -> bool:
+        filter_str = ":".join(f"{k}:{filters[k]}" for k in sorted(filters)) if filters else ""
+        key = f"metadata:{metadata_type}:{filter_str}" if filter_str else f"metadata:{metadata_type}"
+        return await self.set_cache_entry(key, data, ttl_seconds=ttl or self.cache_settings.metadata_ttl)
+
     async def get_cache_stats(self) -> Dict[str, Any]:
         """Get cache performance statistics."""
         try:
@@ -246,9 +358,10 @@ class CacheManager:
             
             # Get Redis info
             info = await client.info()
-            
+
             # Count keys by pattern
-            aurum_keys = await client.keys("aurum:*")
+            namespace_prefix = f"{self.namespace}:*"
+            aurum_keys = await client.keys(namespace_prefix)
             negative_keys = await client.keys("404:*")
             
             return {
