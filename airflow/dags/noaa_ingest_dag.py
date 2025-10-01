@@ -29,6 +29,7 @@ from aurum.parsers.runner import build_seatunnel_task
 from aurum.staleness.watermark_tracker import WatermarkTracker
 from aurum.telemetry.context import log_structured
 from aurum.airflow_utils.datasets import noaa_trigger, noaa_ingest
+from aurum.airflow_utils.timescale import build_timescale_task as _build_ts
 
 
 def update_watermark(
@@ -329,11 +330,12 @@ def build_noaa_ingest_task(dataset_key: str, dataset_config: Dict[str, Any]) -> 
     )
 
 def build_noaa_to_timescale_task(dataset_key: str, dataset_config: Dict[str, Any]) -> Any:
-    """Build a SeaTunnel task to load NOAA data from Kafka to Timescale."""
+    """Build a SeaTunnel task to load NOAA data from Kafka to Timescale using shared helper."""
 
-    return build_seatunnel_task(
-        "noaa_weather_kafka_to_timescale",
-        [
+    return _build_ts(
+        task_id=f"noaa_{dataset_key}_to_timescale",
+        job_name="noaa_weather_kafka_to_timescale",
+        env_entries=[
             "SCHEMA_REGISTRY_URL='{{ var.value.get(\"aurum_schema_registry\", \"http://localhost:8081\") }}'",
             "TIMESCALE_JDBC_URL='{{ var.value.get(\"aurum_timescale_jdbc\", \"jdbc:postgresql://timescale:5432/timeseries\") }}'",
             "NOAA_TABLE='{{ var.value.get(\"aurum_noaa_timescale_table\", \"noaa_weather_timeseries\") }}'",
@@ -346,7 +348,6 @@ def build_noaa_to_timescale_task(dataset_key: str, dataset_config: Dict[str, Any
             "secret/data/aurum/timescale:user=TIMESCALE_USER",
             "secret/data/aurum/timescale:password=TIMESCALE_PASSWORD",
         ],
-        task_id_override=f"noaa_{dataset_key}_to_timescale"
     )
 
 def build_noaa_lineage_task(dataset_key: str, dataset_config: Dict[str, Any]) -> Any:
