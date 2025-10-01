@@ -9,6 +9,7 @@ from airflow import DAG
 from airflow.operators.bash import BashOperator
 from airflow.operators.empty import EmptyOperator
 from airflow.operators.python import PythonOperator
+from aurum.airflow_utils import build_preflight_callable
 
 
 DEFAULT_ARGS: dict[str, Any] = {
@@ -54,24 +55,6 @@ def register_stream_source(**context: Any) -> None:
     except Exception as exc:  # pragma: no cover
         print(f"Failed to register ingest source fred_series_timescale: {exc}")
 
-
-def preflight_required_vars(keys: list[str]) -> None:
-    try:
-        from airflow.models import Variable  # type: ignore
-    except Exception as exc:  # pragma: no cover
-        print(f"Airflow Variable API unavailable: {exc}")
-        return
-    missing: list[str] = []
-    for key in keys:
-        try:
-            Variable.get(key)
-        except Exception:
-            missing.append(key)
-    if missing:
-        critical = {"aurum_kafka_bootstrap", "aurum_schema_registry", "aurum_timescale_jdbc"}
-        if any(k in critical for k in missing):
-            raise RuntimeError(f"Missing required Airflow Variables: {missing}")
-        print(f"Warning: missing optional Airflow Variables: {missing}")
 
 
 def emit_lakefs_lineage(dataset: str, **context: Any) -> None:
@@ -128,12 +111,12 @@ with DAG(
     start = EmptyOperator(task_id="start")
     preflight = PythonOperator(
         task_id="preflight_airflow_vars",
-        python_callable=lambda **_: preflight_required_vars(
-            [
+        python_callable=build_preflight_callable(
+            required_variables=(
                 "aurum_kafka_bootstrap",
                 "aurum_schema_registry",
                 "aurum_timescale_jdbc",
-            ]
+            )
         ),
     )
     register_source = PythonOperator(task_id="register_fred_series_source", python_callable=register_stream_source)

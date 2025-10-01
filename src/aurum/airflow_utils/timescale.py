@@ -25,6 +25,7 @@ def build_timescale_task(
     execution_timeout_minutes: int = 45,
     pool: Optional[str] = None,
     queue: Optional[str] = None,
+    debug_describe: bool = False,
 ):
     """Return a BashOperator that runs a SeaTunnel job for Timescale loads.
 
@@ -62,6 +63,12 @@ def build_timescale_task(
     # Always ensure a reasonable PATH/PYTHONPATH for scripts
     env_line = " ".join(list(env_entries))
 
+    describe_line = ""
+    if debug_describe:
+        describe_line = (
+            f"if [ \"${{AURUM_DEBUG:-0}}\" != \"0\" ]; then scripts/seatunnel/run_job.sh --describe {job_name}; fi\n"
+        )
+
     operator_kwargs = {
         "task_id": task_id,
         "bash_command": (
@@ -70,6 +77,7 @@ def build_timescale_task(
             f"{pull_cmd}"
             f"export PATH=\"{bin_path}\"\n"
             f"export PYTHONPATH=\"${{PYTHONPATH:-}}:{pythonpath_entry}\"\n"
+            f"{describe_line}"
             f"{env_line} scripts/seatunnel/run_job.sh {job_name}"
         ),
         "execution_timeout": timedelta(minutes=execution_timeout_minutes),
@@ -84,4 +92,3 @@ def build_timescale_task(
 
 
 __all__ = ["build_timescale_task"]
-

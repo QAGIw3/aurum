@@ -9,6 +9,7 @@ from airflow import DAG
 from airflow.operators.bash import BashOperator
 from airflow.operators.empty import EmptyOperator
 from airflow.operators.python import PythonOperator
+from aurum.airflow_utils import build_preflight_callable
 
 
 DEFAULT_ARGS: dict[str, Any] = {
@@ -45,24 +46,6 @@ def register_stream_source(**context: Any) -> None:
     except Exception as exc:  # pragma: no cover
         print(f"Failed to register ingest source cpi_series_timescale: {exc}")
 
-
-def preflight_required_vars(keys: list[str]) -> None:
-    try:
-        from airflow.models import Variable  # type: ignore
-    except Exception as exc:  # pragma: no cover
-        print(f"Airflow Variable API unavailable: {exc}")
-        return
-    missing: list[str] = []
-    for key in keys:
-        try:
-            Variable.get(key)
-        except Exception:
-            missing.append(key)
-    if missing:
-        critical = {"aurum_kafka_bootstrap", "aurum_schema_registry", "aurum_timescale_jdbc"}
-        if any(k in critical for k in missing):
-            raise RuntimeError(f"Missing required Airflow Variables: {missing}")
-        print(f"Warning: missing optional Airflow Variables: {missing}")
 
 
 def emit_lakefs_lineage(dataset: str, **context: Any) -> None:
@@ -103,50 +86,7 @@ def emit_lakefs_lineage(dataset: str, **context: Any) -> None:
         print(f"LakeFS lineage commit failed: {exc}")
 
 
-def build_timescale_task(task_id: str) -> BashOperator:
-    mappings = [
-        "secret/data/aurum/timescale:user=TIMESCALE_USER",
-        "secret/data/aurum/timescale:password=TIMESCALE_PASSWORD",
-    ]
-    mapping_flags = " ".join(f"--mapping {m}" for m in mappings)
-    pull_cmd = (
-        f"eval \"$(VAULT_ADDR={VAULT_ADDR} VAULT_TOKEN={VAULT_TOKEN} "
-        f"PYTHONPATH=${{PYTHONPATH:-}}:{PYTHONPATH_ENTRY} "
-        f"{VENV_PYTHON} scripts/secrets/pull_vault_env.py {mapping_flags} --format shell)\" || true"
-    )
-
-    kafka_bootstrap = "{{ var.value.get('aurum_kafka_bootstrap', 'localhost:9092') }}"
-    schema_registry = "{{ var.value.get('aurum_schema_registry', 'http://localhost:8081') }}"
-    jdbc_url = "{{ var.value.get('aurum_timescale_jdbc', 'jdbc:postgresql://timescale:5432/timeseries') }}"
-    topic_pattern = "{{ var.value.get('aurum_cpi_topic_pattern', 'aurum\\.ref\\.cpi\\..*\\.v1') }}"
-    table_name = "{{ var.value.get('aurum_cpi_series_table', 'cpi_series_timeseries') }}"
-    dlq_topic = "{{ var.value.get('aurum_cpi_dlq_topic', 'aurum.ref.cpi.series.dlq.v1') }}"
-    backfill_flag = "{{ dag_run.conf.get('backfill', '0') }}"
-    backfill_start = "{{ dag_run.conf.get('backfill_start', '') }}"
-    backfill_end = "{{ dag_run.conf.get('backfill_end', '') }}"
-
-    env_line = (
-        f"KAFKA_BOOTSTRAP_SERVERS='{kafka_bootstrap}' "
-        f"SCHEMA_REGISTRY_URL='{schema_registry}' "
-        f"TIMESCALE_JDBC_URL='{jdbc_url}' "
-        f"CPI_TOPIC_PATTERN='{topic_pattern}' "
-        f"CPI_SERIES_TABLE='{table_name}' "
-        f"DLQ_TOPIC='{dlq_topic}' "
-        f"BACKFILL_ENABLED='{backfill_flag}' "
-        f"BACKFILL_START='{backfill_start}' "
-        f"BACKFILL_END='{backfill_end}'"
-    )
-
-    return BashOperator(
-        task_id=task_id,
-        bash_command=(
-            "set -euo pipefail\n"
-            f"{pull_cmd}\n"
-            f"export PATH=\"{BIN_PATH}\"\n"
-            f"export PYTHONPATH=\"${{PYTHONPATH:-}}:{PYTHONPATH_ENTRY}\"\n"
-            f"{env_line} scripts/seatunnel/run_job.sh cpi_series_kafka_to_timescale"
-        ),
-    )
+from aurum.airflow_utils.timescale import build_timescale_task as _build_ts
 
 
 with DAG(
@@ -162,16 +102,34 @@ with DAG(
     start = EmptyOperator(task_id="start")
     preflight = PythonOperator(
         task_id="preflight_airflow_vars",
-        python_callable=lambda **_: preflight_required_vars(
-            [
+        python_callable=build_preflight_callable(
+            required_variables=(
                 "aurum_kafka_bootstrap",
                 "aurum_schema_registry",
                 "aurum_timescale_jdbc",
-            ]
+            )
         ),
     )
     register_source = PythonOperator(task_id="register_cpi_series_source", python_callable=register_stream_source)
-    load_timescale = build_timescale_task(task_id="cpi_series_kafka_to_timescale")
+    load_timescale = _build_ts(
+        task_id="cpi_series_kafka_to_timescale",
+        job_name="cpi_series_kafka_to_timescale",
+        env_entries=[
+            "KAFKA_BOOTSTRAP_SERVERS='{{ var.value.get(\"aurum_kafka_bootstrap\", \"localhost:9092\") }}'",
+            "SCHEMA_REGISTRY_URL='{{ var.value.get(\"aurum_schema_registry\", \"http://localhost:8081\") }}'",
+            "TIMESCALE_JDBC_URL='{{ var.value.get(\"aurum_timescale_jdbc\", \"jdbc:postgresql://timescale:5432/timeseries\") }}'",
+            "CPI_TOPIC_PATTERN='{{ var.value.get(\"aurum_cpi_topic_pattern\", \"aurum\\.ref\\.cpi\\..*\\.v1\") }}'",
+            "CPI_SERIES_TABLE='{{ var.value.get(\"aurum_cpi_series_table\", \"cpi_series_timeseries\") }}'",
+            "DLQ_TOPIC='{{ var.value.get(\"aurum_cpi_dlq_topic\", \"aurum.ref.cpi.series.dlq.v1\") }}'",
+            "BACKFILL_ENABLED='{{ dag_run.conf.get(\"backfill\", \"0\") }}'",
+            "BACKFILL_START='{{ dag_run.conf.get(\"backfill_start\", \"\") }}'",
+            "BACKFILL_END='{{ dag_run.conf.get(\"backfill_end\", \"\") }}'",
+        ],
+        mappings=[
+            "secret/data/aurum/timescale:user=TIMESCALE_USER",
+            "secret/data/aurum/timescale:password=TIMESCALE_PASSWORD",
+        ],
+    )
 
     def _update_watermark(**context: Any) -> None:
         logical_date: datetime = context["logical_date"]

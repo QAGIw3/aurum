@@ -28,7 +28,7 @@ _SRC_PATH = os.environ.get("AURUM_PYTHONPATH_ENTRY", "/opt/airflow/src")
 if _SRC_PATH and _SRC_PATH not in sys.path:
     sys.path.insert(0, _SRC_PATH)
 
-from aurum.airflow_utils import build_default_args
+from aurum.airflow_utils import build_default_args, build_preflight_callable
 from aurum.airflow_utils import iso as iso_utils
 
 DEFAULT_ARGS: dict[str, Any] = build_default_args(
@@ -210,24 +210,6 @@ def _register_bulk_sources(**context: Any) -> None:
         print(f"Bulk source registration failed: {exc}")
 
 
-def _preflight_required_vars(keys: list[str]) -> None:
-    try:
-        from airflow.models import Variable  # type: ignore
-    except Exception as exc:  # pragma: no cover
-        print(f"Airflow Variable API unavailable: {exc}")
-        return
-    missing: list[str] = []
-    for key in keys:
-        try:
-            Variable.get(key)
-        except Exception:
-            missing.append(key)
-    if missing:
-        critical = {"aurum_kafka_bootstrap", "aurum_schema_registry"}
-        if any(k in critical for k in missing):
-            raise RuntimeError(f"Missing required Airflow Variables: {missing}")
-        print(f"Warning: missing optional Airflow Variables: {missing}")
-
 
 def _update_watermark(source_name: str, logical_date: datetime) -> None:
     watermark = logical_date.astimezone(timezone.utc)
@@ -261,8 +243,8 @@ with DAG(
 
     preflight = PythonOperator(
         task_id="preflight_airflow_vars",
-        python_callable=lambda **_: _preflight_required_vars(
-            ["aurum_kafka_bootstrap", "aurum_schema_registry"]
+        python_callable=build_preflight_callable(
+            required_variables=("aurum_kafka_bootstrap", "aurum_schema_registry")
         ),
     )
 

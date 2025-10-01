@@ -42,48 +42,7 @@ SOURCES = (
 )
 
 
-def build_timescale_task(task_id: str) -> BashOperator:
-    mappings = [
-        "secret/data/aurum/timescale:user=TIMESCALE_USER",
-        "secret/data/aurum/timescale:password=TIMESCALE_PASSWORD",
-    ]
-    mapping_flags = " ".join(f"--mapping {mapping}" for mapping in mappings)
-    pull_cmd = (
-        f"eval \"$(VAULT_ADDR={VAULT_ADDR} VAULT_TOKEN={VAULT_TOKEN} "
-        f"PYTHONPATH=${{PYTHONPATH:-}}:{PYTHONPATH_ENTRY} "
-        f"{VENV_PYTHON} scripts/secrets/pull_vault_env.py {mapping_flags} --format shell)\" || true"
-    )
-
-    kafka_bootstrap = "{{ var.value.get('aurum_kafka_bootstrap', 'localhost:9092') }}"
-    schema_registry = "{{ var.value.get('aurum_schema_registry', 'http://localhost:8081') }}"
-    jdbc_url = "{{ var.value.get('aurum_timescale_jdbc', 'jdbc:postgresql://timescale:5432/timeseries') }}"
-    topic_pattern = "{{ var.value.get('aurum_iso_load_topic_pattern', 'aurum\\.iso\\..*\\.load\\.v1') }}"
-    table_name = "{{ var.value.get('aurum_iso_load_table', 'load_timeseries') }}"
-    save_mode = "{{ var.value.get('aurum_iso_load_save_mode', 'upsert') }}"
-    area_fallback = "{{ var.value.get('aurum_iso_load_area_fallback', 'SYSTEM') }}"
-
-    env_line = (
-        f"KAFKA_BOOTSTRAP_SERVERS='{kafka_bootstrap}' "
-        f"SCHEMA_REGISTRY_URL='{schema_registry}' "
-        f"TIMESCALE_JDBC_URL='{jdbc_url}' "
-        f"ISO_LOAD_TOPIC_PATTERN='{topic_pattern}' "
-        f"ISO_LOAD_TABLE='{table_name}' "
-        f"ISO_LOAD_SAVE_MODE='{save_mode}' "
-        f"ISO_LOAD_AREA_FALLBACK='{area_fallback}'"
-    )
-
-    return BashOperator(
-        task_id=task_id,
-        bash_command=(
-            "set -euo pipefail\n"
-            "if [ \"${AURUM_DEBUG:-0}\" != \"0\" ]; then set -x; fi\n"
-            f"{pull_cmd}\n"
-            f"export PATH=\"{BIN_PATH}\"\n"
-            f"export PYTHONPATH=\"${{PYTHONPATH:-}}:{PYTHONPATH_ENTRY}\"\n"
-            "if [ \"${AURUM_DEBUG:-0}\" != \"0\" ]; then scripts/seatunnel/run_job.sh --describe iso_load_kafka_to_timescale; fi\n"
-            f"{env_line} scripts/seatunnel/run_job.sh iso_load_kafka_to_timescale"
-        ),
-    )
+from aurum.airflow_utils.timescale import build_timescale_task as _build_ts
 
 
 with DAG(
@@ -120,7 +79,24 @@ with DAG(
         python_callable=lambda: iso_utils.register_sources(SOURCES),
     )
 
-    load_timescale = build_timescale_task(task_id="iso_load_kafka_to_timescale")
+    load_timescale = _build_ts(
+        task_id="iso_load_kafka_to_timescale",
+        job_name="iso_load_kafka_to_timescale",
+        env_entries=[
+            "KAFKA_BOOTSTRAP_SERVERS='{{ var.value.get(\"aurum_kafka_bootstrap\", \"localhost:9092\") }}'",
+            "SCHEMA_REGISTRY_URL='{{ var.value.get(\"aurum_schema_registry\", \"http://localhost:8081\") }}'",
+            "TIMESCALE_JDBC_URL='{{ var.value.get(\"aurum_timescale_jdbc\", \"jdbc:postgresql://timescale:5432/timeseries\") }}'",
+            "ISO_LOAD_TOPIC_PATTERN='{{ var.value.get(\"aurum_iso_load_topic_pattern\", \"aurum\\.iso\\..*\\.load\\.v1\") }}'",
+            "ISO_LOAD_TABLE='{{ var.value.get(\"aurum_iso_load_table\", \"load_timeseries\") }}'",
+            "ISO_LOAD_SAVE_MODE='{{ var.value.get(\"aurum_iso_load_save_mode\", \"upsert\") }}'",
+            "ISO_LOAD_AREA_FALLBACK='{{ var.value.get(\"aurum_iso_load_area_fallback\", \"SYSTEM\") }}'",
+        ],
+        mappings=[
+            "secret/data/aurum/timescale:user=TIMESCALE_USER",
+            "secret/data/aurum/timescale:password=TIMESCALE_PASSWORD",
+        ],
+        debug_describe=True,
+    )
 
     watermark = PythonOperator(
         task_id="update_iso_load_watermark",
