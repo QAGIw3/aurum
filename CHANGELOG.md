@@ -1,5 +1,515 @@
 # CHANGELOG
 
+## v0.3.0 (2025-10-01)
+
+### Chore
+
+* chore: commit all changes ([`0ddf1ab`](https://github.com/QAGIw3/aurum/commit/0ddf1abddf7b2d2e31a25b3433e6bbfd28113afe))
+
+### Feature
+
+* feat(airflow): standardize Timescale jobs via helper and re-enable debug describe for ISO DAGs
+
+Add src/aurum/airflow_utils/timescale.py with build_timescale_task(...) including Vault env mapping, PATH/PYTHONPATH setup, and optional debug_describe flag. Refactor Timescale loading DAGs to use helper: ingest_eia_series_timescale, ingest_fred_series_timescale, ingest_cpi_series_timescale, ingest_iso_aux_timescale, ingest_iso_load_timescale, ingest_iso_prices_timescale. Replace bespoke preflight checks with build_preflight_callable for consistency across DAGs. Add/expand DagBag parse tests in tests/airflow/test_ingest_timescale_dags.py to cover refactored DAGs and ensure eia_bulk DAG imports with key tasks present. ([`1a54d0e`](https://github.com/QAGIw3/aurum/commit/1a54d0eaba8ba4c1139ddc222ffdc8c0b986e6cc))
+
+### Refactor
+
+* refactor(api): standardize ETag via respond_with_etag; unify CacheManager; remove legacy cache; consolidate settings imports; add HTTP ETag README ([`b3038b5`](https://github.com/QAGIw3/aurum/commit/b3038b52a672c873fd29df2aae35f7c7301be97c))
+
+### Unknown
+
+* 	modified:   src/aurum/api/v2/admin.py
+	modified:   src/aurum/api/v2/metadata.py
+	modified:   src/aurum/api/v2/scenarios.py ([`11ca934`](https://github.com/QAGIw3/aurum/commit/11ca9348af6311b310db88f92ed3016ed7eced21))
+
+* 	deleted:    .bin/kustomize
+	modified:   airflow/dags/aurum/reference/__init__.py
+	modified:   k8s/base/configmap-env.yaml
+	modified:   k8s/base/kafka.yaml
+	modified:   k8s/base/kustomization.yaml
+	modified:   k8s/base/nessie.yaml
+	modified:   k8s/base/schema-registry.yaml
+	modified:   k8s/base/vault-agent-injector.yaml
+	modified:   k8s/ui/kafka-ui.yaml
+	modified:   libs/common/cache.py
+	deleted:    libs/contracts/openapi/aurum.generated.yaml
+	deleted:    libs/contracts/openapi/aurum.yaml
+	modified:   libs/core/__init__.py
+	modified:   libs/core/enums.py
+	modified:   libs/core/models.py
+	modified:   libs/core/pagination.py
+	modified:   libs/pipelines/data_pipeline/optimization.py
+	modified:   libs/pipelines/seatunnel/__init__.py
+	modified:   libs/pipelines/seatunnel/assertions.py
+	modified:   libs/pipelines/seatunnel/dry_run_renderer.py
+	modified:   libs/pipelines/seatunnel/generate_assertion_config.py
+	modified:   libs/pipelines/seatunnel/linter.py
+	modified:   libs/pipelines/seatunnel/renderer.py
+	modified:   libs/pipelines/seatunnel/subject_naming.py
+	modified:   libs/pipelines/seatunnel/transforms.py
+	modified:   libs/services/__init__.py
+	new file:   libs/services/base_service.py
+	new file:   libs/services/cache_support.py
+	modified:   libs/services/catalog_service.py
+	new file:   libs/services/contracts.py
+	modified:   libs/services/curves_service.py
+	modified:   libs/services/market_service.py
+	modified:   libs/services/metadata_service.py
+	new file:   libs/services/query_builder.py
+	modified:   src/aurum/api/app.py
+	modified:   src/aurum/api/cache/cache.py
+	modified:   src/aurum/api/cache/consolidated_manager.py
+	modified:   src/aurum/api/cache/initialization.py
+	modified:   src/aurum/api/container.py
+	modified:   src/aurum/api/contracts/__init__.py
+	modified:   src/aurum/api/curves_v2_service.py
+	modified:   src/aurum/api/dao/curves_dao.py
+	modified:   src/aurum/api/deps.py
+	modified:   src/aurum/api/handlers/external.py
+	new file:   src/aurum/api/handlers/external_support.py
+	new file:   src/aurum/api/http/response_builders.py
+	modified:   src/aurum/api/http/responses.py
+	modified:   src/aurum/api/lifespan_manager.py
+	modified:   src/aurum/api/middleware/enhanced_registry.py
+	modified:   src/aurum/api/middleware/manager.py
+	modified:   src/aurum/api/middleware/registry.py
+	modified:   src/aurum/api/query.py
+	modified:   src/aurum/api/rate_limiting/__init__.py
+	modified:   src/aurum/api/rate_limiting/admin_router.py
+	modified:   src/aurum/api/rate_limiting/unified_rate_limiter.py
+	modified:   src/aurum/api/router_registry.py
+	modified:   src/aurum/api/service.py
+	modified:   src/aurum/api/services/__init__.py
+	deleted:    src/aurum/api/services/curves_service.py
+	modified:   src/aurum/api/services/dbt_management_service.py
+	modified:   src/aurum/api/services/iso_service.py
+	modified:   src/aurum/api/state.py
+	new file:   src/aurum/api/v1_retired.py
+	modified:   src/aurum/api/v2/admin.py
+	modified:   src/aurum/api/v2/admin_config.py
+	modified:   src/aurum/api/v2/curves.py
+	modified:   src/aurum/api/v2/drought.py
+	modified:   src/aurum/api/v2/eia.py
+	modified:   src/aurum/api/v2/iso.py
+	modified:   src/aurum/api/v2/metadata.py
+	modified:   src/aurum/api/v2/ppa.py
+	modified:   src/aurum/api/v2/scenarios.py
+	modified:   src/aurum/core/settings.py
+	modified:   src/aurum/events/streaming.py
+	modified:   src/aurum/notifications/pipeline.py
+	modified:   src/aurum/observability/metrics.py
+	modified:   src/aurum/scenarios/event_pipeline.py
+	modified:   src/aurum/scenarios/worker.py
+	modified:   src/aurum/streaming/kafka_processor.py
+	new file:   src/aurum/streaming/kafka_utils.py
+	modified:   src/aurum/telemetry/__init__.py
+	deleted:    tests/api/test_admin_cache_controls.py
+	new file:   tests/api/test_admin_cache_controls_v2.py
+	new file:   tests/api/test_admin_config_more_v2.py
+	new file:   tests/api/test_admin_config_v2.py
+	modified:   tests/api/test_admin_guard_block.py
+	modified:   tests/api/test_auth_middleware_jwt.py
+	modified:   tests/api/test_curves_api.py
+	modified:   tests/api/test_curves_etag.py
+	modified:   tests/api/test_etag_coverage.py
+	deleted:    tests/api/test_feature_flags_integration.py
+	modified:   tests/api/test_iso_lmp_api.py
+	modified:   tests/api/test_router_registry.py
+	modified:   tests/api/test_scenario_conformance.py
+	modified:   tests/api/test_scenarios_api.py
+	modified:   tests/api/test_services_curves.py
+	modified:   tests/api/test_tenant_rate_limits.py
+	new file:   tests/api/test_v1_retired_stub.py
+	modified:   tests/conftest.py
+	modified:   tests/e2e/test_smoke.py
+	modified:   tests/smoke/test_api_smoke.py
+	new file:   tests/unit/test_external_support_helpers.py
+	new file:   tests/unit/test_http_response_builders.py
+	modified:   validate_cache_governance.py
+	modified:   validate_data_pipeline.py
+	modified:   validate_observability.py
+	modified:   validate_rate_limiting.py
+	new file:   validation_utils.py
+
+ Changes not staged for commit:
+	modified:   src/aurum/api/v2/admin.py
+	modified:   src/aurum/api/v2/metadata.py
+	modified:   src/aurum/api/v2/scenarios.py ([`d712d8e`](https://github.com/QAGIw3/aurum/commit/d712d8e1744cd598ac3d2dd5a1ab9ee73e148ccd))
+
+* 	new file:   .github/workflows/config-validation.yml
+	modified:   .gitignore
+	new file:   .hypothesis/unicode_data/14.0.0/charmap.json.gz
+	modified:   compose/docker-compose.dev.yml
+	modified:   config/grafana_dashboards.json
+	new file:   config/notifications/channels.json
+	new file:   config/notifications/rate_limits.json
+	new file:   config/notifications/routing_defaults.json
+	new file:   config/notifications/templates/alert.generic.json
+	new file:   db/migrations/versions/20250102_01_config_tracking_tables.py
+	new file:   db/migrations/versions/20250928_10_event_platform_tables.py
+	modified:   docs/README.md
+	new file:   docs/architecture/event_driven_follow_up.md
+	new file:   docs/architecture/event_driven_platform.md
+	modified:   docs/configuration.md
+	modified:   docs/feature-flags.md
+	new file:   docs/search-platform/README.md
+	new file:   docs/search-platform/feature-rollout.md
+	new file:   docs/search-platform/operations-runbook.md
+	new file:   docs/security/token-issuer.md
+	new file:   k8s/base/elasticsearch.yaml
+	modified:   k8s/base/kustomization.yaml
+	new file:   kafka/schemas/config.events.v1.avsc
+	modified:   kafka/schemas/contracts.yml
+	new file:   kafka/schemas/notifications.analytics.v1.avsc
+	new file:   kafka/schemas/notifications.delivery.v1.avsc
+	new file:   kafka/schemas/notifications.dispatch.v1.avsc
+	new file:   kafka/schemas/search.analytics.v1.avsc
+	modified:   kafka/schemas/subjects.json
+	modified:   pyproject.toml
+	new file:   pytest.ini
+	new file:   scripts/config/backup_restore.py
+	new file:   scripts/config/deploy.py
+	new file:   scripts/config/diff.py
+	new file:   scripts/search_batch_loader.py
+	modified:   scripts/seatunnel/test_data_quality.py
+	modified:   src/aurum/api/app.py
+	modified:   src/aurum/api/async_service.py
+	modified:   src/aurum/api/auth.py
+	new file:   src/aurum/api/auth_endpoints.py
+	modified:   src/aurum/api/cache/__init__.py
+	modified:   src/aurum/api/cache/unified_cache_manager.py
+	modified:   src/aurum/api/database/__init__.py
+	modified:   src/aurum/api/database/database_monitor.py
+	modified:   src/aurum/api/database/trino_admin.py
+	modified:   src/aurum/api/database/trino_client.py
+	modified:   src/aurum/api/deps.py
+	modified:   src/aurum/api/features/__init__.py
+	new file:   src/aurum/api/features/analytics.py
+	modified:   src/aurum/api/features/feature_management.py
+	new file:   src/aurum/api/features/manager.py
+	new file:   src/aurum/api/features/models.py
+	new file:   src/aurum/api/features/rollouts.py
+	new file:   src/aurum/api/features/stores.py
+	modified:   src/aurum/api/legacy/__init__.py
+	modified:   src/aurum/api/legacy/async_service_legacy.py
+	new file:   src/aurum/api/legacy/models.py
+	new file:   src/aurum/api/legacy/scenario_models.py
+	modified:   src/aurum/api/middleware/admin_guard.py
+	modified:   src/aurum/api/middleware/manager.py
+	modified:   src/aurum/api/offload.py
+	modified:   src/aurum/api/rate_limiting/admin_router.py
+	modified:   src/aurum/api/router_registry.py
+	modified:   src/aurum/api/routes.py
+	modified:   src/aurum/api/scenarios/feature_flags.py
+	new file:   src/aurum/api/scenarios/monte_carlo.py
+	new file:   src/aurum/api/scenarios/storage.py
+	modified:   src/aurum/api/service.py
+	modified:   src/aurum/api/v1/curves.py
+	new file:   src/aurum/api/v1/notifications.py
+	modified:   src/aurum/api/v2/admin.py
+	new file:   src/aurum/api/v2/admin_config.py
+	new file:   src/aurum/api/v2/search.py
+	modified:   src/aurum/cli/stress_test.py
+	new file:   src/aurum/config/change_tracking.py
+	new file:   src/aurum/config/dynamic_config.py
+	new file:   src/aurum/config/observability.py
+	new file:   src/aurum/config/validation.py
+	modified:   src/aurum/core/settings.py
+	new file:   src/aurum/events/__init__.py
+	new file:   src/aurum/events/event_store.py
+	new file:   src/aurum/events/saga_orchestrator.py
+	new file:   src/aurum/events/streaming.py
+	modified:   src/aurum/external/collect/base.py
+	new file:   src/aurum/notifications/__init__.py
+	new file:   src/aurum/notifications/analytics.py
+	new file:   src/aurum/notifications/intelligent_routing.py
+	new file:   src/aurum/notifications/multi_channel.py
+	new file:   src/aurum/notifications/pipeline.py
+	new file:   src/aurum/notifications/scheduling.py
+	new file:   src/aurum/notifications/service.py
+	new file:   src/aurum/notifications/templates.py
+	modified:   src/aurum/observability/alert_manager.py
+	modified:   src/aurum/observability/metrics.py
+	new file:   src/aurum/scenarios/event_pipeline.py
+	modified:   src/aurum/scenarios/stress_testing.py
+	modified:   src/aurum/scenarios/worker_service.py
+	new file:   src/aurum/search/__init__.py
+	new file:   src/aurum/search/advanced_filtering.py
+	new file:   src/aurum/search/analytics.py
+	new file:   src/aurum/search/ann_optimizer.py
+	new file:   src/aurum/search/circuit_breaker.py
+	new file:   src/aurum/search/elasticsearch_engine.py
+	new file:   src/aurum/search/index_lifecycle.py
+	new file:   src/aurum/search/mappers.py
+	new file:   src/aurum/search/query_processor.py
+	new file:   src/aurum/search/ranking_engine.py
+	new file:   src/aurum/search/semantic_search.py
+	new file:   src/aurum/search/synonyms_and_fuzzy.py
+	modified:   src/aurum/security/audit.py
+	modified:   src/aurum/security/auth.py
+	modified:   src/aurum/security/middleware.py
+	new file:   src/aurum/security/rbac.py
+	new file:   src/aurum/security/token_service.py
+	modified:   src/aurum/security/validation.py
+	modified:   tests/api/__init__.py
+	modified:   tests/api/conftest.py
+	modified:   tests/api/test_app_configuration.py
+	modified:   tests/api/test_app_factory.py
+	modified:   tests/api/test_auth_enforcement.py
+	new file:   tests/common/__init__.py
+	new file:   tests/common/airflow_stub.py
+	new file:   tests/common/app_factory.py
+	new file:   tests/common/feature_flags.py
+	new file:   tests/common/fixtures.py
+	new file:   tests/common/in_memory_streaming.py
+	new file:   tests/config/test_dynamic_config.py
+	modified:   tests/conftest.py
+	new file:   tests/contract/__init__.py
+	new file:   tests/contract/conftest.py
+	new file:   tests/contract/test_openapi_conformance.py
+	new file:   tests/contract/test_rfc7807_errors.py
+	new file:   tests/factories/__init__.py
+	new file:   tests/factories/api_payload_factories.py
+	new file:   tests/factories/curve_factories.py
+	new file:   tests/factories/scenario_factories.py
+	new file:   tests/factories/tenant_factories.py
+	modified:   tests/integration/conftest.py
+	new file:   tests/integration/containers.py
+	new file:   tests/integration/test_config_runtime.py
+	new file:   tests/integration/test_database_integration.py
+	new file:   tests/integration/test_kafka_integration.py
+	new file:   tests/integration/test_multitenant_integration.py
+	modified:   tests/observability/test_metrics_endpoint.py
+	new file:   tests/perf/__init__.py
+	new file:   tests/perf/conftest.py
+	new file:   tests/perf/test_api_performance.py
+	new file:   tests/perf/test_service_performance.py
+	new file:   tests/scenarios/test_event_pipeline.py
+	new file:   tests/schema/test_schema_validator.py
+	new file:   tests/security/test_security_middleware.py
+	new file:   tests/security/test_token_service.py
+	new file:   tests/test_factories_usage.py
+	modified:   tests/workflow/test_versioning.py ([`6d13a0f`](https://github.com/QAGIw3/aurum/commit/6d13a0fea4e4e40bdbfc75c8e9ed787af937653f))
+
+* 	deleted:    .coverage
+	modified:   airflow/dags/ingest_vendor_curves_eod.py
+	new file:   compose/docker-compose.governance.yml
+	new file:   config/async_runtime.json
+	new file:   config/governance/openmetadata_ingestion.yaml
+	modified:   config/workflows/example_dynamic.json
+	modified:   docs/README.md
+	new file:   docs/adr/ADR-async-execution.md
+	modified:   docs/api/external.md
+	new file:   docs/api/middleware.md
+	new file:   docs/governance/rollout.md
+	new file:   docs/workflows/advanced_orchestration.md
+	modified:   grafana_dashboards.json
+	new file:   monitoring_alerting/governance_alerts.yml
+	modified:   pyproject.toml
+	new file:   scripts/governance/run_openmetadata_ingestion.sh
+	modified:   src/aurum/airflow_utils/__init__.py
+	new file:   src/aurum/airflow_utils/openlineage_adapter.py
+	modified:   src/aurum/api/app.py
+	new file:   src/aurum/api/async_exec/executor.py
+	new file:   src/aurum/api/async_exec/monitoring.py
+	new file:   src/aurum/api/async_exec/queues.py
+	new file:   src/aurum/api/async_exec/retry_circuit.py
+	new file:   src/aurum/api/async_exec/supervisor.py
+	new file:   src/aurum/api/async_exec/testing.py
+	modified:   src/aurum/api/async_service.py
+	modified:   src/aurum/api/cache/cache.py
+	modified:   src/aurum/api/cache/consolidated_manager.py
+	modified:   src/aurum/api/client.py
+	modified:   src/aurum/api/container.py
+	new file:   src/aurum/api/database/redis_client.py
+	modified:   src/aurum/api/database/timescale_client.py
+	modified:   src/aurum/api/database/trino_client.py
+	modified:   src/aurum/api/graphql/resolvers.py
+	modified:   src/aurum/api/graphql/schema.py
+	new file:   src/aurum/api/graphql/subscriptions.py
+	new file:   src/aurum/api/legacy/__init__.py
+	new file:   src/aurum/api/legacy/async_service_legacy.py
+	modified:   src/aurum/api/lifespan_manager.py
+	new file:   src/aurum/api/middleware/manager.py
+	new file:   src/aurum/api/middleware/resource_cleanup.py
+	new file:   src/aurum/api/middleware/testing.py
+	modified:   src/aurum/api/rate_limiting/rate_limiting.py
+	modified:   src/aurum/api/services/__init__.py
+	new file:   src/aurum/api/services/governance_service.py
+	new file:   src/aurum/cache/__init__.py
+	new file:   src/aurum/cache/analytics.py
+	new file:   src/aurum/cache/multi_tier.py
+	new file:   src/aurum/cache/predictive_warming.py
+	modified:   src/aurum/cli/feature.py
+	modified:   src/aurum/cli/scenario.py
+	new file:   src/aurum/cli/workflow.py
+	modified:   src/aurum/common/__init__.py
+	new file:   src/aurum/curves/__init__.py
+	new file:   src/aurum/curves/analytics_engine.py
+	new file:   src/aurum/curves/interpolation.py
+	new file:   src/aurum/curves/pattern_recognition.py
+	modified:   src/aurum/data/backend_adapter.py
+	new file:   src/aurum/governance/__init__.py
+	new file:   src/aurum/governance/catalog.py
+	new file:   src/aurum/governance/classification.py
+	new file:   src/aurum/governance/impact_analysis.py
+	new file:   src/aurum/governance/lineage_tracker.py
+	new file:   src/aurum/governance/monitors.py
+	new file:   src/aurum/governance/privacy.py
+	new file:   src/aurum/governance/quality_engine.py
+	new file:   src/aurum/governance/schema_tracker.py
+	modified:   src/aurum/observability/metrics.py
+	modified:   src/aurum/observability/tracing.py
+	new file:   src/aurum/workflow/config_schema.py
+	modified:   src/aurum/workflow/dynamic_dags.py
+	new file:   src/aurum/workflow/observability.py
+	modified:   src/aurum/workflow/templates.py
+	new file:   src/aurum/workflow/versioning.py
+	modified:   tests/e2e/test_smoke.py
+	modified:   tests/observability/test_metric_helpers.py
+	new file:   tests/test_middleware_manager.py
+	new file:   tests/workflow/test_dynamic_dags.py
+	new file:   tests/workflow/test_versioning.py ([`0ee54ae`](https://github.com/QAGIw3/aurum/commit/0ee54aed8ed33ee416d743388c2b9dc6dc9e133b))
+
+* 	modified:   src/aurum/api/graphql/schema.py ([`e75730f`](https://github.com/QAGIw3/aurum/commit/e75730fe5665280106325de5ffcb6a0ccd7f003f))
+
+* 	modified:   src/aurum/api/graphql/schema.py ([`966ef1d`](https://github.com/QAGIw3/aurum/commit/966ef1d157849614ced409169911f153c6ce6851))
+
+* 	modified:   .coverage
+	new file:   .hypothesis/examples/04e6b3400353b141/1e5676e52abf40fd
+	new file:   .hypothesis/examples/04e6b3400353b141/31456db505b8cd89
+	new file:   .hypothesis/examples/04e6b3400353b141/43b68f2b603b3a22
+	new file:   .hypothesis/examples/04e6b3400353b141/45053d9929c91ff9
+	new file:   .hypothesis/examples/04e6b3400353b141/4ef53017c7c05511
+	new file:   .hypothesis/examples/04e6b3400353b141/7b856ac9cf768c46
+	new file:   .hypothesis/examples/04e6b3400353b141/7ce065bc3164c98c
+	new file:   .hypothesis/examples/04e6b3400353b141/b9dfb70d7d433f3b
+	new file:   .hypothesis/examples/04e6b3400353b141/cd0e86372849af91
+	new file:   .hypothesis/examples/1e5676e52abf40fd/9f23b58f0f6bd9da
+	new file:   .hypothesis/examples/31456db505b8cd89/40c1147b1c6908a9
+	new file:   .hypothesis/examples/43b68f2b603b3a22/7c799e9074a9d073
+	new file:   .hypothesis/examples/43b68f2b603b3a22/8cbdbeb9c5b1b441
+	new file:   .hypothesis/examples/45053d9929c91ff9/c1ce3806d7b03392
+	new file:   .hypothesis/examples/4ef53017c7c05511/52491accf24051ba
+	new file:   .hypothesis/examples/4ef53017c7c05511/b6bafb2cc8d317c6
+	new file:   .hypothesis/examples/7b856ac9cf768c46/1ae46554858e307b
+	new file:   .hypothesis/examples/7b856ac9cf768c46/759a43b4dfa35d20
+	new file:   .hypothesis/examples/7ce065bc3164c98c/1236c0a13f38a176
+	new file:   .hypothesis/examples/7ce065bc3164c98c/20fc1290ca65f05f
+	new file:   .hypothesis/examples/7ce065bc3164c98c/33bcc3bef475e01d
+	new file:   .hypothesis/examples/7ce065bc3164c98c/d1204f893ac83108
+	new file:   .hypothesis/examples/b9dfb70d7d433f3b/77fa7e3c44765c16
+	new file:   .hypothesis/examples/b9dfb70d7d433f3b/88950f267ce61a3e
+	new file:   .hypothesis/examples/cd0e86372849af91/3e9e434b1cbbf963
+	new file:   .hypothesis/examples/cd0e86372849af91/e0ab96c57319e4a9
+	modified:   .hypothesis/unicode_data/15.1.0/codec-utf-8.json.gz
+	modified:   apps/api/main.py
+	modified:   coverage.xml
+	new file:   docs/CONFIG_SCHEMA_README.md
+	modified:   docs/async_dao_pattern.md
+	modified:   docs/configuration.md
+	new file:   docs/feature_flags.md
+	modified:   libs/common/config.py
+	modified:   pyproject.toml
+	modified:   src/aurum/api/__init__.py
+	modified:   src/aurum/api/app.py
+	modified:   src/aurum/api/app_lifecycle.py
+	modified:   src/aurum/api/auth.py
+	modified:   src/aurum/api/cache/README.md
+	modified:   src/aurum/api/cache/cache_analytics.py
+	modified:   src/aurum/api/cache/consolidated_manager.py
+	modified:   src/aurum/api/cache/unified_cache_manager.py
+	modified:   src/aurum/api/cache/utils.py
+	modified:   src/aurum/api/container.py
+	new file:   src/aurum/api/dao/experimental/__init__.py
+	renamed:    src/aurum/api/daos/base_dao.py -&gt; src/aurum/api/dao/experimental/base_dao.py
+	renamed:    src/aurum/api/daos/cache_dao.py -&gt; src/aurum/api/dao/experimental/cache_dao.py
+	renamed:    src/aurum/api/daos/curves_dao.py -&gt; src/aurum/api/dao/experimental/curves_dao.py
+	renamed:    src/aurum/api/daos/scenarios_dao.py -&gt; src/aurum/api/dao/experimental/scenarios_dao.py
+	renamed:    src/aurum/api/daos/test/__init__.py -&gt; src/aurum/api/dao/experimental/test/__init__.py
+	renamed:    src/aurum/api/daos/test/fake_cache_dao.py -&gt; src/aurum/api/dao/experimental/test/fake_cache_dao.py
+	renamed:    src/aurum/api/daos/test/fake_curves_dao.py -&gt; src/aurum/api/dao/experimental/test/fake_curves_dao.py
+	renamed:    src/aurum/api/daos/test/fake_scenarios_dao.py -&gt; src/aurum/api/dao/experimental/test/fake_scenarios_dao.py
+	deleted:    src/aurum/api/daos/__init__.py
+	modified:   src/aurum/api/database/connections.py
+	modified:   src/aurum/api/database/performance.py
+	new file:   src/aurum/api/database/timescale_client.py
+	modified:   src/aurum/api/exceptions.py
+	new file:   src/aurum/api/graphql/resolvers.py
+	modified:   src/aurum/api/graphql/router.py
+	modified:   src/aurum/api/graphql/schema.py
+	modified:   src/aurum/api/http/middleware/access.py
+	modified:   src/aurum/api/lifespan_manager.py
+	modified:   src/aurum/api/logging/__init__.py
+	new file:   src/aurum/api/middleware/logging_context.py
+	modified:   src/aurum/api/middleware/registry.py
+	modified:   src/aurum/api/middleware/rfc7807.py
+	new file:   src/aurum/api/middleware/tenant_context.py
+	modified:   src/aurum/api/router_registry.py
+	modified:   src/aurum/api/runtime_config.py
+	modified:   src/aurum/api/service.py
+	modified:   src/aurum/api/services/admin_service.py
+	modified:   src/aurum/api/services/anomaly_detection_service.py
+	modified:   src/aurum/api/services/bidding_rl_service.py
+	modified:   src/aurum/api/services/carbon_rec_service.py
+	modified:   src/aurum/api/services/dbt_management_service.py
+	modified:   src/aurum/api/services/esg_risk_service.py
+	modified:   src/aurum/api/services/explainability_service.py
+	modified:   src/aurum/api/services/feature_store_service.py
+	modified:   src/aurum/api/services/iso_service.py
+	modified:   src/aurum/api/services/model_registry_service.py
+	new file:   src/aurum/api/services/plugin_marketplace.py
+	modified:   src/aurum/api/services/plugin_system_service.py
+	modified:   src/aurum/api/services/policy_tagging_service.py
+	modified:   src/aurum/api/services/ppa_service.py
+	modified:   src/aurum/api/services/regulatory_tracker_service.py
+	modified:   src/aurum/api/services/renewables_ingestion_service.py
+	new file:   src/aurum/api/services/risk_compliance_service.py
+	modified:   src/aurum/api/services/risk_engine_service.py
+	modified:   src/aurum/api/v1/admin.py
+	modified:   src/aurum/api/v1/curves.py
+	modified:   src/aurum/api/v1/drought.py
+	modified:   src/aurum/api/v2/__init__.py
+	modified:   src/aurum/api/v2/curves.py
+	modified:   src/aurum/api/v2/eia.py
+	modified:   src/aurum/api/v2/forecasting.py
+	modified:   src/aurum/api/v2/metadata.py
+	modified:   src/aurum/api/v2/ppa.py
+	new file:   src/aurum/api/v2/risk_management.py
+	modified:   src/aurum/api/v2/scenarios.py
+	modified:   src/aurum/core/settings.py
+	modified:   src/aurum/external/providers/__init__.py
+	modified:   src/aurum/ml/__init__.py
+	modified:   src/aurum/ml/anomaly_detection.py
+	modified:   src/aurum/ml/forecasting/models.py
+	modified:   src/aurum/observability/logging.py
+	new file:   src/aurum/risk/__init__.py
+	new file:   src/aurum/risk/compliance.py
+	new file:   src/aurum/risk/stress_testing.py
+	new file:   src/aurum/risk/var_engine.py
+	modified:   src/aurum/scenarios/storage.py
+	modified:   src/aurum/telemetry/context.py
+	new file:   src/aurum/tenancy/__init__.py
+	new file:   src/aurum/tenancy/isolation.py
+	new file:   src/aurum/tenancy/runtime.py
+	new file:   src/aurum/tenancy/tenant_manager.py
+	new file:   tests/api/test_app_factory.py
+	modified:   tests/ml/test_anomaly_detection.py
+	new file:   tests/ml/test_cli.py
+	new file:   tests/ml/test_evaluation.py
+	modified:   tests/ml/test_feature_engineering.py
+	new file:   tests/ml/test_forecasting_models.py
+	modified:   tests/ml/test_forecasting_pipeline.py
+	new file:   tests/ml/test_forecasting_shape.py
+	modified:   tests/ml/test_forecasting_simple.py
+	new file:   tests/ml/test_registry.py
+	modified:   tests/ml/test_retraining.py
+	modified:   tests/ml/test_volatility.py
+	new file:   tests/risk/test_stress_testing.py
+	new file:   tests/risk/test_var_engine.py
+	new file:   tests/tenancy/test_tenant_context_middleware.py
+	new file:   tests/tenancy/test_tenant_manager.py ([`fed59fb`](https://github.com/QAGIw3/aurum/commit/fed59fba84bd7e3f62b054ec6d5d8d2aa8f6c9b1))
+
 ## v0.2.0 (2025-09-28)
 
 ### Feature
