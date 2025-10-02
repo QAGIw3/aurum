@@ -10,7 +10,7 @@ Conventions
 - Keep surrogate keys stable; continue using `aurum_text_hash` in dimensions.
 
 Docs persistence
-- `persist_docs` is enabled for relations and columns. On Trino + Iceberg, dbt applies `COMMENT ON TABLE/COLUMN` where supported by the connector.
+- `persist_docs` is enabled for relations and columns on models and seeds. On Trino + Iceberg, dbt applies `COMMENT ON TABLE/COLUMN` where supported by the connector.
 - Ensure the Trino role used for dbt has privileges to set comments in the target catalog/schema.
 
 Selectors
