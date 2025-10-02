@@ -1,495 +1,521 @@
-"""Model registry service for ML model management with caching.
+"""Core Model Registry Service.
 
-Implements business logic for model versioning, training job management,
-model comparison, and deployment lifecycle.
+This service handles model registration, versioning, and metadata management
+following SOLID principles and clean architecture patterns.
+
+Extracted from the monolithic model_registry_service.py as part of the 
+service layer decomposition initiative.
 """
 
 from __future__ import annotations
 
-import hashlib
-import json
 import logging
-from typing import Any, Dict, List, Optional, Protocol
 from datetime import datetime
+from typing import Dict, List, Optional, Any, Set
 from uuid import uuid4
 
-from ..base import BaseService, ServiceContext, ServiceResult, ServiceError, ValidationError, NotFoundError
+from pydantic import BaseModel, Field
 
-logger = logging.getLogger(__name__)
-
-
-class CacheProtocol(Protocol):
-    """Protocol for cache implementations."""
-    
-    async def get(self, key: str) -> Optional[Any]:
-        ...
-    
-    async def set(self, key: str, value: Any, ttl: int) -> None:
-        ...
-    
-    async def delete(self, key: str) -> None:
-        ...
+from src.aurum.services.base import BaseService
+from src.aurum.data.repositories.base import BaseRepository
 
 
-class ModelRegistryService(BaseService):
-    """Service for ML model registry operations with caching support.
+class RegisteredModel(BaseModel):
+    """Represents a registered ML model in the registry."""
     
-    Model registry provides:
-    - Model versioning and lifecycle management
-    - Training job tracking and metrics
-    - Model comparison and A/B testing
-    - Deployment management
-    - Model performance monitoring
+    model_id: str = Field(default_factory=lambda: str(uuid4()))
+    model_name: str
+    model_type: str
+    description: str = ""
+    status: str = "active"
+    versions: List[str] = Field(default_factory=list)
+    latest_version: Optional[str] = None
+    tags: Dict[str, str] = Field(default_factory=dict)
+    owners: Set[str] = Field(default_factory=set)
+    metadata: Dict[str, Any] = Field(default_factory=dict)
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+    updated_at: datetime = Field(default_factory=datetime.utcnow)
+
+
+class ModelVersion(BaseModel):
+    """Represents a specific version of a registered model."""
     
-    This service:
-    - Manages model definitions and versions
-    - Tracks training jobs and experiments
-    - Provides model comparison analytics
-    - Implements model promotion workflows
-    - Enforces model governance policies
-    - Caches model metadata for performance
-    """
+    version_id: str = Field(default_factory=lambda: str(uuid4()))
+    model_name: str
+    version_number: str
+    description: str = ""
+    status: str = "registered"
+    model_path: Optional[str] = None
+    model_size_bytes: Optional[int] = None
+    config: Dict[str, Any] = Field(default_factory=dict)
+    performance_metrics: Dict[str, float] = Field(default_factory=dict)
+    feature_importance: Dict[str, float] = Field(default_factory=dict)
+    validation_results: Dict[str, Any] = Field(default_factory=dict)
+    training_start_date: Optional[datetime] = None
+    training_end_date: Optional[datetime] = None
+    deployment_date: Optional[datetime] = None
+    retirement_date: Optional[datetime] = None
+    tags: Dict[str, str] = Field(default_factory=dict)
+    metadata: Dict[str, Any] = Field(default_factory=dict)
+    created_by: str
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+    updated_at: datetime = Field(default_factory=datetime.utcnow)
+
+
+class ModelRegistryRepository(BaseRepository):
+    """Repository interface for model registry operations."""
     
-    def __init__(self, cache: Optional[CacheProtocol] = None, cache_ttl: int = 1800):
-        """Initialize service with optional cache.
-        
-        Args:
-            cache: Optional cache implementation
-            cache_ttl: Cache time-to-live in seconds (default 30 min)
-        """
-        super().__init__()
-        self._models: Dict[str, Dict[str, Any]] = {}
-        self._versions: Dict[str, List[Dict[str, Any]]] = {}
-        self._training_jobs: Dict[str, Dict[str, Any]] = {}
-        self.cache = cache
-        self.cache_ttl = cache_ttl
-        self._cache_namespace = "models:v1"
+    async def save_model(self, model: RegisteredModel) -> RegisteredModel:
+        """Save or update a registered model."""
+        raise NotImplementedError
     
-    async def register_model(
-        self,
-        name: str,
-        model_type: str,
-        description: Optional[str] = None,
-        tags: Optional[List[str]] = None,
-        context: Optional[ServiceContext] = None
-    ) -> ServiceResult[Dict[str, Any]]:
-        """Register a new model in the registry.
-        
-        Args:
-            name: Model name (unique identifier)
-            model_type: Type of model (e.g., "forecasting", "classification")
-            description: Model description
-            tags: Model tags for categorization
-            context: Service context
-            
-        Returns:
-            ServiceResult with registered model
-            
-        Raises:
-            ValidationError: If parameters invalid
-            ServiceError: If registration fails
-        """
-        self._log_operation("register_model", context=context, model_name=name)
-        
-        try:
-            # Validate inputs
-            self._validate_model_name(name)
-            self._validate_model_type(model_type)
-            
-            # Check if model already exists
-            if name in self._models:
-                raise ValidationError(f"Model '{name}' already registered", field="name")
-            
-            # Create model entry
-            model = {
-                "name": name,
-                "model_type": model_type,
-                "description": description or "",
-                "tags": tags or [],
-                "created_at": datetime.now().isoformat(),
-                "version_count": 0,
-                "latest_version": None,
-                "status": "registered"
-            }
-            
-            self._models[name] = model
-            self._versions[name] = []
-            
-            return ServiceResult.ok(
-                data=model,
-                metadata={"model_name": name, "registered": True}
-            )
-            
-        except ValidationError:
-            raise
-        except Exception as e:
-            raise self._handle_error(e, "register_model", context)
-    
-    async def create_model_version(
-        self,
-        model_name: str,
-        version: str,
-        model_path: str,
-        metrics: Optional[Dict[str, float]] = None,
-        parameters: Optional[Dict[str, Any]] = None,
-        context: Optional[ServiceContext] = None
-    ) -> ServiceResult[Dict[str, Any]]:
-        """Create a new version of a model.
-        
-        Args:
-            model_name: Name of the model
-            version: Version identifier (e.g., "v1.0.0")
-            model_path: Path to model artifacts
-            metrics: Model performance metrics
-            parameters: Model hyperparameters
-            context: Service context
-            
-        Returns:
-            ServiceResult with created model version
-            
-        Raises:
-            ValidationError: If parameters invalid
-            NotFoundError: If model not found
-            ServiceError: If creation fails
-        """
-        self._log_operation(
-            "create_model_version",
-            context=context,
-            model_name=model_name,
-            version=version
-        )
-        
-        try:
-            # Validate inputs
-            self._validate_model_name(model_name)
-            self._validate_version(version)
-            self._validate_model_path(model_path)
-            
-            # Check if model exists
-            if model_name not in self._models:
-                raise NotFoundError("model", model_name)
-            
-            # Check if version already exists
-            existing_versions = self._versions.get(model_name, [])
-            if any(v["version"] == version for v in existing_versions):
-                raise ValidationError(f"Version '{version}' already exists", field="version")
-            
-            # Create version entry
-            model_version = {
-                "model_name": model_name,
-                "version": version,
-                "model_path": model_path,
-                "metrics": metrics or {},
-                "parameters": parameters or {},
-                "created_at": datetime.now().isoformat(),
-                "status": "active"
-            }
-            
-            self._versions[model_name].append(model_version)
-            
-            # Update model info
-            self._models[model_name]["version_count"] = len(self._versions[model_name])
-            self._models[model_name]["latest_version"] = version
-            
-            return ServiceResult.ok(
-                data=model_version,
-                metadata={
-                    "model_name": model_name,
-                    "version": version,
-                    "created": True
-                }
-            )
-            
-        except (ValidationError, NotFoundError):
-            raise
-        except Exception as e:
-            raise self._handle_error(e, "create_model_version", context)
-    
-    async def get_model(
-        self,
-        model_name: str,
-        context: Optional[ServiceContext] = None
-    ) -> ServiceResult[Dict[str, Any]]:
-        """Get model information.
-        
-        Args:
-            model_name: Model name
-            context: Service context
-            
-        Returns:
-            ServiceResult with model information
-            
-        Raises:
-            ValidationError: If name invalid
-            NotFoundError: If model not found
-            ServiceError: If retrieval fails
-        """
-        self._log_operation("get_model", context=context, model_name=model_name)
-        
-        try:
-            self._validate_model_name(model_name)
-            
-            if model_name not in self._models:
-                raise NotFoundError("model", model_name)
-            
-            model = self._models[model_name]
-            
-            return ServiceResult.ok(
-                data=model,
-                metadata={"model_name": model_name}
-            )
-            
-        except (ValidationError, NotFoundError):
-            raise
-        except Exception as e:
-            raise self._handle_error(e, "get_model", context)
+    async def get_model(self, model_name: str) -> Optional[RegisteredModel]:
+        """Get a model by name."""
+        raise NotImplementedError
     
     async def list_models(
         self,
-        model_type: Optional[str] = None,
-        tags: Optional[List[str]] = None,
+        status: Optional[str] = None,
+        tags: Optional[Dict[str, str]] = None,
         limit: int = 100,
-        context: Optional[ServiceContext] = None
-    ) -> ServiceResult[List[Dict[str, Any]]]:
-        """List models with optional filtering.
-        
-        Args:
-            model_type: Filter by model type
-            tags: Filter by tags
-            limit: Maximum results
-            context: Service context
-            
-        Returns:
-            ServiceResult with list of models
-        """
-        self._log_operation("list_models", context=context, model_type=model_type)
-        
-        try:
-            if limit < 1 or limit > 1000:
-                raise ValidationError("Limit must be between 1 and 1000", field="limit")
-            
-            # Filter models
-            models = list(self._models.values())
-            
-            if model_type:
-                self._validate_model_type(model_type)
-                models = [m for m in models if m["model_type"] == model_type]
-            
-            if tags:
-                models = [m for m in models if any(tag in m["tags"] for tag in tags)]
-            
-            # Apply limit
-            models = models[:limit]
-            
-            return ServiceResult.ok(
-                data=models,
-                metadata={
-                    "model_count": len(models),
-                    "limit": limit,
-                    "model_type": model_type
-                }
-            )
-            
-        except ValidationError:
-            raise
-        except Exception as e:
-            raise self._handle_error(e, "list_models", context)
+        offset: int = 0
+    ) -> List[RegisteredModel]:
+        """List registered models with optional filters."""
+        raise NotImplementedError
     
-    async def get_model_versions(
+    async def save_version(self, version: ModelVersion) -> ModelVersion:
+        """Save a model version."""
+        raise NotImplementedError
+    
+    async def get_version(self, version_id: str) -> Optional[ModelVersion]:
+        """Get a specific model version."""
+        raise NotImplementedError
+    
+    async def list_versions(
         self,
         model_name: str,
+        status: Optional[str] = None,
         limit: int = 100,
-        context: Optional[ServiceContext] = None
-    ) -> ServiceResult[List[Dict[str, Any]]]:
-        """Get all versions of a model.
+        offset: int = 0
+    ) -> List[ModelVersion]:
+        """List versions for a model."""
+        raise NotImplementedError
+
+
+class ModelRegistryService(BaseService):
+    """
+    Core model registration and versioning service.
+    
+    This service handles the fundamental operations of model lifecycle management
+    including registration, versioning, and metadata management.
+    """
+    
+    def __init__(
+        self,
+        repository: Optional[ModelRegistryRepository] = None,
+        cache_enabled: bool = True,
+        cache_ttl: int = 300
+    ):
+        """
+        Initialize the model registry service.
         
         Args:
-            model_name: Model name
-            limit: Maximum results
-            context: Service context
+            repository: Repository for data persistence
+            cache_enabled: Enable caching for read operations
+            cache_ttl: Cache time-to-live in seconds
+        """
+        super().__init__(cache_enabled=cache_enabled, cache_ttl=cache_ttl)
+        self.repository = repository or self._get_default_repository()
+        self.logger = logging.getLogger(__name__)
+        
+        # In-memory indexes for fast lookups
+        self._models_by_name: Dict[str, RegisteredModel] = {}
+        self._versions_by_id: Dict[str, ModelVersion] = {}
+    
+    def _get_default_repository(self) -> ModelRegistryRepository:
+        """Get default repository from DI container."""
+        # TODO: Integrate with DI container
+        # For now, return a mock repository
+        class MockRepository(ModelRegistryRepository):
+            async def save_model(self, model: RegisteredModel) -> RegisteredModel:
+                return model
+            
+            async def get_model(self, model_name: str) -> Optional[RegisteredModel]:
+                return None
+            
+            async def list_models(self, **kwargs) -> List[RegisteredModel]:
+                return []
+            
+            async def save_version(self, version: ModelVersion) -> ModelVersion:
+                return version
+            
+            async def get_version(self, version_id: str) -> Optional[ModelVersion]:
+                return None
+            
+            async def list_versions(self, **kwargs) -> List[ModelVersion]:
+                return []
+        
+        return MockRepository()
+    
+    async def register_model(
+        self,
+        model_name: str,
+        model_type: str,
+        description: str = "",
+        tags: Optional[Dict[str, str]] = None,
+        owners: Optional[List[str]] = None,
+        metadata: Optional[Dict[str, Any]] = None
+    ) -> RegisteredModel:
+        """
+        Register a new model or update existing registration.
+        
+        Args:
+            model_name: Unique name for the model
+            model_type: Type of model (e.g., 'xgboost', 'tensorflow')
+            description: Human-readable description
+            tags: Key-value tags for categorization
+            owners: List of model owners
+            metadata: Additional metadata
             
         Returns:
-            ServiceResult with list of versions
-            
-        Raises:
-            ValidationError: If parameters invalid
-            NotFoundError: If model not found
-            ServiceError: If retrieval fails
+            RegisteredModel instance
         """
-        self._log_operation("get_model_versions", context=context, model_name=model_name)
+        # Check cache first
+        cache_key = f"model:{model_name}"
+        if self.cache_enabled:
+            cached = await self._get_from_cache(cache_key)
+            if cached:
+                self.logger.debug(f"Model {model_name} found in cache")
+                return RegisteredModel(**cached)
         
-        try:
-            self._validate_model_name(model_name)
+        # Check if model exists
+        existing = await self.repository.get_model(model_name)
+        
+        if existing:
+            # Update existing model
+            if description:
+                existing.description = description
+            if tags:
+                existing.tags.update(tags)
+            if owners:
+                existing.owners.update(owners)
+            if metadata:
+                existing.metadata.update(metadata)
+            existing.updated_at = datetime.utcnow()
             
-            if model_name not in self._models:
-                raise NotFoundError("model", model_name)
-            
-            versions = self._versions.get(model_name, [])
-            
-            return ServiceResult.ok(
-                data=versions[:limit],
-                metadata={
-                    "model_name": model_name,
-                    "version_count": len(versions),
-                    "limit": limit
-                }
+            model = await self.repository.save_model(existing)
+            self.logger.info(f"Updated existing model: {model_name}")
+        else:
+            # Create new model
+            model = RegisteredModel(
+                model_name=model_name,
+                model_type=model_type,
+                description=description,
+                tags=tags or {},
+                owners=set(owners) if owners else set(),
+                metadata=metadata or {}
             )
             
-        except (ValidationError, NotFoundError):
-            raise
-        except Exception as e:
-            raise self._handle_error(e, "get_model_versions", context)
-    
-    async def compare_models(
-        self,
-        model_name1: str,
-        version1: str,
-        model_name2: str,
-        version2: str,
-        context: Optional[ServiceContext] = None
-    ) -> ServiceResult[Dict[str, Any]]:
-        """Compare two model versions.
+            model = await self.repository.save_model(model)
+            self.logger.info(f"Registered new model: {model_name}")
         
-        Args:
-            model_name1: First model name
-            version1: First model version
-            model_name2: Second model name
-            version2: Second model version
-            context: Service context
-            
-        Returns:
-            ServiceResult with comparison results
-            
-        Raises:
-            ValidationError: If parameters invalid
-            NotFoundError: If models/versions not found
-            ServiceError: If comparison fails
-        """
-        self._log_operation(
-            "compare_models",
-            context=context,
-            model1=f"{model_name1}:{version1}",
-            model2=f"{model_name2}:{version2}"
+        # Update cache and index
+        self._models_by_name[model_name] = model
+        if self.cache_enabled:
+            await self._set_cache(cache_key, model.dict(), ttl=self.cache_ttl)
+        
+        # Emit metrics
+        await self._emit_metric(
+            "model_registered",
+            tags={"model_type": model_type, "action": "create" if not existing else "update"}
         )
         
-        try:
-            # Validate inputs
-            self._validate_model_name(model_name1)
-            self._validate_model_name(model_name2)
-            self._validate_version(version1)
-            self._validate_version(version2)
-            
-            # Get model versions
-            version1_data = self._get_version(model_name1, version1)
-            version2_data = self._get_version(model_name2, version2)
-            
-            if not version1_data:
-                raise NotFoundError("model_version", f"{model_name1}:{version1}")
-            if not version2_data:
-                raise NotFoundError("model_version", f"{model_name2}:{version2}")
-            
-            # Perform comparison
-            comparison = self._compute_comparison(version1_data, version2_data)
-            
-            return ServiceResult.ok(
-                data=comparison,
-                metadata={
-                    "model1": model_name1,
-                    "version1": version1,
-                    "model2": model_name2,
-                    "version2": version2
-                }
-            )
-            
-        except (ValidationError, NotFoundError):
-            raise
-        except Exception as e:
-            raise self._handle_error(e, "compare_models", context)
+        return model
     
-    # Private helper methods
-    
-    def _validate_model_name(self, name: str) -> None:
-        """Validate model name."""
-        if not name or not name.strip():
-            raise ValidationError("Model name is required", field="name")
+    async def register_model_version(
+        self,
+        model_name: str,
+        version_number: str,
+        description: str = "",
+        model_path: Optional[str] = None,
+        config: Optional[Dict[str, Any]] = None,
+        performance_metrics: Optional[Dict[str, float]] = None,
+        created_by: str = "system",
+        metadata: Optional[Dict[str, Any]] = None
+    ) -> ModelVersion:
+        """
+        Register a new version of a model.
         
-        if len(name) > 100:
-            raise ValidationError("Model name too long", field="name")
+        Args:
+            model_name: Name of the parent model
+            version_number: Version identifier (e.g., 'v1.0', '2023.10.1')
+            description: Version description
+            model_path: Path to model artifacts
+            config: Model configuration used for training
+            performance_metrics: Performance metrics dict
+            created_by: User or system that created the version
+            metadata: Additional metadata
+            
+        Returns:
+            ModelVersion instance
+            
+        Raises:
+            ValueError: If model is not registered
+        """
+        # Ensure model exists
+        model = await self.get_model(model_name)
+        if not model:
+            raise ValueError(f"Model {model_name} not found. Register model first.")
         
-        invalid_chars = ["<", ">", "&", "\"", "'", ";"]
-        if any(char in name for char in invalid_chars):
-            raise ValidationError("Model name contains invalid characters", field="name")
-    
-    def _validate_model_type(self, model_type: str) -> None:
-        """Validate model type."""
-        valid_types = ["forecasting", "classification", "regression", "clustering", "anomaly_detection"]
-        if model_type not in valid_types:
-            raise ValidationError(
-                f"Invalid model type. Must be one of: {', '.join(valid_types)}",
-                field="model_type"
-            )
-    
-    def _validate_version(self, version: str) -> None:
-        """Validate version string."""
-        if not version or not version.strip():
-            raise ValidationError("Version is required", field="version")
+        # Create version
+        version = ModelVersion(
+            model_name=model_name,
+            version_number=version_number,
+            description=description,
+            model_path=model_path,
+            config=config or {},
+            performance_metrics=performance_metrics or {},
+            created_by=created_by,
+            metadata=metadata or {}
+        )
         
-        if len(version) > 50:
-            raise ValidationError("Version string too long", field="version")
+        # Save version
+        version = await self.repository.save_version(version)
+        
+        # Update model
+        model.versions.append(version.version_id)
+        model.latest_version = version.version_id
+        model.updated_at = datetime.utcnow()
+        await self.repository.save_model(model)
+        
+        # Update indexes
+        self._versions_by_id[version.version_id] = version
+        
+        self.logger.info(f"Registered version {version_number} for model {model_name}")
+        
+        # Emit metrics
+        await self._emit_metric(
+            "model_version_registered",
+            tags={"model_name": model_name, "version": version_number}
+        )
+        
+        return version
     
-    def _validate_model_path(self, path: str) -> None:
-        """Validate model path."""
-        if not path or not path.strip():
-            raise ValidationError("Model path is required", field="model_path")
+    async def get_model(self, model_name: str) -> Optional[RegisteredModel]:
+        """
+        Get a registered model by name.
+        
+        Args:
+            model_name: Name of the model
+            
+        Returns:
+            RegisteredModel if found, None otherwise
+        """
+        # Check memory index first
+        if model_name in self._models_by_name:
+            return self._models_by_name[model_name]
+        
+        # Check cache
+        cache_key = f"model:{model_name}"
+        if self.cache_enabled:
+            cached = await self._get_from_cache(cache_key)
+            if cached:
+                model = RegisteredModel(**cached)
+                self._models_by_name[model_name] = model
+                return model
+        
+        # Load from repository
+        model = await self.repository.get_model(model_name)
+        if model:
+            self._models_by_name[model_name] = model
+            if self.cache_enabled:
+                await self._set_cache(cache_key, model.dict(), ttl=self.cache_ttl)
+        
+        return model
     
-    def _get_version(self, model_name: str, version: str) -> Optional[Dict[str, Any]]:
-        """Get a specific model version."""
-        versions = self._versions.get(model_name, [])
-        for v in versions:
-            if v["version"] == version:
-                return v
+    async def get_model_version(self, version_id: str) -> Optional[ModelVersion]:
+        """
+        Get a specific model version.
+        
+        Args:
+            version_id: Version identifier
+            
+        Returns:
+            ModelVersion if found, None otherwise
+        """
+        # Check memory index
+        if version_id in self._versions_by_id:
+            return self._versions_by_id[version_id]
+        
+        # Load from repository
+        version = await self.repository.get_version(version_id)
+        if version:
+            self._versions_by_id[version_id] = version
+        
+        return version
+    
+    async def get_latest_model_version(self, model_name: str) -> Optional[ModelVersion]:
+        """
+        Get the latest version of a model.
+        
+        Args:
+            model_name: Name of the model
+            
+        Returns:
+            Latest ModelVersion if found, None otherwise
+        """
+        model = await self.get_model(model_name)
+        if not model or not model.latest_version:
+            return None
+        
+        return await self.get_model_version(model.latest_version)
+    
+    async def list_models(
+        self,
+        status: Optional[str] = None,
+        tags: Optional[Dict[str, str]] = None,
+        owner: Optional[str] = None,
+        limit: int = 100,
+        offset: int = 0
+    ) -> List[RegisteredModel]:
+        """
+        List registered models with optional filters.
+        
+        Args:
+            status: Filter by status
+            tags: Filter by tags (all must match)
+            owner: Filter by owner
+            limit: Maximum results to return
+            offset: Pagination offset
+            
+        Returns:
+            List of RegisteredModel instances
+        """
+        # For now, use repository directly
+        # TODO: Add caching strategy for list operations
+        models = await self.repository.list_models(
+            status=status,
+            tags=tags,
+            limit=limit,
+            offset=offset
+        )
+        
+        # Apply additional filters in memory if needed
+        if owner:
+            models = [m for m in models if owner in m.owners]
+        
+        return models
+    
+    async def list_model_versions(
+        self,
+        model_name: str,
+        status: Optional[str] = None,
+        limit: int = 100,
+        offset: int = 0
+    ) -> List[ModelVersion]:
+        """
+        List versions for a model.
+        
+        Args:
+            model_name: Name of the model
+            status: Filter by status
+            limit: Maximum results
+            offset: Pagination offset
+            
+        Returns:
+            List of ModelVersion instances
+        """
+        return await self.repository.list_versions(
+            model_name=model_name,
+            status=status,
+            limit=limit,
+            offset=offset
+        )
+    
+    async def update_model_metadata(
+        self,
+        model_name: str,
+        description: Optional[str] = None,
+        status: Optional[str] = None,
+        tags: Optional[Dict[str, str]] = None,
+        owners: Optional[List[str]] = None,
+        metadata: Optional[Dict[str, Any]] = None
+    ) -> RegisteredModel:
+        """
+        Update model metadata.
+        
+        Args:
+            model_name: Name of the model
+            description: New description
+            status: New status
+            tags: Tags to add/update
+            owners: Owners to add
+            metadata: Metadata to add/update
+            
+        Returns:
+            Updated RegisteredModel
+            
+        Raises:
+            ValueError: If model not found
+        """
+        model = await self.get_model(model_name)
+        if not model:
+            raise ValueError(f"Model {model_name} not found")
+        
+        # Update fields
+        if description is not None:
+            model.description = description
+        if status is not None:
+            model.status = status
+        if tags:
+            model.tags.update(tags)
+        if owners:
+            model.owners.update(owners)
+        if metadata:
+            model.metadata.update(metadata)
+        
+        model.updated_at = datetime.utcnow()
+        
+        # Save and update cache
+        model = await self.repository.save_model(model)
+        self._models_by_name[model_name] = model
+        
+        cache_key = f"model:{model_name}"
+        if self.cache_enabled:
+            await self._set_cache(cache_key, model.dict(), ttl=self.cache_ttl)
+        
+        self.logger.info(f"Updated metadata for model {model_name}")
+        
+        return model
+    
+    async def retire_model(self, model_name: str, reason: str = "") -> RegisteredModel:
+        """
+        Retire a model from active use.
+        
+        Args:
+            model_name: Name of the model
+            reason: Retirement reason
+            
+        Returns:
+            Updated RegisteredModel
+        """
+        return await self.update_model_metadata(
+            model_name=model_name,
+            status="retired",
+            metadata={"retirement_reason": reason, "retired_at": datetime.utcnow().isoformat()}
+        )
+    
+    async def _emit_metric(self, metric_name: str, value: float = 1.0, tags: Optional[Dict[str, str]] = None):
+        """Emit a metric (placeholder for actual implementation)."""
+        # TODO: Integrate with telemetry service
+        self.logger.debug(f"Metric: {metric_name}={value}, tags={tags}")
+    
+    async def _get_from_cache(self, key: str) -> Optional[Dict[str, Any]]:
+        """Get value from cache (placeholder)."""
+        # TODO: Integrate with cache service
         return None
     
-    def _compute_comparison(
-        self,
-        version1: Dict[str, Any],
-        version2: Dict[str, Any]
-    ) -> Dict[str, Any]:
-        """Compute comparison between two model versions."""
-        metrics1 = version1.get("metrics", {})
-        metrics2 = version2.get("metrics", {})
-        
-        # Calculate metric differences
-        metric_diffs = {}
-        all_metrics = set(metrics1.keys()) | set(metrics2.keys())
-        
-        for metric in all_metrics:
-            val1 = metrics1.get(metric, 0)
-            val2 = metrics2.get(metric, 0)
-            metric_diffs[metric] = {
-                "version1_value": val1,
-                "version2_value": val2,
-                "difference": val2 - val1,
-                "percent_change": ((val2 - val1) / val1 * 100) if val1 != 0 else 0
-            }
-        
-        return {
-            "version1": version1["version"],
-            "version2": version2["version"],
-            "metric_comparisons": metric_diffs,
-            "recommendation": self._generate_recommendation(metric_diffs)
-        }
-    
-    def _generate_recommendation(self, metric_diffs: Dict[str, Any]) -> str:
-        """Generate recommendation based on metric comparison."""
-        # Simplified logic
-        improvements = sum(1 for m in metric_diffs.values() if m["difference"] > 0)
-        total = len(metric_diffs)
-        
-        if improvements / total > 0.7:
-            return "version2_recommended"
-        elif improvements / total < 0.3:
-            return "version1_recommended"
-        else:
-            return "inconclusive"
-
+    async def _set_cache(self, key: str, value: Dict[str, Any], ttl: int):
+        """Set value in cache (placeholder)."""
+        # TODO: Integrate with cache service
+        pass

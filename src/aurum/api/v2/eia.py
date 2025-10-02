@@ -102,8 +102,12 @@ async def list_eia_datasets_v2(
             filters=None,
         )
 
-        from ..services import EiaService
-        svc = EiaService()
+        from aurum.services.external import EiaService
+        from aurum.data.repositories import EiaRepository
+        
+        eia_repo = EiaRepository(settings=settings)
+        await eia_repo.initialize()
+        svc = EiaService(eia_repo)
         paginated_data, total_count = await svc.list_datasets(offset=offset, limit=effective_limit)
 
         # Create cursors and pagination envelope
@@ -216,8 +220,12 @@ async def get_eia_series_v2(
             filters={"series_id": series_id, "start_date": start_date, "end_date": end_date},
         )
 
-        from ..services import EiaService
-        svc = EiaService()
+        from aurum.services.external import EiaService
+        from aurum.data.repositories import EiaRepository
+        
+        eia_repo = EiaRepository(settings=settings)
+        await eia_repo.initialize()
+        svc = EiaService(eia_repo)
         series_points = await svc.get_series(
             series_id=series_id,
             start_date=start_date,
@@ -334,8 +342,12 @@ async def get_eia_series_dimensions_v2(
             pass
         if settings:
             pass
-        from ..services import EiaService
-        svc = EiaService()
+        from aurum.services.external import EiaService
+        from aurum.data.repositories import EiaRepository
+        
+        eia_repo = EiaRepository(settings=settings)
+        await eia_repo.initialize()
+        svc = EiaService(eia_repo)
         values = await svc.get_series_dimensions(
             series_id=series_id,
             frequency=frequency,

@@ -13,7 +13,7 @@ from typing import Any, Dict, List, Optional, Protocol
 from datetime import date, datetime
 
 from ..base import BaseService, ServiceContext, ServiceResult, ServiceError, ValidationError, NotFoundError
-from aurum.data.repositories import MetadataRepository
+from aurum.data.repositories import EiaRepository
 
 logger = logging.getLogger(__name__)
 
@@ -55,19 +55,19 @@ class EiaService(BaseService):
     
     def __init__(
         self,
-        metadata_repository: MetadataRepository,
+        eia_repository: EiaRepository,
         cache: Optional[CacheProtocol] = None,
         cache_ttl: int = 3600  # 1 hour for EIA data
     ):
         """Initialize service with dependencies.
         
         Args:
-            metadata_repository: Repository for metadata and catalog access
+            eia_repository: Repository for EIA data access
             cache: Optional cache implementation
             cache_ttl: Cache time-to-live in seconds
         """
         super().__init__()
-        self.metadata_repo = metadata_repository
+        self.eia_repo = eia_repository
         self.cache = cache
         self.cache_ttl = cache_ttl
         self._cache_namespace = "eia:v1"
@@ -158,9 +158,12 @@ class EiaService(BaseService):
             if not series_info:
                 raise NotFoundError("eia_series", series_id)
             
-            # Query observations (would use EIA-specific repository)
-            # For now, returning metadata
-            observations = []  # TODO: Implement actual data query
+            # Query observations from repository
+            observations = await self.eia_repo.query_series(
+                series_id=series_id,
+                start_date=start_date.isoformat() if start_date else None,
+                end_date=end_date.isoformat() if end_date else None
+            )
             
             self.logger.info(
                 f"Retrieved {len(observations)} observations for series {series_id}",
@@ -237,12 +240,19 @@ class EiaService(BaseService):
                     field="limit"
                 )
             
-            # Search metadata catalog
-            results = await self.metadata_repo.search_metadata(
-                search_term=search_term.strip(),
-                datasets=["eia"],
-                limit=limit
-            )
+            # Search series by getting dimensions
+            # For now, get all series and filter client-side
+            # TODO: Implement proper search in repository
+            all_series = await self.eia_repo.query_series(limit=limit)
+            
+            # Basic text search in series data
+            search_lower = search_term.strip().lower()
+            results = [
+                s for s in all_series 
+                if search_lower in s.get('series_id', '').lower() or
+                   search_lower in str(s.get('dataset', '')).lower() or
+                   search_lower in str(s.get('sector', '')).lower()
+            ]
             
             # Filter by category if provided
             if category:
@@ -376,8 +386,7 @@ class EiaService(BaseService):
         - Frequency (annual, monthly, etc.)
         - Last updated
         """
-        # Query catalog
-        # This would use the metadata repository
-        # For now, return None to indicate series not found in catalog
-        return None  # TODO: Implement actual catalog query
+        # Get series metadata from repository
+        metadata = await self.eia_repo.get_series_metadata(series_id)
+        return metadata
 

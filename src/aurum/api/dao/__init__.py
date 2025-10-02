@@ -11,13 +11,12 @@ Async DAO Classes:
 - EiaAsyncDao: Async DAO for EIA data operations
 
 Legacy Sync DAO Classes (deprecated):
-- EiaDao: Synchronous EIA DAO (use EiaAsyncDao instead)
 - CurvesDao: Synchronous Curves DAO
 - MetadataDao: Synchronous Metadata DAO
+- PpaDao: Synchronous PPA DAO
 """
 
 # Legacy sync DAOs (deprecated)
-from .eia_dao import EiaDao
 from .curves_dao import CurvesDao
 from .metadata_dao import MetadataDao
 from .ppa_dao import PpaDao
@@ -31,7 +30,6 @@ from .eia_async_dao import EiaAsyncDao
 
 __all__ = [
     # Legacy sync DAOs (deprecated)
-    "EiaDao",
     "CurvesDao", 
     "MetadataDao",
     "PpaDao",

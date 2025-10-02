@@ -1,4 +1,14 @@
-{{ config(materialized='view') }}
+{{ iceberg_config_staging(target_file_size_mb=64, write_compression='ZSTD') }}
+{{
+    config(
+        materialized='incremental',
+        schema='stg',
+        alias='stg_vector_event',
+        tags=['drought', 'staging', 'vector'],
+        incremental_strategy='merge',
+        unique_key=['layer', 'event_id', 'ingest_ts']
+    )
+}}
 
 WITH source AS (
     SELECT *
@@ -24,3 +34,8 @@ SELECT
     geometry_wkt,
     CAST(properties AS JSON) AS properties_json
 FROM source
+{% if is_incremental() %}
+  WHERE ingest_ts > (
+      select coalesce(max(ingest_ts), cast('1970-01-01 00:00:00' as timestamp)) from {{ this }}
+  )
+{% endif %}

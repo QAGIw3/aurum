@@ -4,18 +4,20 @@ Services for primary business domains: curves, scenarios, metadata, PPAs.
 """
 
 from .curves import CurveService
-from .metadata import MetadataService
-from .scenarios import ScenarioService
-from .ppa import PpaService
-from .iso import IsoService
 from .drought import DroughtService
+from .eia import EiaService
+from .iso import IsoService
+from .metadata import MetadataService
+from .ppa import PpaService
+from .scenarios import ScenarioService
 
 __all__ = [
     "CurveService",
-    "MetadataService",
-    "ScenarioService",
-    "PpaService",
-    "IsoService",
     "DroughtService",
+    "EiaService",
+    "IsoService",
+    "MetadataService",
+    "PpaService",
+    "ScenarioService",
 ]
 

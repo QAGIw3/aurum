@@ -27,7 +27,7 @@ import pandas as pd
 from opentelemetry import propagate
 from aurum.streaming.kafka_utils import decode_headers as _decode_headers, build_produce_headers as _build_produce_headers
 
-from aurum.api.services.admin_service import AdminService
+from aurum.services.platform import AdminService
 from aurum.api.services.admin_service import CacheConfig
 from aurum.api.scenario_models import ScenarioRunPriority, ScenarioRunStatus
 from aurum.api.scenario_service import STORE as ScenarioStore

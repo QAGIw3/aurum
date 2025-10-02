@@ -15,7 +15,8 @@ from ..reference import eia_catalog as ref_eia
 from .config import CacheConfig, TrinoConfig
 from aurum.core.settings import get_settings as _core_get_settings
 from .database.backend_selector import get_data_backend
-from .services.eia_service import EiaService
+from aurum.services.external import EiaService
+from aurum.data.repositories import EiaRepository
 
 
 class DatasetItem(BaseModel):

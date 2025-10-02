@@ -2,6 +2,8 @@
 
 This document tracks legacy code usage during the refactoring process.
 
+**📋 See Also:** [LEGACY_MIGRATION_CHECKLIST.md](./LEGACY_MIGRATION_CHECKLIST.md) for detailed migration tracking.
+
 ## Legacy Imports Audit (Phase 1)
 
 ### Status: IN PROGRESS

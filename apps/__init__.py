@@ -1,1 +1,0 @@
-"""Aurum applications package."""

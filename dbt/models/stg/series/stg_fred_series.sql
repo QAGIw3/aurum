@@ -1,3 +1,15 @@
+{{ iceberg_config_staging(target_file_size_mb=64, write_compression='ZSTD') }}
+{{
+    config(
+        materialized='incremental',
+        schema='stg',
+        alias='stg_fred_series',
+        tags=['series', 'fred', 'staging'],
+        incremental_strategy='merge',
+        unique_key=['tenant_id', 'series_id', 'obs_date']
+    )
+}}
+
 with source as (
     select
         tenant_id,
@@ -34,3 +46,8 @@ select
     ingest_run_id,
     ingest_batch_id
 from source
+{% if is_incremental() %}
+  where ingest_ts > (
+      select coalesce(max(ingest_ts), cast('1970-01-01 00:00:00' as timestamp)) from {{ this }}
+  )
+{% endif %}

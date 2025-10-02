@@ -4,6 +4,18 @@
 -- canonical ISO fields produced by ingestion (`iso_*`). Metadata is a
 -- string map; complex values are JSON-stringified upstream for Avro safety.
 --
+{{ iceberg_config_staging(target_file_size_mb=64, write_compression='ZSTD') }}
+{{
+    config(
+        materialized='incremental',
+        schema='stg',
+        alias='stg_external__series_catalog',
+        tags=['external', 'staging'],
+        incremental_strategy='merge',
+        unique_key=['tenant_id', 'provider', 'series_id', 'version']
+    )
+}}
+
 WITH raw_series_catalog AS (
     SELECT
         tenant_id,
@@ -91,3 +103,8 @@ SELECT
     version
 FROM raw_series_catalog
 WHERE rn = 1
+{% if is_incremental() %}
+  AND ingest_ts > (
+      select coalesce(max(ingest_ts), cast('1970-01-01 00:00:00' as timestamp)) from {{ this }}
+  )
+{% endif %}

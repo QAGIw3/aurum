@@ -21,6 +21,8 @@ Aurum is a comprehensive market intelligence platform for energy trading, provid
 - 🚀 [Onboarding Guide](docs/onboarding.md) - Get started quickly
 - 🏗️ [Architecture Overview](docs/architecture-overview.md) - System design
 - 📚 [API Documentation](docs/api/README.md) - API usage and examples
+- 📋 [Platform Roadmap](docs/ROADMAP.md) - Development priorities
+- 🔧 [Refactoring Plan](AURUM_REFACTOR_PLAN_2025.md) - Technical debt reduction
 - ☸️ [Kubernetes Development](docs/k8s-dev.md) - K8s workflow
 - 🔒 [Security & Auth](docs/security/tenant-rls.md) - Authentication setup
 - [SRE & On-call](docs/sre/README.md) - Paging policy and runbooks

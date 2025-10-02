@@ -81,7 +81,9 @@ def pull_all_secrets(vault_addr: str, vault_token: str) -> Dict[str, str]:
             f"{VAULT_BASE_PATH}/noaa",
             f"{VAULT_BASE_PATH}/timescale",
             f"{VAULT_BASE_PATH}/pjm",
-            f"{VAULT_BASE_PATH}/kafka"
+            f"{VAULT_BASE_PATH}/kafka",
+            # MinIO/S3 object store credentials
+            f"{VAULT_BASE_PATH}/minio",
         ]
 
         for path in vault_paths:
@@ -114,6 +116,18 @@ def pull_all_secrets(vault_addr: str, vault_token: str) -> Dict[str, str]:
                     elif path == f"{VAULT_BASE_PATH}/kafka":
                         all_secrets[f"AURUM_KAFKA_BOOTSTRAP_SERVERS"] = secrets.get("bootstrap_servers", "localhost:9092")
                         all_secrets[f"AURUM_SCHEMA_REGISTRY_URL"] = secrets.get("schema_registry", "http://localhost:8081")
+                    elif path == f"{VAULT_BASE_PATH}/minio":
+                        # Map MinIO secrets to Aurum S3 environment variables if present
+                        if "access_key" in secrets:
+                            all_secrets["AURUM_S3_ACCESS_KEY"] = secrets["access_key"]
+                        if "secret_key" in secrets:
+                            all_secrets["AURUM_S3_SECRET_KEY"] = secrets["secret_key"]
+                        if "endpoint" in secrets:
+                            all_secrets["AURUM_S3_ENDPOINT"] = secrets["endpoint"]
+                        if "region" in secrets:
+                            all_secrets["AURUM_S3_REGION"] = secrets["region"]
+                        if "bucket" in secrets:
+                            all_secrets["AURUM_S3_BUCKET"] = secrets["bucket"]
 
             except Exception as e:
                 print(f"Warning: Could not read secrets from {path}: {e}", file=sys.stderr)
@@ -141,6 +155,11 @@ def generate_env_file(env_vars: Dict[str, str], filepath: str) -> None:
             "Core Infrastructure": [
                 "AURUM_KAFKA_BOOTSTRAP_SERVERS",
                 "AURUM_SCHEMA_REGISTRY_URL",
+                "AURUM_S3_ENDPOINT",
+                "AURUM_S3_REGION",
+                "AURUM_S3_ACCESS_KEY",
+                "AURUM_S3_SECRET_KEY",
+                "AURUM_S3_BUCKET",
                 "AURUM_TIMESCALE_JDBC_URL",
                 "AURUM_TIMESCALE_USER",
                 "AURUM_TIMESCALE_PASSWORD"
@@ -222,17 +241,19 @@ def main() -> int:
 
         # Show summary
         print("📋 Environment Summary:")
-📋 Environment Summary:"        print(f"  • Kafka: {env_vars.get('AURUM_KAFKA_BOOTSTRAP_SERVERS', 'Not configured')}")
+        print(f"  • Kafka: {env_vars.get('AURUM_KAFKA_BOOTSTRAP_SERVERS', 'Not configured')}")
         print(f"  • Schema Registry: {env_vars.get('AURUM_SCHEMA_REGISTRY_URL', 'Not configured')}")
+        print(f"  • MinIO Endpoint: {env_vars.get('AURUM_S3_ENDPOINT', 'Not configured')}")
+        print(f"  • S3 Access Key: {'✅' if 'AURUM_S3_ACCESS_KEY' in env_vars else '❌'}")
         print(f"  • Timescale: {env_vars.get('AURUM_TIMESCALE_JDBC_URL', 'Not configured')}")
         print(f"  • EIA API: {'✅' if 'EIA_API_KEY' in env_vars else '❌'}")
         print(f"  • FRED API: {'✅' if 'FRED_API_KEY' in env_vars else '❌'}")
         print(f"  • NOAA API: {'✅' if 'NOAA_GHCND_TOKEN' in env_vars else '❌'}")
         print(f"  • PJM API: {'✅' if 'PJM_TOKEN' in env_vars else '❌'}")
 
-        print("
-🚀 Next Steps:"        print("  1. Source the environment: source .env.local")
-        print("  2. Start local services: docker-compose up")
+        print("\n🚀 Next Steps:")
+        print("  1. Source the environment: source .env.local")
+        print("  2. Start local services: docker compose -f compose/docker-compose.dev.yml up -d")
         print("  3. Test with: python3 scripts/secrets/vault_secrets_manager.py --list")
         print("  4. Run dry-run: python3 scripts/seatunnel/dry_run_renderer.py --template eia_series_to_kafka")
 

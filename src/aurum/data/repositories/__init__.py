@@ -12,18 +12,20 @@ Following the Repository Pattern from Domain-Driven Design.
 """
 
 from .curves import CurveRepository
-from .scenarios import ScenarioRepository
+from .drought import DroughtRepository
+from .eia import EiaRepository
+from .iso import IsoRepository
 from .metadata import MetadataRepository
 from .ppa import PpaRepository
-from .drought import DroughtRepository
-from .iso import IsoRepository
+from .scenarios import ScenarioRepository
 
 __all__ = [
     "CurveRepository",
-    "ScenarioRepository",
+    "DroughtRepository",
+    "EiaRepository",
+    "IsoRepository",
     "MetadataRepository",
     "PpaRepository",
-    "DroughtRepository",
-    "IsoRepository",
+    "ScenarioRepository",
 ]
 

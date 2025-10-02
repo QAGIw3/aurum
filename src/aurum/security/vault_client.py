@@ -281,6 +281,18 @@ class VaultCredentialProvider:
 
         return credentials if len(credentials) >= 2 else None
 
+    async def get_minio_credentials(self) -> Optional[Dict[str, str]]:
+        """Get MinIO/S3-compatible credentials from Vault (secret/aurum/minio)."""
+        credentials: Dict[str, str] = {}
+
+        # Supported fields in secret data: access_key, secret_key, endpoint, region, bucket
+        for field in ['access_key', 'secret_key', 'endpoint', 'region', 'bucket']:
+            value = await self.get_credential("minio", field, cache=False)
+            if value:
+                credentials[field] = value
+
+        return credentials if credentials else None
+
     async def refresh_cache(self, path: str = None):
         """Refresh the credential cache."""
         if path:
@@ -414,6 +426,21 @@ async def patch_environment_with_vault_credentials():
             if 'region' in aws_config:
                 os.environ["AWS_DEFAULT_REGION"] = aws_config['region']
             logger.info("Patched AWS configuration")
+
+        # Patch MinIO/S3 credentials for Aurum object storage
+        minio_config = await provider.get_minio_credentials()
+        if minio_config:
+            if 'access_key' in minio_config:
+                os.environ["AURUM_S3_ACCESS_KEY"] = minio_config['access_key']
+            if 'secret_key' in minio_config:
+                os.environ["AURUM_S3_SECRET_KEY"] = minio_config['secret_key']
+            if 'endpoint' in minio_config:
+                os.environ["AURUM_S3_ENDPOINT"] = minio_config['endpoint']
+            if 'region' in minio_config:
+                os.environ["AURUM_S3_REGION"] = minio_config['region']
+            if 'bucket' in minio_config:
+                os.environ["AURUM_S3_BUCKET"] = minio_config['bucket']
+            logger.info("Patched MinIO/S3 credentials for Aurum storage")
 
         logger.info("Environment patched with Vault credentials")
 
