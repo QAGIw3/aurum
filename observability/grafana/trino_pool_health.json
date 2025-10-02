@@ -1,0 +1,71 @@
+{
+  "title": "Trino Pool Health",
+  "uid": "trino-pool-health",
+  "schemaVersion": 36,
+  "version": 1,
+  "timezone": "browser",
+  "refresh": "30s",
+  "time": {
+    "from": "now-6h",
+    "to": "now"
+  },
+  "panels": [
+    {
+      "type": "timeseries",
+      "title": "Pool Utilization",
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "targets": [
+        {
+          "expr": "aurum_trino_connection_pool_utilization",
+          "legendFormat": "utilization"
+        }
+      ],
+      "gridPos": {"x": 0, "y": 0, "w": 12, "h": 8}
+    },
+    {
+      "type": "timeseries",
+      "title": "Active vs Idle Connections",
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "targets": [
+        {
+          "expr": "aurum_trino_connection_pool_active",
+          "legendFormat": "active"
+        },
+        {
+          "expr": "aurum_trino_connection_pool_idle",
+          "legendFormat": "idle"
+        }
+      ],
+      "gridPos": {"x": 12, "y": 0, "w": 12, "h": 8}
+    },
+    {
+      "type": "stat",
+      "title": "Circuit Breaker State",
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "targets": [
+        {
+          "expr": "max(aurum_trino_circuit_breaker_state{state='open'})",
+          "legendFormat": "open"
+        }
+      ],
+      "gridPos": {"x": 0, "y": 8, "w": 6, "h": 6},
+      "options": {
+        "reduceOptions": {"calcs": ["lastNotNull"], "values": false},
+        "colorMode": "value",
+        "graphMode": "none"
+      }
+    },
+    {
+      "type": "timeseries",
+      "title": "Connection Acquire p95",
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "targets": [
+        {
+          "expr": "histogram_quantile(0.95, sum(rate(aurum_trino_connection_acquire_time_seconds_bucket[5m])) by (le))",
+          "legendFormat": "p95"
+        }
+      ],
+      "gridPos": {"x": 6, "y": 8, "w": 18, "h": 6}
+    }
+  ]
+}

@@ -1,0 +1,82 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Aurum API Documentation - v1.0.0</title>
+    <meta charset="utf-8"/>
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <link href="https://fonts.googleapis.com/css?family=Montserrat:300,400,700|Roboto:300,400,700" rel="stylesheet">
+    <style>
+      body {
+        margin: 0;
+        padding: 20px;
+        font-family: Roboto, sans-serif;
+      }
+      .header {
+        text-align: center;
+        margin-bottom: 30px;
+      }
+      .header h1 {
+        color: #333;
+        margin-bottom: 10px;
+      }
+      .header p {
+        color: #666;
+        margin-bottom: 20px;
+      }
+      .version-info {
+        background: #f5f5f5;
+        padding: 15px;
+        border-radius: 5px;
+        margin-bottom: 20px;
+        border-left: 4px solid #007acc;
+      }
+      .version-info h3 {
+        margin-top: 0;
+        color: #333;
+      }
+      .links {
+        text-align: center;
+      }
+      .links a {
+        display: inline-block;
+        margin: 10px 20px;
+        padding: 10px 20px;
+        background: #007acc;
+        color: white;
+        text-decoration: none;
+        border-radius: 5px;
+        transition: background 0.3s;
+      }
+      .links a:hover {
+        background: #0056b3;
+      }
+    </style>
+</head>
+<body>
+    <div class="header">
+        <h1>Aurum API Documentation</h1>
+        <p>Market Intelligence Platform API</p>
+        <div class="version-info">
+            <h3>Version 1.0.0</h3>
+            <p>Generated: Aurum API</p>
+        </div>
+    </div>
+
+    <div class="links">
+        <a href="openapi-spec.json">Download OpenAPI JSON</a>
+        <a href="openapi-spec.html">View Interactive Documentation</a>
+        <a href="https://github.com/your-org/aurum" target="_blank">View Source Code</a>
+    </div>
+
+    <!-- Auto-redirect to interactive docs after 3 seconds -->
+    <script>
+        setTimeout(function() {
+            window.location.href = 'openapi-spec.html';
+        }, 3000);
+    </script>
+
+    <div style="text-align: center; margin-top: 30px; color: #666;">
+        <p>Redirecting to interactive documentation in 3 seconds...</p>
+    </div>
+</body>
+</html>
