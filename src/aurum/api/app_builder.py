@@ -79,9 +79,11 @@ class ApplicationBuilder:
 
         self.app.state.settings = self.settings
 
-        self.container = DependencyInjectionContainer.from_settings(self.settings)
-        register_core_services(self.container)
+        # Initialize unified DI container
+        from aurum.core.container import get_container
+        self.container = get_container(self.settings)
         self.app.state.container = self.container
+        self.app.state.di_container = self.container  # Alias for new code
 
         self.tenant_manager, self.tenant_context_options = _initialize_tenant_manager(
             self.settings, self.container

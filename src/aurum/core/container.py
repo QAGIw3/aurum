@@ -188,18 +188,138 @@ def _register_core_services(container: DependencyContainer) -> None:
     # Settings (already available as container.settings)
     container.register_singleton(AurumSettings, container.settings)
     
-    # Register services as they become available
-    # Example:
-    # from aurum.services.core import CurveService
-    # from aurum.data.repositories import CurveRepository
-    # 
-    # container.register(
-    #     CurveService,
-    #     lambda: CurveService(CurveRepository(container.settings)),
-    #     lifetime=ServiceLifetime.SINGLETON
-    # )
+    # Register repositories
+    from aurum.data.repositories import (
+        CurveRepository,
+        MetadataRepository,
+        ScenarioRepository,
+        PpaRepository,
+        DroughtRepository
+    )
     
-    logger.info("Core services registered in DI container")
+    container.register(
+        CurveRepository,
+        lambda: CurveRepository(container.settings),
+        lifetime=ServiceLifetime.SINGLETON
+    )
+    
+    container.register(
+        MetadataRepository,
+        lambda: MetadataRepository(container.settings),
+        lifetime=ServiceLifetime.SINGLETON
+    )
+    
+    container.register(
+        ScenarioRepository,
+        lambda: ScenarioRepository(container.settings),
+        lifetime=ServiceLifetime.SINGLETON
+    )
+    
+    container.register(
+        PpaRepository,
+        lambda: PpaRepository(container.settings),
+        lifetime=ServiceLifetime.SINGLETON
+    )
+    
+    container.register(
+        DroughtRepository,
+        lambda: DroughtRepository(container.settings),
+        lifetime=ServiceLifetime.SINGLETON
+    )
+    
+    # Register core services
+    from aurum.services.core import (
+        CurveService,
+        MetadataService,
+        ScenarioService,
+        PpaService,
+        IsoService,
+        DroughtService
+    )
+    
+    async def create_curve_service():
+        repo = await container.get(CurveRepository)
+        await repo.initialize()
+        return CurveService(repo)
+    
+    async def create_metadata_service():
+        repo = await container.get(MetadataRepository)
+        await repo.initialize()
+        return MetadataService(repo)
+    
+    async def create_scenario_service():
+        repo = await container.get(ScenarioRepository)
+        await repo.initialize()
+        return ScenarioService(repo)
+    
+    async def create_ppa_service():
+        repo = await container.get(PpaRepository)
+        await repo.initialize()
+        return PpaService(repo)
+    
+    async def create_iso_service():
+        repo = await container.get(MetadataRepository)
+        await repo.initialize()
+        return IsoService(repo)
+    
+    async def create_drought_service():
+        repo = await container.get(DroughtRepository)
+        await repo.initialize()
+        return DroughtService(repo)
+    
+    container.register(CurveService, create_curve_service, lifetime=ServiceLifetime.SINGLETON)
+    container.register(MetadataService, create_metadata_service, lifetime=ServiceLifetime.SINGLETON)
+    container.register(ScenarioService, create_scenario_service, lifetime=ServiceLifetime.SINGLETON)
+    container.register(PpaService, create_ppa_service, lifetime=ServiceLifetime.SINGLETON)
+    container.register(IsoService, create_iso_service, lifetime=ServiceLifetime.SINGLETON)
+    container.register(DroughtService, create_drought_service, lifetime=ServiceLifetime.SINGLETON)
+    
+    # Register external services
+    from aurum.services.external import EiaService, RenewablesIngestionService
+    
+    async def create_eia_service():
+        repo = await container.get(MetadataRepository)
+        await repo.initialize()
+        return EiaService(repo)
+    
+    container.register(EiaService, create_eia_service, lifetime=ServiceLifetime.SINGLETON)
+    container.register(RenewablesIngestionService, lambda: RenewablesIngestionService(), lifetime=ServiceLifetime.SINGLETON)
+    
+    # Register ML services
+    from aurum.services.ml import (
+        FeatureStoreService,
+        ModelRegistryService,
+        RiskEngineService,
+        BiddingRLService,
+        AutoReforecastService,
+        CarbonRECService,
+        ESGRiskService,
+        AnomalyDetectionService
+    )
+    
+    container.register(FeatureStoreService, lambda: FeatureStoreService(), lifetime=ServiceLifetime.SINGLETON)
+    container.register(ModelRegistryService, lambda: ModelRegistryService(), lifetime=ServiceLifetime.SINGLETON)
+    container.register(RiskEngineService, lambda: RiskEngineService(), lifetime=ServiceLifetime.SINGLETON)
+    container.register(BiddingRLService, lambda: BiddingRLService(), lifetime=ServiceLifetime.SINGLETON)
+    container.register(AutoReforecastService, lambda: AutoReforecastService(), lifetime=ServiceLifetime.SINGLETON)
+    container.register(CarbonRECService, lambda: CarbonRECService(), lifetime=ServiceLifetime.SINGLETON)
+    container.register(ESGRiskService, lambda: ESGRiskService(), lifetime=ServiceLifetime.SINGLETON)
+    container.register(AnomalyDetectionService, lambda: AnomalyDetectionService(), lifetime=ServiceLifetime.SINGLETON)
+    
+    # Register platform services
+    from aurum.services.platform import (
+        GovernanceService,
+        PerformanceMonitoringService,
+        RegulatoryTrackerService,
+        RiskComplianceService
+    )
+    
+    container.register(GovernanceService, lambda: GovernanceService(), lifetime=ServiceLifetime.SINGLETON)
+    container.register(PerformanceMonitoringService, lambda: PerformanceMonitoringService(), lifetime=ServiceLifetime.SINGLETON)
+    container.register(RegulatoryTrackerService, lambda: RegulatoryTrackerService(), lifetime=ServiceLifetime.SINGLETON)
+    container.register(RiskComplianceService, lambda: RiskComplianceService(), lifetime=ServiceLifetime.SINGLETON)
+    
+    logger.info("All 20 services registered in DI container")
 
 
 # Convenience function for FastAPI dependency injection
