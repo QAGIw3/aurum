@@ -1,4 +1,4 @@
-"""EIA (Energy Information Administration) service.
+"""EIA (Energy Information Administration) service with caching.
 
 Implements business logic for EIA data operations including series queries,
 catalog management, and data validation.
@@ -6,8 +6,10 @@ catalog management, and data validation.
 
 from __future__ import annotations
 
+import hashlib
+import json
 import logging
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Protocol
 from datetime import date, datetime
 
 from ..base import BaseService, ServiceContext, ServiceResult, ServiceError, ValidationError, NotFoundError
@@ -16,8 +18,24 @@ from aurum.data.repositories import MetadataRepository
 logger = logging.getLogger(__name__)
 
 
+class CacheProtocol(Protocol):
+    """Protocol for cache implementations."""
+    
+    async def get(self, key: str) -> Optional[Any]:
+        """Get value from cache."""
+        ...
+    
+    async def set(self, key: str, value: Any, ttl: int) -> None:
+        """Set value in cache with TTL."""
+        ...
+    
+    async def delete(self, key: str) -> None:
+        """Delete value from cache."""
+        ...
+
+
 class EiaService(BaseService):
-    """Service for EIA data operations.
+    """Service for EIA data operations with caching support.
     
     EIA provides energy statistics, forecasts, and analysis.
     Data includes:
@@ -32,16 +50,61 @@ class EiaService(BaseService):
     - Provides data query interface
     - Handles frequency conversions
     - Enforces access control
+    - Caches series data for performance
     """
     
-    def __init__(self, metadata_repository: MetadataRepository):
+    def __init__(
+        self,
+        metadata_repository: MetadataRepository,
+        cache: Optional[CacheProtocol] = None,
+        cache_ttl: int = 3600  # 1 hour for EIA data
+    ):
         """Initialize service with dependencies.
         
         Args:
             metadata_repository: Repository for metadata and catalog access
+            cache: Optional cache implementation
+            cache_ttl: Cache time-to-live in seconds
         """
         super().__init__()
         self.metadata_repo = metadata_repository
+        self.cache = cache
+        self.cache_ttl = cache_ttl
+        self._cache_namespace = "eia:v1"
+    
+    def _build_cache_key(self, operation: str, **params) -> str:
+        """Build a cache key from operation and parameters."""
+        sorted_params = sorted(params.items())
+        param_str = json.dumps(sorted_params, sort_keys=True, default=str)
+        param_hash = hashlib.md5(param_str.encode()).hexdigest()[:16]
+        return f"{self._cache_namespace}:{operation}:{param_hash}"
+    
+    async def _get_from_cache(self, cache_key: str) -> Optional[Any]:
+        """Get value from cache if available."""
+        if not self.cache:
+            return None
+        
+        try:
+            cached = await self.cache.get(cache_key)
+            if cached:
+                self.logger.debug(f"Cache hit: {cache_key}")
+                return cached
+            return None
+        except Exception as e:
+            self.logger.warning(f"Cache get error: {e}")
+            return None
+    
+    async def _set_in_cache(self, cache_key: str, value: Any, ttl: Optional[int] = None) -> None:
+        """Set value in cache."""
+        if not self.cache:
+            return
+        
+        try:
+            ttl = ttl or self.cache_ttl
+            await self.cache.set(cache_key, value, ttl)
+            self.logger.debug(f"Cache set: {cache_key}")
+        except Exception as e:
+            self.logger.warning(f"Cache set error: {e}")
     
     async def get_series(
         self,

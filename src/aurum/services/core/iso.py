@@ -1,4 +1,4 @@
-"""ISO (Independent System Operator) service for market data operations.
+"""ISO (Independent System Operator) service for market data operations with caching.
 
 Implements business logic for ISO LMP (Locational Marginal Pricing) data,
 market operations, and regional energy market analytics.
@@ -6,8 +6,10 @@ market operations, and regional energy market analytics.
 
 from __future__ import annotations
 
+import hashlib
+import json
 import logging
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Protocol
 from datetime import date, datetime
 
 from ..base import BaseService, ServiceContext, ServiceResult, ServiceError, ValidationError, NotFoundError
@@ -16,8 +18,15 @@ from aurum.data.repositories import MetadataRepository
 logger = logging.getLogger(__name__)
 
 
+class CacheProtocol(Protocol):
+    """Protocol for cache implementations."""
+    async def get(self, key: str) -> Optional[Any]: ...
+    async def set(self, key: str, value: Any, ttl: int) -> None: ...
+    async def delete(self, key: str) -> None: ...
+
+
 class IsoService(BaseService):
-    """Service for ISO market data operations.
+    """Service for ISO market data operations with caching support.
 
     ISOs (Independent System Operators) manage regional energy markets
     and provide real-time pricing data (LMP - Locational Marginal Pricing).
@@ -28,16 +37,27 @@ class IsoService(BaseService):
     - Implements market analytics
     - Handles real-time vs historical data
     - Manages market-specific business rules
+    - Caches LMP data for performance
     """
 
-    def __init__(self, metadata_repository: MetadataRepository):
+    def __init__(
+        self,
+        metadata_repository: MetadataRepository,
+        cache: Optional[CacheProtocol] = None,
+        cache_ttl: int = 300  # 5 minutes for real-time data
+    ):
         """Initialize service with dependencies.
 
         Args:
             metadata_repository: Repository for metadata and catalog access
+            cache: Optional cache implementation
+            cache_ttl: Cache TTL in seconds (default 5 min for real-time data)
         """
         super().__init__()
         self.metadata_repo = metadata_repository
+        self.cache = cache
+        self.cache_ttl = cache_ttl
+        self._cache_namespace = "iso:v1"
 
     async def get_lmp_data(
         self,

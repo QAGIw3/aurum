@@ -1,4 +1,4 @@
-"""Feature store service for ML feature engineering and management.
+"""Feature store service for ML feature engineering and management with caching.
 
 Implements business logic for feature store operations including feature
 creation, versioning, and serving for ML models.
@@ -6,14 +6,32 @@ creation, versioning, and serving for ML models.
 
 from __future__ import annotations
 
+import hashlib
+import json
 import logging
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Protocol
 from datetime import datetime, timedelta
 from dataclasses import dataclass
 
 from ..base import BaseService, ServiceContext, ServiceResult, ServiceError, ValidationError, NotFoundError
 
 logger = logging.getLogger(__name__)
+
+
+class CacheProtocol(Protocol):
+    """Protocol for cache implementations."""
+    
+    async def get(self, key: str) -> Optional[Any]:
+        """Get value from cache."""
+        ...
+    
+    async def set(self, key: str, value: Any, ttl: int) -> None:
+        """Set value in cache with TTL."""
+        ...
+    
+    async def delete(self, key: str) -> None:
+        """Delete value from cache."""
+        ...
 
 
 @dataclass
@@ -44,7 +62,7 @@ class FeatureDefinition:
 
 
 class FeatureStoreService(BaseService):
-    """Service for ML feature store operations.
+    """Service for ML feature store operations with caching support.
 
     Feature store provides:
     - Cross-asset feature engineering (weather, load, price data)
@@ -61,12 +79,54 @@ class FeatureStoreService(BaseService):
     - Implements caching for performance
     """
 
-    def __init__(self):
-        """Initialize service with default configuration."""
+    def __init__(self, cache: Optional[CacheProtocol] = None, cache_ttl: int = 3600):
+        """Initialize service with optional cache.
+        
+        Args:
+            cache: Optional cache implementation
+            cache_ttl: Cache time-to-live in seconds (default 1 hour)
+        """
         super().__init__()
         self._feature_definitions: Dict[str, FeatureDefinition] = {}
         self._config = FeatureConfig()
+        self.cache = cache
+        self.cache_ttl = cache_ttl
+        self._cache_namespace = "features:v1"
         self._initialize_feature_definitions()
+    
+    def _build_cache_key(self, operation: str, **params) -> str:
+        """Build a cache key from operation and parameters."""
+        sorted_params = sorted(params.items())
+        param_str = json.dumps(sorted_params, sort_keys=True, default=str)
+        param_hash = hashlib.md5(param_str.encode()).hexdigest()[:16]
+        return f"{self._cache_namespace}:{operation}:{param_hash}"
+    
+    async def _get_from_cache(self, cache_key: str) -> Optional[Any]:
+        """Get value from cache if available."""
+        if not self.cache:
+            return None
+        
+        try:
+            cached = await self.cache.get(cache_key)
+            if cached:
+                self.logger.debug(f"Cache hit: {cache_key}")
+                return cached
+            return None
+        except Exception as e:
+            self.logger.warning(f"Cache get error: {e}")
+            return None
+    
+    async def _set_in_cache(self, cache_key: str, value: Any, ttl: Optional[int] = None) -> None:
+        """Set value in cache."""
+        if not self.cache:
+            return
+        
+        try:
+            ttl = ttl or self.cache_ttl
+            await self.cache.set(cache_key, value, ttl)
+            self.logger.debug(f"Cache set: {cache_key}")
+        except Exception as e:
+            self.logger.warning(f"Cache set error: {e}")
 
     async def create_feature_definition(
         self,

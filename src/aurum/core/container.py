@@ -601,12 +601,28 @@ def _register_core_services(container: DependencyContainer) -> None:
     async def create_iso_service():
         repo = await container.get(MetadataRepository)
         await repo.initialize()
-        return IsoService(repo)
+        
+        # Try to get cache
+        cache = None
+        try:
+            cache = await container.get(UnifiedCacheManager)
+        except Exception:
+            pass
+        
+        return IsoService(repo, cache=cache, cache_ttl=300)
     
     async def create_drought_service():
         repo = await container.get(DroughtRepository)
         await repo.initialize()
-        return DroughtService(repo)
+        
+        # Try to get cache
+        cache = None
+        try:
+            cache = await container.get(UnifiedCacheManager)
+        except Exception:
+            pass
+        
+        return DroughtService(repo, cache=cache, cache_ttl=1800)
     
     container.register(CurveService, create_curve_service, lifetime=ServiceLifetime.SINGLETON)
     container.register(MetadataService, create_metadata_service, lifetime=ServiceLifetime.SINGLETON)
@@ -615,18 +631,26 @@ def _register_core_services(container: DependencyContainer) -> None:
     container.register(IsoService, create_iso_service, lifetime=ServiceLifetime.SINGLETON)
     container.register(DroughtService, create_drought_service, lifetime=ServiceLifetime.SINGLETON)
     
-    # Register external services
+    # Register external services with cache support
     from aurum.services.external import EiaService, RenewablesIngestionService
     
     async def create_eia_service():
         repo = await container.get(MetadataRepository)
         await repo.initialize()
-        return EiaService(repo)
+        
+        # Try to get cache
+        cache = None
+        try:
+            cache = await container.get(UnifiedCacheManager)
+        except Exception:
+            pass
+        
+        return EiaService(repo, cache=cache, cache_ttl=3600)
     
     container.register(EiaService, create_eia_service, lifetime=ServiceLifetime.SINGLETON)
     container.register(RenewablesIngestionService, lambda: RenewablesIngestionService(), lifetime=ServiceLifetime.SINGLETON)
     
-    # Register ML services
+    # Register ML services with cache support
     from aurum.services.ml import (
         FeatureStoreService,
         ModelRegistryService,
@@ -638,9 +662,33 @@ def _register_core_services(container: DependencyContainer) -> None:
         AnomalyDetectionService
     )
     
-    container.register(FeatureStoreService, lambda: FeatureStoreService(), lifetime=ServiceLifetime.SINGLETON)
-    container.register(ModelRegistryService, lambda: ModelRegistryService(), lifetime=ServiceLifetime.SINGLETON)
-    container.register(RiskEngineService, lambda: RiskEngineService(), lifetime=ServiceLifetime.SINGLETON)
+    async def create_feature_store_service():
+        cache = None
+        try:
+            cache = await container.get(UnifiedCacheManager)
+        except Exception:
+            pass
+        return FeatureStoreService(cache=cache, cache_ttl=3600)
+    
+    async def create_model_registry_service():
+        cache = None
+        try:
+            cache = await container.get(UnifiedCacheManager)
+        except Exception:
+            pass
+        return ModelRegistryService(cache=cache, cache_ttl=1800)
+    
+    async def create_risk_engine_service():
+        cache = None
+        try:
+            cache = await container.get(UnifiedCacheManager)
+        except Exception:
+            pass
+        return RiskEngineService(cache=cache, cache_ttl=900)
+    
+    container.register(FeatureStoreService, create_feature_store_service, lifetime=ServiceLifetime.SINGLETON)
+    container.register(ModelRegistryService, create_model_registry_service, lifetime=ServiceLifetime.SINGLETON)
+    container.register(RiskEngineService, create_risk_engine_service, lifetime=ServiceLifetime.SINGLETON)
     container.register(BiddingRLService, lambda: BiddingRLService(), lifetime=ServiceLifetime.SINGLETON)
     container.register(AutoReforecastService, lambda: AutoReforecastService(), lifetime=ServiceLifetime.SINGLETON)
     container.register(CarbonRECService, lambda: CarbonRECService(), lifetime=ServiceLifetime.SINGLETON)

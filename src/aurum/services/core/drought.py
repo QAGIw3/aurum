@@ -1,12 +1,14 @@
-"""Drought service for drought monitoring and analysis operations.
+"""Drought service for drought monitoring and analysis operations with caching.
 
 Implements business logic for drought data queries, analysis, and reporting.
 """
 
 from __future__ import annotations
 
+import hashlib
+import json
 import logging
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Protocol
 from datetime import date, timedelta
 
 from ..base import BaseService, ServiceContext, ServiceResult, ServiceError, ValidationError, NotFoundError
@@ -15,8 +17,15 @@ from aurum.data.repositories import DroughtRepository
 logger = logging.getLogger(__name__)
 
 
+class CacheProtocol(Protocol):
+    """Protocol for cache implementations."""
+    async def get(self, key: str) -> Optional[Any]: ...
+    async def set(self, key: str, value: Any, ttl: int) -> None: ...
+    async def delete(self, key: str) -> None: ...
+
+
 class DroughtService(BaseService):
-    """Service for drought data operations.
+    """Service for drought data operations with caching support.
 
     Drought monitoring and analysis includes:
     - Drought indices (SPI, SPEI, PDSI)
@@ -31,16 +40,27 @@ class DroughtService(BaseService):
     - Implements drought monitoring workflows
     - Enforces data access controls
     - Generates drought alerts and reports
+    - Caches drought data for performance
     """
 
-    def __init__(self, drought_repository: DroughtRepository):
+    def __init__(
+        self,
+        drought_repository: DroughtRepository,
+        cache: Optional[CacheProtocol] = None,
+        cache_ttl: int = 1800  # 30 minutes for drought data
+    ):
         """Initialize service with dependencies.
 
         Args:
             drought_repository: Repository for drought data access
+            cache: Optional cache implementation
+            cache_ttl: Cache TTL in seconds (default 30 min)
         """
         super().__init__()
         self.drought_repo = drought_repository
+        self.cache = cache
+        self.cache_ttl = cache_ttl
+        self._cache_namespace = "drought:v1"
 
     async def get_drought_indices(
         self,

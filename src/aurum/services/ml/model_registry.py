@@ -1,4 +1,4 @@
-"""Model registry service for ML model management.
+"""Model registry service for ML model management with caching.
 
 Implements business logic for model versioning, training job management,
 model comparison, and deployment lifecycle.
@@ -6,8 +6,10 @@ model comparison, and deployment lifecycle.
 
 from __future__ import annotations
 
+import hashlib
+import json
 import logging
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Protocol
 from datetime import datetime
 from uuid import uuid4
 
@@ -16,8 +18,21 @@ from ..base import BaseService, ServiceContext, ServiceResult, ServiceError, Val
 logger = logging.getLogger(__name__)
 
 
+class CacheProtocol(Protocol):
+    """Protocol for cache implementations."""
+    
+    async def get(self, key: str) -> Optional[Any]:
+        ...
+    
+    async def set(self, key: str, value: Any, ttl: int) -> None:
+        ...
+    
+    async def delete(self, key: str) -> None:
+        ...
+
+
 class ModelRegistryService(BaseService):
-    """Service for ML model registry operations.
+    """Service for ML model registry operations with caching support.
     
     Model registry provides:
     - Model versioning and lifecycle management
@@ -32,14 +47,23 @@ class ModelRegistryService(BaseService):
     - Provides model comparison analytics
     - Implements model promotion workflows
     - Enforces model governance policies
+    - Caches model metadata for performance
     """
     
-    def __init__(self):
-        """Initialize service with default configuration."""
+    def __init__(self, cache: Optional[CacheProtocol] = None, cache_ttl: int = 1800):
+        """Initialize service with optional cache.
+        
+        Args:
+            cache: Optional cache implementation
+            cache_ttl: Cache time-to-live in seconds (default 30 min)
+        """
         super().__init__()
         self._models: Dict[str, Dict[str, Any]] = {}
         self._versions: Dict[str, List[Dict[str, Any]]] = {}
         self._training_jobs: Dict[str, Dict[str, Any]] = {}
+        self.cache = cache
+        self.cache_ttl = cache_ttl
+        self._cache_namespace = "models:v1"
     
     async def register_model(
         self,

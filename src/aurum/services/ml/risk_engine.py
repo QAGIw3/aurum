@@ -1,4 +1,4 @@
-"""Risk engine service for risk analytics and calculations.
+"""Risk engine service for risk analytics and calculations with caching.
 
 Implements business logic for portfolio risk, VaR/CVaR calculations,
 stress testing, and risk reporting.
@@ -6,8 +6,10 @@ stress testing, and risk reporting.
 
 from __future__ import annotations
 
+import hashlib
+import json
 import logging
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Protocol
 from datetime import date, datetime
 
 from ..base import BaseService, ServiceContext, ServiceResult, ServiceError, ValidationError, NotFoundError
@@ -15,8 +17,15 @@ from ..base import BaseService, ServiceContext, ServiceResult, ServiceError, Val
 logger = logging.getLogger(__name__)
 
 
+class CacheProtocol(Protocol):
+    """Protocol for cache implementations."""
+    async def get(self, key: str) -> Optional[Any]: ...
+    async def set(self, key: str, value: Any, ttl: int) -> None: ...
+    async def delete(self, key: str) -> None: ...
+
+
 class RiskEngineService(BaseService):
-    """Service for risk engine operations.
+    """Service for risk engine operations with caching support.
     
     Risk engine provides:
     - Portfolio risk calculations (VaR, CVaR)
@@ -31,12 +40,21 @@ class RiskEngineService(BaseService):
     - Provides stress testing capabilities
     - Generates risk reports
     - Enforces risk management policies
+    - Caches risk calculations for performance
     """
     
-    def __init__(self):
-        """Initialize service with default configuration."""
+    def __init__(self, cache: Optional[CacheProtocol] = None, cache_ttl: int = 900):
+        """Initialize service with optional cache.
+        
+        Args:
+            cache: Optional cache implementation
+            cache_ttl: Cache TTL in seconds (default 15 min)
+        """
         super().__init__()
         self._risk_models: Dict[str, Dict[str, Any]] = {}
+        self.cache = cache
+        self.cache_ttl = cache_ttl
+        self._cache_namespace = "risk:v1"
     
     async def calculate_portfolio_risk(
         self,
