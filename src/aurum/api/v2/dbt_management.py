@@ -20,7 +20,7 @@ from fastapi import APIRouter, HTTPException, Query, Request, Response, Depends
 from pydantic import BaseModel, Field
 
 from ..deps import get_settings
-from ..services.dbt_management_service import (
+from ..services.dbt_management_shim import (
     get_dbt_management_service,
     DBTModel,
     DataMart,
@@ -176,7 +176,7 @@ async def run_dbt_tests(
     start_time = time.perf_counter()
 
     try:
-        from ..services.dbt_management_service import run_model_tests
+        from ..services.dbt_management_shim import run_model_tests
 
         # Run tests
         result = await run_model_tests(test_data.model_names)
@@ -265,7 +265,7 @@ async def generate_test_fixtures(
     start_time = time.perf_counter()
 
     try:
-        from ..services.dbt_management_service import generate_development_fixtures
+        from ..services.dbt_management_shim import generate_development_fixtures
 
         # Generate fixtures
         results = await generate_development_fixtures(fixture_data.fixture_names)
@@ -502,7 +502,7 @@ async def analyze_model_dependencies(
     start_time = time.perf_counter()
 
     try:
-        from ..services.dbt_management_service import analyze_model_impact
+        from ..services.dbt_management_shim import analyze_model_impact
 
         # Analyze dependencies
         analysis = await analyze_model_impact(model_name)

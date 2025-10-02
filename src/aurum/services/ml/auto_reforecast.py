@@ -10,6 +10,7 @@ import logging
 from typing import Any, Dict, List, Optional
 from datetime import datetime, timedelta
 from dataclasses import dataclass
+from uuid import uuid4
 
 from ..base import BaseService, ServiceContext, ServiceResult, ServiceError, ValidationError, NotFoundError
 

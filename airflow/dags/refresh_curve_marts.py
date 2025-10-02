@@ -32,7 +32,7 @@ DBT_BASE_CMD = f"{DBT_BIN} --project-dir {DBT_PROJECT_DIR} --profiles-dir {DBT_P
 async def execute_scheduled_dbt_tests() -> None:
     """Execute scheduled DBT tests using the management service."""
     try:
-        from aurum.api.services.dbt_management_service import get_dbt_management_service
+        from aurum.api.services.dbt_management_shim import get_dbt_management_service
 
         service = get_dbt_management_service()
         results = await service.execute_scheduled_tests()

@@ -36,6 +36,22 @@ from .manager import (
 )
 
 from .feature_management import router as feature_management_router
+from .migration_flags import (
+    MIGRATION_FLAGS,
+    initialize_migration_flags,
+    is_migration_feature_enabled,
+    get_migration_feature_variant,
+    should_use_unified_db_connections,
+    should_enable_db_health_monitoring,
+    should_use_unified_collectors,
+    should_use_new_ppa_service,
+    should_emit_deprecation_warnings,
+    can_migrate_database_connections,
+    can_use_production_monitoring,
+    can_use_unified_collectors,
+    should_warn_about_legacy_dao,
+    should_warn_about_legacy_service,
+)
 
 # Public API helper functions
 async def is_enabled(
@@ -158,6 +174,22 @@ __all__ = [
     "is_enabled",
     "get_variant",
     "evaluate_flag",
+
+    # Migration Flags
+    "MIGRATION_FLAGS",
+    "initialize_migration_flags",
+    "is_migration_feature_enabled",
+    "get_migration_feature_variant",
+    "should_use_unified_db_connections",
+    "should_enable_db_health_monitoring",
+    "should_use_unified_collectors",
+    "should_use_new_ppa_service",
+    "should_emit_deprecation_warnings",
+    "can_migrate_database_connections",
+    "can_use_production_monitoring",
+    "can_use_unified_collectors",
+    "should_warn_about_legacy_dao",
+    "should_warn_about_legacy_service",
 
     # Routers
     "feature_management_router",

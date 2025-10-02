@@ -20,7 +20,7 @@ from fastapi import APIRouter, HTTPException, Query, Request, Response, Depends
 from pydantic import BaseModel, Field
 
 from ..deps import get_settings
-from ..services.plugin_system_service import (
+from ..services.plugin_system_shim import (
     get_plugin_system_service,
     PluginContract,
     PluginInstance,

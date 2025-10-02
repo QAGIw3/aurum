@@ -23,8 +23,17 @@ from .checkpoints import (
     PostgresCheckpointStore,
     RedisCheckpointStore,
 )
+from .unified_collector import (
+    BaseProviderCollector,
+    DataTransformer,
+    DatasetConfig,
+    JSONDataTransformer,
+    ProviderConfig,
+    create_provider_collector,
+)
 
 __all__ = [
+    # Base framework
     "AvroEncoder",
     "Checkpoint",
     "CheckpointStore",
@@ -44,4 +53,12 @@ __all__ = [
     "RetryConfig",
     "RetryLimitExceeded",
     "create_avro_producer",
+
+    # Unified collector framework
+    "BaseProviderCollector",
+    "DataTransformer",
+    "DatasetConfig",
+    "JSONDataTransformer",
+    "ProviderConfig",
+    "create_provider_collector",
 ]

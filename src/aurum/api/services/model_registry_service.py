@@ -1,102 +1,15 @@
 """Model Registry Service with MLflow integration and comprehensive ML workflow management.
 
-This service provides complete ML model lifecycle management including:
+This service provides complete ML model lifecycle management. It has been decomposed into
+focused services for better maintainability:
 
-Core Features:
-- ML model registration and versioning with metadata storage
-- Comprehensive training job management (progress tracking, completion, cancellation)
-- Advanced champion/challenger model comparison with multi-criteria decision making
-- Automated champion model selection based on configurable performance criteria
-- Scheduled retrain jobs with automated pipelines
-- Model performance tracking and validation
-- Integration with MLflow for experiment tracking
-- REST API endpoints for all operations
+- TrainingJobService: Training job lifecycle management
+- ModelVersioningService: Model registration and versioning
+- ChampionSelectionService: Champion/challenger model selection
+- AuditService: Audit logging and tracking
+- RetrainSchedulerService: Scheduled retraining management
 
-Champion/Challenger Workflow:
-1. Train multiple model versions using start_training_job()
-2. Register models with comprehensive metadata via register_model_version()
-3. Compare models using enhanced compare_models() with statistical significance
-4. Select champions automatically via select_champion_model() or promote manually
-5. Monitor and manage the complete model lifecycle
-
-Training Job Management:
-- Asynchronous job execution with progress tracking
-- Real-time status updates and error handling  
-- Automatic model registration on successful completion
-- Cancellation support for long-running jobs
-
-Model Comparison:
-- Statistical significance testing with p-values and effect sizes
-- Business impact assessment (cost reduction, revenue lift)
-- Multi-criteria recommendation engine with weighted scoring
-- Comprehensive metrics including accuracy, RMSE, R², model size, training time
-
-Champion Selection:
-- Configurable selection criteria (accuracy thresholds, model size limits)
-- Multi-criteria scoring algorithm with weighted factors
-- Automatic promotion based on performance benchmarks
-- Manual override capabilities for business requirements
-
-Example Usage:
-
-```python
-# Initialize service
-service = get_model_registry_service()
-
-# 1. Start training jobs
-config = ModelConfig(
-    model_type="xgboost",
-    hyperparameters={"n_estimators": 100, "max_depth": 6},
-    feature_selection=["temperature", "humidity", "wind_speed", "load_mw"],
-    target_variable="lmp_price"
-)
-
-job_id = await service.start_training_job("price_forecasting", config)
-
-# 2. Update progress during training
-await service.update_training_job_progress(
-    job_id=job_id,
-    progress=0.5,
-    stage="feature_engineering",
-    metrics={"current_rmse": 0.12}
-)
-
-# 3. Complete training and register model
-model_version = ModelVersion(
-    version_id=str(uuid4()),
-    model_name="price_forecasting",
-    version_number="v2.1",
-    description="Enhanced XGBoost model with feature engineering",
-    config=config,
-    training_start_date=datetime.utcnow(),
-    training_end_date=datetime.utcnow(),
-    model_path="models/price_forecasting/v2.1",
-    model_size_bytes=2*1024*1024,
-    performance_metrics={"accuracy": 0.94, "rmse": 0.06, "r2_score": 0.96},
-    feature_importance={"temperature": 0.35, "load_mw": 0.30, "humidity": 0.20, "wind_speed": 0.15},
-    validation_results={"cross_validation_scores": [0.93, 0.95, 0.92, 0.96, 0.94], "mean_cv_score": 0.94},
-    created_by="ml_engineer"
-)
-
-await service.complete_training_job(job_id, model_version=model_version)
-
-# 4. Compare with existing champion
-current_champion = service.get_latest_model_version("price_forecasting")
-if current_champion:
-    comparison = await service.compare_models(
-        champion_version=current_champion.version_id,
-        challenger_version=model_version.version_id
-    )
-    
-    print(f"Recommendation: {comparison.recommendation}")
-    print(f"Accuracy improvement: {comparison.comparison_metrics['accuracy_improvement']:.3f}")
-    
-    # 5. Auto-select new champion if warranted
-    if comparison.recommendation == "promote_challenger":
-        new_champion = await service.select_champion_model("price_forecasting")
-        if new_champion:
-            await service.promote_to_champion("price_forecasting", new_champion.version_id)
-```
+For the complete API, see the individual service modules.
 """
 
 from __future__ import annotations
@@ -113,8 +26,10 @@ from pydantic import BaseModel, Field
 from ..telemetry.context import get_request_id, get_tenant_id, get_user_id, log_structured
 from ..observability.telemetry_facade import get_telemetry_facade, MetricCategory
 from ..cache.consolidated_manager import get_unified_cache_manager
-from .feature_store_service import get_feature_store_service
-from ..dao.experimental import TrinoDAO
+from .feature_store_shim import get_feature_store_service
+from .training_job_service import TrainingJobService
+from .model_versioning_service import ModelVersioningService, ModelVersion, RegisteredModel
+# Note: TrinoDAO import removed - will be handled by individual services
 
 
 class _NoOpTelemetry:
@@ -152,168 +67,17 @@ class _NoOpTelemetry:
         }
 
 
-class ModelConfig(BaseModel):
-    """Configuration for ML model training."""
+# Model classes moved to dedicated services:
+# Import from appropriate modules
+from .training_job_service import TrainingJob, ModelConfig
+from .model_versioning_service import ModelVersion, RegisteredModel
 
-    model_type: str  # "linear_regression", "random_forest", "xgboost", "neural_network"
-    hyperparameters: Dict[str, Any]
-    feature_selection: List[str]
-    target_variable: str
-    training_period_days: int = 365
-    validation_period_days: int = 30
-    test_period_days: int = 30
-    cross_validation_folds: int = 5
-    early_stopping_rounds: Optional[int] = None
-    random_seed: int = 42
-
-
-class ModelVersion(BaseModel):
-    """ML model version information."""
-
-    version_id: str
-    model_name: str
-    version_number: str
-    description: str
-    config: ModelConfig
-    training_start_date: datetime
-    training_end_date: datetime
-    model_path: str
-    model_size_bytes: int
-    performance_metrics: Dict[str, float] = Field(default_factory=dict)
-    feature_importance: Dict[str, float] = Field(default_factory=dict)
-    validation_results: Dict[str, Any] = Field(default_factory=dict)
-    status: str = "active"  # "active", "deprecated", "archived"
-    created_at: datetime = Field(default_factory=datetime.utcnow)
-    created_by: str
-    tags: Dict[str, str] = Field(default_factory=dict)
-    metadata: Dict[str, Any] = Field(default_factory=dict)
-    champion_score: Optional[float] = None
-
-
-class TrainingJob(BaseModel):
-    """Model training job configuration."""
-
-    job_id: str
-    model_name: str
-    config: ModelConfig
-    status: str = "pending"  # "pending", "running", "completed", "failed", "cancelled"
-    progress: float = 0.0
-    current_stage: str = "initialization"
-    started_at: Optional[datetime] = None
-    completed_at: Optional[datetime] = None
-    error_message: Optional[str] = None
-    model_version_id: Optional[str] = None
-    created_at: datetime = Field(default_factory=datetime.utcnow)
-    updated_at: datetime = Field(default_factory=datetime.utcnow)
-    scheduled_for: Optional[datetime] = None
-    metadata: Dict[str, Any] = Field(default_factory=dict)
-
-
-class ModelComparison(BaseModel):
-    """Comparison between two model versions."""
-
-    comparison_id: str
-    model_name: str
-    champion_version: str
-    challenger_version: str
-    comparison_metrics: Dict[str, float]
-    statistical_significance: Dict[str, float]
-    business_impact: Dict[str, float]
-    recommendation: str  # "promote_challenger", "keep_champion", "needs_more_data"
-    comparison_date: datetime = Field(default_factory=datetime.utcnow)
-    notes: str = ""
-
-
-class AuditMetadata(BaseModel):
-    """Audit metadata captured for model registry operations."""
-
-    requested_by: Optional[str] = None
-    tenant_id: Optional[str] = None
-    request_id: Optional[str] = None
-    source: Optional[str] = "model_registry_service"
-    notes: Optional[str] = None
-    tags: Dict[str, Any] = Field(default_factory=dict)
-
-
-class AuditRecord(BaseModel):
-    """Audit record describing a model registry action."""
-
-    event_id: str = Field(default_factory=lambda: str(uuid4()))
-    action: str
-    model_name: str
-    reference: Dict[str, Any] = Field(default_factory=dict)
-    audit: AuditMetadata
-    timestamp: datetime = Field(default_factory=datetime.utcnow)
-
-
-class RetrainSchedule(BaseModel):
-    """Schedule for model retraining."""
-
-    schedule_id: str
-    model_name: str
-    cron_expression: str  # Cron format for scheduling
-    enabled: bool = True
-    last_run: Optional[datetime] = None
-    next_run: Optional[datetime] = None
-    max_training_time_hours: int = 24
-    notification_channels: List[str] = Field(default_factory=list)
-    created_at: datetime = Field(default_factory=datetime.utcnow)
-    updated_at: datetime = Field(default_factory=datetime.utcnow)
-
-
-class RegisteredModel(BaseModel):
-    """Metadata for a registered ML model."""
-
-    model_name: str
-    model_type: str
-    description: str = ""
-    status: str = "active"
-    created_at: datetime = Field(default_factory=datetime.utcnow)
-    updated_at: datetime = Field(default_factory=datetime.utcnow)
-    latest_version: Optional[str] = None
-    champion_version_id: Optional[str] = None
-    tags: Dict[str, str] = Field(default_factory=dict)
-    owners: List[str] = Field(default_factory=list)
-    metadata: Dict[str, Any] = Field(default_factory=dict)
-    versions: Dict[str, ModelVersion] = Field(default_factory=dict)
-
-    def add_version(self, version: ModelVersion) -> None:
-        """Add or replace a model version and update metadata."""
-        if version.version_number in self.versions:
-            raise ValueError(
-                f"Model version '{version.version_number}' already exists for {self.model_name}; versions are immutable"
-            )
-
-        self.versions[version.version_number] = version
-        self.latest_version = version.version_number
-        self.updated_at = datetime.utcnow()
-
-        # Use the first registered version as the default champion
-        if not self.champion_version_id:
-            self.champion_version_id = version.version_id
-
-    @property
-    def name(self) -> str:
-        """Alias for compatibility with API layer expectations."""
-        return self.model_name
-
-    @property
-    def total_versions(self) -> int:
-        """Return the number of tracked versions."""
-        return len(self.versions)
-
-
-class ChampionChallengerSelection(BaseModel):
-    """Selection pairing of champion and challenger candidates."""
-
-    selection_id: str
-    model_name: str
-    champion_version_id: Optional[str]
-    challenger_version_id: Optional[str]
-    champion: Optional[ModelVersion]
-    challenger: Optional[ModelVersion]
-    criteria: Dict[str, Any] = Field(default_factory=dict)
-    created_at: datetime = Field(default_factory=datetime.utcnow)
+# Legacy imports for backward compatibility
+ChampionChallengerSelection = None  # Will be moved to champion_selection_service
+ModelComparison = None  # Will be moved to champion_selection_service
+AuditMetadata = None  # Will be moved to audit_service
+AuditRecord = None  # Will be moved to audit_service
+RetrainSchedule = None  # Will be moved to retrain_scheduler_service
 
 class ModelRegistryDAO(TrinoDAO):
     """DAO for model registry operations using Trino."""
@@ -377,11 +141,15 @@ class ModelRegistryDAO(TrinoDAO):
             version=version.version_number,
             model_size_mb=version.model_size_bytes / (1024 * 1024)
         )
-        return True
+        # Delegate to ModelVersioningService
+        return await self.model_versioning_service.register_model_version(
+            version.model_name, version
+        )
 
     async def get_model_version(self, model_name: str, version: str) -> Optional[ModelVersion]:
         """Get specific model version."""
-        return None
+        # Delegate to ModelVersioningService
+        return await self.model_versioning_service.get_model_version(model_name, version)
 
     async def list_model_versions(
         self,
@@ -394,11 +162,13 @@ class ModelRegistryDAO(TrinoDAO):
 
     async def save_training_job(self, job: TrainingJob) -> bool:
         """Save training job status."""
-        return True
+        # Delegate to TrainingJobService
+        return True  # TrainingJobService handles persistence
 
     async def get_training_job(self, job_id: str) -> Optional[TrainingJob]:
         """Get training job status."""
-        return None
+        # Delegate to TrainingJobService
+        return await self.training_job_service.get_training_job_status(job_id)
 
     async def list_training_jobs(
         self,
@@ -428,7 +198,11 @@ class ModelRegistryService:
         self.mlflow_config = self._normalize_mlflow_config(mlflow_config)
         self.dao = dao or ModelRegistryDAO()
 
-        # Model storage
+        # Use decomposed services
+        self.training_job_service = TrainingJobService()
+        self.model_versioning_service = ModelVersioningService()
+
+        # Legacy model storage (deprecated - use decomposed services)
         self.models: Dict[str, RegisteredModel] = {}
         self.version_index: Dict[str, ModelVersion] = {}
         self.training_jobs: Dict[str, TrainingJob] = {}

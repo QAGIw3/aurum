@@ -1,4 +1,7 @@
-"""Observability metrics utilities backed by Prometheus."""
+"""Observability metrics utilities backed by Prometheus.
+
+Core infrastructure moved to core_metrics.py, application metrics to application_metrics.py.
+"""
 
 from __future__ import annotations
 
@@ -8,6 +11,24 @@ from dataclasses import dataclass
 from enum import Enum
 from typing import Dict, List, Optional, Tuple, Union, Any
 import os
+
+# Import decomposed metrics modules
+from .core_metrics import (
+    generate_latest,
+    get_metrics_collector,
+    MetricPoint,
+    MetricType,
+    MetricsCollector,
+    METRICS_PATH,
+    PROMETHEUS_AVAILABLE,
+)
+from .application_metrics import (
+    get_application_metrics,
+    ApplicationMetrics,
+    record_external_api_request,
+    record_external_contract_publish,
+    record_external_contract_merge,
+)
 
 try:  # pragma: no cover - optional dependency
     from prometheus_client import (

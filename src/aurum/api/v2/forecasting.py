@@ -26,7 +26,7 @@ from enum import Enum
 from ..deps import get_settings, get_cache_manager, get_unified_cache_manager_dep
 from ..telemetry.context import get_request_id, get_tenant_id
 from aurum.core import AurumSettings
-from ..services.feature_store_service import get_feature_store_service
+from ..services.feature_store_shim import get_feature_store_service
 from ...observability.telemetry_facade import get_telemetry_facade, MetricCategory
 from ..http import respond_with_etag
 

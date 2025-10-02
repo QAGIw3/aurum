@@ -48,7 +48,10 @@ class NoaaRepository(BaseRepository):
         end_date: Optional[date] = None
     ) -> List[Dict[str, Any]]:
         """Get NOAA station data."""
-        # Stub implementation - would query from iceberg.external.noaa_observations
+        # NOTE: Repository methods are stubs for now.
+        # In production, this would query a warehouse table, e.g.
+        # iceberg.external.noaa_observations, with appropriate filters
+        # (station, dataset, date range), and return normalized rows.
         return []
     
     async def search_stations(
@@ -60,7 +63,9 @@ class NoaaRepository(BaseRepository):
         limit: int = 100
     ) -> List[Dict[str, Any]]:
         """Search NOAA weather stations."""
-        # Stub implementation - would query from iceberg.external.noaa_stations
+        # Stub: replace with query against a stations dimension table
+        # such as iceberg.external.noaa_stations with spatial predicates
+        # (e.g., ST_DWithin for radius search) or simple metadata filters.
         return []
     
     async def get_station_metadata(
@@ -68,7 +73,8 @@ class NoaaRepository(BaseRepository):
         station_id: str
     ) -> Optional[Dict[str, Any]]:
         """Get metadata for a NOAA station."""
-        # Stub implementation
+        # Stub: return a metadata record (e.g., station name, lat/lon, elevation)
+        # fetched from the station catalog once implemented.
         return None
     
     async def get_climate_data(
@@ -79,7 +85,9 @@ class NoaaRepository(BaseRepository):
         end_date: Optional[date] = None
     ) -> List[Dict[str, Any]]:
         """Get climate data for a location."""
-        # Stub implementation
+        # Stub: return metric-specific aggregates or raw time series for
+        # the requested location. In a full implementation this would
+        # likely hit a pre-aggregated climate table.
         return []
 
 
@@ -120,11 +128,16 @@ class NoaaService(BaseService):
         self.cache = cache
         self.cache_ttl = cache_ttl
         self._cache_namespace = "noaa:v1"
+        # Namespacing cache keys makes it safe to evolve formats without
+        # colliding with older entries. Adjust the version when changing
+        # key shapes or cached payload semantics.
     
     def _build_cache_key(self, operation: str, **params) -> str:
         """Build a cache key from operation and parameters."""
+        # Sort params to ensure equivalent calls produce identical keys
         sorted_params = sorted(params.items())
         param_str = json.dumps(sorted_params, sort_keys=True, default=str)
+        # Hash long param blobs to keep keys short and safe for backends
         param_hash = hashlib.md5(param_str.encode()).hexdigest()[:16]
         return f"{self._cache_namespace}:{operation}:{param_hash}"
     
@@ -191,7 +204,7 @@ class NoaaService(BaseService):
         )
         
         try:
-            # Validate
+            # Validate required identifiers early for fast failure
             if not station_id:
                 raise ValidationError("Station ID is required", field="station_id")
             
@@ -210,6 +223,7 @@ class NoaaService(BaseService):
                 )
                 cached = await self._get_from_cache(cache_key)
                 if cached is not None:
+                    # Short-circuit on cache hit; include provenance
                     return ServiceResult.ok(
                         data=cached,
                         metadata={
@@ -219,7 +233,7 @@ class NoaaService(BaseService):
                         }
                     )
             
-            # Get from repository
+            # Get from repository (DB/warehouse)
             data = await self.noaa_repo.get_station_data(
                 station_id=station_id,
                 dataset_id=dataset_id,
@@ -230,7 +244,7 @@ class NoaaService(BaseService):
             if not data:
                 raise NotFoundError(f"No data found for station: {station_id}")
             
-            # Cache results
+            # Cache results for subsequent requests
             if use_cache and cache_key:
                 await self._set_in_cache(cache_key, data)
             
@@ -282,7 +296,7 @@ class NoaaService(BaseService):
         )
         
         try:
-            # Validate
+            # Validate dependent lat/lon arguments and numeric ranges
             if lat is not None and lon is None:
                 raise ValidationError("Longitude is required when latitude is provided")
             if lon is not None and lat is None:
@@ -311,7 +325,7 @@ class NoaaService(BaseService):
                         metadata={"source": "cache", "count": len(cached)}
                     )
             
-            # Search in repository
+            # Query repository using spatial or metadata filters
             stations = await self.noaa_repo.search_stations(
                 lat=lat,
                 lon=lon,
@@ -320,7 +334,7 @@ class NoaaService(BaseService):
                 limit=limit
             )
             
-            # Cache results
+            # Cache results to accelerate repeated discovery queries
             if use_cache and cache_key:
                 await self._set_in_cache(cache_key, stations)
             
@@ -381,7 +395,7 @@ class NoaaService(BaseService):
         )
         
         try:
-            # Validate
+            # Validate inputs and cap request size to protect the backend
             if not location:
                 raise ValidationError("Location is required", field="location")
             
@@ -391,7 +405,7 @@ class NoaaService(BaseService):
             if len(metrics) > 10:
                 raise ValidationError("Maximum 10 metrics per request", field="metrics")
             
-            # Get data for each metric
+            # Fetch each metric independently to tolerate partial failures
             results = {}
             errors = []
             
@@ -454,7 +468,7 @@ class NoaaService(BaseService):
         )
         
         try:
-            # For alerts, use shorter cache TTL (5 minutes)
+            # For alerts, use shorter cache TTL since data changes often
             cache_ttl = 300 if use_cache else None
             
             # Try cache first
@@ -473,8 +487,8 @@ class NoaaService(BaseService):
                         metadata={"source": "cache", "count": len(cached)}
                     )
             
-            # In a real implementation, would query NWS alerts API
-            # For now, return empty list
+            # Placeholder: integrate with NWS alerts API (cap results,
+            # normalize fields, and map severities). For now, return []
             alerts = []
             
             # Cache results with short TTL

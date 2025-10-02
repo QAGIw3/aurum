@@ -8,8 +8,8 @@ from typing import Any, Dict, List, Optional
 from uuid import UUID
 
 from aurum.core import AurumSettings
-from aurum.api.dao.timescale_async_dao import TimescaleAsyncDao
-from aurum.api.services.auto_reforecast_service import (
+from aurum.data.dao.timescale import TimescaleDAO
+from aurum.api.services.auto_reforecast_shim import (
     ForecastTrigger,
     TriggerCondition,
     TriggerEvent,
@@ -21,7 +21,7 @@ from aurum.api.services.auto_reforecast_service import (
 class AutoReforecastRepository:
     """Timescale-backed persistence for auto-reforecast triggers."""
 
-    def __init__(self, dao: TimescaleAsyncDao):
+    def __init__(self, dao: TimescaleDAO):
         self._dao = dao
 
     async def list_triggers(self, tenant_id: UUID) -> List[ForecastTrigger]:
@@ -205,7 +205,7 @@ class AutoReforecastRepository:
 class AutoReforecastJobRepository:
     """Timescale-backed persistence for reforecast jobs."""
 
-    def __init__(self, dao: TimescaleAsyncDao):
+    def __init__(self, dao: TimescaleDAO):
         self._dao = dao
 
     async def enqueue_job(
@@ -420,7 +420,7 @@ _auto_reforecast_job_repository: Optional[AutoReforecastJobRepository] = None
 def get_auto_reforecast_repository(settings: Optional[AurumSettings] = None) -> AutoReforecastRepository:
     global _auto_reforecast_repository
     if _auto_reforecast_repository is None:
-        dao = TimescaleAsyncDao(settings=settings)
+        dao = TimescaleDAO(settings=settings)
         _auto_reforecast_repository = AutoReforecastRepository(dao)
     return _auto_reforecast_repository
 
@@ -428,6 +428,6 @@ def get_auto_reforecast_repository(settings: Optional[AurumSettings] = None) -> 
 def get_auto_reforecast_job_repository(settings: Optional[AurumSettings] = None) -> AutoReforecastJobRepository:
     global _auto_reforecast_job_repository
     if _auto_reforecast_job_repository is None:
-        dao = TimescaleAsyncDao(settings=settings)
+        dao = TimescaleDAO(settings=settings)
         _auto_reforecast_job_repository = AutoReforecastJobRepository(dao)
     return _auto_reforecast_job_repository

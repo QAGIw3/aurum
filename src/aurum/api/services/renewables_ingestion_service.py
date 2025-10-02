@@ -22,8 +22,8 @@ from pydantic import BaseModel, Field, validator
 
 from ..observability.telemetry_facade import MetricCategory, get_telemetry_facade
 from ..telemetry.context import log_structured
-from .feature_store_service import get_feature_store_service
-from ..dao.experimental import TrinoDAO
+from .feature_store_shim import get_feature_store_service
+from aurum.data.dao.trino import TrinoDAO
 
 
 class DataSourceConfig(BaseModel):

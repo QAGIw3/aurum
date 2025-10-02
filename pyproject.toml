@@ -96,6 +96,9 @@ aurum-external-collector = "aurum.external.runner:cli"
 aurum-admin = "aurum.cli.admin:main"
 
 [project.optional-dependencies]
+dev = [
+    "import-linter==2.0",
+]
 test = [
     "pytest==8.3.3",
     "pytest-asyncio==0.25.0",

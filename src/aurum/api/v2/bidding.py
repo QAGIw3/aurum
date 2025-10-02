@@ -19,7 +19,7 @@ from fastapi import APIRouter, HTTPException, Query, Request, Response, Depends
 from pydantic import BaseModel, Field
 
 from ..deps import get_settings
-from ..services.bidding_rl_service import (
+from ..services.bidding_rl_shim import (
     get_bidding_rl_service,
     AuctionEnvironment,
     BiddingPolicy,

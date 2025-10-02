@@ -35,7 +35,7 @@ from ..scenario_models import (
     ScenarioRunOptions,
     ScenarioRunPriority,
 )
-from ..services.feature_store_service import get_feature_store_service
+from ..services.feature_store_shim import get_feature_store_service
 from ..v2.forecasting import (
     ForecastBatchRequest,
     ForecastHistoryRequest,

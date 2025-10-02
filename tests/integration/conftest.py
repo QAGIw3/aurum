@@ -1,173 +1,76 @@
-"""Configuration for integration tests with containers."""
+"""Pytest fixtures for integration tests."""
+
+import asyncio
+from typing import AsyncGenerator
 
 import pytest
-import httpx
-from typing import Dict, Any, List
-from fastapi import FastAPI
+import pytest_asyncio
+from sqlalchemy import create_engine, event
+from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine, async_sessionmaker
+from sqlalchemy.orm import Session
+from sqlalchemy.pool import StaticPool
 
-from tests.common import create_test_app, TestAppConfig
-from tests.integration.containers import (
-    postgres_dsn,
-    timescale_dsn,
-    kafka_bootstrap_servers,
-    clickhouse_dsn,
-    trino_dsn,
-    database_urls,
-)
+from aurum.infrastructure.persistence.models.curve_model import Base as CurveBase
+from aurum.infrastructure.persistence.models.iso_model import Base as IsoBase
+from aurum.infrastructure.persistence.models.ppa_model import Base as PPABase
+from aurum.infrastructure.messaging.event_bus import InMemoryEventBus
 
 
-@pytest.fixture(scope="function")
-def integration_app_settings(database_urls: Dict[str, str]) -> TestAppConfig:
-    """App settings configured for integration testing with containers."""
-    settings = TestAppConfig()
-
-    # Configure database connections
-    if "postgres" in database_urls:
-        # Parse postgres URL and configure settings
-        pg_url = database_urls["postgres"]
-        # In real implementation, parse the URL to extract host, port, etc.
-        settings.backend_type = "postgres"
-
-    if "kafka" in database_urls:
-        settings.kafka_bootstrap_servers = [database_urls["kafka"]]
-        settings.kafka_enabled = True
-
-    return settings
+# Test database URL - using in-memory SQLite for fast tests
+TEST_DATABASE_URL = "sqlite+aiosqlite:///:memory:"
 
 
-@pytest.fixture(scope="function")
-def integration_api_app(integration_app_settings: TestAppConfig) -> FastAPI:
-    """FastAPI app configured for integration testing."""
-    return create_test_app(integration_app_settings)
+@pytest.fixture(scope="session")
+def event_loop():
+    """Create event loop for async tests."""
+    loop = asyncio.get_event_loop_policy().new_event_loop()
+    yield loop
+    loop.close()
 
 
-@pytest.fixture(scope="function")
-def integration_api_client(integration_api_app: FastAPI) -> httpx.AsyncClient:
-    """HTTP client for integration testing."""
-    return httpx.AsyncClient(app=integration_api_app, base_url="http://test")
-
-
-@pytest.fixture(scope="function")
-def authenticated_integration_client(integration_api_client: httpx.AsyncClient) -> httpx.AsyncClient:
-    """Authenticated HTTP client for integration testing."""
-    # Add authentication headers
-    integration_api_client.headers.update({
-        "X-Aurum-Tenant": "test-tenant-integration",
-        "X-User-ID": "test-user-integration",
-        "X-Correlation-ID": "test-correlation-integration"
-    })
-
-    return integration_api_client
-
-
-@pytest.fixture(scope="function")
-def test_tenants() -> List[Dict[str, Any]]:
-    """Test tenant configurations for multi-tenant testing."""
-    return [
-        {
-            "id": "test-tenant-001",
-            "name": "Test Tenant 1",
-            "users": ["user-001", "user-002"],
-            "settings": {"feature_flags": ["advanced_analytics"]}
-        },
-        {
-            "id": "test-tenant-002",
-            "name": "Test Tenant 2",
-            "users": ["user-003", "user-004"],
-            "settings": {"feature_flags": ["basic_analytics"]}
-        },
-        {
-            "id": "test-tenant-003",
-            "name": "Test Tenant 3",
-            "users": ["user-005", "user-006"],
-            "settings": {"feature_flags": ["experimental_features"]}
-        }
-    ]
-
-
-@pytest.fixture(scope="function")
-def test_scenarios() -> Dict[str, Any]:
-    """Test scenario data for integration testing."""
-    return {
-        "scenarios": [
-            {
-                "name": "Revenue Forecast Q1",
-                "description": "Quarterly revenue forecasting scenario",
-                "assumptions": [
-                    {"type": "market_growth", "value": 0.05},
-                    {"type": "discount_rate", "value": 0.08}
-                ],
-                "parameters": {
-                    "forecast_period_months": 12,
-                    "confidence_interval": 0.95,
-                    "num_simulations": 1000
-                }
-            },
-            {
-                "name": "Stress Test - Recession",
-                "description": "Stress testing scenario for recession conditions",
-                "assumptions": [
-                    {"type": "market_growth", "value": -0.02},
-                    {"type": "volatility_multiplier", "value": 2.0}
-                ],
-                "parameters": {
-                    "forecast_period_months": 24,
-                    "confidence_interval": 0.99,
-                    "num_simulations": 5000
-                }
-            }
-        ],
-        "run_options": {
-            "monte_carlo": {
-                "scenario_type": "monte_carlo",
-                "parameters": {
-                    "num_simulations": 100,
-                    "confidence_level": 0.95
-                }
-            },
-            "forecasting": {
-                "scenario_type": "forecasting",
-                "parameters": {
-                    "forecast_period_months": 12,
-                    "confidence_interval": 0.95
-                }
-            }
-        }
-    }
-
-
-@pytest.fixture(scope="function")
-def database_setup(database_urls: Dict[str, str]) -> None:
-    """Set up test databases with required fixtures."""
-    # This would execute SQL fixtures against the containerized databases
-    # For now, this is a placeholder that would be implemented based on
-    # the actual database schema and fixtures needed
-
-    # Example: Create tables, insert test data, etc.
-    pass
-
-
-@pytest.fixture(scope="function")
-def clean_database_state(database_urls: Dict[str, str]) -> None:
-    """Clean up database state after each test."""
-    # This would clean up test data from the containerized databases
-    # For now, this is a placeholder
-    pass
-
-
-# Integration test marker and configuration
-
-def pytest_configure(config):
-    """Configure pytest for integration tests."""
-    config.addinivalue_line(
-        "markers", "integration: mark test as integration test requiring containers"
+@pytest_asyncio.fixture
+async def async_engine():
+    """Create async engine for tests."""
+    engine = create_async_engine(
+        TEST_DATABASE_URL,
+        echo=False,
+        poolclass=StaticPool,  # Use single connection for in-memory DB
     )
+    
+    # Create all tables
+    async with engine.begin() as conn:
+        # Import all base classes to ensure tables are created
+        await conn.run_sync(CurveBase.metadata.create_all)
+        await conn.run_sync(IsoBase.metadata.create_all)
+        await conn.run_sync(PPABase.metadata.create_all)
+    
+    yield engine
+    
+    # Cleanup
+    await engine.dispose()
 
 
-def pytest_collection_modifyitems(config, items):
-    """Skip integration tests by default unless explicitly requested."""
-    skip_integration = pytest.mark.skip(reason="integration tests require --integration flag")
+@pytest_asyncio.fixture
+async def async_session(async_engine) -> AsyncGenerator[AsyncSession, None]:
+    """Create async session for tests."""
+    async_session_maker = async_sessionmaker(
+        async_engine,
+        class_=AsyncSession,
+        expire_on_commit=False,
+    )
+    
+    async with async_session_maker() as session:
+        yield session
+        await session.rollback()  # Rollback any changes
 
-    for item in items:
-        if "integration" in item.keywords:
-            item.add_marker(skip_integration)
+
+@pytest.fixture
+def event_bus():
+    """Create event bus for tests."""
+    return InMemoryEventBus()
+
+
+@pytest_asyncio.fixture
+async def db_session(async_session):
+    """Alias for async_session for backwards compatibility."""
+    return async_session

@@ -47,7 +47,8 @@ class FredRepository(BaseRepository):
         end_date: Optional[date] = None
     ) -> List[Dict[str, Any]]:
         """Get FRED series data."""
-        # Stub implementation - would query from iceberg.external.fred_observations
+        # Stub: replace with a query against a warehouse table like
+        # iceberg.external.fred_observations filtered by series/date range.
         return []
     
     async def search_series(
@@ -56,7 +57,8 @@ class FredRepository(BaseRepository):
         limit: int = 100
     ) -> List[Dict[str, Any]]:
         """Search FRED series catalog."""
-        # Stub implementation - would query from iceberg.external.fred_catalog
+        # Stub: replace with a lookup in a catalog table such as
+        # iceberg.external.fred_catalog with proper text search or trigram index.
         return []
     
     async def get_series_metadata(
@@ -64,7 +66,8 @@ class FredRepository(BaseRepository):
         series_id: str
     ) -> Optional[Dict[str, Any]]:
         """Get metadata for a FRED series."""
-        # Stub implementation
+        # Stub: return metadata record (title, frequency, units, last update)
+        # via a dedicated metadata table.
         return None
 
 
@@ -108,8 +111,10 @@ class FredService(BaseService):
     
     def _build_cache_key(self, operation: str, **params) -> str:
         """Build a cache key from operation and parameters."""
+        # Sort parameters to produce stable keys regardless of call arg order
         sorted_params = sorted(params.items())
         param_str = json.dumps(sorted_params, sort_keys=True, default=str)
+        # Hash parameters into a compact, backend-safe suffix
         param_hash = hashlib.md5(param_str.encode()).hexdigest()[:16]
         return f"{self._cache_namespace}:{operation}:{param_hash}"
     
@@ -123,6 +128,7 @@ class FredService(BaseService):
             if cached:
                 self.logger.debug(f"Cache hit: {cache_key}")
                 return cached
+            # Explicit return keeps the None path obvious
             return None
         except Exception as e:
             self.logger.warning(f"Cache get error: {e}")
@@ -163,7 +169,7 @@ class FredService(BaseService):
         self._log_operation("get_series", context=context, series_id=series_id)
         
         try:
-            # Validate series ID
+            # Validate series ID and normalize to canonical uppercase
             if not series_id:
                 raise ValidationError("Series ID is required", field="series_id")
             
@@ -190,7 +196,7 @@ class FredService(BaseService):
                         }
                     )
             
-            # Get from repository
+            # Fetch from repository (DB/warehouse)
             data = await self.fred_repo.get_series(
                 series_id=series_id,
                 start_date=start_date,
@@ -200,7 +206,7 @@ class FredService(BaseService):
             if not data:
                 raise NotFoundError(f"FRED series not found: {series_id}")
             
-            # Cache results
+            # Cache results to speed up repeated reads for the same slice
             if use_cache and cache_key:
                 await self._set_in_cache(cache_key, data)
             
@@ -241,7 +247,7 @@ class FredService(BaseService):
         self._log_operation("search_series", context=context, search_text=search_text)
         
         try:
-            # Validate
+            # Validate basic input
             if not search_text:
                 raise ValidationError("Search text is required", field="search_text")
             
@@ -322,14 +328,14 @@ class FredService(BaseService):
         )
         
         try:
-            # Validate
+            # Validate request size and contents
             if not indicators:
                 raise ValidationError("At least one indicator is required", field="indicators")
             
             if len(indicators) > 20:
                 raise ValidationError("Maximum 20 indicators per request", field="indicators")
             
-            # Get each series
+            # Fetch each series independently to allow partial success
             results = {}
             errors = []
             
@@ -408,7 +414,7 @@ class FredService(BaseService):
             if not metadata:
                 raise NotFoundError(f"FRED series metadata not found: {series_id}")
             
-            # Cache results (longer TTL for metadata)
+            # Cache results (longer TTL for relatively static metadata)
             if use_cache and cache_key:
                 await self._set_in_cache(cache_key, metadata, ttl=86400)  # 24 hours
             

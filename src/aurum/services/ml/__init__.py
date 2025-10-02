@@ -54,6 +54,11 @@ from .mlflow_integration import (
     ExperimentRun
 )
 
+from .explainability import (
+    ExplainabilityService,
+    ExplainabilityEngine
+)
+
 __all__ = [
     # Model Registry
     "ModelRegistryService",
@@ -90,4 +95,8 @@ __all__ = [
     "MLflowIntegrationService",
     "MLflowConfig",
     "ExperimentRun",
+    
+    # Explainability
+    "ExplainabilityService",
+    "ExplainabilityEngine",
 ]

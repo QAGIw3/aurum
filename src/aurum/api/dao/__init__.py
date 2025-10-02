@@ -6,18 +6,12 @@ Each domain has its own DAO class that handles database queries and caching for 
 Async DAO Classes:
 - BaseAsyncDao: Abstract base class for async DAOs with connection pooling
 - TrinoAsyncDao: Async DAO for Trino federated queries
-- ClickHouseAsyncDao: Async DAO for ClickHouse OLAP operations  
+- ClickHouseAsyncDao: Async DAO for ClickHouse OLAP operations
 - TimescaleAsyncDao: Async DAO for TimescaleDB time-series operations
 - EiaAsyncDao: Async DAO for EIA data operations
 
-Legacy Sync DAO Classes (deprecated):
-- PpaDao: Synchronous PPA DAO (to be migrated)
+Note: All DAOs are now async. Legacy sync DAOs have been migrated or removed.
 """
-
-# Legacy sync DAOs (deprecated)
-# CurvesDao - removed, use CurveRepository from aurum.data.repositories
-# MetadataDao - removed, use MetadataRepository from aurum.data.repositories
-from .ppa_dao import PpaDao  # Still needed until PPA service migration
 
 # New async DAOs with connection pooling
 from .base_async_dao import BaseAsyncDao
@@ -27,13 +21,10 @@ from .timescale_async_dao import TimescaleAsyncDao
 from .eia_async_dao import EiaAsyncDao
 
 __all__ = [
-    # Legacy sync DAOs (deprecated)
-    "PpaDao",  # Still needed until PPA service migration
-    
     # New async DAOs with connection pooling
     "BaseAsyncDao",
     "TrinoAsyncDao",
-    "ClickHouseAsyncDao", 
+    "ClickHouseAsyncDao",
     "TimescaleAsyncDao",
     "EiaAsyncDao",
 ]

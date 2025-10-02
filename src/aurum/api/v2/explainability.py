@@ -20,7 +20,7 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
 from ..deps import get_settings
-from ..services.explainability_service import (
+from ..services.explainability_shim import (
     get_explainability_service,
     ExplanationArtifact,
     ExplanationSummary,

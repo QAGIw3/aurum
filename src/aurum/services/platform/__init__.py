@@ -35,6 +35,29 @@ from .api_documentation import (
     ApiDocumentationRepository
 )
 
+from .dbt_management import (
+    DBTManagementService,
+    DBTExecutor
+)
+
+from .plugin_system import (
+    PluginSystemService,
+    PluginInterface,
+    PluginMetadata,
+    PluginSecurityLevel,
+    PluginStatus,
+    PluginRegistry
+)
+
+from .policy_tagging import (
+    PolicyTaggingService,
+    PolicyCategory,
+    PolicySubcategory,
+    PolicyImpactDimension,
+    PolicyRelationship,
+    PolicyClassifier
+)
+
 __all__ = [
     # Workspace Manager
     "WorkspaceManagerService",
@@ -58,4 +81,24 @@ __all__ = [
     "CodeExample",
     "InteractiveTest",
     "ApiDocumentationRepository",
+    
+    # DBT Management
+    "DBTManagementService",
+    "DBTExecutor",
+    
+    # Plugin System
+    "PluginSystemService",
+    "PluginInterface",
+    "PluginMetadata",
+    "PluginSecurityLevel",
+    "PluginStatus",
+    "PluginRegistry",
+    
+    # Policy Tagging
+    "PolicyTaggingService",
+    "PolicyCategory",
+    "PolicySubcategory",
+    "PolicyImpactDimension",
+    "PolicyRelationship",
+    "PolicyClassifier",
 ]

@@ -18,7 +18,7 @@ from fastapi import APIRouter, HTTPException, Query, Request, Response, Depends
 from pydantic import BaseModel, Field
 
 from ..deps import get_settings, get_tenant_id
-from ..services.auto_reforecast_service import (
+from ..services.auto_reforecast_shim import (
     get_auto_reforecast_service,
     ForecastTrigger,
     TriggerEvent,

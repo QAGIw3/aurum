@@ -29,7 +29,7 @@ from aurum.scenarios.parallel_engine import ScenarioExecutionResult
 from aurum.scenarios.validation import SimulationResult
 from aurum.api.scenarios.scenario_service import InMemoryScenarioStore
 from aurum.scenarios.storage import get_scenario_store
-from .feature_store_service import get_features_for_scenario as _fetch_features_for_scenario
+from .feature_store_shim import get_features_for_scenario as _fetch_features_for_scenario
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
     from .model_registry_service import ModelRegistryService, ModelVersion

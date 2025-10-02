@@ -10,7 +10,13 @@
 
 The Aurum API provides comprehensive access to market data, curves, and analytics through a high-performance RESTful interface built with FastAPI. It offers enterprise-grade features including authentication, rate limiting, caching, and comprehensive monitoring.
 
-See also: ../pagination.md and ../runtime-config.md
+**Recent Architecture Improvements:**
+- **Unified Database Connection Management**: Standardized connection pooling across all databases (Trino, TimescaleDB, ClickHouse, PostgreSQL) with health monitoring and alerting
+- **Enhanced Service Layer**: Decomposed monolithic services into focused, testable modules with proper dependency injection
+- **Improved External Data Ingestion**: Unified collector framework for all data providers with rate limiting, retries, and error handling
+- **Production Monitoring**: Enterprise-grade health monitoring with Slack/PagerDuty alerting
+
+See also: ../pagination.md, ../runtime-config.md, and ../../src/aurum/database/README.md
 
 ## 🚀 Quick Start
 
@@ -85,7 +91,26 @@ export AURUM_API_HOST=0.0.0.0
 export AURUM_API_PORT=8080
 export AURUM_API_WORKERS=4
 
-# Database Connections
+# Database Connection Management (New Unified System)
+export AURUM_DB_TRINO_HOST=trino
+export AURUM_DB_TRINO_PORT=8080
+export AURUM_DB_TRINO_CATALOG=aurum
+export AURUM_DB_TRINO_USER=aurum_user
+export AURUM_DB_TRINO_PASSWORD=secure_password
+
+export AURUM_DB_TIMESCALE_HOST=timescale
+export AURUM_DB_TIMESCALE_PORT=5432
+export AURUM_DB_TIMESCALE_DATABASE=timeseries
+export AURUM_DB_TIMESCALE_USER=aurum_user
+export AURUM_DB_TIMESCALE_PASSWORD=secure_password
+
+# Database Pool Configuration
+export AURUM_DB_POOL_MIN_SIZE=2
+export AURUM_DB_POOL_MAX_SIZE=20
+export AURUM_DB_POOL_IDLE_TIMEOUT=300
+export AURUM_DB_ACQUIRE_TIMEOUT=10
+
+# Legacy Database Connections (Deprecated - use unified system)
 export AURUM_TIMESCALE_DSN="postgresql://user:pass@timescale:5432/timeseries"
 export AURUM_TRINO_HOST=trino
 export AURUM_TRINO_PORT=8080
@@ -101,6 +126,109 @@ export AURUM_JWT_SECRET=your-secret-key
 # Rate Limiting
 export AURUM_RATE_LIMIT_ENABLED=true
 export AURUM_RATE_LIMIT_RPS=10
+
+# Database Health Monitoring (New)
+export AURUM_DB_MONITORING_ENABLED=true
+export AURUM_DB_MONITORING_INTERVAL=30
+export AURUM_DB_ALERT_SLACK_WEBHOOK=https://hooks.slack.com/services/...
+export AURUM_DB_ALERT_EMAIL=admin@aurum.com
+
+# External Data Collectors (New Unified Framework)
+export AURUM_COLLECTORS_FRED_API_KEY=your-fred-key
+export AURUM_COLLECTORS_NOAA_TOKEN=your-noaa-token
+export AURUM_COLLECTORS_WORLD_BANK_ENABLED=false
+```
+
+## 🗄️ Database Connection Management
+
+### Unified Connection Pooling
+
+The Aurum platform now uses a unified connection pool management system that provides:
+
+- **Standardized Pooling**: Consistent connection pooling across all database types
+- **Health Monitoring**: Real-time monitoring of pool utilization and performance
+- **Automatic Scaling**: Dynamic pool sizing based on load
+- **Alerting**: Proactive alerts for pool exhaustion and performance issues
+
+### Supported Databases
+
+| Database | Purpose | Pool Manager | Health Monitoring |
+|----------|---------|--------------|------------------|
+| **Trino** | Analytics & OLAP | `TrinoPoolManager` | ✅ |
+| **TimescaleDB** | Time-series data | `TimescalePoolManager` | ✅ |
+| **ClickHouse** | OLAP queries | Planned | ✅ |
+| **PostgreSQL** | Application data | Planned | ✅ |
+
+### Monitoring & Alerting
+
+Database health monitoring is automatically enabled and provides:
+
+- **Pool Utilization Alerts**: Warning at 80%, Critical at 95%
+- **Response Time Monitoring**: Alerts for slow connection acquisition
+- **Connection Exhaustion**: Alerts when pools are fully utilized
+- **Multi-channel Notifications**: Email, Slack, PagerDuty integration
+
+### Configuration Example
+
+```python
+from aurum.database import configure_alerting
+
+# Configure alerting
+alert_config = configure_alerting(
+    smtp_server="smtp.aurum.com",
+    smtp_username="alerts@aurum.com",
+    smtp_password="secure_password",
+    slack_webhook="https://hooks.slack.com/services/...",
+    pagerduty_routing_key="your-routing-key",
+    to_emails=["admin@aurum.com", "dba@aurum.com"]
+)
+
+# Start monitoring
+from aurum.database import start_production_monitoring
+await start_production_monitoring(alert_config)
+```
+
+## 📊 External Data Collection
+
+### Unified Collector Framework
+
+The platform now uses a unified framework for external data collection that provides:
+
+- **Standardized Patterns**: Common rate limiting, retry logic, and error handling
+- **Provider Abstraction**: Easy to add new data providers
+- **Automatic Checkpointing**: Incremental data collection with resume capability
+- **Comprehensive Monitoring**: Built-in metrics and alerting for collection jobs
+
+### Supported Providers
+
+| Provider | API | Rate Limit | Data Types | Status |
+|----------|-----|------------|------------|--------|
+| **EIA** | ✅ | 1000/min | Energy data | ✅ Unified |
+| **FRED** | ✅ | 120/min | Economic data | ✅ Unified |
+| **NOAA** | ✅ | 1000/min | Weather data | ✅ Unified |
+| **WorldBank** | ✅ | 1000/min | Global indicators | ✅ Unified |
+
+### Usage Example
+
+```python
+from aurum.external.providers.eia_unified import create_eia_collector
+
+# Create collector with unified framework
+collector = create_eia_collector()
+
+# Collect catalog (series metadata)
+await collector.collect_catalog()
+
+# Collect observations for specific datasets
+await collector.collect_observations("electricity_series")
+
+# Framework handles:
+# - Rate limiting and quota management
+# - Automatic retries with exponential backoff
+# - Checkpoint management for incremental updates
+# - Data transformation and validation
+# - Kafka emission for downstream processing
+```
 ```
 
 ### Docker Configuration

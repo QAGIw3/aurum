@@ -1,0 +1,47 @@
+[importlinter]
+root_package = aurum
+include_external_packages = False
+
+[importlinter:contract:domain-independence]
+name = Domain layer must not depend on other layers
+type = forbidden
+source_modules =
+    aurum.domain
+forbidden_modules =
+    aurum.application
+    aurum.infrastructure
+    aurum.presentation
+    aurum.api
+    fastapi
+    sqlalchemy
+    pydantic
+
+[importlinter:contract:application-dependencies]
+name = Application layer can only depend on domain
+type = layers
+layers =
+    aurum.application
+    aurum.domain
+
+[importlinter:contract:clean-architecture]
+name = Clean architecture dependency rule
+type = layers
+layers =
+    aurum.presentation
+    aurum.api
+    aurum.infrastructure
+    aurum.application
+    aurum.domain
+ignore_imports =
+    aurum.api.* -> aurum.core.*
+    aurum.infrastructure.* -> aurum.core.*
+
+[importlinter:contract:no-circular-imports]
+name = Prevent circular imports
+type = independence
+modules =
+    aurum.domain.energy
+    aurum.domain.shared_kernel
+    aurum.application.energy
+    aurum.infrastructure.persistence
+

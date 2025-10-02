@@ -19,7 +19,7 @@ from fastapi import APIRouter, HTTPException, Query, Request, Response, Depends
 from pydantic import BaseModel, Field
 
 from ..deps import get_settings
-from ..services.anomaly_detection_service import (
+from ..services.anomaly_detection_shim import (
     get_anomaly_detection_service,
     AnomalySignal,
     AnomalyDetectionConfig
@@ -272,7 +272,7 @@ async def detect_price_anomalies(
     start_time = time.perf_counter()
 
     try:
-        from ..services.anomaly_detection_service import detect_price_anomalies
+        from ..services.anomaly_detection_shim import detect_price_anomalies
 
         # Detect anomalies
         results = await detect_price_anomalies(price_data, geography)
@@ -331,7 +331,7 @@ async def detect_load_anomalies(
     start_time = time.perf_counter()
 
     try:
-        from ..services.anomaly_detection_service import detect_load_anomalies
+        from ..services.anomaly_detection_shim import detect_load_anomalies
 
         # Detect anomalies
         results = await detect_load_anomalies(load_data, geography)

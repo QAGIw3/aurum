@@ -74,8 +74,10 @@ class EiaService(BaseService):
     
     def _build_cache_key(self, operation: str, **params) -> str:
         """Build a cache key from operation and parameters."""
+        # Stable key generation regardless of parameter order
         sorted_params = sorted(params.items())
         param_str = json.dumps(sorted_params, sort_keys=True, default=str)
+        # Use a short hash suffix to keep keys compact
         param_hash = hashlib.md5(param_str.encode()).hexdigest()[:16]
         return f"{self._cache_namespace}:{operation}:{param_hash}"
     
@@ -143,7 +145,7 @@ class EiaService(BaseService):
         )
         
         try:
-            # Validate series ID
+            # Validate series ID format and enforce ordering of dates
             self._validate_series_id(series_id)
             
             # Validate date range
@@ -153,12 +155,12 @@ class EiaService(BaseService):
                     field="date_range"
                 )
             
-            # Check if series exists in catalog
+            # Check if series exists in catalog to return 404 quickly
             series_info = await self._get_series_info(series_id)
             if not series_info:
                 raise NotFoundError("eia_series", series_id)
             
-            # Query observations from repository
+            # Query observations from repository (DB/warehouse)
             observations = await self.eia_repo.query_series(
                 series_id=series_id,
                 start_date=start_date.isoformat() if start_date else None,
@@ -240,9 +242,10 @@ class EiaService(BaseService):
                     field="limit"
                 )
             
-            # Search series by getting dimensions
-            # For now, get all series and filter client-side
-            # TODO: Implement proper search in repository
+            # Basic search approach until a dedicated index exists:
+            # 1) Fetch candidate series from repo
+            # 2) Filter client-side by id/dataset/sector fields
+            # TODO: Replace with repository-backed text search
             all_series = await self.eia_repo.query_series(limit=limit)
             
             # Basic text search in series data
@@ -254,7 +257,7 @@ class EiaService(BaseService):
                    search_lower in str(s.get('sector', '')).lower()
             ]
             
-            # Filter by category if provided
+            # Optional category filter
             if category:
                 results = [r for r in results if r.get("category") == category]
             
@@ -299,8 +302,8 @@ class EiaService(BaseService):
         )
         
         try:
-            # Get categories from metadata
-            # This would query the EIA catalog structure
+            # Retrieve categories from the EIA catalog structure once available.
+            # Could include parent-child hierarchy and series counts per node.
             categories = []  # TODO: Implement actual category query
             
             return ServiceResult.ok(
@@ -335,8 +338,7 @@ class EiaService(BaseService):
         )
         
         try:
-            # Get latest update from metadata
-            # This would query the ingestion metadata
+            # Query ingestion metadata to determine freshness of EIA data.
             latest = None  # TODO: Implement actual query
             
             return ServiceResult.ok(
@@ -389,4 +391,3 @@ class EiaService(BaseService):
         # Get series metadata from repository
         metadata = await self.eia_repo.get_series_metadata(series_id)
         return metadata
-

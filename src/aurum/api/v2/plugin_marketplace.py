@@ -21,15 +21,14 @@ from pydantic import BaseModel, Field
 
 from ...telemetry.context import get_request_id, get_tenant_id, log_structured
 from ...observability.telemetry_facade import get_telemetry_facade, MetricCategory
-from ..services.plugin_system_service import (
-    PluginSystemService,
+from ..services.plugin_system_shim import (
     PluginContract,
     PluginInstance,
     PluginSecurityLevel,
     PluginStatus,
-    get_plugin_system_service,
-    discover_and_load_plugins
+    get_plugin_system_service
 )
+from aurum.services.platform.plugin_system import PluginSystemService
 from ..services.base_service import ServiceInterface
 
 

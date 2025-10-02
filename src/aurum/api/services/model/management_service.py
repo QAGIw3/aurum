@@ -28,7 +28,7 @@ except ImportError:
     def get_tenant_id(): return "demo-tenant"
     def get_user_id(): return "demo-user"
 try:
-    from aurum.dao.experimental import TrinoDAO
+    from aurum.data.dao.trino import TrinoDAO
 except ImportError:
     # Mock DAO for demo
     class TrinoDAO:

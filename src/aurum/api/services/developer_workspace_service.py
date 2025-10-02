@@ -425,7 +425,7 @@ class DeveloperWorkspaceService:
             sample_queries=[
                 {
                     "name": "Load Feature Data",
-                    "code": "from aurum.api.services.feature_store_service import get_feature_store_service\nfeatures = await get_feature_store_service().get_features_for_modeling()",
+                    "code": "from aurum.api.services.feature_store_shim import get_feature_store_service\nfeatures = await get_feature_store_service().get_features_for_modeling()",
                     "description": "Load features for model training"
                 },
                 {

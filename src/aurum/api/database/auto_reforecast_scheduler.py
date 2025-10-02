@@ -12,7 +12,7 @@ from uuid import UUID
 
 from aurum.core import AurumSettings
 from aurum.api.database.auto_reforecast import get_auto_reforecast_job_repository
-from aurum.api.services.auto_reforecast_service import get_auto_reforecast_service
+from aurum.api.services.auto_reforecast_shim import get_auto_reforecast_service
 
 
 class AutoReforecastScheduler:
