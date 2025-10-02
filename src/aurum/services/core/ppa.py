@@ -1,12 +1,14 @@
-"""PPA (Power Purchase Agreement) service for contract operations.
+"""PPA (Power Purchase Agreement) service for contract operations with caching.
 
 Implements business logic for PPA contracts, valuations, and risk analysis.
 """
 
 from __future__ import annotations
 
+import hashlib
+import json
 import logging
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Protocol, Tuple
 from datetime import date
 from calendar import monthrange
 
@@ -16,8 +18,24 @@ from aurum.data.repositories import PpaRepository
 logger = logging.getLogger(__name__)
 
 
+class CacheProtocol(Protocol):
+    """Protocol for cache implementations."""
+    
+    async def get(self, key: str) -> Optional[Any]:
+        """Get value from cache."""
+        ...
+    
+    async def set(self, key: str, value: Any, ttl: int) -> None:
+        """Set value in cache with TTL."""
+        ...
+    
+    async def delete(self, key: str) -> None:
+        """Delete value from cache."""
+        ...
+
+
 class PpaService(BaseService):
-    """Service for PPA contract operations.
+    """Service for PPA contract operations with caching support.
 
     PPA (Power Purchase Agreement) contracts involve long-term energy
     purchase agreements with complex valuation and risk calculations.
@@ -28,16 +46,61 @@ class PpaService(BaseService):
     - Provides risk metrics
     - Manages contract lifecycle
     - Enforces business rules
+    - Caches valuations and risk calculations
     """
 
-    def __init__(self, ppa_repository: PpaRepository):
+    def __init__(
+        self,
+        ppa_repository: PpaRepository,
+        cache: Optional[CacheProtocol] = None,
+        cache_ttl: int = 600  # 10 minutes for PPA data
+    ):
         """Initialize service with dependencies.
 
         Args:
             ppa_repository: Repository for PPA data access
+            cache: Optional cache implementation
+            cache_ttl: Cache time-to-live in seconds
         """
         super().__init__()
         self.ppa_repo = ppa_repository
+        self.cache = cache
+        self.cache_ttl = cache_ttl
+        self._cache_namespace = "ppa:v1"
+    
+    def _build_cache_key(self, operation: str, **params) -> str:
+        """Build a cache key from operation and parameters."""
+        sorted_params = sorted(params.items())
+        param_str = json.dumps(sorted_params, sort_keys=True, default=str)
+        param_hash = hashlib.md5(param_str.encode()).hexdigest()[:16]
+        return f"{self._cache_namespace}:{operation}:{param_hash}"
+    
+    async def _get_from_cache(self, cache_key: str) -> Optional[Any]:
+        """Get value from cache if available."""
+        if not self.cache:
+            return None
+        
+        try:
+            cached = await self.cache.get(cache_key)
+            if cached:
+                self.logger.debug(f"Cache hit: {cache_key}")
+                return cached
+            return None
+        except Exception as e:
+            self.logger.warning(f"Cache get error: {e}")
+            return None
+    
+    async def _set_in_cache(self, cache_key: str, value: Any, ttl: Optional[int] = None) -> None:
+        """Set value in cache."""
+        if not self.cache:
+            return
+        
+        try:
+            ttl = ttl or self.cache_ttl
+            await self.cache.set(cache_key, value, ttl)
+            self.logger.debug(f"Cache set: {cache_key}")
+        except Exception as e:
+            self.logger.warning(f"Cache set error: {e}")
 
     async def get_ppa_contracts(
         self,
@@ -46,15 +109,17 @@ class PpaService(BaseService):
         start_date: Optional[date] = None,
         end_date: Optional[date] = None,
         limit: int = 100,
+        use_cache: bool = True,
         context: Optional[ServiceContext] = None
     ) -> ServiceResult[List[Dict[str, Any]]]:
-        """Get PPA contracts with optional filtering.
+        """Get PPA contracts with optional filtering and caching.
 
         Business logic:
         - Validates contract ID format
         - Applies business rules for date ranges
         - Enforces tenant access control
         - Limits result size for performance
+        - Caches results for repeated queries
 
         Args:
             contract_ids: List of specific contract IDs
@@ -62,6 +127,7 @@ class PpaService(BaseService):
             start_date: Filter contracts starting on or after this date
             end_date: Filter contracts ending on or before this date
             limit: Maximum results (max 1000)
+            use_cache: Whether to use caching
             context: Service context
 
         Returns:
@@ -95,6 +161,29 @@ class PpaService(BaseService):
                     field="date_range"
                 )
 
+            # Try cache first
+            cache_key = None
+            if use_cache and self.cache:
+                cache_key = self._build_cache_key(
+                    "contracts",
+                    contract_ids=contract_ids,
+                    counterparty=counterparty,
+                    start_date=start_date.isoformat() if start_date else None,
+                    end_date=end_date.isoformat() if end_date else None,
+                    limit=limit
+                )
+                cached_contracts = await self._get_from_cache(cache_key)
+                if cached_contracts is not None:
+                    return ServiceResult.ok(
+                        data=cached_contracts,
+                        metadata={
+                            "contract_count": len(cached_contracts),
+                            "limit": limit,
+                            "has_more": len(cached_contracts) == limit,
+                            "source": "cache"
+                        }
+                    )
+
             # Query repository
             contracts = await self.ppa_repo.get_ppa_contracts(
                 contract_ids=contract_ids,
@@ -104,12 +193,17 @@ class PpaService(BaseService):
                 limit=limit
             )
 
+            # Cache results
+            if use_cache and cache_key:
+                await self._set_in_cache(cache_key, contracts)
+
             return ServiceResult.ok(
                 data=contracts,
                 metadata={
                     "contract_count": len(contracts),
                     "limit": limit,
-                    "has_more": len(contracts) == limit
+                    "has_more": len(contracts) == limit,
+                    "source": "database"
                 }
             )
 
@@ -124,20 +218,23 @@ class PpaService(BaseService):
         asof_date: Optional[date] = None,
         valuation_type: Optional[str] = None,
         limit: int = 100,
+        use_cache: bool = True,
         context: Optional[ServiceContext] = None
     ) -> ServiceResult[List[Dict[str, Any]]]:
-        """Get PPA valuations with optional filtering.
+        """Get PPA valuations with optional filtering and caching.
 
         Business logic:
         - Validates contract exists (if specified)
         - Applies business rules for valuation types
         - Calculates derived metrics where needed
+        - Caches valuations for performance
 
         Args:
             contract_id: Filter by specific contract ID
             asof_date: Filter valuations as of this date
             valuation_type: Filter by valuation type
             limit: Maximum results
+            use_cache: Whether to use caching
             context: Service context
 
         Returns:
@@ -169,6 +266,29 @@ class PpaService(BaseService):
                     field="limit"
                 )
 
+            # Try cache first
+            cache_key = None
+            if use_cache and self.cache:
+                cache_key = self._build_cache_key(
+                    "valuations",
+                    contract_id=contract_id,
+                    asof_date=asof_date.isoformat() if asof_date else None,
+                    valuation_type=valuation_type,
+                    limit=limit
+                )
+                cached_valuations = await self._get_from_cache(cache_key)
+                if cached_valuations is not None:
+                    return ServiceResult.ok(
+                        data=cached_valuations,
+                        metadata={
+                            "valuation_count": len(cached_valuations),
+                            "contract_id": contract_id,
+                            "valuation_type": valuation_type,
+                            "limit": limit,
+                            "source": "cache"
+                        }
+                    )
+
             # Query repository
             valuations = await self.ppa_repo.get_ppa_valuations(
                 contract_id=contract_id,
@@ -180,13 +300,18 @@ class PpaService(BaseService):
             # Calculate derived metrics if needed
             enriched_valuations = self._enrich_valuations(valuations)
 
+            # Cache results
+            if use_cache and cache_key:
+                await self._set_in_cache(cache_key, enriched_valuations)
+
             return ServiceResult.ok(
                 data=enriched_valuations,
                 metadata={
                     "valuation_count": len(valuations),
                     "contract_id": contract_id,
                     "valuation_type": valuation_type,
-                    "limit": limit
+                    "limit": limit,
+                    "source": "database"
                 }
             )
 

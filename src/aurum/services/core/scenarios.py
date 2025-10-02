@@ -1,12 +1,14 @@
-"""Scenario service for modeling and what-if analysis.
+"""Scenario service for modeling and what-if analysis with caching.
 
 Implements business logic for scenario creation, execution, and results retrieval.
 """
 
 from __future__ import annotations
 
+import hashlib
+import json
 import logging
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Protocol
 from uuid import UUID
 from datetime import datetime
 
@@ -16,8 +18,24 @@ from aurum.data.repositories import ScenarioRepository
 logger = logging.getLogger(__name__)
 
 
+class CacheProtocol(Protocol):
+    """Protocol for cache implementations."""
+    
+    async def get(self, key: str) -> Optional[Any]:
+        """Get value from cache."""
+        ...
+    
+    async def set(self, key: str, value: Any, ttl: int) -> None:
+        """Set value in cache with TTL."""
+        ...
+    
+    async def delete(self, key: str) -> None:
+        """Delete value from cache."""
+        ...
+
+
 class ScenarioService(BaseService):
-    """Service for scenario operations.
+    """Service for scenario operations with caching support.
     
     Scenarios represent what-if analyses and modeling runs.
     Metadata stored in Postgres, outputs in Iceberg.
@@ -28,16 +46,61 @@ class ScenarioService(BaseService):
     - Orchestrates scenario execution
     - Retrieves and aggregates results
     - Enforces access control
+    - Caches scenario metadata for performance
     """
     
-    def __init__(self, scenario_repository: ScenarioRepository):
+    def __init__(
+        self,
+        scenario_repository: ScenarioRepository,
+        cache: Optional[CacheProtocol] = None,
+        cache_ttl: int = 300  # 5 minutes for scenarios
+    ):
         """Initialize service with dependencies.
         
         Args:
             scenario_repository: Repository for scenario data access
+            cache: Optional cache implementation
+            cache_ttl: Cache time-to-live in seconds
         """
         super().__init__()
         self.scenario_repo = scenario_repository
+        self.cache = cache
+        self.cache_ttl = cache_ttl
+        self._cache_namespace = "scenarios:v1"
+    
+    def _build_cache_key(self, operation: str, **params) -> str:
+        """Build a cache key from operation and parameters."""
+        sorted_params = sorted(params.items())
+        param_str = json.dumps(sorted_params, sort_keys=True, default=str)
+        param_hash = hashlib.md5(param_str.encode()).hexdigest()[:16]
+        return f"{self._cache_namespace}:{operation}:{param_hash}"
+    
+    async def _get_from_cache(self, cache_key: str) -> Optional[Any]:
+        """Get value from cache if available."""
+        if not self.cache:
+            return None
+        
+        try:
+            cached = await self.cache.get(cache_key)
+            if cached:
+                self.logger.debug(f"Cache hit: {cache_key}")
+                return cached
+            return None
+        except Exception as e:
+            self.logger.warning(f"Cache get error: {e}")
+            return None
+    
+    async def _set_in_cache(self, cache_key: str, value: Any, ttl: Optional[int] = None) -> None:
+        """Set value in cache."""
+        if not self.cache:
+            return
+        
+        try:
+            ttl = ttl or self.cache_ttl
+            await self.cache.set(cache_key, value, ttl)
+            self.logger.debug(f"Cache set: {cache_key}")
+        except Exception as e:
+            self.logger.warning(f"Cache set error: {e}")
     
     async def create_scenario(
         self,
@@ -116,17 +179,20 @@ class ScenarioService(BaseService):
     async def get_scenario(
         self,
         scenario_id: str,
+        use_cache: bool = True,
         context: Optional[ServiceContext] = None
     ) -> ServiceResult[Dict[str, Any]]:
-        """Get scenario by ID.
+        """Get scenario by ID with optional caching.
         
         Business logic:
         - Validates UUID format
         - Checks tenant access
         - Returns scenario with metadata
+        - Caches results for performance
         
         Args:
             scenario_id: Scenario UUID
+            use_cache: Whether to use caching
             context: Service context
             
         Returns:
@@ -149,6 +215,21 @@ class ScenarioService(BaseService):
                     field="scenario_id"
                 )
             
+            # Try cache first
+            cache_key = None
+            if use_cache and self.cache:
+                cache_key = self._build_cache_key("scenario", scenario_id=scenario_id)
+                cached_scenario = await self._get_from_cache(cache_key)
+                if cached_scenario is not None:
+                    # Still need to check tenant access
+                    if context and context.tenant_id:
+                        if cached_scenario.get("tenant_id") != context.tenant_id:
+                            raise NotFoundError("scenario", scenario_id)
+                    return ServiceResult.ok(
+                        data=cached_scenario,
+                        metadata={"scenario_id": scenario_id, "source": "cache"}
+                    )
+            
             # Get scenario
             scenario = await self.scenario_repo.find_by_id(uuid_obj)
             
@@ -160,9 +241,13 @@ class ScenarioService(BaseService):
                 if scenario.get("tenant_id") != context.tenant_id:
                     raise NotFoundError("scenario", scenario_id)  # Don't leak existence
             
+            # Cache result
+            if use_cache and cache_key:
+                await self._set_in_cache(cache_key, scenario)
+            
             return ServiceResult.ok(
                 data=scenario,
-                metadata={"scenario_id": scenario_id}
+                metadata={"scenario_id": scenario_id, "source": "database"}
             )
             
         except (ValidationError, NotFoundError):
