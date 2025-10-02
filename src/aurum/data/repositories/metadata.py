@@ -156,4 +156,122 @@ class MetadataRepository(BaseRepository):
                 logger.warning(f"Failed to search {dataset}: {e}")
         
         return results[:limit]
+    
+    async def get_iso_locations(
+        self,
+        iso: str
+    ) -> List[Dict[str, Any]]:
+        """Get locations for a specific ISO.
+        
+        Args:
+            iso: ISO/RTO identifier
+            
+        Returns:
+            List of location dictionaries with metadata
+        """
+        query = """
+            SELECT DISTINCT
+                location,
+                COUNT(*) as curve_count,
+                MAX(asof_date) as latest_data,
+                MIN(asof_date) as earliest_data
+            FROM iceberg.market.curve_observation
+            WHERE iso = :iso
+              AND location IS NOT NULL
+            GROUP BY location
+            ORDER BY location
+        """
+        
+        results = await self._trino_dao.execute_query(
+            query,
+            {"iso": iso}
+        )
+        
+        return [
+            {
+                "iso": iso,
+                "location": row["location"],
+                "curve_count": row["curve_count"],
+                "latest_data": str(row["latest_data"]) if row["latest_data"] else None,
+                "earliest_data": str(row["earliest_data"]) if row["earliest_data"] else None
+            }
+            for row in results
+        ]
+    
+    async def get_units(self) -> List[Dict[str, Any]]:
+        """Get all units from the reference data.
+        
+        Returns:
+            List of unit dictionaries
+        """
+        query = """
+            SELECT DISTINCT
+                unit_type,
+                canonical_unit,
+                description,
+                conversion_factor
+            FROM iceberg.reference.units
+            ORDER BY unit_type, canonical_unit
+        """
+        
+        try:
+            results = await self._trino_dao.execute_query(query)
+            return [dict(row) for row in results]
+        except Exception as e:
+            # If reference table doesn't exist, return common units
+            logger.warning(f"Failed to get units from reference table: {e}")
+            return [
+                {"unit_type": "energy", "canonical_unit": "MWh", "description": "Megawatt hour"},
+                {"unit_type": "power", "canonical_unit": "MW", "description": "Megawatt"},
+                {"unit_type": "price", "canonical_unit": "$/MWh", "description": "Dollars per megawatt hour"},
+                {"unit_type": "temperature", "canonical_unit": "F", "description": "Fahrenheit"},
+                {"unit_type": "percentage", "canonical_unit": "%", "description": "Percentage"},
+            ]
+    
+    async def get_calendars(self) -> List[Dict[str, Any]]:
+        """Get all calendars from the reference data.
+        
+        Returns:
+            List of calendar dictionaries
+        """
+        query = """
+            SELECT DISTINCT
+                calendar_name,
+                calendar_type,
+                description,
+                timezone,
+                holidays_count
+            FROM iceberg.reference.calendars
+            ORDER BY calendar_name
+        """
+        
+        try:
+            results = await self._trino_dao.execute_query(query)
+            return [dict(row) for row in results]
+        except Exception as e:
+            # If reference table doesn't exist, return common calendars
+            logger.warning(f"Failed to get calendars from reference table: {e}")
+            return [
+                {
+                    "calendar_name": "PJM",
+                    "calendar_type": "ISO",
+                    "description": "PJM Interconnection calendar",
+                    "timezone": "US/Eastern",
+                    "holidays_count": 10
+                },
+                {
+                    "calendar_name": "ERCOT",
+                    "calendar_type": "ISO",
+                    "description": "Electric Reliability Council of Texas calendar",
+                    "timezone": "US/Central",
+                    "holidays_count": 10
+                },
+                {
+                    "calendar_name": "NERC",
+                    "calendar_type": "Standard",
+                    "description": "North American Electric Reliability Corporation holidays",
+                    "timezone": "US/Eastern",
+                    "holidays_count": 6
+                }
+            ]
 

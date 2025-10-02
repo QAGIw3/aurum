@@ -17,7 +17,6 @@ from aurum.core import AurumSettings
 from aurum.telemetry.context import get_request_id
 
 from aurum.api.services import admin_service as _admin_service
-from aurum.api.services import metadata_service as _metadata_service
 from aurum.api.services import iso_service as _iso_service
 
 from .cache.cache import CacheManager

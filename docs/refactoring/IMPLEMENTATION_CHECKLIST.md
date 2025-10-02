@@ -1,106 +1,11 @@
-# Aurum Refactoring Implementation Guide
+# Refactoring Implementation Checklist
 
-This guide provides concrete implementation steps for the 10 prioritized refactoring tasks identified in the Aurum codebase analysis.
+This checklist provides concrete implementation steps for key refactoring tasks.
 
-## Quick Start Tasks (Week 1)
+## 1. Router Registry Migration
 
-### Task 1: Remove Duplicate HTTP Utilities
-
-**Files to modify:**
-- `src/aurum/api/http/__init__.py` (canonical implementations)
-- `src/aurum/api/scenarios/http.py` (remove duplicates)
-- Any imports of scenarios.http utilities
-
-**Implementation steps:**
-```bash
-# 1. Compare implementations
-diff src/aurum/api/http/pagination.py src/aurum/api/scenarios/http.py
-
-# 2. Update imports in scenarios modules
-grep -r "from.*scenarios.http" src/aurum/api/scenarios/
-grep -r "from.*\.http" src/aurum/api/scenarios/
-
-# 3. Replace with canonical imports
-# Before: from aurum.api.scenarios.http import respond_with_etag
-# After:  from aurum.api.http import respond_with_etag
-```
-
-**Validation:**
-- Run existing scenario tests to ensure no regressions
-- Verify response formats remain identical
-- Check for unused imports after cleanup
-
-### Task 5: Dependency Version Alignment
-
-**Files to modify:**
-- `pyproject.toml`
-- `constraints/` (new directory)
-
-**Implementation steps:**
-```bash
-# 1. Create constraints file
-mkdir -p constraints/
-cat > constraints/base.txt << EOF
-# Core dependencies with pinned versions
-fastapi==0.115.6
-uvicorn[standard]==0.32.0
-pydantic==2.10.3
-# ... other shared deps
-EOF
-
-# 2. Refactor pyproject.toml groups
-# Remove duplicates from api/worker/ingest groups
-# Reference constraints file in each group
-```
-
-## Foundation Tasks (Weeks 2-4)
-
-### Task 4: Standardize Health Check Infrastructure
-
-**Files to modify:**
-- `src/aurum/api/health.py`
-- `src/aurum/api/health_checks.py` 
-- Health check endpoints in routers
-
-**Key changes:**
+**Fix duplicate registration:**
 ```python
-# Before: Blocking health check
-def check_schema_registry():
-    with requests.get(url) as response:
-        return response.status_code == 200
-
-# After: Async health check  
-async def check_schema_registry():
-    async with httpx.AsyncClient() as client:
-        response = await client.get(url)
-        return response.status_code == 200
-```
-
-**New health check provider pattern:**
-```python
-class HealthCheckProvider(ABC):
-    @abstractmethod
-    async def check_health(self, target: str) -> HealthCheckResult:
-        pass
-
-class TrinoHealthProvider(HealthCheckProvider):
-    async def check_health(self, target: str) -> HealthCheckResult:
-        # Implement Trino-specific health check
-        pass
-```
-
-## Architecture Tasks (Weeks 5-12)
-
-### Task 2: Complete Router Registry Migration
-
-**Files to modify:**
-- `src/aurum/api/router_registry.py`
-- `src/aurum/api/v1/*.py` (domain routers)
-- `src/aurum/api/routes.py` (reduce to utilities only)
-
-**Implementation approach:**
-```python
-# Fix duplicate registration
 class RouterRegistry:
     def __init__(self):
         self._registered_routers: Set[str] = set()
@@ -112,7 +17,7 @@ class RouterRegistry:
         # ... registration logic
 ```
 
-**Validation tests:**
+**Validation test:**
 ```python
 def test_router_registry_prevents_duplicates():
     registry = RouterRegistry()
@@ -124,11 +29,9 @@ def test_router_registry_prevents_duplicates():
         registry.register_router(router, "test")
 ```
 
-### Task 3: Decompose Monolithic Service Layer
+## 2. Service Layer Decomposition
 
-**Implementation strategy:**
-1. **Start with least coupled domain (e.g., metadata)**
-2. **Extract service interface:**
+**Implementation pattern:**
 ```python
 class MetadataService:
     def __init__(self, dao: MetadataDAO, cache: CacheManager):
@@ -146,7 +49,7 @@ class MetadataService:
         return result
 ```
 
-3. **Create service factory:**
+**Service factory:**
 ```python
 def create_metadata_service(settings: AurumSettings) -> MetadataService:
     dao = MetadataDAO(trino_client=get_trino_client(settings))
@@ -154,7 +57,7 @@ def create_metadata_service(settings: AurumSettings) -> MetadataService:
     return MetadataService(dao, cache)
 ```
 
-4. **Update router to use service:**
+**Router update:**
 ```python
 # Before: Direct service.py import
 from . import service
@@ -171,9 +74,9 @@ async def get_metadata(
     return await metadata_service.get_metadata()
 ```
 
-### Task 6: Implement Async DAO Pattern
+## 3. Async DAO Pattern
 
-**Base DAO interface:**
+**Base interface:**
 ```python
 class AsyncDAO(ABC):
     def __init__(self, client: Any):
@@ -188,7 +91,7 @@ class AsyncDAO(ABC):
         pass
 ```
 
-**Trino DAO implementation:**
+**Implementation:**
 ```python
 class TrinoDAO(AsyncDAO):
     async def query(self, query: str, params: Dict[str, Any]) -> List[Dict[str, Any]]:
@@ -197,11 +100,38 @@ class TrinoDAO(AsyncDAO):
             return await cursor.fetchall()
 ```
 
-## Enhancement Tasks (Weeks 13-16)
+## 4. Health Check Standardization
 
-### Task 7: Enhance Feature Flag System
+**Convert to async:**
+```python
+# Before: Blocking health check
+def check_schema_registry():
+    with requests.get(url) as response:
+        return response.status_code == 200
 
-**Dynamic feature flag implementation:**
+# After: Async health check  
+async def check_schema_registry():
+    async with httpx.AsyncClient() as client:
+        response = await client.get(url)
+        return response.status_code == 200
+```
+
+**Provider pattern:**
+```python
+class HealthCheckProvider(ABC):
+    @abstractmethod
+    async def check_health(self, target: str) -> HealthCheckResult:
+        pass
+
+class TrinoHealthProvider(HealthCheckProvider):
+    async def check_health(self, target: str) -> HealthCheckResult:
+        # Implement Trino-specific health check
+        pass
+```
+
+## 5. Feature Flag Enhancement
+
+**Dynamic implementation:**
 ```python
 class FeatureFlagManager:
     def __init__(self, config_source: str = "env"):
@@ -217,15 +147,11 @@ class FeatureFlagManager:
             return self._check_percentage_rollout(flag, context)
         
         return flag.enabled
-    
-    def _check_percentage_rollout(self, flag: FeatureFlag, context: Dict[str, Any]) -> bool:
-        # Implement consistent hash-based percentage rollout
-        pass
 ```
 
-### Task 8: Centralize Cache Management
+## 6. Cache Management
 
-**Extended cache manager:**
+**Extended manager:**
 ```python
 class CacheManager:
     def __init__(self, redis_client: redis.Redis):
@@ -243,9 +169,9 @@ class CacheManager:
         return value
 ```
 
-### Task 9: Strengthen Error Handling
+## 7. RFC7807 Error Handling
 
-**RFC7807 error responses:**
+**Problem detail responses:**
 ```python
 class ProblemDetail(BaseModel):
     type: str
@@ -281,7 +207,7 @@ async def create_error_response(
     )
 ```
 
-### Task 10: API Documentation Generation
+## 8. API Documentation
 
 **OpenAPI customization:**
 ```python
@@ -307,9 +233,9 @@ def custom_openapi():
     return app.openapi_schema
 ```
 
-## Testing Strategy
+## Testing Commands
 
-### Contract Testing with Schemathesis
+### Contract Testing
 ```bash
 # Install schemathesis
 pip install schemathesis
@@ -343,34 +269,30 @@ def test_v1_split_ppa_flag(flag_state):
             assert "/v1/ppa" not in routes  # Monolith handles PPA
 ```
 
+## Monitoring Checklist
+
+### Key Metrics
+- [ ] API response times (p50, p95, p99)
+- [ ] Error rates per endpoint
+- [ ] Cache hit/miss ratios
+- [ ] Database query performance
+- [ ] Feature flag usage statistics
+
+### Alert Thresholds
+- [ ] P95 latency increase >20%
+- [ ] Error rate increase >5%
+- [ ] Cache miss rate increase >10%
+- [ ] Any 5xx errors on health endpoints
+
 ## Rollback Procedures
 
-### Immediate Rollback Steps
-1. **Environment Variable Rollback:** Disable feature flags
-2. **Code Rollback:** Git revert to last known good commit
-3. **Cache Invalidation:** Clear relevant cache keys
-4. **Health Check Verification:** Confirm all endpoints return healthy
+### Immediate Rollback
+1. Disable feature flags via environment variables
+2. Git revert to last known good commit
+3. Clear relevant cache keys
+4. Verify all health endpoints return healthy
 
 ### Gradual Rollback
-1. **Percentage Decrease:** Reduce feature flag percentage
-2. **Monitor Metrics:** Watch error rates and latency  
-3. **Full Disable:** Turn off feature completely if issues persist
-
-## Monitoring and Observability
-
-### Key Metrics to Track
-- API response times (p50, p95, p99)
-- Error rates per endpoint
-- Cache hit/miss ratios
-- Database query performance
-- Feature flag usage statistics
-
-### Alerting Thresholds
-- P95 latency increase >20% 
-- Error rate increase >5%
-- Cache miss rate increase >10%
-- Any 5xx errors on health endpoints
-
----
-
-*This implementation guide provides concrete steps for executing the 10 refactoring tasks. Each task should be implemented with comprehensive testing, monitoring, and rollback procedures to ensure system stability throughout the refactoring process.*
+1. Reduce feature flag percentage
+2. Monitor error rates and latency
+3. Disable feature completely if issues persist

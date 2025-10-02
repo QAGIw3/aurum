@@ -11,15 +11,13 @@ Async DAO Classes:
 - EiaAsyncDao: Async DAO for EIA data operations
 
 Legacy Sync DAO Classes (deprecated):
-- CurvesDao: Synchronous Curves DAO
-- MetadataDao: Synchronous Metadata DAO
-- PpaDao: Synchronous PPA DAO
+- PpaDao: Synchronous PPA DAO (to be migrated)
 """
 
 # Legacy sync DAOs (deprecated)
-from .curves_dao import CurvesDao
-from .metadata_dao import MetadataDao
-from .ppa_dao import PpaDao
+# CurvesDao - removed, use CurveRepository from aurum.data.repositories
+# MetadataDao - removed, use MetadataRepository from aurum.data.repositories
+from .ppa_dao import PpaDao  # Still needed until PPA service migration
 
 # New async DAOs with connection pooling
 from .base_async_dao import BaseAsyncDao
@@ -30,9 +28,7 @@ from .eia_async_dao import EiaAsyncDao
 
 __all__ = [
     # Legacy sync DAOs (deprecated)
-    "CurvesDao", 
-    "MetadataDao",
-    "PpaDao",
+    "PpaDao",  # Still needed until PPA service migration
     
     # New async DAOs with connection pooling
     "BaseAsyncDao",

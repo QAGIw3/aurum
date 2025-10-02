@@ -391,10 +391,10 @@ class MetadataService(BaseService):
                         metadata={"source": "cache", "iso": iso}
                     )
             
-            # Get from repository (stub - needs implementation in repository)
-            locations = []  # await self.metadata_repo.get_iso_locations(iso)
-            paginated = locations[offset:offset + limit]
+            # Get from repository
+            locations = await self.metadata_repo.get_iso_locations(iso)
             total = len(locations)
+            paginated = locations[offset:offset + limit]
             result = (paginated, total)
             
             # Cache results
@@ -442,10 +442,10 @@ class MetadataService(BaseService):
                         metadata={"source": "cache"}
                     )
             
-            # Get from repository (stub - needs implementation)
-            units = []  # await self.metadata_repo.get_units()
-            paginated = units[offset:offset + limit]
+            # Get from repository
+            units = await self.metadata_repo.get_units()
             total = len(units)
+            paginated = units[offset:offset + limit]
             result = (paginated, total)
             
             # Cache results
@@ -491,10 +491,10 @@ class MetadataService(BaseService):
                         metadata={"source": "cache"}
                     )
             
-            # Get from repository (stub - needs implementation)
-            calendars = []  # await self.metadata_repo.get_calendars()
-            paginated = calendars[offset:offset + limit]
+            # Get from repository
+            calendars = await self.metadata_repo.get_calendars()
             total = len(calendars)
+            paginated = calendars[offset:offset + limit]
             result = (paginated, total)
             
             # Cache results
