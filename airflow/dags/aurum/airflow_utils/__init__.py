@@ -33,6 +33,8 @@ from .dag_factory import (
     create_incremental_dag,
     create_seatunnel_dag,
     create_backfill_dag,
+    create_ingest_chain,
+    create_backfill_task,
     POOL_CONFIGS,
     SLA_CONFIGS,
 )
@@ -87,6 +89,8 @@ __all__ = [
     "create_incremental_dag",
     "create_seatunnel_dag",
     "create_backfill_dag",
+    "create_ingest_chain",
+    "create_backfill_task",
     "POOL_CONFIGS",
     "SLA_CONFIGS",
     "SeaTunnelJobOperator",

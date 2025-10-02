@@ -23,7 +23,7 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
 from ..deps import get_settings
-from libs.services.curves_service import CurvesService
+from aurum.libs.services.curves_service import CurvesService
 from ..http import respond_with_etag, deprecation_warning_headers, csv_response
 from ..http.response_builders import (
     etag_response_builder,

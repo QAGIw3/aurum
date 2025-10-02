@@ -7,7 +7,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request, Response
 from aurum.api.http.responses import respond_with_etag
 from pydantic import BaseModel
 
-from libs.storage import PostgresMetaRepo
+from aurum.libs.storage import PostgresMetaRepo
 from ..main import get_postgres_repo
 
 router = APIRouter()

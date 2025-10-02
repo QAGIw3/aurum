@@ -9,8 +9,8 @@ from typing import Any, Dict, List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response
 
-from libs.common.config import AurumSettings, get_settings
-from libs.services.market_service import MarketService
+from aurum.libs.common.config import AurumSettings, get_settings
+from aurum.libs.services.market_service import MarketService
 from aurum.api.v2.pagination import (
     resolve_pagination,
     build_next_cursor,

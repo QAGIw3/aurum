@@ -28,7 +28,7 @@ _SRC_PATH = os.environ.get("AURUM_PYTHONPATH_ENTRY", "/opt/airflow/src")
 if _SRC_PATH and _SRC_PATH not in sys.path:
     sys.path.insert(0, _SRC_PATH)
 
-from aurum.airflow_utils import build_default_args, build_preflight_callable
+from aurum.airflow_utils import build_default_args, build_preflight_callable, create_ingest_chain
 from aurum.airflow_utils import iso as iso_utils
 
 DEFAULT_ARGS: dict[str, Any] = build_default_args(
@@ -260,18 +260,24 @@ with DAG(
 
     task_results: list[tuple[BashOperator, PythonOperator]] = []
     for dataset_cfg in BULK_DATASETS:
-        bulk_task = _build_bulk_task(dataset_cfg)
-        watermark_task = PythonOperator(
-            task_id=f"{dataset_cfg['source_name']}_watermark",
-            python_callable=_make_watermark_callable(dataset_cfg["source_name"]),
+        # Use factory ingest chain to standardize render/execute/watermark
+        render_task, execute_task, watermark_task = create_ingest_chain(
+            dag,
+            f"eia_bulk_{dataset_cfg['source_name']}",
+            job_name="eia_bulk_to_kafka",
+            source_name=dataset_cfg["source_name"],
+            env_entries=_build_bulk_env(dataset_cfg),
+            pool="api_eia",
+            watermark_policy="day",
         )
-        task_results.append((bulk_task, watermark_task))
+        task_results.append(((render_task, execute_task), watermark_task))
 
     end = EmptyOperator(task_id="end")
 
     start >> preflight >> refresh_manifest >> register_sources
-    for bulk_task, watermark_task in task_results:
-        register_sources >> bulk_task >> watermark_task >> end
+    for bulk_pair, watermark_task in task_results:
+        render_task, execute_task = bulk_pair
+        register_sources >> render_task >> execute_task >> watermark_task >> end
 
     if not task_results:
         register_sources >> end

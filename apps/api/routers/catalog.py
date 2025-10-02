@@ -6,7 +6,7 @@ from typing import Dict, List, Optional, Any
 from fastapi import APIRouter, Depends, HTTPException, Request, Response
 from aurum.api.http.responses import respond_with_etag
 
-from libs.services.catalog_service import CatalogService
+from aurum.libs.services.catalog_service import CatalogService
 
 router = APIRouter()
 
@@ -76,7 +76,7 @@ async def get_table_stats(
     """Get detailed statistics for a table."""
     
     try:
-        from libs.storage.trino import TrinoAnalyticRepo
+        from aurum.libs.storage.trino import TrinoAnalyticRepo
         from aurum.core import get_settings
         repo = TrinoAnalyticRepo(get_settings().database)
         stats = await repo.get_table_stats(table_name=table_name, catalog=catalog, schema=schema)
@@ -134,8 +134,8 @@ async def get_dimensions(
         ORDER BY dimension, count DESC
         """
         
-        from libs.storage.trino import TrinoAnalyticRepo
-        from libs.common.config import get_settings
+        from aurum.libs.storage.trino import TrinoAnalyticRepo
+        from aurum.libs.common.config import get_settings
         repo = TrinoAnalyticRepo(get_settings().database)
         results = await repo.execute_query(query)
         
@@ -192,8 +192,8 @@ async def execute_analytical_query(
             raise HTTPException(status_code=400, detail=f"Keyword '{keyword}' is not allowed")
     
     try:
-        from libs.storage.trino import TrinoAnalyticRepo
-        from libs.common.config import get_settings
+        from aurum.libs.storage.trino import TrinoAnalyticRepo
+        from aurum.libs.common.config import get_settings
         repo = TrinoAnalyticRepo(get_settings().database)
         results = await repo.execute_query(query)
         

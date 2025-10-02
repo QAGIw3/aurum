@@ -29,7 +29,7 @@ def test_tenant_rate_limit_headers():
     def mock_query(*args, **kwargs):
         return [{"curve_key": "test", "mid": 42.0}], 1.0
 
-    with patch("aurum.api.service.query_curves", mock_query):
+    with patch("aurum.api.services.curves_v2_service.CurvesV2Service.query_curves", mock_query):
         response = client.get("/v1/curves", params={"limit": 1}, headers={"X-Aurum-Tenant": "tenant-123"})
 
     assert response.status_code == 200
@@ -49,7 +49,7 @@ def test_tenant_rate_limit_different_tenants():
     def mock_query(*args, **kwargs):
         return [{"curve_key": "test", "mid": 42.0}], 1.0
 
-    with patch("aurum.api.service.query_curves", mock_query):
+    with patch("aurum.api.services.curves_v2_service.CurvesV2Service.query_curves", mock_query):
         # First tenant
         response1 = client.get("/v1/curves", params={"limit": 1}, headers={"X-Aurum-Tenant": "tenant-1"})
         remaining1 = int(response1.headers["X-RateLimit-Remaining"])
@@ -75,7 +75,7 @@ def test_tenant_rate_limit_from_principal():
     def mock_get_principal(request):
         return {"tenant": "principal-tenant"}
 
-    with patch("aurum.api.service.query_curves", mock_query), \
+    with patch("aurum.api.services.curves_v2_service.CurvesV2Service.query_curves", mock_query), \
          patch("aurum.api.routes._get_principal", mock_get_principal):
         response = client.get("/v1/curves", params={"limit": 1})
 
@@ -95,7 +95,7 @@ def test_tenant_rate_limit_priority():
     def mock_get_principal(request):
         return {"tenant": "principal-tenant"}
 
-    with patch("aurum.api.service.query_curves", mock_query), \
+    with patch("aurum.api.services.curves_v2_service.CurvesV2Service.query_curves", mock_query), \
          patch("aurum.api.routes._get_principal", mock_get_principal):
         response = client.get(
             "/v1/curves",
@@ -120,7 +120,7 @@ def test_tenant_rate_limit_overrides():
         def mock_query(*args, **kwargs):
             return [{"curve_key": "test", "mid": 42.0}], 1.0
 
-        with patch("aurum.api.service.query_curves", mock_query):
+        with patch("aurum.api.services.curves_v2_service.CurvesV2Service.query_curves", mock_query):
             response = client.get("/v1/curves", params={"limit": 1}, headers={"X-Aurum-Tenant": "tenant-123"})
 
         assert response.status_code == 200
@@ -141,7 +141,7 @@ def test_rate_limit_exhaustion():
         def mock_query(*args, **kwargs):
             return [{"curve_key": "test", "mid": 42.0}], 1.0
 
-        with patch("aurum.api.service.query_curves", mock_query):
+        with patch("aurum.api.services.curves_v2_service.CurvesV2Service.query_curves", mock_query):
             # First request - should succeed
             response1 = client.get("/v1/curves", params={"limit": 1}, headers={"X-Aurum-Tenant": "tenant-123"})
             assert response1.status_code == 200
@@ -178,7 +178,7 @@ def test_rate_limit_tenant_isolation():
         def mock_query(*args, **kwargs):
             return [{"curve_key": "test", "mid": 42.0}], 1.0
 
-        with patch("aurum.api.service.query_curves", mock_query):
+        with patch("aurum.api.services.curves_v2_service.CurvesV2Service.query_curves", mock_query):
             # Tenant 1 makes 3 requests
             for i in range(3):
                 response = client.get("/v1/curves", params={"limit": 1}, headers={"X-Aurum-Tenant": "tenant-1"})
@@ -204,7 +204,7 @@ def test_rate_limit_redis_fallback():
         def mock_query(*args, **kwargs):
             return [{"curve_key": "test", "mid": 42.0}], 1.0
 
-        with patch("aurum.api.service.query_curves", mock_query):
+        with patch("aurum.api.services.curves_v2_service.CurvesV2Service.query_curves", mock_query):
             # Should still work with memory-based rate limiting
             response = client.get("/v1/curves", params={"limit": 1}, headers={"X-Aurum-Tenant": "tenant-123"})
 
@@ -223,7 +223,7 @@ def test_rate_limit_whitelist():
         def mock_query(*args, **kwargs):
             return [{"curve_key": "test", "mid": 42.0}], 1.0
 
-        with patch("aurum.api.service.query_curves", mock_query):
+        with patch("aurum.api.services.curves_v2_service.CurvesV2Service.query_curves", mock_query):
             # Whitelisted tenant should not have rate limit headers
             response = client.get("/v1/curves", params={"limit": 1}, headers={"X-Aurum-Tenant": "tenant-123"})
 
@@ -244,7 +244,7 @@ def test_rate_limit_identifier_header():
         def mock_query(*args, **kwargs):
             return [{"curve_key": "test", "mid": 42.0}], 1.0
 
-        with patch("aurum.api.service.query_curves", mock_query):
+        with patch("aurum.api.services.curves_v2_service.CurvesV2Service.query_curves", mock_query):
             response = client.get(
                 "/v1/curves",
                 params={"limit": 1},
@@ -263,7 +263,7 @@ def test_rate_limit_reset_time_calculation():
     def mock_query(*args, **kwargs):
         return [{"curve_key": "test", "mid": 42.0}], 1.0
 
-    with patch("aurum.api.service.query_curves", mock_query):
+    with patch("aurum.api.services.curves_v2_service.CurvesV2Service.query_curves", mock_query):
         response = client.get("/v1/curves", params={"limit": 1}, headers={"X-Aurum-Tenant": "tenant-123"})
 
     assert response.status_code == 200

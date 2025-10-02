@@ -275,7 +275,7 @@ def run_great_expectations(**context: Any) -> None:
             from aurum.airflow_utils import ExpectationSuiteConfig, validate_dataframe  # type: ignore
 
             repo_root = Path(__file__).resolve().parents[2]
-            suite_path = repo_root / "ge" / "expectations" / "curve_business.yml"
+            suite_path = repo_root / "ge" / "expectations" / "curve_business.json"
             output_root = Path(os.environ.get("AURUM_PARSED_OUTPUT_DIR", "/opt/airflow/data/processed"))
             run_folder = output_root / ds.replace("-", "")
             frames: list[pd.DataFrame] = []

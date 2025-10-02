@@ -94,6 +94,14 @@ class CacheConfig:
 
 
 @dataclass(slots=True)
+class IdempotencyConfig:
+    enabled: bool = True
+    key_header: str = "X-Idempotency-Key"
+    ttl_seconds: int = 86400  # 24 hours
+    max_entries: int = 1024
+
+
+@dataclass(slots=True)
 class AuthConfig:
     api_key: Optional[str] = None
     api_key_header: str = "X-API-Key"
@@ -109,6 +117,7 @@ class ClientConfig:
     retry: RetryConfig = field(default_factory=RetryConfig)
     cache: CacheConfig = field(default_factory=CacheConfig)
     auth: AuthConfig = field(default_factory=AuthConfig)
+    idempotency: IdempotencyConfig = field(default_factory=IdempotencyConfig)
     circuit_breaker: CircuitBreakerConfig | None = None
     telemetry_namespace: str = "external_api"
 
@@ -154,6 +163,32 @@ class APIResponseCache:
         self._cache[hashkey(*key)] = stored
 
 
+class IdempotencyStore:
+    def __init__(self, config: IdempotencyConfig) -> None:
+        self._cache: TTLCache | None = None
+        if config.enabled:
+            ttl = max(1, config.ttl_seconds)
+            maxsize = max(1, config.max_entries)
+            self._cache = TTLCache(maxsize=maxsize, ttl=ttl)
+
+    def get(self, key: str) -> Optional[httpx.Response]:
+        if self._cache is None:
+            return None
+        return self._cache.get(key)
+
+    def set(self, key: str, response: httpx.Response) -> None:
+        if self._cache is None:
+            return
+        # Store a copy to avoid consumed response bodies
+        stored = httpx.Response(
+            status_code=response.status_code,
+            headers=response.headers.copy(),
+            content=response.content,
+            request=response.request,
+        )
+        self._cache[key] = stored
+
+
 class ExternalAPIClient:
     """Unified client for resilient external API access."""
 
@@ -170,6 +205,7 @@ class ExternalAPIClient:
         breaker_config = config.circuit_breaker or CircuitBreakerConfig(name=f"external:{self._base_url}")
         self._breaker: CircuitBreaker = get_circuit_breaker(breaker_config.name, breaker_config)
         self._cache = APIResponseCache(config.cache)
+        self._idempotency_store = IdempotencyStore(config.idempotency)
         self._logger = logging.getLogger(__name__)
         self._token_expiration: float | None = None
 
@@ -223,7 +259,17 @@ class ExternalAPIClient:
         if self._breaker.is_open():
             raise ExternalAPICircuitOpenError(f"Circuit open for {config.base_url}")
 
-        # Attempt cache lookup
+        # Handle idempotency for POST requests
+        idempotency_key = None
+        if method.upper() == "POST" and config.idempotency.enabled:
+            idempotency_key = request_headers.get(config.idempotency.key_header)
+            if idempotency_key:
+                # Check if we already have a response for this idempotency key
+                cached_response = self._idempotency_store.get(idempotency_key)
+                if cached_response is not None:
+                    return cached_response
+
+        # Attempt cache lookup (for GET requests)
         try:
             cached = self._cache.get(cache_key)
         except ExternalAPICacheMiss:
@@ -262,6 +308,11 @@ class ExternalAPIClient:
                         pass
                     if _default_should_cache(method, response.status_code):
                         self._cache.set(cache_key, response)
+
+                    # Store idempotent POST responses
+                    if idempotency_key:
+                        self._idempotency_store.set(idempotency_key, response)
+
                     return response
 
                 if response.status_code in {401, 403}:
@@ -348,7 +399,10 @@ __all__ = [
     "ClientConfig",
     "RetryConfig",
     "CacheConfig",
+    "IdempotencyConfig",
     "AuthConfig",
+    "APIResponseCache",
+    "IdempotencyStore",
     "ExternalAPIError",
     "ExternalAPINetworkError",
     "ExternalAPIResponseError",

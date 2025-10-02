@@ -669,6 +669,8 @@ def _build_dag(config: ProviderDagConfig) -> DAG:
 
     start = EmptyOperator(task_id="start", dag=dag)
 
+    # Keep PythonOperator wiring but structure remains the same; future step can
+    # call into DAGFactory helpers for parity once backfill/incremental are exposed.
     ingest = PythonOperator(
         task_id="incremental_ingest",
         python_callable=_incremental_wrapper,

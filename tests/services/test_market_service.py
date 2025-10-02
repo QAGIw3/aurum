@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import pytest
 
-from libs.services.market_service import MarketService
+from aurum.libs.services.market_service import MarketService
 
 
 class FakeCache:

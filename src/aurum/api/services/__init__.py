@@ -214,7 +214,7 @@ for module_name, exports in _EXPORTS:
 
 # Prefer the shared curves service implementation from libs when available
 try:  # pragma: no cover - optional dependency wiring
-    from libs.services.curves_service import CurvesService as _SharedCurvesService
+    from aurum.libs.services.curves_service import CurvesService as _SharedCurvesService
 except Exception:  # pragma: no cover - defensive guard for minimal environments
     _logger.debug("Shared CurvesService import failed; CurvesService unavailable", exc_info=True)
 else:

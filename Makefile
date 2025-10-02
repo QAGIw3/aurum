@@ -1,5 +1,5 @@
 
-.PHONY: help build test deploy lint clean docker-build docker-push k8s-deploy db-migrate security-scan security-pip-audit security-bandit trino-harness trino-harness-metrics reconcile-kafka-lake iceberg-maintenance ci-trino-smoke cache-warm \
+.PHONY: help build test deploy lint clean docker-build docker-push k8s-deploy db-migrate security-scan security-pip-audit security-bandit trino-harness trino-harness-metrics reconcile-kafka-lake iceberg-maintenance ci-trino-smoke cache-warm ge-sync ge-lint \
 	kind-create kind-apply kind-bootstrap kind-up kind-down kind-apply-ui kind-delete-ui \
 	kafka-bootstrap kafka-register-schemas kafka-set-compat kafka-apply-topics kafka-apply-topics-kind kafka-apply-topics-dry-run \
 	compose-bootstrap perf-k6 \
@@ -101,6 +101,38 @@ lint: ## Run linting
 	black --check src/ tests/
 	isort --check-only src/ tests/
 	flake8 src/ tests/
+
+# Great Expectations suites
+ge-sync: ## Sync canonical GE suites into ge/expectations and build index
+	python3 scripts/contracts/sync_ge_suites.py
+
+ge-lint: ## Lint GE suites for drift and tier compatibility
+	python3 scripts/contracts/lint_ge_suites.py
+
+ge-generate-curves: ## Generate curves-domain suites from fragments (canonical)
+	python3 scripts/contracts/generate_curves_suites.py
+	$(MAKE) ge-sync
+	$(MAKE) ge-lint
+
+ge-generate-external: ## Generate external-domain suites from fragments (canonical)
+	python3 scripts/contracts/generate_external_suites.py
+	$(MAKE) ge-sync
+	$(MAKE) ge-lint
+
+ge-generate-iso: ## Generate ISO-domain suites from fragments (canonical)
+	python3 scripts/contracts/generate_iso_suites.py
+	$(MAKE) ge-sync
+	$(MAKE) ge-lint
+
+ge-generate-mart: ## Generate mart-domain suites from fragments (canonical)
+	python3 scripts/contracts/generate_mart_suites.py
+	$(MAKE) ge-sync
+	$(MAKE) ge-lint
+
+ge-generate-drought: ## Generate drought-domain suites from fragments (canonical)
+	python3 scripts/contracts/generate_drought_suites.py
+	$(MAKE) ge-sync
+	$(MAKE) ge-lint
 
 format: ## Format code
 	black src/ tests/

@@ -1,0 +1,21 @@
+[
+  "tenant_id",
+  "provider",
+  "series_id",
+  "ts",
+  "asof_date",
+  "value",
+  "value_raw",
+  "unit_code",
+  "geo_id",
+  "dataset_code",
+  "frequency_code",
+  "status",
+  "quality_flag",
+  "ingest_ts",
+  "ingest_job_id",
+  "ingest_run_id",
+  "ingest_batch_id",
+  "source_event_id",
+  "metadata"
+]

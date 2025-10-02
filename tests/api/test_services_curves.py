@@ -5,9 +5,9 @@ from typing import Any, Dict, List, Optional, Tuple
 
 import pytest
 
-from libs.services.cache_support import AsyncCacheProtocol
-from libs.services.contracts import CacheDirective, CacheStatus, ServiceExecutionResult
-from libs.services.curves_service import Curve, CurvesService
+from aurum.libs.services.cache_support import AsyncCacheProtocol
+from aurum.libs.services.contracts import CacheDirective, CacheStatus, ServiceExecutionResult
+from aurum.libs.services.curves_service import Curve, CurvesService
 
 
 class InMemoryAsyncCache(AsyncCacheProtocol):

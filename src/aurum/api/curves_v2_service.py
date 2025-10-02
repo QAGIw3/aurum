@@ -9,9 +9,9 @@ adapts dataclasses into Pydantic models expected by the router layer.
 from typing import Any, Dict, List, Optional, Tuple
 from pydantic import BaseModel, Field
 
-from libs.services.cache_support import AsyncCacheProtocol
-from libs.services.curves_service import Curve as SharedCurve
-from libs.services.curves_service import CurvesService as SharedCurvesService
+from aurum.libs.services.cache_support import AsyncCacheProtocol
+from aurum.libs.services.curves_service import Curve as SharedCurve
+from aurum.libs.services.curves_service import CurvesService as SharedCurvesService
 
 
 class CurveItem(BaseModel):

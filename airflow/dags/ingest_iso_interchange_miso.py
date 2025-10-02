@@ -15,7 +15,7 @@ _SRC_PATH = os.environ.get("AURUM_PYTHONPATH_ENTRY", "/opt/airflow/src")
 if _SRC_PATH and _SRC_PATH not in sys.path:
     sys.path.insert(0, _SRC_PATH)
 
-from aurum.airflow_utils import build_failure_callback, build_preflight_callable
+from aurum.airflow_utils import build_failure_callback, build_preflight_callable, create_ingest_chain
 from aurum.airflow_utils import iso as iso_utils
 
 
@@ -61,7 +61,8 @@ def build_miso_interchange_task(
         "MISO_INTERFACE_COLUMN=\"{{ var.value.get('aurum_miso_interchange_interface_column', 'Interface') }}\"",
         "MISO_INTERCHANGE_COLUMN=\"{{ var.value.get('aurum_miso_interchange_column', 'Interchange') }}\"",
     ]
-    return iso_utils.create_seatunnel_ingest_chain(
+    return create_ingest_chain(
+        dag,
         task_prefix,
         job_name="miso_interchange_to_kafka",
         source_name=source_name,

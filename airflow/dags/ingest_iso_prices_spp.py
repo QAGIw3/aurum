@@ -15,7 +15,7 @@ _SRC_PATH = os.environ.get("AURUM_PYTHONPATH_ENTRY", "/opt/airflow/src")
 if _SRC_PATH and _SRC_PATH not in sys.path:
     sys.path.insert(0, _SRC_PATH)
 
-from aurum.airflow_utils import build_failure_callback, build_preflight_callable
+from aurum.airflow_utils import build_failure_callback, build_preflight_callable, create_ingest_chain
 from aurum.airflow_utils import iso as iso_utils
 from aurum.airflow_utils.vault import build_pull_env_command
 
@@ -62,6 +62,7 @@ def _token_flag() -> str:
 
 
 def build_pipeline(
+    dag: DAG,
     prefix: str,
     report_var: str,
     interval_minutes: int,
@@ -103,13 +104,13 @@ def build_pipeline(
         pool="api_spp",
     )
 
-    render_task, run_k8s_task, watermark_task = iso_utils.create_seatunnel_ingest_chain(
+    render_task, run_k8s_task, watermark_task = create_ingest_chain(
+        dag,
         f"spp_{prefix}",
         job_name="spp_lmp_to_kafka",
         source_name=source_name,
         env_entries=[
             f"SPP_INPUT_JSON={staging_path}",
-            # Retain schema path if template needs it
             "ISO_LMP_SCHEMA_PATH=/opt/airflow/scripts/kafka/schemas/iso.lmp.v1.avsc",
         ],
         pool="api_spp",
@@ -149,12 +150,14 @@ with DAG(
     register_sources = PythonOperator(task_id="register_sources", python_callable=_register_sources)
 
     da_stage, da_seatunnel, da_exec, da_watermark = build_pipeline(
+        dag,
         "da",
         "aurum_spp_da_report",
         interval_minutes=60,
         source_name="spp_da_lmp",
     )
     rt_stage, rt_seatunnel, rt_exec, rt_watermark = build_pipeline(
+        dag,
         "rt",
         "aurum_spp_rt_report",
         interval_minutes=5,

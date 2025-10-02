@@ -1,0 +1,8 @@
+[
+  "tenant_id",
+  "provider",
+  "series_id",
+  "ts",
+  "asof_date",
+  "ingest_ts"
+]

@@ -1,0 +1,8 @@
+[
+  "tenant_id",
+  "provider",
+  "series_id",
+  "title",
+  "ingest_ts",
+  "version"
+]

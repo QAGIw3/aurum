@@ -15,7 +15,7 @@ _SRC_PATH = os.environ.get("AURUM_PYTHONPATH_ENTRY", "/opt/airflow/src")
 if _SRC_PATH and _SRC_PATH not in sys.path:
     sys.path.insert(0, _SRC_PATH)
 
-from aurum.airflow_utils import build_failure_callback, build_preflight_callable
+from aurum.airflow_utils import build_failure_callback, build_preflight_callable, create_ingest_chain
 from aurum.airflow_utils import iso as iso_utils
 
 
@@ -54,8 +54,9 @@ SOURCES = (
 )
 
 
-def build_chain(task_prefix: str, job_name: str, source_name: str, env_entries: list[str]):
-    return iso_utils.create_seatunnel_ingest_chain(
+def build_chain(dag: DAG, task_prefix: str, job_name: str, source_name: str, env_entries: list[str]):
+    return create_ingest_chain(
+        dag,
         task_prefix,
         job_name=job_name,
         source_name=source_name,
@@ -98,6 +99,7 @@ with DAG(
     )
 
     nyiso_render, nyiso_exec, nyiso_watermark = build_chain(
+        dag,
         "nyiso",
         "nyiso_lmp_to_kafka",
         "nyiso_csv",
@@ -108,6 +110,7 @@ with DAG(
     )
 
     miso_da_render, miso_da_exec, miso_da_watermark = build_chain(
+        dag,
         "miso_da",
         "miso_lmp_to_kafka",
         "miso_csv",
@@ -118,6 +121,7 @@ with DAG(
     )
 
     miso_rt_render, miso_rt_exec, miso_rt_watermark = build_chain(
+        dag,
         "miso_rt",
         "miso_lmp_to_kafka",
         "miso_csv",

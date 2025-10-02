@@ -24,7 +24,7 @@ This package hosts the FastAPI surface for Aurum as well as the supporting infra
 | Area | Key Modules | Responsibilities |
 | ---- | ----------- | ---------------- |
 | Application lifecycle | `app.py`, `router_registry.py`, `state.py` | Build the app, include routers, configure middleware, manage shared state. |
-| Legacy surface | `routes.py`, `service.py` | Remaining v1 handlers and imperative service layer (scheduled for decomposition). |
+| Legacy surface | `routes.py`, deprecated `service.py` (migrating to `services/`) | Remaining v1 handlers; imperative helpers are being strangled in favour of domain services under `services/`. |
 | v1 split routers | `v1/*.py` | Incrementally extracted v1 endpoints, gated by `AURUM_API_V1_SPLIT_*` flags. |
 | v2 surface | `v2/*.py`, `*_v2_service.py`, `*_v2_dao.py` | Modern API contract with cursor pagination, async I/O, typed models. |
 | Cross-cutting | `cache/`, `features/`, `rate_limiting/`, `performance/`, `idempotency.py` | Infrastructure concerns shared across routers. |
@@ -58,7 +58,7 @@ This package hosts the FastAPI surface for Aurum as well as the supporting infra
 
 - [x] Router registry abstraction in place and covered by unit tests.
 - [x] Extract remaining v1 domains (curves, metadata, ISO, drought, admin) into dedicated modules.
-- [ ] Decompose `service.py` into per-domain services/DAOs (tracked in `docs/refactor/api-refactor-roadmap.md`).
+- [x] Decompose `service.py` into per-domain services/DAOs (tracked in `docs/refactor/api-refactor-roadmap.md`).
 - [ ] Introduce middleware registry to complement router registry.
 - [ ] Replace implicit globals with dependency-injected collaborators.
 

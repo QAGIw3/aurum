@@ -458,6 +458,13 @@ AURUM_API_RATE_LIMIT_BURST=40
 AURUM_API_CORS_ORIGINS=http://localhost:3000
 AURUM_API_METRICS_ENABLED=1
 
+# API Migration and Feature Flags
+AURUM_USE_SIMPLIFIED_API=false  # Use simplified API with essential middleware only
+AURUM_API_MIGRATION_PHASE=1      # Current migration phase (1=legacy, 2=simplified, 3=minimal)
+AURUM_API_LIGHT_INIT=1           # Lightweight initialization for tests (1=enabled, 0=full init)
+AURUM_ENABLE_V2_ONLY=true        # Default to v2 routers only (no v1 compatibility)
+AURUM_API_V1_RETIRE_STUB=0       # Return 410 Gone for /v1/* routes when v2-only is enabled
+
 # Optional OIDC
 AURUM_API_AUTH_DISABLED=0
 AURUM_API_OIDC_ISSUER=https://id.example.com

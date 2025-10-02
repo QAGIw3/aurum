@@ -9,6 +9,7 @@ from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 from .base_service import DimensionalServiceInterface, QueryableServiceInterface
 from ..dao.metadata_dao import MetadataDao
+from ..cache.consolidated_manager import get_unified_cache_manager
 
 
 class MetadataService(DimensionalServiceInterface, QueryableServiceInterface):
@@ -19,6 +20,7 @@ class MetadataService(DimensionalServiceInterface, QueryableServiceInterface):
     
     def __init__(self):
         self._dao = MetadataDao()
+        self._cache = get_unified_cache_manager()
 
     async def list_dimensions(
         self, 
@@ -28,11 +30,29 @@ class MetadataService(DimensionalServiceInterface, QueryableServiceInterface):
         limit: int
     ) -> Tuple[List[Dict[str, Any]], int]:
         """List dimensions with pagination (legacy method)."""
+        cache_key = f"metadata:dims:{offset}:{limit}"
+        cached = None
+        if self._cache is not None:
+            try:
+                cached = await self._cache.get(cache_key)
+            except Exception:
+                pass
+
+        if cached:
+            return cached["items"], cached["total"]
+
         metadata_dims = await self._dao.fetch_metadata_dimensions()
-        
-        # Apply offset and limit
+
         paginated = metadata_dims[offset:offset + limit]
-        return paginated, len(metadata_dims)
+        total = len(metadata_dims)
+
+        if self._cache is not None:
+            try:
+                await self._cache.set(cache_key, {"items": paginated, "total": total})
+            except Exception:
+                pass
+
+        return paginated, total
 
     async def list_locations(
         self, 

@@ -15,7 +15,7 @@ _SRC_PATH = os.environ.get("AURUM_PYTHONPATH_ENTRY", "/opt/airflow/src")
 if _SRC_PATH and _SRC_PATH not in sys.path:
     sys.path.insert(0, _SRC_PATH)
 
-from aurum.airflow_utils import build_failure_callback, build_preflight_callable
+from aurum.airflow_utils import build_failure_callback, build_preflight_callable, create_ingest_chain
 from aurum.airflow_utils import iso as iso_utils
 from aurum.airflow_utils.vault import build_pull_env_command
 
@@ -54,12 +54,13 @@ SOURCES = (
 )
 
 
-def _isone_chain():
+def _isone_chain(dag: DAG):
     pull_cmd = build_pull_env_command([
         "secret/data/aurum/isone:username=ISONE_USERNAME",
         "secret/data/aurum/isone:password=ISONE_PASSWORD",
     ])
-    return iso_utils.create_seatunnel_ingest_chain(
+    return create_ingest_chain(
+        dag,
         "isone_lmp",
         job_name="isone_lmp_to_kafka",
         source_name="isone_ws",
@@ -74,8 +75,9 @@ def _isone_chain():
         watermark_policy="hour",
     )
 
-def _spp_chain(staging_path: str):
-    return iso_utils.create_seatunnel_ingest_chain(
+def _spp_chain(dag: DAG, staging_path: str):
+    return create_ingest_chain(
+        dag,
         "spp_lmp",
         job_name="spp_lmp_to_kafka",
         source_name="spp_file",
@@ -120,7 +122,7 @@ with DAG(
         python_callable=lambda: iso_utils.register_sources(SOURCES),
     )
 
-    isone_render, isone_exec, isone_watermark = _isone_chain()
+    isone_render, isone_exec, isone_watermark = _isone_chain(dag)
 
     # SPP: stage JSON via Python helper, then publish via SeaTunnel LocalFile source
     spp_staging = os.environ.get("AURUM_STAGING_DIR", "files/staging") + "/spp/{{ ds }}.json"
@@ -148,7 +150,7 @@ with DAG(
         execution_timeout=timedelta(minutes=20),
     )
 
-    spp_render, spp_exec, spp_watermark = _spp_chain(spp_staging)
+    spp_render, spp_exec, spp_watermark = _spp_chain(dag, spp_staging)
 
     end = EmptyOperator(task_id="end")
 

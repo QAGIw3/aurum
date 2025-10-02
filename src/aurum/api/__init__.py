@@ -10,9 +10,11 @@ from __future__ import annotations
 
 import importlib
 import os as _os
+
+from aurum.core import AurumSettings
 from typing import Any
 
-if _os.getenv("AURUM_API_LIGHT_INIT", "0") == "1":
+if getattr(AurumSettings(), "api_light_init", False):
     __all__: list[str] = []
 else:
     _EXPORTS: dict[str, tuple[str, str | None]] = {
@@ -23,6 +25,8 @@ else:
         "create_test_app": ("aurum.api.app", "create_test_app"),
         # Back-compat: export module for test convenience
         "app": ("aurum.api.app", None),
+        "ApplicationFactory": ("aurum.api.app", "ApplicationFactory"),
+        "ApplicationBuilder": ("aurum.api.app_builder", "ApplicationBuilder"),
         # Routers (kept minimal; prefer router registry within factory)
         "health_router": ("aurum.api.health", "router"),
         # Exceptions
@@ -133,7 +137,7 @@ else:
     __all__ = sorted(_EXPORTS)
 
     # Emit deprecation warning outside of tests
-    if not _os.getenv("PYTEST_CURRENT_TEST"):
+    if not getattr(AurumSettings(), "is_test", False) and not _os.getenv("PYTEST_CURRENT_TEST"):
         import warnings as _warnings
 
         _warnings.warn(

@@ -7,7 +7,7 @@ from typing import Any, Dict, Iterable, Tuple
 
 from fastapi import APIRouter, HTTPException
 
-from libs.common.config import AurumSettings, get_settings
+from aurum.libs.common.config import AurumSettings, get_settings
 
 
 router = APIRouter(prefix="/_internal", tags=["internal"])

@@ -81,11 +81,11 @@ _INITIALISED = False
 
 # Prefer shared observability implementation when available
 try:  # pragma: no cover - optional dependency path
-    from libs.observability.api import (
+    from aurum.libs.observability.api import (
         configure_observability as _libs_configure_observability,
         get_observability as _libs_get_observability,
     )
-    from libs.common.config import ObservabilitySettings as _LibsObsSettings
+    from aurum.libs.common.config import ObservabilitySettings as _LibsObsSettings
     _LIBS_OBS_AVAILABLE = True
 except Exception:  # pragma: no cover - libs not present in some environments
     _LIBS_OBS_AVAILABLE = False

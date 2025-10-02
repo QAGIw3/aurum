@@ -12,7 +12,7 @@ from dataclasses import dataclass, field
 from typing import Any, Dict, Generic, Mapping, Optional, Sequence, Tuple, TypeVar
 from datetime import date
 
-from libs.services.contracts import (
+from aurum.libs.services.contracts import (
     CacheDirective,
     CacheStatus,
     ServiceExecutionMetadata,

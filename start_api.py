@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Canonical launcher for the Aurum API (unified app).
 
-Boots `apps.api.main:create_app` under uvicorn.
+Boots `aurum.api.app:create_app` under uvicorn.
 """
 
 import os
@@ -13,7 +13,7 @@ def main() -> None:
     port = int(os.getenv("AURUM_API_PORT", "8080"))
     workers = int(os.getenv("AURUM_API_WORKERS", "1"))
     uvicorn.run(
-        "apps.api.main:create_app",
+        "aurum.api.app:create_app",
         host=host,
         port=port,
         workers=workers,

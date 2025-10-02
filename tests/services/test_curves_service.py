@@ -3,7 +3,7 @@ from __future__ import annotations
 import asyncio
 import pytest
 
-from libs.services.curves_service import CurvesService
+from aurum.libs.services.curves_service import CurvesService
 
 
 class FakeTrino:

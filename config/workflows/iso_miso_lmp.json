@@ -1,0 +1,112 @@
+{
+  "dag_id": "dyn_ingest_iso_miso_lmp",
+  "description": "Dynamic DAG: Ingest MISO DA/RT LMP via factory create_ingest_chain",
+  "schedule": "15 * * * *",
+  "start_date": "2024-01-01T00:00:00+00:00",
+  "catchup": false,
+  "max_active_runs": 1,
+  "tags": ["aurum", "iso", "miso", "lmp", "dynamic"],
+  "default_args": {
+    "owner": "aurum-data",
+    "email_on_failure": true,
+    "retries": 3,
+    "retry_delay_minutes": 10,
+    "execution_timeout_minutes": 45
+  },
+  "feature_flags": {
+    "enable_monitoring": true
+  },
+  "tasks": [
+    { "task_id": "start", "type": "empty", "params": {}, "depends_on": [] },
+
+    {
+      "task_id": "preflight",
+      "type": "python",
+      "params": {
+        "callable": "aurum.airflow_utils:build_preflight_callable",
+        "op_kwargs": {
+          "required_variables": [
+            "aurum_kafka_bootstrap",
+            "aurum_schema_registry",
+            "aurum_miso_da_url",
+            "aurum_miso_rt_url"
+          ]
+        }
+      },
+      "depends_on": ["start"]
+    },
+
+    {
+      "task_id": "register_sources",
+      "type": "python",
+      "params": {
+        "callable": "aurum.airflow_utils.iso:register_sources",
+        "op_kwargs": {
+          "sources": {
+            "factory": true,
+            "sources": [
+              {"name": "miso_da_lmp", "description": "MISO day-ahead LMP", "schedule": "15 * * * *", "target": "kafka"},
+              {"name": "miso_rt_lmp", "description": "MISO real-time LMP", "schedule": "*/5 * * * *", "target": "kafka"}
+            ]
+          }
+        }
+      },
+      "depends_on": ["preflight"]
+    },
+
+    {
+      "task_id": "miso_da_render",
+      "type": "python",
+      "params": {
+        "callable": "aurum.airflow_utils:create_ingest_chain",
+        "op_kwargs": {
+          "factory": true,
+          "dag": {"__context": "dag"},
+          "task_prefix": "miso_da",
+          "job_name": "miso_lmp_to_kafka",
+          "source_name": "miso_da_lmp",
+          "env_entries": [
+            "MISO_URL=\"{{ var.value.get('aurum_miso_da_url') }}\"",
+            "MISO_MARKET=\"DAY_AHEAD\"",
+            "MISO_TOPIC=\"aurum.iso.miso.lmp.v1\"",
+            "MISO_INTERVAL_SECONDS=3600"
+          ],
+          "pool": "api_miso",
+          "watermark_policy": "hour"
+        }
+      },
+      "depends_on": ["register_sources"]
+    },
+    { "task_id": "miso_da_execute", "type": "empty", "params": {}, "depends_on": ["miso_da_render"] },
+    { "task_id": "miso_da_watermark", "type": "empty", "params": {}, "depends_on": ["miso_da_execute"] },
+
+    {
+      "task_id": "miso_rt_render",
+      "type": "python",
+      "params": {
+        "callable": "aurum.airflow_utils:create_ingest_chain",
+        "op_kwargs": {
+          "factory": true,
+          "dag": {"__context": "dag"},
+          "task_prefix": "miso_rt",
+          "job_name": "miso_lmp_to_kafka",
+          "source_name": "miso_rt_lmp",
+          "env_entries": [
+            "MISO_URL=\"{{ var.value.get('aurum_miso_rt_url') }}\"",
+            "MISO_MARKET=\"REAL_TIME\"",
+            "MISO_TOPIC=\"aurum.iso.miso.lmp.v1\"",
+            "MISO_INTERVAL_SECONDS=300"
+          ],
+          "pool": "api_miso",
+          "watermark_policy": "hour"
+        }
+      },
+      "depends_on": ["register_sources"]
+    },
+    { "task_id": "miso_rt_execute", "type": "empty", "params": {}, "depends_on": ["miso_rt_render"] },
+    { "task_id": "miso_rt_watermark", "type": "empty", "params": {}, "depends_on": ["miso_rt_execute"] },
+
+    { "task_id": "end", "type": "empty", "params": {}, "depends_on": ["miso_da_watermark", "miso_rt_watermark"] }
+  ]
+}
+

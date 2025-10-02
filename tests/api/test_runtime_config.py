@@ -11,7 +11,7 @@ from unittest.mock import AsyncMock
 import aurum.api.runtime_config as runtime_config
 import aurum.api.app as app_module
 import aurum.api.routes as routes
-from aurum.core.settings import SimplifiedSettings
+from aurum.core import AurumSettings
 
 
 class StubScenarioStore:
@@ -83,11 +83,44 @@ def scenario_store(monkeypatch: pytest.MonkeyPatch) -> StubScenarioStore:
     return store
 
 
-def _settings_stub() -> SimpleNamespace:
-    rate_limit_ns = SimpleNamespace(tenant_overrides={}, daily_cap=100000, overrides={})
-    concurrency_ns = SimpleNamespace(tenant_overrides={})
-    api = SimpleNamespace(rate_limit=rate_limit_ns, concurrency=concurrency_ns)
-    return SimpleNamespace(api=api)
+class _StubSettings(AurumSettings):
+    def __init__(self) -> None:
+        # Minimal API settings needed by ApplicationBuilder
+        self.api = SimpleNamespace(
+            api_title="Test API",
+            version="0.0-test",
+            request_timeout_seconds=30,
+            cache=SimpleNamespace(in_memory_ttl=60, metadata_ttl=60, curve_ttl=60, curve_diff_ttl=60, curve_strip_ttl=60, eia_series_ttl=60, eia_series_dimensions_ttl=60),
+            concurrency=None,
+            metrics=SimpleNamespace(enabled=False),
+            admin_guard_enabled=False,
+        )
+        self.telemetry = SimpleNamespace(service_name="aurum-api-test")
+        self.redis_url = None
+        self.debug = False
+        self.environment = "test"
+        self.enable_v2_only = False
+        self.tenancy = SimpleNamespace(
+            enabled=False,
+            isolation_rls_tables=(),
+            isolation_schema_template=None,
+            compute_pools=None,
+            default_compute_pool=None,
+            default_plan="standard",
+            default_features=(),
+            default_quotas=None,
+            bootstrap_tenants=(),
+            default_tenant=None,
+            auto_provision=False,
+            cross_tenant_roles=(),
+            header_name="X-Aurum-Tenant",
+            query_param="tenant_id",
+            require_registered_tenant=False,
+        )
+
+
+def _settings_stub() -> AurumSettings:
+    return _StubSettings()
 
 
 def test_concurrency_override_update_and_fetch(monkeypatch: pytest.MonkeyPatch, scenario_store: StubScenarioStore) -> None:
@@ -138,12 +171,20 @@ def test_runtime_config_router_is_registered(monkeypatch: pytest.MonkeyPatch) ->
     monkeypatch.setattr(app_module, "configure_telemetry", lambda *args, **kwargs: None, raising=False)
     monkeypatch.setattr(app_module, "_register_metrics_endpoint", lambda app, settings: None, raising=False)
     monkeypatch.setattr(app_module, "_register_trino_lifecycle", lambda app: None, raising=False)
-    monkeypatch.setattr(app_module, "_install_rate_limit_middleware", lambda app, settings: app, raising=False)
-    monkeypatch.setattr(app_module, "_install_concurrency_middleware", lambda app, settings: app, raising=False)
     monkeypatch.setattr(app_module, "HybridTrinoClientManager", type("_Stub", (), {"get_instance": classmethod(lambda cls: None)}))
+    monkeypatch.setattr(
+        "aurum.api.features.initialize_feature_flags",
+        lambda **kwargs: None,
+        raising=False,
+    )
+    monkeypatch.setattr(
+        "aurum.core.AurumSettings.from_env",
+        staticmethod(_settings_stub),
+        raising=False,
+    )
 
-    settings = SimplifiedSettings()
-    app = app_module._create_simplified_app(settings, logger=app_module.logging.getLogger("test-config"))
+    settings = _settings_stub()
+    app = app_module.ApplicationFactory._create_simplified_app(settings, logger=app_module.logging.getLogger("test-config"))
 
     paths = {route.path for route in app.router.routes}
     assert "/v1/admin/config/concurrency/{tenant_id}" in paths

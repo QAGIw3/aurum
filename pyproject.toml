@@ -249,7 +249,7 @@ quality = [
 demo_ep = "aurum_vendor_demo.demo:parse_demo"
 
 [tool.hatch.build.targets.wheel]
-packages = ["src/aurum", "src/aurum_vendor_demo"]
+packages = ["src/aurum", "src/libs", "src/aurum_vendor_demo"]
 
 [tool.black]
 line-length = 88

@@ -108,6 +108,89 @@ def _evaluate_expectation(df: pd.DataFrame, expectation: Dict[str, Any]) -> Expe
             details = f"{duplicate_count} duplicates found"
         return ExpectationResult(expectation_type, kwargs, success, details)
 
+    if expectation_type == "expect_column_values_to_be_of_type":
+        # Minimal type checker to support common GE types seen in suites
+        type_ = kwargs.get("type_") or kwargs.get("type")
+        if type_ is None:
+            raise ValueError("expect_column_values_to_be_of_type requires 'type_'")
+        non_null = series.dropna()
+        if non_null.empty:
+            return ExpectationResult(expectation_type, kwargs, True)
+
+        # Normalize target type
+        target = str(type_).upper()
+
+        def _is_type(s: pd.Series, target_type: str) -> bool:
+            dtype = s.dtype
+            if target_type in {"FLOAT", "FLOAT64", "DOUBLE"}:
+                return pd.api.types.is_float_dtype(dtype)
+            if target_type in {"INTEGER", "INT", "INT64"}:
+                return pd.api.types.is_integer_dtype(dtype)
+            if target_type in {"BOOLEAN", "BOOL"}:
+                return pd.api.types.is_bool_dtype(dtype)
+            if target_type in {"STRING", "STR", "OBJECT"}:
+                return pd.api.types.is_string_dtype(dtype) or pd.api.types.is_object_dtype(dtype)
+            if target_type in {"DATE", "DATETIME", "TIMESTAMP"}:
+                return pd.api.types.is_datetime64_any_dtype(dtype)
+            # Fallback: exact match check on dtype name
+            return str(dtype).lower() == target_type.lower()
+
+        success = _is_type(non_null, target)
+        details = None if success else f"observed dtype '{non_null.dtype}' not compatible with '{target}'"
+        return ExpectationResult(expectation_type, kwargs, success, details)
+
+    if expectation_type == "expect_column_pair_values_to_be_equal":
+        col_a = kwargs.get("column_A") or kwargs.get("column_a")
+        col_b = kwargs.get("column_B") or kwargs.get("column_b")
+        mostly = kwargs.get("mostly", 1.0)
+        if not col_a or not col_b:
+            raise ValueError("expect_column_pair_values_to_be_equal requires 'column_A' and 'column_B'")
+
+        filtered_df = _filter_dataframe(df, kwargs)
+        missing = [c for c in (col_a, col_b) if c not in filtered_df.columns]
+        if missing:
+            raise ValueError(f"Columns {missing} missing from dataframe for expect_column_pair_values_to_be_equal")
+
+        a = filtered_df[col_a]
+        b = filtered_df[col_b]
+        # Consider pairs equal when both are NaN; compare non-null pairs strictly
+        both_null = a.isna() & b.isna()
+        non_null = ~(both_null) & ~(a.isna() | b.isna())
+        eq_mask = both_null | (non_null & (a[non_null].values == b[non_null].values))
+        ratio = _fraction(eq_mask, len(filtered_df))
+        success = ratio >= mostly
+        details = None if success else f"only {ratio:.3f} pairs equal between '{col_a}' and '{col_b}'"
+        return ExpectationResult(expectation_type, kwargs, success, details)
+
+    if expectation_type == "expect_column_pair_values_A_to_be_greater_than_B":
+        col_a = kwargs.get("column_A") or kwargs.get("column_a")
+        col_b = kwargs.get("column_B") or kwargs.get("column_b")
+        or_equal = bool(kwargs.get("or_equal", False))
+        mostly = kwargs.get("mostly", 1.0)
+        if not col_a or not col_b:
+            raise ValueError("expect_column_pair_values_A_to_be_greater_than_B requires 'column_A' and 'column_B'")
+
+        filtered_df = _filter_dataframe(df, kwargs)
+        missing = [c for c in (col_a, col_b) if c not in filtered_df.columns]
+        if missing:
+            raise ValueError(f"Columns {missing} missing from dataframe for expect_column_pair_values_A_to_be_greater_than_B")
+
+        a = filtered_df[col_a]
+        b = filtered_df[col_b]
+        # Treat both null as pass; compare only rows with both non-null
+        both_null = a.isna() & b.isna()
+        both_non_null = ~(a.isna() | b.isna())
+        if or_equal:
+            comp = a[both_non_null] >= b[both_non_null]
+        else:
+            comp = a[both_non_null] > b[both_non_null]
+        ok_mask = both_null.copy()
+        ok_mask[both_non_null] = comp
+        ratio = _fraction(ok_mask, len(filtered_df))
+        success = ratio >= mostly
+        details = None if success else f"only {ratio:.3f} rows satisfy {col_a} {'>=' if or_equal else '>'} {col_b}"
+        return ExpectationResult(expectation_type, kwargs, success, details)
+
     if expectation_type in {
         "expect_compound_columns_to_be_unique",
         "expect_multicolumn_values_to_be_unique",

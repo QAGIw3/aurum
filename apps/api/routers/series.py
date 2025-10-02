@@ -7,9 +7,9 @@ from typing import List, Optional
 from fastapi import APIRouter, Depends, HTTPException, Request, Response
 from fastapi.responses import JSONResponse
 
-from libs.core import CurveKey, PriceObservation
-from libs.storage import TimescaleSeriesRepo
-from libs.common.observability import get_observability
+from aurum.libs.core import CurveKey, PriceObservation
+from aurum.libs.storage import TimescaleSeriesRepo
+from aurum.libs.common.observability import get_observability
 from aurum.api.http.responses import respond_with_etag
 from aurum.api.cache.cache import CacheManager
 from ..main import get_timescale_repo, get_cache_manager

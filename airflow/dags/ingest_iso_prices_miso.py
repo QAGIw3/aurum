@@ -15,7 +15,7 @@ _SRC_PATH = os.environ.get("AURUM_PYTHONPATH_ENTRY", "/opt/airflow/src")
 if _SRC_PATH and _SRC_PATH not in sys.path:
     sys.path.insert(0, _SRC_PATH)
 
-from aurum.airflow_utils import build_failure_callback, build_preflight_callable
+from aurum.airflow_utils import build_failure_callback, build_preflight_callable, create_ingest_chain
 from aurum.airflow_utils import iso as iso_utils
 
 
@@ -99,7 +99,8 @@ with DAG(
         python_callable=lambda: iso_utils.register_sources(SOURCES),
     )
 
-    da_render, da_exec, da_watermark = iso_utils.create_seatunnel_ingest_chain(
+    da_render, da_exec, da_watermark = create_ingest_chain(
+        dag,
         "miso_da",
         job_name="miso_lmp_to_kafka",
         source_name="miso_da_lmp",
@@ -108,7 +109,8 @@ with DAG(
         watermark_policy="hour",
     )
 
-    rt_render, rt_exec, rt_watermark = iso_utils.create_seatunnel_ingest_chain(
+    rt_render, rt_exec, rt_watermark = create_ingest_chain(
+        dag,
         "miso_rt",
         job_name="miso_lmp_to_kafka",
         source_name="miso_rt_lmp",

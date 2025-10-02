@@ -14,7 +14,7 @@ async def test_cache_manager():
     """Test the Redis cache manager."""
     print("🧪 Testing cache manager...")
     
-    from libs.common.config import RedisSettings, CacheSettings
+    from aurum.libs.common.config import RedisSettings, CacheSettings
     from aurum.api.cache.cache import CacheManager
     
     # Create test settings
@@ -58,9 +58,9 @@ def test_timescale_operations():
     print("🧪 Testing Timescale operations...")
     
     try:
-        from libs.common.config import DatabaseSettings
-        from libs.storage import TimescaleSeriesRepo
-        from libs.storage.timescale_ops import TimescalePerformanceOps
+        from aurum.libs.common.config import DatabaseSettings
+        from aurum.libs.storage import TimescaleSeriesRepo
+        from aurum.libs.storage.timescale_ops import TimescalePerformanceOps
         
         db_settings = DatabaseSettings()
         timescale_repo = TimescaleSeriesRepo(db_settings)
@@ -80,8 +80,8 @@ async def test_observability():
     print("🧪 Testing observability...")
     
     try:
-        from libs.common.config import ObservabilitySettings
-        from libs.common.observability import ObservabilityManager
+        from aurum.libs.common.config import ObservabilitySettings
+        from aurum.libs.common.observability import ObservabilityManager
         
         obs_settings = ObservabilitySettings(
             service_name="test-aurum",
@@ -123,7 +123,7 @@ def test_config_validation():
     os.environ["AURUM_OBSERVABILITY_ENABLE_TRACING"] = "true"
     os.environ["AURUM_REDIS_HOST"] = "test-redis"
     
-    from libs.common.config import AurumSettings, reset_settings
+    from aurum.libs.common.config import AurumSettings, reset_settings
     
     # Reset settings to pick up env vars
     reset_settings()

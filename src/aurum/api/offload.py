@@ -6,7 +6,7 @@ import asyncio
 
 from fastapi import APIRouter, Depends, HTTPException
 
-from libs.services.async_exec import fetch_job_result
+from aurum.libs.services.async_exec import fetch_job_result
 from aurum.api.auth import Permission, require_permissions
 
 

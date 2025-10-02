@@ -39,7 +39,8 @@ dag = DAG(
     catchup=False,
     max_active_runs=1,
     max_active_tasks=10,
-    tags=['aurum', 'backfill', 'orchestrator'],
+    tags=['aurum', 'backfill', 'orchestrator', 'deprecated'],
+    is_paused_upon_creation=True,
     params={
         "source_name": "eia",
         "start_date": "2024-01-01",
@@ -388,7 +389,4 @@ cleanup = BashOperator(
     dag=dag
 )
 
-# DAG Flow
-validate_request >> [proceed_with_backfill, DummyOperator(task_id='validation_failed', dag=dag)]
-
-proceed_with_backfill >> create_slices >> execute_slices >> generate_report >> cleanup
+# Deprecated: replaced by unified backfill in prod ingestion DAGs.

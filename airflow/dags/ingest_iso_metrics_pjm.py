@@ -15,7 +15,7 @@ _SRC_PATH = os.environ.get("AURUM_PYTHONPATH_ENTRY", "/opt/airflow/src")
 if _SRC_PATH and _SRC_PATH not in sys.path:
     sys.path.insert(0, _SRC_PATH)
 
-from aurum.airflow_utils import build_failure_callback, build_preflight_callable
+from aurum.airflow_utils import build_failure_callback, build_preflight_callable, create_ingest_chain
 from aurum.airflow_utils import iso as iso_utils
 from aurum.airflow_utils.vault import build_pull_env_command
 
@@ -55,9 +55,10 @@ SOURCES = (
 )
 
 
-def _build_job(task_prefix: str, job_name: str, source_name: str, *, env_entries: Iterable[str], pool: str | None = None):
+def _build_job(dag: DAG, task_prefix: str, job_name: str, source_name: str, *, env_entries: Iterable[str], pool: str | None = None):
     pull_cmd = build_pull_env_command(["secret/data/aurum/pjm:token=PJM_API_KEY"])
-    return iso_utils.create_seatunnel_ingest_chain(
+    return create_ingest_chain(
+        dag,
         task_prefix,
         job_name=job_name,
         source_name=source_name,

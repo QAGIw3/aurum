@@ -1,0 +1,17 @@
+{
+  "dataset": [
+    "nclimgrid",
+    "acis",
+    "cpc",
+    "prism",
+    "eddi"
+  ],
+  "index": [
+    "SPI",
+    "SPEI",
+    "EDDI",
+    "PDSI",
+    "QuickDRI",
+    "VHI"
+  ]
+}

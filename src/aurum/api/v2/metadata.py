@@ -33,7 +33,7 @@ from .pagination import (
 from ...telemetry.context import get_request_id
 from ...scenarios.series_curve_mapping import get_database_mapper
 from ..deps import get_settings, get_cache_manager, get_unified_cache_manager_dep
-from libs.services.metadata_service import MetadataService
+from aurum.libs.services.metadata_service import MetadataService
 from aurum.core import AurumSettings
 # use dependency wrapper to avoid FastAPI analyzing internal types
 from ..container import provide_service

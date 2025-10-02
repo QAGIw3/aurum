@@ -27,10 +27,10 @@ import pandas as pd
 from opentelemetry import propagate
 from aurum.streaming.kafka_utils import decode_headers as _decode_headers, build_produce_headers as _build_produce_headers
 
-from aurum.api.config import CacheConfig
+from aurum.api.services.admin_service import AdminService
+from aurum.api.services.admin_service import CacheConfig
 from aurum.api.scenario_models import ScenarioRunPriority, ScenarioRunStatus
 from aurum.api.scenario_service import STORE as ScenarioStore
-from aurum.api.service import invalidate_scenario_outputs_cache
 from aurum.parsers.iceberg_writer import write_scenario_output
 from aurum.scenarios.models import DriverType
 from aurum.telemetry import configure_telemetry, get_tracer
@@ -1040,7 +1040,8 @@ def _append_to_iceberg(records: Iterable[dict[str, object]]) -> list[dict[str, o
             if record.get("scenario_id")
         }
         for tenant_id, scenario_id in keys:
-            invalidate_scenario_outputs_cache(cache_cfg, tenant_id, scenario_id)
+            admin_service = AdminService()
+            admin_service.invalidate_scenario_outputs_cache(cache_cfg, tenant_id, scenario_id)
     except Exception:  # pragma: no cover - cache invalidation best effort
         LOGGER.debug("Cache invalidation skipped", exc_info=True)
     return deduped_payload

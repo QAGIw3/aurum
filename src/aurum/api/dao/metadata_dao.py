@@ -5,11 +5,35 @@ from __future__ import annotations
 import logging
 from typing import Any, Dict, List, Optional, Sequence
 
+import backoff
+from pydantic import BaseModel
+
 from aurum.core import AurumSettings
 from ..config import CacheConfig, TrinoConfig
 from aurum.core.settings import get_settings as _core_get_settings
 
 LOGGER = logging.getLogger(__name__)
+
+
+class MetadataDimensionRow(BaseModel):
+    dimension_name: str
+    dimension_value: str
+    record_count: int
+    latest_asof: Optional[str]
+    earliest_asof: Optional[str]
+
+
+class MetadataLocationRow(BaseModel):
+    iso: Optional[str]
+    location: Optional[str]
+    curve_count: Optional[int]
+    latest_data: Optional[str]
+    earliest_data: Optional[str]
+
+
+class MetadataUnitRow(BaseModel):
+    unit_type: str
+    canonical_unit: str
 
 
 class MetadataDao:
@@ -78,22 +102,17 @@ class MetadataDao:
         
         query += " ORDER BY dimension_type, dimension_value"
         
-        trino_client = get_trino_client()
-        rows = await trino_client.execute_query(query, params, use_cache=True)
-        
-        # Group by dimension type
+        rows = await self._run_trino_query(query, params)
+
         dimensions: Dict[str, set] = {}
         for row in rows:
             dim_type = row.get("dimension_type")
             dim_value = row.get("dimension_value")
-            
+
             if dim_type and dim_value:
-                if dim_type not in dimensions:
-                    dimensions[dim_type] = set()
-                dimensions[dim_type].add(str(dim_value))
-        
-        # Convert to sorted lists
-        return {key: sorted(list(values)) for key, values in dimensions.items()}
+                dimensions.setdefault(dim_type, set()).add(str(dim_value))
+
+        return {key: sorted(values) for key, values in dimensions.items()}
     
     async def fetch_metadata_dimensions(
         self,
@@ -150,10 +169,8 @@ class MetadataDao:
         
         query += " ORDER BY dimension_name, record_count DESC"
         
-        trino_client = get_trino_client()
-        rows = await trino_client.execute_query(query, params, use_cache=True)
-        
-        return [dict(row) for row in rows]
+        rows = await self._run_trino_query(query, params)
+        return [MetadataDimensionRow(**row).model_dump() for row in rows]
     
     async def fetch_iso_locations(self, *, iso: Optional[str] = None) -> List[Dict[str, Any]]:
         """Fetch ISO locations with metadata."""
@@ -181,10 +198,8 @@ class MetadataDao:
         ORDER BY iso, curve_count DESC, location
         """
         
-        trino_client = get_trino_client()
-        rows = await trino_client.execute_query(query, params, use_cache=True)
-        
-        return [dict(row) for row in rows]
+        rows = await self._run_trino_query(query, params)
+        return [MetadataLocationRow(**row).model_dump() for row in rows]
     
     async def fetch_units_canonical(self) -> List[Dict[str, Any]]:
         """Fetch canonical units mapping."""
@@ -217,10 +232,8 @@ class MetadataDao:
         ORDER BY unit_type, canonical_unit
         """
         
-        trino_client = get_trino_client()
-        rows = await trino_client.execute_query(query, {}, use_cache=True)
-        
-        return [dict(row) for row in rows]
+        rows = await self._run_trino_query(query, {})
+        return [MetadataUnitRow(**row).model_dump() for row in rows]
     
     async def fetch_units_mapping(self, *, prefix: Optional[str] = None) -> List[Dict[str, Any]]:
         """Fetch units mapping with optional prefix filtering."""
@@ -260,9 +273,7 @@ class MetadataDao:
         
         query += " ORDER BY unit_category, source_unit"
         
-        trino_client = get_trino_client()
-        rows = await trino_client.execute_query(query, params, use_cache=True)
-        
+        rows = await self._run_trino_query(query, params)
         return [dict(row) for row in rows]
     
     async def fetch_calendars(self) -> List[Dict[str, Any]]:
@@ -280,9 +291,7 @@ class MetadataDao:
         ORDER BY calendar_name
         """
         
-        trino_client = get_trino_client()
-        rows = await trino_client.execute_query(query, {}, use_cache=True)
-        
+        rows = await self._run_trino_query(query, {})
         return [dict(row) for row in rows]
     
     async def fetch_calendar_blocks(self, *, name: str) -> List[Dict[str, Any]]:
@@ -305,9 +314,7 @@ class MetadataDao:
         
         params = {"calendar_name": name}
         
-        trino_client = get_trino_client()
-        rows = await trino_client.execute_query(query, params, use_cache=True)
-        
+        rows = await self._run_trino_query(query, params)
         return [dict(row) for row in rows]
     
     async def invalidate_metadata_cache(
@@ -346,3 +353,17 @@ class MetadataDao:
     async def invalidate_dimensions_cache(self) -> Dict[str, int]:
         """Invalidate dimensions-specific cache."""
         return await self.invalidate_metadata_cache(prefixes=["dimensions:"])
+
+    @staticmethod
+    @backoff.on_exception(
+        backoff.expo,
+        Exception,
+        max_time=30,
+        jitter=backoff.random_jitter,
+    )
+    async def _run_trino_query(query: str, params: Dict[str, Any]) -> List[Dict[str, Any]]:
+        from ..database import get_trino_client
+
+        trino_client = get_trino_client()
+        rows = await trino_client.execute_query(query, params, use_cache=True)
+        return [dict(row) for row in rows]

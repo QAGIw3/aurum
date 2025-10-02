@@ -17,7 +17,7 @@ async def demo_unified_config():
     print("🔧 UNIFIED CONFIGURATION SYSTEM")
     print("=" * 50)
     
-    from libs.common.config import get_settings, reset_settings
+    from aurum.libs.common.config import get_settings, reset_settings
     
     # Reset to pick up demo environment
     reset_settings()
@@ -40,7 +40,7 @@ def demo_domain_models():
     print("📋 DOMAIN MODELS & CORE ABSTRACTIONS")
     print("=" * 50)
     
-    from libs.core import CurveKey, PriceObservation, IsoCode, IsoMarket
+    from aurum.libs.core import CurveKey, PriceObservation, IsoCode, IsoMarket
     
     # Create a curve key
     curve = CurveKey(
@@ -72,8 +72,8 @@ async def demo_storage_abstraction():
     print("=" * 50)
     
 from aurum.core import get_settings
-    from libs.storage import TimescaleSeriesRepo, PostgresMetaRepo, TrinoAnalyticRepo
-    from libs.core import CurveKey, IsoCode, IsoMarket
+    from aurum.libs.storage import TimescaleSeriesRepo, PostgresMetaRepo, TrinoAnalyticRepo
+    from aurum.libs.core import CurveKey, IsoCode, IsoMarket
     
     settings = get_settings()
     
@@ -111,7 +111,7 @@ def demo_api_structure():
     print("🌐 FASTAPI v2-ONLY SURFACE")
     print("=" * 50)
     
-    from libs.common.config import get_settings
+    from aurum.libs.common.config import get_settings
     
     settings = get_settings()
     

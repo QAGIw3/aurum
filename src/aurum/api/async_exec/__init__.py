@@ -6,7 +6,7 @@ This module re-exports the same public API to avoid breaking imports.
 from __future__ import annotations
 
 import os
-from libs.services.async_exec import (  # type: ignore F401
+from aurum.libs.services.async_exec import (  # type: ignore F401
     JOB_REGISTRY,
     register_job,
     run_job_async,

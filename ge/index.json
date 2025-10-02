@@ -1,0 +1,429 @@
+{
+  "cpi_series": {
+    "domain": "public",
+    "expectation_types": [
+      "expect_column_values_to_be_between",
+      "expect_column_values_to_not_be_null",
+      "expect_table_columns_to_match_set"
+    ],
+    "notes": "Checks for CPI series observations landing in Timescale.",
+    "path": "ge/expectations/cpi_series.json",
+    "suite": "cpi_series",
+    "tier": "A"
+  },
+  "curve_business": {
+    "domain": "curves",
+    "expectation_types": [
+      "expect_column_pair_values_A_to_be_greater_than_B",
+      "expect_column_values_to_be_between",
+      "expect_multicolumn_values_to_be_unique"
+    ],
+    "notes": "Business rules capturing relationships between bid, ask, and mid prices.",
+    "path": "ge/expectations/curve_business.json",
+    "suite": "curve_business",
+    "tier": "A"
+  },
+  "curve_landing": {
+    "domain": "curves",
+    "expectation_types": [
+      "expect_column_values_to_be_in_set",
+      "expect_column_values_to_not_be_null"
+    ],
+    "notes": "Validates enriched canonical curve rows prior to persistence.",
+    "path": "ge/expectations/curve_landing.json",
+    "suite": "curve_landing",
+    "tier": "A"
+  },
+  "curve_schema": {
+    "domain": "curves",
+    "expectation_types": [
+      "expect_column_values_to_match_regex",
+      "expect_column_values_to_not_be_null",
+      "expect_table_columns_to_match_set"
+    ],
+    "notes": "Ensures canonical curve schema is present after parsing vendor workbooks.",
+    "path": "ge/expectations/curve_schema.json",
+    "suite": "curve_schema",
+    "tier": "A"
+  },
+  "drought_index": {
+    "domain": "drought",
+    "expectation_types": [
+      "expect_column_values_to_be_between",
+      "expect_column_values_to_be_in_set",
+      "expect_column_values_to_match_regex",
+      "expect_column_values_to_not_be_null",
+      "expect_table_columns_to_match_set"
+    ],
+    "notes": "Contracts for drought index zonal statistics ingested from raster pipelines.",
+    "path": "ge/expectations/drought_index.json",
+    "suite": "drought_index",
+    "tier": "A"
+  },
+  "drought_usdm_area": {
+    "domain": "drought",
+    "expectation_types": [
+      "expect_column_values_to_be_between",
+      "expect_column_values_to_not_be_null",
+      "expect_table_columns_to_match_set"
+    ],
+    "notes": "Weekly USDM area fraction checks by geography.",
+    "path": "ge/expectations/drought_usdm_area.json",
+    "suite": "drought_usdm_area",
+    "tier": "A"
+  },
+  "drought_vector_event": {
+    "domain": "drought",
+    "expectation_types": [
+      "expect_column_values_to_be_in_set",
+      "expect_column_values_to_match_regex",
+      "expect_column_values_to_not_be_null",
+      "expect_table_columns_to_match_set"
+    ],
+    "notes": "Structure checks for vector overlay events pushed from Airflow ingestion.",
+    "path": "ge/expectations/drought_vector_event.json",
+    "suite": "drought_vector_event",
+    "tier": "A"
+  },
+  "eia_series": {
+    "domain": "public",
+    "expectation_types": [
+      "expect_column_values_to_be_between",
+      "expect_column_values_to_be_in_set",
+      "expect_column_values_to_be_of_type",
+      "expect_column_values_to_be_unique",
+      "expect_column_values_to_match_regex",
+      "expect_column_values_to_not_be_null",
+      "expect_table_columns_to_match_set"
+    ],
+    "notes": "Comprehensive data quality checks for EIA v2 series observations emitted by SeaTunnel. Includes anomaly detection, range validation, and statistical checks for production use.",
+    "path": "ge/expectations/eia_series.json",
+    "suite": "eia_series",
+    "tier": "A"
+  },
+  "eia_series_mart": {
+    "domain": "public",
+    "expectation_types": [
+      "expect_column_values_to_be_between",
+      "expect_column_values_to_not_be_null",
+      "expect_table_columns_to_match_set"
+    ],
+    "notes": "Business-facing checks for the curated EIA mart.",
+    "path": "ge/expectations/eia_series_mart.json",
+    "suite": "eia_series_mart",
+    "tier": "A"
+  },
+  "external_dbt_outputs": {
+    "domain": "external",
+    "expectation_types": [
+      "expect_column_values_to_be_between",
+      "expect_column_values_to_be_in_set",
+      "expect_column_values_to_not_be_null",
+      "expect_multicolumn_values_to_be_unique"
+    ],
+    "notes": "",
+    "path": "ge/expectations/external_dbt_outputs.yml",
+    "suite": "external_dbt_outputs",
+    "tier": "C"
+  },
+  "external_obs_conformed": {
+    "domain": "external",
+    "expectation_types": [
+      "expect_column_values_to_be_between",
+      "expect_column_values_to_be_in_set",
+      "expect_column_values_to_not_be_null"
+    ],
+    "notes": "Validates conformed external observations after standardization.",
+    "path": "ge/expectations/external_obs_conformed.json",
+    "suite": "external_obs_conformed",
+    "tier": "A"
+  },
+  "external_obs_curated": {
+    "domain": "external",
+    "expectation_types": [
+      "expect_column_values_to_be_between",
+      "expect_column_values_to_be_in_set",
+      "expect_column_values_to_not_be_null",
+      "expect_multicolumn_values_to_be_unique"
+    ],
+    "notes": "Validates curated external observations in curve_observation format.",
+    "path": "ge/expectations/external_obs_curated.json",
+    "suite": "external_obs_curated",
+    "tier": "A"
+  },
+  "external_series_catalog": {
+    "domain": "external",
+    "expectation_types": [
+      "expect_column_values_to_be_between",
+      "expect_column_values_to_be_in_set",
+      "expect_column_values_to_not_be_null",
+      "expect_table_columns_to_match_set"
+    ],
+    "notes": "Validates external series catalog data from Kafka to Iceberg.",
+    "path": "ge/expectations/external_series_catalog.json",
+    "suite": "external_series_catalog",
+    "tier": "A"
+  },
+  "external_timeseries_obs": {
+    "domain": "external",
+    "expectation_types": [
+      "expect_column_values_to_be_between",
+      "expect_column_values_to_be_in_set",
+      "expect_column_values_to_not_be_null",
+      "expect_table_columns_to_match_set"
+    ],
+    "notes": "Validates external timeseries observations from Kafka to Iceberg.",
+    "path": "ge/expectations/external_timeseries_obs.json",
+    "suite": "external_timeseries_obs",
+    "tier": "A"
+  },
+  "fct_curve_observation": {
+    "domain": "curves",
+    "expectation_types": [
+      "expect_column_values_to_be_between",
+      "expect_column_values_to_be_in_set",
+      "expect_column_values_to_not_be_null",
+      "expect_compound_columns_to_be_unique"
+    ],
+    "notes": "Checks for canonical curve fact table ensuring grain and value sanity.",
+    "path": "ge/expectations/fct_curve_observation.json",
+    "suite": "fct_curve_observation",
+    "tier": "A"
+  },
+  "fred_series": {
+    "domain": "public",
+    "expectation_types": [
+      "expect_column_values_to_be_between",
+      "expect_column_values_to_be_of_type",
+      "expect_column_values_to_be_unique",
+      "expect_column_values_to_match_regex",
+      "expect_column_values_to_not_be_null",
+      "expect_table_columns_to_match_set"
+    ],
+    "notes": "Comprehensive data quality checks for FRED series observations landing in Timescale. Includes anomaly detection, range validation, and statistical checks for production use.",
+    "path": "ge/expectations/fred_series.json",
+    "suite": "fred_series",
+    "tier": "A"
+  },
+  "fx_rates": {
+    "domain": "public",
+    "expectation_types": [
+      "expect_column_pair_values_to_be_equal",
+      "expect_column_values_to_be_between",
+      "expect_column_values_to_be_in_set",
+      "expect_column_values_to_match_regex",
+      "expect_column_values_to_not_be_null",
+      "expect_table_columns_to_match_set"
+    ],
+    "notes": "Quality checks for FX rates data from ECB via exchangerate.host API.",
+    "path": "ge/expectations/fx_rates.json",
+    "suite": "fx_rates",
+    "tier": "A"
+  },
+  "iso_genmix_raw": {
+    "domain": "iso",
+    "expectation_types": [
+      "expect_column_values_to_be_between",
+      "expect_column_values_to_be_in_set",
+      "expect_column_values_to_not_be_null",
+      "expect_compound_columns_to_be_unique",
+      "expect_table_columns_to_match_set"
+    ],
+    "notes": "",
+    "path": "ge/expectations/iso_genmix_raw.json",
+    "suite": "iso_genmix_raw",
+    "tier": "A"
+  },
+  "iso_lmp": {
+    "domain": "iso",
+    "expectation_types": [
+      "expect_column_values_to_be_between",
+      "expect_column_values_to_be_in_set",
+      "expect_column_values_to_be_unique",
+      "expect_column_values_to_not_be_null",
+      "expect_table_columns_to_match_set"
+    ],
+    "notes": "Data quality checks for normalized ISO LMP observations pushed to Kafka.",
+    "path": "ge/expectations/iso_lmp.json",
+    "suite": "iso_lmp",
+    "tier": "A"
+  },
+  "iso_lmp_raw": {
+    "domain": "iso",
+    "expectation_types": [
+      "expect_column_values_to_be_between",
+      "expect_column_values_to_be_in_set",
+      "expect_column_values_to_not_be_null",
+      "expect_compound_columns_to_be_unique",
+      "expect_table_columns_to_match_set"
+    ],
+    "notes": "",
+    "path": "ge/expectations/iso_lmp_raw.json",
+    "suite": "iso_lmp_raw",
+    "tier": "A"
+  },
+  "iso_load_raw": {
+    "domain": "iso",
+    "expectation_types": [
+      "expect_column_values_to_be_in_set",
+      "expect_column_values_to_not_be_null",
+      "expect_compound_columns_to_be_unique",
+      "expect_table_columns_to_match_set"
+    ],
+    "notes": "",
+    "path": "ge/expectations/iso_load_raw.json",
+    "suite": "iso_load_raw",
+    "tier": "A"
+  },
+  "mart_cpi_series_latest": {
+    "domain": "mart",
+    "expectation_types": [
+      "expect_column_values_to_be_between",
+      "expect_column_values_to_not_be_null"
+    ],
+    "notes": "Validates mart layer for latest CPI observations.",
+    "path": "ge/expectations/mart_cpi_series_latest.json",
+    "suite": "mart_cpi_series_latest",
+    "tier": "A"
+  },
+  "mart_curve_asof_diff": {
+    "domain": "mart",
+    "expectation_types": [
+      "expect_column_values_to_be_between",
+      "expect_column_values_to_not_be_null"
+    ],
+    "notes": "Sanity checks for pre-computed as-of curve deltas.",
+    "path": "ge/expectations/mart_curve_asof_diff.json",
+    "suite": "mart_curve_asof_diff",
+    "tier": "A"
+  },
+  "mart_curve_latest": {
+    "domain": "mart",
+    "expectation_types": [
+      "expect_column_values_to_be_between",
+      "expect_column_values_to_be_in_set",
+      "expect_column_values_to_not_be_null",
+      "expect_compound_columns_to_be_unique"
+    ],
+    "notes": "Quality checks for the mart_curve_latest view.",
+    "path": "ge/expectations/mart_curve_latest.json",
+    "suite": "mart_curve_latest",
+    "tier": "A"
+  },
+  "mart_eia_series_latest": {
+    "domain": "mart",
+    "expectation_types": [
+      "expect_column_values_to_be_in_set",
+      "expect_column_values_to_not_be_null"
+    ],
+    "notes": "Quality checks for the mart_eia_series_latest view.",
+    "path": "ge/expectations/mart_eia_series_latest.json",
+    "suite": "mart_eia_series_latest",
+    "tier": "A"
+  },
+  "mart_external_series_catalog": {
+    "domain": "mart",
+    "expectation_types": [
+      "expect_column_values_to_be_between",
+      "expect_column_values_to_be_in_set",
+      "expect_column_values_to_not_be_null",
+      "expect_multicolumn_values_to_be_unique"
+    ],
+    "notes": "Data quality checks for the external series catalog mart. Validates canonical ISO fields (iso_code/market/product/location/timezone/interval/unit/subject/curve_role) are present or have UNKNOWN fallback; mapping_status is constrained.",
+    "path": "ge/expectations/mart_external_series_catalog.json",
+    "suite": "mart_external_series_catalog",
+    "tier": "A"
+  },
+  "mart_fred_series_latest": {
+    "domain": "mart",
+    "expectation_types": [
+      "expect_column_values_to_not_be_null"
+    ],
+    "notes": "Validates mart layer for latest FRED observations.",
+    "path": "ge/expectations/mart_fred_series_latest.json",
+    "suite": "mart_fred_series_latest",
+    "tier": "A"
+  },
+  "mart_scenario_output": {
+    "domain": "mart",
+    "expectation_types": [
+      "expect_column_proportion_of_nonnulls_to_be_between",
+      "expect_column_values_to_not_be_null",
+      "expect_compound_columns_to_be_unique"
+    ],
+    "notes": "Quality checks for the mart_scenario_output view.",
+    "path": "ge/expectations/mart_scenario_output.json",
+    "suite": "mart_scenario_output",
+    "tier": "A"
+  },
+  "mart_series_curve_mapping": {
+    "domain": "mart",
+    "expectation_types": [
+      "expect_column_values_to_be_between",
+      "expect_column_values_to_be_in_set",
+      "expect_column_values_to_not_be_null",
+      "expect_multicolumn_values_to_be_unique"
+    ],
+    "notes": "Quality checks for series to curve mapping mart.",
+    "path": "ge/expectations/mart_series_curve_mapping.json",
+    "suite": "mart_series_curve_mapping",
+    "tier": "A"
+  },
+  "noaa_weather": {
+    "domain": "public",
+    "expectation_types": [
+      "expect_column_pair_values_to_be_equal",
+      "expect_column_values_to_be_between",
+      "expect_column_values_to_be_in_set",
+      "expect_column_values_to_be_of_type",
+      "expect_column_values_to_be_unique",
+      "expect_column_values_to_match_regex",
+      "expect_column_values_to_not_be_null",
+      "expect_table_columns_to_match_set"
+    ],
+    "notes": "Comprehensive data quality checks for NOAA GHCND daily observations after SeaTunnel ingestion. Includes anomaly detection, range validation, and statistical checks for production use.",
+    "path": "ge/expectations/noaa_weather.json",
+    "suite": "noaa_weather",
+    "tier": "A"
+  },
+  "publish_curve_observation": {
+    "domain": "curves",
+    "expectation_types": [
+      "expect_column_values_to_match_regex",
+      "expect_column_values_to_not_be_null",
+      "expect_multicolumn_values_to_be_unique",
+      "expect_table_columns_to_match_set"
+    ],
+    "notes": "",
+    "path": "ge/expectations/publish_curve_observation.json",
+    "suite": "publish_curve_observation",
+    "tier": "A"
+  },
+  "scenario_output": {
+    "domain": "scenarios",
+    "expectation_types": [
+      "expect_column_proportion_of_nonnulls_to_be_between",
+      "expect_column_values_to_be_between",
+      "expect_column_values_to_be_in_set",
+      "expect_column_values_to_not_be_null",
+      "expect_compound_columns_to_be_unique"
+    ],
+    "notes": "",
+    "path": "ge/expectations/scenario_output.json",
+    "suite": "scenario_output",
+    "tier": "A"
+  },
+  "stg_curve_observation": {
+    "domain": "staging",
+    "expectation_types": [
+      "expect_column_values_to_be_in_set",
+      "expect_column_values_to_match_regex",
+      "expect_column_values_to_not_be_null",
+      "expect_table_columns_to_match_set"
+    ],
+    "notes": "",
+    "path": "ge/expectations/stg_curve_observation.json",
+    "suite": "stg_curve_observation",
+    "tier": "A"
+  }
+}

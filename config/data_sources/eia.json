@@ -1,0 +1,133 @@
+{
+  "metadata": {
+    "description": "EIA Energy Data Source Configuration",
+    "version": "2.1.0",
+    "last_updated": "2024-09-23",
+    "source": "EIA API v2",
+    "base_url": "https://api.eia.gov"
+  },
+
+  "catalog": {
+    "generated_at": "2025-09-21T03:13:49.967221+00:00",
+    "dataset_count": 230,
+    "base_url": "https://api.eia.gov/v2",
+    "summary": {
+      "total_datasets": 230,
+      "categories": ["energy", "electricity", "petroleum", "natural_gas", "coal", "renewables"],
+      "geographic_coverage": ["US", "regional", "state"],
+      "temporal_range": "2011-2040"
+    }
+  },
+
+  "ingestion": {
+    "global_settings": {
+      "rate_limit_sleep_ms": 300,
+      "timeout_seconds": 60,
+      "retry_attempts": 7,
+      "retry_backoff_ms": 3000,
+      "retry_backoff_max_ms": 180000,
+      "page_limit": 5000,
+      "station_limit": 1000,
+      "concurrent_requests": 3,
+      "max_active_runs": 5,
+      "pool": "api_eia",
+      "schema_registry_url": "http://localhost:8081",
+      "kafka_bootstrap_servers": "localhost:9092",
+      "timescale_table": "eia_series_timeseries",
+      "dlq_topic": "aurum.ref.eia.series.dlq.v1"
+    },
+
+    "cost_controls": {
+      "daily_request_limit": 100000,
+      "hourly_request_limit": 20000,
+      "monthly_budget_usd": 10000.00,
+      "cost_per_1000_requests": 0.005,
+      "enable_dynamic_throttling": true,
+      "cost_alert_thresholds": {
+        "warning_percent": 75,
+        "critical_percent": 90,
+        "stop_percent": 100
+      },
+      "monitoring": {
+        "enable_request_tracking": true,
+        "enable_cost_estimation": true,
+        "enable_usage_alerts": true,
+        "alert_channels": ["#data-cost-monitoring", "#eia-alerts"],
+        "cost_report_frequency_hours": 6
+      }
+    },
+
+    "alerting": {
+      "slack_channels": ["#data-ingestion-alerts", "#energy-data", "#data-cost-monitoring"],
+      "email_recipients": ["data-team@aurum.com", "energy-team@aurum.com", "cost-monitoring@aurum.com"],
+      "critical_staleness_hours": 48,
+      "warning_staleness_hours": 12,
+      "quality_threshold_percent": 95,
+      "cost_alerts": {
+        "enabled": true,
+        "threshold_usd": 5000,
+        "alert_frequency_hours": 6
+      }
+    },
+
+    "priority_datasets": [
+      {
+        "dataset_path": "electricity/rto/region-data",
+        "priority": "critical",
+        "frequency_hours": 1,
+        "retention_days": 365,
+        "quality_checks": ["completeness", "freshness", "outliers"]
+      },
+      {
+        "dataset_path": "petroleum/status",
+        "priority": "high",
+        "frequency_hours": 6,
+        "retention_days": 180,
+        "quality_checks": ["completeness", "freshness"]
+      }
+    ]
+  },
+
+  "quality": {
+    "enabled": true,
+    "validation_rules": {
+      "data_completeness": {
+        "min_coverage_percent": 95,
+        "check_frequency": "daily"
+      },
+      "freshness": {
+        "max_age_hours": 24,
+        "critical_datasets": ["electricity/rto/region-data"]
+      },
+      "outlier_detection": {
+        "enabled": true,
+        "sensitivity": "medium",
+        "methods": ["z_score", "iqr", "isolation_forest"]
+      }
+    }
+  },
+
+  "environments": {
+    "development": {
+      "ingestion": {
+        "concurrent_requests": 1,
+        "rate_limit_sleep_ms": 1000,
+        "daily_request_limit": 1000
+      }
+    },
+    "staging": {
+      "ingestion": {
+        "concurrent_requests": 2,
+        "rate_limit_sleep_ms": 500,
+        "daily_request_limit": 10000
+      }
+    },
+    "production": {
+      "ingestion": {
+        "concurrent_requests": 3,
+        "rate_limit_sleep_ms": 300,
+        "daily_request_limit": 100000
+      }
+    }
+  }
+}

@@ -40,7 +40,7 @@ def _load_api_module(name: str):
 
 
 CacheConfig = _load_api_module("aurum.api.config").CacheConfig
-service = _load_api_module("aurum.api.service")
+admin_service = _load_api_module("aurum.api.services.admin_service")
 
 
 def _settings_with_redis(**updates) -> AurumSettings:
@@ -80,9 +80,9 @@ def test_maybe_redis_client_returns_none_when_dependency_missing(monkeypatch):
         return original_import(name, *args, **kwargs)
 
     monkeypatch.setattr(builtins, "__import__", fake_import)
-    assert service._maybe_redis_client(cfg) is None
+    assert admin_service._maybe_redis_client(cfg) is None
 
 
 def test_maybe_redis_client_returns_none_for_incomplete_sentinel():
     cfg = CacheConfig(mode="sentinel", sentinel_endpoints=(), sentinel_master=None)
-    assert service._maybe_redis_client(cfg) is None
+    assert admin_service._maybe_redis_client(cfg) is None

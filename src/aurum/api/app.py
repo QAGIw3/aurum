@@ -20,8 +20,6 @@ import logging
 import os
 import re
 import gzip
-import asyncio
-import inspect
 from typing import Any, Callable, Dict, Mapping, Optional, Tuple, Union
 
 try:
@@ -30,8 +28,6 @@ except Exception:  # pragma: no cover - optional dependency
     redis = None  # type: ignore[assignment]
 
 from fastapi import Depends, FastAPI, HTTPException, Request, Response
-from fastapi.middleware.cors import CORSMiddleware
-from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.responses import JSONResponse
 from starlette.datastructures import MutableHeaders
 from starlette.types import ASGIApp
@@ -126,12 +122,9 @@ from aurum.api.router_registry import RouterSpec, get_v1_router_specs, get_v2_ro
 from aurum.api.routes import configure_routes
 from .lifespan_manager import setup_lifespan
 from .container import DependencyInjectionContainer, register_core_services
-from .app_offload import build_offload_predicate as _build_offload_predicate
 from .middleware.manager import MiddlewareManager
-from .middleware.logging_context import logging_context_middleware
-from .middleware.admin_guard import AdminRouteGuard
 from .middleware.tenant_context import TenantContextMiddleware, TenantContextOptions
-from .auth import AuthMiddleware, OIDCConfig
+from .app_builder import ApplicationBuilder
 from aurum.tenancy import (
     InMemoryTenantStore,
     TenantAnalyticsAdapter,
@@ -556,41 +549,39 @@ def _build_offload_predicate(
     return predicate
 
 
-def _install_concurrency_middleware(
-    app: FastAPI,
-    settings: AurumSettings,
-) -> Union[FastAPI, ConcurrencyMiddleware]:
-    """Wrap the app with concurrency middleware when enabled in configuration."""
+def _register_versioned_routers(app: FastAPI, settings: AurumSettings, logger: logging.Logger) -> bool:
+    """Register v1 and v2 routers discovered via the router registry.
 
-    offload_predicate = _build_offload_predicate(settings)
+    Returns True when at least one router was included successfully.
+    """
 
-    try:
-        wrapped = create_concurrency_middleware_from_settings(
-            app,
-            settings=settings,
-            offload_predicate=offload_predicate,
-        )
-    except Exception as exc:  # pragma: no cover - middleware install is optional
-        LOGGER.warning("concurrency_middleware_setup_failed", exc_info=exc)
-        return app
-
-    return wrapped
-
-
-def _install_rate_limit_middleware(app: ASGIApp, settings: AurumSettings) -> ASGIApp:
-    """Wrap the app with consolidated rate limiting."""
+    def _include(spec: RouterSpec) -> None:
+        include_kwargs = dict(spec.include_kwargs)
+        try:
+            app.include_router(spec.router, **include_kwargs)
+        except Exception as exc:  # pragma: no cover - defensive guard
+            name = spec.name or getattr(spec.router, "prefix", "<unknown>")
+            logger.warning("Failed to include router '%s'", name, exc_info=exc)
+        else:
+            included_specs.append(spec)
 
     try:
-        # Get unified rate limiter instance
-        rate_limiter = get_unified_rate_limiter()
+        v1_specs = get_v1_router_specs(settings)
+    except Exception as exc:  # pragma: no cover - discovery failures should not crash
+        logger.warning("v1_router_discovery_failed", exc_info=exc)
+        v1_specs = []
 
-        # Create middleware using the consolidated rate limiter
-        from .rate_limiting import RateLimitingMiddleware
-        return RateLimitingMiddleware(app, rate_limiter)
+    try:
+        v2_specs = get_v2_router_specs(settings)
+    except Exception as exc:  # pragma: no cover - discovery failures should not crash
+        logger.warning("v2_router_discovery_failed", exc_info=exc)
+        v2_specs = []
 
-    except Exception as exc:  # pragma: no cover - rate limiting is optional
-        LOGGER.warning("rate_limit_middleware_setup_failed", exc_info=exc)
-        return app
+    included_specs: list[RouterSpec] = []
+    for spec in (*v1_specs, *v2_specs):
+        _include(spec)
+
+    return bool(included_specs)
 
 
 def _register_versioned_routers(app: FastAPI, settings: AurumSettings, logger: logging.Logger) -> bool:
@@ -704,251 +695,26 @@ class ApplicationFactory:
         """Create simplified API with essential middleware only."""
         logger.info("Creating simplified API configuration")
 
-        _configure_admin_groups(settings)
-        _require_admin_groups(settings, logger)
-
-        app = FastAPI(
-            title=settings.api.api_title,
-            version=settings.api.version,
-            default_response_class=JSONResponse,
-            timeout=settings.api.request_timeout_seconds,
-            responses=GLOBAL_ERROR_RESPONSES,
-            lifespan=setup_lifespan(settings),
-            docs_url="/docs" if getattr(settings, "debug", False) else None,
-            redoc_url="/redoc" if getattr(settings, "debug", False) else None,
-        )
-        # Bind settings and DI container to application state
-        app.state.settings = settings
-        container = DependencyInjectionContainer.from_settings(settings)
-        register_core_services(container)
-        app.state.container = container
-        tenant_manager, tenant_context_options = _initialize_tenant_manager(settings, container)
-        app.state.tenant_manager = tenant_manager
-
-        token_service = _initialize_token_service(app, settings)
-
-        # Initialize token service before middleware setup
-        token_service = _initialize_token_service(app, settings)
-
-        # Initialize feature flag manager
-        try:
-            from aurum.api.features import initialize_feature_flags
-            from aurum.cache.cache import get_cache_manager
-
-            # Get cache manager from container if available
-            cache_manager = get_cache_manager()
-            if cache_manager is None:
-                cache_manager = container.get("cache_manager") if "cache_manager" in container else None
-
-            # Get scenario store from container if available
-            scenario_store = container.get("scenario_store") if "scenario_store" in container else None
-
-            # Initialize feature flag manager
-            init_result = initialize_feature_flags(
-                redis_url=getattr(settings, "redis_url", None),
-                cache_manager=cache_manager,
-                scenario_store=scenario_store
-            )
-            feature_manager = (
-                asyncio.run(init_result)
-                if inspect.isawaitable(init_result)
-                else init_result
-            )
-            app.state.feature_manager = feature_manager
-            logger.info("Feature flag manager initialized successfully")
-        except Exception as e:
-            logger.warning(f"Failed to initialize feature flag manager: {e}")
-            # Continue without feature flag manager - will fall back to env-based checks
-        app.add_exception_handler(Exception, _api_exception_handler)
-        configure_routes(settings)
-        # Avoid module-level/global configuration side effects
-
-        # Essential telemetry
-        configure_telemetry(settings.telemetry.service_name, fastapi_app=app, enable_psycopg=True)
-
-        # Compose middleware via manager with ordering and config
-        manager = MiddlewareManager()
-        manager.add_defaults(
+        builder = ApplicationBuilder(
             settings,
-            tenant_manager=tenant_manager,
-            tenant_context_options=tenant_context_options,
-            token_service=token_service,
+            logger,
+            mode="simplified",
+            strict_token_service=True,
         )
-        app_with_basic_middleware = manager.apply(app, settings)
-
-        # Register lifecycle-managed resources and metrics endpoint
-        _register_trino_lifecycle(app)
-        _register_metrics_endpoint(app, settings)
-
-        # Admin/auth/tenant are handled by manager.add_defaults
-
-        # Concurrency and rate limiting applied by manager; chain is returned above
-        wrapped_app = app_with_basic_middleware
-
-        # Core health endpoints
-        try:
-            from .health import router as health_router
-            app.include_router(health_router)
-        except Exception as e:
-            logger.warning(f"Failed to load health router: {e}")
-
-        if token_service is not None:
-            try:
-                from aurum.api.auth_endpoints import router as auth_router
-                app.include_router(auth_router)
-            except Exception as exc:
-                logger.warning("Failed to load auth router", exc_info=exc)
-
-        # Scenarios router - now handled by router registry
-        # Legacy scenarios router removed in favor of v1/v2 registry-driven mounting
-
-        # Versioned routers (v1/v2) and supplemental admin routers are now
-        # registered exclusively via the router registry.
-
-        # Basic route registration (honor light init flag) with v2-only guard
-        v2_only = False
-        try:
-            v2_only = bool(getattr(settings, "enable_v2_only", False))
-        except Exception:
-            v2_only = False
-
-        if os.getenv("AURUM_API_LIGHT_INIT", "0") == "1":
-            # In light init, only include fallbacks if v2-only is NOT enabled
-            if not v2_only:
-                _include_fallback_routes(app, logger)
-        else:
-            if not _register_versioned_routers(app, settings, logger):
-                # Only fall back to legacy stubs if v2-only is NOT enabled
-                if not v2_only:
-                    _include_fallback_routes(app, logger)
-
-        # Per-request response header utilities and access log installed by manager
-
-        return wrapped_app
+        return builder.build()
 
     @staticmethod
     def _create_legacy_app(settings: AurumSettings, logger: logging.Logger) -> FastAPI:
         """Create legacy API with full feature set."""
         logger.info("Creating legacy API configuration with full features")
 
-        _configure_admin_groups(settings)
-        _require_admin_groups(settings, logger)
-
-        app = FastAPI(
-            title=settings.api.api_title,
-            version=settings.api.version,
-            default_response_class=JSONResponse,
-            timeout=settings.api.request_timeout_seconds,
-            responses=GLOBAL_ERROR_RESPONSES,
-            lifespan=setup_lifespan(settings),
-            docs_url="/docs" if getattr(settings, "debug", False) else None,
-            redoc_url="/redoc" if getattr(settings, "debug", False) else None,
-        )
-        # Bind settings and DI container to application state
-        app.state.settings = settings
-        container = DependencyInjectionContainer.from_settings(settings)
-        register_core_services(container)
-        app.state.container = container
-        tenant_manager, tenant_context_options = _initialize_tenant_manager(settings, container)
-        app.state.tenant_manager = tenant_manager
-        try:
-            token_service = _initialize_token_service(app, settings)
-        except Exception as exc:  # pragma: no cover - ensure API still boots in dev
-            logger.warning("Failed to initialize token service", exc_info=exc)
-            token_service = None
-        # Initialize feature flag manager
-        try:
-            from aurum.api.features import initialize_feature_flags
-            from aurum.cache.cache import get_cache_manager
-
-            # Get cache manager from container if available
-            cache_manager = get_cache_manager()
-            if cache_manager is None:
-                cache_manager = container.get("cache_manager") if "cache_manager" in container else None
-
-            # Get scenario store from container if available
-            scenario_store = container.get("scenario_store") if "scenario_store" in container else None
-
-            # Initialize feature flag manager
-            init_result = initialize_feature_flags(
-                redis_url=getattr(settings, "redis_url", None),
-                cache_manager=cache_manager,
-                scenario_store=scenario_store
-            )
-            feature_manager = (
-                asyncio.run(init_result)
-                if inspect.isawaitable(init_result)
-                else init_result
-            )
-            app.state.feature_manager = feature_manager
-            logger.info("Feature flag manager initialized successfully")
-        except Exception as e:
-            logger.warning(f"Failed to initialize feature flag manager: {e}")
-            # Continue without feature flag manager - will fall back to env-based checks
-        app.add_exception_handler(Exception, _api_exception_handler)
-        configure_routes(settings)
-        # Avoid module-level/global configuration side effects
-
-        # Full telemetry setup
-        configure_telemetry(settings.telemetry.service_name, fastapi_app=app, enable_psycopg=True)
-
-        # Compose middleware via manager with ordering and config
-        manager = MiddlewareManager()
-        manager.add_defaults(
+        builder = ApplicationBuilder(
             settings,
-            tenant_manager=tenant_manager,
-            tenant_context_options=tenant_context_options,
-            token_service=token_service,
+            logger,
+            mode="legacy",
+            strict_token_service=False,
         )
-        app_with_middleware = manager.apply(app, settings)
-
-        # Register lifecycle-managed resources and metrics endpoint
-        _register_trino_lifecycle(app)
-        _register_metrics_endpoint(app, settings)
-
-        # Admin/auth/tenant are handled by manager.add_defaults
-
-        # Concurrency and rate limiting applied by manager; chain is returned above
-        wrapped_app = app_with_middleware
-
-        # Core health endpoints
-        try:
-            from .health import router as health_router
-            app.include_router(health_router)
-        except Exception as e:
-            logger.warning(f"Failed to load health router: {e}")
-
-        if token_service is not None:
-            try:
-                from aurum.api.auth_endpoints import router as auth_router
-                app.include_router(auth_router)
-            except Exception as exc:
-                logger.warning("Failed to load auth router", exc_info=exc)
-
-        # Scenarios router - now handled by router registry
-        # Legacy scenarios router removed in favor of v1/v2 registry-driven mounting
-
-        # Versioned routers (v1/v2) and supplemental admin routers are now
-        # registered exclusively via the router registry.
-
-        # Basic route registration (honor light init flag) with v2-only guard
-        v2_only = False
-        try:
-            v2_only = bool(getattr(settings, "enable_v2_only", False))
-        except Exception:
-            v2_only = False
-
-        if os.getenv("AURUM_API_LIGHT_INIT", "0") == "1":
-            if not v2_only:
-                _include_fallback_routes(app, logger)
-        else:
-            if not _register_versioned_routers(app, settings, logger):
-                if not v2_only:
-                    _include_fallback_routes(app, logger)
-
-        # Per-request response header utilities and access log installed by manager
-
-        return wrapped_app
+        return builder.build()
 
 
 def _include_fallback_routes(app: FastAPI, logger: logging.Logger) -> None:

@@ -15,7 +15,7 @@ _SRC_PATH = os.environ.get("AURUM_PYTHONPATH_ENTRY", "/opt/airflow/src")
 if _SRC_PATH and _SRC_PATH not in sys.path:
     sys.path.insert(0, _SRC_PATH)
 
-from aurum.airflow_utils import build_failure_callback, build_preflight_callable
+from aurum.airflow_utils import build_failure_callback, build_preflight_callable, create_ingest_chain
 from aurum.airflow_utils import iso as iso_utils
 from aurum.airflow_utils.vault import build_pull_env_command
 
@@ -110,7 +110,8 @@ with DAG(
         pool="api_ercot",
     )
 
-    render_task, exec_k8s, watermark = iso_utils.create_seatunnel_ingest_chain(
+    render_task, exec_k8s, watermark = create_ingest_chain(
+        dag,
         "ercot_lmp",
         job_name="ercot_lmp_to_kafka",
         source_name="ercot_mis_lmp",

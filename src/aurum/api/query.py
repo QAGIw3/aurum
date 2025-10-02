@@ -7,7 +7,7 @@ from typing import Any, Dict, Iterable, Optional, Union, Tuple, List, Mapping, S
 import hashlib
 import json
 
-from libs.services.query_builder import build_series_catalog_query as _shared_build_series_catalog_query
+from aurum.libs.services.query_builder import build_series_catalog_query as _shared_build_series_catalog_query
 
 from .http.pagination import MAX_PAGE_SIZE
 

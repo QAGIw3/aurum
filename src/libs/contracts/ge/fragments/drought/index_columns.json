@@ -1,0 +1,19 @@
+[
+  "tenant_id",
+  "schema_version",
+  "ingest_ts",
+  "ingest_job_id",
+  "series_id",
+  "region_type",
+  "region_id",
+  "dataset",
+  "index",
+  "timescale",
+  "valid_date",
+  "as_of",
+  "value",
+  "unit",
+  "poc",
+  "source_url",
+  "metadata"
+]

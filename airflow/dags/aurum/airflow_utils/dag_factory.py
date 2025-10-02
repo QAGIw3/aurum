@@ -27,6 +27,7 @@ from airflow.operators.trigger_dagrun import TriggerDagRunOperator
 from airflow.sensors.base import BaseSensorOperator
 from airflow.utils.task_group import TaskGroup
 from airflow.utils.trigger_rule import TriggerRule
+from typing import Iterable, Optional, Tuple, Any
 
 # Default configuration
 DEFAULT_DAG_CONFIG = {
@@ -52,18 +53,29 @@ DEFAULT_DAG_CONFIG = {
 
 # SLA configurations by data source
 SLA_CONFIGS = {
-    "high_frequency": timedelta(minutes=30),
-    "medium_frequency": timedelta(hours=2),
-    "low_frequency": timedelta(hours=6),
-    "bulk_load": timedelta(hours=24),
+    "high_frequency": timedelta(minutes=30),   # e.g., RTM LMP, frequent telemetry
+    "medium_frequency": timedelta(hours=2),   # e.g., hourly loads, gen mix
+    "low_frequency": timedelta(hours=6),      # e.g., daily jobs or less frequent
+    "bulk_load": timedelta(hours=24),         # heavy/batch historical loads
 }
 
 # Pool configurations for resource management
 POOL_CONFIGS = {
-    "api_calls": {"slots": 5, "description": "API rate limiting pool"},
+    "api_calls": {"slots": 5, "description": "API rate limiting pool (generic)"},
     "heavy_processing": {"slots": 2, "description": "Heavy data processing pool"},
     "kafka_producers": {"slots": 3, "description": "Kafka producer pool"},
     "db_writes": {"slots": 4, "description": "Database write operations pool"},
+    # Recommended provider-specific defaults (ops can tune in Airflow UI):
+    "api_iso": {"slots": 6, "description": "ISO APIs (CAISO/ISONE/PJM/MISO/SPP/NYISO/AESO)"},
+    "api_eia": {"slots": 3, "description": "EIA APIs/bulk"},
+    "api_noaa": {"slots": 4, "description": "NOAA APIs"},
+    "api_caiso": {"slots": 4, "description": "CAISO-specific endpoints"},
+    "api_isone": {"slots": 4, "description": "ISO-NE endpoints"},
+    "api_pjm": {"slots": 4, "description": "PJM endpoints"},
+    "api_miso": {"slots": 4, "description": "MISO endpoints"},
+    "api_spp": {"slots": 3, "description": "SPP endpoints"},
+    "api_nyiso": {"slots": 3, "description": "NYISO endpoints"},
+    "api_aeso": {"slots": 3, "description": "AESO endpoints"}
 }
 
 # Environment variables
@@ -712,3 +724,87 @@ def create_backfill_dag(
     start >> backfill_tasks >> validation_task >> end
 
     return factory.get_dag()
+
+
+# ----------------------------------------------------------------------------
+# First-class ingestion chain helper (SeaTunnel render/execute/watermark)
+# ----------------------------------------------------------------------------
+def create_ingest_chain(
+    dag: DAG,
+    task_prefix: str,
+    *,
+    job_name: str,
+    source_name: str,
+    env_entries: Iterable[str],
+    pool: Optional[str] = None,
+    queue: Optional[str] = None,
+    pre_lines: Optional[Iterable[str]] = None,
+    extra_lines: Optional[Iterable[str]] = None,
+    render_timeout_minutes: int = 10,
+    execute_timeout_minutes: int = 20,
+    k8s_timeout_seconds: int = 600,
+    watermark_policy: str = "exact",
+) -> Tuple[Any, Any, Any]:
+    """Create standard render/execute/watermark tasks for a SeaTunnel job attached to ``dag``.
+
+    Returns (render_task, execute_task, watermark_task).
+    """
+    from aurum.airflow_utils import iso as iso_utils  # type: ignore
+
+    with dag:
+        return iso_utils.create_seatunnel_ingest_chain(
+            task_prefix,
+            job_name=job_name,
+            source_name=source_name,
+            env_entries=env_entries,
+            pool=pool,
+            queue=queue,
+            pre_lines=pre_lines,
+            extra_lines=extra_lines,
+            render_timeout_minutes=render_timeout_minutes,
+            execute_timeout_minutes=execute_timeout_minutes,
+            k8s_timeout_seconds=k8s_timeout_seconds,
+            watermark_policy=watermark_policy,
+        )
+
+
+# ----------------------------------------------------------------------------
+# Standardized backfill helper (dag_run.conf contract)
+# ----------------------------------------------------------------------------
+def create_backfill_task(
+    dag: DAG,
+    task_id: str,
+    *,
+    provider: str,
+    default_chunk_hours: int,
+    datasets_variable: Optional[str] = None,
+    data_types: Optional[List[str]] = None,
+) -> PythonOperator:
+    """Create a PythonOperator that executes the unified backfill contract.
+
+    This reuses the implementation from ``prod_external_ingestion._backfill_wrapper``
+    to ensure a single behavior surface for backfills.
+    """
+
+    def _callable(**context: Any) -> None:
+        # Lazy import to avoid cycles at parse time
+        try:
+            import importlib
+            wrapper_mod = importlib.import_module("airflow.dags.prod_external_ingestion")
+        except Exception as exc:  # pragma: no cover - defensive
+            raise RuntimeError(f"Failed to load backfill wrapper: {exc}") from exc
+
+        kwargs = {
+            "provider": provider,
+            "default_chunk_hours": int(default_chunk_hours),
+            "data_types": data_types,
+            "datasets_var": datasets_variable,
+        }
+        # Delegate to the canonical wrapper
+        wrapper_mod._backfill_wrapper(**kwargs, **context)  # type: ignore[attr-defined]
+
+    with dag:
+        return PythonOperator(
+            task_id=task_id,
+            python_callable=_callable,
+        )

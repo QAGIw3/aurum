@@ -16,8 +16,12 @@ from fastapi import HTTPException, Request, Response
 from aurum.core import AurumSettings
 from aurum.telemetry.context import get_request_id
 
-from . import service
+from aurum.api.services import admin_service as _admin_service
+from aurum.api.services import metadata_service as _metadata_service
+from aurum.api.services import iso_service as _iso_service
+
 from .cache.cache import CacheManager
+from .cache.consolidated_manager import get_unified_cache_manager
 from .config import CacheConfig, TrinoConfig
 from .http import respond_with_etag as http_respond_with_etag
 from aurum.core.settings import get_settings as _core_get_settings
@@ -56,8 +60,7 @@ _TILE_CACHE_CFG: CacheConfig | None = None
 _TILE_CACHE: Any | None = None
 
 _CACHE_MANAGER: CacheManager | None = None
-_METADATA_FALLBACK_CACHE: dict[str, tuple[float, Any]] = {}
-_METADATA_FALLBACK_LOCK = threading.Lock()
+_METADATA_CACHE_LOCK = threading.Lock()
 _INMEM_TTL = 60
 
 ADMIN_GROUPS: Set[str] = set()
@@ -114,8 +117,11 @@ def configure_routes(settings: AurumSettings) -> None:
     global EIA_SERIES_CACHE_TTL, EIA_SERIES_DIMENSIONS_CACHE_TTL, EIA_SERIES_MAX_LIMIT
 
     ADMIN_GROUPS = app_context.get_admin_groups()
-    _TILE_CACHE_CFG = CacheConfig.from_settings(settings)
-    _TILE_CACHE = None
+    # Reset context-managed tile cache so it will be re-initialized using new settings
+    try:
+        app_context.tile_cache = None
+    except Exception:
+        pass
     api_cfg = getattr(settings, "api", None)
     cache_cfg = getattr(api_cfg, "cache", None) if api_cfg is not None else None
     pagination_cfg = getattr(settings, "pagination", None)
@@ -155,8 +161,12 @@ def configure_routes(settings: AurumSettings) -> None:
     else:
         observability_metrics.METRICS_PATH = METRICS_PATH
 
-    with _METADATA_FALLBACK_LOCK:
-        _METADATA_FALLBACK_CACHE.clear()
+    cache_manager = get_metadata_cache()
+    if cache_manager is not None:
+        try:
+            cache_manager.clear()
+        except Exception:
+            LOGGER.warning("metadata_cache_clear_failed", exc_info=True)
 
 
 # --- Principal / admin helpers ------------------------------------------------
@@ -264,23 +274,48 @@ def _resolve_tenant_optional(request: Request, explicit: Optional[str]) -> Optio
 def _drought_catalog() -> DroughtCatalog:
     if load_catalog is None or DroughtCatalog is None:  # pragma: no cover - optional dependency
         raise RuntimeError("drought catalog features require optional dependencies")
-    global _DROUGHT_CATALOG
-    if _DROUGHT_CATALOG is None:
-        _DROUGHT_CATALOG = load_catalog(_CATALOG_PATH)
-    return _DROUGHT_CATALOG
+    # Use application context instead of module-global cache
+    try:
+        from .container import get_app_context
+        app_context = get_app_context()
+    except Exception:
+        app_context = None
+
+    if app_context is not None and getattr(app_context, "drought_catalog", None) is not None:
+        return app_context.drought_catalog  # type: ignore[return-value]
+
+    catalog = load_catalog(_CATALOG_PATH)
+    if app_context is not None:
+        try:
+            app_context.drought_catalog = catalog
+        except Exception:
+            pass
+    return catalog
 
 
 def _tile_cache():
-    global _TILE_CACHE
-    if _TILE_CACHE is not None:
-        return _TILE_CACHE
-    cfg = _TILE_CACHE_CFG or _cache_config()
+    # Use application context instead of module-global cache/config
+    try:
+        from .container import get_app_context
+        app_context = get_app_context()
+    except Exception:
+        app_context = None
+
+    if app_context is not None and getattr(app_context, "tile_cache", None) is not None:
+        return app_context.tile_cache
+
+    cfg = _cache_config()
     try:
         client = service._maybe_redis_client(cfg)
     except Exception:  # pragma: no cover - cache is optional
         client = None
-    _TILE_CACHE = client
-    return _TILE_CACHE
+
+    if app_context is not None:
+        try:
+            app_context.tile_cache = client
+        except Exception:
+            pass
+    return client
 
 
 def _record_tile_cache_metric(endpoint: str, result: str) -> None:
@@ -303,47 +338,41 @@ def _observe_tile_fetch(endpoint: str, status: str, duration: float) -> None:
 
 # --- Metadata cache helpers ---------------------------------------------------
 
-def set_cache_manager(manager: CacheManager | None) -> None:
-    """Register the active CacheManager for synchronous helpers."""
-    global _CACHE_MANAGER
-    _CACHE_MANAGER = manager
+
+def get_metadata_cache() -> CacheManager | None:
+    """Return the metadata cache manager for legacy routes."""
+
+    from .container import get_app_context
+
+    app_context = get_app_context()
+    cache = getattr(app_context, "metadata_cache", None)
+    if cache is not None:
+        return cache
+
+    try:
+        cache = get_unified_cache_manager()
+    except Exception:
+        LOGGER.warning("metadata_cache_manager_unavailable", exc_info=True)
+        cache = None
+
+    if cache is not None:
+        setattr(app_context, "metadata_cache", cache)
+    return cache
 
 
-def _metadata_fallback_get(key: str) -> Any | None:
-    now = time.time()
-    with _METADATA_FALLBACK_LOCK:
-        entry = _METADATA_FALLBACK_CACHE.get(key)
-        if not entry:
-            return None
-        expires_at, value = entry
-        if now >= expires_at:
-            _METADATA_FALLBACK_CACHE.pop(key, None)
-            return None
-        return value
+def invalidate_metadata_cache(prefixes: Sequence[str]) -> int:
+    """Invalidate metadata cache entries with the specified prefixes."""
 
+    cache_manager = get_metadata_cache()
+    if cache_manager is None:
+        return 0
 
-def _metadata_fallback_set(key: str, value: Any, ttl: int) -> None:
-    with _METADATA_FALLBACK_LOCK:
-        _METADATA_FALLBACK_CACHE[key] = (time.time() + ttl, value)
-
-
-def _metadata_cache_get_or_set(key_suffix: str, supplier):
-    cached = _metadata_fallback_get(key_suffix)
-    if cached is not None:
-        return cached
-    value = supplier()
-    _metadata_fallback_set(key_suffix, value, METADATA_CACHE_TTL)
-    return value
-
-
-def _metadata_cache_purge(prefixes: Sequence[str]) -> int:
     removed = 0
-    with _METADATA_FALLBACK_LOCK:
-        for prefix in prefixes:
-            keys = [key for key in list(_METADATA_FALLBACK_CACHE) if key.startswith(prefix)]
-            for key in keys:
-                _METADATA_FALLBACK_CACHE.pop(key, None)
-            removed += len(keys)
+    for prefix in prefixes:
+        try:
+            removed += cache_manager.invalidate_pattern(prefix)
+        except Exception:
+            LOGGER.warning("metadata_cache_invalidate_failed", extra={"prefix": prefix}, exc_info=True)
     return removed
 
 
@@ -404,10 +433,7 @@ __all__ = [
     "_tile_cache",
     "_record_tile_cache_metric",
     "_observe_tile_fetch",
-    "_metadata_cache_get_or_set",
-    "_metadata_cache_purge",
     "_generate_etag",
     "_respond_with_etag",
-    "set_cache_manager",
     "METRICS_MIDDLEWARE",
 ]

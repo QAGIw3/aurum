@@ -32,6 +32,7 @@ from aurum.airflow_utils.datasets import noaa_trigger, noaa_ingest
 from aurum.airflow_utils.timescale import build_timescale_task as _build_ts
 from aurum.airflow_utils import iso as iso_utils
 from aurum.airflow_utils.vault import build_pull_env_command
+from aurum.airflow_utils import create_ingest_chain
 
 
 def update_watermark(
@@ -297,7 +298,7 @@ def update_noaa_watermark(dataset_key: str, logical_date: str):
         )
         raise
 
-def build_noaa_ingest_task(dataset_key: str, dataset_config: Dict[str, Any]):
+def build_noaa_ingest_task(dag: DAG, dataset_key: str, dataset_config: Dict[str, Any]):
     """Build standard render/execute/watermark chain for NOAA data ingestion."""
 
     env_vars = [
@@ -323,7 +324,8 @@ def build_noaa_ingest_task(dataset_key: str, dataset_config: Dict[str, Any]):
     pull_cmd = build_pull_env_command(["secret/data/aurum/noaa:token=NOAA_GHCND_TOKEN"])
     policy = "hour" if int(dataset_config.get("window_hours", 0) or 0) > 0 else "day"
 
-    return iso_utils.create_seatunnel_ingest_chain(
+    return create_ingest_chain(
+        dag,
         f"noaa_{dataset_key}",
         job_name=f"noaa_{dataset_key}_to_kafka",
         source_name=f"noaa_{dataset_key}",

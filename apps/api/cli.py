@@ -6,8 +6,8 @@ import click
 from typing import Optional
 
 from aurum.core import get_settings, AurumSettings
-from libs.storage import TimescaleSeriesRepo, PostgresMetaRepo
-from libs.storage.timescale_ops import TimescalePerformanceOps
+from aurum.libs.storage import TimescaleSeriesRepo, PostgresMetaRepo
+from aurum.libs.storage.timescale_ops import TimescalePerformanceOps
 from aurum.api.cache.cache import CacheManager
 
 

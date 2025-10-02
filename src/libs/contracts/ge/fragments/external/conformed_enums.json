@@ -1,0 +1,21 @@
+{
+  "frequency_code_normalized": [
+    "ANNUAL",
+    "QUARTERLY",
+    "MONTHLY",
+    "WEEKLY",
+    "DAILY",
+    "HOURLY",
+    "OTHER"
+  ],
+  "unit_code_canonical": [
+    "USD/MWh",
+    "USD/MMBtu",
+    "USD/Mcf"
+  ],
+  "quality_status": [
+    "NULL_VALUE",
+    "ZERO_VALUE",
+    "VALID"
+  ]
+}

@@ -1,0 +1,22 @@
+[
+  "iso_code",
+  "market",
+  "delivery_date",
+  "interval_start",
+  "interval_end",
+  "interval_minutes",
+  "location_id",
+  "location_name",
+  "location_type",
+  "price_total",
+  "price_energy",
+  "price_congestion",
+  "price_loss",
+  "currency",
+  "uom",
+  "settlement_point",
+  "source_run_id",
+  "ingest_ts",
+  "record_hash",
+  "metadata"
+]

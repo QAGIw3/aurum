@@ -15,7 +15,7 @@ _SRC_PATH = os.environ.get("AURUM_PYTHONPATH_ENTRY", "/opt/airflow/src")
 if _SRC_PATH and _SRC_PATH not in sys.path:
     sys.path.insert(0, _SRC_PATH)
 
-from aurum.airflow_utils import build_failure_callback, build_preflight_callable
+from aurum.airflow_utils import build_failure_callback, build_preflight_callable, create_ingest_chain
 from aurum.airflow_utils import iso as iso_utils
 from aurum.airflow_utils.datasets import iso_trigger, iso_ingest
 from aurum.airflow_utils.vault import build_pull_env_command
@@ -53,10 +53,11 @@ def _register_sources() -> None:
     iso_utils.register_sources(AESO_SOURCES)
 
 
-def build_seatunnel_task():
+def build_seatunnel_task(dag: DAG):
     pull_cmd = build_pull_env_command(["secret/data/aurum/aeso:token=AESO_API_KEY"]).rstrip()
 
-    render, execute, watermark = iso_utils.create_seatunnel_ingest_chain(
+    render, execute, watermark = create_ingest_chain(
+        dag,
         "aeso_lmp",
         job_name="aeso_lmp_to_kafka",
         source_name="aeso_smp",
@@ -107,7 +108,7 @@ with DAG(
 
     register_sources = PythonOperator(task_id="register_sources", python_callable=_register_sources)
 
-    aeso_render, aeso_exec, aeso_watermark = build_seatunnel_task()
+    aeso_render, aeso_exec, aeso_watermark = build_seatunnel_task(dag)
 
     end = EmptyOperator(task_id="end")
 

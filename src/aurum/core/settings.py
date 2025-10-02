@@ -13,7 +13,7 @@ import hashlib
 from datetime import datetime
 
 try:  # Prefer consolidated configuration from libs/common/config when available
-    from libs.common.config import (  # type: ignore
+    from aurum.libs.common.config import (  # type: ignore
         AurumSettings as _UnifiedAurumSettings,
         configure_settings as _unified_configure_settings,
         get_settings as _unified_get_settings,

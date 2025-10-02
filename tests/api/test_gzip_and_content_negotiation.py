@@ -69,7 +69,7 @@ def test_gzip_compression_small_response():
         # Small response that should not be gzipped
         return [{"curve_key": "test", "mid": 42.0}], 1.0
 
-    with patch("aurum.api.service.query_curves", mock_query):
+    with patch("aurum.api.services.curves_v2_service.CurvesV2Service.query_curves", mock_query):
         response = client.get("/v1/curves", params={"limit": 1})
 
     assert response.status_code == 200
@@ -87,7 +87,7 @@ def test_gzip_compression_large_response():
         # Large response that should be gzipped
         return [{"curve_key": f"test_{i}", "mid": float(i)} for i in range(1000)], 1.0
 
-    with patch("aurum.api.service.query_curves", mock_query):
+    with patch("aurum.api.services.curves_v2_service.CurvesV2Service.query_curves", mock_query):
         response = client.get("/v1/curves", params={"limit": 1000})
 
     assert response.status_code == 200
@@ -114,7 +114,7 @@ def test_gzip_disabled():
         def mock_query(*args, **kwargs):
             return [{"curve_key": f"test_{i}", "mid": float(i)} for i in range(1000)], 1.0
 
-        with patch("aurum.api.service.query_curves", mock_query):
+        with patch("aurum.api.services.curves_v2_service.CurvesV2Service.query_curves", mock_query):
             response = client.get("/v1/curves", params={"limit": 1000})
 
         assert response.status_code == 200
@@ -162,7 +162,7 @@ def test_gzip_accept_encoding_wildcard():
     def mock_query(*args, **kwargs):
         return [{"curve_key": f"test_{i}", "mid": float(i)} for i in range(1000)], 1.0
 
-    with patch("aurum.api.service.query_curves", mock_query):
+    with patch("aurum.api.services.curves_v2_service.CurvesV2Service.query_curves", mock_query):
         response = client.get(
             "/v1/curves",
             params={"limit": 1000},
@@ -180,7 +180,7 @@ def test_gzip_accept_encoding_gzip():
     def mock_query(*args, **kwargs):
         return [{"curve_key": f"test_{i}", "mid": float(i)} for i in range(1000)], 1.0
 
-    with patch("aurum.api.service.query_curves", mock_query):
+    with patch("aurum.api.services.curves_v2_service.CurvesV2Service.query_curves", mock_query):
         response = client.get(
             "/v1/curves",
             params={"limit": 1000},
@@ -198,7 +198,7 @@ def test_no_gzip_when_not_accepted():
     def mock_query(*args, **kwargs):
         return [{"curve_key": f"test_{i}", "mid": float(i)} for i in range(1000)], 1.0
 
-    with patch("aurum.api.service.query_curves", mock_query):
+    with patch("aurum.api.services.curves_v2_service.CurvesV2Service.query_curves", mock_query):
         response = client.get(
             "/v1/curves",
             params={"limit": 1000},
@@ -222,7 +222,7 @@ def test_gzip_threshold_edge_cases():
         def mock_query(*args, **kwargs):
             return [{"curve_key": "test", "mid": 42.0}], 1.0
 
-        with patch("aurum.api.service.query_curves", mock_query):
+        with patch("aurum.api.services.curves_v2_service.CurvesV2Service.query_curves", mock_query):
             response = client.get("/v1/curves", params={"limit": 1})
 
         assert response.status_code == 200
@@ -254,7 +254,7 @@ def test_gzip_content_length_header():
         data = [{"curve_key": f"test_{i}", "mid": float(i)} for i in range(500)]
         return data, 1.0
 
-    with patch("aurum.api.service.query_curves", mock_query):
+    with patch("aurum.api.services.curves_v2_service.CurvesV2Service.query_curves", mock_query):
         response = client.get("/v1/curves", params={"limit": 500})
 
     assert response.status_code == 200

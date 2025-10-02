@@ -42,8 +42,8 @@ from ..cache.consolidated_manager import get_unified_cache_manager
 from ..dao.trino_async_dao import TrinoAsyncDao
 # Optional Timescale dependencies; allow import without SQLAlchemy when unused
 try:  # pragma: no cover - optional local library
-    from libs.storage.timescale import TimescaleSeriesRepo  # type: ignore
-    from libs.storage.timescale_ops import TimescalePerformanceOps  # type: ignore
+    from aurum.libs.storage.timescale import TimescaleSeriesRepo  # type: ignore
+    from aurum.libs.storage.timescale_ops import TimescalePerformanceOps  # type: ignore
 except Exception:  # pragma: no cover - tolerate absence in test/import contexts
     TimescaleSeriesRepo = None  # type: ignore[assignment]
     TimescalePerformanceOps = None  # type: ignore[assignment]

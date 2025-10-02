@@ -22,7 +22,7 @@ from pydantic import BaseModel, Field
 
 from ..http import respond_with_etag
 from ..http.response_builders import etag_response_builder, etag_cursor_response_builder
-from libs.services.scenarios_service import ScenariosService
+from aurum.libs.services.scenarios_service import ScenariosService
 from ..deps import get_settings, get_cache_manager, get_unified_cache_manager_dep
 from aurum.core import AurumSettings
 from ..scenario_models import (

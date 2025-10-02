@@ -25,7 +25,7 @@ from pydantic import BaseModel, Field, validator
 
 from ..http import respond_with_etag
 from ..deps import get_settings, get_cache_manager
-from libs.services.search_service import SearchService
+from aurum.libs.services.search_service import SearchService
 from ..features import is_feature_enabled, require_feature
 from aurum.core import AurumSettings
 from ...telemetry.context import get_request_id

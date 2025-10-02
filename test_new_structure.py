@@ -18,7 +18,7 @@ def test_config_system():
     os.environ["AURUM_TIMESCALE_HOST"] = "test-timescale"
     os.environ["AURUM_REDIS_HOST"] = "test-redis"
     
-    from libs.common.config import AurumSettings, reset_settings
+    from aurum.libs.common.config import AurumSettings, reset_settings
     
     # Reset settings to pick up env vars
     reset_settings()
@@ -41,7 +41,7 @@ def test_core_models():
     """Test core domain models."""
     print("🧪 Testing core models...")
     
-    from libs.core import CurveKey, IsoCode, IsoMarket, PriceObservation
+    from aurum.libs.core import CurveKey, IsoCode, IsoMarket, PriceObservation
     from datetime import datetime, date
     
     # Test CurveKey
@@ -73,8 +73,8 @@ def test_repository_interfaces():
     """Test repository interfaces can be imported."""
     print("🧪 Testing repository interfaces...")
     
-    from libs.storage.ports import SeriesRepository, MetadataRepository, AnalyticRepository
-    from libs.storage import TimescaleSeriesRepo, PostgresMetaRepo, TrinoAnalyticRepo
+    from aurum.libs.storage.ports import SeriesRepository, MetadataRepository, AnalyticRepository
+    from aurum.libs.storage import TimescaleSeriesRepo, PostgresMetaRepo, TrinoAnalyticRepo
     
     # Test that implementations inherit from interfaces
     assert issubclass(TimescaleSeriesRepo, SeriesRepository)
@@ -89,8 +89,8 @@ def test_app_structure():
     print("🧪 Testing app structure...")
     
     try:
-        from apps.api.main import create_app
-        from libs.common.config import AurumSettings
+        from aurum.api.app import create_app
+        from aurum.libs.common.config import AurumSettings
         
         # Create test settings
         settings = AurumSettings(

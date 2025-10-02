@@ -615,7 +615,7 @@ def parse(path: str, asof: date) -> pd.DataFrame:
   * `ingest_iso_prices_isone` – pulls ISO-NE web services LMP data and pushes to Kafka.
   * `ingest_iso_prices_spp` – downloads SPP Marketplace files (DA/RT) and publishes to Kafka.
 * **dbt models:** `dbt/models/stg`, `dbt/models/int`, `dbt/models/mart`, plus `schema.yml`
-* **Great Expectations suites:** `ge/expectations/curve_schema.json`, `ge/expectations/curve_business.yml` plus checkpoint
+* **Great Expectations suites:** `ge/expectations/curve_schema.json`, `ge/expectations/curve_business.json` plus checkpoint
 * **Vector config:** `vector/vector.toml`
 * **Traefik ingress:** `traefik/ingressroute.yaml`
 

@@ -20,7 +20,7 @@
 
 ## Phase 1 – API Composition & Lifecycle (Target: Feb 2025)
 - Replace the `routes.py` megafile with per-domain v1 routers living beside v2 modules (curves, metadata, ISO/EIA, drought, scenarios, PPA).
-- Introduce middleware registry/loader mirroring the router registry, making toggling (audit, rate limit, telemetry) configuration-driven.
+- Introduce middleware registry/loader mirroring the router registry, making toggling (audit, rate limit, telemetry) configuration-driven. ✅ Completed via `MiddlewareManager` and `ApplicationBuilder` consolidation (Oct 2025).
 - Convert `create_app` into a pure factory (no global side-effects) and expose a startup hook that receives resolved dependencies (cache, feature flags, telemetry).
 - Decouple admin/observability routers from `routes.py`; move to dedicated packages with explicit auth dependencies.
 - Document lifecycle in `docs/refactor/playbook.md` (startup ordering, required env vars, migration strategy).
@@ -61,3 +61,4 @@
 1. Fix router registry duplication for v1 PPA router and add regression tests.
 2. Draft module-level READMEs (starting with `src/aurum/api/README.md`) summarizing new architecture.
 3. Schedule pairing sessions with data ingest team to map DAO boundaries and shared schemas.
+4. Replace residual imports of `aurum.api.service` with domain services and remove dead module surface.

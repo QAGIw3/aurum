@@ -1,9 +1,19 @@
 """Aurum core domain package providing shared models and configuration."""
 from .enums import CurrencyCode, IsoCode, IsoMarket, PriceBlock, UnitOfMeasure
 from .models import AurumBaseModel, CurveKey, PaginationMeta, PriceObservation, UnitNormalization
-# Unified configuration re-exports (single source of truth)
-from libs.common.config import AurumSettings, get_settings
 from .pagination import CursorPage, OffsetPage, Paginator
+
+# Unified configuration re-exports (single source of truth)
+try:
+    from aurum.libs.common.config import AurumSettings, get_settings
+except ImportError:
+    # Fallback for when libs is not available
+    class MockAurumSettings:
+        pass
+    AurumSettings = MockAurumSettings
+
+    def get_settings():
+        return AurumSettings()
 
 __all__ = [
     "AurumSettings",

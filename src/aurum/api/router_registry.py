@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import logging
-import os
 from dataclasses import dataclass, field
 from importlib import import_module
 from typing import Any, Iterable, Mapping
@@ -48,7 +47,7 @@ def _try_import_router(module_path: str, *, attr: str = "router") -> APIRouter |
     router symbol (e.g. ``offload_router`` or diagnostics routers).
     """
 
-    if os.getenv("AURUM_API_LIGHT_INIT", "0") == "1":
+    if getattr(_settings, "api_light_init", False):
         router = _LIGHTWEIGHT_ROUTER_CACHE.get(module_path)
         if router is None:
             router = APIRouter()

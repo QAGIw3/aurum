@@ -1,11 +1,15 @@
+"""Router registry and application builder regression tests."""
+
 from __future__ import annotations
 
-import pytest
+import logging
 
+import pytest
 from fastapi import APIRouter, FastAPI
 from fastapi.routing import APIRoute
 from fastapi.testclient import TestClient
 
+from aurum.api.app_builder import ApplicationBuilder
 from aurum.api.router_registry import (
     get_v1_router_specs,
     get_v2_router_specs,
@@ -14,15 +18,29 @@ from aurum.api.router_registry import (
     _build_specs,
     _try_import_router,
 )
-from fastapi import APIRouter
 from aurum.core import AurumSettings
-import pytest
 
 _V2_ONLY = False
 try:
     _V2_ONLY = bool(getattr(AurumSettings(), "enable_v2_only", False))
 except Exception:
     _V2_ONLY = False
+
+
+def test_application_builder_installs_basic_routes(monkeypatch):
+    settings = AurumSettings()
+
+    builder = ApplicationBuilder(settings, logging.getLogger("test"), mode="simplified")
+    monkeypatch.setenv("AURUM_API_LIGHT_INIT", "1")
+    app = builder.build()
+
+    client = TestClient(app)
+    response = client.get("/health")
+    assert response.status_code in {200, 503}
+
+    if response.status_code == 503:
+        fallback = TestClient(app).get("/v1/curves")
+        assert fallback.status_code in {200, 404}
 
 
 @pytest.fixture
@@ -139,6 +157,63 @@ def test_v2_routers_require_tenant_dependency(monkeypatch, reset_split_flags):
         deps = getattr(spec.router, "dependencies", ()) or ()
         assert isinstance(deps, (list, tuple))
         assert len(deps) >= 1
+
+
+def test_v1_retired_stub_returns_410(monkeypatch, reset_split_flags):
+    """Test that v1_retired router returns 410 Gone for all v1 routes."""
+    from aurum.api.app import create_app
+
+    # Enable v2-only mode and v1 retire stub
+    monkeypatch.setenv("AURUM_ENABLE_V2_ONLY", "true")
+    monkeypatch.setenv("AURUM_API_V1_RETIRE_STUB", "1")
+    monkeypatch.setenv("AURUM_API_LIGHT_INIT", "0")  # Ensure full init
+
+    settings = AurumSettings()
+    app = create_app(settings)
+
+    # Test that v1_retired router is included
+    specs = get_v1_router_specs(settings)
+    retired_spec = next((s for s in specs if s.name == "aurum.api.v1_retired"), None)
+    assert retired_spec is not None
+
+    # Test 410 response for a v1 route
+    with TestClient(app) as client:
+        response = client.get("/v1/curves")
+        assert response.status_code == 410
+        assert "API v1 has been retired" in response.json()["error"]
+        assert response.headers["Deprecation"] == "true"
+        assert "Sunset" in response.headers
+        assert "X-API-Version" in response.headers
+        assert response.headers["X-API-Version"] == "v1"
+
+
+def test_middleware_ordering():
+    """Test that MiddlewareManager maintains correct middleware ordering."""
+    from aurum.api.middleware.manager import MiddlewareManager
+    from aurum.api.app import create_app
+
+    settings = AurumSettings()
+    manager = MiddlewareManager()
+    manager.add_defaults(settings)
+
+    # Get the expected middleware order
+    order = manager.describe_order()
+
+    # Verify that middleware is ordered correctly (higher priority applied later)
+    # Logging context should be outermost (highest priority)
+    assert order[0] == "logging_context"
+
+    # Resource cleanup should be near the top
+    cleanup_idx = order.index("resource_cleanup")
+    assert cleanup_idx < len(order) - 1  # Should not be last
+
+    # Access log should be towards the bottom (lower priority)
+    access_idx = order.index("access_log")
+    assert access_idx > cleanup_idx
+
+    # Response headers should be near the bottom
+    headers_idx = order.index("response_headers")
+    assert headers_idx > access_idx
 
 
 @pytest.mark.skipif(_V2_ONLY, reason="v2-only mode: v1 registry tests are skipped")

@@ -5,7 +5,7 @@ from typing import Dict, List, Optional, Any
 
 from fastapi import APIRouter, Depends, HTTPException, Request, Response
 
-from libs.storage import TimescaleSeriesRepo, PostgresMetaRepo, TrinoAnalyticRepo, RedisCacheRepo
+from aurum.libs.storage import TimescaleSeriesRepo, PostgresMetaRepo, TrinoAnalyticRepo, RedisCacheRepo
 from aurum.core import get_settings
 from ..main import get_timescale_repo, get_postgres_repo, get_trino_repo
 
@@ -129,7 +129,7 @@ async def clear_cache(
 async def get_config() -> dict:
     """Get current application configuration (sanitized)."""
     
-    from libs.common.config import get_settings
+    from aurum.libs.common.config import get_settings
     
     settings = get_settings()
     
