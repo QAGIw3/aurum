@@ -1,3 +1,4 @@
+{{ iceberg_config_staging(target_file_size_mb=64, write_compression='ZSTD') }}
 {{
     config(
         materialized='incremental',
@@ -5,12 +6,7 @@
         alias='int_isone_load_enriched',
         tags=['isone', 'load', 'intermediate'],
         incremental_strategy='merge',
-        unique_key=['iso_code', 'area', 'interval_start'],
-        partition_by={
-            "field": "interval_start",
-            "data_type": "timestamp",
-            "granularity": "hour"
-        }
+        unique_key=['iso_code', 'area', 'interval_start']
     )
 }}
 
@@ -33,5 +29,5 @@ from {{ ref('stg_isone_load') }}
 
 {% if is_incremental() %}
   -- Only process records newer than the latest processed record
-  where ingest_ts > (select coalesce(max(ingest_ts), '1970-01-01T00:00:00Z') from {{ this }})
+  where ingest_ts > (select coalesce(max(ingest_ts), cast('1970-01-01 00:00:00' as timestamp)) from {{ this }})
 {% endif %}
