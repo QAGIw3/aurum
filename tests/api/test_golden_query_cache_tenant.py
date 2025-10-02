@@ -8,7 +8,7 @@ import asyncio
 from unittest.mock import Mock, patch
 from typing import Any, Dict
 
-from aurum.api.golden_query_cache import (
+from aurum.api.cache.golden_query_cache import (
     GoldenQueryCache,
     QueryPattern,
     QueryType,

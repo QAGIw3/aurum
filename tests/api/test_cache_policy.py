@@ -8,7 +8,7 @@ from unittest.mock import Mock, patch, AsyncMock
 from typing import Any, Dict, List
 from datetime import date
 
-from aurum.api.golden_query_cache import (
+from aurum.api.cache.golden_query_cache import (
     GoldenQueryCache,
     QueryType,
     CacheInvalidationStrategy,

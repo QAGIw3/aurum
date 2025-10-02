@@ -1,37 +1,25 @@
-"""Feature-flagged configuration system for Aurum services with gradual migration support."""
+"""Unified configuration system using pydantic-settings.
+
+Supports layered sources: env > .env > defaults
+Frozen at process start for consistency.
+"""
 from __future__ import annotations
 
 import os
-import json
-import logging
 from enum import Enum
 from pathlib import Path
-from types import SimpleNamespace
-from typing import Any, Dict, Iterable, List, Mapping, Optional, Callable
-import threading
-import hashlib
-from datetime import datetime
+from typing import Any, Dict, List, Optional, Union
+import json
 
-try:  # Prefer consolidated configuration from libs/common/config when available
-    from aurum.libs.common.config import (  # type: ignore
-        AurumSettings as _UnifiedAurumSettings,
-        configure_settings as _unified_configure_settings,
-        get_settings as _unified_get_settings,
-        reset_settings as _unified_reset_settings,
-    )
-except Exception:  # pragma: no cover - fallback to legacy settings path
-    _UnifiedAurumSettings = None  # type: ignore[assignment]
-    _unified_get_settings = None  # type: ignore[assignment]
-    _unified_configure_settings = None  # type: ignore[assignment]
-    _unified_reset_settings = None  # type: ignore[assignment]
+try:
+    import yaml  # type: ignore
+except Exception:  # noqa: BLE001
+    yaml = None
 
-print(f"DEBUG: Loading settings.py - AURUM_ENABLE_MIGRATION_MONITORING = {os.getenv('AURUM_ENABLE_MIGRATION_MONITORING', 'NOT_SET')}")
-
-# Setup logging
-logger = logging.getLogger(__name__)
+from pydantic import Field, field_validator
+from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
-# Redis configuration modes (for backward compatibility)
 class RedisMode(str, Enum):
     """Redis deployment modes."""
     STANDALONE = "standalone"
@@ -40,32 +28,398 @@ class RedisMode(str, Enum):
 
 
 class DataBackendType(str, Enum):
-    """Supported data backend engines for the API layer."""
-
+    """Supported data backend engines."""
     TRINO = "trino"
     CLICKHOUSE = "clickhouse"
     TIMESCALE = "timescale"
 
-# Feature flags for migration (uppercase primary with lowercase fallback)
-FEATURE_FLAGS = {
-    "USE_SIMPLIFIED_SETTINGS": "AURUM_USE_SIMPLIFIED_SETTINGS",
-    "ENABLE_MIGRATION_MONITORING": "AURUM_ENABLE_MIGRATION_MONITORING",
-    "SETTINGS_MIGRATION_PHASE": "AURUM_SETTINGS_MIGRATION_PHASE",  # "legacy", "hybrid", "simplified"
-    "USE_DYNAMIC_CONFIG": "AURUM_USE_DYNAMIC_CONFIG",
 
-    # Search feature flags
-    "SEARCH_ENABLED": "AURUM_SEARCH_ENABLED",
-    "SEARCH_SEMANTIC_ENABLED": "AURUM_SEARCH_SEMANTIC_ENABLED",
-    "SEARCH_SUGGESTIONS_ENABLED": "AURUM_SEARCH_SUGGESTIONS_ENABLED",
-    "SEARCH_ANALYTICS_ENABLED": "AURUM_SEARCH_ANALYTICS_ENABLED",
-}
+class DatabaseSettings(BaseSettings):
+    """Database connection settings."""
 
+    model_config = SettingsConfigDict(
+        env_prefix="AURUM_",
+        env_file=".env",
+        case_sensitive=False,
+    )
+
+    # Timescale/PostgreSQL
+    timescale_host: str = Field(default="localhost", description="Timescale host")
+    timescale_port: int = Field(default=5432, description="Timescale port")
+    timescale_user: str = Field(default="aurum", description="Timescale user")
+    timescale_password: str = Field(default="aurum", description="Timescale password")
+    timescale_database: str = Field(default="timeseries", description="Timescale database")
+
+    # Postgres (metadata)
+    postgres_host: str = Field(default="localhost", description="Postgres host")
+    postgres_port: int = Field(default=5432, description="Postgres port")
+    postgres_user: str = Field(default="aurum", description="Postgres user")
+    postgres_password: str = Field(default="aurum", description="Postgres password")
+    postgres_database: str = Field(default="aurum", description="Postgres database")
+
+    # Trino
+    trino_host: str = Field(default="localhost", description="Trino host")
+    trino_port: int = Field(default=8080, description="Trino port")
+    trino_user: str = Field(default="aurum", description="Trino user")
+    trino_catalog: str = Field(default="iceberg", description="Trino catalog")
+    trino_schema: str = Field(default="market", description="Trino schema")
+
+    # ClickHouse (optional)
+    clickhouse_host: str = Field(default="localhost", description="ClickHouse host")
+    clickhouse_port: int = Field(default=8123, description="ClickHouse port")
+    clickhouse_user: str = Field(default="default", description="ClickHouse user")
+    clickhouse_password: str = Field(default="", description="ClickHouse password")
+    clickhouse_database: str = Field(default="default", description="ClickHouse database")
+
+    # Connection pooling
+    pool_size: int = Field(default=20, description="Database connection pool size")
+    max_overflow: int = Field(default=10, description="Max overflow connections")
+    pool_timeout: int = Field(default=30, description="Connection pool timeout")
+    pool_recycle: int = Field(default=3600, description="Connection recycle time")
+
+    @property
+    def timescale_dsn(self) -> str:
+        """Async PostgreSQL DSN for Timescale."""
+        return f"postgresql+asyncpg://{self.timescale_user}:{self.timescale_password}@{self.timescale_host}:{self.timescale_port}/{self.timescale_database}"
+
+    @property
+    def postgres_dsn(self) -> str:
+        """Async PostgreSQL DSN for metadata."""
+        return f"postgresql+asyncpg://{self.postgres_user}:{self.postgres_password}@{self.postgres_host}:{self.postgres_port}/{self.postgres_database}"
+
+
+class RedisSettings(BaseSettings):
+    """Redis cache settings."""
+
+    model_config = SettingsConfigDict(
+        env_prefix="AURUM_REDIS_",
+        env_file=".env",
+        case_sensitive=False,
+    )
+
+    host: str = Field(default="localhost", description="Redis host")
+    port: int = Field(default=6379, description="Redis port")
+    db: int = Field(default=0, description="Redis database")
+    password: Optional[str] = Field(default=None, description="Redis password")
+    mode: RedisMode = Field(default=RedisMode.STANDALONE, description="Redis mode")
+
+    # Connection pooling
+    max_connections: int = Field(default=50, description="Max Redis connections")
+    socket_timeout: int = Field(default=5, description="Socket timeout")
+    socket_connect_timeout: int = Field(default=5, description="Socket connect timeout")
+
+    # Sentinel settings (if mode is sentinel)
+    sentinel_hosts: List[str] = Field(default_factory=list, description="Sentinel hosts")
+    sentinel_service: str = Field(default="mymaster", description="Sentinel service name")
+
+    @property
+    def redis_url(self) -> str:
+        """Redis connection URL."""
+        if self.password:
+            return f"redis://:{self.password}@{self.host}:{self.port}/{self.db}"
+        return f"redis://{self.host}:{self.port}/{self.db}"
+
+
+class CacheSettings(BaseSettings):
+    """Cache TTL settings by data category."""
+
+    # Base TTL levels
+    high_frequency_ttl: int = Field(default=60, description="High frequency cache TTL (seconds)")
+    medium_frequency_ttl: int = Field(default=300, description="Medium frequency cache TTL")
+    low_frequency_ttl: int = Field(default=3600, description="Low frequency cache TTL")
+    static_ttl: int = Field(default=7200, description="Static data cache TTL")
+
+    # Specific data types
+    curve_data_ttl: int = Field(default=300, description="Curve data cache TTL")
+    metadata_ttl: int = Field(default=7200, description="Metadata cache TTL")
+    external_data_ttl: int = Field(default=7200, description="External data cache TTL")
+    scenario_data_ttl: int = Field(default=300, description="Scenario data cache TTL")
+
+    # Golden query list with longer TTL
+    golden_query_ttl: int = Field(default=14400, description="Golden query cache TTL")
+    negative_cache_ttl: int = Field(default=60, description="Negative cache TTL for 404s")
+
+
+class APISettings(BaseSettings):
+    """FastAPI application settings."""
+
+    host: str = Field(default="0.0.0.0", description="API host")
+    port: int = Field(default=8000, description="API port")
+    title: str = Field(default="Aurum API", description="API title")
+    version: str = Field(default="2.0.0", description="API version")
+
+    # CORS
+    cors_origins: List[str] = Field(default=["*"], description="CORS origins")
+
+    # Request handling
+    request_timeout: int = Field(default=30, description="Request timeout seconds")
+    max_request_size: int = Field(default=16777216, description="Max request size bytes")
+
+    # Workers
+    worker_count: Optional[int] = Field(default=None, description="Uvicorn worker count")
+
+    # Middleware
+    gzip_min_bytes: int = Field(default=500, description="Minimum bytes for gzip")
+    enable_etags: bool = Field(default=True, description="Enable ETag headers")
+    enable_304_responses: bool = Field(default=True, description="Enable 304 Not Modified")
+
+    @field_validator('cors_origins', mode='before')
+    def parse_cors_origins(cls, v):
+        if isinstance(v, str):
+            return [origin.strip() for origin in v.split(",")]
+        return v
+
+
+class ObservabilitySettings(BaseSettings):
+    """Observability and monitoring settings."""
+
+    service_name: str = Field(default="aurum-api", description="Service name for tracing")
+
+    # OpenTelemetry
+    enable_tracing: bool = Field(default=True, description="Enable OpenTelemetry tracing")
+    enable_metrics: bool = Field(default=True, description="Enable OpenTelemetry metrics")
+    otel_endpoint: Optional[str] = Field(default=None, description="OTEL collector endpoint")
+
+    # Logging
+    log_level: str = Field(default="INFO", description="Log level")
+    log_format: str = Field(default="json", description="Log format: json or text")
+
+    # Metrics
+    metrics_enabled: bool = Field(default=True, description="Enable Prometheus metrics")
+    metrics_path: str = Field(default="/metrics", description="Metrics endpoint path")
+
+
+class SecuritySettings(BaseSettings):
+    """Security and authentication settings."""
+
+    auth_enabled: bool = Field(default=False, description="Enable authentication")
+    jwt_secret: Optional[str] = Field(default=None, description="JWT signing secret")
+    jwt_algorithm: str = Field(default="HS256", description="JWT algorithm")
+    jwt_expiry_hours: int = Field(default=24, description="JWT expiry hours")
+
+    # Rate limiting
+    rate_limit_enabled: bool = Field(default=True, description="Enable rate limiting")
+    rate_limit_requests: int = Field(default=1000, description="Requests per minute")
+    rate_limit_window: int = Field(default=60, description="Rate limit window seconds")
+
+
+class WorkerSettings(BaseSettings):
+    """Background worker settings."""
+
+    # Celery
+    broker_url: str = Field(default="redis://localhost:6379/1", description="Celery broker URL")
+    result_backend: str = Field(default="redis://localhost:6379/1", description="Celery result backend")
+    default_queue: str = Field(default="default", description="Default task queue")
+
+    # Task routing
+    enable_async_offload: bool = Field(default=False, description="Enable async task offload")
+    task_timeout: int = Field(default=3600, description="Task timeout seconds")
+
+
+class TenancySettings(BaseSettings):
+    """Configuration for Aurum's multi-tenant control plane."""
+
+    model_config = SettingsConfigDict(
+        env_prefix="AURUM_TENANCY_",
+        env_file=".env",
+        case_sensitive=False,
+    )
+
+    enabled: bool = Field(default=True, description="Enable multi-tenant capabilities")
+    require_registered_tenant: bool = Field(
+        default=True,
+        description="Reject requests for tenants that are not provisioned",
+    )
+    default_plan: str = Field(default="standard", description="Default subscription plan")
+    default_features: List[str] = Field(default_factory=list, description="Features enabled for new tenants")
+    header_name: str = Field(default="X-Aurum-Tenant", description="Header used to resolve tenant id")
+    query_param: str = Field(default="tenant_id", description="Query parameter fallback for tenant id")
+    default_tenant: Optional[str] = Field(default=None, description="Fallback tenant id when none provided")
+    cross_tenant_roles: List[str] = Field(
+        default_factory=lambda: ["aurum:admin", "aurum:superadmin"],
+        description="Roles permitted to operate across tenants",
+    )
+    auto_provision: bool = Field(
+        default=False,
+        description="Automatically provision tenants when first encountered",
+    )
+    isolation_rls_tables: List[str] = Field(
+        default_factory=list,
+        description="Tables that require row-level security policies",
+    )
+    isolation_schema_template: str = Field(
+        default="tenant_{tenant_id}",
+        description="Template used for per-tenant schema creation",
+    )
+    compute_pools: List[str] = Field(default_factory=list, description="Named compute pools available")
+    default_compute_pool: Optional[str] = Field(
+        default=None,
+        description="Default compute pool assignment",
+    )
+    default_quotas: Dict[str, Dict[str, Any]] = Field(
+        default_factory=dict,
+        description="Default resource quotas applied to new tenants",
+    )
+    bootstrap_tenants: List[Dict[str, Any]] = Field(
+        default_factory=list,
+        description="Tenants to provision automatically at startup",
+    )
+
+
+class AurumSettings(BaseSettings):
+    """Main Aurum configuration with all subsystems."""
+
+    model_config = SettingsConfigDict(
+        env_prefix="AURUM_",
+        env_file=".env",
+        env_file_encoding="utf-8",
+        case_sensitive=False,
+        extra="ignore",
+        frozen=True,  # Freeze settings at startup
+    )
+
+    # Environment
+    environment: str = Field(default="development", description="Environment name")
+    debug: bool = Field(default=False, description="Debug mode")
+
+    # Subsystem settings
+    database: DatabaseSettings = Field(default_factory=DatabaseSettings)
+    redis: RedisSettings = Field(default_factory=RedisSettings)
+    cache: CacheSettings = Field(default_factory=CacheSettings)
+    api: APISettings = Field(default_factory=APISettings)
+    observability: ObservabilitySettings = Field(default_factory=ObservabilitySettings)
+    security: SecuritySettings = Field(default_factory=SecuritySettings)
+    workers: WorkerSettings = Field(default_factory=WorkerSettings)
+    tenancy: TenancySettings = Field(default_factory=TenancySettings)
+
+    # Pagination defaults
+    pagination_default_size: int = Field(default=100, description="Default pagination size")
+    pagination_max_size: int = Field(default=1000, description="Max pagination size")
+
+    # Feature flags
+    enable_v2_only: bool = Field(default=True, description="Enable v2 API only")
+    enable_timescale_caggs: bool = Field(default=True, description="Enable continuous aggregates")
+    enable_iceberg_time_travel: bool = Field(default=False, description="Enable Iceberg time travel")
+
+
+# Global settings instance
+_settings: Optional[AurumSettings] = None
+
+
+def _deep_merge_dicts(base: Dict[str, Any], override: Dict[str, Any]) -> Dict[str, Any]:
+    """Deep-merge two dicts, with override taking precedence.
+
+    - Recursively merges nested dicts
+    - Lists and scalars are replaced by override
+    """
+    result: Dict[str, Any] = dict(base)
+    for key, override_value in override.items():
+        base_value = result.get(key)
+        if isinstance(base_value, dict) and isinstance(override_value, dict):
+            result[key] = _deep_merge_dicts(base_value, override_value)
+        else:
+            result[key] = override_value
+    return result
+
+
+def _load_overlays(config_base_path: Path, environment: str) -> Dict[str, Any]:
+    """Load configuration overlays from config/<base|environment>.{yaml|yml|json} and config/<env>/*.{yaml|yml|json}."""
+    overlays: List[Dict[str, Any]] = []
+
+    def _load_file(file_path: Path) -> Optional[Dict[str, Any]]:
+        if not file_path.exists():
+            return None
+        try:
+            if file_path.suffix in (".yaml", ".yml"):
+                if yaml is None:
+                    return None
+                with file_path.open("r", encoding="utf-8") as fh:
+                    data = yaml.safe_load(fh) or {}
+            elif file_path.suffix == ".json":
+                with file_path.open("r", encoding="utf-8") as fh:
+                    data = json.load(fh) or {}
+            else:
+                return None
+            return data if isinstance(data, dict) else None
+        except Exception:
+            return None
+
+    # base overlay
+    for name in ("base", environment):
+        for ext in (".yaml", ".yml", ".json"):
+            loaded = _load_file(config_base_path / f"{name}{ext}")
+            if loaded:
+                overlays.append(loaded)
+
+    # environment-specific directory overlays
+    env_dir = config_base_path / environment
+    if env_dir.exists() and env_dir.is_dir():
+        for child in sorted(env_dir.iterdir()):
+            if child.suffix.lower() in (".yaml", ".yml", ".json"):
+                loaded = _load_file(child)
+                if loaded:
+                    overlays.append(loaded)
+
+    merged: Dict[str, Any] = {}
+    for piece in overlays:
+        merged = _deep_merge_dicts(merged, piece)
+    return merged
+
+
+def get_settings() -> AurumSettings:
+    """Get the global settings instance with overlays (env > overlays > defaults).
+
+    Implementation: Build overlay settings from config/, then deep-merge with env-loaded
+    settings so that env takes precedence.
+    """
+    global _settings
+    if _settings is not None:
+        return _settings
+
+    # Determine config base and environment
+    environment = os.getenv("AURUM_ENV", "development").strip() or "development"
+    base_from_env = os.getenv("AURUM_CONFIG_PATH") or os.getenv("AURUM_SETTINGS_PATH")
+    if base_from_env:
+        config_base_path = Path(base_from_env)
+    else:
+        try:
+            # repo_root/config relative to this file
+            config_base_path = Path(__file__).resolve().parents[3] / "config"
+        except Exception:
+            config_base_path = Path.cwd() / "config"
+
+    # Load env settings and overlays separately
+    env_settings = AurumSettings()
+    overlays: Dict[str, Any] = _load_overlays(config_base_path, environment) if config_base_path.exists() else {}
+
+    if overlays:
+        overlay_settings = AurumSettings(**overlays)
+        merged = _deep_merge_dicts(overlay_settings.model_dump(), env_settings.model_dump())
+        _settings = AurumSettings(**merged)
+    else:
+        _settings = env_settings
+
+    return _settings
+
+
+def configure_settings(settings: AurumSettings) -> None:
+    """Configure the global settings instance (for testing)."""
+    global _settings
+    _settings = settings
+
+
+def reset_settings() -> None:
+    """Reset settings (for testing)."""
+    global _settings
+    _settings = None
 
 def get_flag_env(flag_name: str, *, default: str = "") -> str:
     """Return environment value for ``flag_name`` with lowercase fallback.
 
     Emits a deprecation warning when the lowercase variant is used.
     """
+    import logging
+    logger = logging.getLogger(__name__)
 
     value = os.getenv(flag_name)
     if value is None:
@@ -86,2271 +440,3 @@ def _set_flag_env(flag_name: str, value: str) -> None:
     os.environ[flag_name] = value
     os.environ[flag_name.lower()] = value
 
-
-class MigrationMetrics:
-    """Track migration metrics and health."""
-
-    def __init__(self):
-        # Check if migration monitoring is enabled at the very beginning
-        if not is_feature_enabled(FEATURE_FLAGS["ENABLE_MIGRATION_MONITORING"]):
-            self._metrics = self._default_metrics()
-            self.metrics_file = None
-            return
-
-        try:
-            metrics_dir = os.getenv("AURUM_METRICS_DIR", str(Path.home() / ".aurum"))
-            self.metrics_file = Path(metrics_dir) / "migration_metrics.json"
-
-            # Try to create the directory and handle read-only filesystems
-            try:
-                self.metrics_file.parent.mkdir(parents=True, exist_ok=True)
-            except OSError as e:
-                # If we can't create the directory (read-only filesystem), create a dummy metrics object
-                logger.debug(f"Cannot create metrics directory {self.metrics_file.parent}: {e}")
-                self._metrics = self._default_metrics()
-                self.metrics_file = None
-                return
-
-            try:
-                self._load_metrics()
-            except OSError as e:
-                # If we can't load metrics (read-only filesystem), use default metrics
-                logger.debug(f"Cannot load metrics from {self.metrics_file}: {e}")
-                self._metrics = self._default_metrics()
-        except Exception as e:
-            # If anything fails during initialization, use default metrics
-            logger.debug(f"MigrationMetrics initialization failed: {e}")
-            self._metrics = self._default_metrics()
-            self.metrics_file = None
-
-    def _load_metrics(self):
-        """Load metrics from file."""
-        if self.metrics_file.exists():
-            try:
-                with open(self.metrics_file, 'r') as f:
-                    self._metrics = json.load(f)
-            except Exception:
-                self._metrics = self._default_metrics()
-        else:
-            self._metrics = self._default_metrics()
-
-    def _default_metrics(self):
-        """Get default metrics structure."""
-        return {
-            "settings_migration": {
-                "legacy_calls": 0,
-                "simplified_calls": 0,
-                "errors": 0,
-                "performance_ms": [],
-                "feature_flag_enabled": False,
-                "migration_phase": "legacy"
-            },
-            "database_migration": {
-                "legacy_calls": 0,
-                "simplified_calls": 0,
-                "errors": 0,
-                "performance_ms": [],
-                "feature_flag_enabled": False
-            }
-        }
-
-    def _save_metrics(self):
-        """Save metrics to file."""
-        try:
-            with open(self.metrics_file, 'w') as f:
-                json.dump(self._metrics, f, indent=2)
-        except OSError:
-            # If we can't write to the file (read-only filesystem), just log and continue
-            logger.debug("Cannot save migration metrics due to read-only filesystem")
-        except Exception as e:
-            logger.warning(f"Failed to save migration metrics: {e}")
-
-    def record_settings_call(self, system: str, duration_ms: float, error: bool = False):
-        """Record a settings system call."""
-        if not self.is_monitoring_enabled():
-            return
-
-        metrics = self._metrics["settings_migration"]
-        if system == "simplified":
-            metrics["simplified_calls"] += 1
-        else:
-            metrics["legacy_calls"] += 1
-
-        if error:
-            metrics["errors"] += 1
-
-        metrics["performance_ms"].append(duration_ms)
-        # Keep only last 1000 measurements
-        if len(metrics["performance_ms"]) > 1000:
-            metrics["performance_ms"] = metrics["performance_ms"][-1000:]
-
-        self._save_metrics()
-
-    def get_migration_status(self) -> Dict[str, Any]:
-        """Get current migration status."""
-        if "settings_migration" not in self._metrics:
-            return {
-                "settings_phase": "disabled",
-                "settings_simplified_ratio": 0.0,
-                "database_phase": "disabled",
-                "monitoring_enabled": False,
-            }
-        return {
-            "settings_phase": self._metrics["settings_migration"]["migration_phase"],
-            "settings_simplified_ratio": self._get_simplified_ratio("settings_migration"),
-            "database_phase": self._metrics["database_migration"].get("migration_phase", "legacy"),
-            "monitoring_enabled": self.is_monitoring_enabled(),
-        }
-
-    def _get_simplified_ratio(self, component: str) -> float:
-        """Calculate ratio of simplified system usage."""
-        metrics = self._metrics[component]
-        total = metrics.get("simplified_calls", 0) + metrics.get("legacy_calls", 0)
-        if total == 0:
-            return 0.0
-        return metrics.get("simplified_calls", 0) / total
-
-    def is_monitoring_enabled(self) -> bool:
-        """Check if migration monitoring is enabled."""
-        value = get_flag_env(
-            FEATURE_FLAGS["ENABLE_MIGRATION_MONITORING"],
-            default="false",
-        )
-        return value.lower() in ("true", "1", "yes")
-
-    def set_migration_phase(self, component: str, phase: str):
-        """Set migration phase for a component."""
-        if component in self._metrics:
-            self._metrics[component]["migration_phase"] = phase
-            self._save_metrics()
-
-
-# Global migration metrics instance - initialized lazily
-_migration_metrics: Optional[MigrationMetrics] = None
-
-
-def _init_migration_metrics():
-    """Initialize migration metrics lazily."""
-    global _migration_metrics
-    if _migration_metrics is None:
-        # Check if migration monitoring is enabled before initializing
-        if not is_feature_enabled(FEATURE_FLAGS["ENABLE_MIGRATION_MONITORING"]):
-            _migration_metrics = None
-            return
-
-        try:
-            _migration_metrics = MigrationMetrics()
-        except Exception:
-            # If we can't create the metrics file (any error), keep it None
-            _migration_metrics = None
-
-
-def is_feature_enabled(flag: str) -> bool:
-    """Check if a feature flag is enabled.
-
-    This now delegates to the centralized FeatureFlagManager when available,
-    falling back to environment variables for backward compatibility.
-
-    Defaults to enabled for the simplified settings flag to complete migration.
-    """
-    try:
-        # Try to use the centralized feature flag manager
-        from ..api.features import get_feature_manager
-        manager = get_feature_manager()
-
-        # Use empty context since settings don't have user context
-        # This will return the default value for flags without rules
-        return manager.is_enabled(flag, {}, {})  # type: ignore
-
-    except Exception:
-        # Fallback to environment variables for backward compatibility
-        import logging
-        logger = logging.getLogger(__name__)
-        logger.debug(f"Feature flag manager not available, falling back to env for {flag}")
-
-        # Prefer default enabled for simplified settings roll-out
-        default_value = "true" if flag == FEATURE_FLAGS.get("USE_SIMPLIFIED_SETTINGS") else "false"
-        value = get_flag_env(flag, default=default_value).lower()
-        return value in ("true", "1", "yes")
-
-
-def get_migration_phase(component: str = "settings") -> str:
-    """Get current migration phase for a component."""
-    phase = get_flag_env(
-        FEATURE_FLAGS["SETTINGS_MIGRATION_PHASE"],
-        default="legacy",
-    )
-    # Only set migration phase if metrics are already initialized to avoid triggering initialization during module import
-    if _migration_metrics is not None:
-        _migration_metrics.set_migration_phase("settings_migration", phase)
-    return phase
-
-
-class DataBackendConfig:
-    """Configuration container for pluggable data backends."""
-
-    def __init__(
-        self,
-        *,
-        backend_type: str | DataBackendType = DataBackendType.TRINO,
-        trino_host: str = "localhost",
-        trino_port: int = 8080,
-        trino_catalog: str = "iceberg",
-        trino_database_schema: str = "market",
-        trino_user: str = "aurum",
-        trino_password: str | None = None,
-        clickhouse_host: str = "localhost",
-        clickhouse_port: int = 9000,
-        clickhouse_database: str = "aurum",
-        clickhouse_user: str = "aurum",
-        clickhouse_password: str | None = None,
-        timescale_host: str = "localhost",
-        timescale_port: int = 5432,
-        timescale_database: str = "aurum",
-        timescale_user: str = "aurum",
-        timescale_password: str | None = None,
-        connection_pool_min_size: int = 5,
-        connection_pool_max_size: int = 20,
-        connection_pool_max_idle_time: int = 300,
-        connection_pool_timeout_seconds: float = 30.0,
-        connection_pool_acquire_timeout_seconds: float = 10.0,
-    ) -> None:
-        self.backend_type = backend_type
-        self.trino_host = trino_host
-        self.trino_port = trino_port
-        self.trino_catalog = trino_catalog
-        self.trino_database_schema = trino_database_schema
-        self.trino_user = trino_user
-        self.trino_password = trino_password
-        self.clickhouse_host = clickhouse_host
-        self.clickhouse_port = clickhouse_port
-        self.clickhouse_database = clickhouse_database
-        self.clickhouse_user = clickhouse_user
-        self.clickhouse_password = clickhouse_password
-        self.timescale_host = timescale_host
-        self.timescale_port = timescale_port
-        self.timescale_database = timescale_database
-        self.timescale_user = timescale_user
-        self.timescale_password = timescale_password
-        self.connection_pool_min_size = connection_pool_min_size
-        self.connection_pool_max_size = connection_pool_max_size
-        self.connection_pool_max_idle_time = connection_pool_max_idle_time
-        self.connection_pool_timeout_seconds = connection_pool_timeout_seconds
-        self.connection_pool_acquire_timeout_seconds = connection_pool_acquire_timeout_seconds
-
-    def _coerce_backend_type(self, value: str | DataBackendType) -> DataBackendType:
-        if isinstance(value, DataBackendType):
-            return value
-        if isinstance(value, str):
-            try:
-                return DataBackendType(value.lower())
-            except ValueError as exc:  # pragma: no cover - defensive guard
-                raise ValueError(f"Unsupported data backend type: {value}") from exc
-        raise TypeError(f"backend_type must be a string or DataBackendType, got {type(value)!r}")
-
-    @property
-    def backend_type(self) -> DataBackendType:
-        return self._backend_type
-
-    @backend_type.setter
-    def backend_type(self, value: str | DataBackendType) -> None:
-        self._backend_type = self._coerce_backend_type(value)
-
-    def __repr__(self) -> str:  # pragma: no cover - debugging helper
-        return f"DataBackendConfig(backend_type={self.backend_type.value!r})"
-
-
-class SimplifiedSettings:
-    """Simplified, focused settings system."""
-
-    def __init__(self, env_prefix: str = "AURUM_"):
-        self.env_prefix = env_prefix
-        self._cache: Dict[str, Any] = {}
-        start_time = self._current_time_ms()
-        self._load_from_env()
-        duration = self._current_time_ms() - start_time
-        if get_migration_metrics() is not None:
-            _migration_metrics.record_settings_call("simplified", duration)
-
-    def _current_time_ms(self) -> float:
-        """Get current time in milliseconds."""
-        return self._get_time_ms()
-
-    @staticmethod
-    def _get_time_ms() -> float:
-        """Get current wall time in milliseconds."""
-        try:
-            import time
-            return time.perf_counter() * 1000.0
-        except Exception:
-            return 0.0
-
-    @staticmethod
-    def _get_int_from_env(env: Mapping[str, str], keys: Iterable[str], default: int) -> int:
-        """Read the first valid integer from the provided environment keys."""
-        for key in keys:
-            raw = env.get(key)
-            if raw is None:
-                continue
-            try:
-                return int(raw)
-            except ValueError:
-                logger.warning("Invalid integer for %s=%r; using default %s", key, raw, default)
-        return default
-
-    @staticmethod
-    def _get_float_from_env(env: Mapping[str, str], keys: Iterable[str], default: float) -> float:
-        """Read the first valid float from the provided environment keys."""
-        for key in keys:
-            raw = env.get(key)
-            if raw is None:
-                continue
-            try:
-                return float(raw)
-            except ValueError:
-                logger.warning("Invalid float for %s=%r; using default %s", key, raw, default)
-        return default
-
-    @staticmethod
-    def _get_bool_from_env(env: Mapping[str, str], keys: Iterable[str], default: bool) -> bool:
-        """Read the first boolean-like value from the provided environment keys."""
-
-        truthy = {"true", "1", "yes", "on"}
-        falsy = {"false", "0", "no", "off"}
-        for key in keys:
-            raw = env.get(key)
-            if raw is None:
-                continue
-            lowered = raw.strip().lower()
-            if lowered in truthy:
-                return True
-            if lowered in falsy:
-                return False
-            logger.warning("Invalid boolean for %s=%r; using default %s", key, raw, default)
-        return default
-
-    def _load_from_env(self) -> None:
-        """Load configuration from environment variables."""
-        env = os.environ
-
-        # Core settings
-        self.environment = env.get(f"{self.env_prefix}ENV", "development")
-        self.debug = env.get(f"{self.env_prefix}DEBUG", "false").lower() in ("true", "1", "yes")
-        self.log_level = env.get(f"{self.env_prefix}LOG_LEVEL", "INFO")
-
-        # API settings
-        self.api_host = env.get(f"{self.env_prefix}API_HOST", "localhost")
-        self.api_port = int(env.get(f"{self.env_prefix}API_PORT", "8000"))
-        self.api_cors_origins = self._split_env_list(env.get(f"{self.env_prefix}API_CORS_ORIGINS", "*"))
-        self.api_title = env.get(f"{self.env_prefix}API_TITLE", "Aurum API")
-        self.api_version = env.get(f"{self.env_prefix}API_VERSION", "1.0.0")
-        self.api_request_timeout_seconds = int(env.get(f"{self.env_prefix}API_REQUEST_TIMEOUT_SECONDS", "30"))
-
-        # Search settings
-        self.search_enabled = self._get_bool_from_env(env, [f"{self.env_prefix}SEARCH_ENABLED"], True)
-        self.search_hosts = self._split_env_list(env.get(f"{self.env_prefix}SEARCH_HOSTS", "localhost:9200"))
-        self.search_username = env.get(f"{self.env_prefix}SEARCH_USERNAME", "")
-        self.search_password = env.get(f"{self.env_prefix}SEARCH_PASSWORD", "")
-        self.search_api_key = env.get(f"{self.env_prefix}SEARCH_API_KEY", "")
-        self.search_index_prefix = env.get(f"{self.env_prefix}SEARCH_INDEX_PREFIX", "aurum")
-        self.search_suggest_enabled = self._get_bool_from_env(env, [f"{self.env_prefix}SEARCH_SUGGEST_ENABLED"], True)
-        self.search_semantic_enabled = self._get_bool_from_env(env, [f"{self.env_prefix}SEARCH_SEMANTIC_ENABLED"], False)
-        self.search_embedding_model = env.get(f"{self.env_prefix}SEARCH_EMBEDDING_MODEL", "sentence-transformers/all-MiniLM-L6-v2")
-        self.search_knn_k = self._get_int_from_env(env, [f"{self.env_prefix}SEARCH_KNN_K"], 100)
-        self.search_semantic_weight = self._get_float_from_env(env, [f"{self.env_prefix}SEARCH_SEMANTIC_WEIGHT"], 0.3)
-        self.search_query_timeout_ms = self._get_int_from_env(env, [f"{self.env_prefix}SEARCH_QUERY_TIMEOUT_MS"], 30000)
-        self.search_max_result_window = self._get_int_from_env(env, [f"{self.env_prefix}SEARCH_MAX_RESULT_WINDOW"], 10000)
-        self.search_cursor_page_size_default = self._get_int_from_env(env, [f"{self.env_prefix}SEARCH_CURSOR_PAGE_SIZE_DEFAULT"], 20)
-        self.search_analytics_enabled = self._get_bool_from_env(env, [f"{self.env_prefix}SEARCH_ANALYTICS_ENABLED"], True)
-        # GZip settings (compat: allow unprefixed var used in tests)
-        try:
-            self.gzip_min_bytes = int(env.get("API_GZIP_MIN_BYTES", env.get(f"{self.env_prefix}API_GZIP_MIN_BYTES", "500")))
-        except ValueError:
-            self.gzip_min_bytes = 500
-
-        cache_ttl_high_frequency = self._get_int_from_env(
-            env,
-            [
-                f"{self.env_prefix}API_CACHE_TTL_HIGH_FREQUENCY",
-                f"{self.env_prefix}API_CACHE_HIGH_TTL",
-            ],
-            60,
-        )
-        cache_ttl_medium_frequency = self._get_int_from_env(
-            env,
-            [
-                f"{self.env_prefix}API_CACHE_TTL_MEDIUM_FREQUENCY",
-                f"{self.env_prefix}API_CACHE_MEDIUM_TTL",
-            ],
-            300,
-        )
-        cache_ttl_low_frequency = self._get_int_from_env(
-            env,
-            [
-                f"{self.env_prefix}API_CACHE_TTL_LOW_FREQUENCY",
-                f"{self.env_prefix}API_CACHE_LOW_TTL",
-            ],
-            3600,
-        )
-        cache_ttl_static = self._get_int_from_env(
-            env,
-            [f"{self.env_prefix}API_CACHE_TTL_STATIC"],
-            7200,
-        )
-        cache_ttl_curve_data = self._get_int_from_env(
-            env,
-            [
-                f"{self.env_prefix}API_CACHE_TTL_CURVE_DATA",
-                f"{self.env_prefix}API_CACHE_CURVE_TTL",
-            ],
-            cache_ttl_medium_frequency,
-        )
-        cache_ttl_metadata = self._get_int_from_env(
-            env,
-            [
-                f"{self.env_prefix}API_CACHE_TTL_METADATA",
-                f"{self.env_prefix}API_CACHE_METADATA_TTL",
-            ],
-            cache_ttl_static,
-        )
-        cache_ttl_external_data = self._get_int_from_env(
-            env,
-            [f"{self.env_prefix}API_CACHE_TTL_EXTERNAL_DATA"],
-            cache_ttl_static,
-        )
-        cache_ttl_scenario_data = self._get_int_from_env(
-            env,
-            [
-                f"{self.env_prefix}API_CACHE_TTL_SCENARIO_DATA",
-                f"{self.env_prefix}API_CACHE_SCENARIO_TTL",
-            ],
-            cache_ttl_medium_frequency,
-        )
-        cache_ttl_curve_diff = self._get_int_from_env(
-            env,
-            [
-                f"{self.env_prefix}API_CACHE_TTL_CURVE_DIFF",
-                f"{self.env_prefix}API_CACHE_CURVE_DIFF_TTL",
-            ],
-            cache_ttl_medium_frequency,
-        )
-        cache_ttl_curve_strips = self._get_int_from_env(
-            env,
-            [
-                f"{self.env_prefix}API_CACHE_TTL_CURVE_STRIPS",
-                f"{self.env_prefix}API_CACHE_CURVE_STRIP_TTL",
-            ],
-            cache_ttl_medium_frequency,
-        )
-        eia_series_ttl = self._get_int_from_env(
-            env,
-            [f"{self.env_prefix}API_CACHE_EIA_SERIES_TTL"],
-            cache_ttl_medium_frequency,
-        )
-        eia_series_dim_ttl = self._get_int_from_env(
-            env,
-            [f"{self.env_prefix}API_CACHE_EIA_SERIES_DIM_TTL"],
-            cache_ttl_low_frequency,
-        )
-
-        # API cache configuration defaults
-        api_cache_defaults = {
-            "in_memory_ttl": self._get_int_from_env(
-                env,
-                [f"{self.env_prefix}API_CACHE_IN_MEMORY_TTL"],
-                60,
-            ),
-            "metadata_ttl": cache_ttl_metadata,
-            "curve_ttl": cache_ttl_curve_data,
-            "curve_diff_ttl": cache_ttl_curve_diff,
-            "curve_strip_ttl": cache_ttl_curve_strips,
-            "eia_series_ttl": eia_series_ttl,
-            "eia_series_dimensions_ttl": eia_series_dim_ttl,
-            "cache_ttl_high_frequency": cache_ttl_high_frequency,
-            "cache_ttl_medium_frequency": cache_ttl_medium_frequency,
-            "cache_ttl_low_frequency": cache_ttl_low_frequency,
-            "cache_ttl_static": cache_ttl_static,
-            "cache_ttl_curve_data": cache_ttl_curve_data,
-            "cache_ttl_metadata": cache_ttl_metadata,
-            "cache_ttl_external_data": cache_ttl_external_data,
-            "cache_ttl_scenario_data": cache_ttl_scenario_data,
-        }
-
-        api_metrics_enabled = env.get(f"{self.env_prefix}API_METRICS_ENABLED", "false").lower() in ("true", "1", "yes")
-        api_metrics_path = env.get(f"{self.env_prefix}API_METRICS_PATH", "/metrics")
-
-        # Concurrency controls
-        concurrency_enabled = self._get_bool_from_env(
-            env,
-            [f"{self.env_prefix}API_CONCURRENCY_ENABLED"],
-            True,
-        )
-        concurrency_defaults = {
-            "max_concurrent_requests": self._get_int_from_env(
-                env,
-                [f"{self.env_prefix}API_CONCURRENCY_MAX_CONCURRENT_REQUESTS"],
-                100,
-            ),
-            "max_requests_per_second": self._get_float_from_env(
-                env,
-                [f"{self.env_prefix}API_CONCURRENCY_MAX_REQUESTS_PER_SECOND"],
-                10.0,
-            ),
-            "max_request_duration_seconds": self._get_float_from_env(
-                env,
-                [f"{self.env_prefix}API_CONCURRENCY_MAX_REQUEST_DURATION_SECONDS"],
-                float(self.api_request_timeout_seconds),
-            ),
-            "max_requests_per_tenant": self._get_int_from_env(
-                env,
-                [f"{self.env_prefix}API_CONCURRENCY_MAX_REQUESTS_PER_TENANT"],
-                20,
-            ),
-            "tenant_burst_limit": self._get_int_from_env(
-                env,
-                [f"{self.env_prefix}API_CONCURRENCY_TENANT_BURST_LIMIT"],
-                50,
-            ),
-            "tenant_queue_limit": self._get_int_from_env(
-                env,
-                [f"{self.env_prefix}API_CONCURRENCY_TENANT_QUEUE_LIMIT"],
-                64,
-            ),
-            "queue_timeout_seconds": self._get_float_from_env(
-                env,
-                [f"{self.env_prefix}API_CONCURRENCY_QUEUE_TIMEOUT_SECONDS"],
-                2.0,
-            ),
-            "burst_refill_per_second": self._get_float_from_env(
-                env,
-                [f"{self.env_prefix}API_CONCURRENCY_BURST_REFILL_PER_SECOND"],
-                0.5,
-            ),
-            "slow_start_initial_limit": self._get_int_from_env(
-                env,
-                [f"{self.env_prefix}API_CONCURRENCY_SLOW_START_INITIAL_LIMIT"],
-                2,
-            ),
-            "slow_start_step_seconds": self._get_float_from_env(
-                env,
-                [f"{self.env_prefix}API_CONCURRENCY_SLOW_START_STEP_SECONDS"],
-                3.0,
-            ),
-            "slow_start_step_size": self._get_int_from_env(
-                env,
-                [f"{self.env_prefix}API_CONCURRENCY_SLOW_START_STEP_SIZE"],
-                1,
-            ),
-            "slow_start_cooldown_seconds": self._get_float_from_env(
-                env,
-                [f"{self.env_prefix}API_CONCURRENCY_SLOW_START_COOLDOWN_SECONDS"],
-                30.0,
-            ),
-            "offload_routes": [],
-        }
-
-        concurrency_field_casts = {
-            "max_requests_per_tenant": int,
-            "tenant_queue_limit": int,
-            "tenant_burst_limit": int,
-            "queue_timeout_seconds": float,
-            "burst_refill_per_second": float,
-            "slow_start_initial_limit": int,
-            "slow_start_step_seconds": float,
-            "slow_start_step_size": int,
-            "slow_start_cooldown_seconds": float,
-            "max_request_duration_seconds": float,
-            "max_requests_per_second": float,
-        }
-
-        tenant_overrides_raw = env.get(
-            f"{self.env_prefix}API_CONCURRENCY_TENANT_OVERRIDES",
-            "",
-        )
-        tenant_overrides: Dict[str, Dict[str, Any]] = {}
-        if tenant_overrides_raw:
-            try:
-                overrides_payload = json.loads(tenant_overrides_raw)
-            except json.JSONDecodeError:
-                logger.warning(
-                    "Invalid JSON for %sAPI_CONCURRENCY_TENANT_OVERRIDES; ignoring overrides",
-                    self.env_prefix,
-                )
-                overrides_payload = {}
-
-            if isinstance(overrides_payload, dict):
-                for tenant_key, override in overrides_payload.items():
-                    if not isinstance(override, dict):
-                        logger.warning(
-                            "Tenant override for %s must be an object; skipping",
-                            tenant_key,
-                        )
-                        continue
-                    normalized: Dict[str, Any] = {}
-                    for field_name, value in override.items():
-                        caster = concurrency_field_casts.get(field_name)
-                        if caster is None:
-                            continue
-                        try:
-                            normalized[field_name] = caster(value)
-                        except (TypeError, ValueError):
-                            logger.warning(
-                                "Invalid override value %r for %s on tenant %s; skipping",
-                                value,
-                                field_name,
-                                tenant_key,
-                            )
-                    if normalized:
-                        tenant_overrides[str(tenant_key)] = normalized
-            elif tenant_overrides_raw:
-                logger.warning(
-                    "Tenant overrides must decode to a JSON object; received %r",
-                    overrides_payload,
-                )
-
-        redis_url_default = env.get(f"{self.env_prefix}REDIS_URL", "redis://localhost:6379")
-        redis_namespace_default = env.get(f"{self.env_prefix}REDIS_NAMESPACE", "aurum")
-        offload_routes_raw = env.get(f"{self.env_prefix}API_CONCURRENCY_OFFLOAD_ROUTES", "")
-        if offload_routes_raw:
-            try:
-                routes = json.loads(offload_routes_raw)
-                if isinstance(routes, list):
-                    concurrency_defaults["offload_routes"] = routes
-                else:
-                    logger.warning("Offload routes must decode to a JSON array; ignoring configuration")
-            except json.JSONDecodeError:
-                logger.warning("Invalid JSON for %sAPI_CONCURRENCY_OFFLOAD_ROUTES; ignoring", self.env_prefix)
-
-        concurrency_redis_enabled = self._get_bool_from_env(
-            env,
-            [f"{self.env_prefix}API_CONCURRENCY_REDIS_ENABLED"],
-            False,
-        )
-        concurrency_redis_url = env.get(
-            f"{self.env_prefix}API_CONCURRENCY_REDIS_URL",
-            redis_url_default,
-        )
-        concurrency_redis_namespace = env.get(
-            f"{self.env_prefix}API_CONCURRENCY_REDIS_NAMESPACE",
-            f"{redis_namespace_default}:api:concurrency",
-        )
-        concurrency_redis_poll = self._get_float_from_env(
-            env,
-            [f"{self.env_prefix}API_CONCURRENCY_REDIS_POLL_INTERVAL_SECONDS"],
-            0.05,
-        )
-        concurrency_redis_stale = self._get_float_from_env(
-            env,
-            [f"{self.env_prefix}API_CONCURRENCY_REDIS_QUEUE_STALE_SECONDS"],
-            concurrency_defaults["queue_timeout_seconds"],
-        )
-        concurrency_redis_ttl = self._get_float_from_env(
-            env,
-            [f"{self.env_prefix}API_CONCURRENCY_REDIS_QUEUE_TTL_SECONDS"],
-            max(concurrency_redis_stale * 10.0, 30.0),
-        )
-        concurrency_backpressure_threshold = self._get_float_from_env(
-            env,
-            [f"{self.env_prefix}API_CONCURRENCY_BACKPRESSURE_RATIO_THRESHOLD"],
-            0.0,
-        )
-        concurrency_backpressure_header = env.get(
-            f"{self.env_prefix}API_CONCURRENCY_BACKPRESSURE_HEADER",
-            "X-Backpressure",
-        )
-        concurrency_redis_username = env.get(
-            f"{self.env_prefix}API_CONCURRENCY_REDIS_USERNAME",
-            env.get(f"{self.env_prefix}REDIS_USERNAME"),
-        )
-        concurrency_redis_password = env.get(
-            f"{self.env_prefix}API_CONCURRENCY_REDIS_PASSWORD",
-            env.get(f"{self.env_prefix}REDIS_PASSWORD"),
-        )
-
-        concurrency_namespace = SimpleNamespace(
-            enabled=concurrency_enabled,
-            tenant_overrides=tenant_overrides,
-            redis_enabled=concurrency_redis_enabled,
-            redis_url=concurrency_redis_url,
-            redis_namespace=concurrency_redis_namespace,
-            redis_poll_interval_seconds=concurrency_redis_poll,
-            redis_queue_stale_seconds=concurrency_redis_stale,
-            redis_queue_ttl_seconds=concurrency_redis_ttl,
-            redis_username=concurrency_redis_username,
-            redis_password=concurrency_redis_password,
-            backpressure_ratio_threshold=concurrency_backpressure_threshold,
-            backpressure_header=concurrency_backpressure_header,
-            **concurrency_defaults,
-        )
-
-        # Database settings
-        self.database_url = env.get(f"{self.env_prefix}DATABASE_URL", "postgresql://localhost/aurum")
-        self.trino_host = env.get(f"{self.env_prefix}TRINO_HOST", "localhost")
-        self.trino_port = int(env.get(f"{self.env_prefix}TRINO_PORT", "8080"))
-        self.redis_url = env.get(f"{self.env_prefix}REDIS_URL", "redis://localhost:6379")
-        self.trino_user = env.get(f"{self.env_prefix}TRINO_USER", "aurum")
-        self.trino_password = env.get(f"{self.env_prefix}TRINO_PASSWORD", "")
-        self.trino_catalog = env.get(f"{self.env_prefix}TRINO_CATALOG", "iceberg")
-        self.trino_schema = env.get(f"{self.env_prefix}TRINO_SCHEMA", "market")
-        self.trino_http_scheme = env.get(f"{self.env_prefix}TRINO_HTTP_SCHEME", "http")
-        self.trino_hot_cache_enabled = self._get_bool_from_env(
-            env,
-            [f"{self.env_prefix}TRINO_HOT_CACHE_ENABLED"],
-            True,
-        )
-        self.trino_prepared_cache_metrics_enabled = self._get_bool_from_env(
-            env,
-            [f"{self.env_prefix}TRINO_PREPARED_CACHE_METRICS_ENABLED"],
-            True,
-        )
-        self.trino_trace_tagging_enabled = self._get_bool_from_env(
-            env,
-            [f"{self.env_prefix}TRINO_TRACE_TAGGING_ENABLED"],
-            True,
-        )
-        self.trino_metrics_label = env.get(f"{self.env_prefix}TRINO_METRICS_LABEL", "default")
-        default_cache_ttl = int(env.get(f"{self.env_prefix}CACHE_TTL", "300"))
-        self.database_timescale_dsn = env.get(f"{self.env_prefix}TIMESCALE_DSN", self.database_url)
-        self.database_eia_series_base_table = env.get(f"{self.env_prefix}EIA_SERIES_BASE_TABLE", "iceberg.market.eia_series")
-
-        # ClickHouse defaults
-        self.clickhouse_host = env.get(f"{self.env_prefix}CLICKHOUSE_HOST", "localhost")
-        self.clickhouse_port = self._get_int_from_env(
-            env,
-            [f"{self.env_prefix}CLICKHOUSE_PORT"],
-            9000,
-        )
-        self.clickhouse_user = env.get(f"{self.env_prefix}CLICKHOUSE_USER", "aurum")
-        self.clickhouse_password = env.get(f"{self.env_prefix}CLICKHOUSE_PASSWORD", "")
-        self.clickhouse_database = env.get(f"{self.env_prefix}CLICKHOUSE_DATABASE", "aurum")
-
-        # Timescale defaults
-        self.timescale_host = env.get(f"{self.env_prefix}TIMESCALE_HOST", "localhost")
-        self.timescale_port = self._get_int_from_env(
-            env,
-            [f"{self.env_prefix}TIMESCALE_PORT"],
-            5432,
-        )
-        self.timescale_user = env.get(f"{self.env_prefix}TIMESCALE_USER", "aurum")
-        self.timescale_password = env.get(f"{self.env_prefix}TIMESCALE_PASSWORD", "")
-        self.timescale_database = env.get(f"{self.env_prefix}TIMESCALE_DATABASE", "aurum")
-
-        # Redis tuning
-        redis_mode_value = env.get(f"{self.env_prefix}REDIS_MODE", RedisMode.STANDALONE.value).lower()
-        try:
-            self.redis_mode = RedisMode(redis_mode_value)
-        except ValueError:
-            self.redis_mode = redis_mode_value
-        self.redis_sentinel_endpoints = self._split_env_list(env.get(f"{self.env_prefix}REDIS_SENTINELS", ""))
-        self.redis_sentinel_master = env.get(f"{self.env_prefix}REDIS_SENTINEL_MASTER")
-        self.redis_cluster_nodes = self._split_env_list(env.get(f"{self.env_prefix}REDIS_CLUSTER_NODES", ""))
-        self.redis_username = env.get(f"{self.env_prefix}REDIS_USERNAME")
-        self.redis_password = env.get(f"{self.env_prefix}REDIS_PASSWORD")
-        self.redis_namespace = env.get(f"{self.env_prefix}REDIS_NAMESPACE", "aurum")
-        self.redis_db = int(env.get(f"{self.env_prefix}REDIS_DB", "0"))
-        self.redis_socket_timeout = float(env.get(f"{self.env_prefix}REDIS_SOCKET_TIMEOUT", "1.5"))
-        self.redis_connect_timeout = float(env.get(f"{self.env_prefix}REDIS_CONNECT_TIMEOUT", "1.5"))
-
-        # Performance settings
-        self.max_workers = int(env.get(f"{self.env_prefix}MAX_WORKERS", "4"))
-        self.request_timeout = float(env.get(f"{self.env_prefix}REQUEST_TIMEOUT", "30.0"))
-        self.cache_ttl = default_cache_ttl
-        self.redis_ttl_seconds = int(env.get(f"{self.env_prefix}REDIS_TTL_SECONDS", str(default_cache_ttl)))
-        # Security settings
-        self.auth_enabled = env.get(f"{self.env_prefix}AUTH_ENABLED", "true").lower() in ("true", "1", "yes")
-        self.jwt_secret = env.get(f"{self.env_prefix}JWT_SECRET", "")
-        self.admin_emails = self._split_env_list(env.get(f"{self.env_prefix}ADMIN_EMAILS", ""))
-
-        # Telemetry settings
-        self.service_name = env.get(f"{self.env_prefix}OTEL_SERVICE_NAME", "aurum")
-
-        # Structured API settings for simplified mode
-        security_headers_enabled = self._get_bool_from_env(
-            env,
-            [f"{self.env_prefix}API_SECURITY_HEADERS_ENABLED"],
-            True,
-        )
-        security_headers_csp = (
-            env.get(f"{self.env_prefix}API_SECURITY_HEADERS_CSP")
-            or "default-src 'self'; script-src 'self'; connect-src 'self' https:; img-src 'self' data:; style-src 'self' 'unsafe-inline'"
-        )
-        security_headers_hsts = (
-            env.get(f"{self.env_prefix}API_SECURITY_HEADERS_HSTS")
-            or "max-age=31536000; includeSubDomains"
-        )
-
-        cors_allowlist_cfg = self._split_env_list(
-            env.get(f"{self.env_prefix}API_CORS_ALLOWLIST", "")
-        )
-        cors_allowlist = cors_allowlist_cfg or self.api_cors_origins
-        cors_strict = self._get_bool_from_env(
-            env,
-            [f"{self.env_prefix}API_CORS_STRICT"],
-            not self.is_development(),
-        )
-        cors_allow_credentials = self._get_bool_from_env(
-            env,
-            [f"{self.env_prefix}API_CORS_ALLOW_CREDENTIALS"],
-            True,
-        )
-        cors_allowed_headers = self._split_env_list(
-            env.get(
-                f"{self.env_prefix}API_CORS_ALLOWED_HEADERS",
-                "Authorization,Content-Type,X-Requested-With",
-            )
-        )
-        cors_max_age = self._get_int_from_env(
-            env,
-            [f"{self.env_prefix}API_CORS_MAX_AGE"],
-            600,
-        )
-
-        self.api = SimpleNamespace(
-            api_title=self.api_title,
-            title=self.api_title,
-            version=self.api_version,
-            request_timeout_seconds=self.api_request_timeout_seconds,
-            host=self.api_host,
-            port=self.api_port,
-            cors_origins=self.api_cors_origins,
-            gzip_min_bytes=self.gzip_min_bytes,
-            cache=SimpleNamespace(**api_cache_defaults),
-            metrics=SimpleNamespace(enabled=api_metrics_enabled, path=api_metrics_path),
-            concurrency=concurrency_namespace,
-            rate_limit=SimpleNamespace(enabled=False, tenant_overrides={}),
-            security_headers=SimpleNamespace(
-                enabled=security_headers_enabled,
-                csp=security_headers_csp,
-                hsts=security_headers_hsts,
-            ),
-            cors=SimpleNamespace(
-                strict=cors_strict,
-                allowlist=cors_allowlist,
-                allow_credentials=cors_allow_credentials,
-                allowed_headers=cors_allowed_headers,
-                max_age=cors_max_age,
-            ),
-            admin_guard_enabled=self._get_bool_from_env(
-                env,
-                [f"{self.env_prefix}API_ADMIN_GUARD_ENABLED"],
-                False,
-            ),
-            dimensions_table_trino=env.get(
-                f"{self.env_prefix}API_DIMENSIONS_TABLE_TRINO",
-                "iceberg.market.curve_observation",
-            ),
-            dimensions_table_clickhouse=env.get(
-                f"{self.env_prefix}API_DIMENSIONS_TABLE_CLICKHOUSE",
-                "aurum.curve_observation",
-            ),
-            dimensions_table_timescale=env.get(
-                f"{self.env_prefix}API_DIMENSIONS_TABLE_TIMESCALE",
-                "market.curve_observation",
-            ),
-            eia_series_table_trino=env.get(
-                f"{self.env_prefix}API_EIA_SERIES_TABLE_TRINO",
-                env.get(f"{self.env_prefix}EIA_SERIES_BASE_TABLE", "iceberg.market.eia_series"),
-            ),
-            eia_series_table_clickhouse=env.get(
-                f"{self.env_prefix}API_EIA_SERIES_TABLE_CLICKHOUSE",
-                "aurum.eia_series",
-            ),
-            eia_series_table_timescale=env.get(
-                f"{self.env_prefix}API_EIA_SERIES_TABLE_TIMESCALE",
-                "market.eia_series",
-            ),
-            iso_lmp_last24h_table_trino=env.get(
-                f"{self.env_prefix}API_ISO_LMP_LAST24H_TABLE_TRINO",
-                "environment.iso_lmp_last_24h",
-            ),
-            iso_lmp_last24h_table_clickhouse=env.get(
-                f"{self.env_prefix}API_ISO_LMP_LAST24H_TABLE_CLICKHOUSE",
-                "aurum.iso_lmp_last_24h",
-            ),
-            iso_lmp_last24h_table_timescale=env.get(
-                f"{self.env_prefix}API_ISO_LMP_LAST24H_TABLE_TIMESCALE",
-                "public.iso_lmp_last_24h",
-            ),
-            iso_lmp_hourly_table_trino=env.get(
-                f"{self.env_prefix}API_ISO_LMP_HOURLY_TABLE_TRINO",
-                "environment.iso_lmp_hourly",
-            ),
-            iso_lmp_hourly_table_clickhouse=env.get(
-                f"{self.env_prefix}API_ISO_LMP_HOURLY_TABLE_CLICKHOUSE",
-                "aurum.iso_lmp_hourly",
-            ),
-            iso_lmp_hourly_table_timescale=env.get(
-                f"{self.env_prefix}API_ISO_LMP_HOURLY_TABLE_TIMESCALE",
-                "public.iso_lmp_hourly",
-            ),
-            iso_lmp_daily_table_trino=env.get(
-                f"{self.env_prefix}API_ISO_LMP_DAILY_TABLE_TRINO",
-                "environment.iso_lmp_daily",
-            ),
-            iso_lmp_daily_table_clickhouse=env.get(
-                f"{self.env_prefix}API_ISO_LMP_DAILY_TABLE_CLICKHOUSE",
-                "aurum.iso_lmp_daily",
-            ),
-            iso_lmp_daily_table_timescale=env.get(
-                f"{self.env_prefix}API_ISO_LMP_DAILY_TABLE_TIMESCALE",
-                "public.iso_lmp_daily",
-            ),
-            drought_index_table_trino=env.get(
-                f"{self.env_prefix}API_DROUGHT_INDEX_TABLE_TRINO",
-                "environment.drought_index",
-            ),
-            drought_index_table_clickhouse=env.get(
-                f"{self.env_prefix}API_DROUGHT_INDEX_TABLE_CLICKHOUSE",
-                "aurum.drought_index",
-            ),
-            drought_index_table_timescale=env.get(
-                f"{self.env_prefix}API_DROUGHT_INDEX_TABLE_TIMESCALE",
-                "public.drought_index",
-            ),
-            usdm_area_table_trino=env.get(
-                f"{self.env_prefix}API_USDM_AREA_TABLE_TRINO",
-                "environment.usdm_area",
-            ),
-            usdm_area_table_clickhouse=env.get(
-                f"{self.env_prefix}API_USDM_AREA_TABLE_CLICKHOUSE",
-                "aurum.usdm_area",
-            ),
-            usdm_area_table_timescale=env.get(
-                f"{self.env_prefix}API_USDM_AREA_TABLE_TIMESCALE",
-                "public.usdm_area",
-            ),
-            geographies_table_trino=env.get(
-                f"{self.env_prefix}API_GEOGRAPHIES_TABLE_TRINO",
-                "ref.geographies",
-            ),
-            geographies_table_clickhouse=env.get(
-                f"{self.env_prefix}API_GEOGRAPHIES_TABLE_CLICKHOUSE",
-                "aurum.geographies",
-            ),
-            geographies_table_timescale=env.get(
-                f"{self.env_prefix}API_GEOGRAPHIES_TABLE_TIMESCALE",
-                "ref.geographies",
-            ),
-        )
-
-        if isinstance(self.api.cache, SimpleNamespace):
-            # Provide additional aliases expected in legacy code paths
-            cache_ns = self.api.cache
-            cache_ns.ttl_seconds = cache_ns.curve_ttl
-
-        self.redis = SimpleNamespace(
-            url=self.redis_url,
-            ttl_seconds=self.redis_ttl_seconds,
-            mode=self.redis_mode,
-            sentinel_endpoints=self.redis_sentinel_endpoints,
-            sentinel_master=self.redis_sentinel_master,
-            cluster_nodes=self.redis_cluster_nodes,
-            username=self.redis_username,
-            password=self.redis_password,
-            namespace=self.redis_namespace,
-            db=self.redis_db,
-            socket_timeout=self.redis_socket_timeout,
-            connect_timeout=self.redis_connect_timeout,
-        )
-
-        self.database = SimpleNamespace(
-            url=self.database_url,
-            timescale_dsn=self.database_timescale_dsn,
-            eia_series_base_table=self.database_eia_series_base_table,
-        )
-
-        self.trino = SimpleNamespace(
-            host=self.trino_host,
-            port=self.trino_port,
-            user=self.trino_user,
-            password=self.trino_password or None,
-            http_scheme=self.trino_http_scheme,
-            catalog=self.trino_catalog,
-            database_schema=self.trino_schema,
-            hot_cache_enabled=self.trino_hot_cache_enabled,
-            prepared_cache_metrics_enabled=self.trino_prepared_cache_metrics_enabled,
-            trace_tagging_enabled=self.trino_trace_tagging_enabled,
-            metrics_label=self.trino_metrics_label,
-        )
-
-        backend_type_value = env.get(f"{self.env_prefix}API_BACKEND", DataBackendType.TRINO.value)
-        pool_min_size = self._get_int_from_env(
-            env,
-            [
-                f"{self.env_prefix}DATA_BACKEND_POOL_MIN_SIZE",
-                f"{self.env_prefix}DATA_BACKEND_CONNECTION_POOL_MIN_SIZE",
-                f"{self.env_prefix}CONNECTION_POOL_MIN_SIZE",
-            ],
-            5,
-        )
-        pool_max_size = self._get_int_from_env(
-            env,
-            [
-                f"{self.env_prefix}DATA_BACKEND_POOL_MAX_SIZE",
-                f"{self.env_prefix}DATA_BACKEND_CONNECTION_POOL_MAX_SIZE",
-                f"{self.env_prefix}CONNECTION_POOL_MAX_SIZE",
-            ],
-            20,
-        )
-        pool_max_idle_time = self._get_int_from_env(
-            env,
-            [
-                f"{self.env_prefix}DATA_BACKEND_POOL_MAX_IDLE_TIME",
-                f"{self.env_prefix}DATA_BACKEND_CONNECTION_POOL_MAX_IDLE_TIME",
-            ],
-            300,
-        )
-        pool_timeout = self._get_float_from_env(
-            env,
-            [
-                f"{self.env_prefix}DATA_BACKEND_POOL_TIMEOUT_SECONDS",
-                f"{self.env_prefix}DATA_BACKEND_CONNECTION_TIMEOUT_SECONDS",
-            ],
-            30.0,
-        )
-        pool_acquire_timeout = self._get_float_from_env(
-            env,
-            [
-                f"{self.env_prefix}DATA_BACKEND_POOL_ACQUIRE_TIMEOUT_SECONDS",
-                f"{self.env_prefix}DATA_BACKEND_CONNECTION_ACQUIRE_TIMEOUT_SECONDS",
-            ],
-            10.0,
-        )
-
-        self.data_backend = DataBackendConfig(
-            backend_type=backend_type_value,
-            trino_host=self.trino_host,
-            trino_port=self.trino_port,
-            trino_catalog=self.trino_catalog,
-            trino_database_schema=self.trino_schema,
-            trino_user=self.trino_user,
-            trino_password=self.trino_password or None,
-            clickhouse_host=self.clickhouse_host,
-            clickhouse_port=self.clickhouse_port,
-            clickhouse_database=self.clickhouse_database,
-            clickhouse_user=self.clickhouse_user,
-            clickhouse_password=self.clickhouse_password or None,
-            timescale_host=self.timescale_host,
-            timescale_port=self.timescale_port,
-            timescale_database=self.timescale_database,
-            timescale_user=self.timescale_user,
-            timescale_password=self.timescale_password or None,
-            connection_pool_min_size=pool_min_size,
-            connection_pool_max_size=pool_max_size,
-            connection_pool_max_idle_time=pool_max_idle_time,
-            connection_pool_timeout_seconds=pool_timeout,
-            connection_pool_acquire_timeout_seconds=pool_acquire_timeout,
-        )
-
-        offload_enabled = self._get_bool_from_env(
-            env,
-            [f"{self.env_prefix}API_OFFLOAD_ENABLED"],
-            False,
-        )
-        default_stub = self.environment.lower() in {"development", "dev", "local"}
-        offload_use_stub = self._get_bool_from_env(
-            env,
-            [f"{self.env_prefix}API_OFFLOAD_USE_STUB"],
-            default_stub or not offload_enabled,
-        )
-        offload_broker = env.get(
-            f"{self.env_prefix}API_OFFLOAD_CELERY_BROKER_URL",
-            env.get("AURUM_CELERY_BROKER_URL", "redis://localhost:6379/0"),
-        )
-        offload_backend = env.get(
-            f"{self.env_prefix}API_OFFLOAD_CELERY_RESULT_BACKEND",
-            env.get("AURUM_CELERY_RESULT_BACKEND", "redis://localhost:6379/1"),
-        )
-        offload_default_queue = env.get(
-            f"{self.env_prefix}API_OFFLOAD_DEFAULT_QUEUE",
-            env.get("AURUM_CELERY_TASK_DEFAULT_QUEUE", "default"),
-        )
-
-        mlflow_enabled = self._get_bool_from_env(
-            env,
-            [
-                f"{self.env_prefix}MODEL_REGISTRY_MLFLOW_ENABLED",
-                f"{self.env_prefix}MLFLOW_ENABLED",
-            ],
-            False,
-        )
-        mlflow_tracking_uri = (
-            env.get(f"{self.env_prefix}MODEL_REGISTRY_MLFLOW_TRACKING_URI")
-            or env.get(f"{self.env_prefix}MLFLOW_TRACKING_URI")
-            or env.get("MLFLOW_TRACKING_URI")
-        )
-        if mlflow_tracking_uri:
-            mlflow_tracking_uri = mlflow_tracking_uri.strip() or None
-
-        mlflow_registry_uri = (
-            env.get(f"{self.env_prefix}MODEL_REGISTRY_MLFLOW_REGISTRY_URI")
-            or env.get(f"{self.env_prefix}MLFLOW_REGISTRY_URI")
-            or env.get("MLFLOW_REGISTRY_URI")
-        )
-        if mlflow_registry_uri:
-            mlflow_registry_uri = mlflow_registry_uri.strip() or None
-
-        mlflow_experiment_name = (
-            env.get(f"{self.env_prefix}MODEL_REGISTRY_MLFLOW_EXPERIMENT_NAME")
-            or env.get(f"{self.env_prefix}MLFLOW_EXPERIMENT_NAME")
-        )
-        if mlflow_experiment_name:
-            mlflow_experiment_name = mlflow_experiment_name.strip() or None
-
-        mlflow_timeout_seconds = self._get_int_from_env(
-            env,
-            [
-                f"{self.env_prefix}MODEL_REGISTRY_MLFLOW_TIMEOUT_SECONDS",
-                f"{self.env_prefix}MLFLOW_TIMEOUT_SECONDS",
-            ],
-            30,
-        )
-
-        self.model_registry = SimpleNamespace(
-            mlflow=SimpleNamespace(
-                enabled=mlflow_enabled,
-                tracking_uri=mlflow_tracking_uri,
-                registry_uri=mlflow_registry_uri,
-                experiment_name=mlflow_experiment_name,
-                timeout_seconds=mlflow_timeout_seconds,
-            )
-        )
-
-        self.telemetry = SimpleNamespace(service_name=self.service_name)
-
-        # Authentication / authorization configuration
-        auth_disabled = self._get_bool_from_env(
-            env,
-            [f"{self.env_prefix}API_AUTH_DISABLED", f"{self.env_prefix}AUTH_DISABLED"],
-            False,
-        )
-        oidc_issuer = env.get(f"{self.env_prefix}API_OIDC_ISSUER")
-        oidc_audience = env.get(f"{self.env_prefix}API_OIDC_AUDIENCE")
-        oidc_jwks_url = env.get(f"{self.env_prefix}API_OIDC_JWKS_URL")
-        jwt_leeway_seconds = self._get_int_from_env(
-            env,
-            [f"{self.env_prefix}API_JWT_LEEWAY"],
-            60,
-        )
-        forward_auth_header = env.get(f"{self.env_prefix}API_FORWARD_AUTH_HEADER")
-        forward_auth_claims_header = env.get(f"{self.env_prefix}API_FORWARD_AUTH_CLAIMS_HEADER")
-
-        raw_admin_groups = env.get(f"{self.env_prefix}API_ADMIN_GROUP", "")
-        admin_groups = {
-            group.strip().lower()
-            for group in raw_admin_groups.split(",")
-            if group.strip()
-        }
-
-        token_issuer_enabled = self._get_bool_from_env(
-            env,
-            [f"{self.env_prefix}API_TOKEN_ISSUER_ENABLED"],
-            False,
-        )
-        access_token_ttl_seconds = self._get_int_from_env(
-            env,
-            [f"{self.env_prefix}API_ACCESS_TOKEN_TTL_SECONDS"],
-            900,
-        )
-        refresh_token_ttl_seconds = self._get_int_from_env(
-            env,
-            [f"{self.env_prefix}API_REFRESH_TOKEN_TTL_SECONDS"],
-            60 * 60 * 24 * 14,
-        )
-        auth_audiences = self._split_env_list(
-            env.get(f"{self.env_prefix}API_AUTH_AUDIENCES", "")
-        )
-        if not auth_audiences and oidc_audience:
-            auth_audiences = [oidc_audience]
-        required_scopes = self._split_env_list(
-            env.get(f"{self.env_prefix}API_AUTH_REQUIRED_SCOPES", "")
-        )
-        cookie_name = env.get(
-            f"{self.env_prefix}API_AUTH_COOKIE_NAME",
-            "aurum_access_token",
-        )
-        cookie_enabled = self._get_bool_from_env(
-            env,
-            [f"{self.env_prefix}API_AUTH_COOKIE_ENABLED"],
-            token_issuer_enabled,
-        )
-        cookie_secure = self._get_bool_from_env(
-            env,
-            [f"{self.env_prefix}API_AUTH_COOKIE_SECURE"],
-            not self.is_development(),
-        )
-        cookie_http_only = self._get_bool_from_env(
-            env,
-            [f"{self.env_prefix}API_AUTH_COOKIE_HTTP_ONLY"],
-            True,
-        )
-        cookie_same_site = (
-            env.get(f"{self.env_prefix}API_AUTH_COOKIE_SAMESITE", "lax")
-            or "lax"
-        ).lower()
-        if cookie_same_site not in {"lax", "strict", "none"}:
-            cookie_same_site = "lax"
-        cookie_domain = env.get(f"{self.env_prefix}API_AUTH_COOKIE_DOMAIN")
-        cookie_path = env.get(f"{self.env_prefix}API_AUTH_COOKIE_PATH", "/")
-
-        refresh_store_redis_url = env.get(
-            f"{self.env_prefix}API_REFRESH_TOKEN_STORE_REDIS_URL",
-            self.redis_url,
-        )
-        refresh_store_namespace = env.get(
-            f"{self.env_prefix}API_REFRESH_TOKEN_STORE_NAMESPACE",
-            f"{self.redis_namespace}:auth:refresh_tokens",
-        )
-
-        oidc_configured = bool(oidc_issuer and oidc_jwks_url)
-        auth_disabled_flag = auth_disabled
-
-        clients_raw = env.get(f"{self.env_prefix}API_AUTH_CLIENTS") or env.get(f"{self.env_prefix}AUTH_CLIENTS")
-        clients: Dict[str, Dict[str, Any]] = {}
-        if clients_raw:
-            try:
-                payload = json.loads(clients_raw)
-            except json.JSONDecodeError:
-                payload = []
-
-            if isinstance(payload, dict):
-                iterator = payload.items()
-            elif isinstance(payload, list):
-                iterator = (
-                    (entry.get("client_id"), entry)
-                    for entry in payload
-                    if isinstance(entry, dict)
-                )
-            else:
-                iterator = []
-
-            for client_id, spec in iterator:
-                if not client_id:
-                    continue
-                client_secret = str(spec.get("client_secret", ""))
-                scopes = spec.get("scopes") or []
-                if isinstance(scopes, str):
-                    scopes = [token.strip() for token in scopes.split(" ") if token.strip()]
-                elif isinstance(scopes, (list, tuple)):
-                    scopes = [str(token).strip() for token in scopes if token]
-                else:
-                    scopes = []
-                clients[str(client_id)] = {
-                    "client_secret": client_secret,
-                    "scopes": tuple(scopes),
-                    "tenant": spec.get("tenant") or spec.get("tenant_id"),
-                    "claims": spec.get("claims") or {},
-                }
-
-        self.auth = SimpleNamespace(
-            disabled=auth_disabled_flag or (not oidc_configured and not token_issuer_enabled),
-            enabled=not (
-                auth_disabled_flag or (not oidc_configured and not token_issuer_enabled)
-            ),
-            oidc_issuer=oidc_issuer,
-            oidc_audience=oidc_audience,
-            oidc_jwks_url=oidc_jwks_url,
-            jwt_leeway_seconds=jwt_leeway_seconds,
-            forward_auth_header=forward_auth_header,
-            forward_auth_claims_header=forward_auth_claims_header,
-            admin_groups=frozenset(admin_groups),
-            token_issuer_enabled=token_issuer_enabled,
-            access_token_ttl_seconds=access_token_ttl_seconds,
-            refresh_token_ttl_seconds=refresh_token_ttl_seconds,
-            audiences=tuple(auth_audiences),
-            required_scopes=tuple(required_scopes),
-            cookie=SimpleNamespace(
-                enabled=cookie_enabled,
-                name=cookie_name,
-                secure=cookie_secure,
-                http_only=cookie_http_only,
-                same_site=cookie_same_site,
-                domain=cookie_domain,
-                path=cookie_path,
-            ),
-            clients=clients,
-            refresh_store=SimpleNamespace(
-                redis_url=refresh_store_redis_url,
-                namespace=refresh_store_namespace,
-            ),
-        )
-        self.pagination = SimpleNamespace(default_page_size=100, max_page_size=1000)
-        self.messaging = SimpleNamespace(enabled=False)
-        self.async_offload = SimpleNamespace(
-            enabled=offload_enabled,
-            use_stub=offload_use_stub,
-            broker_url=offload_broker,
-            result_backend=offload_backend,
-            default_queue=offload_default_queue,
-        )
-
-    def _split_env_list(self, value: str, separator: str = ",") -> List[str]:
-        """Split environment variable list."""
-        if not value or value == "*":
-            return []
-        return [item.strip() for item in value.split(separator) if item.strip()]
-
-    def get(self, key: str, default: Any = None) -> Any:
-        """Get setting value with optional default."""
-        return getattr(self, key, default)
-
-    def is_development(self) -> bool:
-        """Check if running in development mode."""
-        return self.environment.lower() in ("development", "dev", "local")
-
-    def is_production(self) -> bool:
-        """Check if running in production mode."""
-        return self.environment.lower() in ("production", "prod")
-
-    @classmethod
-    def from_env(cls, env_prefix: str = "AURUM_") -> "SimplifiedSettings":
-        """Create settings from environment."""
-        return cls(env_prefix=env_prefix)
-
-
-class HybridAurumSettings:
-    """Hybrid settings system that can use either legacy or simplified based on feature flags."""
-
-    def __init__(self, env_prefix: str = "AURUM_"):
-        self.env_prefix = env_prefix
-        self._migration_phase = get_migration_phase()
-        self._use_simplified = is_feature_enabled(FEATURE_FLAGS["USE_SIMPLIFIED_SETTINGS"])
-
-        # Initialize both systems for hybrid mode
-        self._legacy_settings = None
-        self._simplified_settings = None
-
-        start_time = self._current_time_ms()
-        self._initialize_settings()
-        duration = self._current_time_ms() - start_time
-
-        # Record metrics
-        if get_migration_metrics() is not None:
-            _migration_metrics.record_settings_call(
-                "simplified" if self._use_simplified else "legacy",
-                duration
-            )
-
-    def _current_time_ms(self) -> float:
-        """Get current time in milliseconds."""
-        return SimplifiedSettings._get_time_ms()
-
-    def _initialize_settings(self):
-        """Initialize the appropriate settings system."""
-        if self._use_simplified or self._migration_phase in ("simplified", "hybrid"):
-            self._simplified_settings = SimplifiedSettings(self.env_prefix)
-            self._delegate_to_simplified()
-        else:
-            # Legacy mode - would import and use complex settings
-            self._delegate_to_legacy()
-
-    def __getattr__(self, name):
-        """Dynamic attribute delegation to the active settings system."""
-        if self._use_simplified and self._simplified_settings:
-            value = getattr(self._simplified_settings, name)
-            logger.debug(f"Simplified fallback for '{name}': {value}")
-            return value
-        else:
-            # Fallback to legacy behavior with sensible defaults
-            if name == "api_title":
-                value = "Aurum API"
-                logger.debug(f"Legacy fallback for '{name}': {value}")
-                return value
-            elif name == "version":
-                value = "1.0.0"
-                logger.debug(f"Legacy fallback for '{name}': {value}")
-                return value
-            elif name == "request_timeout_seconds":
-                value = 30
-                logger.debug(f"Legacy fallback for '{name}': {value}")
-                return value
-            elif name == "gzip_min_bytes":
-                try:
-                    value = int(os.environ.get("API_GZIP_MIN_BYTES", os.environ.get(f"{self.env_prefix}API_GZIP_MIN_BYTES", "500")))
-                except ValueError:
-                    value = 500
-                logger.debug(f"Legacy fallback for '{name}': {value}")
-                return value
-            elif name == "service_name":
-                value = "aurum"
-                logger.debug(f"Legacy fallback for '{name}': {value}")
-                return value
-            else:
-                logger.debug(f"No fallback defined for '{name}', returning None")
-                return None
-
-    def _delegate_to_simplified(self):
-        """Set up delegation to simplified settings."""
-        if self._simplified_settings:
-            for attr in (
-                "api",
-                "data_backend",
-                "trino",
-                "redis",
-                "database",
-                "auth",
-                "messaging",
-                "telemetry",
-                "pagination",
-                "async_offload",
-            ):
-                setattr(self, attr, getattr(self._simplified_settings, attr, None))
-
-    def _delegate_to_legacy(self):
-        """Delegate to legacy settings system."""
-        # This would import and use the complex settings system
-        # For now, create a minimal stub
-        logger.warning("Using legacy settings system - consider migrating to simplified version")
-
-        simplified = SimplifiedSettings(self.env_prefix)
-        self._simplified_settings = simplified
-        self._delegate_to_simplified()
-
-        # Set basic attributes that the rest of the system expects using simplified defaults
-        self.environment = simplified.environment
-        self.debug = simplified.debug
-        self.database_url = simplified.database_url
-        self.gzip_min_bytes = getattr(simplified.api, "gzip_min_bytes", 500)
-
-    def get_migration_status(self) -> Dict[str, Any]:
-        """Get migration status for this settings instance."""
-        return {
-            "using_simplified": self._use_simplified,
-            "migration_phase": self._migration_phase,
-            "has_simplified": self._simplified_settings is not None,
-            "has_legacy": self._legacy_settings is not None,
-        }
-
-    def switch_to_simplified(self) -> bool:
-        """Switch to simplified settings system."""
-        if self._simplified_settings:
-            self._use_simplified = True
-            self._delegate_to_simplified()
-            logger.info("Switched to simplified settings system")
-            return True
-        return False
-
-    def switch_to_legacy(self) -> bool:
-        """Switch to legacy settings system."""
-        if self._legacy_settings or self._simplified_settings:
-            self._use_simplified = False
-            self._delegate_to_legacy()
-            logger.info("Switched to legacy settings system")
-            return True
-        return False
-
-    @classmethod
-    def from_env(
-        cls,
-        *,
-        vault_mapping: Mapping[str, Any] | None = None,
-        overrides: Mapping[str, Any] | None = None,
-    ) -> "HybridAurumSettings":
-        """Factory method with vault and override support."""
-        instance = cls()
-
-        # Apply vault mappings if provided
-        if vault_mapping:
-            for key, value in vault_mapping.items():
-                setattr(instance, key.lower(), value)
-
-        # Apply overrides
-        if overrides:
-            for key, value in overrides.items():
-                setattr(instance, key.lower(), value)
-
-        return instance
-
-
-# Legacy compatibility - use hybrid system
-class AurumSettings(HybridAurumSettings):
-    """Legacy settings class for backward compatibility - now uses hybrid system."""
-
-    def __init__(self, env_prefix: str = "AURUM_"):
-        super().__init__(env_prefix)
-
-
-# Global settings instance
-_settings_instance: AurumSettings | None = None
-
-
-def _legacy_get_settings() -> AurumSettings:
-    """Return the configured legacy settings instance, raising if unavailable."""
-    global _settings_instance
-    if _settings_instance is not None:
-        return _settings_instance
-
-    # Allow opt-in lazy defaulting in tests/dev only
-    if os.getenv("AURUM_TEST_DEFAULT_SETTINGS", "0").lower() in ("1", "true", "yes"):
-        _settings_instance = AurumSettings()
-        return _settings_instance
-
-    raise RuntimeError("AurumSettings have not been configured")
-
-
-def get_settings() -> Any:
-    """Return consolidated settings, preferring the shared libs implementation."""
-
-    if _unified_get_settings is not None:
-        return _unified_get_settings()
-
-    return _legacy_get_settings()
-
-
-def get_legacy_settings() -> AurumSettings:
-    """Explicit access to the legacy hybrid settings implementation."""
-
-    return _legacy_get_settings()
-
-
-def configure_settings(settings: Any) -> None:
-    """Configure the global settings instance.
-
-    When the unified libs configuration is available, forward configuration to
-    that module while maintaining legacy state for callers that still rely on
-    `_legacy_get_settings`.
-    """
-
-    global _settings_instance
-    if isinstance(settings, AurumSettings):
-        _settings_instance = settings
-    else:
-        _settings_instance = None
-
-    if _unified_configure_settings is not None:
-        _unified_configure_settings(settings)  # type: ignore[arg-type]
-
-
-def reset_settings() -> None:
-    """Reset both legacy and unified settings caches."""
-
-    global _settings_instance
-    _settings_instance = None
-
-    if _unified_reset_settings is not None:
-        _unified_reset_settings()
-
-
-def get_migration_metrics() -> Optional[MigrationMetrics]:
-    """Get the global migration metrics instance."""
-    # Only initialize migration metrics if not during module import
-    if _migration_metrics is None:
-        _init_migration_metrics()
-    return _migration_metrics
-
-
-def log_migration_status() -> None:
-    """Log current migration status."""
-    if get_migration_metrics() is not None:
-        status = _migration_metrics.get_migration_status()
-        logger.info("Migration Status", extra={"migration": status})
-
-    if is_feature_enabled(FEATURE_FLAGS["ENABLE_MIGRATION_MONITORING"]):
-        logger.info("Migration monitoring enabled")
-    else:
-        logger.info("Migration monitoring disabled")
-
-
-def validate_migration_health() -> Dict[str, Any]:
-    """Validate migration health and return status."""
-    migration_metrics = get_migration_metrics()
-    if migration_metrics is None:
-        return {"healthy": True, "issues": [], "monitoring_disabled": True}
-    metrics = migration_metrics._metrics
-    health = {"healthy": True, "issues": []}
-
-    # Check settings migration
-    settings_metrics = metrics["settings_migration"]
-    if settings_metrics["errors"] > 10:
-        health["issues"].append("High error rate in settings migration")
-        health["healthy"] = False
-
-    # Check performance
-    if settings_metrics["performance_ms"]:
-        avg_performance = sum(settings_metrics["performance_ms"]) / len(settings_metrics["performance_ms"])
-        if avg_performance > 100:  # 100ms threshold
-            health["issues"].append(f"Settings performance degraded: {avg_performance:.2f}ms avg")
-            health["healthy"] = False
-
-    return health
-
-
-# Add migration management functions
-def advance_migration_phase(component: str = "settings", phase: str = "hybrid") -> bool:
-    """Advance migration phase for a component."""
-    if component == "settings":
-        _set_flag_env(FEATURE_FLAGS["SETTINGS_MIGRATION_PHASE"], phase)
-        if get_migration_metrics() is not None:
-            _migration_metrics.set_migration_phase("settings_migration", phase)
-        logger.info(f"Advanced settings migration to phase: {phase}")
-        return True
-    return False
-
-
-def rollback_migration_phase(component: str = "settings") -> bool:
-    """Rollback migration phase for a component."""
-    current_phase = get_migration_phase(component)
-    if current_phase == "simplified":
-        advance_migration_phase(component, "hybrid")
-        logger.warning(f"Rolled back settings migration from simplified to hybrid")
-        return True
-    elif current_phase == "hybrid":
-        advance_migration_phase(component, "legacy")
-        logger.warning(f"Rolled back settings migration from hybrid to legacy")
-        return True
-    return False
-
-
-# Audit settings classes
-class AuditSinkType:
-    """Types of audit sinks supported."""
-    KAFKA = "kafka"
-    CLICKHOUSE = "clickhouse"
-    FILE = "file"
-    STDOUT = "stdout"
-
-
-class AuditKafkaSettings:
-    """Settings for Kafka audit sink."""
-    def __init__(self):
-        self.bootstrap_servers = os.getenv("AURUM_AUDIT_KAFKA_BOOTSTRAP_SERVERS", "localhost:9092")
-        self.topic = os.getenv("AURUM_AUDIT_KAFKA_TOPIC", "aurum-audit")
-        self.client_id = os.getenv("AURUM_AUDIT_KAFKA_CLIENT_ID", "aurum-audit-producer")
-
-
-class AuditClickHouseSettings:
-    """Settings for ClickHouse audit sink."""
-    def __init__(self):
-        self.host = os.getenv("AURUM_AUDIT_CLICKHOUSE_HOST", "localhost")
-        self.port = int(os.getenv("AURUM_AUDIT_CLICKHOUSE_PORT", "8123"))
-        self.database = os.getenv("AURUM_AUDIT_CLICKHOUSE_DATABASE", "aurum_audit")
-        self.table = os.getenv("AURUM_AUDIT_CLICKHOUSE_TABLE", "audit_events")
-        self.username = os.getenv("AURUM_AUDIT_CLICKHOUSE_USERNAME", "aurum")
-        self.password = os.getenv("AURUM_AUDIT_CLICKHOUSE_PASSWORD", "")
-
-
-class ExternalAuditSettings:
-    """Settings for external audit logging with override support."""
-
-    def __init__(
-        self,
-        *,
-        enabled: Optional[bool] = None,
-        sink_type: Optional[str] = None,
-        log_dir: Optional[str] = None,
-        sinks: Optional[Iterable[str]] = None,
-        kafka_settings: Optional[AuditKafkaSettings] = None,
-        clickhouse_settings: Optional[AuditClickHouseSettings] = None,
-    ) -> None:
-        env_enabled = os.getenv("AURUM_EXTERNAL_AUDIT_ENABLED", "true")
-        self.enabled = enabled if enabled is not None else env_enabled.lower() in ("true", "1", "yes")
-
-        env_sink_type = os.getenv("AURUM_EXTERNAL_AUDIT_SINK_TYPE", AuditSinkType.FILE)
-        self.sink_type = self._normalize_sink(sink_type or env_sink_type)
-
-        self.log_dir = log_dir or os.getenv("AURUM_EXTERNAL_AUDIT_LOG_DIR", "/var/log/aurum/audit")
-
-        if sinks is None:
-            sinks_str = os.getenv("AURUM_EXTERNAL_AUDIT_SINKS", "file,stdout")
-            parsed = self._parse_sinks(sinks_str)
-        else:
-            parsed = [self._normalize_sink(value) for value in sinks]
-        self.sinks = tuple(parsed)
-
-        self.kafka_settings = kafka_settings or AuditKafkaSettings()
-        self.clickhouse_settings = clickhouse_settings or AuditClickHouseSettings()
-
-    @staticmethod
-    def _normalize_sink(value: str) -> str:
-        """Normalise sink identifiers to lowercase strings."""
-        return str(value).strip().lower()
-
-    def _parse_sinks(self, sinks_str: str) -> List[str]:
-        """Parse sink configuration string into a list of sink identifiers."""
-        return [self._normalize_sink(sink) for sink in sinks_str.split(",") if sink.strip()]
-
-
-# ----------------------
-# Centralized settings manager with validation, env inheritance, and hot-reload
-# ----------------------
-
-def _deep_merge_dicts(base: Dict[str, Any], override: Dict[str, Any]) -> Dict[str, Any]:
-    """Deep-merge two dictionaries without mutating inputs.
-
-    Values from override win over base. Nested dictionaries are merged recursively.
-    """
-    if not base:
-        return dict(override or {})
-    if not override:
-        return dict(base)
-    result: Dict[str, Any] = dict(base)
-    for key, value in override.items():
-        if isinstance(value, dict) and isinstance(result.get(key), dict):
-            result[key] = _deep_merge_dicts(result[key], value)
-        else:
-            result[key] = value
-    return result
-
-
-def _apply_overrides_to_object(target: Any, overrides: Dict[str, Any]) -> None:
-    """Apply nested overrides to an object in-place.
-
-    Supports nested `SimpleNamespace` and objects with attributes. If an attribute
-    is itself a mapping-like object, nested overrides are applied recursively.
-    """
-    if not overrides:
-        return
-
-    for key, value in overrides.items():
-        if not hasattr(target, key):
-            # Skip unknown keys to preserve forward-compatibility
-            continue
-        current = getattr(target, key)
-        if isinstance(value, dict) and not isinstance(current, (str, int, float, bool, type(None))):
-            try:
-                _apply_overrides_to_object(current, value)
-            except Exception:
-                # Fallback to assignment if recursive apply fails
-                try:
-                    setattr(target, key, value)
-                except Exception:
-                    pass
-        else:
-            try:
-                setattr(target, key, value)
-            except Exception:
-                pass
-
-
-def _load_overlay_files(base_path: Path, environment: str) -> Dict[str, Any]:
-    """Load configuration overlays from config/<base|environment>.{yaml,json}.
-
-    Later overlays override earlier ones. Missing files are ignored.
-    """
-    overlays: List[Dict[str, Any]] = []
-
-    candidates: List[Path] = []
-    for name in ("base", environment):
-        for ext in (".yaml", ".yml", ".json"):
-            candidates.append(base_path / f"{name}{ext}")
-
-    for candidate in candidates:
-        if not candidate.exists():
-            continue
-        try:
-            if candidate.suffix in (".yaml", ".yml"):
-                try:
-                    import yaml  # type: ignore
-                except Exception:
-                    logger.warning("YAML overlay %s ignored (PyYAML not available)", candidate)
-                    continue
-                with candidate.open("r", encoding="utf-8") as fh:
-                    payload = yaml.safe_load(fh) or {}
-            else:
-                with candidate.open("r", encoding="utf-8") as fh:
-                    payload = json.load(fh) or {}
-            if isinstance(payload, dict):
-                overlays.append(payload)
-            else:
-                logger.warning("Overlay file %s must contain an object; skipping", candidate)
-        except Exception as exc:  # noqa: BLE001
-            logger.warning("Failed to load overlay %s: %s", candidate, exc)
-
-    merged: Dict[str, Any] = {}
-    for piece in overlays:
-        merged = _deep_merge_dicts(merged, piece)
-    return merged
-
-
-def _snapshot_core_settings(settings: "AurumSettings") -> Dict[str, Any]:
-    """Create a stable snapshot of relevant configuration for change detection/logging."""
-    try:
-        api = getattr(settings, "api", None)
-        redis = getattr(settings, "redis", None)
-        trino = getattr(settings, "trino", None)
-        database = getattr(settings, "database", None)
-        concurrency = getattr(api, "concurrency", None) if api else None
-
-        return {
-            "environment": getattr(settings, "environment", None),
-            "debug": getattr(settings, "debug", None),
-            "api": {
-                "host": getattr(api, "host", None),
-                "port": getattr(api, "port", None),
-                "title": getattr(api, "title", None),
-                "version": getattr(api, "version", None),
-                "gzip_min_bytes": getattr(api, "gzip_min_bytes", None),
-                "metrics": {
-                    "enabled": getattr(getattr(api, "metrics", None), "enabled", None),
-                    "path": getattr(getattr(api, "metrics", None), "path", None),
-                },
-                "concurrency": {
-                    "enabled": getattr(concurrency, "enabled", None) if concurrency else None,
-                    "max_concurrent_requests": getattr(concurrency, "max_concurrent_requests", None) if concurrency else None,
-                    "max_requests_per_second": getattr(concurrency, "max_requests_per_second", None) if concurrency else None,
-                } if concurrency else None,
-            },
-            "redis": {
-                "url": getattr(redis, "url", None),
-                "ttl_seconds": getattr(redis, "ttl_seconds", None),
-                "namespace": getattr(redis, "namespace", None),
-                "mode": getattr(redis, "mode", None).value if getattr(redis, "mode", None) and hasattr(getattr(redis, "mode", None), "value") else str(getattr(redis, "mode", None)),
-            } if redis else None,
-            "trino": {
-                "host": getattr(trino, "host", None),
-                "port": getattr(trino, "port", None),
-                "catalog": getattr(trino, "catalog", None),
-                "database_schema": getattr(trino, "database_schema", None),
-                "metrics_label": getattr(trino, "metrics_label", None),
-            } if trino else None,
-            "database": {
-                "url": getattr(database, "url", None),
-                "timescale_dsn": getattr(database, "timescale_dsn", None),
-            } if database else None,
-        }
-    except Exception:  # pragma: no cover - defensive
-        return {}
-
-
-class _SettingsValidationError(Exception):
-    """Raised when configuration validation fails."""
-
-
-class SettingsManager:
-    """Centralized settings manager providing:
-
-    - Single source of truth via `get()`
-    - Environment-specific overlay inheritance from `config/`
-    - Change detection and optional hot-reloading
-    - Optional validation hooks
-    - Schema export for documentation
-    """
-
-    def __init__(
-        self,
-        *,
-        env_prefix: str = "AURUM_",
-        environment: Optional[str] = None,
-        config_base_path: Optional[str | Path] = None,
-        hot_reload_enabled: Optional[bool] = None,
-        reload_interval_seconds: float = 2.0,
-        on_change: Optional[Callable[["AurumSettings"], None]] = None,
-        use_dynamic_config: Optional[bool] = None,
-    ) -> None:
-        self.env_prefix = env_prefix
-        self.environment = (environment or os.getenv(f"{env_prefix}ENV", "development")).strip() or "development"
-
-        base_from_env = os.getenv("AURUM_CONFIG_PATH") or os.getenv("AURUM_SETTINGS_PATH")
-        if config_base_path is not None:
-            self.config_base_path = Path(config_base_path)
-        elif base_from_env:
-            self.config_base_path = Path(base_from_env)
-        else:
-            # Default to <repo_root>/config when possible, otherwise CWD/config
-            try:
-                self.config_base_path = Path(__file__).resolve().parents[3] / "config"
-            except Exception:
-                self.config_base_path = Path.cwd() / "config"
-
-        if hot_reload_enabled is None:
-            # Enable hot-reload by default in development only
-            auto = self.environment.lower() in {"development", "dev", "local"}
-            hrenv = os.getenv("AURUM_SETTINGS_HOT_RELOAD_ENABLED", "true" if auto else "false").lower()
-            hot_reload_enabled = hrenv in ("true", "1", "yes")
-
-        self.hot_reload_enabled = bool(hot_reload_enabled)
-        self.reload_interval_seconds = max(0.5, float(reload_interval_seconds))
-        self._stop_event = threading.Event()
-        self._thread: Optional[threading.Thread] = None
-        self._on_change = on_change
-
-        # Dynamic config integration
-        if use_dynamic_config is None:
-            # Check feature flag for dynamic config
-            self.use_dynamic_config = is_feature_enabled("USE_DYNAMIC_CONFIG")
-        else:
-            self.use_dynamic_config = use_dynamic_config
-
-        self._dynamic_config_service = None
-        self._current_settings: Optional[AurumSettings] = None
-        self._last_overlay_hash: str = ""
-        self._last_snapshot_hash: str = ""
-        self._last_overlay_mtimes: Dict[str, float] = {}
-
-        # Initialize dynamic config service if enabled
-        if self.use_dynamic_config:
-            try:
-                from aurum.config.dynamic_config import DynamicConfigService
-                from aurum.config.validation import get_config_validator
-
-                self._dynamic_config_service = DynamicConfigService(
-                    environment=self.environment,
-                    config_base_path=self.config_base_path,
-                    hot_reload_enabled=self.hot_reload_enabled,
-                    reload_interval_seconds=self.reload_interval_seconds
-                )
-
-                # Subscribe to config changes
-                self._dynamic_config_service.subscribe(self._on_dynamic_config_change)
-
-                logger.info("Dynamic configuration system initialized")
-            except Exception as e:
-                logger.warning(f"Failed to initialize dynamic config system, falling back to legacy: {e}")
-                self.use_dynamic_config = False
-
-        # Initial build
-        self.reload()
-
-        # Start watch loop if enabled and not using dynamic config
-        if self.hot_reload_enabled and not self.use_dynamic_config:
-            self._start_thread()
-
-    # ---------------------- Public API ----------------------
-    def get(self) -> "AurumSettings":
-        if self._current_settings is None:
-            raise RuntimeError("SettingsManager not initialized")
-        return self._current_settings
-
-    def reload(self) -> None:
-        """Rebuild settings from environment and overlays, validate, and activate."""
-        if self.use_dynamic_config and self._dynamic_config_service:
-            # Use dynamic config system
-            self._reload_from_dynamic_config()
-        else:
-            # Use legacy system
-            self._reload_from_legacy()
-
-    def _reload_from_dynamic_config(self) -> None:
-        """Reload using the dynamic configuration system."""
-        try:
-            # Get configuration from dynamic service
-            config = self._dynamic_config_service.get()
-
-            # Validate and coerce types
-            from aurum.config.validation import validate_and_coerce_config
-            config = validate_and_coerce_config(config)
-
-            # Create new settings from validated config
-            new_settings = AurumSettings()
-
-            # Apply configuration to settings object
-            self._apply_config_to_settings(new_settings, config)
-
-            # Basic validation
-            self._validate(new_settings)
-
-            # Update current settings
-            self._current_settings = new_settings
-            configure_settings(new_settings)
-
-            # Notify change callback
-            if self._on_change:
-                try:
-                    self._on_change(new_settings)
-                except Exception as e:
-                    logger.error(f"Error in settings change callback: {e}")
-
-        except Exception as exc:
-            logger.warning("Dynamic config reload failed during reload: %s", exc)
-            if self._current_settings is None:
-                # No previous configuration; propagate
-                raise
-
-    def _reload_from_legacy(self) -> None:
-        """Reload using the legacy configuration system."""
-        overlays = _load_overlay_files(self.config_base_path, self.environment)
-        overlay_hash = hashlib.sha1(json.dumps(overlays, sort_keys=True, default=str).encode("utf-8")).hexdigest()
-
-        # Always rebuild to allow env changes to take effect
-        new_settings = AurumSettings()
-        try:
-            # Apply nested overrides to well-known namespaces
-            # Expected keys include: api, redis, database, trino, auth, telemetry, pagination, async_offload
-            for key in ("api", "redis", "database", "trino", "auth", "telemetry", "pagination", "async_offload"):
-                if key in overlays and hasattr(new_settings, key):
-                    _apply_overrides_to_object(getattr(new_settings, key), overlays[key])
-            # Also allow top-level fields like environment/debug
-            for key in ("environment", "debug"):
-                if key in overlays:
-                    try:
-                        setattr(new_settings, key, overlays[key])
-                    except Exception:
-                        pass
-
-            # Basic validation
-            self._validate(new_settings)
-        except Exception as exc:  # pragma: no cover - log and keep previous settings
-            logger.warning("Settings validation failed during reload: %s", exc)
-            if self._current_settings is None:
-                # No previous configuration; propagate
-                raise
-            return
-
-        snapshot = _snapshot_core_settings(new_settings)
-        snapshot_hash = hashlib.sha1(json.dumps(snapshot, sort_keys=True, default=str).encode("utf-8")).hexdigest()
-
-        self._current_settings = new_settings
-        configure_settings(new_settings)
-
-    def _apply_config_to_settings(self, settings: "AurumSettings", config: Dict[str, Any]) -> None:
-        """Apply configuration dictionary to settings object."""
-        # Apply nested overrides to well-known namespaces
-        for key in ("api", "redis", "database", "trino", "auth", "telemetry", "pagination", "async_offload"):
-            if key in config and hasattr(settings, key):
-                _apply_overrides_to_object(getattr(settings, key), config[key])
-
-        # Also allow top-level fields like environment/debug
-        for key in ("environment", "debug"):
-            if key in config:
-                try:
-                    setattr(settings, key, config[key])
-                except Exception:
-                    pass
-
-    def _on_dynamic_config_change(self, snapshot) -> None:
-        """Callback when dynamic configuration changes."""
-        try:
-            # Record the change for audit
-            from aurum.config.change_tracking import record_config_change, ChangeType, ChangeSource
-            from aurum.config.change_tracking import create_config_version
-
-            import asyncio
-            loop = asyncio.new_event_loop()
-            asyncio.set_event_loop(loop)
-
-            try:
-                # Record change
-                change_id = loop.run_until_complete(record_config_change(
-                    change_type=ChangeType.UPDATED,
-                    source=ChangeSource.FILE_WATCHER,
-                    actor="system",
-                    namespace=None,
-                    reason="Dynamic configuration file change detected",
-                    old_config=self._current_settings.__dict__ if self._current_settings else None,
-                    new_config=snapshot.config
-                ))
-
-                # Create version
-                loop.run_until_complete(create_config_version(
-                    config=snapshot.config,
-                    change_id=change_id,
-                    metadata={"source": "file_watcher", "environment": self.environment}
-                ))
-            finally:
-                loop.close()
-
-            # Reload settings
-            self.reload()
-
-        except Exception as e:
-            logger.error(f"Error handling dynamic config change: {e}")
-            try:
-                self._on_change(new_settings)
-            except Exception:  # pragma: no cover - user callback errors should not disrupt
-                pass
-
-        logger.info(
-            "Settings loaded",
-            extra={
-                "environment": self.environment,
-                "config_path": str(self.config_base_path),
-                "changed_at": datetime.utcnow().isoformat() + "Z",
-            },
-        )
-
-    def stop(self) -> None:
-        if not self._thread:
-            return
-        self._stop_event.set()
-        try:
-            self._thread.join(timeout=2.0)
-        except Exception:
-            pass
-        finally:
-            self._thread = None
-
-    def export_schema(self, target_path: str | Path) -> Path:
-        """Export JSON Schema for configuration to the provided file path.
-
-        Uses the typed schema from `libs.common.config.AurumSettings` as the canonical
-        documentation surface.
-        """
-        from importlib import import_module
-
-        try:
-            mod = import_module("libs.common.config")
-            TypedAurum = getattr(mod, "AurumSettings")
-            schema = TypedAurum.model_json_schema()  # type: ignore[attr-defined]
-        except Exception as exc:  # pragma: no cover - schema export is best-effort
-            logger.warning("Unable to generate config schema from typed model: %s", exc)
-            schema = {
-                "$schema": "https://json-schema.org/draft/2020-12/schema",
-                "title": "AurumSettings",
-                "description": "Fallback schema. Install pydantic models for full schema.",
-                "type": "object",
-            }
-
-        target = Path(target_path)
-        target.parent.mkdir(parents=True, exist_ok=True)
-        with target.open("w", encoding="utf-8") as fh:
-            json.dump(schema, fh, indent=2)
-        return target
-
-    # ---------------------- Internals ----------------------
-    def _start_thread(self) -> None:
-        if self._thread:
-            return
-        self._thread = threading.Thread(target=self._watch_loop, name="AurumSettingsHotReload", daemon=True)
-        self._thread.start()
-
-    def _update_overlay_mtimes(self) -> None:
-        mtimes: Dict[str, float] = {}
-        for name in ("base", self.environment):
-            for ext in (".yaml", ".yml", ".json"):
-                path = self.config_base_path / f"{name}{ext}"
-                try:
-                    stat = path.stat()
-                except FileNotFoundError:
-                    continue
-                mtimes[str(path)] = getattr(stat, "st_mtime", 0.0)
-        self._last_overlay_mtimes = mtimes
-
-    def _overlays_changed(self) -> bool:
-        if not self._last_overlay_mtimes:
-            return True
-        for name in ("base", self.environment):
-            for ext in (".yaml", ".yml", ".json"):
-                path = self.config_base_path / f"{name}{ext}"
-                key = str(path)
-                if not path.exists():
-                    if key in self._last_overlay_mtimes:
-                        return True
-                    continue
-                try:
-                    mtime = path.stat().st_mtime
-                except Exception:
-                    continue
-                if self._last_overlay_mtimes.get(key) != mtime:
-                    return True
-        return False
-
-    def _watch_loop(self) -> None:  # pragma: no cover - background watcher
-        try:
-            while not self._stop_event.wait(self.reload_interval_seconds):
-                if self._overlays_changed():
-                    try:
-                        self.reload()
-                    except Exception as exc:
-                        logger.warning("Settings reload failed: %s", exc)
-        except Exception:
-            # Never raise from background thread
-            pass
-
-    def _validate(self, settings: "AurumSettings") -> None:
-        """Perform sanity checks across key configuration sections.
-
-        Raises _SettingsValidationError on failure.
-        """
-        issues: List[str] = []
-
-        # API validation
-        api = getattr(settings, "api", None)
-        if api is not None:
-            try:
-                port = int(getattr(api, "port", 0))
-                if not (1 <= port <= 65535):
-                    issues.append(f"api.port out of range: {port}")
-            except Exception:
-                issues.append("api.port must be an integer")
-
-            try:
-                gz = int(getattr(api, "gzip_min_bytes", 0))
-                if gz < 0:
-                    issues.append("api.gzip_min_bytes must be >= 0")
-            except Exception:
-                issues.append("api.gzip_min_bytes must be an integer")
-
-            conc = getattr(api, "concurrency", None)
-            if conc is not None:
-                try:
-                    mcr = int(getattr(conc, "max_concurrent_requests", 0))
-                    if mcr < 1:
-                        issues.append("api.concurrency.max_concurrent_requests must be >= 1")
-                except Exception:
-                    issues.append("api.concurrency.max_concurrent_requests must be an integer")
-
-                try:
-                    mps = float(getattr(conc, "max_requests_per_second", 0.0))
-                    if mps <= 0:
-                        issues.append("api.concurrency.max_requests_per_second must be > 0")
-                except Exception:
-                    issues.append("api.concurrency.max_requests_per_second must be a number")
-
-        # Redis validation
-        redis = getattr(settings, "redis", None)
-        if redis is not None:
-            url_value = getattr(redis, "url", "") or ""
-            if not isinstance(url_value, str) or not url_value:
-                issues.append("redis.url must be a non-empty string")
-            elif not (url_value.startswith("redis://") or url_value.startswith("rediss://")):
-                issues.append("redis.url must start with 'redis://' or 'rediss://'")
-
-            try:
-                ttl = int(getattr(redis, "ttl_seconds", 0))
-                if ttl < 0:
-                    issues.append("redis.ttl_seconds must be >= 0")
-            except Exception:
-                issues.append("redis.ttl_seconds must be an integer")
-
-        # Trino validation
-        trino = getattr(settings, "trino", None)
-        if trino is not None:
-            host = getattr(trino, "host", "") or ""
-            try:
-                port = int(getattr(trino, "port", 0))
-            except Exception:
-                port = 0
-            if not host:
-                issues.append("trino.host must be set")
-            if not (1 <= port <= 65535):
-                issues.append("trino.port must be in [1,65535]")
-
-        if issues:
-            raise _SettingsValidationError("; ".join(issues))
-
-
-# Global manager (lazy-initialized)
-_settings_manager: Optional[SettingsManager] = None
-
-
-def get_settings_manager() -> SettingsManager:
-    """Get or create the global SettingsManager instance."""
-    global _settings_manager
-    if _settings_manager is None:
-        _settings_manager = SettingsManager()
-    return _settings_manager
-
-
-__all__ = [
-    "AurumSettings",
-    "HybridAurumSettings",
-    "SimplifiedSettings",
-    "MigrationMetrics",
-    "get_settings",
-    "configure_settings",
-    "get_migration_metrics",
-    "log_migration_status",
-    "validate_migration_health",
-    "advance_migration_phase",
-    "rollback_migration_phase",
-    "is_feature_enabled",
-    "get_migration_phase",
-    "FEATURE_FLAGS",
-    "get_flag_env",
-    "ExternalAuditSettings",
-    "AuditSinkType",
-    "AuditKafkaSettings",
-    "AuditClickHouseSettings",
-    "DataBackendType",
-    "DataBackendConfig",
-]

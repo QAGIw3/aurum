@@ -5,7 +5,7 @@ from .pagination import CursorPage, OffsetPage, Paginator
 
 # Unified configuration re-exports (single source of truth)
 try:
-    from aurum.libs.common.config import AurumSettings, get_settings
+    from aurum.core.settings import AurumSettings, get_settings
 except ImportError:
     # Fallback for when libs is not available
     class MockAurumSettings:

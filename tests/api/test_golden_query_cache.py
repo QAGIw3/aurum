@@ -10,7 +10,7 @@ from datetime import datetime, timedelta
 from unittest.mock import AsyncMock, MagicMock, Mock, patch
 from uuid import uuid4
 
-from aurum.api.golden_query_cache import (
+from aurum.api.cache.golden_query_cache import (
     QueryType,
     CacheInvalidationStrategy,
     QueryPattern,
@@ -626,7 +626,7 @@ class TestGoldenQueryIntegration:
 
     def test_query_hash_consistency(self):
         """Test that query hashes are consistent."""
-        from aurum.api.golden_query_cache import GoldenQueryCache
+        from aurum.api.cache.golden_query_cache import GoldenQueryCache
 
         cache = GoldenQueryCache(AsyncMock())
 
@@ -642,7 +642,7 @@ class TestGoldenQueryIntegration:
     def test_cache_entry_serialization(self):
         """Test cache entry serialization/deserialization."""
         import time
-        from aurum.api.golden_query_cache import CacheEntry
+        from aurum.api.cache.golden_query_cache import CacheEntry
 
         original_entry = CacheEntry(
             value={"test": "data"},

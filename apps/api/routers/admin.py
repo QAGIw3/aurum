@@ -129,7 +129,7 @@ async def clear_cache(
 async def get_config() -> dict:
     """Get current application configuration (sanitized)."""
     
-    from aurum.libs.common.config import get_settings
+    from aurum.core.settings import get_settings
     
     settings = get_settings()
     

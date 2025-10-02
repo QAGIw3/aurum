@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import pytest
 
-from aurum.core.settings import SimplifiedSettings
+from aurum.core.settings import AurumSettings
 
 
 @pytest.fixture
@@ -25,7 +25,7 @@ def clear_env(monkeypatch):
 
 
 def test_async_offload_defaults_use_stub(clear_env):
-    settings = SimplifiedSettings()
+    settings = AurumSettings()
     offload = settings.async_offload
     assert offload.enabled is False
     assert offload.use_stub is True
@@ -41,7 +41,7 @@ def test_async_offload_custom_env(monkeypatch, clear_env):
     monkeypatch.setenv("AURUM_API_OFFLOAD_CELERY_RESULT_BACKEND", "redis://redis.example/6")
     monkeypatch.setenv("AURUM_API_OFFLOAD_DEFAULT_QUEUE", "cpu-bound")
 
-    settings = SimplifiedSettings()
+    settings = AurumSettings()
     offload = settings.async_offload
 
     assert offload.enabled is True

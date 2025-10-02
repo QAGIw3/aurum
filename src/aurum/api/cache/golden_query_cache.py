@@ -33,9 +33,9 @@ def _load_settings():
     except Exception:
         try:
             # Local import to avoid circulars and keep import time light
-            from aurum.core.settings import SimplifiedSettings  # type: ignore
+            from aurum.core.settings import AurumSettings  # type: ignore
 
-            return SimplifiedSettings()
+            return AurumSettings()
         except Exception:  # pragma: no cover - extreme fallback
             raise
 

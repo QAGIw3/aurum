@@ -85,7 +85,7 @@ try:  # pragma: no cover - optional dependency path
         configure_observability as _libs_configure_observability,
         get_observability as _libs_get_observability,
     )
-    from aurum.libs.common.config import ObservabilitySettings as _LibsObsSettings
+    from aurum.core.settings import ObservabilitySettings as _CoreObsSettings
     _LIBS_OBS_AVAILABLE = True
 except Exception:  # pragma: no cover - libs not present in some environments
     _LIBS_OBS_AVAILABLE = False

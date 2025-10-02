@@ -135,7 +135,7 @@ async def get_dimensions(
         """
         
         from aurum.libs.storage.trino import TrinoAnalyticRepo
-        from aurum.libs.common.config import get_settings
+        from aurum.core.settings import get_settings
         repo = TrinoAnalyticRepo(get_settings().database)
         results = await repo.execute_query(query)
         
@@ -193,7 +193,7 @@ async def execute_analytical_query(
     
     try:
         from aurum.libs.storage.trino import TrinoAnalyticRepo
-        from aurum.libs.common.config import get_settings
+        from aurum.core.settings import get_settings
         repo = TrinoAnalyticRepo(get_settings().database)
         results = await repo.execute_query(query)
         

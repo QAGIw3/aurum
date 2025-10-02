@@ -41,7 +41,7 @@ from aurum.api.performance import ConnectionPool
 from aurum.external.collect.base import RetryConfig
 from aurum.api.config import TrinoConfig
 from aurum.api.database.config import TrinoConfig as DatabaseTrinoConfig
-from aurum.core.settings import SimplifiedSettings
+from aurum.core.settings import AurumSettings
 import aurum.api.app as app_module
 from aurum.api.rate_limiting.redis_concurrency import (
     RedisConcurrencyBackend,
@@ -201,7 +201,7 @@ class TestConcurrencySettingsIntegration:
         monkeypatch.setenv("AURUM_API_CONCURRENCY_MAX_REQUEST_DURATION_SECONDS", "12.25")
         monkeypatch.setenv("AURUM_API_CONCURRENCY_TENANT_OVERRIDES", json.dumps(overrides))
 
-        settings = SimplifiedSettings()
+        settings = AurumSettings()
         concurrency = settings.api.concurrency
 
         assert concurrency.enabled is False
@@ -220,7 +220,7 @@ class TestConcurrencySettingsIntegration:
         monkeypatch.setenv("AURUM_API_CONCURRENCY_MAX_REQUESTS_PER_TENANT", "3")
         monkeypatch.setenv("AURUM_API_CONCURRENCY_TENANT_OVERRIDES", json.dumps(tenant_overrides))
 
-        settings = SimplifiedSettings()
+        settings = AurumSettings()
 
         async def noop_app(scope, receive, send):
             return None
@@ -234,7 +234,7 @@ class TestConcurrencySettingsIntegration:
     def test_factory_returns_app_when_disabled(self, monkeypatch):
         monkeypatch.setenv("AURUM_API_CONCURRENCY_ENABLED", "false")
 
-        settings = SimplifiedSettings()
+        settings = AurumSettings()
 
         async def noop_app(scope, receive, send):
             return None
@@ -1738,7 +1738,7 @@ class TestAppLifecycle:
 
         monkeypatch.setattr(app_module.FastAPI, "include_router", _noop_include_router)
 
-        settings = SimplifiedSettings()
+        settings = AurumSettings()
         logger = logging.getLogger("test-lifecycle")
         app = app_module._create_simplified_app(settings, logger)
 

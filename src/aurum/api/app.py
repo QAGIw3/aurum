@@ -584,41 +584,6 @@ def _register_versioned_routers(app: FastAPI, settings: AurumSettings, logger: l
     return bool(included_specs)
 
 
-def _register_versioned_routers(app: FastAPI, settings: AurumSettings, logger: logging.Logger) -> bool:
-    """Register v1 and v2 routers discovered via the router registry.
-
-    Returns True when at least one router was included successfully.
-    """
-
-    def _include(spec: RouterSpec) -> None:
-        include_kwargs = dict(spec.include_kwargs)
-        try:
-            app.include_router(spec.router, **include_kwargs)
-        except Exception as exc:  # pragma: no cover - defensive guard
-            name = spec.name or getattr(spec.router, "prefix", "<unknown>")
-            logger.warning("Failed to include router '%s'", name, exc_info=exc)
-        else:
-            included_specs.append(spec)
-
-    try:
-        v1_specs = get_v1_router_specs(settings)
-    except Exception as exc:  # pragma: no cover - discovery failures should not crash
-        logger.warning("v1_router_discovery_failed", exc_info=exc)
-        v1_specs = []
-
-    try:
-        v2_specs = get_v2_router_specs(settings)
-    except Exception as exc:  # pragma: no cover - discovery failures should not crash
-        logger.warning("v2_router_discovery_failed", exc_info=exc)
-        v2_specs = []
-
-    included_specs: list[RouterSpec] = []
-    for spec in (*v1_specs, *v2_specs):
-        _include(spec)
-
-    return bool(included_specs)
-
-
 def _initialize_token_service(app: FastAPI, settings: AurumSettings) -> Optional["TokenService"]:
     if not getattr(settings.auth, "token_issuer_enabled", False):
         return None

@@ -1,30 +1,8 @@
-from __future__ import annotations
-
-from fastapi import APIRouter, Request, Response, status
-
-
-router = APIRouter(prefix="/v1")
-
-
-@router.api_route(
-    "/{path:path}",
-    methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS", "HEAD"],
-    status_code=status.HTTP_410_GONE,
-)
-async def retired_v1_endpoint(path: str, request: Request, response: Response):
-    response.headers.setdefault("Deprecation", "true")
-    response.headers.setdefault("Sunset", "Thu, 30 Oct 2025 23:59:59 GMT")
-    response.headers.setdefault("Link", '<https://docs.aurum.dev/api/migration-v1-to-v2>; rel="deprecation"; type="text/html"')
-    response.headers.setdefault("X-API-Version", "v1")
-    response.headers.setdefault("X-API-Lifecycle", "retired")
-    response.headers.setdefault("X-API-Migration-Guide", "https://docs.aurum.dev/api/migration-v1-to-v2")
-    return {"error": "API v1 has been retired. Please migrate to /v2.", "path": f"/v1/{path}"}
-
 """Retired v1 catch-all router returning 410 Gone.
 
 This router is included only when the v2-only switch is enabled and the
 environment flag `AURUM_API_V1_RETIRE_STUB=1` is set. It provides a consistent
-Problem Details response and deprecation headers to guide clients to v2.
+RFC 7807 Problem Details response and deprecation headers to guide clients to v2.
 """
 
 from __future__ import annotations
