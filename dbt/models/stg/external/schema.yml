@@ -3,7 +3,7 @@ models:
 - name: stg_noaa_weather
   description: Staging model for NOAA weather observations streamed into Timescale.
   tests:
-  - unique_combination:
+  - dbt_utils.unique_combination_of_columns:
       combination_of_columns:
       - tenant_id
       - station_id
@@ -35,7 +35,7 @@ models:
 - name: stg_external__series_catalog
   description: Staging model for external series catalog data with deduplication.
   tests:
-  - unique_combination:
+  - dbt_utils.unique_combination_of_columns:
       combination_of_columns:
       - tenant_id
       - provider
@@ -68,7 +68,7 @@ models:
 - name: stg_external__obs
   description: Staging model for external timeseries observations with deduplication.
   tests:
-  - unique_combination:
+  - dbt_utils.unique_combination_of_columns:
       combination_of_columns:
       - tenant_id
       - provider

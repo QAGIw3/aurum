@@ -372,6 +372,31 @@ sources:
           - name: ingest_job_id
           - name: ingest_run_id
           - name: ingest_batch_id
+  - name: external
+    description: External ISO sources (raw ISO-NE operational data in Iceberg)
+    schema: "{{ 'external' if target.name != 'duckdb' else target.schema ~ '_external' }}"
+    freshness:
+      warn_after: {count: 6, period: hour}
+      error_after: {count: 12, period: hour}
+    tables:
+      - name: isone_lmp
+        description: ISO-NE locational marginal prices (interval).
+        loaded_at_field: ingest_ts
+      - name: isone_load
+        description: ISO-NE system/area load (interval).
+        loaded_at_field: ingest_ts
+      - name: isone_generation_mix
+        description: ISO-NE generation by fuel type (interval).
+        loaded_at_field: ingest_ts
+      - name: isone_interchange
+        description: ISO-NE interchange flows (interval).
+        loaded_at_field: ingest_ts
+      - name: isone_generators
+        description: ISO-NE generator reference data.
+        loaded_at_field: updated_at
+      - name: isone_ancillary_services
+        description: ISO-NE ancillary services prices.
+        loaded_at_field: ingest_ts
           - name: version
       - name: timeseries_observation
         description: External timeseries observations from upstream providers.

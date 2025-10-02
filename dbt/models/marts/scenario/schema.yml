@@ -1,9 +1,9 @@
 version: 2
 models:
-- name: mart_scenario_output
+  - name: mart_scenario_output
   description: Latest scenario outputs materialized as a Trino view.
   tests:
-  - unique_combination:
+  - dbt_utils.unique_combination_of_columns:
       combination_of_columns:
       - tenant_id
       - scenario_id
@@ -13,19 +13,15 @@ models:
   columns:
   - name: scenario_id
     tests:
-    - not_null
-    - relationships:
-        to: ref('mart_scenario_output')
-        field: scenario_id
-        to_field: scenario_id
-    - relationships:
-        to: ref('mart_scenario_output')
-        field: scenario_id
-        to_field: scenario_id
-    - relationships:
-        to: source('iceberg_market', 'scenario_output')
-        field: scenario_id
-        to_field: scenario_id
+      - not_null
+      - relationships:
+          to: ref('mart_scenario_output')
+          field: scenario_id
+          to_field: scenario_id
+      - relationships:
+          to: source('iceberg_market', 'scenario_output')
+          field: scenario_id
+          to_field: scenario_id
   - name: run_id
     description: Identifier of the scenario run that produced the output.
     tests:
@@ -47,7 +43,7 @@ models:
 - name: mart_scenario_metric_latest
   description: Helper view exposing the latest value per scenario and metric.
   tests:
-  - unique_combination:
+  - dbt_utils.unique_combination_of_columns:
       combination_of_columns:
       - tenant_id
       - scenario_id
@@ -73,7 +69,7 @@ models:
   - name: mart_ppa_valuation
     description: Persisted PPA valuation cashflows and summary metrics.
     tests:
-      - unique_combination:
+      - dbt_utils.unique_combination_of_columns:
           combination_of_columns:
             - ppa_contract_id
             - scenario_id
@@ -93,7 +89,7 @@ models:
   - name: mart_stress_test_results
     description: Comprehensive stress test results and scenario impact analysis.
     tests:
-      - unique_combination:
+      - dbt_utils.unique_combination_of_columns:
           combination_of_columns:
             - scenario_id
             - affected_curve_key
@@ -176,7 +172,7 @@ models:
   - name: mart_scenario_analytics_summary
     description: "Comprehensive scenario analytics summary with performance, risk, and attribution metrics."
     tests:
-      - unique_combination:
+      - dbt_utils.unique_combination_of_columns:
           combination_of_columns:
             - scenario_id
             - scenario_created_at
@@ -291,7 +287,7 @@ models:
 - name: mart_scenario_overview
   description: Scenario catalog summarizing metadata, run performance, and output freshness for API consumption.
   tests:
-  - unique_combination:
+  - dbt_utils.unique_combination_of_columns:
       combination_of_columns:
       - tenant_id
       - scenario_id

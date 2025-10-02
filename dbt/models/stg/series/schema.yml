@@ -3,7 +3,7 @@ models:
 - name: stg_eia_series
   description: Staging model exposing raw EIA series observations from Timescale.
   tests:
-  - unique_combination:
+  - dbt_utils.unique_combination_of_columns:
       combination_of_columns:
       - tenant_id
       - series_id
@@ -47,7 +47,7 @@ models:
 - name: stg_fred_series
   description: Staging model exposing FRED series observations with tenant context.
   tests:
-  - unique_combination:
+  - dbt_utils.unique_combination_of_columns:
       combination_of_columns:
       - tenant_id
       - series_id
@@ -75,7 +75,7 @@ models:
 - name: stg_cpi_series
   description: Staging model exposing CPI series observations with tenant context.
   tests:
-  - unique_combination:
+  - dbt_utils.unique_combination_of_columns:
       combination_of_columns:
       - tenant_id
       - series_id

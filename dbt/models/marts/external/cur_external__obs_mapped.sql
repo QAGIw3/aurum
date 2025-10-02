@@ -137,17 +137,15 @@ curve_formatted_observations AS (
         COALESCE(curve_key, 'EXTERNAL_' || provider || '_' || series_id) as curve_key,
 
         -- Create version hash from observation metadata
-        MD5(
-            provider || '|' ||
-            series_id || '|' ||
-            TO_CHAR(observation_ts, 'YYYY-MM-DD HH24:MI:SS') || '|' ||
-            COALESCE(value::TEXT, '')
-        ) as version_hash,
+        {{ aurum_text_hash("provider || '|' || series_id || '|' || TO_CHAR(observation_ts, 'YYYY-MM-DD HH24:MI:SS') || '|' || COALESCE(value::TEXT, '')") }} as version_hash,
 
         ingest_ts as _ingest_ts,
 
         -- Lineage tracking
-        'source=iceberg.external.timeseries_observation|provider=' || provider || '|series=' || series_id || '|iso=' || COALESCE(iso_code, 'UNKNOWN') || '|table=iceberg.market.curve_observation' as lineage_tags
+        {{ aurum_lineage_append(
+            "'source=iceberg.external.timeseries_observation|provider=' || provider || '|series=' || series_id || '|iso=' || COALESCE(iso_code, 'UNKNOWN')",
+            "'table=iceberg.market.curve_observation'"
+        ) }} as lineage_tags
 
     FROM external_mapped_observations
     WHERE value IS NOT NULL  -- Only include observations with valid values

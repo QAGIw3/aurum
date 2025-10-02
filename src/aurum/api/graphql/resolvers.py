@@ -31,7 +31,9 @@ except Exception:  # pragma: no cover - fallback in environments without graphql
 
 from strawberry.types import Info
 
-from ..services.iso_service import IsoService
+from aurum.services.core import IsoService
+from aurum.data.repositories import IsoRepository
+from aurum.core.settings import get_settings
 from ..services.risk_compliance_service import (
     ComplianceReportConfig,
     get_risk_compliance_service,
@@ -94,10 +96,22 @@ class IsoLmpDataLoader:
     """Batching loader for ISO LMP queries to prevent N+1 fetches."""
 
     def __init__(self) -> None:
-        self._service = IsoService()
+        # Initialize service with dependencies
+        settings = get_settings()
+        self._iso_repo = IsoRepository(settings)
+        self._service_initialized = False
+        self._service: Optional[IsoService] = None
         self._cache: Dict[EnergyMarketKey, Tuple[List[Dict[str, Any]], float]] = {}
         self._locks: Dict[EnergyMarketKey, asyncio.Lock] = {}
         self._locks_guard = asyncio.Lock()
+    
+    async def _ensure_service(self) -> IsoService:
+        """Ensure service is initialized."""
+        if not self._service_initialized:
+            await self._iso_repo.initialize()
+            self._service = IsoService(self._iso_repo)
+            self._service_initialized = True
+        return self._service
 
     async def load(self, key: EnergyMarketKey) -> Tuple[List[Dict[str, Any]], float]:
         if key in self._cache:
@@ -108,40 +122,49 @@ class IsoLmpDataLoader:
             if key in self._cache:
                 return self._cache[key]
 
+            # Ensure service is initialized
+            service = await self._ensure_service()
+            
             payload: Tuple[List[Dict[str, Any]], float]
             if key.granularity == "LAST_24H":
-                payload = await self._service.lmp_last_24h(
-                    iso_code=key.iso_code,
-                    market=key.market,
-                    location_id=key.location_id,
-                    limit=key.limit,
+                # Use the new service method which returns ServiceResult
+                result = await service.get_lmp_data(
+                    iso=key.iso_code,
+                    node=key.location_id,
+                    market_type=key.market,
+                    limit=key.limit
                 )
+                # Extract data and create tuple format expected by GraphQL
+                payload = (result.data, 0.0)  # Query time not available in new service
             elif key.granularity == "HOURLY":
-                payload = await self._service.lmp_hourly(
-                    iso_code=key.iso_code,
+                result = await service.get_lmp_hourly(
+                    iso=key.iso_code,
                     market=key.market,
                     location_id=key.location_id,
-                    date=key.start,
-                    limit=key.limit,
+                    date_str=key.start,
+                    limit=key.limit
                 )
+                payload = (result.data, 0.0)
             elif key.granularity == "DAILY":
-                payload = await self._service.lmp_daily(
-                    iso_code=key.iso_code,
+                result = await service.get_lmp_daily(
+                    iso=key.iso_code,
                     market=key.market,
                     location_id=key.location_id,
                     start_date=key.start,
                     end_date=key.end,
-                    limit=key.limit,
+                    limit=key.limit
                 )
+                payload = (result.data, 0.0)
             elif key.granularity == "NEGATIVE":
-                payload = await self._service.lmp_negative(
-                    iso_code=key.iso_code,
+                result = await service.get_lmp_negative(
+                    iso=key.iso_code,
                     market=key.market,
                     location_id=key.location_id,
                     start_date=key.start,
                     end_date=key.end,
-                    limit=key.limit,
+                    limit=key.limit
                 )
+                payload = (result.data, 0.0)
             else:
                 raise GraphQLError(f"Unsupported granularity '{key.granularity}'")
 

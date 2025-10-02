@@ -1,3 +1,4 @@
+{{ iceberg_config_dimension(target_file_size_mb=64, write_compression='ZSTD') }}
 {{
     config(
         materialized='table',

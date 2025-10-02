@@ -4,7 +4,7 @@ models:
   description: Latest drought index value per series_id and valid_date with geography
     context.
   tests:
-  - unique_combination:
+  - dbt_utils.unique_combination_of_columns:
       combination_of_columns:
       - series_id
       - valid_date
@@ -35,7 +35,7 @@ models:
 - name: fct_usdm_area
   description: Latest USDM severity fractions by geography.
   tests:
-  - unique_combination:
+  - dbt_utils.unique_combination_of_columns:
       combination_of_columns:
       - region_type
       - region_id
@@ -59,7 +59,7 @@ models:
 - name: fct_vector_event
   description: Latest vector overlay per layer/event with geometry.
   tests:
-  - unique_combination:
+  - dbt_utils.unique_combination_of_columns:
       combination_of_columns:
       - layer
       - event_id

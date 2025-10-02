@@ -17,7 +17,7 @@ models:
 - name: dim_market
   description: ISO market dimension aligning run types with settlement intervals.
   tests:
-  - unique_combination:
+  - dbt_utils.unique_combination_of_columns:
       combination_of_columns:
       - iso_code
       - market_code
@@ -75,7 +75,7 @@ models:
 - name: fct_curve_observation
   description: Canonical curve fact table joining dimensions for downstream marts.
   tests:
-  - unique_combination:
+  - dbt_utils.unique_combination_of_columns:
       combination_of_columns:
       - curve_key
       - tenor_label
@@ -131,7 +131,7 @@ models:
 - name: mart_curve_asof_diff
   description: Precomputed as-of deltas for curve observations to power diff APIs.
   tests:
-  - unique_combination:
+  - dbt_utils.unique_combination_of_columns:
       combination_of_columns:
       - curve_key
       - tenor_label
@@ -161,7 +161,7 @@ models:
   description: Incremental publish step that materializes the canonical curve table
     from landing data.
   tests:
-  - unique_combination:
+  - dbt_utils.unique_combination_of_columns:
       combination_of_columns:
       - tenant_id
       - curve_key
@@ -173,7 +173,7 @@ models:
   description: Business mart exposing the latest available curve per identity and
     tenor.
   tests:
-  - unique_combination:
+  - dbt_utils.unique_combination_of_columns:
       combination_of_columns:
       - tenant_id
       - curve_key

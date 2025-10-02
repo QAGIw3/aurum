@@ -48,7 +48,10 @@ with source_rows as (
         curve_key,
         version_hash,
         _ingest_ts,
-        'source=iceberg.raw.curve_landing|topic=aurum.curve.observation.v1|table=iceberg.market.curve_observation' as lineage_tags
+        {{ aurum_lineage_append(
+            "'source=iceberg.raw.curve_landing|topic=aurum.curve.observation.v1'",
+            "'table=iceberg.market.curve_observation'"
+        ) }} as lineage_tags
     from {{ ref('stg_curve_observation') }}
 )
 select *

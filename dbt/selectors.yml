@@ -19,3 +19,69 @@ selectors:
         - method: tag
           value: timeseries
 
+  - name: curve
+    description: Build all curve domain models (stg/int/marts)
+    definition:
+      union:
+        - method: fqn
+          value: aurum.stg.curve
+        - method: fqn
+          value: aurum.int.curve
+        - method: fqn
+          value: aurum.marts.curve
+
+  - name: series
+    description: Build external series domain (stg/int/marts)
+    definition:
+      union:
+        - method: fqn
+          value: aurum.stg.series
+        - method: fqn
+          value: aurum.int.series
+        - method: fqn
+          value: aurum.marts.series
+
+  - name: scenario
+    description: Build scenario analytics domain (stg/int/marts)
+    definition:
+      union:
+        - method: fqn
+          value: aurum.stg.scenario
+        - method: fqn
+          value: aurum.int.scenario
+        - method: fqn
+          value: aurum.marts.scenario
+
+  - name: iso
+    description: Build ISO models (stg/int only)
+    definition:
+      union:
+        - method: fqn
+          value: aurum.stg.iso
+        - method: fqn
+          value: aurum.int.iso
+
+  - name: external
+    description: Build external observations + mappings
+    definition:
+      union:
+        - method: fqn
+          value: aurum.stg.external
+        - method: fqn
+          value: aurum.int.external
+        - method: fqn
+          value: aurum.marts.external
+
+  - name: smoke
+    description: Very fast smoke set for local runs (seeds + publish views)
+    definition:
+      union:
+        - method: resource_type
+          value: seed
+        - method: tag
+          value: publish
+      exclude:
+        - method: tag
+          value: iceberg
+        - method: tag
+          value: timeseries

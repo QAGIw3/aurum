@@ -27,6 +27,9 @@ dist/
 build/
 *.log
 artifacts/
+.coverage
+coverage.xml
+security_audit.log
 .kind-data/
 .kind-data/backups/
 seatunnel/jobs/generated/*.conf

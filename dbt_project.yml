@@ -15,6 +15,9 @@ clean-targets:
 
 models:
   aurum:
+    +persist_docs:
+      relation: true
+      columns: true
     +materialized: view
     +contract:
       enforced: true
@@ -26,6 +29,9 @@ models:
       +schema: mart
 
 seeds:
+  +persist_docs:
+    relation: true
+    columns: true
   aurum:
     ref:
       +schema: "{{ target.schema ~ '_ref' if target.name == 'duckdb' else 'ref' }}"

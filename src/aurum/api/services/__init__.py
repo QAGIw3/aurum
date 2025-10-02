@@ -26,8 +26,6 @@ _EXPORTS: Tuple[Tuple[str, Tuple[str, ...]], ...] = (
     )),
     (".metadata_service", ("MetadataService",)),
     (".ppa_service", ("PpaService",)),
-    (".drought_service", ("DroughtService",)),
-    (".iso_service", ("IsoService",)),
     (".eia_service", ("EiaService",)),
     (".scenario_service", ("ScenarioService",)),
     (".feature_store_service", (

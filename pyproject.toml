@@ -93,6 +93,7 @@ aurum-api = "aurum.api.__main__:main"
 aurum-ml = "aurum.ml.cli:main"
 aurum-anomaly-service = "aurum.streaming.services.anomaly_service:main"
 aurum-external-collector = "aurum.external.runner:cli"
+aurum-admin = "aurum.cli.admin:main"
 
 [project.optional-dependencies]
 test = [
@@ -245,11 +246,9 @@ quality = [
     "pytest-deadfixtures>=2,<3",
 ]
 
-[project.entry-points."aurum.vendor_parsers"]
-demo_ep = "aurum_vendor_demo.demo:parse_demo"
 
 [tool.hatch.build.targets.wheel]
-packages = ["src/aurum", "src/libs", "src/aurum_vendor_demo"]
+packages = ["src/aurum", "src/libs"]
 
 [tool.black]
 line-length = 88

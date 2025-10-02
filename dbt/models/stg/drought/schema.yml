@@ -3,7 +3,7 @@ models:
 - name: stg_drought_index
   description: Staging view exposing raw drought index records with JSON metadata.
   tests:
-  - unique_combination:
+  - dbt_utils.unique_combination_of_columns:
       combination_of_columns:
       - series_id
       - valid_date
@@ -34,7 +34,7 @@ models:
 - name: stg_usdm_area
   description: Staging view for USDM area fractions at the latest ingest.
   tests:
-  - unique_combination:
+  - dbt_utils.unique_combination_of_columns:
       combination_of_columns:
       - region_type
       - region_id
@@ -58,7 +58,7 @@ models:
 - name: stg_vector_event
   description: Staging view for vector overlays with geometry serialized as WKT.
   tests:
-  - unique_combination:
+  - dbt_utils.unique_combination_of_columns:
       combination_of_columns:
       - layer
       - event_id

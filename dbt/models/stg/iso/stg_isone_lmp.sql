@@ -1,3 +1,4 @@
+{{ iceberg_config_staging(target_file_size_mb=64, write_compression='ZSTD') }}
 {{
     config(
         materialized='incremental',
@@ -5,12 +6,7 @@
         alias='stg_isone_lmp',
         tags=['isone', 'lmp', 'staging'],
         incremental_strategy='merge',
-        unique_key=['iso_code', 'location_id', 'interval_start', 'market'],
-        partition_by={
-            "field": "delivery_date",
-            "data_type": "date",
-            "granularity": "day"
-        }
+        unique_key=['iso_code', 'location_id', 'interval_start', 'market']
     )
 }}
 
@@ -39,5 +35,5 @@ from {{ source('external', 'isone_lmp') }}
 
 {% if is_incremental() %}
   -- Only process records newer than the latest processed record
-  where ingest_ts > (select coalesce(max(ingest_ts), '1970-01-01T00:00:00Z') from {{ this }})
+  where ingest_ts > (select coalesce(max(ingest_ts), cast('1970-01-01 00:00:00' as timestamp)) from {{ this }})
 {% endif %}

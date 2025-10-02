@@ -4,7 +4,7 @@ models:
   description: Intermediate model filtering to monthly tenors and latest copies per
     ingest.
   tests:
-  - unique_combination:
+  - dbt_utils.unique_combination_of_columns:
       combination_of_columns:
       - tenant_id
       - curve_key
@@ -30,7 +30,7 @@ models:
 - name: int_curve_calendar
   description: Calendar strips derived by averaging monthly curves.
   tests:
-  - unique_combination:
+  - dbt_utils.unique_combination_of_columns:
       combination_of_columns:
       - curve_key
       - tenor_label
@@ -56,7 +56,7 @@ models:
 - name: int_curve_quarter
   description: Quarterly strips derived by averaging monthly curves.
   tests:
-  - unique_combination:
+  - dbt_utils.unique_combination_of_columns:
       combination_of_columns:
       - curve_key
       - tenor_label

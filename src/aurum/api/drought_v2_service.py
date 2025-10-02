@@ -6,7 +6,8 @@ from datetime import date as _date
 from typing import Any, Dict, List, Optional
 
 from .config import TrinoConfig
-from .services.drought_service import DroughtService
+from aurum.services.core import DroughtService
+from aurum.data.repositories import DroughtRepository
 from aurum.core.settings import get_settings as _core_get_settings
 from .database.backend_selector import get_data_backend
 
@@ -28,7 +29,10 @@ class DroughtV2Service:
     ) -> List[Dict[str, Any]]:
         settings = get_settings()
         trino_cfg = TrinoConfig.from_settings(settings)
-        drought_service = DroughtService()
+        # Create service with dependencies
+        drought_repo = DroughtRepository(settings)
+        await drought_repo.initialize()
+        drought_service = DroughtService(drought_repo)
 
         def _to_date(value: Optional[str]) -> Optional[_date]:
             if not value:
@@ -127,7 +131,10 @@ class DroughtV2Service:
     ) -> List[Dict[str, Any]]:
         settings = get_settings()
         trino_cfg = TrinoConfig.from_settings(settings)
-        drought_service = DroughtService()
+        # Create service with dependencies
+        drought_repo = DroughtRepository(settings)
+        await drought_repo.initialize()
+        drought_service = DroughtService(drought_repo)
 
         def _to_date(value: Optional[str]) -> Optional[_date]:
             if not value:

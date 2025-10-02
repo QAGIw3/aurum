@@ -3,7 +3,7 @@ models:
 - name: mart_external__geo
   description: Canonical geography dimension for external data providers.
   tests:
-  - unique_combination:
+  - dbt_utils.unique_combination_of_columns:
       combination_of_columns:
       - provider
       - provider_geo_code
@@ -43,7 +43,7 @@ models:
   description: Curated external observations transformed to match curve_observation
     format.
   tests:
-  - unique_combination:
+  - dbt_utils.unique_combination_of_columns:
       combination_of_columns:
       - curve_key
       - tenor_label

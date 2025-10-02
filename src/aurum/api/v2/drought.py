@@ -107,8 +107,15 @@ async def get_drought_indices_v2(
             },
         )
 
-        from ..services import DroughtService
-        svc = DroughtService()
+        from aurum.services.core import DroughtService
+        from aurum.data.repositories import DroughtRepository
+        from aurum.core.settings import get_settings
+        
+        # Create service with dependencies
+        settings = get_settings()
+        drought_repo = DroughtRepository(settings)
+        await drought_repo.initialize()
+        svc = DroughtService(drought_repo)
         paginated_data = await svc.list_indices(
             dataset=dataset,
             index=index,
@@ -270,8 +277,15 @@ async def get_drought_usdm_v2(
             },
         )
 
-        from ..services import DroughtService
-        svc = DroughtService()
+        from aurum.services.core import DroughtService
+        from aurum.data.repositories import DroughtRepository
+        from aurum.core.settings import get_settings
+        
+        # Create service with dependencies
+        settings = get_settings()
+        drought_repo = DroughtRepository(settings)
+        await drought_repo.initialize()
+        svc = DroughtService(drought_repo)
         paginated_data = await svc.list_usdm(
             region_type=region_type,
             region_id=region_id,

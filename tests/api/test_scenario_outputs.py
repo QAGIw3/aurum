@@ -9,7 +9,7 @@ from fastapi import HTTPException
 from fastapi.testclient import TestClient
 
 from aurum.api.scenarios import router
-from aurum.api.container import get_service
+from aurum.core.container import get_service
 from aurum.api.async_service import AsyncScenarioService
 from aurum.api.models import ScenarioOutputListResponse, ScenarioOutputFilter
 

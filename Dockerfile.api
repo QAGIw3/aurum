@@ -48,7 +48,6 @@ COPY --from=builder --chown=aurum:aurum /opt/venv /opt/venv
 COPY --chown=aurum:aurum src /app/src
 COPY --chown=aurum:aurum apps /app/apps
 COPY --chown=aurum:aurum scripts /app/scripts
-COPY --chown=aurum:aurum start_api.py /app/
 COPY --chown=aurum:aurum config /app/config
 
 LABEL org.opencontainers.image.title="aurum-api" \
@@ -65,4 +64,4 @@ USER aurum
 HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
   CMD python -m aurum.healthchecks.api
 
-CMD ["python", "start_api.py"]
+CMD ["aurum-api"]

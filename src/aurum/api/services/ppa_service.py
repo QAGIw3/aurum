@@ -1,4 +1,11 @@
-"""Domain service for PPA contracts and valuations."""
+"""Domain service for PPA contracts and valuations.
+
+LEGACY SERVICE: This service is retained temporarily because it contains complex
+valuation logic that hasn't been fully migrated to the new architecture.
+Used by: ppa_v2_service.py for list_contracts and list_contract_valuation_rows methods.
+
+TODO: Migrate remaining functionality to src/aurum/services/core/ppa.py
+"""
 
 from __future__ import annotations
 

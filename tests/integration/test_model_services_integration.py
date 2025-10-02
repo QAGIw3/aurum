@@ -7,7 +7,7 @@ from datetime import datetime
 from typing import AsyncGenerator
 from unittest.mock import Mock, AsyncMock
 
-from aurum.api.container import DependencyInjectionContainer, ServiceLifetime
+from aurum.core.container import DependencyContainer, ServiceLifetime
 from aurum.api.services.model import (
     ModelConfig,
     ModelVersion,
@@ -20,9 +20,9 @@ from aurum.api.services.model import (
 
 
 @pytest.fixture
-async def di_container() -> AsyncGenerator[DependencyInjectionContainer, None]:
+async def di_container() -> AsyncGenerator[DependencyContainer, None]:
     """Create a DI container with all model services registered."""
-    container = DependencyInjectionContainer()
+    container = DependencyContainer()
 
     # Register services
     container.register(

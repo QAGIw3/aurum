@@ -12,7 +12,7 @@ class ScenariosService:
     def __init__(self) -> None:
         # Lazy to avoid import-time coupling
         from aurum.api.async_service import AsyncScenarioService  # type: ignore
-        from aurum.api.container import provide_service  # type: ignore
+        from aurum.core.container import provide_service  # type: ignore
 
         self._provider = provide_service(AsyncScenarioService)
         self._svc: Optional[AsyncScenarioService] = None  # type: ignore[name-defined]

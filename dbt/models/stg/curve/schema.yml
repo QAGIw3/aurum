@@ -3,7 +3,7 @@ models:
 - name: stg_curve_landing
   description: Staging model that normalizes landing rows and retains quarantine context.
   tests:
-  - unique_combination:
+  - dbt_utils.unique_combination_of_columns:
       combination_of_columns:
       - tenant_id
       - curve_key
@@ -78,7 +78,7 @@ models:
 - name: stg_curve_quarantine
   description: Filtered view of landing rows that were quarantined with reasons attached.
   tests:
-  - unique_combination:
+  - dbt_utils.unique_combination_of_columns:
       combination_of_columns:
       - tenant_id
       - curve_key
@@ -101,7 +101,7 @@ models:
 - name: stg_curve_observation
   description: Staging model that harmonizes curve observations for downstream consumption.
   tests:
-  - unique_combination:
+  - dbt_utils.unique_combination_of_columns:
       combination_of_columns:
       - tenant_id
       - curve_key
@@ -154,7 +154,7 @@ models:
   description: Dead letter staging view capturing failed curve records and schema
     drift context.
   tests:
-  - unique_combination:
+  - dbt_utils.unique_combination_of_columns:
       combination_of_columns:
       - source
       - ingest_ts

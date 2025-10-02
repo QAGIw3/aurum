@@ -86,7 +86,7 @@ def scan_imports() -> Dict[str, int]:
             content = py_file.read_text()
             
             # Count old imports
-            if "from aurum.api.container import DependencyInjectionContainer" in content:
+            if "from aurum.api.container import" in content:
                 old_container_imports += 1
             
             # Count new imports

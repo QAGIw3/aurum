@@ -4,7 +4,7 @@ models:
   description: Intermediate model surfacing NOAA weather observations with tenant
     context.
   tests:
-  - unique_combination:
+  - dbt_utils.unique_combination_of_columns:
       combination_of_columns:
       - tenant_id
       - station_id
@@ -32,7 +32,7 @@ models:
 - name: int_external__obs_conformed
   description: Conformance layer standardizing external observations across providers.
   tests:
-  - unique_combination:
+  - dbt_utils.unique_combination_of_columns:
       combination_of_columns:
       - provider
       - series_id
@@ -81,7 +81,7 @@ models:
 - name: int_external__geo_mapping
   description: Intermediate model mapping provider geo codes to canonical geographies.
   tests:
-  - unique_combination:
+  - dbt_utils.unique_combination_of_columns:
       combination_of_columns:
       - provider
       - provider_geo_code

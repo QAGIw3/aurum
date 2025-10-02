@@ -12,7 +12,8 @@ from datetime import date as _date
 from .config import CacheConfig, TrinoConfig
 from aurum.core.settings import get_settings as _core_get_settings
 from .database.backend_selector import get_data_backend
-from .services.metadata_service import MetadataService
+from aurum.services.core import MetadataService
+from aurum.data.repositories import MetadataRepository
 from ..reference import iso_locations as ref_iso
 from ..reference import units as ref_units
 from ..reference import calendars as ref_cal
@@ -75,7 +76,11 @@ class MetadataV2Service:
                     asof_dt = _date.fromisoformat(asof)
                 except Exception:
                     asof_dt = None
-            metadata_service = MetadataService()
+            # Create service with dependencies
+            settings = get_settings()
+            metadata_repo = MetadataRepository(settings)
+            await metadata_repo.initialize()
+            metadata_service = MetadataService(metadata_repo)
             filters = {}
             if asof_dt:
                 filters['asof'] = asof_dt

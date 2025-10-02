@@ -2,6 +2,12 @@ from __future__ import annotations
 
 """Metadata domain service with DAO pattern implementation.
 
+LEGACY SERVICE: This service is retained for v1 API compatibility.
+Used by: metadata.py (v1 endpoints) and metadata_v2_service.py (partially migrated).
+
+The new service is at: src/aurum/services/core/metadata.py
+
+TODO: Complete migration of all methods to new service.
 Phase 1.3 Service Layer Decomposition: Handles metadata, dimensions, units, and calendar data.
 """
 

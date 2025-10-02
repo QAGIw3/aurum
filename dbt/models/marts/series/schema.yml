@@ -4,7 +4,7 @@ models:
   description: Latest observation per series identifier with normalized units and
     currency.
   tests:
-  - unique_combination:
+  - dbt_utils.unique_combination_of_columns:
       combination_of_columns:
       - tenant_id
       - series_id
@@ -64,7 +64,7 @@ models:
 - name: mart_eia_series_units
   description: Lookup of raw units to normalized currency and unit denominators.
   tests:
-  - unique_combination:
+  - dbt_utils.unique_combination_of_columns:
       combination_of_columns:
       - tenant_id
       - unit_raw
@@ -78,7 +78,7 @@ models:
 - name: mart_fred_series_latest
   description: Latest FRED observation per tenant and series identifier.
   tests:
-  - unique_combination:
+  - dbt_utils.unique_combination_of_columns:
       combination_of_columns:
       - tenant_id
       - series_id
@@ -98,7 +98,7 @@ models:
 - name: mart_cpi_series_latest
   description: Latest CPI observation per tenant and series identifier.
   tests:
-  - unique_combination:
+  - dbt_utils.unique_combination_of_columns:
       combination_of_columns:
       - tenant_id
       - series_id

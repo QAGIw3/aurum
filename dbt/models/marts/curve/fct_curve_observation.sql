@@ -1,3 +1,10 @@
+{{ iceberg_config_fact_table(
+    partition_fields=['asof_date', 'iso_code', 'product_code'],
+    partition_granularity='day',
+    sort_columns=['tenant_id', 'iso_code', 'market_code', 'asof_date'],
+    target_file_size_mb=256,
+    write_compression='ZSTD'
+) }}
 {{
     config(
         materialized='incremental',
@@ -6,25 +13,7 @@
         unique_key=['curve_key', 'tenor_label', 'asof_date'],
         incremental_strategy='merge',
         on_schema_change='sync',
-        tags=['curve', 'fact', 'iceberg', 'analytical'],
-        table_properties={
-            'format': 'ICEBERG',
-            'partitioning': "ARRAY['days(asof_date)', 'iso_code', 'product_code']",
-            'write_compression': 'ZSTD',
-            'write_target_file_size_bytes': '268435456',
-            'write_parquet_compression_codec': 'ZSTD',
-            'write_parquet_compression_level': '9',
-            'write_parquet_bloom_filter_columns': "ARRAY['tenant_id', 'iso_code', 'market_code', 'product_code']",
-            'write_parquet_bloom_filter_enabled': 'true',
-            'write_parquet_page_size_bytes': '2097152',
-            'write_parquet_row_group_size_bytes': '268435456',
-            'write_parquet_dict_encoding_enabled': 'true',
-            'write_parquet_plain_encoding_enabled': 'false',
-            'write_parquet_rle_encoding_enabled': 'true',
-            'write_parquet_bloom_filter_fpp': '0.005',
-            'write_parquet_statistics_enabled': 'true',
-            'write_parquet_statistics_columns': "ARRAY['mid', 'bid', 'ask', 'price_total', 'price_energy', 'mw', 'value']"
-        }
+        tags=['curve', 'fact', 'iceberg', 'analytical']
     )
 }}
 
@@ -118,7 +107,7 @@ select
     sheet_name,
     version_hash,
     _ingest_ts,
-    concat(lineage_tags, '|fact=iceberg.fact.fct_curve_observation') as lineage_tags
+    {{ aurum_lineage_append(lineage_tags, "'fact=iceberg.fact.fct_curve_observation'") }} as lineage_tags
 from joined
 {% if is_incremental() %}
 where _ingest_ts >= (

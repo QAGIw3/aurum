@@ -3,7 +3,7 @@ models:
 - name: int_eia_series_enriched
   description: Intermediate model normalizing currency and unit metadata for EIA series.
   tests:
-  - unique_combination:
+  - dbt_utils.unique_combination_of_columns:
       combination_of_columns:
       - tenant_id
       - series_id
@@ -32,7 +32,7 @@ models:
   description: Intermediate model augmenting FRED series observations with derived
     periods.
   tests:
-  - unique_combination:
+  - dbt_utils.unique_combination_of_columns:
       combination_of_columns:
       - tenant_id
       - series_id
@@ -58,7 +58,7 @@ models:
 - name: int_cpi_series_enriched
   description: Intermediate model enriching CPI series with normalized period dates.
   tests:
-  - unique_combination:
+  - dbt_utils.unique_combination_of_columns:
       combination_of_columns:
       - tenant_id
       - series_id

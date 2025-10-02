@@ -16,6 +16,7 @@ from .scenarios import ScenarioRepository
 from .metadata import MetadataRepository
 from .ppa import PpaRepository
 from .drought import DroughtRepository
+from .iso import IsoRepository
 
 __all__ = [
     "CurveRepository",
@@ -23,5 +24,6 @@ __all__ = [
     "MetadataRepository",
     "PpaRepository",
     "DroughtRepository",
+    "IsoRepository",
 ]
 

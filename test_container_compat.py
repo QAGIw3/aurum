@@ -60,14 +60,14 @@ async def test_api_container_compatibility():
     import warnings
     with warnings.catch_warnings(record=True) as w:
         warnings.simplefilter("always")
-        from aurum.api.container import DependencyInjectionContainer, ServiceLifetime
+        from aurum.core.container import DependencyContainer, ServiceLifetime
         
         # Check deprecation warning was issued
         assert len(w) > 0, "No deprecation warning issued"
         assert issubclass(w[0].category, DeprecationWarning), "Wrong warning type"
         print(f"✅ Deprecation warning issued: {w[0].message}")
     
-    container = DependencyInjectionContainer()
+        container = DependencyContainer()
     
     # Register a service
     class ApiTestService:

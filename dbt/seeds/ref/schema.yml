@@ -17,7 +17,7 @@ seeds:
   - name: market_catalog
     description: Mapping of ISO markets and run types to canonical codes.
     tests:
-      - unique_combination:
+      - dbt_utils.unique_combination_of_columns:
           combination_of_columns: [iso_code, market_code]
     columns:
       - name: iso_code
